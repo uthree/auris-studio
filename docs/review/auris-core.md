@@ -1,6 +1,6 @@
 # Review findings: auris-core
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 24 verified findings: 3 critical, 8 high, 9 medium, 4 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 32 verified findings: 3 critical, 10 high, 13 medium, 6 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -17,6 +17,8 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-056 | high | `crates/auris-core/src/project/track.rs:496` | set_hosted_instrument swaps a track's plugin without calling remove_instrument_automation, so stale automation lanes drive the new plugin's unrelated […] |
 | F-076 | high | `crates/auris-core/src/time.rs:684` | SignatureMap::from_points/align_to_bars does unchecked i64 multiply-add on tick values from deserialized project files, panicking (debug) or silently […] |
 | F-083 | high | `crates/auris-core/src/project/clip.rs:1349` | notes_digest omits phoneme_seconds/scoop/fall/vibrato despite claiming "every field", so ornament-only hand edits are silently discarded on resize/regenerate. |
+| F-317 | high | `crates/auris-core/src/theory/numeral.rs:519` | degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double […] |
+| F-352 | high | `crates/auris-core/src/project/routing.rs:390` | repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid. |
 | F-007 | medium | `crates/auris-core/src/project/clip.rs:100` | Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in […] |
 | F-048 | medium | `crates/auris-core/src/theory/key.rs:130` | Key::spelling() picks the wrong sharps/flats side for 7 of 84 mode/tonic pairs (Dorian, Phrygian, Locrian, Mixolydian), contradicting its own doc comment's […] |
 | F-114 | medium | `crates/auris-core/src/project/curve.rs:132` | load_project never sorts bend/controller CurvePoints, so an out-of-order project file silently mis-evaluates curve_at/curve_events on playback. |
@@ -26,10 +28,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-184 | medium | `crates/auris-core/src/project/track.rs:600` | Deleting a bus / repairing routing prunes AuxSends but leaves their automation lanes orphaned in the saved project, though no live parameter is ever misdriven […] |
 | F-208 | medium | `crates/auris-core/src/project/curve.rs:163` | curve_events checks the curve's raw trailing point instead of its value at the truncation boundary, so it can fail to release to zero — masked today because […] |
 | F-254 | medium | `crates/auris-core/src/theory/chart.rs:331` | Chart::Display can render a Chart (built via the public Chart::new/bars API) with an empty bar as a doubled pipe that Chart::parse's own deliberate empty-bar […] |
+| F-356 | medium | `crates/auris-core/src/project/curve.rs:144` | curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export. |
+| F-377 | medium | `crates/auris-core/src/project/clip.rs:1035` | split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split […] |
+| F-397 | medium | `crates/auris-core/src/time.rs:785` | TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable […] |
+| F-418 | medium | `crates/auris-core/src/project/track.rs:548` | Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's […] |
 | F-238 | low | `crates/auris-core/src/project/clip.rs:1024` | split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) […] |
 | F-265 | low | `crates/auris-core/src/theory/numeral.rs:574` | diatonic_quality's "fewer than seven degrees" fallback arm at numeral.rs:575-576 is dead code with a now-inaccurate comment, no behavioral effect today. |
 | F-286 | low | `crates/auris-core/src/theory/numeral.rs:386` | Numeral::name_in does unclamped u8 arithmetic on secondary-numeral degree, panicking on out-of-range input that every sibling helper in the file already clamps […] |
 | F-296 | low | `crates/auris-core/src/rng.rs:152` | Rng::weighted excludes NaN weights from `total` but not from the selection loop, so a NaN weight silently forces the last index instead of being treated as […] |
+| F-430 | low | `crates/auris-core/src/time.rs:219` | TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160. |
+| F-453 | low | `crates/auris-core/src/project/clip.rs:628` | AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip. |
 
 ### F-014 · critical · CurvePoint lacks the finite-value guard AutomationLane and set_param already enforce, so a NaN bend/controller value round-trips to JSON `null` and makes the whole project file unreadable.
 
@@ -209,6 +217,36 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** FNV-1a over every field of every note, order-sensitive, exact: velocities go in as their bit patterns, because an edit undone restores exactly the bits it moved and must read as no edit at all.
 
+### F-317 · high · degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double accidentals instead of plain or single-accidental numerals.
+
+`crates/auris-core/src/theory/numeral.rs:519` · theory · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Any minor-key (or other non-major-scale key) chord or note whose root is an unaltered major-scale degree but not part of the key's own scale — e.g. a borrowed major sixth or major seventh in a minor key — gets labelled with a double accidental (e.g. "bbVII") instead of the plain or single-accidental numeral a musician would expect. Anywhere the app displays roman-numeral chord analysis for minor or modal keys, users see wrong, confusing labels for common borrowed chords.
+
+**Trigger.** `degree_of(Key::parse("C minor").unwrap(), PitchClass::parse("A").unwrap())` returns `(7, -2)` — i.e. the numeral text `bbVII` — instead of the musically correct `(6, 0)` (`VI`). Reached in practice through `auris_compose::frame::colour`'s borrow-colouring (`Mood::borrow_rate()` is positive whenever `tension > 0.5`, an ordinary setting): for a generated minor-key section with a bare `vi`-degree numeral, `colour` builds the chord in the parallel major (`event.key.parallel()`), gets `Am` (root A, minor) for degree 6, and then calls `Numeral::respelled_in(parallel_major, minor_key)`, which calls this `degree_of` and gets back `(7, -2)`. Because `as_written.chord_in(to) == chord` still holds […]
+
+**Mechanism.** `degree_of`'s first loop (lines 521-525) only matches `class` against the ACTUAL key's own scale (`key.class(...)`, accidental 0) — for a Minor/HarmonicMinor/Phrygian/Locrian key this is not the major scale. The second loop (lines 528-533) only tries `accidental in [-1, 1, -2, 2]` against a *major*-scale reference (`major.class(...).transposed(accidental)`); it never tries accidental 0 against that major reference. So a pitch class that IS an unaltered major-scale degree (e.g. the plain major 6th, semitone 9 relative to tonic) but is NOT a member of the actual key's own (non-major) scale is invisible to both loops at accidental 0, and the search falls through to whichever ±1/±2 major-relative offset happens to land on it — here none of the ±1 offsets reach semitone 9 (major-scale degrees 2, 5 and 6, i.e. relative semitones 2/7/9, are exactly the three values the ±1 sweep can never produce), so it settles on a ±2 match instead of the correct 0-accidental one.
+
+**Expected.** Per the function's own doc comment (lines 513-518): "A note the key has is named plainly; anything else is named from the degree of the **major** scale nearest to it, which is the convention roman numeral analysis uses" and "Flat before sharp, and one accidental before two" (line 527). An unaltered major-scale degree should be found and preferred over any accidental at all — the second loop needs an accidental-0 pass against `major` (or the first loop needs to check `major`, not just the […]
+
+**Fix direction.** In `degree_of`'s second loop, also try accidental 0 against the major reference scale (e.g. iterate `[0, -1, 1, -2, 2]` instead of `[-1, 1, -2, 2]`), so a pitch class that is a plain major-scale degree not present in the key's own scale is named plainly against major before the code falls back to single- or double-accidental matches.
+
+**Written rule it breaks.** A note the key has is named plainly; anything else is named from the degree of the major scale nearest to it — degree_of's own doc comment (crates/auris-core/src/theory/numeral.rs)
+
+### F-352 · high · repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid.
+
+`crates/auris-core/src/project/routing.rs:390` · ui · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Every time a project file is opened (GUI, CLI, MCP, or agent frontend), the app runs an O(n^3)-in-track-count repair pass unconditionally, even when the routing is already valid. `Session::open` calls `load_project` synchronously on the caller's thread, so for a project with a large but realistic track count (dense bus/sidechain routing across hundreds of tracks) this is a multi-second, unresponsive stall on every single open, not just the rare hand-edited-or-corrupt-file case the repair exists for. The GUI does show an "Opening…" status line first, so the freeze isn't silent, but there is no further progress or way to cancel during the repair pass itself.
+
+**Trigger.** Opening any `.auris` project (via the GUI, `auris-cli`, or the `auris-mcp`/`auris-agent` toolbox, all of which go through `Session::open` -> `load_project`) that has on the order of a few thousand tracks each routed to a bus (a legitimate, non-corrupted routing graph — e.g. a large orchestral or mix-template project, or a file crafted to have many tracks). At n=3,000 bus-routed tracks, n^3 ~= 2.7x10^10 comparisons purely from the repeated `routing_edges()` rebuild plus BFS/track_index scans; at n=10,000 it is n^3 ~= 10^12. There is no maximum-track-count guard anywhere in `auris-core`/`auris-session` (confirmed by grep — no `MAX_TRACK` constant bounds `Project::tracks`).
+
+**Mechanism.** `routing_would_cycle` (line 382) calls `self.routing_edges()` fresh on every invocation (line 390). `routing_edges()` (line 305) itself calls `self.track_index()` — a linear `.iter().position()` scan over all tracks (track.rs:620-622) — once per feed/sidechain edge, making `routing_edges()` O(n^2) for n tracks. `repair_routing` (line 429) calls `routing_would_cycle` once per track's bus output and once per send while restoring edges one at a time (lines 468-483: `if self.routing_would_cycle(owner, target)` and `if self.routing_would_cycle(owner, send.target)`), i.e. roughly n times. n calls x O(n^2) per call = O(n^3) total. `load_project` (auris-io/src/project_file.rs:194-195) calls `project.repair_routing()` unconditionally on every single project load, not only when the routing is actually malformed — so this cost is paid even for a project whose bus routing is entirely valid, as long as enough tracks route to buses.
+
+**Expected.** Repairing routing on load should cost close to O(n) or O(n log n): `routing_edges()` should be built once and reused across all `routing_would_cycle` calls inside one `repair_routing()` pass (and `track_index` should use a lookup map rather than a linear scan), rather than rebuilding the whole adjacency list and re-scanning it from scratch for every edge being restored.
+
+**Fix direction.** Skip the expensive repair path when nothing is broken: first cheaply validate that every output/send/sidechain names a real track and that no cycle exists (reusing one freshly-built adjacency list across the whole check instead of calling `routing_would_cycle` per edge, which rebuilds `routing_edges()` from scratch each time), and only run the O(n) per-edge repair-and-rebuild loop when that check finds a real fault. Separately, replace the linear scans in `Project::track_index` and `repair_routing`'s `usable()` closure with a `HashMap<TrackId, usize>` built once, dropping `routing_edges`/`routing_would_cycle` from O(n^2) to O(n + edges) per call.
+
 ### F-007 · medium · Ticks::Add is unchecked, so a corrupted/malicious .auris file with extreme start/length values panics in debug or silently corrupts note/clip end positions in release.
 
 `crates/auris-core/src/project/clip.rs:100` · persistence · confirmed (executed reproduction; reported independently 2×)
@@ -357,6 +395,68 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 
 **Written rule it breaks.** // There is no way to write an empty bar on purpose here, so the answer is not to guess at one: a chart that cannot be read is refused, as a chart of nothing already was. (crates/auris-core/src/theory/chart.rs, Chart::parse doc/comment, restated by the `what_display_writes_is_what_parse_reads` test name)
 
+### F-356 · medium · curve_events() only emits interior CurvePoints that happen to land on the CURVE_STEP grid, rounding off drawn pitch-bend/CC corners in playback and MIDI export.
+
+`crates/auris-core/src/project/curve.rs:144` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** When a user draws a pitch-bend or modulation curve with a sharp corner (peak, dip, or vibrato point) that doesn't happen to land on a CURVE_STEP grid tick (a 1/96 note), that corner is quietly rounded off during playback and MIDI export: the engine and MIDI writer only ever sample curve_at() at fixed grid points plus the curve's first/last point, so an interior corner is replaced by the linearly-interpolated value of its two neighboring grid samples. A drawn pitch bend peak of, say, +2 semitones can come out audibly shallower, and the exported MIDI file's pitch-bend/CC data will not reproduce the shape shown in the editor.
+
+**Trigger.** A 3-point curve whose interior point's tick is not aligned to `CURVE_STEP` (a 96th note, ~20ms at 120bpm) -- e.g. bend points at ticks 0 (0.0 semitones), 505 (a peak at 3.0 semitones) and 1000 (0.0). `curve_events` samples every `CURVE_STEP` from 0 up to (but not including) 1000, plus the explicit point at 1000; none of those sample ticks is exactly 505.
+
+**Mechanism.** The doc says events are sampled "Every `step` across the stretch the curve was written over, plus the points themselves so a corner lands exactly where it was drawn." But the implementation (lines 151-170) only ever pushes two ticks verbatim: the loop's starting `at` (= `first.at.max_zero()`, i.e. the first point) and the explicit trailing `out.push((last.at, last.value))` (the last point). Every point strictly between them is never pushed at its own tick -- it is only ever visible through whichever nearby `step`-grid sample happens to land near it, via `curve_at`.
+
+**Expected.** Per the doc, every drawn point ("the points themselves") should land exactly where it was drawn; only the first and last actually do, which nothing in the existing tests (which only exercise 2-point curves) exposes.
+
+**Fix direction.** Merge the curve's own point ticks into the sampling walk instead of only its step grid: e.g. iterate the union of grid ticks and interior points.iter().map(|p| p.at) in sorted order (or splice each point.at into the loop when it falls between the current 'at' and the next grid tick), pushing curve_at() at each so every CurvePoint.at is guaranteed to appear verbatim in the output, matching the doc comment's promise.
+
+**Written rule it breaks.** Every `step` across the stretch the curve was written over, plus the points themselves so a corner lands exactly where it was drawn.
+
+### F-377 · medium · split_clip's unchecked `clip.offset_frames + frames` at clip.rs:1035 can panic or silently wrap on a corrupted/hand-edited project file, corrupting the split clip's playback region.
+
+`crates/auris-core/src/project/clip.rs:1035` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A project file with a hand-edited or corrupted (or maliciously crafted) `offset_frames` near u64::MAX loads without any validation; splitting that clip anywhere then either panics and crashes the app (debug/test builds, where overflow-checks are on) or, in a release build, silently wraps to a small value, so the newly created right-hand piece plays back the wrong region of the source audio with no error shown to the user.
+
+**Trigger.** A hand-edited or corrupted project file sets an audio clip's `offset_frames` close to `u64::MAX` (e.g. `u64::MAX - 10`) while `length_frames` stays a normal value >= 2 (e.g. 100) -- a perfectly ordinary-looking value that never needs to reference the actual decoded buffer, since `resolve_audio_clip` only clamps `offset_frames` against `available` at render time, not at load time. Calling `Project::split_clip` at any point strictly inside that clip then computes `clip.offset_frames + frames`, which exceeds `u64::MAX`.
+
+**Mechanism.** `right.offset_frames = clip.offset_frames + frames;` is a plain, unchecked `u64` addition. `clip.offset_frames` is a `pub offset_frames: u64` field that arrives verbatim from `#[derive(Deserialize)]` with no range validation anywhere on the load path (unlike e.g. `TempoMap`, whose doc explicitly routes deserialization through `TryFrom` for exactly this reason). `frames` is only bounded to `1..=clip.length_frames-1`, so it is always >= 1 for any valid split.
+
+**Expected.** A field that arrives unguarded from deserialize and is then added to a derived, similarly-unbounded value should not be able to panic or silently wrap; either the arithmetic should be checked/saturating, or `offset_frames`/`length_frames` should be validated the way other invariant-bearing fields in this crate are.
+
+**Fix direction.** Use `clip.offset_frames.saturating_add(frames)` (or `checked_add` with a `None`-return / clamp against `length_frames`) at clip.rs:1035 so a corrupt offset can't panic or wrap; longer term, validate `offset_frames`/`length_frames` on load the same way `TempoMap` is routed through `TryFrom`, per the crate's own stated rationale for that field.
+
+**Written rule it breaks.** a hand-edited or corrupted project file would otherwise construct a map that violates [its] invariants (crates/auris-core/src/time.rs, cited rationale for validating TempoMap via TryFrom, which offset_frames is not given)
+
+### F-397 · medium · TempoMap::from_points keeps the first of two same-tick points while TempoMap::set_point keeps the last, an unstated and inconsistent collision policy reachable via file load or bulk import.
+
+`crates/auris-core/src/time.rs:785` · persistence · confirmed (executed reproduction; reported independently 2×)
+
+**What a user sees.** If a project file (or a bulk tempo-point import) contains two tempo points that land on the same tick — either literal duplicates or two negative ticks that both clamp to Ticks::ZERO — the surviving point is silently the earlier one in the input list. Editing that same tick afterward through the normal UI path (set_point) instead keeps whichever value was written last. A user who hand-edits or merges a project file, or who imports/undoes onto a colliding tick, gets a different, unstated collision rule depending on which code path handled the write, with no error or indication that a point was dropped.
+
+**Trigger.** Deserialize (or call `TempoMap::from_points` directly with) a points list carrying two entries at the same tick, e.g. `{"points":[{"tick":0,"bpm":90.0},{"tick":0,"bpm":150.0}]}`. (The same collision is reachable without an exact duplicate too: two distinct negative ticks both clamp to zero via `point.tick.max_zero()` a few lines above the sort, e.g. ticks -50 and -10 both become 0.)
+
+**Mechanism.** `from_points` (the constructor `TryFrom<TempoMapRepr>` routes every deserialization through, per the type's own doc comment) does `points.sort_by_key(|p| p.tick)` — a stable sort that preserves the original relative order of equal-tick entries — then `points.dedup_by_key(|p| p.tick)` at line 785, which per `Vec::dedup_by_key`'s documented behaviour keeps only the FIRST of any run of consecutive equal-key elements. So of two points that land on the same tick, the one that appeared earlier in the input list survives and the later one is silently dropped. `TempoMap::set_point` (lines 812-819) implements the opposite policy: `match self.points.binary_search_by_key(&tick, |p| p.tick) { Ok(index) => self.points[index].bpm = bpm, ... }` always overwrites an existing point at that tick with the newly-given value, i.e. the LAST write wins. The two code paths of the same type disagree on which of two same-tick values is kept.
+
+**Expected.** A duplicate-tick collision should resolve the same way regardless of whether the map is built by deserialization or by sequential `set_point` calls. `SignatureMap`'s own collision handling in the same file explicitly documents and implements a 'last write wins' policy for exactly this situation (`align_to_bars`'s comment: 'the one written later is the one that was meant') — `TempoMap::from_points` should either match that policy (and `set_point`'s own behaviour) or the difference should be […]
+
+**Fix direction.** Make from_points use the same last-wins policy as set_point — e.g. reverse-stable-sort or dedup from the back (dedup_by_key keeps the first of a run, so sort/iterate so the last input entry ends up first before deduping, or fold duplicates explicitly keeping the later tick's bpm) — and add a one-line doc comment on from_points stating the collision policy, mirroring the comment already given for SignatureMap::align_to_bars.
+
+### F-418 · medium · Project::duplicate_track reissues ids for effects/sends/clips but never rekeys or copies the original track's automation lanes, so a duplicated track's automated parameters silently become static.
+
+`crates/auris-core/src/project/track.rs:548` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Duplicating a track that has automated parameters (volume/pan/send/instrument/effect automation) produces a copy whose automated values silently revert to static — a fader that was riding through a mix, or an effect parameter swept over the song, is flat and unmoving on the new track with no error or warning. The user typically discovers this by ear or by opening the automation lane and finding it empty, well after the duplicate has been worked into the arrangement.
+
+**Trigger.** Draw an automated fader ride on a track's TrackGain lane (or automate one of its effect/instrument parameters) via the normal automation commands, then call Project::duplicate_track on that track (or Session::duplicate_track, auris-session/src/session/tracks.rs:464-473, which forwards straight to it).
+
+**Mechanism.** duplicate_track (lines 548-581) clones the Track, then reissues ids for its effect slots (`slot.id = EffectSlotId(self.allocate_id())`, lines 555-557), its sends (`send.id = SendId(self.allocate_id())`, lines 558-560) and its note clips (lines 561-576) — but the function never reads or writes `self.automation`. No lane is ever created for `TrackGain(copy.id)`, `TrackPan(copy.id)`, `Send{track: copy.id, ..}`, `Instrument{track: copy.id, ..}` or `Effect{track: Some(copy.id), slot: <new id>, ..}`, even though every other visible attribute of the track (mixer settings, effect chain, instrument, clips) is faithfully duplicated.
+
+**Expected.** Either the automated behaviour is duplicated along with everything else (lanes cloned and rekeyed to the new track/slot/send ids, the same way ids are reissued for slots/sends/clips), or the gap is stated in the doc comment so it reads as a decision. Note: this may be a deliberate consequence of the codebase's broader pattern of never migrating automation across a changed identity (instrument swap, track/effect/send deletion all explicitly drop rather than migrate automation) — confidence is […]
+
+**Fix direction.** Add a rekeying method to `Automation` (e.g. `duplicate_track(&mut self, old: TrackId, new: TrackId, effect_id_map: &HashMap<EffectSlotId,EffectSlotId>, send_id_map: &HashMap<SendId,SendId>)`) that clones each lane whose `ParamTarget` references the old track/slot/send ids, rewriting them to the new ones, and call it from `Project::duplicate_track` after the id reassignment loops (using the same allocated new ids for slots/sends so the automation targets line up with the copied mixer/send state).
+
+**Written rule it breaks.** // Its automation leaves with it. A lane left behind names a track that is not there, and ids are handed out again — so it would come back to life driving a parameter on whichever track was created next. (comment on `remove_track` in the same file, showing the codebase's own stated expectation that automation stays in sync with track lifecycle)
+
 ### F-238 · low · split_clip and resize_clip floor seconds->frames with a bare `as u64` cast while trim_clip_start rounds the same quantity, causing sub-frame (≤1 frame) inconsistency between edit gestures.
 
 `crates/auris-core/src/project/clip.rs:1024` · correctness · confirmed (executed reproduction; reported independently 1×)
@@ -414,3 +514,35 @@ Concrete trace: points = [{tick:0, sig:4/1 (per_bar=15360)}, {tick:8000, sig:3/4
 **Fix direction.** Make the loop's skip condition the logical negation of the total's inclusion condition: replace `if *weight <= 0.0 { continue; }` with `if !(*weight > 0.0) { continue; }` (or equivalently check `*weight <= 0.0 || weight.is_nan()`), so NaN is skipped consistently in both places.
 
 **Written rule it breaks.** /// Non-positive weights are treated as zero. Returns `0` when every weight is zero, so a caller never has to handle an empty draw.
+
+### F-430 · low · TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
+
+`crates/auris-core/src/time.rs:219` · other · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A developer reading the rustdoc for TimeSignature::COMMON (or the published cargo doc output) sees a wrong justification: it claims a full meter menu would be 400 rows, when the actual cross product of NUMERATORS (32 values) x DENOMINATORS (5 values) is 160. No runtime behavior is affected; this is purely a misleading number in documentation.
+
+**Trigger.** Reading the doc comment on `TimeSignature::COMMON` alongside the `NUMERATORS`/`DENOMINATORS` constants it is justifying itself against; no runtime input is involved, this is a static factual claim in an inline doc comment (which `cargo doc --workspace --no-deps` publishes verbatim per this project's own doc-quality rule).
+
+**Mechanism.** The doc comment on `TimeSignature::COMMON` (line 219) reads: '...but a menu of every meter in the range would be four hundred rows.' `NUMERATORS` is `1..=32` (32 values, line 210) and `DENOMINATORS` is `[1, 2, 4, 8, 16]` (5 values, line 213), and `TimeSignature::new`/`FromStr` accept any combination of the two (line 257: `!Self::NUMERATORS.contains(&numerator) || !Self::DENOMINATORS.contains(&denominator)`). The full cross product is therefore 32 x 5 = 160 rows, not the claimed ~400.
+
+**Expected.** The comment should state the correct count derived from `NUMERATORS.len() * DENOMINATORS.len()` (160), or at least a figure in the right order of magnitude, rather than one 2.5x too large.
+
+**Fix direction.** Change "four hundred rows" to "a hundred and sixty rows" (32 x 5 = 160) in the doc comment at crates/auris-core/src/time.rs:219-222.
+
+**Written rule it breaks.** CI builds the docs with warnings denied ... Anything about the system as a whole belongs there (CLAUDE.md conventions section requires clean, accurate doc builds)
+
+### F-453 · low · AudioClip::fade_gain_at has no guard against overlapping fade_in/fade_out, so any producer besides set_clip_fades can trigger a silent mid-clip gain dip.
+
+`crates/auris-core/src/project/clip.rs:628` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Nothing audible in the shipped product today, since the only writer of fade_in_frames/fade_out_frames (auris-session's set_clip_fades) already clamps them so they cannot overlap. But AudioClip is a plain public struct with public u64 fade fields and no invariant enforced at construction or deserialization, so any other producer (a project file hand-edited or written by a future tool/importer, a new session mutator, or a test) that sets fade_in_frames + fade_out_frames > length_frames will make fade_gain_at silently multiply both fade curves together mid-clip, producing an audible gain dip nothing in the code intends or documents.
+
+**Trigger.** An `AudioClip` with `length_frames: 100, fade_in_frames: 80, fade_out_frames: 80` -- both plain `u64` fields with no validation on deserialize (the non-overlap invariant is enforced only by `auris-session`'s `set_clip_fades`, outside this crate, and `split_clip`'s own clamping only ever leaves one fade per side). `fade_gain_at(50)` then multiplies a fade-in fraction of 0.625 by a fade-out fraction of 0.625, giving ~0.39 instead of anything near unity.
+
+**Mechanism.** The fade-in block (`if self.fade_in_frames > 0 && position < self.fade_in_frames { gain *= ... }`) and the fade-out block (`if self.fade_out_frames > 0 { ...; if position >= fade_start { gain *= ... } }`) are applied unconditionally and independently, with no clamp ensuring `fade_in_frames + fade_out_frames <= length_frames`. When the two ranges overlap, both multiply into `gain` for every frame in the overlap.
+
+**Expected.** Given the rest of this crate is careful never to construct overlapping fades (see split_clip's own clamping), `fade_gain_at` -- the one place the shape is actually computed -- has no equivalent guard of its own, so any other producer of an `AudioClip` reaches it unguarded.
+
+**Fix direction.** In fade_gain_at, clamp the effective fade-out length to what the fade-in leaves before using it, e.g. `let fade_out_frames = self.fade_out_frames.min(self.length_frames.saturating_sub(self.fade_in_frames));` then compute fade_start and the fade-out gain from that clamped value — mirroring the same clamp set_clip_fades already applies, so the invariant is enforced in the one place the shape is actually computed rather than relying on a single external caller.
+
+**Written rule it breaks.** The fade-in is clamped to the clip and the fade-out to what the fade-in leaves, so the two can meet but never cross — crossed fades would multiply into a dip no hand drew.

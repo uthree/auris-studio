@@ -1,6 +1,6 @@
 # Review findings: auris-toolbox
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 9 verified findings: 1 critical, 4 high, 3 medium, 1 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 16 verified findings: 1 critical, 7 high, 7 medium, 1 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -11,9 +11,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-066 | high | `crates/auris-toolbox/src/lib.rs:2519` | strip_by_name treats any track named "master" as the master bus, silently misrouting set_level/set_effect/section_gain to the wrong target. |
 | F-116 | high | `crates/auris-toolbox/src/lib.rs:2330` | auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — an […] |
 | F-123 | high | `crates/auris-toolbox/src/lib.rs:326` | `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename. |
+| F-314 | high | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
+| F-326 | high | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
+| F-328 | high | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no […] |
 | F-210 | medium | `crates/auris-toolbox/src/lib.rs:773` | set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with […] |
 | F-214 | medium | `crates/auris-toolbox/src/lib.rs:1398` | add_track (crates/auris-toolbox/src/lib.rs:1399) accepts empty/whitespace names that rename_track explicitly rejects, creating unaddressable tracks. |
 | F-219 | medium | `crates/auris-toolbox/src/lib.rs:937` | set_effect's slot/effect match discards `effect` whenever `slot` is given, silently applying a value to the wrong effect if the two disagree. |
+| F-367 | medium | `crates/auris-toolbox/src/lib.rs:669` | mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling. |
+| F-376 | medium | `crates/auris-toolbox/src/lib.rs:2723` | another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous […] |
+| F-385 | medium | `crates/auris-toolbox/src/lib.rs:1251` | teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first. |
+| F-388 | medium | `crates/auris-toolbox/src/lib.rs:330` | render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller. |
 | F-267 | low | `crates/auris-toolbox/src/lib.rs:27` | auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() […] |
 
 ### F-017 · critical · edit_notes' `beats`/`beat` fields have no upper bound, letting a single tool call overflow Ticks arithmetic in fit_length_to_notes and crash or corrupt the session.
@@ -92,6 +99,52 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Fix direction.** Before calling `render_stems`/`render_to_wav`, canonicalize the destination folder/output path and the project's `Audio/` directory (and any `AssetPath::Inside` references) and reject (or require an explicit `overwrite` flag) when the destination is inside or equal to the project's asset directory or would overwrite an existing referenced asset file; `write_wav`'s rename-over-existing behavior is otherwise appropriate (matches `save_project`'s crash-safety design) and should stay as is once the containment check happens earlier in `render::run`.
 
+### F-314 · high · `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process.
+
+`crates/auris-toolbox/src/lib.rs:1558` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A single `add_part` MCP/CLI call with a `bars` value in the hundreds of millions (any u32 up to ~4.29 billion passes the only check, `bars > 0`) drives `write_phrase` to allocate and populate a `SectionPlan` with that many bars, then `write_parts` generates melody/comp/bass/drum notes proportional to that bar count. This exhausts memory and CPU on the machine running `auris-mcp`/`auris-agent`/`auris-cli`, hanging or OOM-crashing the process — since the call runs via `spawn_blocking` on a shared tokio runtime, an OOM kill takes down every other session sharing that server process, not just the caller's.
+
+**Trigger.** Call `add_part` on any project that has been through `compose` (so its harmony has at least one chord) with e.g. `part: "drums"`, `start_bar: 1`, `bars: 4000000000`.
+
+**Mechanism.** `add_part`'s only check on `bars` is `Some(bars) if bars > 0 => bars` (line 1558) — any positive u32 up to 4294967295 passes. `bar_after` (line 2502) only guards against u32 addition overflow, so `after` can land near u32::MAX. `length = bar_start(after) - start` (line 1575) is then a Ticks value in the trillions, handed straight to `session.generate_clip(track, start, length, ...)` (line 1579). That calls `auris_session::Session::phrase` -> `auris_compose::write_phrase` (crates/auris-compose/src/phrase.rs:207), which computes `bars = length / bar_ticks` — still in the billions — and stores it on the `SectionPlan`. `auris_core::Harmony::events_in` (crates/auris-core/src/harmony.rs:479) returns a single event spanning the whole requested window whenever a chord is in force at `start` (true for any project produced by `compose`, since the harmony's last chord is treated as holding indefinitely), so the early `events.is_empty()` bailout in `write_phrase` does not fire. `write_parts` (crates/auris-compose/src/parts/mod.rs) then dispatches to role writers; for the […]
+
+**Expected.** `add_part` (and `add_clip`, which shares the same unchecked `bars: u32` shape) should refuse a `bars` value beyond a sane ceiling — e.g. relative to the song's own duration, or an absolute cap of a few thousand bars — the same way `bars == 0` is already refused, rather than passing an attacker/model-controlled magnitude straight through to generation.
+
+**Fix direction.** Add a sane upper bound on `bars` (and derived song length) in `add_part::run` right beside the existing `bars > 0` check — e.g. reject anything past a few thousand bars (already far beyond any real song) with the same style of user-facing error used for `bars == 0`, before `bar_after`/`generate_clip` are ever called.
+
+### F-326 · high · track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
+
+`crates/auris-toolbox/src/lib.rs:2416` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** An LLM agent or CLI user driving Auris via auris-toolbox's by-name tools (rename_track, remove_track, and every other tool built on track_by_name/strip_by_name) can silently act on the wrong track whenever two tracks share a name case-insensitively. Renaming or deleting "Vocals" when two tracks are named "Vocals" always hits whichever is first in the track list, with no warning that a second candidate exists.
+
+**Trigger.** Call add_track(project, name: "Drums") twice (or rename_track onto a name another track already has) — both succeed with no warning, leaving two tracks named "Drums". A subsequent remove_track(project, track: "Drums") then resolves to whichever track was created/renamed first, not necessarily the one the caller means.
+
+**Mechanism.** track_by_name (lines 2412-2428) resolves a name with `.find(|track| track.name.eq_ignore_ascii_case(name))`, returning the first match and never detecting or reporting a second one; strip_by_name (2519-2524) delegates to it. Neither add_track::run (1415-1454) nor rename_track::run (1686-1701, which only rejects an empty/whitespace name) checks whether the resulting name already exists on another track. Every by-name tool (remove_track, set_level, set_send, set_effect, section_gain, add_part, add_clip, edit_notes, accompany, sing, another_take/write_again) goes through this same first-match lookup.
+
+**Expected.** Either creation/rename should refuse a name collision, or a by-name lookup that matches more than one track should refuse ambiguously (as set_effect already does for a duplicated effect id via `slot`) instead of silently picking the first match — rename_track's own doc comment states 'the new name is the address from here on', implying uniqueness that nothing enforces.
+
+**Fix direction.** Make track_by_name collect all case-insensitive matches and, when more than one exists, return a refusal naming the ambiguous tracks instead of silently returning the first hit, matching the existing "no track is named" error style used for the zero-match case.
+
+**Written rule it breaks.** No written rule quoted; no uniqueness or ambiguity-handling rule exists in CLAUDE.md for track names.
+
+### F-328 · high · edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no mention in the success response.
+
+`crates/auris-toolbox/src/lib.rs:1933` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** An agent or CLI caller running `edit_notes` with a normal-looking bar/beat/velocity for a new note, but a `beats` value that runs past the clip's stored length, gets a plain success message ("Removed X, placed Y — the clip holds N notes. Saved.") while the clip has silently grown to cover extra bars nobody asked for. The bar range that `add_clip` or a prior `describe` reported is now stale, and nothing in the response says the clip moved — the caller has to issue a separate `describe`/`notes` call to discover it.
+
+**Trigger.** `add_clip` a 4-bar clip, then `edit_notes` with `add: [{pitch: "C4", bar: 4, beat: 1, beats: 100}]` — the note's start (bar 4 beat 1) is inside the clip, so the check passes, but its 100-beat length runs far past `clip_end`.
+
+**Mechanism.** The bounds check `if tick < clip_start || tick >= clip_end { ... }` (line 1933) only validates the note's *start* tick. `spec.beats` (the note's length) is checked solely for `<= 0.0` (line 1944) and then turned into `length` (line 1960) with no comparison against `clip_end`. The note is then written via `session.add_note` (crates/auris-session/src/session/notes.rs:79), which calls `target.fit_length_to_notes(grid)` (line 94) — and `MidiClip::new` (crates/auris-core/src/project/clip.rs:242) sets `length_is_explicit: false` for every clip `add_clip` creates, so `fit_length_to_notes` (crates/auris-core/src/project/clip.rs:406-420) silently grows the clip's stored `length` whenever a note's end exceeds it.
+
+**Expected.** The same length a note is refused for going below (`beats <= 0.0` is rejected) should also be checked against the clip's remaining span, refusing (or at minimum flagging) a note whose end falls outside `[clip_start, clip_end)`, consistent with how the start position is already refused rather than clamped.
+
+**Fix direction.** In `edit_notes::run` (crates/auris-toolbox/src/lib.rs, right after the `spec.beats <= 0.0` check around line 1944), compute `length` first and reject when `tick - clip_start + length > clip.length` (equivalently `tick + length > clip_end`), returning an Err in the same style as the existing start-bound check, instead of letting `session.add_note`'s `fit_length_to_notes` silently grow the clip.
+
+**Written rule it breaks.** "Refused rather than clamped, like every other bounded number at this door: the session would quietly pull it into range, and a success that placed a different velocity than the one asked for is a lie of omission." (crates/auris-toolbox/src/lib.rs, comment directly above the velocity check in the same function)
+
 ### F-210 · medium · set_level's pan branch skips the is_automated warning that its own gain branch three lines above gives, so a pan set on an automated track saves silently with no indication the value is overridden by a lane.
 
 `crates/auris-toolbox/src/lib.rs:773` · correctness · confirmed (executed reproduction; reported independently 1×)
@@ -137,6 +190,64 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In the `match (args.slot, &args.effect)` at lib.rs:937, replace the `(Some(number), _)` wildcard arm with an explicit `(Some(number), None)` arm plus a `(Some(number), Some(name))` arm that resolves the slot and then checks the resolved `effect_id` against `name` (by id or by its last dotted segment, matching the existing name-matching logic), returning an error such as `"slot [{number}] on '{track}' is {effect_id}, not '{name}'"` on mismatch — mirroring the existing `"pass either \`spec\` or \`preset\`, not both"` / `"pass \`instrument\` or \`sound\`, not both"` idiom already used elsewhere in this file for exclusive-alternative argument pairs.
 
 **Written rule it breaks.** /// The effect's id as `mixer` lists it — the full `auris.fx.limiter` or just `limiter`. Leave out when addressing by `slot`.
+
+### F-367 · medium · mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
+
+`crates/auris-toolbox/src/lib.rs:669` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A user or LLM agent driving the toolbox (via auris-mcp or auris-agent) who runs `mixer` sees no "[automated]" tag on a send that is in fact under automation, and if they then call `set_send` to hand-set a level, they get a plain "Saved." with no warning — unlike `set_level`/`set_effect`, which append a note when the parameter is automated. The written value will be silently overridden by the automation lane on next playback, and the tool gave no indication that would happen.
+
+**Trigger.** Automate a track's send level (from the desktop UI, or any future toolbox path), then call `mixer` on that project, or call `set_send` to change that same send.
+
+**Mechanism.** `ParamTarget::Send { track, send }` (crates/auris-core/src/param.rs:408) is a fully automatable target — the engine's automation graph (crates/auris-engine/src/graph/automation.rs:87) and the desktop's own automation UI (crates/auris-gpui/src/ui/automation.rs:547) both handle it. `mixer`'s `Row` (line 579) captures `sends: track.sends.iter().map(|send| (name_of(send.target), send.level_db, send.pre_fader))` (lines 611-615) — it never even captures `send.id`, so the display loop `for (target, level, pre) in &row.sends` (line 669) has no way to call `session.is_automated(...)` the way it does two lines later for gain (line 655/759) and pan (line 658), and the way the effect loop does per-parameter (line 686). `set_send::run` moves the level via `session.set_send_level(track_id, send_id, args.level_db)` (line 867) with no `session.is_automated` check at all, unlike `set_level` (gain, line 759) and `set_effect` (line 1019).
+
+**Expected.** Both tools should treat sends the same as gain/pan/effect parameters: `mixer` flagging an automated send and `set_send` warning when the send it just moved is lane-driven.
+
+**Fix direction.** Add the send's `SendId` (or precomputed `ParamTarget::Send{track, send}`) into `mixer::Row.sends`'s tuple type, then in the display loop call `session.is_automated(...)` for each send the same way gain/pan/effect params already do; mirror `set_level`/`set_effect`'s pattern in `set_send::run` by checking `is_automated` and appending the same warning note to the returned string.
+
+**Written rule it breaks.** CLAUDE.md's toolbox description: auris-toolbox is "every word said to a model — tool names, descriptions, schemas and the work behind them" — an inconsistent automation surface across otherwise-parallel tools (gain/pan/effects vs sends) misleads that model-facing account. The codebase's own test `every_parameter_on_a_track_can_be_automated_and_nothing_on_the_master_can` treats `ParamTarget::Send` […]
+
+### F-376 · medium · another_take(clip: None, seed: Some(N)) stamps the same seed onto every generated clip on the track, discarding each clip's own seed, with no guard analogous to the existing write_again+seed check.
+
+`crates/auris-toolbox/src/lib.rs:2723` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Calling the `another_take` tool with `clip: None` (apply to whole track) and an explicit `seed` silently overwrites every generated clip on the track with the identical seed, discarding each clip's individually-chosen or previously-measured seed — the user (or the LLM agent driving the tool) gets no error and no warning, only a track where every clip now renders the same take.
+
+**Trigger.** Call `another_take` with `track: "Lead"`, `clip: None`, `seed: Some(3)` on a track carrying more than one generated clip.
+
+**Mechanism.** When `args.clip` is `None`, `chosen` (built at lines 2695-2705) is every generated clip on the track. The match at lines 2720-2732 then applies, per clip in that list, `(Take::Another, Some(seed)) => { let recipe = session.clip_recipe(*id)...with_seed(seed); session.set_clip_recipe(*id, recipe) }` — the identical `seed` value from the one `RegenerateArgs.seed` field is written onto every clip's own, independent recipe.
+
+**Expected.** Either refuse the `clip: None` + `seed: Some(_)` combination (since a seed's earlier-measured meaning is per-clip) or document plainly that it fans the one seed out to every generated clip on the track.
+
+**Fix direction.** In `regenerate` (crates/auris-toolbox/src/lib.rs), reject `Take::Another` with `args.seed.is_some()` when `args.clip` is `None` and more than one clip is chosen — the same way the existing guard already refuses `write_again` with a seed — with an error telling the caller to target one clip at a time when picking a specific seed.
+
+### F-385 · medium · teach_progression/forget_progression race on ProgressionBook's unlocked load/save, silently dropping whichever edit saves first.
+
+`crates/auris-toolbox/src/lib.rs:1251` · concurrency · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If two teach_progression/forget_progression calls happen close together (e.g. an agent issuing overlapping MCP tool calls, or two Auris frontends open at once), the load-modify-save cycle in ProgressionBook::load/save is not serialized: whichever save() lands last silently overwrites the other, and the first caller's kept-or-forgotten progression is silently lost with no error reported.
+
+**Trigger.** Two `teach_progression` (or one `teach_progression` and one `forget_progression`) calls naming different progressions arrive close enough together that both `load()` before either `save()`.
+
+**Mechanism.** `teach_progression::run` (line 1251) and `forget_progression::run` (line 1285) both do `ProgressionBook::load()` then, after mutating in memory, `book.save()` (lines 1259, 1289). `ProgressionBook::load` (crates/auris-session/src/progressions.rs:103) is a plain `std::fs::read_to_string`, and `save` (line 118) is a plain `std::fs::write` of the whole file — no lock file, no compare-and-swap, no advisory locking anywhere in the read-modify-write cycle. This crate's own doc explicitly frames itself as backing two concurrent doors (`auris-mcp` and `auris-agent`, line 6-9), and any client of either can issue calls in flight without serializing them itself.
+
+**Expected.** The load-modify-save cycle should be protected against concurrent callers — a lock file, an atomic compare-and-swap on write, or serializing access to the book — so two in-flight calls cannot silently clobber each other's change.
+
+**Fix direction.** Serialize access to the progression book: take a cross-process advisory file lock (e.g. via fs4/fs2) around the load-modify-save cycle in teach_progression::run and forget_progression::run, or add a version/mtime check in ProgressionBook::save that fails instead of overwriting on a stale read, and write the file atomically (write-to-temp then rename) to avoid partial/torn writes.
+
+### F-388 · medium · render::run's stems path drops already-written stem info via `?` on a mid-loop write failure, hiding partial success from the caller.
+
+`crates/auris-toolbox/src/lib.rs:330` · persistence · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** When rendering stems and a track's WAV write fails partway through (e.g. permission denied, disk full, or a read-only file at a later stem's path), the `render` toolbox call returns only a bare error string. The MCP/agent caller (and the CLI, which has the same pattern) has no way to know that N-1 of N stem files were already successfully written to the target folder — it looks like total failure when partial output actually exists on disk, risking a wasteful full re-render or a misleading failure report to the end user.
+
+**Trigger.** Render a project with `stems` set and 2+ non-muted, non-bus tracks, where a later track's render or `write_wav` fails partway (e.g. permission denied or an existing read-only file at the derived stem path, or the volume fills between two stem writes).
+
+**Mechanism.** `RenderJob::render_stems` (crates/auris-session/src/render.rs:322-373) writes one stem file per track inside a `for (index, (track, name)) in tracks.into_iter().enumerate()` loop, calling `write_wav(&path, &out, &settings)?` per track (line 359) — a failure on any track after the first returns `Err` immediately, and the `Vec<StemSummary>` for tracks already rendered and written to disk is dropped with the early return; only the doc comment for cancellation ('a cancellation leaves the stems already written where they are... deleting them would throw away the part of the export that succeeded') acknowledges this partial-write reality, not the error path. In the toolbox, `render::run` does `job.render_stems(...).map_err(|error| error.to_string())?` (lines 330-332): on `Err` this `?` returns out of `run` immediately, so the `for stem in &written` reporting loop (333-335) never runs, and the `text` buffer already accumulated (including any 'missing audio file' notices built at lines 316-321) is discarded too — the caller receives a bare error string.
+
+**Expected.** A failed stems render should report which files (if any) were already written before the failure, the way a successful render lists every file with `wrote_line` — e.g. by reporting partial results alongside the error instead of discarding them.
+
+**Fix direction.** Have `RenderJob::render_stems` return the partial `Vec<StemSummary>` alongside the error on a mid-loop failure (e.g. via a richer error type or an `Err((SessionError, Vec<StemSummary>))`), and have `render::run` in crates/auris-toolbox/src/lib.rs report the stems already written (using the existing `wrote_line` formatting) before surfacing the error, instead of letting `.map_err(...)?` on line 330 discard everything accumulated so far.
 
 ### F-267 · low · auris-toolbox's crate doc claims a uniform four-item module shape for all 30 tools, but 4 argument-less info tools have only three items and a different run() signature.
 

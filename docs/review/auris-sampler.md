@@ -1,12 +1,15 @@
 # Review findings: auris-sampler
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 4 verified findings: 1 high, 3 medium.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 7 verified findings: 4 high, 3 medium.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
 | F-084 | high | `crates/auris-sampler/src/sampler.rs:676` | stop_everything(false) calls synth.note_off_all(false) immediately, starting the font's ~1ms release under the user's configured Release stage instead of […] |
+| F-343 | high | `crates/auris-sampler/src/sampler.rs:148` | is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN […] |
+| F-347 | high | `crates/auris-sampler/src/sampler.rs:510` | Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click. |
+| F-350 | high | `crates/auris-sampler/src/sampler.rs:658` | let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch. |
 | F-195 | medium | `crates/auris-sampler/src/sampler.rs:668` | stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff. |
 | F-206 | medium | `crates/auris-sampler/src/sampler.rs:692` | step_envelopes and push call into self.synth without checking `poisoned`, contradicting the documented invariant and risking an uncaught second panic/abort on […] |
 | F-226 | medium | `crates/auris-sampler/src/sampler.rs:532` | Sampler::push writes LEVEL straight into rustysynth's master_volume with no SmoothedValue ramp, unlike every other gain control in auris-dsp, causing an […] |
@@ -26,6 +29,54 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In the `immediate == false` branch of `stop_everything`, do not call `synth.note_off_all(false)` at all — let `step_envelopes`/`hand_back` tell the font per-slot once each envelope's Release stage actually reaches silence, exactly as `let_go` already does. Keep `synth.note_off_all(true)` only for the `immediate` (AllSoundOff) branch, where rustysynth's `voices.clear()` is instantaneous anyway so there is nothing to defer.
 
 **Written rule it breaks.** The font is not told yet: the envelope owns the fade, and telling the font now would start its own release underneath and cut the tail short. `step_envelopes` hands the note back when the level reaches silence.
+
+### F-343 · high · is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN state.
+
+`crates/auris-sampler/src/sampler.rs:148` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a project automates a raw MIDI CC lane on the sampler track using controller number 0, 6, 0x64 or 0x65 (bank-select, data-entry, or RPN LSB/MSB — all valid, addressable controller numbers in the same picker that exposes CC1 mod-wheel etc.), the automation is forwarded straight into rustysynth's channel state instead of being rejected or handled specially. Because select() leaves the channel's RPN pointer parked at 0 (pitch-bend range) after every reset/preset change and never re-nulls it, a later CC6 write meant as generic 'data entry' automation silently rewrites the channel's pitch-bend range instead; a CC0 write silently swaps the soundfont bank the channel plays from. The track's sound changes in a way the user did not ask for and cannot see in the mix — the automation lane shows the value they set, but the synth's internal state now means something else.
+
+**Trigger.** Call Sampler::process() with [NoteEvent::Controller{frame:0, number:6, value:0.3}, NoteEvent::PitchBend{frame:1, semitones:1.0}] after a preset has been prepared/selected — reachable through the crate's own public Instrument::process API with a fully valid NoteEvent. At the session layer, Session::set_curve_point (auris-session/src/session/clips.rs:42) accepts ClipCurve::Controller(u8) for any of the 128 CC numbers with no restriction, unlike the MIDI importer's own is_performance_controller (auris-io/src/midi.rs:509-511), which explicitly excludes CC 0/6/32/38/96..=101/120..=127 as 'the file's own plumbing' that 'a lane may [not] be drawn on' — the same numbers select() needs for itself. […]
+
+**Mechanism.** is_reserved() (148-151) excludes only CC_EXPRESSION(11)/CC_EXPRESSION_FINE(43). dispatch()'s catch-all arm (581-591) forwards every OTHER controller number straight to process_midi_message on all_channels() — including CC 0 (bank select), CC 6 (Data Entry) and CC 0x64/0x65 (RPN LSB/MSB), which are exactly the controllers select() (458-469) itself uses to set up a channel's bank/patch and pitch-bend range (CC_RPN_MSB=0, CC_RPN_LSB=0, CC_DATA_ENTRY=BEND_RANGE). In vendor/rustysynth's Channel (channel.rs:150-192), set_rpn_coarse/fine simply store whatever CC 0x65/0x64 write into self.rpn, and data_entry_coarse (driven by CC 6) then applies the value to whichever parameter self.rpn currently names — pitch_bend_range when rpn==0, which is exactly the RPN select() leaves selected and never re-asserts except at the next select()/reset(). So a NoteEvent::Controller{number:6,...} handed to Sampler::process() after a preset is selected silently overwrites the pitch-bend range away from the fixed BEND_RANGE=12 semitones the PitchBend handler (567-569) assumes.
+
+**Expected.** The controllers select() itself relies on (bank select, RPN select, data entry) should be excluded from forwarding the same way the sampler already excludes its own two expression CCs — e.g. by folding is_reserved together with (or delegating to) auris_io::midi::is_performance_controller's exclusion list, so 'which CC numbers may touch this instrument' has one answer instead of being kept correctly in one crate and incompletely in another.
+
+**Fix direction.** Extend is_reserved (sampler.rs:148-151) to also exclude CC_BANK_SELECT (0), CC_DATA_ENTRY (6), and CC_RPN_LSB/CC_RPN_MSB (0x64/0x65) — the same controllers select() itself uses to configure the channel — so automation cannot reach them; alternatively (or additionally), have select() re-assert a null RPN (0x65=0x7F, 0x64=0x7F) after setting the bend range so a stray CC6 has nothing to land on.
+
+**Written rule it breaks.** is_reserved's own doc comment: "Whether a controller is one the sampler spends on itself" / "a clip that writes a lane on either is answered with silence rather than with a fade that fights it" — the same protection given to the expression pair was never extended to the bank-select/RPN/data-entry controllers select() also spends on itself.
+
+### F-347 · high · Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click.
+
+`crates/auris-sampler/src/sampler.rs:510` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A held note that is being sampled through a SoundFont (auris-sampler) produces an audible click/pop the instant a user (or an automation lane) turns the ADSR envelope shaping off while a note is sounding: the channel's MIDI expression is snapped from whatever level the envelope's fade was at straight to full volume in the same call that first tells the font's synth about the note-off, so the SoundFont voice's own release has not yet begun to bring its internal gain down. The output gain jumps upward for one block before the font's release takes over, rather than fading smoothly as the ADSR was doing and as the surrounding code's own comments say it intends.
+
+**Trigger.** With the envelope switch on and sustain set below 1.0 (or during a slow attack), hold a note, then set the envelope parameter back to 0 while the key is still down. turning_the_envelope_back_off_does_not_leave_the_sampler_quiet (sampler.rs:1641-1662) exercises this exact code path — attack=2.0, switch off before the note's own NoteOff — but only asserts on the overall rms of a later block dominated by a newly-retriggered unshaped note, so it never measures the transient at the toggle instant and does not catch the jump.
+
+**Mechanism.** release_the_slots (506-512): for a slot still holding a key (a note the user has not released), it calls envelope.silence() — 'Drops to silence immediately, without any ramp' per Adsr::silence's own doc (auris-dsp/src/adsr.rs:179-183; the same crate separately provides Adsr::kill(), 'the fixed de-click ramp to silence,' for exactly this kind of forced stop) — then hand_back(index) sends the font a note_off, then unconditionally write_raw_expression(index, FULL_EXPRESSION). rustysynth's Voice::process (voice.rs:204-256) recomputes channel_info.get_volume() * channel_info.get_expression() fresh on every internal render_block for as long as the voice stays active, including through the font's own post-note_off release tail — it never snapshots the channel gain at note-off. So a note that was below full expression at the moment of switch-off (anything but a default sustain=1.0 note past its attack, e.g. sustain turned down, or caught mid-attack/decay) has its live channel gain jump upward to full exactly as the font's own release begins, instead of continuing the fade it was already […]
+
+**Expected.** release_the_slots should use the crate's own de-click primitive (Adsr::kill(), already used elsewhere for a hard stop) and/or only restore full channel expression after each note's release has actually finished, rather than writing FULL_EXPRESSION into a channel whose voice may still be audibly present.
+
+**Fix direction.** In `release_the_slots`, stop writing `FULL_EXPRESSION` instantaneously in the same pass that first sends `hand_back`'s note_off. Either ramp the expression back to full over a few `INTERNAL_BLOCK`-sized steps the way `step_envelopes` already does (so it interpolates from the pre-toggle level instead of jumping), or let the envelope run its normal `release()` to silence and only reset the channel to full after `hand_back` has been called and the font's own release has had a chance to start, instead of calling `silence()` (instant drop) immediately before `hand_back` and `write_raw_expression(FULL_EXPRESSION)`.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+### F-350 · high · let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch.
+
+`crates/auris-sampler/src/sampler.rs:658` · correctness · confirmed (executed reproduction; reported independently 2×)
+
+**What a user sees.** When the sampler is under voice-stealing pressure (all 14 shaped slots full) and the same MIDI pitch is sounding both as an old unshaped note (from before the envelope was turned on) and as a newer shaped note that gets stolen, a later note-off meant for one of those two notes can instead silence the other: the still-held unshaped note is cut off early while its own intended note-off later becomes a silent no-op, or vice versa.
+
+**Trigger.** Play pitch P unshaped (envelope off). Turn the envelope on and play the same pitch P again (now shaped, taking a slot). Fill all 14 SLOTS with other held shaped notes and start one more shaped note so claim() steals pitch P's slot before P's own NoteOff arrives. Send P's NoteOff for the stolen (shaped) note before sending P's NoteOff for the still-held unshaped note.
+
+**Mechanism.** claim()'s steal path (313-326) plus start()'s hand_back(index) (616) clears and then reassigns slots[index].key to the stealing note's pitch, so the displaced note's own pitch no longer appears anywhere in self.slots once stolen. let_go() (631-662) decides how to end a pitch by searching self.slots for a slot with key == Some(pitch); finding none, it assumes (line 655's comment) 'No slot holds it, so it is a note from before the envelope was turned on' and sends synth.note_off(CHANNEL, pitch) (658) — but a slot can also show no match because its shaped note was involuntarily stolen, not because it predates shaping. If the same pitch is also genuinely playing unshaped on CHANNEL at that moment (the exact scenario a_held_unshaped_note_is_not_faded_by_a_later_shaped_one, sampler.rs:1665-1706, already treats as real, for a different bug), whichever of the two pending NoteOff events for that pitch is processed first — the one meant for the already-stolen shaped note or the one meant for the genuinely unshaped note — ends the same (only) matching voice on CHANNEL, since let_go cannot tell […]
+
+**Expected.** let_go should not treat 'no slot holds this pitch' as proof the note is unshaped; a note ended by voice-stealing needs its own accounting so a later NoteOff for the same pitch on CHANNEL doesn't misfire against an unrelated held note.
+
+**Fix direction.** Give let_go() a way to distinguish "this pitch was never shaped" from "this pitch's shaped voice was already ended by stealing" instead of inferring it from absence in self.slots — e.g. have hand_back()/claim() record the stolen pitch, or more directly track per-pitch which physical channel currently holds it (updated on start/hand_back/let_go) so let_go() looks that up instead of assuming CHANNEL whenever no slot matches.
+
+**Written rule it breaks.** comment at sampler.rs:655, "No slot holds it, so it is a note from before the envelope was turned on" — false once claim() has stolen and hand_back() has cleared a shaped slot for that pitch
 
 ### F-195 · medium · stop_everything's non-immediate branch clears Slot::key before the release finishes, letting claim() steal and cut off release tails after AllNotesOff.
 

@@ -1,6 +1,6 @@
 # Review findings: auris-clap
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 9 verified findings: 2 critical, 3 high, 2 medium, 2 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 10 verified findings: 2 critical, 4 high, 2 medium, 2 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -11,6 +11,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-090 | high | `crates/auris-clap/src/bridge.rs:306` | Bridge::render hard-codes `None` for CLAP's transport argument, so hosted plugins never see host tempo, playhead, or transport state. |
 | F-100 | high | `crates/auris-clap/src/bridge.rs:244` | A parameter write's `changed` flag is cleared via mem::take before delivery is confirmed, so it is lost forever if `ensure_processing_started()` fails that […] |
 | F-106 | high | `crates/auris-clap/src/ports.rs:110` | Unbounded plugin-reported port/channel/parameter counts size Vec allocations with no cap, letting a buggy or malicious CLAP plugin crash the whole DAW via an […] |
+| F-330 | high | `crates/auris-clap/src/plugin.rs:796` | Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options. |
 | F-122 | medium | `crates/auris-clap/src/window/cocoa.rs:123` | `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle. |
 | F-177 | medium | `crates/auris-clap/src/tests.rs:246` | `dropping_a_plugin_closes_the_window_it_left_open` has no assertion after `drop(plugin)`, so it cannot detect a regression in window teardown. |
 | F-242 | low | `crates/auris-clap/src/bridge.rs:281` | Hosted CLAP plugin output events (e.g. generated notes) are collected in bridge.rs then discarded, but auris-core's Effect/Instrument::process has no channel […] |
@@ -95,6 +96,22 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Introduce a sane upper bound (e.g. a `MAX_PORTS`/`MAX_CHANNELS`/`MAX_PARAMS` constant in the low hundreds to low thousands) and clamp/truncate `count` in `read_side` (ports.rs) and `read_params` (plugin.rs) before it sizes `Vec::with_capacity` or bounds the loop, and likewise clamp `info.channel_count` per port; `Bridge::new`'s `room` closure then inherits the bound automatically since it iterates the already-clamped `ports.inputs`/`ports.outputs`. Treat an out-of-range count the same way the module already treats a port the plugin refuses to describe (via `let Some(info) = ... else`) — degrade to the cap rather than trusting the plugin's raw value.
 
 **Written rule it breaks.** A host must hand a plugin exactly the ports it declared — not the ports the host happens to care about. ... Surge XT Effects is the plugin that taught this crate the lesson ... switching to it took the whole application down. (crates/auris-clap/src/ports.rs module doc)
+
+### F-330 · high · Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options.
+
+`crates/auris-clap/src/plugin.rs:796` · ui · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** For any hosted CLAP plugin with a stepped/enum parameter (oscillator waveform, filter type, LFO shape, and any other non-boolean choice parameter), the DAW picks the "choice" control for it and opens a menu to select an option, but the menu contains only the title row with zero selectable options — `param_choice_menu` loops `for index in 0..descriptor.choices.len()` and `choices` is always an empty slice for CLAP-sourced descriptors. The user cannot pick any named option for that parameter through the UI at all.
+
+**Trigger.** Host any CLAP plugin with a multi-position enum parameter (a filter type, an oscillator waveform, an LFO shape — extremely common; e.g. Surge XT's many mode selectors) and left-click its control in the effect/instrument inspector to open the choice menu.
+
+**Mechanism.** `describe()` assigns `ParamUnit::Choice` to any IS_STEPPED CLAP parameter whose range is not exactly 0..1 (line 779: `(true, _, _) => ParamUnit::Choice`), but always builds the descriptor with `choices: Cow::Borrowed(&[])` (line 796) — nothing in this crate ever populates it. Every other producer of a `ParamUnit::Choice` descriptor in the workspace (auris-dsp's delay sync/distortion mode, auris-synth's waveform picker) goes through `ParamDescriptor::with_choices()`, which sets `steps` and `choices` together (auris-core/src/param.rs:146-153) — auris-clap is the only place that sets the unit without the labels. Downstream, `Inspector::param_choice_menu` (crates/auris-gpui/src/ui/context_menu/tracks.rs:335) builds the picker by looping `for index in 0..descriptor.choices.len()`, not by `descriptor.steps` (which `ParamUnit::Choice`'s own doc comment in auris-core/src/param.rs says is the option count).
+
+**Expected.** A CLAP-hosted Choice descriptor should populate `choices` (even with generic numeric labels such as "0", "1", … when the plugin gives no per-value names) so `param_choice_menu` can list every position, matching the invariant every other Choice-producer in the codebase already keeps between `steps` and `choices`.
+
+**Fix direction.** In `describe()` (crates/auris-clap/src/plugin.rs), when a stepped, non-toggle parameter is classified as `ParamUnit::Choice`, query the CLAP plugin's value-to-text extension for each step (0..steps) to build real labels, or, failing that, fall back to `ParamUnit::Plain` instead of leaving `choices` empty, so the invariant that every other Choice producer keeps (`choices.len() == steps`) is not broken.
+
+**Written rule it breaks.** /// Labels for a [`ParamUnit::Choice`] parameter, in value order. (crates/auris-core/src/param.rs:106) — every other producer of ParamUnit::Choice (`ParamDescriptor::with_choices`) keeps `choices.len() == steps`; auris-clap's `describe()` is the only Choice producer that sets `unit: Choice` without populating `choices`.
 
 ### F-122 · medium · `ClapPlugin::open_gui` is a safe fn that lets any caller trigger UB in `owning_window`'s unchecked NSView pointer deref via an arbitrary RawWindowHandle.
 

@@ -1,6 +1,6 @@
 # Review findings: auris-vocal
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 8 verified findings: 2 critical, 3 high, 3 medium.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 9 verified findings: 2 critical, 3 high, 4 medium.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -14,6 +14,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-163 | medium | `crates/auris-vocal/src/frames.rs:303` | Two vocal notes sharing an identical start tick cause the shorter one to be silently dropped from the rendered performance with no warning. |
 | F-216 | medium | `crates/auris-vocal/src/frames.rs:165` | render_frames only checks frame_hop is finite and positive, so a project file with a near-zero hop bypasses the session's documented [1ms,100ms] clamp and can […] |
 | F-237 | medium | `crates/auris-vocal/src/phoneme.rs:20` | is_syllabic only recognizes the 5 Japanese-core vowels, so any hand-edited non-Japanese IPA vowel is timed and gained as a consonant instead of stretching to […] |
+| F-391 | medium | `crates/auris-vocal/src/ornament.rs:41` | ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood […] |
 
 ### F-009 · critical · JapaneseDictionary::phonemes() misparses jpreprocess's NJD output as HTS labels, so any kanji lyric errors instead of singing on the live singer.rs render path.
 
@@ -144,3 +145,19 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Written rule it breaks.** auris-vocal/src/lib.rs: "Other languages are written by editing a note's phonemes directly; the phoneme vocabulary is IPA precisely so that nothing here has to be rebuilt when a voice model [learns another language]"
 
 **Verifier's correction.** `is_syllabic` in crates/auris-vocal/src/phoneme.rs (VOWELS at line 20, is_syllabic lines 28-30) recognizes only the 5 Japanese-core vowels, not the ~15 additional vowels (ɛ, ɪ, ʊ, y, ø, œ, ɐ, etc.) that the shared trainer-side IPA table (training/src/auris_singer/text/ipa.py's IPA_SYMBOLS/PHONEME_CLASSES["vowel"]) and STRETCHED set (training/src/auris_singer/phoneme_durations.py) already reserve and treat as syllabic for exactly this purpose — supporting future non-Japanese language front-ends without changing the shared phoneme table. This contradicts the project's own documented design […]
+
+### F-391 · medium · ornament_offset validates t/length/seconds/rate for finiteness but uses scoop/fall/vibrato depth raw, letting a corrupted project file's Infinity depth flood the f0 curve.
+
+`crates/auris-vocal/src/ornament.rs:41` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Opening a corrupted or hand-edited .auris project whose note ornament carries an out-of-range depth (e.g. JSON literal 1e400, which serde_json parses as Infinity) produces Infinity/NaN semitone offsets from ornament_offset that flow straight into the f0 curve fed to the singing-voice model, so that note's pitch output is corrupted (garbage or silent) rather than the ornament being switched off as documented.
+
+**Trigger.** Hand-edit (or have any external tool write) a `.auris` project file so a note's `scoop` (or `fall`/`vibrato`) object has `"depth": 1e40`, then open the project and view/render the singer clip.
+
+**Mechanism.** `ornament_offset`'s guard at line 41 (`if !t.is_finite() || !length.is_finite() || length <= 0.0 || t < 0.0 || t >= length`) and `ornament_reach` (lines 83-88) validate `t`, `length`, `seconds`, `rate`, `delay` and `fade_in`, but never `scoop.depth` / `fall.depth` / `vibrato.depth` before they are used unguarded at lines 50, 59 and 71 (e.g. `offset -= f64::from(scoop.depth) * ease;`). The doc comment at lines 32-33 promises 'Degenerate numbers (a non-positive or non-finite span or rate) switch that ornament off rather than propagating' -- depth is conspicuously not in that list. The only place that clamps depth to a finite, bounded range is `ornament_depth()` in crates/auris-session/src/session/singer.rs:1118, which runs solely inside session *commands* (creating/editing an ornament from the UI or toolbox). `crates/auris-io/src/project_file.rs::load_project` (~lines 180-199) deserializes `Project` with plain serde and only repairs id counters and routing afterward -- it never re-validates ornament fields. `Scoop`/`Fall`/`Vibrato` (crates/auris-core/src/project/ornament.rs) derive […]
+
+**Expected.** The module's own doc comment says degenerate ornament numbers 'switch that ornament off rather than propagating'; `depth` should be validated the same way `seconds`/`rate`/`delay`/`fade_in` already are, or `load_project` should re-validate ornament fields the way session commands do.
+
+**Fix direction.** In ornament_offset (crates/auris-vocal/src/ornament.rs), check scoop.depth.is_finite(), fall.depth.is_finite(), and vibrato.depth.is_finite() alongside the existing t/length/seconds/rate checks, skipping that ornament's contribution (treating it as 0) when depth is non-finite — matching the pattern already used for seconds/rate/delay/fade_in.
+
+**Written rule it breaks.** Degenerate numbers (a non-positive or non-finite span or rate) switch that ornament off rather than propagating. (crates/auris-vocal/src/ornament.rs:32-33 doc comment)

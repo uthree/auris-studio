@@ -1,6 +1,6 @@
 # Review findings: auris-agent
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 2 verified findings: 1 high, 1 medium.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 3 verified findings: 1 high, 2 medium.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -8,6 +8,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 |---|---|---|---|
 | F-093 | high | `crates/auris-agent/src/main.rs:839` | converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models […] |
 | F-252 | medium | `crates/auris-agent/src/main.rs:794` | auris-agent's Reporter/Narrator hooks always return ToolCallAction::Run and compose's `output` path is unconfined, so project-embedded text can steer […] |
+| F-386 | medium | `crates/auris-agent/src/main.rs:984` | Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops. |
 
 ### F-093 · high · converse() in auris-agent has no request timeout, so a black-holed LLM host hangs the agent process (and the panel's parked thread) forever, unlike list_models which is explicitly bounded for exactly this reason.
 
@@ -38,3 +39,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Expected.** The concern's own brief calls this out directly ("whether the agent can be steered into writing files outside the project folder"); a destructive/writing tool call reachable from model-controlled or document-embedded text should be confirmed or at least confined to the working directory before it runs.
 
 **Fix direction.** Give AgentHook::on_tool_call a real decision point: before returning ToolCallAction::Run for any tool in auris_toolbox::WRITES_PROJECTS, either prompt the user (Narrator: a stdin y/n; Reporter/JSON: emit a "confirm" event and block for the host's reply) or confine resolve_project/compose's output argument to the current project directory (canonicalize and reject any path that escapes it) unless an explicit --allow-outside-project flag was passed at startup.
+
+### F-386 · medium · Ollama's `list_models` discards all already-fetched model entries on a 20s timeout because the accumulator lives inside the future `tokio::time::timeout` drops.
+
+`crates/auris-agent/src/main.rs:984` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If Ollama is slow to answer `/api/show` for even one model among many (e.g. a large local library, or one unresponsive model), the desktop agent panel's model picker shows only a bare "the server did not answer within 20 seconds" error and an empty list, even though the process had already successfully fetched and resolved most or all of the other models' names and context windows before the 20s deadline hit. The user sees no models at all rather than a usable partial list, and must retry the whole listing (which may time out again if the same slow model is still hanging).
+
+**Trigger.** `auris-agent models` (or the desktop agent panel's model picker) against an Ollama server with a large catalogue (or one where `/api/show` is even moderately slow) such that cumulative round-trip time across all `/api/show` calls exceeds 20 seconds.
+
+**Mechanism.** `list_models`'s Ollama branch (lines 526-560) calls `/api/tags` once, then loops over every returned model and does a *sequential* `await`ed `/api/show` POST for each one still missing `context_length` (`if window.is_none() && let Ok(shown) = ask(http.post(...)).await`). The whole `list_models(&options)` future — every one of those round trips — is wrapped in a single `tokio::time::timeout(MODEL_LIST_PATIENCE, list_models(&options)).await` (MODEL_LIST_PATIENCE = 20s, line 490). `tokio::time::timeout` cancels (drops) the wrapped future the instant the deadline passes, so any models already appended to the local `models` Vec inside the loop are dropped along with it — nothing partial is returned.
+
+**Expected.** A listing that already gathered N-1 of N models' info should degrade to returning those N-1 (with `context_length: null` for stragglers) rather than discarding everything, or the per-model timeout should be bounded independently of the whole-listing timeout.
+
+**Fix direction.** Move the accumulator outside the timed future (e.g. via a channel, or by timing out around each per-model `/api/show` request individually instead of the whole loop) so that models already resolved before the deadline are still returned; on timeout, return `Ok` with whatever was accumulated plus a note that the list may be incomplete, rather than discarding everything.

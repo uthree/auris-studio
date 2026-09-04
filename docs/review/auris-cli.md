@@ -1,6 +1,6 @@
 # Review findings: auris-cli
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 3 verified findings: 2 medium, 1 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 6 verified findings: 2 medium, 4 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -9,6 +9,9 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-145 | medium | `crates/auris-cli/src/main.rs:538` | In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing. |
 | F-167 | medium | `crates/auris-cli/src/main.rs:425` | CLI `compose` silently drops --preset when a spec file is also given, unlike auris-toolbox's resolve_spec which rejects the combination outright. |
 | F-181 | low | `crates/auris-cli/src/main.rs:243` | crates/auris-cli/src/main.rs:243 pads a kept progression's name with `{:<15}` instead of the file's own CJK-width-aware `pad()`, misaligning the table for […] |
+| F-422 | low | `crates/auris-cli/src/main.rs:366` | `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling […] |
+| F-429 | low | `crates/auris-cli/src/main.rs:1212` | auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently […] |
+| F-444 | low | `crates/auris-cli/src/main.rs:867` | sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved. |
 
 ### F-145 · medium · In auris-cli/src/main.rs, `sing`'s doc comment is fused with `collect`'s, so `sing`'s rendered docs open by describing SoundFont collection, not singing.
 
@@ -57,3 +60,45 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Change line 243 from `writeln!(out, "  {:<15} {}", entry.name, entry.chart)?;` to use the file's own `pad()` helper: `writeln!(out, "  {} {}", pad(entry.name, 15), entry.chart)?;` — matching the pattern already used for `preset.name`, `font.name`, `dictionary.name`, and `track.name` elsewhere in the same file.
 
 **Written rule it breaks.** `display_width`'s own doc comment: "`{:<12}` pads by counting *characters*, which lines a table up in English and ruins it the moment a column holds anything wider."
+
+### F-422 · low · `auris compose --preset --force` (flag right after --preset) is parsed as preset name "--force", producing a confusing unknown-preset error instead of enabling --force.
+
+`crates/auris-cli/src/main.rs:366` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Running `auris compose --preset --force` (flag placed right after --preset) silently consumes "--force" as the preset name instead of enabling the force flag, so the command fails with a confusing "unknown preset: --force" error rather than either working or reporting a missing preset name.
+
+**Trigger.** `auris compose --preset --force` (or any invocation where `--preset` is immediately followed by another flag with no preset name in between).
+
+**Mechanism.** `named` is computed by `args.iter().position(|arg| arg == "--preset").and_then(|at| args.get(at + 1))` (lines 363-366) — it takes the literal next token with no check that it isn't itself a flag. The later parsing loop's `"--preset" => index += 1` arm (line 417) then skips exactly that one token as "already consumed", so if the token immediately following `--preset` starts with `-`, it is taken as the preset name and never reconsidered as its own flag.
+
+**Expected.** A token starting with `-` immediately after `--preset` should be treated as a missing-value error for `--preset` (the way `--output`, `--set`, etc. already reject a missing following value elsewhere in this same function), not silently accepted as the preset name.
+
+**Fix direction.** In the `named` computation, filter the token after `--preset` with the same `!arg.starts_with('-')` guard used for `source`, and if it's absent or starts with `-`, raise the existing "option needs value" error instead of accepting an arbitrary flag as the preset name.
+
+### F-429 · low · auris-cli's --bpm parser lacks the finite/positive filter that the --sample-rate parser right beside it applies, so bad --bpm values are silently clamped/defaulted instead of rejected.
+
+`crates/auris-cli/src/main.rs:1212` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Running `auris new Song --bpm nan` (or `--bpm inf`/`--bpm -50`) does not produce the CLI's usual invalid-argument error; the command silently succeeds and reports a fabricated tempo (120 BPM for non-finite input, or a value silently clamped into [10, 999] for out-of-range input) instead of telling the user their --bpm value was rejected.
+
+**Trigger.** `auris new Song --bpm nan` (or `--bpm inf`, or `--bpm -50`).
+
+**Mechanism.** The `--bpm` arm (lines 1208-1220) parses with `args.get(index).and_then(|value| value.parse().ok())` and no further filter, so `--bpm nan`, `--bpm inf` or `--bpm -50` all parse successfully as `f64`. The `--sample-rate` arm 13 lines below it explicitly adds `.filter(|rate: &f64| rate.is_finite() && *rate > 0.0)` with a comment explaining exactly why (`parse::<f64>` accepts `inf`/`NaN`/overflowing literals). `session.set_bpm(bpm)` eventually reaches `TempoMap::clamp_bpm` (auris-core/src/time.rs:789-795), which silently maps non-finite input to 120.0 and out-of-range input to [10, 999] with no error surfaced.
+
+**Expected.** `--bpm` should reject non-finite or non-positive input the same way `--sample-rate` does, for the same stated reason, rather than relying entirely on the downstream clamp to silently substitute a different value.
+
+**Fix direction.** Add the same `.filter(|bpm: &f64| bpm.is_finite() && *bpm > 0.0)` (or reuse TempoMap::MIN_BPM/MAX_BPM bounds) to the --bpm parsing arm at crates/auris-cli/src/main.rs:1208-1220 that --sample-rate already applies 13 lines below, so bad --bpm values hit the existing `.ok_or_else` error path instead of silently reaching Session::set_bpm's clamp_bpm substitution.
+
+### F-444 · low · sing-frames prints a failure and skips the success line if the optional --report write fails, even though the WAV was already fully rendered and saved.
+
+`crates/auris-cli/src/main.rs:867` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Running `auris sing-frames ... --report <path>` where the report path can't be written (missing parent directory, bad permissions) causes the CLI to exit with an error message and no success output, even though the WAV audio render completed and was fully written to disk beforehand. A user or script relying on the printed success line (or exit code) to know the render succeeded is misled into thinking the whole command failed, when only the optional side-artifact (the JSON report) failed.
+
+**Trigger.** `auris sing-frames frames.json --voice v.onnx --report /nonexistent-dir/report.json` run directly at a shell (not through `training/src/auris_singer/host.py`, which always creates the report's parent directory first).
+
+**Mechanism.** `sing_frames` calls `session.sing_frames(...)` which writes the WAV to `output` and returns `sung` (line 862-864); only afterward, if `--report` was given, does it `std::fs::write(&report, text)` and propagate any error with `?` (lines 865-868). Because that `?` is inside the same `fn sing_frames(...) -> Result<(), String>` whose `Err` makes `main` return `ExitCode::FAILURE`, a report-write failure (bad path, missing parent directory, permissions) turns an already-successful render into a reported command failure, and the success message (`frames_sung`, lines 869-878) is never printed even though the WAV on disk is complete and correct.
+
+**Expected.** A `--report` write failure should be reported as a warning (the way missing-audio and foreign-build notices already are, via `warned`) without turning a successful render into a failed command — or the report should be written before the success message is suppressed by its own failure.
+
+**Fix direction.** Print the success message (`messages::frames_sung`) before attempting the `--report` write, or write the report first and treat its failure as a non-fatal warning printed to stderr rather than propagating it via `?`, so a report-write failure never masks or is mistaken for an audio-render failure.

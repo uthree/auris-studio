@@ -1,6 +1,6 @@
 # Review findings: auris-compose
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 18 verified findings: 4 high, 11 medium, 3 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 25 verified findings: 6 high, 16 medium, 3 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -10,6 +10,8 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-060 | high | `crates/auris-compose/src/gm.rs:248` | Drum `program` values between GM kit boundaries are silently corrupted to the nearest lower kit's number on TOML save/reparse, with no validation or error. |
 | F-101 | high | `crates/auris-compose/src/parts/comp.rs:305` | Pushed-chord anticipation in auris-compose's comp() deletes (not trims) a prior close chord's onset when chords are spaced under half a beat apart. |
 | F-112 | high | `crates/auris-compose/src/phrase.rs:207` | write_phrase floor-divides length into bars, so resizing a Lead/Kick/Snare/Hat/Drums clip to a non-bar-aligned length silently leaves its fractional tail with […] |
+| F-316 | high | `crates/auris-compose/src/parts/drums.rs:115` | drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the […] |
+| F-375 | high | `crates/auris-compose/src/rhythm.rs:279` | Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare […] |
 | F-053 | medium | `crates/auris-compose/src/spec/doc.rs:391` | Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload. |
 | F-059 | medium | `crates/auris-compose/src/spec/doc.rs:731` | An empty `[section.X.part.Y]` TOML tweak table for a nonexistent part Y is silently dropped before validation, so no "part does not exist" error is ever raised. |
 | F-117 | medium | `crates/auris-compose/src/frame.rs:331` | colour() gives a borrowed bVII a major seventh instead of the diatonically correct quality because its accidental!=0 skips diatonic_seventh and falls back to a […] |
@@ -21,6 +23,11 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-209 | medium | `crates/auris-compose/src/render.rs:312` | clips_of silently drops swing-delayed notes past a section boundary instead of clamping them, contradicting its own adjacent comment. |
 | F-230 | medium | `crates/auris-compose/src/spec/doc.rs:838` | Riser's `note` rejection error wrongly claims its pitch "comes from the harmony," though Riser's pitch is a hardcoded constant, not harmony-derived. |
 | F-231 | medium | `crates/auris-compose/src/parts/arp.rs:110` | arp()'s procedural path drops all notes for a chord event shorter than one arp step (count==0), unlike bass/comp's guaranteed onset-0 guard. |
+| F-357 | medium | `crates/auris-compose/src/spec/mod.rs:373` | SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic […] |
+| F-378 | medium | `crates/auris-compose/src/spec/doc.rs:248` | A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised. |
+| F-379 | medium | `crates/auris-compose/src/parts/coda.rs:118` | coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early. |
+| F-387 | medium | `crates/auris-compose/src/parts/comp.rs:321` | A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump. |
+| F-400 | medium | `crates/auris-compose/src/spec/doc.rs:564` | Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, […] |
 | F-263 | low | `crates/auris-compose/src/frame.rs:597` | `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace. |
 | F-292 | low | `crates/auris-compose/src/parts/drums.rs:247` | `.max(1)` in drums.rs:247 drops the first step of a full-bar snare fill when beats*per_beat exactly equals steps (e.g. 2/4 meter, fill=1.0, intensity=1.0). |
 | F-304 | low | `crates/auris-compose/src/frame.rs:169` | frame.rs:169's comment claims harmony, fill, and crash all gate joins the same way, but only harmony and crash share the intensity-comparison arrival test — […] |
@@ -88,6 +95,38 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In `write_phrase` (crates/auris-compose/src/phrase.rs:207), compute `bars` with a ceiling division instead of a floor division (`(length.raw().max(0) + bar_ticks - 1) / bar_ticks`) so bar-scoped writers (melody.rs:468, joins.rs:104) loop far enough to cover the fractional tail bar; the existing post-filter at phrase.rs (`draft.start >= Ticks::ZERO && draft.start < length`) already truncates any generated notes back to the true, unrounded `length`, so this alone closes the gap without touching the event-driven writers (Chords/Pad/Stab/Bass/Arp) that are unaffected.
 
 **Written rule it breaks.** Session::resize_clip doc comment: a dragged-out generated clip "fills the bars it gained instead of trailing silence"
+
+### F-316 · high · drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the fill despite being a valid, resolved groove name.
+
+`crates/auris-compose/src/parts/drums.rs:115` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Any composed piece that uses the built-in "sparse" groove (intended for intros and ambient sections) never gets a snare fill leading out of its last section, regardless of the `fill` density setting the user dials in — the transition into whatever follows just plays the bare groove to the end. The user sees no error; the fill setting silently has no effect for this groove, and the same silent loss applies to any custom groove whose snare row happens to be empty even though kick/hat are active.
+
+**Trigger.** Any song/section using groove = "sparse" (a real, named, shipped groove, not a typo) with the snare part left to play the groove (no `part.rhythm` override) reaching a section that leads somewhere (`section.coda`-adjacent or mid-form).
+
+**Mechanism.** `drums()` guards the call to `fill()` with `if pattern.hits() > 0`, where `pattern` is *this voice's own* groove pattern (`part.rhythm.clone().unwrap_or_else(|| crate::frame::groove_pattern(&settings.groove, voice))`, line 33-36). The comment above the guard (lines 112-114) explains the intent is to catch an *unrecognised groove name*, which leaves every voice a bar of rests. But the check is evaluated per-voice against that voice's own pattern, not against whether the groove as a whole is real. `rhythm.rs`'s shipped `"sparse"` groove (lines 517-525, `description: "Almost nothing: for intros and ambient sections"`) sets `snare: "~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~"` — sixteen rests, `hits() == 0` — while its `kick` and `hat` rows do have real onsets. `fill()` itself only ever acts for `voice == DrumVoice::Snare` (line 232), so on this groove the caller-level gate at line 115 is false for the one voice that matters, and `fill()` is never invoked at all.
+
+**Expected.** The doc comment's own stated purpose is to skip the fill only when the *groove name itself* is unrecognised (`Pattern::rests(16)` for every voice via `groove_pattern`'s fallback), not when a real groove simply gives one voice an empty part; the snare's ending fill should be able to run independently of what the snare's steady-state pattern happens to contain.
+
+**Fix direction.** Gate the fill on whether the groove name resolved (e.g. check `crate::rhythm::groove(&settings.groove).is_some()`, or pass that resolution result down) rather than on `pattern.hits() > 0` for the current voice, since the current check conflates "no groove found" with "this voice's row in a valid groove happens to be empty."
+
+**Written rule it breaks.** // A fill is a departure from a groove, so there has to be a groove to depart from. A name nobody recognises leaves every voice a bar of rests, and running a fill over that would be the kit inventing a part out of a typo.
+
+### F-375 · high · Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare backbeat under any bar with 3+ beats, including plain 4/4.
+
+`crates/auris-compose/src/rhythm.rs:279` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Selecting the "six-eight" drum groove (the only shipped groove whose pattern is two beats long) in the composer produces audibly wrong drums on every bar whose meter is not itself two beats long — which includes a plain 4/4 song, not just an oddball compound meter. `Pattern::at_in_bar` in crates/auris-compose/src/rhythm.rs is called from crates/auris-compose/src/parts/drums.rs and crates/auris-compose/src/parts/bass.rs for every groove-driven (non-user-written) drum and bass part. For six-eight, pattern_beats=2 makes `middle` (line 267) always 0, so the `middle == 0` branch at line 279 fires for every interior beat and hard-codes it to pattern-beat 0 (the kick hit) instead of cycling as the function's own doc comment says ("the beats between cycle through the middle... a longer one repeats them"). The snare backbeat (the pattern's beat 1, marked `X`) never sounds on any interior beat of a bar with 3 or more beats — e.g. a straight 4/4 bar has bar_beats=4, so beats 1 and 2 both collapse to the kick hit and the groove plays as an empty, snare-less pattern instead of alternating kick/snare.
+
+**Trigger.** A song spec with `meter = "12/8"` (or `9/8`, or any compound meter whose bar counts 3+ of the groove's own dotted beats) and `groove = "six-eight"` — both individually valid, unrelated TOML fields (meter has no format-level tie to groove, and groove names are validated only against the fixed vocabulary in spec/doc.rs). Traced by hand through `parts::drums::drums` -> `Pattern::at_in_bar(step, 24, 6, 3)`: the mapped bar-beat sequence for a 12/8 bar (4 beats) comes out `[0,0,0,1]` instead of `[0,1,0,1]`. Since six-eight's kick pattern only has content on its own first beat and its snare only on its own second beat, this produces a kick struck on bar-beats 0, 1 and 2 (three consecutive kicks […]
+
+**Mechanism.** In `Pattern::at_in_bar`, `middle = pattern_beats.saturating_sub(2)` and the final `mapped` selector is `if beat==0 {0} else if beat+1>=bar_beats {pattern_beats-1} else if middle==0 {0} else {1+(beat-1)%middle}` (lines 267-283). For any 2-beat pattern (`pattern_beats==2`, e.g. the shipped `six-eight` groove, whose kick/snare/hat are each 6 steps at `own_steps_per_beat=3`) stretched over a bar with 3 or more beats, `middle` is 0, so every interior bar-beat (all of them except the first and the last) falls into the `middle==0 => 0` arm and replays pattern beat 0 — never pattern beat 1 (the pattern's only other beat, which carries the groove's backbeat/turnaround). This contradicts the function's own doc comment, which promises interior beats 'cycle through the middle' the way `1+(beat-1)%middle` genuinely does for any pattern with 3+ beats (`middle>=1`); for a 2-beat pattern there is nothing to cycle through, so the algorithm silently always answers the first beat instead of alternating between the pattern's two beats.
+
+**Expected.** Per `Pattern::at_in_bar`'s doc comment ("the beats between cycle through the middle... which is what a drummer does with a pattern in a meter it was not written for"), interior bar-beats should alternate/cycle through the pattern's own beats (0,1,0,1,... for a 2-beat pattern) rather than all collapsing onto beat 0, so a two-beat groove stretched over a longer bar repeats its whole kick-then-backbeat idea rather than repeating only its first half.
+
+**Fix direction.** In the `middle == 0` branch of `at_in_bar` (rhythm.rs:279), a pattern with only 2 beats has no true "middle" beat to cycle through, so interior beats should alternate between the pattern's first and last beat (e.g. `if (beat - 1) % 2 == 0 { 0 } else { pattern_beats - 1 }`) rather than always returning 0; add a regression test laying the "six-eight" groove over a plain 4/4 bar (or 9/8) asserting the snare still lands on the expected interior beats.
+
+**Written rule it breaks.** "the bar's first beat takes the groove's first, its last beat takes the groove's last, and the beats between cycle through the middle. A shorter bar drops middle beats and a longer one repeats them" (doc comment on Pattern::at_in_bar, rhythm.rs:234-236)
 
 ### F-053 · medium · Drum-part GM program numbers between kit boundaries (e.g. 30) are silently rounded down to the nearest kit's patch number on save/reload.
 
@@ -285,6 +324,84 @@ note = 64`  — rejected with the harmony-derived-notes message.
 **Fix direction.** In the procedural (non-rhythm) branch of arp() at crates/auris-compose/src/parts/arp.rs:110, after computing count, force at least one onset when count == 0: emit a single note at event.start (clamped to event.length) using voicing[0], mirroring the `if !written && !chosen.contains(&0)` guard bass.rs:273-275 and comp.rs:281-283 already use to guarantee a chord's own start always sounds.
 
 **Written rule it breaks.** arp.rs's own module doc: "its density is a *rate* — how fast the figure climbs — rather than how many of its notes survive, because an arpeggio with holes punched in it is not a sparser arpeggio, it is a broken one."
+
+### F-357 · medium · SectionSpec::named matches section names case-sensitively, unlike every sibling vocabulary parser, so `[section.Chorus]` silently falls back to the generic 0.60 intensity instead of 0.90.
+
+`crates/auris-compose/src/spec/mod.rs:373` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A composer who writes a TOML section as `[section.Chorus]` (or any capitalization that doesn't exactly match the lowercase literal) silently gets the generic 0.60 intensity fallback instead of the intended value (0.90 for a chorus, 0.30 for an intro, etc.) — no error, no warning, just a section rendered quieter or flatter than the format promises for that section type.
+
+**Trigger.** A `.asong` file with `[section.Chorus]` (capitalised, a completely natural way to write a TOML table key) and no explicit `intensity =` line. `name.as_str()` is `"Chorus"`, which matches none of the lowercase arms, so `intensity` falls through to the `_ => 0.60` default instead of the intended 0.90 for a chorus.
+
+**Mechanism.** `SectionSpec::named` matches the raw name verbatim: `match name.as_str() { "intro" => 0.30, ..., "chorus" => 0.90, ..., _ => 0.60 }` (mod.rs:373-383), with no case folding. Every other 'read a word' function in this same crate normalises first — `Role::parse`, `LeadIn::parse` and `Ending::parse` (all in this file) and `Mood::named` (mood.rs) all call `.trim().to_ascii_lowercase()` before matching. `SectionDoc::into_spec` (doc.rs:672) calls `SectionSpec::named(name)` with the literal TOML table key from `[section.X]`, and nothing normalises it beforehand.
+
+**Expected.** The name lookup should lowercase (or otherwise normalise) before matching, exactly as `Role::parse`/`Ending::parse`/`Mood::named` already do, so `[section.Chorus]` and `[section.chorus]` produce the same default intensity.
+
+**Fix direction.** In `SectionSpec::named` (crates/auris-compose/src/spec/mod.rs:373), match on `name.trim().to_ascii_lowercase().as_str()` instead of `name.as_str()`, mirroring `LeadIn::parse`, `Ending::parse`, `Role::parse`, and `Mood::named`, while still storing the original `name` verbatim in `self.name`.
+
+### F-378 · medium · A misspelled or comma-mangled `form` entry silently auto-vivifies a phantom section and orphans the real configured section, with no `SpecError` raised.
+
+`crates/auris-compose/src/spec/doc.rs:248` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a `.asong` file's `form` field has a typo, or (rarely) uses an unsupported comma-separated string, the misspelled/mangled entry silently creates a brand-new default-intensity section instead of raising a `SpecError`, while the section the author actually configured (e.g. `[section.chorus]` with its intensity/bars/chords) is left in `spec.sections` unreferenced and never sounds. The composed song plays a phantom section with wrong defaults and drops the real configuration, with no warning anywhere in the pipeline.
+
+**Trigger.** A `.asong` file with `form = "chorus, outro"` plus a deliberately configured `[section.chorus]\nintensity = 0.95\nbars = 12`. The form token is actually `"chorus,"` (with the comma), which does not match the declared `chorus` section, so the auto-vivify loop creates a fresh, unconfigured `SectionSpec::named("chorus,")` instead.
+
+**Mechanism.** `words_or_list`'s string variant splits only on whitespace: `words.split_whitespace().map(str::to_string).collect()` (doc.rs:248), so `form = "intro, chorus, outro"` yields tokens `["intro,", "chorus,", "outro"]` — every token but the last keeps its trailing comma. `SongDoc::into_spec`'s auto-vivify loop (doc.rs:606-612) then does `spec.sections.entry(name.clone()).or_insert_with(|| SectionSpec::named(name))` for every form entry with no matching declared section, silently manufacturing a brand-new, comma-suffixed default section rather than reporting an unresolved reference — unlike every other unresolved-name case in the same function (`section.chords` naming a nonexistent chart, or `section.parts`/tweaks naming a nonexistent part), which is explicitly collected into `errors` a few lines later (doc.rs:622-642).
+
+**Expected.** Either `words_or_list` should also split on commas (a very natural way to type a list, and TOML's own array syntax already uses them), or the auto-vivify loop should be limited to genuinely new names and raise a `SpecError` (as sibling name-resolution checks already do) when a form entry cannot be reconciled with any declared section.
+
+**Fix direction.** In `SongDoc::into_spec` (doc.rs ~606-611), after (or instead of) the unconditional `or_insert_with` auto-vivify loop, track which explicitly-declared `[section.x]` entries actually get consumed by `spec.form`, and push a `SpecError` for any declared section that ends up unreferenced — matching the existing pattern used for unknown chart/part names at doc.rs:622-642. Separately, `words_or_list` (doc.rs:248) should reject or normalize comma-separated tokens rather than silently keeping a trailing comma glued to each word.
+
+**Written rule it breaks.** doc.rs comment at 605-607: "A section named in the form but never described still has to exist, or the form would silently skip it" — the code guarantees a referenced section exists but gives no equivalent guarantee that a section the author explicitly described is actually referenced.
+
+### F-379 · medium · coda()'s "held" ending note is silently re-shortened by shorten() to the part's gate fraction whenever gate < 1.0, cutting the final chord off early.
+
+`crates/auris-compose/src/parts/coda.rs:118` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Any composed piece whose SongSpec sets a Bass, Melody, Arp, Chords, or Pad part's `gate` field below 1.0 (a legitimate, user-reachable staccato/pluck setting) will have its final "held" ending note truncated by that same gate fraction and go silent for the rest of the last bar, instead of ringing through as the coda writer intends and documents.
+
+**Trigger.** A Bass, Melody, Arp, Chords or Pad part whose `gate` field is set below 1.0 (e.g. a staccato comp style for the body of the piece) reaching the piece's held ending section.
+
+**Mechanism.** `coda()` writes the final-bar note for Bass/Melody/Arp/Chords/Pad with `length: section.length.max(Ticks(1))` (line 118) specifically so the ending is "the chord held" per the module's own doc comment (lines 3-6). But `write_parts` (mod.rs) appends coda notes into the same `draft.notes` as every other section's notes (line 168) and then runs the universal `shorten(&played, &mut draft.notes)` pass (line 190) over all of them with no exemption for `section.coda`; `shorten()` (line 219-236) only skips drum roles, and shrinks any other part's note to `length * part.gate` whenever `gate < 1.0` (the default is 1.0 for every affected role except Stab, which `coda()` already excludes, but `gate` is a plain `pub gate: f32` field a user or preset can set below 1.0 for Bass/Melody/Arp/Chords/Pad).
+
+**Expected.** Either the coda's ending notes should be exempt from the general `gate` shrinkage (the way the module's design implies — "the chord held" — an ending gate-immune the same way its length is fixed to the whole bar), or the interaction should be a documented, deliberate trade-off; currently it is neither.
+
+**Fix direction.** In `write_parts` (crates/auris-compose/src/parts/mod.rs), track which sections are coda sections (e.g. `let coda: Vec<bool> = frame.sections.iter().map(|s| s.coda).collect();`) and pass that into `shorten`, which should `continue` for any note whose `note.section` is a coda section — mirroring the existing `part.role.is_drum()` exemption — so the ending note's length written by `coda()` is never re-shortened by the part's `gate`.
+
+**Written rule it breaks.** The coda.rs module doc comment: "What a band actually does on the last bar is land — the chord held, the root under it, the kick and the cymbal once."
+
+### F-387 · medium · A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
+
+`crates/auris-compose/src/parts/comp.rs:321` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** In a comp/pad section where the composer randomly draws both "pushing" (syncopation-driven anticipation) and the Held figure for a chord, the pushed anticipation note is struck at 0.9x velocity instead of the 0.7x every other held chord gets — about 29% louder, with no corresponding change in the intensity or dynamics settings that would explain the jump. Because a pushed Held chord's only onset (step 0) is removed by the push logic, this anticipation note is the entire audible strike for that chord, so the volume mismatch is not masked by any other note.
+
+**Trigger.** Any comp/pad section where `pushing` is drawn true (syncopation > 0 gives this nonzero probability every section) and the section's comp figure is drawn as `CompFigure::Held`.
+
+**Mechanism.** When a section pushes (`pushing`, drawn with probability up to 0.6 from `mood.syncopation`, line 165) and the section's drawn figure happens to be `CompFigure::Held` (reachable via `pick_figure`, weight `0.1 + (1.0-busy)*0.8`, always > 0 — line 66/79), the push block writes the chord's anticipation note with a fixed `* 0.9` velocity multiplier (line 321) regardless of `held`. Because a Held figure's only onset is step 0, and `push` removes onset 0 from `onsets` (line 288-290: `onsets.retain(|offset| *offset != 0)`), the main strike loop at line 330 never runs for that event at all — the push note at 0.9 is the *entire* sounding of that chord. Everywhere else the same function deliberately softens a held strike to `* 0.7` versus `* 0.9` for a non-held one (line 365: `if held { 0.7 } else { 0.9 }`).
+
+**Expected.** The pushed anticipation note should use the same `held`-aware multiplier (0.7 for a Held figure, 0.9 otherwise) that the ordinary strike path already applies, so a held comp style sounds equally soft whether or not the section happens to push.
+
+**Fix direction.** At crates/auris-compose/src/parts/comp.rs:321, replace the fixed `* 0.9` multiplier with the same `if held { 0.7 } else { 0.9 }` expression already used at line 365, since `held` is already computed in scope before the push block runs.
+
+**Written rule it breaks.** CLAUDE.md: "Composed audio is calibrated by measurement" — render and measure before touching a level constant; here two paths meant to encode the same "held chords are struck softer" rule silently disagree, which is exactly the kind of unmeasured, accidental level discrepancy that principle is meant to prevent.
+
+### F-400 · medium · Top-level `chords` and a `[harmony].main` entry silently collide (last-write-wins) in SongDoc::into_spec, contradicting the doc comment's "keeps both" claim, with no test pinning the winner.
+
+`crates/auris-compose/src/spec/doc.rs:564` · spec-mismatch · confirmed (executed reproduction; reported independently 2×)
+
+**What a user sees.** A user (or auris-agent/auris-mcp caller) who writes a song document with both a top-level `chords = "..."` shortcut and a `[harmony]` table entry named `main` gets no error — `SongSpec::parse` returns `Ok` — but the `chords` progression is silently discarded and replaced by the `[harmony].main` value. The composed song then uses a harmony the author never intended to be the only one, with no diagnostic pointing at the cause.
+
+**Trigger.** A `.asong` file with `chords = "@axis"` at the top level and `[harmony]\nmain = "@marusa"`. The resulting `spec.charts["main"]` is `@marusa`; `@axis` is discarded with no error.
+
+**Mechanism.** `self.chords` is inserted into `spec.charts["main"]` first (doc.rs:556-563), then the `[harmony]` loop (doc.rs:564-573) runs unconditionally afterward and, for any entry also named `main`, overwrites it via the same `spec.charts.insert(name.clone(), chart)`. The comment directly above both blocks (doc.rs:545-548) says 'Both are merged into the defaults rather than replacing them, so a document with one of each keeps both' — true for the common case of two different names, but for the specific collision of `chords = "..."` and `[harmony] main = "..."` only the harmony value survives; nothing documents or tests which one wins.
+
+**Expected.** Either document the precedence explicitly (harmony wins) or raise a `SpecError` when both forms name the same chart, so the ambiguity is surfaced rather than silently resolved.
+
+**Fix direction.** In the `[harmony]` loop (doc.rs:564-573), check whether `name == "main"` and `self.chords` was also `Some(..)` (or more generally whether `spec.charts` already holds `name`) and push a `SpecError` naming the collision instead of silently overwriting, mirroring the existing duplicate-part guard a few lines below; then add a test pinning that a document with both a top-level `chords` and a `[harmony] main` entry produces an error, not a silent overwrite.
+
+**Written rule it breaks.** Both are merged into the defaults rather than replacing them, so a document with one of each keeps both.
 
 ### F-263 · low · `is_stable` in crates/auris-compose/src/frame.rs:597 is defined but never called anywhere in the crate or workspace.
 

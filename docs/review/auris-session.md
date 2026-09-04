@@ -1,6 +1,6 @@
 # Review findings: auris-session
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 46 verified findings: 3 critical, 15 high, 19 medium, 9 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 68 verified findings: 3 critical, 19 high, 29 medium, 17 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -24,6 +24,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-102 | high | `crates/auris-session/src/session/clips.rs:51` | set_curve_point/move_curve_point clamp NaN-through instead of using the codebase's own finite_unit pattern, letting a NaN curve value get saved as JSON null […] |
 | F-108 | high | `crates/auris-session/src/session/assets.rs:154` | collect_assets copies arbitrary local files named by an untrusted .auris project's External asset paths into Audio/ without ever validating them as audio or […] |
 | F-118 | high | `crates/auris-session/src/session/mod.rs:830` | Re-entrant begin_transaction overwrites an open transaction, so its already-applied edit can become permanently unrecorded and unrendered. |
+| F-327 | high | `crates/auris-session/src/session/clips.rs:566` | trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes. |
+| F-329 | high | `crates/auris-session/src/session/hosted.rs:853` | set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's […] |
+| F-331 | high | `crates/auris-session/src/session/accompany.rs:165` | accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony. |
+| F-341 | high | `crates/auris-session/src/session/mod.rs:1083` | Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via […] |
 | F-037 | medium | `crates/auris-session/src/session/mod.rs:846` | A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before. |
 | F-041 | medium | `crates/auris-session/src/session/clips.rs:292` | split_clip mutates the document and pushes an undo step but never increments Session::revision, breaking its documented invalidation contract. |
 | F-109 | medium | `crates/auris-session/src/session/compose.rs:354` | Compose report undercounts tracks by one when a vocal section's notes are all cut, though an empty Vocal track/clip is actually created. |
@@ -43,6 +47,16 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-215 | medium | `crates/auris-session/src/library.rs:229` | installed_voices_in dedups on the case-sensitive filename while extension matching is case-insensitive, so same-stem files differing only in extension case […] |
 | F-222 | medium | `crates/auris-session/src/session/singer.rs:260` | MIN_PHONEME_SECONDS is fixed to the default 10ms hop, so pins can round to zero frames when frame_hop is widened via set_frame_hop. |
 | F-223 | medium | `crates/auris-session/src/session/generated.rs:196` | set_clip_recipe's rewrite() only patches a Humanize seed, never rebuilding the transform stack for the new preset on a preset switch. |
+| F-340 | medium | `crates/auris-session/src/session/clips.rs:387` | A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked […] |
+| F-362 | medium | `crates/auris-session/src/session/singer.rs:867` | Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app […] |
+| F-371 | medium | `crates/auris-session/src/session/singer.rs:943` | Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap. |
+| F-373 | medium | `crates/auris-session/src/guide.rs:1238` | guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file. |
+| F-392 | medium | `crates/auris-session/src/session/monitor.rs:165` | publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's […] |
+| F-399 | medium | `crates/auris-session/src/session/clips.rs:550` | trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip. |
+| F-404 | medium | `crates/auris-session/src/session/mixer.rs:230` | `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin. |
+| F-406 | medium | `crates/auris-session/src/session/singer.rs:587` | Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived. |
+| F-410 | medium | `crates/auris-session/src/session/autosave.rs:143` | FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save. |
+| F-416 | medium | `crates/auris-session/src/session/mixer.rs:424` | Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit […] |
 | F-126 | low | `crates/auris-session/src/settings.rs:435` | home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform. |
 | F-196 | low | `crates/auris-session/src/session/generated.rs:189` | Session::rewrite() records an undo step even when regenerating a clip produces identical notes, unlike its sibling note-edit commands. |
 | F-249 | low | `crates/auris-session/src/session/mod.rs:906` | undo/redo unconditionally set dirty=true even when they land exactly back on the last-saved project state, misreporting is_dirty(). |
@@ -52,6 +66,14 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-293 | low | `crates/auris-session/src/settings.rs:440` | home() returns Some("") for an empty USERPROFILE/HOME instead of treating it as unset like the rest of config_dir's resolution does. |
 | F-299 | low | `crates/auris-session/src/session/compose.rs:245` | compose() copies a missing instrument's state.params onto its substitute fallback instrument instead of gating the copy on has_instrument, contradicting its […] |
 | F-311 | low | `crates/auris-session/src/session/mod.rs:490` | AudioPreferences.sample_rate lacks the .max(...) floor that sibling field block_frames gets, letting a hand-edited settings.json with sample_rate:0 reach the […] |
+| F-412 | low | `crates/auris-session/src/session/mod.rs:951` | forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current […] |
+| F-427 | low | `crates/auris-session/src/progressions.rs:166` | `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry. |
+| F-431 | low | `crates/auris-session/src/session/clips.rs:305` | rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op […] |
+| F-433 | low | `crates/auris-session/src/session/record.rs:1230` | take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing […] |
+| F-438 | low | `crates/auris-session/src/settings.rs:207` | Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap. |
+| F-442 | low | `crates/auris-session/src/session/singer.rs:926` | A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path. |
+| F-449 | low | `crates/auris-session/src/session/record.rs:543` | restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild. |
+| F-456 | low | `crates/auris-session/src/session/punch.rs:127` | finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves […] |
 
 ### F-024 · critical · HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, discarding unsaved live plugin edits.
 
@@ -338,6 +360,72 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In `begin_transaction`, if `self.transaction` is already `Some`, close it out first (call the equivalent of `end_transaction`'s history-push/rebuild logic, or fold its `edit`/`before`/`needs_rebuild` into the new transaction) instead of unconditionally overwriting it, so a discarded transaction's already-applied mutation is still recorded and rendered.
 
 **Written rule it breaks.** Every mutator records its own undo step (crate-level promise in auris-session's lib.rs), and the realtime/graph contract that a stale render graph must be rebuilt before the audio thread relies on it again.
+
+### F-327 · high · trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes.
+
+`crates/auris-session/src/session/clips.rs:566` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Trimming the front of a MIDI clip that has pitch-bend or CC automation shifts the notes correctly but leaves the bend/controller curve points at their old absolute-from-old-start positions; on playback the pitch bend or controller sweep now lands under the wrong notes (or partly before the clip's new start, silently dropped/misapplied by the scheduler), audibly detuning or mis-automating the trimmed clip without any error or warning.
+
+**Trigger.** Give a MidiClip a bend point (e.g. at tick 200 of a clip starting at tick 0) and call `Session::trim_clip_start(clip, Ticks(480))`, trimming 480 ticks off the front. `by = 480`, `midi.start` becomes 480, but the bend point is still stored `at: 200` (unchanged), now read as absolute tick 480+200=680 instead of the correct (now out-of-range, since it preceded the trim) or rebased position.
+
+**Mechanism.** trim_clip_start moves `midi.start` forward by `by` ticks (566) and rebases `midi.notes` (569, via `notes_trimmed_from_front`/`split_notes_right`), but never rebases `midi.bend` or `midi.controllers` — there is no reference to either field in this branch. Since curve points are stored relative to the clip's own start (see clip.rs doc comments), moving `start` without shifting the curve points by `-by` misaligns every bend/controller point by exactly `by` ticks, the same class of bug as split_clip's right half (crates/auris-core/src/project/clip.rs:990) — indeed the doc comment above this function claims it follows "the rule a split already follows", which for curves it does not.
+
+**Expected.** trim_clip_start should shift every `bend`/`controllers` point by `-by` (dropping any with `at < by`) the same way it shifts notes, so a curve drawn across a clip stays attached to the same musical material after the front is trimmed.
+
+**Fix direction.** In trim_clip_start's MIDI branch (crates/auris-session/src/session/clips.rs ~566-574), after computing `by`, rebase `midi.bend` and each `Vec<CurvePoint>` in `midi.controllers` the same way notes are rebased — write a `curve_points_trimmed_from_front` helper analogous to `notes_trimmed_from_front` (drop points at/before `by`, subtract `by` from the rest) and apply it to both fields; the same helper is also needed for split_clip's right half in crates/auris-core/src/project/clip.rs (~990-1000), which has the identical gap.
+
+**Written rule it breaks.** What a curve reads at `at`, measured from the clip's own start (doc comment on CurvePoint::at / MidiClip::curve_at, crates/auris-core/src/project/curve.rs:28-30)
+
+**Verifier's correction.** The mechanism, location, and consequence are all accurate as stated. One minor numeric detail in the trigger example is off: this project's default PPQ makes `Ticks::QUARTER` equal 960 ticks, not 480 as the trigger's illustrative numbers assumed — the bug reproduces identically regardless of the exact tick count, so this does not change the verdict.
+
+### F-329 · high · set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's unrelated parameters.
+
+`crates/auris-session/src/session/hosted.rs:853` · correctness · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** After swapping a hosted CLAP instrument on a track (e.g. from Surge XT to Vital), automation lanes recorded against the old plugin's parameter indices keep driving the new plugin every block: the new instrument's controls get silently overwritten each frame by numeric values authored for a completely different plugin's parameter layout, producing wrong or nonsensical sound with no error or indication anything is stale.
+
+**Trigger.** A track carries a hosted CLAP instrument A with an automation lane on `ParamTarget::Instrument{track, param: ParamId(0)}` (e.g. a filter-cutoff sweep). Call `session.set_hosted_instrument(track, other_file, other_clap_id)` to point the track at a different plugin B (a completely ordinary "try another synth" gesture, exercised by the existing `set_hosted_instrument` tests but never with a pre-existing lane on the track).
+
+**Mechanism.** `Session::set_hosted_instrument` (hosted.rs:853-877) does `self.record(Edit::ChangeInstrument);` then `self.project.set_hosted_instrument(track, known.auris_id(), AssetPath::external(file))` and `self.invalidate_graph()` — it never calls `self.project.remove_instrument_automation(track)`. Its built-in-instrument sibling `Session::set_track_instrument` (tracks.rs:336-359) and `Session::set_track_preset` (tracks.rs:393-413) both call `self.project.remove_instrument_automation(id)` exactly because, per the code's own comment at tracks.rs:1029-1030, "A lane names the track and the parameter's index, never the plugin, so one left behind would go on sweeping whatever the new instrument keeps at that index." The engine confirms this is not just a document-hygiene issue: `resolve_slot` in auris-engine/src/graph/automation.rs:95-98 resolves `ParamTarget::Instrument{track, param}` purely from `project.track_index(track)` — it never checks that the automated plugin is still the one that owns that ParamId — so `drive_automation` (automation.rs:168-172) unconditionally calls […]
+
+**Expected.** Like `set_track_instrument`/`set_track_preset`, a hosted-instrument swap should drop the track's existing instrument automation lanes (`self.project.remove_instrument_automation(track)`) after recording the edit, so undo can restore them together with the old plugin.
+
+**Fix direction.** In `Session::set_hosted_instrument` (crates/auris-session/src/session/hosted.rs), after `self.record(Edit::ChangeInstrument)` and a successful `self.project.set_hosted_instrument(...)`, call `self.project.remove_instrument_automation(track)` before `self.invalidate_graph()`, mirroring `set_track_instrument` and `set_track_preset` in tracks.rs.
+
+**Written rule it breaks.** Doc comment on `remove_instrument_automation` (crates/auris-core/src/project/track.rs:634-640): "Called when the instrument itself is replaced, for the reason the swap also throws away the saved parameter values: a lane names a track and a parameter index, never the plugin that owns it... It lives here rather than in the caller so that whatever changes a track's instrument next inherits the […]
+
+### F-331 · high · accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony.
+
+`crates/auris-session/src/session/accompany.rs:165` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Running Accompany on a melody whose start isn't already aligned to the harmony grid (a beat, or coarser) produces generated parts whose notes are drawn from the wrong chord/key: the key and chord chart are written at `start` snapped through `snap_harmony` (grid = max(ticks_per_beat, project.grid)), but `generate_clip` independently re-snaps the same raw `start` through the plain editing grid (`project.grid` alone). When the editing grid is finer than a beat — the common case — the clip's snapped start can land before the newly stamped chord/key change, so `write_phrase` reads whatever harmony was in force previously (or none) instead of the harmony `write_accompaniment` just wrote. The generated instrument parts then don't match the key/chords Accompany reports, with no error or warning.
+
+**Trigger.** Default headless session (`project.grid = Ticks(240)`, 4/4 meter so `harmony_grid_at = Ticks(960)`). Add an instrument track, add a MIDI clip starting at `Ticks(700)` (a start `add_midi_clip` does not require to be grid-aligned — see clips.rs:150-174) with a few notes, then call `session.accompany(clip, &[ClipPreset::Bass], 1)`. `snap_harmony(700) == 960`, so the key and the read chart's bars are written on the timeline starting at tick 960. `Session::snap(700) == 720`, so the bass clip is placed and its phrase generated over `[720, 720+length)`. `write_phrase` then queries `harmony.events_in(720, …)`, and the harmony map has nothing written before tick 960 (it was empty before this call), […]
+
+**Mechanism.** `write_accompaniment` calls `self.set_key(start, reading.key)` (line 129) and `self.stamp_progression(&reading.chart, start, reading.bars)` (line 130) with the melody's raw, un-snapped `start`; both of those internally round it through `Session::snap_harmony` (harmony.rs:70-74, 83, 160), whose grid is `max(ticks_per_beat, project.grid)` — a beat or coarser. The very same raw `start` is then passed to `self.generate_clip(track, start, length, recipe)` (accompany.rs:165), which independently rounds it through the *different*, finer `Session::snap` (harmony.rs:233-235, called at generated.rs:51), whose grid is only `project.grid` (a sixteenth note by default). `generate_clip` then calls `self.phrase(start, length, &recipe)` (generated.rs:54) which reaches `auris_compose::write_phrase`, and that queries `harmony.events_in(start, start+length, …)` (phrase.rs:219) using its own, differently-snapped `start`. So the chart's bar-0 origin (computed in `read_melody` from the raw, unsnapped `start`), the tick where the key/chords are actually written (`snap_harmony(start)`), and the tick range […]
+
+**Expected.** The tick the chart's bars are analysed from, the tick the key/chords are actually written at, and the tick range the generated parts are written over should all agree, so the doc's own promise — "a key, a progression and a set of backing parts around a melody clip" as one coherent gesture — actually holds for melodies that don't start on a beat.
+
+**Fix direction.** Snap `start` once in `accompany`/`write_accompaniment` via `self.snap_harmony(start)` and pass that single already-snapped value into both `set_key`/`stamp_progression` and `generate_clip` (or make `generate_clip` accept an already-snapped position rather than re-snapping through the finer `Session::snap`), so the chart, the key, and the generated notes all agree on one position.
+
+**Written rule it breaks.** harmony.rs doc on `harmony_grid_at`/`snap_harmony`: "a menu that offers ... has to round the pointer the same way the command that writes them does, or the two disagree by a sixteenth" — exactly the disagreement that occurs here between `write_accompaniment`'s harmony writes and `generate_clip`'s note generation.
+
+### F-341 · high · Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via colliding TrackIds.
+
+`crates/auris-session/src/session/mod.rs:1083` · lifecycle · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Opening a different project (File > Open) that happens to reuse low-numbered track ids leaves tracks from the old, closed document still armed and being monitored in the new one. Pressing Record can silently record onto a track the user never armed in this session, or the input meters/monitoring path stays routed to a track that no longer means what it did — with no error, warning, or visual indicator that anything is wrong.
+
+**Trigger.** Arm (or start monitoring) a track in Project A, e.g. `session.arm_track(vocals_a, None)`, then call `session.open("ProjectB.auris")` where Project B's own first audio track happens to reuse the same low `TrackId` (very likely, since both projects' ids start at 1). Press Record without re-arming anything in B.
+
+**Mechanism.** `Session::open` (crates/auris-session/src/session/files.rs:232-263) calls `self.clear_sources()` and `self.adopt_project(project)` but never touches `self.armed` or `self.monitored`. `adopt_project` (mod.rs:1083-1095) explicitly clears `transaction`, `needs_rebuild` and `last_record` and even documents *why* hosted-plugin slots are deliberately left alone, but says nothing about `armed`/`monitored` because it simply never clears them. Every `Project` starts its id counter at `next_id: 1` (crates/auris-core/src/project/mod.rs:455) and hands out `TrackId`s from that same counter, so two independently-created or independently-opened documents routinely give their first audio track the same numeric `TrackId` (e.g. `TrackId(1)`). `start_recording`'s re-validation (record.rs:614-632) only checks that the armed `TrackId` currently resolves to *some* audio track — it has no way to tell that the arm was made against a document that is no longer open.
+
+**Expected.** A full document swap (Session::open) should clear transient device-binding state the way it clears transaction/undo-adjacent state, or `start_recording`/`set_track_monitoring` should validate that an arm/monitor was made against the currently-open document rather than trusting a bare `TrackId` match.
+
+**Fix direction.** In `Session::open` (files.rs, alongside the existing `self.hosted.clear()`), also clear `self.armed` and `self.monitored` before or via `adopt_project`, with a comment mirroring the one already written for `hosted`: a different document's ids are not the same tracks even when they collide numerically. Since `adopt_project` is also used by undo/redo/compose where keeping arm/monitor state across a same-document swap is arguably intended, the clear likely belongs in `open` itself (next to `self.hosted.clear()`) rather than inside `adopt_project`.
+
+**Written rule it breaks.** // Hosted plugins belong to the document that named them: their slot ids come from it, and this document reusing an id would inherit the old plugin. (files.rs, Session::open) — the same reasoning applies verbatim to armed/monitored track ids but was not applied to them.
 
 ### F-037 · medium · A net-zero transaction (e.g. drag-and-back) leaves the document falsely marked dirty because end_transaction's no-op branch never restores dirty_before.
 
@@ -643,6 +731,171 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** The feel the preset starts with -- the lean and the wander a recipe used to bake into the notes arrive as the performance stack instead (generated.rs doc comment on generate_clip); test "a_generated_clip_carries_its_feel_instead_of_baking_it" asserts the kick keeps the time.
 
+### F-340 · medium · A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via unchecked negation in move_clips.
+
+`crates/auris-session/src/session/clips.rs:387` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Only a hand-edited, legacy, or otherwise corrupted `.auris` project file can carry a clip with `start = i64::MIN` (every session-level API clamps with `.max_zero()`, so ordinary use can never produce one). If such a file is loaded, the app runs fine until the user drags any selection containing that clip — `move_clips` computes `-earliest`, `Ticks::neg` overflows, and because the dev profile leaves `overflow-checks` at its default of `true`, a debug build panics and the session crashes losing unsaved work; a release build (checks off) would instead silently wrap to a nonsense position.
+
+**Trigger.** Load a project containing a clip whose `start` deserializes to a negative `Ticks` (e.g. `"start": -9223372036854775808` on a MIDI or audio clip in the saved JSON), then drag that clip (or any selection where it is the earliest) so the UI calls `session.move_clips(&origins, delta)` with that clip's captured origin among `origins`.
+
+**Mechanism.** `let delta = delta.max(-earliest);` is meant to stop the earliest selected clip from crossing below zero — the doc says "clamped so that the earliest clip lands on zero rather than each clip being clamped separately." That only works while `earliest >= 0`. `Project::grid`-style loading never validates a clip's `start` field (`crates/auris-io/src/project_file.rs::load_project` only calls `repair_id_counter`/`repair_routing`, and `MidiClip`/`AudioClip::start` is a bare `pub start: Ticks` with no custom deserialize check), so a hand-edited or legacy-corrupt `.auris` file can hold a clip with a negative `start`. If `earliest` is negative, `-earliest` is positive, so `delta.max(-earliest)` now forces the *final* delta to be at least that positive number no matter what the caller actually asked for (even `delta == Ticks::ZERO`), turning a floor meant to prevent going below zero into a forced jump forward. Worse, if `earliest.raw() == i64::MIN` exactly (a value `serde_json` happily round-trips into `Ticks`), `-earliest` invokes `impl Neg for Ticks { fn neg(self) -> Ticks { Ticks(-self.0) } […]
+
+**Expected.** The clamp should only ever prevent the earliest clip's final position from going below zero (as the doc comment states), and should never force a jump larger than requested or crash, regardless of what a loaded file's clip `start` values are.
+
+**Fix direction.** In `crates/auris-io/src/project_file.rs::load_project`, after parsing, clamp every clip's `start` to zero (or otherwise validate it) the same way `repair_id_counter`/`repair_routing` already repair other invariants on load, so `Ticks` values from disk can never be pathological; alternatively/also make `Ticks::neg` (and the `delta.max(-earliest)` call site) use `checked_neg`/`saturating_neg` so a corrupt value degrades gracefully instead of panicking or overflowing.
+
+**Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent. (CLAUDE.md, "The project folder" — the project's own policy that a malformed/missing element degrades a track rather than crashing the app)
+
+### F-362 · medium · Session::voice_model_at caches VoiceModel by path only, so a re-exported .onnx at the same path is silently ignored until acceleration is toggled or the app restarts.
+
+`crates/auris-session/src/session/singer.rs:867` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** In a long-running Auris Studio session, if a user re-exports a voice model to the same .onnx path (e.g. while iterating on training and testing in the DAW without restarting it), subsequent sings/previews of that voice keep using the old cached weights silently — the user hears the old voice and has no indication the new export was ignored, until they change the acceleration setting (which clears the whole cache as an unrelated side effect) or restart the app.
+
+**Trigger.** In one long-lived Session (the desktop app kept open, which is the normal way to iterate on a voice while training/exporting it — CLAUDE.md documents exactly this workflow under 'An exported voice measured through the host'), sing a singer track whose voice is `/path/voice.onnx` (caches the model), then re-export a retrained checkpoint to that same path from outside the app, then press Sing again (or call `sing_frames`/`set_singer_voice` for that path) without changing the acceleration setting.
+
+**Mechanism.** `voice_model_at` (lines 867-874) keys `self.voices: HashMap<PathBuf, Arc<Mutex<VoiceModel>>>` purely by file path: `if let Some(loaded) = self.voices.get(file) { return Ok(Arc::clone(loaded)); }`. Nothing compares the cached entry against the file's current mtime, size or content. The only way the cache is ever emptied is `set_singer_acceleration` (singer.rs:883-889), which clears it as a side effect of changing where inference runs — not as a way to pick up a changed file. `Session::voices`'s own doc comment (mod.rs:373-380) states the caching assumption plainly: "the same file is the same voice whichever project is open", which is exactly the assumption that breaks once a user overwrites that file.
+
+**Expected.** Either `voice_model_at` should notice the file has changed underneath the cached entry (e.g. by comparing a modification stamp) and reload, or there should be an explicit way to invalidate one cached voice — the current code has neither.
+
+**Fix direction.** Key the cache (or validate each hit) on file path plus a cheap freshness signal such as mtime and size (or a content hash) captured at load time; on a cache hit, stat the file and reload if it has changed. Alternatively, expose an explicit "reload voice" command/button in the UI rather than relying on process restart or an unrelated acceleration toggle.
+
+### F-371 · medium · Re-singing a singer track leaks the discarded take's decoded audio in Session::bank/render_bank/waveforms forever, unbounded by History's own 64-step cap.
+
+`crates/auris-session/src/session/singer.rs:943` · lifecycle · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** Nothing looks wrong on screen and no audio is corrupted, but re-singing the same singer track repeatedly within one open project session (an ordinary tweak-notes/re-sing/repeat workflow) leaves every discarded take's full decoded PCM buffer resident in memory forever — in Session::bank, duplicated again in render_bank when render rate differs from project rate, plus its peaks in waveforms. Nothing the user does in-app (including Undo, or Undo past History's 64-step cap) frees it; only closing and reopening the project does. An afternoon of vocal-line iteration can grow memory into the hundreds of megabytes to gigabytes, degrading performance or risking OOM on constrained machines.
+
+**Trigger.** Call `Session::sing` (or the equivalent GUI action) on the same singer track repeatedly within one open document — an entirely ordinary iterative workflow (tweak notes/lyrics, re-sing, repeat) that easily exceeds `History`'s own cap of 64 steps (`History::new(64)`, history.rs:299/305-311; `push` evicts the oldest snapshot past that limit, history.rs:323-325) over the course of an editing session. No Undo is even required to trigger the growth, only to make it permanent: once the recorded `Edit::Sing` step that still names the discarded `SourceId` is evicted from `History::past`, no reachable `Project` (current, past, or future) references that id any more, yet its full decoded PCM buffer […]
+
+**Mechanism.** `land_singer_take` (singer.rs:904-971) unconditionally drops the previous take's `SourceId` from the document with `self.project.audio_sources.remove(&previous.source)` (line 943) every time a singer track is (re-)sung, then installs the new take's buffer via `self.install_source(source, ...)` (line 968), which inserts into `Session::bank`, `Session::render_bank` and `Session::waveforms` (assets.rs `install_source`, lines 238-245). None of those three maps has any per-id removal counterpart anywhere in the crate (grep for `bank.remove`/`render_bank.remove`/`waveforms.remove` over `crates/auris-session/src` finds nothing) — the only place they are ever cleared is `Session::clear_sources` (assets.rs:248-253), and its only caller is `Session::open` (files.rs:235), i.e. loading a *different* document. So within one open document every re-sing leaves the discarded buffer permanently resident.
+
+**Expected.** Session-side caches that mirror `Project::audio_sources` should be pruned in lockstep with it — either by removing the corresponding `bank`/`render_bank`/`waveforms` entries whenever a source id permanently leaves every reachable project state (current, `History::past`, and `History::future`), or at minimum by capping retention to what `History`'s own bounded depth could actually still restore, matching the crate's own comment that a `Project` clone is cheap "because it holds ids, numbers and […]
+
+**Fix direction.** Have land_singer_take remove the previous take's id from self.bank, self.render_bank, and self.waveforms at the same point it removes it from self.project.audio_sources (singer.rs:943), mirroring install_source's three inserts with three matching per-id removals — but only once no other reachable state (current project, History::past, History::future) still references that source id, since Undo/Redo must still be able to restore it. The simplest correct version: defer the removal to whenever the id actually leaves every reachable history slot (e.g. when it is evicted from History::past on push, or when future is discarded on a new edit), not unconditionally at land-time.
+
+**Written rule it breaks.** a Project clone is cheap "because it holds ids, numbers and note lists — never audio samples" (history.rs comment) — the session-side audio caches (bank/render_bank/waveforms) are exactly the samples that assumption relies on being discardable via history eviction, but they are never pruned in lockstep with Project::audio_sources</parameter>
+</invoke>
+
+### F-373 · medium · guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole file.
+
+`crates/auris-session/src/guide.rs:1238` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A developer or contributor reading `auris_session::guide` (the crate CLAUDE.md names as the single authoritative account of the system, to be trusted over the shorter CLAUDE.md summary) is told that an old build reading a post-AssetPath project file would silently misinterpret a relative audio path as absolute and lose the audio. That is wrong: the old `path: PathBuf` field cannot deserialize the new tagged-object wire shape (`{"inside":"..."}` / `{"external":"..."}"`) at all, so the actual failure is a hard serde type-mismatch error that fails the whole `Project` parse — the same "give up on the whole file" behavior the same doc correctly attributes to versions 4, 6, 7, 9, 17, and 19. Anyone reasoning about backward-compatibility behavior (e.g. designing a migration, or explaining to a user why an old build refused to open a file) is misled about the actual failure mode.
+
+**Trigger.** Counterfactually undo the version-2 bump, as the guide's own sentence supposes, and have a pre-AssetPath build (path: PathBuf) open a project saved by a post-AssetPath build with an Inside or External reference. Confirmed via git archaeology: the pre-AssetPath build already had the FormatVersionProbe gate (git show f9ac795^:crates/auris-io/src/project_file.rs), so in the counterfactual (same version number on both sides) the gate does not fire and full parsing proceeds into the type-mismatched path field.
+
+**Mechanism.** guide.rs's documents module says (lines 1235-1238): 'The version moves when an older build could misread a newer file... AssetPath bumped the version because it changed how an existing field was to be read, and an old build would have resolved a relative path as an absolute one and lost the audio.' This describes a silent semantic misread (old build parses the field successfully but interprets it wrongly). But the pre-AssetPath field (SoundFontRef.path / AudioSource.path was a plain 'pub path: PathBuf', confirmed via git show f9ac795^:crates/auris-core/src/project.rs) deserializes only from a bare JSON string. AssetPath's on-disk shape has never been a bare string for Inside/External -- AssetPathRepr::Located serialises as a tagged object, {"inside":"Audio/kick.wav"} or {"external":"..."}, verified by the round-trip test at crates/auris-core/src/asset.rs:226-231, and unchanged since the very commit (f9ac795) that introduced AssetPath. Feeding a JSON object where a plain PathBuf field expects a string is a serde type mismatch that fails the whole Project deserialization outright -- […]
+
+**Expected.** The paragraph should describe the same hard-refusal failure mode it correctly attributes to the other stored-enum/reshaped-field bumps (versions 4, 6, 7, 9, 17, 19), since AssetPath's tagged-object representation puts it in that class, not in the silent-default class (versions 5, 10-16, 18).
+
+**Fix direction.** Change the sentence at guide.rs:1236-1238 to say that `AssetPath` bumped the version because the on-disk shape changed from a bare path string to a tagged object, so an old build's `path: PathBuf` field fails to deserialize and the whole file is rejected with a hard error — not silently misread as an absolute path.
+
+**Written rule it breaks.** CLAUDE.md: "The account — why each boundary is where it is ... is auris_session::guide, and that is where it gets edited first: when the two disagree, the guide is right and this is stale." — the guide is meant to be the authoritative, accurate account, and here it is factually wrong about its own subject.
+
+**Verifier's correction.** guide.rs's documents module (around line 1238) should say that an old build reading a post-AssetPath file would hit a serde type mismatch (an object where the old `path: PathBuf` field expects a string) and fail to deserialize the whole `Project` — the same hard "give up on the whole file" failure it correctly attributes to versions 4, 6, 7, 9, 17, and 19 — rather than silently resolving a relative path as absolute and losing the audio.
+
+### F-392 · medium · publish_monitors reassigns ring slots by Vec position without re-seating, so un-monitoring a middle track bleeds ~32ms of its old audio into the next track's monitor.
+
+`crates/auris-session/src/session/monitor.rs:165` · realtime · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** When three or more tracks are monitored at once and a non-last one (e.g. the middle of A, B, C) is un-monitored, the ring slot that used to belong to the removed track is silently repointed to the next track down (C) by `set_source` alone. Because the ring stays "enabled" throughout the swap, `set_enabled(true)`'s re-seat never runs, so the reader keeps draining whatever of B's audio is still buffered ahead of its read cursor. For roughly one `TARGET_BLOCKS` window (~32 ms at 512 frames/48 kHz) C's monitor output plays back the departed track B's tail instead of C's own live input — an audible, if brief, cross-talk glitch between two people's monitor feeds.
+
+**Trigger.** Monitor three tracks at once in this order: A, B, C (occupying ring slots 0, 1, 2). Call `session.set_track_monitoring(B, false)` while A and C stay on.
+
+**Mechanism.** `publish_monitors` (monitor.rs:150-172) walks physical ring slots `0..MAX_MONITORS` and pairs slot index with `self.monitored.get(slot)` — the *position* in the Vec, not any per-track identity. `set_track_monitoring(track, false)` removes via `self.monitored.retain(...)` (monitor.rs:110), which shifts every later track's index down by one. When a non-last monitored track is switched off (e.g. monitored = [A,B,C], B turned off → [A,C]), the physical ring at slot 1 — previously enabled and actively carrying B's audio — is repointed with `ring.set_source(...)` to C's channels, but the re-seat call `if !ring.is_enabled() { ring.set_enabled(true); }` (lines 165-167) is skipped because the ring was *already* enabled (for B). `MonitorRing::set_enabled` is the only thing that resets the read pointer to the live edge (auris-engine/src/monitor.rs:136-141); without it, the reader keeps draining whatever B's audio is still sitting `TARGET_BLOCKS` (~3 output blocks, ~32 ms) ahead of the read position in the shared ring buffer.
+
+**Expected.** A ring whose logical track assignment changes because of an index shift should be re-seated the same way a ring switching from off to on is, so nobody hears a departed track's tail end through what is now labelled as someone else's monitor.
+
+**Fix direction.** In `publish_monitors`, detect a slot whose track identity changed (not just whose enabled state changed) — e.g. by tracking which `TrackId` each physical ring currently carries, or by always re-seating (`set_enabled(false)` then `set_enabled(true)`, or a dedicated `reseat()`) whenever `self.monitored.get(slot)` differs from what that ring was last assigned — instead of only re-seating on the off-to-on transition.
+
+**Written rule it breaks.** Switching one on re-seats its reader at the live edge rather than resuming, which is what stops a monitor turned off for a minute coming back a minute behind.
+
+### F-399 · medium · trim_clip_start's own-end floor assumes grid > 0; a project file with grid <= 0 makes it emit a negative-length Ticks clip.
+
+`crates/auris-session/src/session/clips.rs:550` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Opening a project file whose JSON explicitly sets a non-positive "grid" value (0 or negative — never reachable through the UI, which clamps via Session::set_grid to at least 1) and then trimming a MIDI clip's start produces a clip with negative Ticks length. That corrupted clip then flows into whatever reads midi.length next — rendering, further edits, or re-save — with no panic and no error reported to the user, so the corruption is silent until something downstream misbehaves.
+
+**Trigger.** A project file with `"grid": -500` (or any grid <= 0) and a MIDI clip with `start = Ticks(0)`, `length = Ticks(100)`; then call `session.trim_clip_start(clip, Ticks(1000))` — an entirely ordinary drag of the clip's start handle far to the right.
+
+**Mechanism.** `let now = start.max_zero().min((was + length - grid).max(was));` is documented as keeping "at least a grid division" so the clip's start can never be dragged past its own end. That floor is only a floor while `grid > 0`: the upper bound is `was + length - grid`, and with `grid <= 0` this becomes `>= was + length` (the clip's own end), so `now` can land past `was + length`. `Project::grid` deserializes via `#[serde(default = "default_grid")]` (`crates/auris-core/src/project/mod.rs:275-276`), which only supplies a value when the field is *absent* — an explicit `"grid": 0` or negative value in the file passes straight through with no clamp, unlike `Session::set_grid` which always stores `grid.raw().max(1)`. With `now > was + length`, `let by = now - was;` exceeds the clip's original `length`, so `let length = length - by;` (line 555) goes negative, and that negative `Ticks` is written straight into `midi.length` a few lines later with `length_is_explicit = true`.
+
+**Expected.** trim_clip_start's own doc comment: "the clip keeps at least a grid division ... Clamped to `was` it simply refuses to be shortened from the front" — this floor should hold (falling back to some positive minimum) even when a loaded file's `grid` is non-positive, not silently disappear.
+
+**Fix direction.** In trim_clip_start (clips.rs:550), clamp grid to at least 1 tick before computing the upper bound — e.g. `let grid = self.project.grid.max(Ticks(1));` — matching the invariant Session::set_grid already enforces for UI-driven changes, so a corrupted or hand-edited project file can no longer smuggle a non-positive grid past the one code path that assumed it.
+
+**Written rule it breaks.** Both ends are bounded by what there is. … neither kind may be dragged past its own end. (doc comment on trim_clip_start, clips.rs)
+
+### F-404 · medium · `envelope_of` calls the unguarded `param_descriptors`, permanently caching an empty list and blanking the ADSR envelope for any hosted CLAP plugin.
+
+`crates/auris-session/src/session/mixer.rs:230` · correctness · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** Opening a hosted CLAP plugin's window in the DAW leaves its ADSR envelope graph permanently blank: `envelope_of` (crates/auris-gpui/src/ui/envelope.rs:196) calls `Session::param_descriptors` unconditionally, and for a hosted plugin id that path can never resolve real parameters (the registry never holds hosted ids) so it caches an empty `Vec` forever in `param_cache`. Once the plugin window has been opened even once, no later fix within that session (e.g. the plugin finishing async load) makes the envelope appear, because the cached empty entry is never invalidated. `switch_is_on` (plugin_window.rs:490) has the same call but its result is currently only consumed for the built-in sampler id, so it has no visible effect today.
+
+**Trigger.** Ask about a hosted plugin's parameters (via `instrument_descriptors`/`effect_descriptors`, or directly via `param_descriptors` with a hosted id) at any point before that specific slot has been built even once — e.g. a freshly opened document whose hosted instrument hasn't gone through its first `rebuild_graph()` yet, or a plugin that failed to load on its first attempt and only starts succeeding on a later rebuild. That first call caches an empty `Vec` under the plugin's own hosted id.
+
+**Mechanism.** `Session::param_descriptors(plugin_id)` (mixer.rs:215-233) checks `self.param_cache` first (line 216) and, on a miss, tries `self.registry.create_instrument`/`create_effect` (lines 219-228) — which cannot know a hosted CLAP id, since the registry only holds built-ins — falls back to `unwrap_or_default()` (an empty `Vec`), and unconditionally caches that empty result under the plugin's own id string (line 230-231) with nothing anywhere in the file ever removing or overwriting a `param_cache` entry afterward. `Session::instrument_descriptors`/`effect_descriptors` (hosted.rs:943-993) avoid the trap by checking `hosted_instrument_parameters`/`hosted_parameters` first and only falling through to `param_descriptors` when that is still empty (i.e. before the hosted plugin has ever been built) — but that fallthrough itself is exactly the path that poisons the cache, and any *other* caller that goes straight to `Session::param_descriptors(id)` with a hosted id — e.g. `auris-gpui/src/ui/plugin_window.rs:490`'s `switch_is_on`, which calls `self.session.param_descriptors(plugin_id)` directly […]
+
+**Expected.** A cache entry for a hosted plugin id should either not be written when the answer came from the registry-miss fallback, or should be invalidated once `HostedPlugins` actually builds that plugin, so a direct `param_descriptors(hosted_id)` call converges on the real list instead of being pinned to the first (pre-build) empty answer forever.
+
+**Fix direction.** Make `envelope_of`/`envelope_target` (and `switch_is_on`, for consistency and future-proofing) check the hosted-plugin parameter maps first, the same way `descriptor_for` already does, before falling through to `param_descriptors`; alternatively, give `param_descriptors` itself that hosted-map-first guard so every caller benefits and the cache never gets poisoned with an empty list for a hosted id.
+
+**Verifier's correction.** Right in substance and mechanism (mixer.rs:215-233's unconditional cache write is exactly as described, and hosted.rs:943/978's guarded fallthrough is exactly as described). One correction/addition: the claim names only `plugin_window.rs:490`'s `switch_is_on` as the unguarded caller; `envelope.rs:196`'s `envelope_of` (also called unconditionally, every frame, from the same `render_plugin_window`) is a second, equally-affected unguarded call site with a more visible consequence — a hosted plugin's ADSR envelope graph silently and permanently failing to render once poisoned, versus […]
+
+### F-406 · medium · Case-mismatched paths on Windows make set_singer_voice store an in-folder voice model as External, breaking it when the project folder is moved or archived.
+
+`crates/auris-session/src/session/singer.rs:587` · platform · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** On Windows, if the voice-model file the user picks (via the GUI dialog, `--voice` on the CLI, or an MCP/agent tool call) has different letter-casing than the project's stored folder path — a routine occurrence, since Windows preserves whatever casing a picker or drive letter happens to report — `set_singer_voice` classifies a file that is actually inside the project folder as `AssetPath::External` instead of `AssetPath::Inside`. The voice keeps playing on this machine (the absolute path still resolves), but the reference is now tied to that literal absolute path: it is skipped by `Session::collect_assets` when archiving, and if the user moves or copies the project folder — the exact scenario `AssetPath::Inside` exists to survive — the singer track silently loses its voice model on next open, contrary to the "one folder, one project" portability the project's asset model promises.
+
+**Trigger.** A project saved/opened as `C:\Users\uthree\Music\MySong\MySong.auris` (so `project_folder()` == `C:\Users\uthree\Music\MySong`), and a voice model chosen through a picker or typed path that resolves to the same directory but with different case, e.g. `c:\users\uthree\music\mysong\Voices\ritsu.onnx` — plausible on Windows since drive-letter and path casing returned by different APIs/dialogs is not guaranteed to match what was stored when the project was saved.
+
+**Mechanism.** `set_singer_voice` decides Inside vs External with `self.project_folder().and_then(|folder| file.strip_prefix(folder).ok())`. `std::path::Path::strip_prefix` compares path components with plain `OsStr` equality, which is byte-exact even on Windows — the standard library does no filesystem-aware case folding for path comparisons. If `file`'s case differs anywhere from `project_folder()`'s stored case (e.g. a drive letter or a folder segment), `strip_prefix` returns `Err`, so the `None` arm fires and the voice is stored as `AssetPath::external(file)` — an absolute path — even though the file is physically inside the project folder.
+
+**Expected.** A file that resolves underneath `project_folder()` should be stored as `AssetPath::Inside` regardless of the case the two paths happen to be spelled in, matching the portability guarantee `AssetPath::Inside` exists to provide.
+
+**Fix direction.** Compare `file` against `project_folder()` case-insensitively on Windows before falling back to `External` — e.g. canonicalize both paths (or compare with `OsStr` ASCII-case-insensitive equality per component under `cfg!(windows)`) instead of relying on `Path::strip_prefix`'s byte-exact `OsStr` comparison. The same `cfg!`-based platform decision pattern CLAUDE.md already prescribes for Windows-specific behavior applies here.
+
+**Written rule it breaks.** Inside is relative to the folder so the folder can be moved; External is absolute because nothing else would find it. ... The invariant that makes the whole thing work is one folder, one project.
+
+### F-410 · medium · FAT32's 2s mtime resolution can make externally_modified() miss a concurrent writer, letting autosave silently overwrite their save.
+
+`crates/auris-session/src/session/autosave.rs:143` · persistence · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** On a project folder living on a FAT32-formatted drive (a common case for external/USB drives and SD cards, which the app supports on Windows), if another writer — the MCP server, a second Auris process, a sync client — saves the same .auris file within about 2 seconds of this session's own last save, autosave's change-detection silently fails to notice: externally_modified() compares only std::fs::metadata(path).modified() against a stored stamp, and FAT32 truncates last-write-time to 2-second resolution, so two distinct writes in that window read back as bit-identical timestamps. The next scheduled autosave (up to 30s later) then calls save_in_place() and silently overwrites the other writer's version with this session's stale in-memory copy — exactly the scenario the code's own doc comment and test (another_writers_version_is_never_silently_overwritten) claim can never happen.
+
+**Trigger.** Open a project whose folder lives on a FAT32-formatted volume (a common case for external/USB drives and SD cards, which the project explicitly supports on Windows). With autosave on, let another writer -- the MCP door, a sync client, a second Auris process -- save the same .auris file within about 2 seconds of this session's last save. `externally_modified()` returns false because the truncated timestamps match, `autosave_state().overwritten` stays false, and the next scheduled autosave (within `AUTOSAVE_INTERVAL` = 30s) calls `save_in_place()`.
+
+**Mechanism.** `mark_saved` stamps `self.disk_stamp` from `meta.modified()` right after every write/open (autosave.rs:123-130), and `externally_modified` later decides whether another writer has touched the file purely by `now != stamp` (line 143), with no content hash or other corroborating check anywhere in the struct (`disk_stamp` has exactly these two call sites). FAT32 volumes store a file's last-write-time with a documented 2-second resolution, so the OS itself rounds both this session's own write and a second writer's write to the same on-disk timestamp whenever they land in the same ~2s bucket -- `now` and `stamp` come out bit-identical even though the bytes on disk changed underneath this session.
+
+**Expected.** The doc comment on `externally_modified` (lines 132-137) and the module doc's contract ('never silently destroy work this window never saw') require that any change made by another writer be detected before an automatic save proceeds; on a FAT32-formatted project folder this guarantee does not hold.
+
+**Fix direction.** Strengthen the corroborating signal externally_modified relies on: at minimum also compare metadata.len() (cheap, catches size-changing concurrent writes even when mtime collides), and for a real guarantee keep a content hash of what this session last wrote/read alongside disk_stamp and compare that against the current file's hash when deciding — hashing a JSON-in-the-kilobytes file is cheap enough to do off the realtime path where this check already runs.
+
+**Written rule it breaks.** Automatically writing over it would silently destroy work this window never saw; a save while that stands has to be a person's own hand on ⌘S, deciding. (autosave.rs should_autosave doc comment, lines 65-68)
+
+**Verifier's correction.** Substance and mechanism are correct as claimed (mtime-only equality check at autosave.rs:143 with no other corroboration, real risk on FAT32's 2s write-time resolution). The one overstatement is the "trigger" section's assertion that the project "explicitly supports" FAT32/USB/SD-card project folders on Windows — no such statement exists anywhere in the repo; Windows support is real (per CLAUDE.md) but nothing calls out removable/FAT32 media specifically.
+
+### F-416 · medium · Session::set_param's Effect arm sends a post-edit slot index over EngineCommand::SetEffectParam without checking needs_rebuild, so mid-transaction it can hit the wrong effect on the still pre-edit live graph.
+
+`crates/auris-session/src/session/mixer.rs:424` · correctness · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** No user-visible bug exists today with any shipped frontend: no call site in auris-gpui, auris-cli, or auris-toolbox combines a structural effect-chain edit (move_effect/remove_effect/set_effect_sidechain) with a parameter write on an effect inside one open transaction. But the public Session API permits exactly that sequence, and if a future caller (most plausibly a scripted or agent-driven compound edit wanting a single undo step, which auris-toolbox and auris-agent exist to enable) does combine them, the audio thread receives a SetEffectParam addressed by the post-edit slot index while still running the pre-edit graph, so the write lands on whichever effect currently occupies that position — an audible, transient parameter change applied to the wrong effect until the deferred rebuild at end_transaction() replaces the graph.
+
+**Trigger.** `session.begin_transaction(edit); session.move_effect(track, slot_b, delta); session.set_param(ParamTarget::Effect{track, slot: slot_a, param}, value); session.end_transaction();` — entirely through `Session`'s own public API (no current frontend call site combines them this way, but nothing prevents a future one, e.g. a scripted/agent-driven compound edit wanting one undo step).
+
+**Mechanism.** Inside an open transaction, `Session::invalidate_graph` (mod.rs:1007-1014) only sets `self.needs_rebuild = true` and does not call `rebuild_graph()` — the graph the engine holds, and the `SetGraph` command that would replace it, are both deferred to `end_transaction()` (mod.rs:842-861). `Session::move_effect`/`remove_effect`/`set_effect_sidechain` (mixer.rs:100-163) all go through `invalidate_graph`, so a structural edit inside a transaction leaves `self.project`'s effect order changed while the engine's live graph — reached only through the same ordered `commands` channel as every other `EngineCommand` (confirmed via `EngineHandle::set_graph`/`send`, handle.rs:53-64) — still has no `SetGraph` queued. `set_param`'s `Effect` arm (mixer.rs:413-439) computes `slot_index` from `self.strip(track)` (i.e. the *current*, already-reordered `self.project`, line 424-429) and sends `EngineCommand::SetEffectParam{slot: slot_index, ...}` immediately (line 434), with no `SetGraph` command ahead of it on the channel to have updated the audio thread's notion of that position.
+
+**Expected.** A parameter write made while `needs_rebuild` is pending should either force the deferred rebuild first, or be deferred itself until the transaction's rebuild has applied, so a position-based `EngineCommand` is never sent against a graph whose structure it was not computed for.
+
+**Fix direction.** In set_param's ParamTarget::Effect (and Instrument) arms, check self.needs_rebuild before sending the position-based EngineCommand: either call self.rebuild_graph() first so the live graph and self.project are index-parallel again before computing slot_index, or (to preserve transaction batching) hold the SetEffectParam command and flush it after the rebuild that end_transaction performs. The cheapest correct fix is forcing rebuild_graph() whenever needs_rebuild is true right before sending a position-addressed EngineCommand in set_param.
+
+**Written rule it breaks.** "The runtime chain has to stay index-parallel with the project's MixerStrip::effects" (crates/auris-engine/src/graph/strip.rs:208-212)
+
+**Verifier's correction.** In Session::set_param's Effect arm (mixer.rs:411-439), the position-based EngineCommand::SetEffectParam is sent immediately (line 434) using a slot_index computed from the post-edit self.project (line 424), with no check of self.needs_rebuild -- so if a caller opens a transaction, performs a structural effect-chain edit (move_effect/remove_effect/set_effect_sidechain, which defer their rebuild via invalidate_graph per mod.rs:1008-1013), and then calls set_param(ParamTarget::Effect{..}) before end_transaction, the SetEffectParam command is misdirected against the still pre-edit live graph […]
+
 ### F-126 · low · home() in settings.rs:435 picks USERPROFILE-vs-HOME order via #[cfg(windows)] instead of cfg!, so the non-native arm can't compile or be tested off-platform.
 
 `crates/auris-session/src/settings.rs:435` · platform · confirmed (traced through the code; reported independently 4×)
@@ -786,3 +1039,133 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Expected.** Clamp `sample_rate` the same defensive way `block_frames` already is when building `AudioSettings`, rather than relying on real-hardware negotiation (which happens to save the non-headless path) or on no caller ever pairing a headless session with loaded preferences (which happens to save the headless path today).
 
 **Fix direction.** In Session::new (crates/auris-session/src/session/mod.rs:~490) and in set_audio_preferences (~line 638), apply the same floor pattern used for block_frames to sample_rate — e.g. `audio.sample_rate.map(|sr| sr.max(1)).or_else(...)` — so a stored or supplied Some(0) cannot survive to reach AudioSettings unclamped.
+
+### F-412 · low · forget_history() lacks the open-transaction guard every sibling (undo/redo/cancel/revert_transaction) has, but the path is unreachable from any current frontend or test.
+
+`crates/auris-session/src/session/mod.rs:951` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** No user or frontend can currently observe this: forget_history() is public API but every call site in the workspace (auris-gpui, auris-cli, auris-mcp, auris-agent, and every test) is either inside a #[cfg(test)] module or called with no transaction open. If a future frontend called it mid-gesture (e.g. to reset a scaffolded demo project while a drag was in flight), the in-flight mutation would be silently kept in self.project, is_dirty() would wrongly report false, and needs_rebuild would not be flushed, leaving the render graph stale.
+
+**Trigger.** A host calls `session.begin_transaction(edit)`, performs one or more mutations, and then calls `session.forget_history()` instead of `end_transaction()`/`cancel_transaction()`/`revert_transaction()`. `forget_history` is public API intended for a host writing scaffolding (per its own doc comment, "For scaffolding a host writes itself — a demo project, a template"); no current frontend (gpui/cli/mcp/agent) calls it outside this crate's own test fixtures, so the sequence is not yet exercised in production, only reachable through the public method.
+
+**Mechanism.** `pub fn forget_history(&mut self)` (mod.rs:951-956) does `self.history.clear(); self.transaction = None; self.last_record = None; self.dirty = false;` and nothing else. Unlike `undo`/`redo`, which explicitly refuse while `self.transaction.is_some()`, and unlike `cancel_transaction`/`revert_transaction`, which check and flush `self.needs_rebuild` (`if std::mem::take(&mut self.needs_rebuild) { self.rebuild_graph(); }`), `forget_history` neither checks nor applies/reverts an open transaction, nor touches `needs_rebuild`. If a caller invokes `forget_history()` between `begin_transaction()` and `end_transaction()`, the mutations already applied to `self.project` during the gesture remain in place (nothing restores `transaction.before`), any pending structural rebuild flagged via `invalidate_graph()` is left un-flushed so the render graph goes on reflecting the pre-gesture project until an unrelated later edit happens to trigger a rebuild, and `dirty` is unconditionally forced to `false` even though the live project may now differ from every saved/history state.
+
+**Expected.** forget_history() should treat an open transaction the same defensive way undo/redo do (refuse, or fold in a revert/rebuild), rather than silently discarding it while leaving needs_rebuild stale and forcing dirty=false over a possibly-changed project.
+
+**Fix direction.** Give forget_history() the same open-transaction handling as its siblings: either drop the in-flight edit by restoring self.project = transaction.before (matching revert_transaction's semantics, which fits "drop the undo history and mark unmodified"), or flush self.needs_rebuild via rebuild_graph() and set self.dirty based on whether project actually changed, rather than unconditionally forcing false. A one-line guard plus reuse of the existing take-and-check pattern (as in cancel_transaction) closes the gap.
+
+**Written rule it breaks.** can_undo's doc comment: "replace_project would drop the open transaction on the floor — not commit it, not revert it, drop it" — describing exactly the failure mode forget_history exhibits, a pattern the codebase otherwise guards against everywhere it touches self.transaction.
+
+**Verifier's correction.** forget_history() (crates/auris-session/src/session/mod.rs:951-956) is missing the same open-transaction guard its siblings all have: unlike undo/redo (which refuse while self.transaction.is_some()) and cancel_transaction/revert_transaction (which flush needs_rebuild, and revert_transaction additionally restores transaction.before and dirty_before), forget_history unconditionally clears self.transaction without reverting or flushing, and forces dirty = false regardless of live project state. If a host ever called forget_history() between begin_transaction() and […]
+
+### F-427 · low · `ProgressionBook::forget()` fails to trim its `name` argument, so untrimmed whitespace makes deletion silently no-op against a trimmed stored entry.
+
+`crates/auris-session/src/progressions.rs:166` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a caller (e.g. an LLM-driven MCP/agent tool call) passes a progression name with incidental leading/trailing whitespace to `forget`, the lookup silently fails to match the trimmed stored name and `forget` returns `false` — the saved progression is not deleted even though a name that "looks the same" was given. No data is corrupted or lost; the entry simply remains until `forget` is called with an exactly-trimmed name.
+
+**Trigger.** `book.keep("mine", &chart, None)` stores an entry named `"mine"`. `book.forget(" mine ")` compares `"mine" != " mine "` for every entry — never equal — so `retain` removes nothing and `forget` returns `false`.
+
+**Mechanism.** `keep` (line 148-163) trims `name` before storing or comparing it (`let name = name.trim();`, line 149), so every stored `SavedProgression.name` is already whitespace-trimmed. `forget` (line 166-170) compares its argument to stored names with a raw `entry.name != name` and never trims it.
+
+**Expected.** forget should treat a name the same way keep does, e.g. by trimming its argument before comparing, so the two form a consistent pair (write and remove agree on what a name is).
+
+**Fix direction.** Add `let name = name.trim();` at the top of `forget` (and, for consistency, `chart`) in crates/auris-session/src/progressions.rs, mirroring the same line already in `keep`, so all three lookups compare against the same normalized key.
+
+### F-431 · low · rename_clip pushes an undo step and dirties the project even when the new name equals the old one, unlike its sibling setters which all guard against no-op edits.
+
+`crates/auris-session/src/session/clips.rs:305` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Confirming a rename dialog without changing the text (e.g. opening the rename prompt pre-filled with the clip's current name and pressing OK/Enter) pushes a real, useless entry onto the undo stack and marks the project dirty/unsaved even though nothing observable changed. The user then has to press Undo an extra time to get past a no-op step, and may be prompted to save a project that has no real edits.
+
+**Trigger.** In the desktop app, `MenuCommand::RenameClip` opens a rename prompt pre-filled with the clip's current name (`crates/auris-gpui/src/ui/context_menu/command.rs:940-946`); the user presses Enter without editing it (or edits then reverts to the exact original text). `PromptTarget::Clip(clip) => self.session.rename_clip(clip, text)` (`crates/auris-gpui/src/ui/prompt.rs:680`) is called directly, outside any `begin_transaction`/`end_transaction` pairing, so `end_transaction`'s before==after no-op check (which protects drag gestures) never applies here.
+
+**Mechanism.** `rename_clip` calls `self.record(Edit::RenameClip);` unconditionally before writing the new name, with no `if current_name == new_name { return Ok(()); }` guard — unlike every other single-value setter in this same file (`set_clip_gain`, `set_fade_in_curve`, `set_fade_out_curve`, `set_clip_source_bpm`, `set_clip_follows_tempo`, `set_clip_fades`), which all compare against the current value first and no-op if unchanged.
+
+**Expected.** Consistent with every sibling setter in this module (and with the project's own emphasis elsewhere on not recording no-op edits, evidenced by several similar already-fixed findings in this same unit), renaming a clip to the name it already has should not cost an undo step.
+
+**Fix direction.** In `rename_clip` (crates/auris-session/src/session/clips.rs:299-311), fetch the clip's current name first, convert the incoming `name` to `String`, and `return Ok(())` early if it equals the current name — before calling `self.record(Edit::RenameClip)` — matching the pattern already used by `set_clip_gain`, `set_clip_source_bpm`, `set_fade_in_curve`, etc.
+
+**Written rule it breaks.** end_transaction's doc comment (session/mod.rs:838-841): "A transaction that made no difference records no undo step" — the same no-op-means-no-undo-step principle rename_clip's siblings already implement but rename_clip itself omits.
+
+### F-433 · low · take_file_name's 9,999-attempt exhaustion fallback returns "{stem}.wav" without an existence check, letting WavRecorder::create silently overwrite an existing file.
+
+`crates/auris-session/src/session/record.rs:1230` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a user (or an automated loop) records more than 9,999 takes of a track with the same name in one project folder, the 10,000th take silently overwrites whichever file happens to be named exactly "{stem}.wav" instead of getting its own numbered name — destroying that file's prior audio with no warning, error, or confirmation.
+
+**Trigger.** A project's Audio folder already contains `"Vocals 1.wav"` through `"Vocals 9999.wav"` (and, separately, a file literally named `"Vocals.wav"` — e.g. an earlier fallback hit, or an imported/renamed file). Record onto a track named "Vocals" once more.
+
+**Mechanism.** `take_file_name` (record.rs:1221-1231) tries `"{stem} 1.wav"` through `"{stem} 9999.wav"`, returning the first name whose file does not already exist. If all 9,999 are taken, it falls through to `format!("{stem}.wav")` (line 1230) with no existence check at all, unlike every numbered attempt before it.
+
+**Expected.** The fallback should keep searching (or otherwise avoid clobbering) rather than trust a fixed name to be free after only the numbered range is exhausted.
+
+**Fix direction.** In take_file_name's exhaustion branch, don't return the unchecked "{stem}.wav"; either extend the search (widen the attempt range or fall back to a name incorporating a timestamp/uuid) or, at minimum, check audio.join(&candidate).exists() the same way the numbered loop does and propagate a failure if no free name can be found.
+
+**Written rule it breaks.** take_file_name's own doc comment: "A file name for a take on `track`, not already taken inside `folder`." The fallback path returns a name with no existence check, breaking that guarantee.
+
+### F-438 · low · Settings::load() returns `recent` unclamped, so an oversized list in settings.json bypasses the documented RECENT cap.
+
+`crates/auris-session/src/settings.rs:207` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a user's settings.json ever ends up with more than 10 entries in "recent" (hand-edited, merged from another install, or written by a future/buggy code path), the File > Recent menu will show all of them instead of being capped at 10 — a cosmetic list-length issue, not data loss or a crash. Every normal in-app path (remember_recent) already truncates correctly, so this only bites on out-of-band edits to the settings file.
+
+**Trigger.** settings.json on disk contains more than `Settings::RECENT` (10) entries in `recent` — e.g. hand-edited, carried over from a build with a larger `RECENT`, or written by another tool — and the application is launched, calling `Settings::load()`.
+
+**Mechanism.** The `recent` field's doc comment (settings.rs:202-207) states "Projects opened lately, most recent first. Capped at [`Settings::RECENT`]." The cap is only enforced by `Settings::remember_recent` (settings.rs:274-278), which truncates after inserting. `Settings::load()` (settings.rs:294-306) deserialises the whole struct with `serde_json::from_str` and returns it as-is — nothing re-truncates `recent` after a successful parse, so the documented invariant is not actually maintained by the type as a whole, only by one of its mutators.
+
+**Expected.** Either Settings::load() truncates `recent` to `Settings::RECENT` after deserialising, or the field's doc comment should not claim the list is capped independent of which mutator wrote it.
+
+**Fix direction.** After `serde_json::from_str` succeeds in `Settings::load()`, truncate `settings.recent` to `Self::RECENT` before returning it (or add a custom deserializer/`Vec` wrapper that enforces the cap on parse), so the doc comment's "Capped at `Settings::RECENT`" invariant holds regardless of how the file was produced.
+
+**Written rule it breaks.** /// Projects opened lately, most recent first. /// Capped at [`Settings::RECENT`].
+
+### F-442 · low · A failed singing-take render leaves an orphaned, unreferenced partial .wav permanently in Audio/, a minor disk-space leak shared with the live-recording path.
+
+`crates/auris-session/src/session/singer.rs:926` · persistence · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a singing-take render fails partway through writing the WAV (e.g. disk fills up, permission revoked, antivirus lock), the file already created at its final path in Audio/ is left behind: unreferenced by the project document, never cleaned up, and never reused by later takes (take_file_name only checks existence). Over repeated failures this is a slow, silent disk-space leak in the project folder that the user has no way to discover or reclaim short of manually inspecting Audio/.
+
+**Trigger.** A rendered take that fails during `WavRecorder::write`/`finish` (e.g. the disk fills up partway through writing the take's samples) — the render can then be retried once space is freed, and the original partial file is never cleaned up.
+
+**Mechanism.** `land_singer_take` picks a fresh filename with `super::record::take_file_name`, then does `WavRecorder::create(&path, ...)?` (which creates the file on disk), `recorder.write(samples)?`, `recorder.finish()?`. If `write` or `finish` fails (full disk, permission revoked mid-write, antivirus lock, etc.), the `?` propagates the error immediately and `land_singer_take` returns `Err` — but the just-created file at `path` is never removed, and nothing is recorded in the document (correctly, since `self.record(Edit::Sing)` has not run yet). `take_file_name` (session/record.rs:1221-1231) only ever checks `!audio.join(&candidate).exists()`, so the next attempt to sing on the same track picks the next numbered name and leaves the broken file where it is, forever.
+
+**Expected.** A failure inside `land_singer_take` after the file was created should remove the partial file it made (or `take_file_name`/the caller should reuse/clean up files that exist but are not referenced by the document) so a failed render costs no disk space, mirroring the doc comment's own stated goal that 'everything that can fail ... happens before anything is recorded, so a full disk costs no undo step' — it currently still costs disk space.
+
+**Fix direction.** In land_singer_take, wrap the create/write/finish sequence so that on any Err from write() or finish(), the partially-written file at path is removed (std::fs::remove_file, best-effort) before the error propagates; apply the same fix to the analogous live-recording paths in session/record.rs (stop_recording and finish_all) since they share the identical gap.
+
+**Written rule it breaks.** "everything that can fail ... happens before anything is recorded, so a full disk costs no undo step" (WavRecorder/land_singer_take's own stated intent) — the undo-step promise is kept, but the implied "costs nothing" is not: it still costs orphaned disk space.
+
+**Verifier's correction.** A failed take render in `land_singer_take` (singer.rs:926-928) can leave a partially-written, document-unreferenced `.wav` permanently in `Audio/` if `WavRecorder::write`/`finish` fails after `create` succeeds (e.g. mid-write disk-full) — confirmed mechanically and by direct reproduction against `auris-io`. This is a genuine, low-severity disk-space leak, but it is not a departure from project convention: the live-recording path in `crates/auris-session/src/session/record.rs` has the identical gap — `stop_recording`'s `result?` (~line 780) and `finish_all` (~1146-1210) both propagate a […]
+
+### F-449 · low · restart_input's Err branch clears self.monitored without rebuilding the graph, leaving stale (but inert) monitor taps wired in until an unrelated rebuild.
+
+`crates/auris-session/src/session/record.rs:543` · correctness · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** If the input device fails to reopen after an input-only settings change while a track was being monitored, the session's monitored-tracks list is cleared and the UI correctly reports monitoring as off, but the render graph is never told to drop the stale monitor taps (the compensating `if self.monitoring() { self.rebuild_graph(); }` in `set_audio_preferences` sees the just-cleared empty list and skips the call). The graph keeps stale `Arc<MonitorRing>` taps from the now-dropped capture device wired into the mix until some unrelated edit next triggers `rebuild_graph()`. Since the old capture's input callback is gone, those rings receive no further writes, so the practical effect is a silent/stalled tap rather than audible garbage or a crash — a harmless but real inconsistency between session state and the audio graph.
+
+**Trigger.** Call `Session::set_audio_preferences` changing only `input_device` while at least one track is being monitored, at a moment the new input device fails to open (device unplugged, exclusive-mode conflict, invalid name).
+
+**Mechanism.** In `restart_input` (lines 525-549), the `Ok(())` arm always pairs a state change with `self.publish_monitors(); self.rebuild_graph();` (lines 539-542) — the same discipline `stop_monitoring`/`set_track_monitoring` in monitor.rs always follow when they touch `self.monitored`. The `Err(error)` arm (lines 543-546) breaks that pattern: it does `self.monitored.clear();` but never calls `rebuild_graph()`. The only caller that could compensate, `set_audio_preferences` (mod.rs:627-631), guards its own extra rebuild behind `if self.monitoring()`, which is false in exactly this branch, so no rebuild happens anywhere on this path.
+
+**Expected.** The Err arm should rebuild the graph (or call `stop_monitoring`'s sequence) the same way every other place that empties `self.monitored` does, so the graph is never left holding taps for a monitoring state the session no longer reports.
+
+**Fix direction.** In the `Err` arm of `restart_input` (record.rs:543-546), follow the same discipline the `Ok` arm and every other mutator of `self.monitored` uses: after `self.monitored.clear()`, call `self.publish_monitors(); self.rebuild_graph();` so the graph is told immediately that no tracks are monitored, instead of relying on the caller's now-incorrect `if self.monitoring()` guard.
+
+**Written rule it breaks.** "the graph is holding the old device's [rings], which is why a rebuild follows" (record.rs comment on the Ok arm of restart_input, describing a rule the Err arm silently breaks)
+
+### F-456 · low · finish_punch's punch-out auto-stop never fires when the engine runs silently (no output device), because it reads a playhead Arc that start_silent leaves frozen at 0.
+
+`crates/auris-session/src/session/punch.rs:127` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** On a machine with no usable output device (or any other path where the audio engine falls back to start_silent, including a headless session), punch recording's auto-stop never fires: the musician plays through the punch-out point and finish_punch keeps returning None instead of Some(stop_recording()), so the take just keeps recording until they notice and stop it by hand — the exact manual step the punch.rs module doc says punch exists to remove ("The transport rolls out of the take by itself at the punch-out, which is the part nobody wants to do by hand while playing").
+
+**Trigger.** Same precondition as the already-reported count-in finding (output engine not running, e.g. no/failed output device while the input device is still open) — press Record with punch enabled and the punch region set so the take starts inside it, and play through the punch-out.
+
+**Mechanism.** `finish_punch` (punch.rs:123-139) reads `self.engine.playhead_frames()` (line 127) to decide whether the take has entered or left the punch region. `playhead_frames()` is only ever written by the output audio callback, once per callback (auris-engine/src/handle.rs:67-69, device.rs:660-661) — the same condition already reported to cause silent count-in-trim data loss (Finding 1) when the output stream isn't running. Under that same condition the playhead is frozen, so `(in_at..out).contains(&playhead)` never transitions from true to false (or never becomes true at all), and `finish_punch` returns `None` forever instead of ever reaching `Some(self.stop_recording())`.
+
+**Expected.** finish_punch's auto-stop should not depend on a playhead reading that can be permanently stale under the same condition the codebase has already identified as breaking count-in trimming.
+
+**Fix direction.** Drive finish_punch's region test off a monotonically-advancing clock that is updated even without a live output stream — e.g. have start_silent's fallback advance a frame counter on each poll/tick (or off wall-clock elapsed time at the sample rate) instead of leaving the playhead Arc frozen at 0 — or, failing that, have finish_punch fall back to a session-side frame estimate when engine.is_playing() is false/silent so the punch-out transition can still be detected.
+
+**Written rule it breaks.** The transport rolls out of the take by itself at the punch-out, which is the part nobody wants to do by hand while playing. (crates/auris-session/src/session/punch.rs module doc)

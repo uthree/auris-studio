@@ -1,6 +1,6 @@
 # Review findings: auris-i18n
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 5 verified findings: 1 high, 4 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 6 verified findings: 1 high, 5 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -11,6 +11,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-148 | low | `crates/auris-i18n/src/strings.rs:1340` | SamplerEnvelopeOn warning string still says 15-note polyphony after SLOTS shrank to 14 in commit 1f41ec7. |
 | F-268 | low | `crates/auris-i18n/src/audio.rs:83` | is_known's doc comment cites "dB" as a same-in-both-languages table entry, but no table in audio.rs contains any dB key — only Q rows exist. |
 | F-289 | low | `crates/auris-i18n/src/lib.rs:97` | from_environment lets an unsupported LC_ALL value fall through to LC_MESSAGES/LANG instead of taking priority as its own doc comment says. |
+| F-448 | low | `crates/auris-i18n/src/controller.rs:18` | NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized. |
 
 ### F-033 · high · English Compose-from-Lyrics hint shows the raw internal token "secondary-Return" instead of a real keystroke like Ctrl/⌘-Return.
 
@@ -95,3 +96,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In from_environment, stop at the first *set* variable (via filter_map keeping only Ok values, then take the first regardless of whether from_locale maps it) rather than searching all three for a recognized language; only fall through to from_system_locale/default when none of LC_ALL/LC_MESSAGES/LANG is set. Concretely: find the first env var among the three that is Ok(_), and if its value doesn't map via from_locale, go straight to the fallback instead of trying the next-lower-priority variable.
 
 **Written rule it breaks.** /// `LC_ALL` outranks `LC_MESSAGES`, which outranks `LANG`, which is the order POSIX gives them
+
+### F-448 · low · NOTABLE's doc comment groups its 8 controllers into 4 named categories that only cover 7, leaving Pan (CC 10) uncategorized.
+
+`crates/auris-i18n/src/controller.rs:18` · other · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A developer or translator reading the doc comment above `NOTABLE` in crates/auris-i18n/src/controller.rs gets a mildly inaccurate mental model of the eight menu controllers: they'd expect four clean categories (two wheels, pedals, two levels, filter) to exhaust the list, but CC 10 (Pan) fits none of them, and CC 2 (Breath) is folded into "wheels" though it's played by blowing, not turning a wheel. No user-facing string, menu order, or behavior is affected — only the prose explaining the array to a reader of the source.
+
+**Trigger.** A maintainer reads the doc comment to reason about what NOTABLE contains -- e.g. deciding whether to add another performance controller -- and trusts the four-category breakdown as accurate.
+
+**Mechanism.** The doc comment on NOTABLE (line 18) describes its order as "the two wheels, the pedals a foot reaches, the two levels, and the filter," but `NOTABLE = [1, 2, 4, 7, 10, 11, 64, 74]` is Modulation(wheel), Breath(a breath controller, not a wheel), Foot(pedal), Volume(level), Pan(stereo position -- not a pedal, not really a "level"), Expression(level), Sustain(a second pedal, positioned after the "levels" the prose puts it before), Brightness(filter). So CC 2 is called part of "the two wheels" though it is a breath controller, and CC 10 (Pan) matches none of the four named categories at all.
+
+**Expected.** The doc's category breakdown should actually account for all eight entries in NOTABLE -- Breath is a breath controller, not a second wheel, and Pan needs its own mention rather than being silently absorbed into "the two levels."
+
+**Fix direction.** Reword the doc comment at controller.rs:17-19 to either add "and pan" (or "the stereo position") as a fifth named category, or drop the precise category-counting language in favor of a looser description (e.g. "roughly the controls under a hand, plus pan") so the prose doesn't imply an exhaustive four-way partition of the eight entries.

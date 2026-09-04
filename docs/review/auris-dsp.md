@@ -1,6 +1,6 @@
 # Review findings: auris-dsp
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 11 verified findings: 4 high, 5 medium, 2 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 18 verified findings: 6 high, 8 medium, 4 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -10,13 +10,20 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-075 | high | `crates/auris-dsp/src/reverb.rs:324` | Reverb reads mix/width/damping/room-size/pre-delay once per block instead of ramping them, causing zipper noise and pre-delay read-head jumps on parameter […] |
 | F-086 | high | `crates/auris-dsp/src/compressor.rs:241` | Compressor makeup gain is added unsmoothed to the envelope-filtered gain each frame, causing a zipper-noise click whenever makeup_db changes between blocks. |
 | F-087 | high | `crates/auris-dsp/src/eq.rs:335` | Re-enabling a disabled EQ band resumes its biquad from stale, frozen s1/s2 state, producing an audible click/thump instead of a clean rejoin. |
+| F-333 | high | `crates/auris-dsp/src/distortion.rs:146` | Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike […] |
+| F-339 | high | `crates/auris-dsp/src/limiter.rs:115` | Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation. |
 | F-040 | medium | `crates/auris-dsp/src/limiter.rs:173` | Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the […] |
 | F-128 | medium | `crates/auris-dsp/src/eq.rs:409` | Disabling then re-enabling a resonant EQ band replays its frozen, stale filter memory as an audible thump instead of resuming cleanly. |
 | F-147 | medium | `crates/auris-dsp/src/delay.rs:165` | delay.rs damping_alpha doc claims exact -3dB cutoff, but it's 5.6% off at the plugin's 6kHz default and unreachable below Nyquist above ~12kHz. |
 | F-152 | medium | `crates/auris-dsp/src/spectrum.rs:166` | SpectrumAnalyzer::magnitudes applies the interior-bin 4/size mirror-recovery scale to the self-mirrored DC and Nyquist bins, reading them +6.02 dB hot; […] |
 | F-179 | medium | `crates/auris-dsp/src/envelope.rs:110` | EnvelopeFollower::process (envelope.rs:110) omits the crate's mandatory settled() denormal/NaN flush that every other recirculating filter state uses, though […] |
+| F-358 | medium | `crates/auris-dsp/src/eq.rs:223` | EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal. |
+| F-359 | medium | `crates/auris-dsp/src/envelope.rs:17` | EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, […] |
+| F-417 | medium | `crates/auris-dsp/src/loudness.rs:121` | block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the […] |
 | F-262 | low | `crates/auris-dsp/src/stretch.rs:129` | window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today. |
 | F-276 | low | `crates/auris-dsp/src/gain.rs:148` | GainPan reads the width parameter once per block unsmoothed, causing an audible zipper-noise step on the side channel when width is automated, unlike gain and […] |
+| F-383 | low | `crates/auris-dsp/src/lib.rs:46` | settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently. |
+| F-401 | low | `crates/auris-dsp/src/reverb.rs:332` | Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a […] |
 
 ### F-057 · high · GainPan ramps gain/pan via SmoothedValue but applies phase-invert and width raw per-block, causing an audible step/pop on toggle.
 
@@ -81,6 +88,40 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In `recompute_band` (or in `set_param` when the enable flag specifically flips from true to false, or false to true), reset that band's `Biquad` state across all channels — e.g. `for ch in &mut self.filters { ch[band].reset(); }` — whenever `OFFSET_ENABLED` changes value, so a disabled band always resumes silent/settled instead of carrying stale s1/s2 forward.
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+### F-333 · high · Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike Delay and Chorus.
+
+`crates/auris-dsp/src/distortion.rs:146` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Automating the Distortion effect's Drive, Output, or Mix parameter (e.g. a drive sweep or a wet/dry fade) produces an audible click or "zipper" artifact at every processing block boundary, because the new value is applied as an instantaneous step to the whole block instead of ramping in sample-by-sample. Static (non-automated) use is unaffected, but any automation lane on those three parameters is audibly broken.
+
+**Trigger.** Put an automation lane on Distortion's `drive_db` (or `mix`/`output_db`) and play through a passage where the lane's value changes between blocks — an ordinary, already-shipped DAW feature per the project's own roadmap. `drive_automation` (auris-engine/src/graph/automation.rs, `AutomationSlot::Effect` arm) writes the new raw value straight into the plugin's `ParamBank` every block via the same setter a moved fader uses, with no ramp.
+
+**Mechanism.** `process` reads `drive = db_to_gain(self.params.at(P_DRIVE_DB))`, `output = db_to_gain(...)`, and `mix = self.params.at(P_MIX)` once per call (lines 146-149) and then applies them to every sample in the block unramped (lines 153-158) — there is no `SmoothedValue` anywhere in this file. `auris_engine::graph::RenderGraph::apply_automation` (crates/auris-engine/src/graph/mod.rs, lines 690-696) documents exactly this consequence for plugin parameters: "Called once per rendered segment rather than once per sample... It is the honest rate for a plugin parameter, which has nowhere finer to put one" — i.e. the engine deliberately leaves interpolation to the plugin, which is why Delay (`self.time`/`self.mix` as `SmoothedValue`, delay.rs) and Chorus (`self.depth`/`self.mix`, chorus.rs) both carry ramps and Distortion does not.
+
+**Expected.** Distortion should ramp its continuous parameters per sample the way its siblings do, per the crate's own stated rule in smooth.rs: "Applying it as a step produces an audible click at the block boundary ('zipper noise'), so continuous parameters are moved towards their target one sample at a time instead."
+
+**Fix direction.** Give `Distortion` three `SmoothedValue` fields (drive, output, mix) initialized in `prepare`/`new` with a short time constant like Delay's and Chorus's, call `.set_target()` from the param values once per `process()`, and read `.next()` per sample inside the processing loop instead of the current block-constant `drive`/`output`/`mix` locals.
+
+**Written rule it breaks.** Applying it as a step produces an audible click at the block boundary ("zipper noise"), so continuous parameters are moved towards their target one sample at a time instead. (crates/auris-dsp/src/smooth.rs doc comment)
+
+### F-339 · high · Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation.
+
+`crates/auris-dsp/src/limiter.rs:115` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Opening a hand-edited or corrupted .auris project file with an absurd sample_rate and rendering/exporting it (via `auris render`, the GUI's export/bounce, or the automatic balance_levels pass in Session::compose) causes the process to abort with an allocation failure instead of producing an error message — the export silently crashes rather than reporting "invalid sample rate."
+
+**Trigger.** `auris new-project --sample-rate 1000000000000 huge.auris` — the CLI's `--sample-rate` parser (crates/auris-cli/src/main.rs:1221-1234) only checks `rate.is_finite() && *rate > 0.0`, no upper bound. Equally, `Project`'s `sample_rate: f64` field (auris-core/src/project/mod.rs:172) derives plain `Deserialize` with no validator, and `auris_io::project_file::load_project` (auris-io/src/project_file.rs:182-201) never checks it either, so a hand-edited or corrupted `.auris` file with `"sample_rate": 1e12` loads successfully. Once such a project is open, inserting a Limiter on any track (or opening a project that already has one saved) makes `RenderStrip::from_mixer` call `Limiter::prepare` with […]
+
+**Mechanism.** `self.lookahead = ((LOOKAHEAD_MS * self.sample_rate / MILLISECONDS_PER_SECOND).round() as usize).max(1);` (line 115) has no upper bound on `self.sample_rate`. The result sizes every allocation in `prepare`: `SlidingMinimum::new(window)` (line 118) computes `capacity = (window+2).next_power_of_two()` and does `vec![0.0; capacity]` for both an `f32` and a `u64` array (limiter.rs:209-212); `MovingAverage::new(window)` does `vec![0.0; window.max(1)]` (limiter.rs:263); and `DelayLine::new(capacity)` -> `resize` does `vec![0.0; len]` with `len = (max_delay_samples+2).max(4).next_power_of_two()` (delay_line.rs:53-58), once per channel. None of these, nor `PrepareContext::new` (auris-core/src/plugin.rs:178), nor `RenderGraph::build_with`'s sample-rate fallback chain (auris-engine/src/graph/mod.rs:262-266, which only filters for `is_finite() && > 0.0`), clamp the magnitude of `sample_rate`.
+
+**Expected.** The sample rate should be validated to a sane audio range (e.g. hundreds of Hz to a few hundred kHz) before it ever reaches a `PrepareContext` — in the CLI parser, in `Project`'s deserialization/repair step, or centrally in `RenderGraph::build_with`'s existing finite/positive fallback — or `Limiter::prepare` should itself clamp the derived window/capacity before allocating.
+
+**Fix direction.** Add an explicit upper bound (e.g. a few hundred kHz — well above any real audio hardware or file format) alongside the existing finite/positive check, at the point where an untrusted sample_rate first enters the system: Project's Deserialize validation or a shared PrepareContext validator, and have RenderGraph::build_with / OfflineRender::new reject or clamp out-of-range rates with a proper EngineError instead of letting them flow to Limiter::prepare unchecked.
+
+**Written rule it breaks.** Missing assets are reported, never fatal: the project opens with that one track silent. (CLAUDE.md's stated philosophy that malformed/missing project data degrades gracefully rather than crashing — a corrupted sample_rate instead aborts the whole render process.)
+
+**Verifier's correction.** The mechanism, trigger, and no-upper-bound defect are correct as described. However, the stated magnitude of the consequence is off by about three orders of magnitude: at the claim's trigger sample_rate of 1e12 Hz, `self.lookahead` becomes ((2.0 * 1e12) / 1000).round() = 2×10^9 samples, not "on the order of 2×10^12 samples." The resulting total allocation across `SlidingMinimum` + `MovingAverage` + `DelayLine` (×2 channels) is on the order of 40-50 GB, not "tens of terabytes." The defect (no clamp on `sample_rate`'s magnitude anywhere from the CLI parser through `Project` deserialization […]
 
 ### F-040 · medium · Limiter's look-ahead delay line doesn't sanitise samples like chorus/delay do, so its own NaN-proof-ceiling doc claim is false in isolation, though the engine's blanket master_scratch.sanitize() keeps it from reaching real playback or exported audio.
 
@@ -164,6 +205,54 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** Every feedback loop in the crate passes its state through this [settled]. (crates/auris-dsp/src/lib.rs doc comment on `settled`)
 
+### F-358 · medium · EQ band frequency ParamDescriptor advertises a static 20 Hz-20 kHz range that biquad::design silently re-clamps below ~40 kHz sample rates, with no UI signal.
+
+`crates/auris-dsp/src/eq.rs:223` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** At project/device sample rates below about 40 kHz (e.g. audio imported or rendered at 22.05 kHz or 32 kHz), a user who drags an EQ band's frequency slider to its documented 20 kHz maximum gets a filter silently designed at a lower corner frequency instead — the UI shows 20 kHz, the stored parameter is 20 kHz, but the audible cutoff is `sample_rate * 0.4995`, with no clamp indicator, warning, or even a difference in the displayed value.
+
+**Trigger.** Create a project at, e.g., 32000 Hz (`auris new-project --sample-rate 32000`, reachable exactly as in finding 1) and set any gain band's frequency (e.g. `hs_freq`) to 20000, which `set_param_by_key` happily accepts since it only checks against eq.rs's own [20, 20000] descriptor range.
+
+**Mechanism.** `pub const MAX_FREQUENCY: f32 = 20_000.0;` (eq.rs:223) is documented as "Highest frequency a band may be set to, in hertz" and is the ceiling `ParamBank::set` clamps a band's frequency parameter to (bank.rs:57, via `ParamDescriptor::clamp`) — so the stored parameter can genuinely hold 20000.0. But the coefficients that are actually designed come from `EqBandKind::design` -> `BiquadCoefficients::*` -> `design()` (biquad.rs:59-77), which separately clamps the frequency to `sample_rate * MAX_FREQUENCY_RATIO` (biquad.rs:24, 0.4995) with no signal that a clamp happened. At any sample rate below 20000/0.4995 ~= 40040 Hz, that ceiling is below 20 kHz, so the audible corner silently sits lower than the stored parameter says.
+
+**Expected.** Either MIN_FREQUENCY/MAX_FREQUENCY (and the parameter descriptor built from them) should be understood as conditional on sample rate, with that documented, or `Equalizer` should surface when a band's requested frequency has been silently retargeted by the sample-rate-dependent ceiling.
+
+**Fix direction.** Make `Equalizer::new()` build each band's frequency `ParamDescriptor` with a sample-rate-aware max (`(sample_rate * MAX_FREQUENCY_RATIO).min(MAX_FREQUENCY)`) instead of the static `MAX_FREQUENCY` constant, so the slider's own range reflects what `biquad::design` can actually reach, or have the EQ's response/UI display the effective clamped frequency when the two disagree.
+
+**Written rule it breaks.** /// Highest frequency a band may be set to, in hertz. (eq.rs MAX_FREQUENCY doc comment, contradicted by biquad.rs's own MAX_FREQUENCY_RATIO comment: "keeps the full 20 kHz audio band reachable at 44.1 kHz" — implying it is not reachable below that)
+
+### F-359 · medium · EnvelopeFollower's doc claims a universal 63%-after-`time` settling, but in Rms mode the exposed envelope (sqrt of the smoothed power) actually reaches ~79.5%, since the pole smooths input² not |input|.
+
+`crates/auris-dsp/src/envelope.rs:17` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A developer or plugin author reading EnvelopeFollower's doc comment to predict attack/release behavior for RMS mode (e.g. tuning a compressor or meter) will believe the envelope reaches ~63% of a step after `time` seconds, when it actually reaches ~79.5%; any calibration or timing derived from the stated 63% figure will be measurably wrong for Rms mode, though Peak mode matches the doc exactly.
+
+**Trigger.** Construct `EnvelopeFollower::new(fs, attack_seconds, release_seconds, EnvelopeMode::Rms)`, feed it a constant-amplitude input for exactly `attack_seconds` worth of samples, and read `value()`.
+
+**Mechanism.** The struct doc (lines 14-17) states unconditionally: "Both coefficients are `exp(-1 / (time * fs))`, so `time` is the classic 1/e time constant: the envelope covers about 63 % of a step in that many seconds." But `recompute` (lines 50-53) computes the same `one_pole_coefficient` regardless of `self.mode`, and in `EnvelopeMode::Rms` the one-pole state tracks the *squared* input (`rectified = input * input`, line 103) while `value()` (lines 115-119) returns `state.sqrt()`. For a constant-amplitude step of size A starting from silence, after `time` seconds (n = time*fs samples, coefficient^n = 1/e) the power state reaches (1 - 1/e)*A^2 ≈ 0.632*A^2, so the exposed envelope is sqrt(0.632)*A ≈ 0.795*A — about 79.5% of the step, not 63%.
+
+**Expected.** Either the doc should state the mode-specific settling fraction (~79.5% for Rms), or Rms's coefficient should be derived so the *exposed* value (post-sqrt) reaches 63% at the stated time, matching Peak mode's behaviour.
+
+**Fix direction.** Scope the doc comment to note that the 63%-after-`time` claim holds only for `EnvelopeMode::Peak`; add a sentence stating the RMS-mode figure (~1 - sqrt(1/e) ≈ 79.5% of the step) since the pole tracks power and the exposed value is its square root. No code change is needed — `process`/`value` already implement RMS correctly per the inline comment at line ~99-101; only the struct-level doc at lines 14-17 is wrong.
+
+**Written rule it breaks.** Every public item carries a doc comment (#![warn(missing_docs)] is on in each crate).
+
+### F-417 · medium · block_powers's independently-rounded hop/block frame counts let per_block drift from 4 at non-standard sample rates, giving integrated_lufs (and the auto-balance command it drives) a silently wrong ~1+ dB reading.
+
+`crates/auris-dsp/src/loudness.rs:121` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** At sample rates that aren't one of the six standard rates (44.1/48/88.2/96/176.4/192 kHz) — reachable today via `auris-cli`'s free-form `--sample-rate` flag, or any headless/scripted project creation with an arbitrary rate — `block_powers` computes an integer hop count (`per_block`) that can drift from the intended 4 (e.g. rate=44055.0 gives per_block=3), while the denominator on line 146 still divides by the true `block_frames`. The result is a `integrated_lufs`/`loudness_quantile` reading that is silently off by roughly 1+ dB. Because `integrated_lufs` backs both the read-only `Session::analyze` report (shown to a user or to an LLM driving the MCP frontend) and `Session::balance` (the command that automatically moves track/master faders to hit `TARGET_LUFS`), a project opened or rendered at such a rate gets a wrong loudness number and, if balanced, wrong fader gains — with nothing in the output flagging that anything is off.
+
+**Trigger.** A project sample rate that lands in one of these narrow bad bands, e.g. `auris new-project --sample-rate 44055` (a plausible fat-fingered value near the standard 44100), or any device/import that reports a near-but-not-exactly-standard rate.
+
+**Mechanism.** `hop_frames = (rate * HOP_SECONDS).round()` and `block_frames = (rate * BLOCK_SECONDS).round()` (loudness.rs:119-120) are rounded independently, then `per_block = (block_frames / hop_frames.max(1)).max(1)` (line 121) is meant to always come out to 4 (0.4s / 0.1s). Because the two roundings are independent, it does not for many realistic-looking integer sample rates. A numeric sweep (checked in this review, not reproduced in the repo) confirms `per_block` lands at 3, 5 or 6 within roughly 45-50 Hz of every one of 44100/48000/88200/96000/176400/192000 Hz on the low side, and at many other integer rates generally, e.g. `sample_rate = 44055.0`: `hop_frames = round(4405.5) = 4406`, `block_frames = round(17622.0) = 17622` (exact, no rounding), so `per_block = 17622 / 4406 = 3` instead of 4.
+
+**Expected.** `block_frames` should be derived from `hop_frames` (e.g. `hop_frames * 4`) rather than independently rounding `rate * BLOCK_SECONDS`, so a measurement block always corresponds to exactly `per_block` whole hops by construction.
+
+**Fix direction.** Derive `per_block` from the same rounding path as `hop_frames`/`block_frames` instead of an independent quotient — e.g. compute `per_block` as the fixed constant 4 (BLOCK_SECONDS/HOP_SECONDS) and derive `block_frames` as `hop_frames * per_block` (or round `block_frames` up to the nearest multiple of `hop_frames`) so the numerator and denominator on line 146 are always consistent for any rate, then add a test that sweeps a non-standard rate (e.g. 44055 Hz) to catch regressions.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
 ### F-262 · low · window_frames()'s doc claims the returned length is "always even" but the function never enforces it; only its sole caller's `& !1` mask makes that true today.
 
 `crates/auris-dsp/src/stretch.rs:129` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
@@ -195,3 +284,37 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Add a fourth `SmoothedValue` for width (or reuse the existing smoothing machinery), call `self.width.set_target(self.params.at(P_WIDTH))` alongside the other `set_target` calls, and read `self.width.next_value()` inside the per-sample loop instead of the loop-invariant `width` local.
 
 **Written rule it breaks.** // Ramp time for gain and pan moves. Long enough to remove the step discontinuity that causes zipper noise, short enough that a fader still feels immediate. (SMOOTHING_SECONDS doc comment, gain.rs:17-19); module doc comment (gain.rs:1) names "level, stereo position and stereo width" as peer controls of the same plugin.
+
+### F-383 · low · settled()'s denormal-flush threshold (DENORMAL_FLOOR) has no direct unit test, so a future regression that weakens it would pass CI silently.
+
+`crates/auris-dsp/src/lib.rs:46` · test-quality · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** No user-visible behavior changes today — `settled()` currently works correctly and every call site is exercised by existing NaN/Infinity recovery tests. The gap only matters as a latent regression risk: a future change that weakens or removes the denormal-flush threshold (e.g. loosening `DENORMAL_FLOOR` or dropping a `crate::settled(...)` call) would pass `cargo test --workspace` silently, and only show up later as CPU spikes/audio dropouts from denormal-range arithmetic in a long reverb or delay tail.
+
+**Trigger.** Weaken or remove the denormal half of the guarantee without touching the NaN/Infinity half — e.g. change `DENORMAL_FLOOR` from `1.0e-30` to something below the true subnormal boundary (~1.18e-38), or drop one of the five `crate::settled(...)` call sites (biquad.rs:326-327, chorus.rs:184, compressor.rs:239, delay.rs:272-299, reverb.rs:81-82) while leaving an equivalent `is_finite()` check in its place.
+
+**Mechanism.** `settled` (line 45-49) is `if value.is_finite() && value.abs() >= DENORMAL_FLOOR { value } else { 0.0 }`. It has two independent jobs bundled into one branch: NaN/Infinity recovery, and denormal flushing at `DENORMAL_FLOOR = 1.0e-30` (line 32). Grepping every test in the crate (biquad.rs, delay.rs, reverb.rs, compressor.rs, and the top-level lib.rs, which has no `#[cfg(test)]` module at all) turns up tests named around `a_non_finite_sample_does_not_...`/`an_infinite_sample_closes_...` that poison state with `f32::NAN`/`f32::INFINITY` and assert recovery, and audio-domain tests (frequency response, tail length, decay rate) that all run at ordinary signal levels. None of them ever drives a recirculating state down toward `DENORMAL_FLOOR` and asserts it lands on exact `0.0`, and none calls `settled()` itself (it is `pub(crate)`, so only an in-crate `#[cfg(test)]` block could).
+
+**Expected.** Per this project's own convention ("DSP code lives behind unit tests that assert on numbers ... rather than on 'it runs'"), the denormal-flush threshold itself should be asserted on numerically — e.g. a `#[cfg(test)]` case in lib.rs checking `settled(1.0e-32) == 0.0` and `settled(1.0e-25) == 1.0e-25`, or an integration test that runs a decaying filter (reverb/delay) long enough to assert its *internal* state field reaches literal `0.0`, not just that the audible output is quiet.
+
+**Fix direction.** Add a small `#[cfg(test)] mod tests` block to crates/auris-dsp/src/lib.rs that asserts on `settled()` directly and numerically: `settled(1.0e-32) == 0.0` (below floor), `settled(DENORMAL_FLOOR) == DENORMAL_FLOOR` or just above it stays unchanged, and `settled(1.0e-25) == 1.0e-25` (well above floor, unaffected), alongside the existing NaN/Infinity cases for completeness.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+### F-401 · low · Reverb::process sums all channels into one accumulator before a fixed gain, so wet level scales with channel count, but every production caller renders at a hardcoded stereo (2-channel) width, so it's currently latent.
+
+`crates/auris-dsp/src/reverb.rs:332` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** No current user or shipped path is affected: auris-engine and auris-session always prepare and process every effect, including Reverb, at a hardcoded RENDER_CHANNELS = 2. The defect only shows up if Reverb is ever driven at a channel count other than 2 (e.g. a future mono/surround render path, or a unit test asserting on loudness instead of just is_finite()), where the wet tail would be ~6 dB quieter in mono or ~9.5 dB louder at 6 channels versus the stereo-tuned level.
+
+**Trigger.** Call `Reverb::prepare`/`process` with `channel_count` 1 or 6 (both paths already exercised for finiteness by `pack.rs`'s `every_effect_survives_mono_and_surround_buffers` and `..._tolerates_a_channel_count_prepare_did_not_expect`) using the same per-channel signal level as a 2-channel buffer.
+
+**Mechanism.** In `process` (lines 327-335), `input` is accumulated by summing every channel's pre-delayed sample (`input += line.read(pre_delay_samples)`) before a single `FIXED_GAIN` (0.015) scales it, and the same summed value feeds every channel's comb network equally (line 338). `FIXED_GAIN`'s doc only says the comb bank's large DC gain needs "the dry signal ... scaled well down", with no channel-count normalization anywhere in the file.
+
+**Expected.** The summed `input` should be normalized (e.g. divided by `channel_count`) so the reverb's wet loudness stays independent of how many channels are handed to `process`, matching the project convention that "DSP code lives behind unit tests that assert on numbers."
+
+**Fix direction.** In Reverb::process, divide the summed `input` accumulator by `channel_count` (or otherwise average rather than sum) before applying FIXED_GAIN, so wet loudness is independent of channel count; add a loudness-parity unit test across 1/2/6-channel buffers per the project's "DSP code lives behind unit tests that assert on numbers" convention, since the existing pack.rs multi-channel tests only check is_finite().
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+**Verifier's correction.** Reverb's wet level (in `crates/auris-dsp/src/reverb.rs`, `Reverb::process`) scales with the channel count it is prepared/processed with: the per-frame loop sums every channel's pre-delayed sample into one `input` accumulator and scales the sum once by the fixed constant `FIXED_GAIN = 0.015` with no division by `channel_count`, so the wet tail is ~6 dB quieter at the same per-channel level on a 1-channel buffer and ~9.5 dB louder on a 6-channel buffer versus 2 channels — confirmed by direct measurement (mono -6.02 dB, six-channel +9.54 dB relative to stereo). This is a real defect in the […]

@@ -1,12 +1,13 @@
 # Review findings: auris-io
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 4 verified findings: 1 critical, 2 medium, 1 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 5 verified findings: 2 critical, 2 medium, 1 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
 | ID | Severity | Location | Finding |
 |---|---|---|---|
 | F-022 | critical | `crates/auris-io/src/soundfont.rs:104` | check_chunk's LIST-descent doesn't clamp to the enclosing LIST's end, and its generic leaf handler mis-tracks ifil/iver's true byte length, letting a crafted […] |
+| F-313 | critical | `crates/auris-io/src/soundfont.rs:62` | load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the […] |
 | F-105 | medium | `crates/auris-io/src/midi.rs:467` | MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's […] |
 | F-229 | medium | `crates/auris-io/src/midi.rs:272` | A TrackName meta event placed after a channel's last MIDI event is silently dropped, so the imported part falls back to "Channel N" instead of its real name. |
 | F-302 | low | `crates/auris-io/src/project_file.rs:106` | folder_is_named's ASCII-only case fold misses non-ASCII cased letters, so renaming a project folder by accented-letter case alone nests a duplicate copy […] |
@@ -26,6 +27,22 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** In `check_chunk`'s LIST-descent branch (crates/auris-io/src/soundfont.rs:114-123), clamp each child's returned cursor to `end` (or reject with an error if a child's checked position exceeds `end`) instead of returning whatever the last child call produced; that alone still leaves the `ifil`/`iver` mismatch, so also special-case those two IDs to know their real consumed length (8 bytes: two u16s) rather than trusting the declared `size` field, mirroring `SoundFontVersion::new`'s actual read.
 
 **Written rule it breaks.** What must not reach it is a *plausible* file whose sizes lie. / stricter, and it would refuse fonts the parser plays; looser, and a lying size gets through.
+
+### F-313 · critical · load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the whole app on project open.
+
+`crates/auris-io/src/soundfont.rs:62` · security · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Opening a project that references a corrupted or malicious .sf2 file (or importing one directly) crashes the entire Auris Studio application with no error dialog — the user loses their whole session, not just the one track using that soundfont.
+
+**Trigger.** Open a project (or import/relocate a SoundFont) whose referenced .sf2 has a well-formed RIFF/chunk-size structure (so check_chunks passes) but a pdta bag/instrument table with an out-of-range zone or generator index — e.g. a corrupted download, a hand-edited font, or one truncated mid-pdta.
+
+**Mechanism.** check_chunks (soundfont.rs:77-126) validates exactly two things — a chunk's declared size against remaining file bytes, and smpl parity — then `SoundFont::new(&mut Cursor::new(bytes))` (line 62) is called with no `std::panic::catch_unwind` around it. A workspace-wide grep for `catch_unwind` finds exactly one call site (crates/auris-sampler/src/sampler.rs:803, wrapping `synth.render`, unrelated to loading), so nothing between the vendored parser and the top-level caller catches a panic raised while parsing. The vendored parser has several unchecked-index panics that check_chunks does nothing to prevent: `vendor/rustysynth/src/instrument.rs:33` (`&zones[span_start..span_end]` on an out-of-range `zone_start_index`, already reported for this unit) and `vendor/rustysynth/src/zone.rs:25` (`generators[(info.generator_index + i) as usize]` on an out-of-range bag generator_index, reported by the sibling `vendor-fork` unit) are both reachable on a file that already passes check_chunks' two checks.
+
+**Expected.** Per soundfont.rs's own stated purpose ('The whole file is read first and its chunk tree walked before the parser is allowed to believe it') and assets.rs's documented design ('nothing here is fatal — a font that cannot be found costs one track its sound and the project still opens'), a structurally invalid SoundFont should surface as a `SessionError`, not take down the process.
+
+**Fix direction.** Wrap the `SoundFont::new(&mut Cursor::new(bytes))` call in `crates/auris-io/src/soundfont.rs:62` with `std::panic::catch_unwind` and turn a caught panic into `IoError::Decode`, the same way the crate already turns rustysynth's `Result::Err` into that error; alternatively extend `check_chunks` to bound-check the pdta zone/generator index tables before `SoundFont::new` is ever called.
+
+**Written rule it breaks.** The whole file is read first and its chunk tree walked before the parser is allowed to believe it — see `check_chunks` below for what the parser would otherwise do with a size field that lies.
 
 ### F-105 · medium · MIDI export silently masks (not errors on) tick deltas over 2^28-1, corrupting event positions past ~38.8 hours with no warning, contradicting auris-io's no-silent-truncation policy.
 

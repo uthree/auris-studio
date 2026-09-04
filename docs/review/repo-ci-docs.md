@@ -1,6 +1,6 @@
 # Review findings: Manifests, CI, tooling and top-level docs
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 7 verified findings: 3 medium, 4 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 8 verified findings: 3 medium, 5 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -13,6 +13,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-272 | low | `Cargo.toml:38` | anyhow and arc-swap are declared in [workspace.dependencies] (Cargo.toml:37-38) but unused by any crate since the first commit. |
 | F-275 | low | `tools/fetch-soundfonts.sh:60` | curl calls in tools/fetch-soundfonts.sh and tools/fetch-dictionary.sh lack --max-time/--connect-timeout, so a stalled peer can hang the release CI job for up […] |
 | F-290 | low | `tools/fetch-soundfonts.sh:47` | tools/fetch-soundfonts.sh:47 writes the license notice straight to its final path with no temp-file staging, unlike the font download three lines later. |
+| F-426 | low | `tools/eval/aesthetics.py:113` | A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores […] |
 
 ### F-146 · medium · docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
 
@@ -119,3 +120,17 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Download the license notice to a `.part` temp path with `curl --output "$destination/${file%.*}_License.md.part" "$license_url"`, then `mv -f` it into place only after the curl exits 0 (no hash is available for license text, so success-based atomic rename is enough — no need to replicate the font's SHA check).
 
 **Written rule it breaks.** A half-finished download left where the application looks would be found, loaded and refused by the parser, and the error would name a corrupt file rather than an interrupted one. (comment at tools/fetch-soundfonts.sh:56-58, describing the discipline applied to the font but not the license file)
+
+### F-426 · low · A typo'd .wav path bypasses collect_wavs's existence check, crashing aesthetics.py with a raw soundfile traceback and losing the run's persisted --json scores instead of a clean error.
+
+`tools/eval/aesthetics.py:113` · correctness · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** Running `uv run tools/eval/aesthetics.py --preset all` (or any invocation) with a typo'd or missing .wav path crashes with a raw `soundfile.LibsndfileError` traceback instead of the tool's own clean `not a wav or a folder of them` message. Because the `--json` file is only written after `score()` returns in full, scores for every already-scored WAV in that run (and, on a `--preset all` run, any rendered presets) are lost from the persisted output and the run must be repeated — though per-file scores already printed to stdout as they were computed are not lost.
+
+**Trigger.** Run `aesthetics.py real1.wav real2.wav typo.wav` (or a `--preset all` run whose renders feed into the same list) where `typo.wav` does not exist. `score()` (called from `main()` at line 189) reaches `soundfile.read(wav, ...)` for `typo.wav` and raises an unhandled exception with a raw soundfile traceback instead of the module's own clean-error convention.
+
+**Mechanism.** `collect_wavs` only branches on `path.is_dir()` (line 111) and `path.suffix.lower() == ".wav"` (line 113) before appending the path (line 114); it never calls `.exists()`/`.is_file()`. The `else: sys.exit(...)` clean-error branch (lines 115-116) therefore never fires for a nonexistent path that merely ends in `.wav`.
+
+**Expected.** collect_wavs should treat a `.wav`-suffixed path that does not exist the same as any other bad input and route it through the existing `sys.exit(f"not a wav or a folder of them: {path}")` clean-error path.
+
+**Fix direction.** In `collect_wavs` (tools/eval/aesthetics.py:107-117), add an existence check alongside the suffix check — e.g. `elif path.suffix.lower() == ".wav" and path.is_file():` — so a nonexistent `.wav`-suffixed path falls through to the existing `sys.exit(f"not a wav or a folder of them: {path}")` clean-error branch instead of reaching `soundfile.read` unchecked.

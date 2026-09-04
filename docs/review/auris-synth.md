@@ -1,6 +1,6 @@
 # Review findings: auris-synth
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 3 verified findings: 1 high, 2 medium.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 4 verified findings: 1 high, 3 medium.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -9,6 +9,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-103 | high | `crates/auris-synth/src/chiptune.rs:278` | Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs […] |
 | F-098 | medium | `crates/auris-synth/src/fm2.rs:279` | Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, […] |
 | F-239 | medium | `crates/auris-synth/src/chiptune.rs:486` | A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment […] |
+| F-407 | medium | `crates/auris-synth/src/noisedrum.rs:268` | NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — […] |
 
 ### F-103 · high · Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs jump-start from an unsounded pitch.
 
@@ -61,3 +62,21 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
 **Verifier's correction.** Non-finite/positive-only sample-rate guard admits a huge-but-finite value that overflows to +Infinity on the narrowing f64→f32 cast, freezing the oscillator (crates/auris-synth/src/chiptune.rs:486, and identically in fm2.rs, noisedrum.rs, vocal.rs, and oscillator.rs's own `set_sample_rate`). Literal `f64::INFINITY`/NaN cannot reach this code through any real entry point — every real boundary (CLI `--sample-rate` flag, `Project::new`, `RenderGraph::build_with`, `OfflineRender::new`) filters with `is_finite() && > 0.0`. But none of those guards checks that the value fits in `f32`'s range, so a […]
+
+### F-407 · medium · NoiseDrum's AllSoundOff calls sweep.silence() instead of sweep.kill(), snapping the filter sweep by several octaves in one sample instead of de-clicking it — though the path is currently unreachable in the shipped app.
+
+`crates/auris-synth/src/noisedrum.rs:268` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** No user-facing effect today: NoteEvent::AllSoundOff is never constructed by any production code path (the live Escape-key panic goes through Instrument::reset(), which NoiseDrum implements correctly, resetting amplitude, sweep, and filter together). But if any future caller ever sends AllSoundOff to NoiseDrum mid-sweep (a MIDI CC120 handler, a host all-sound-off, a toolbox command), a listener would hear the filtered noise hit's timbre snap by several octaves in a single sample while the hit is still clearly audible under the 2ms amplitude kill ramp, instead of gliding smoothly to silence.
+
+**Trigger.** A NoteOn on NoiseDrum with a non-zero `sweep` parameter, followed shortly after by `NoteEvent::AllSoundOff` while the hit's sweep envelope is still mid-decay (e.g. inside the first `SWEEP_DECAY_FRACTION * decay` seconds) and its amplitude envelope is still well above the noise floor — a MIDI panic / all-sound-off arriving soon after a swept kick or tom fires.
+
+**Mechanism.** In the `AllSoundOff` arm of `handle_event` (noisedrum.rs:264-271): `voice.amplitude.kill();` then `voice.sweep.silence();`. `kill()` is the crate's documented de-click ramp (used identically in chiptune.rs's own AllSoundOff arm, commented there as 'The de-click ramp, not a hard cut: an instant stop on a sounding voice is a step edge, and that is audible as a click'), while `silence()` is the hard, instantaneous cut used elsewhere only for a full `reset()`. `render_segment` computes `centre = base * (sweep_octaves * sweep).exp2()` every sample and feeds it straight into the still-ringing `StateVariableFilter` (`voice.filter.process(noise, centre * inv_sample_rate)`), whose `low`/`band` state is *not* reset. Forcing `sweep` to 0 in one sample while `sweep_octaves` can be up to 4 moves `centre` by however many octaves the sweep still had left, discontinuously, while `amplitude` (and therefore the audible level) is still substantial during its own 2 ms `kill()` ramp.
+
+**Expected.** Per the crate's own convention (used for the primary `amplitude` envelope right above it, and for `voice.envelope.kill()` in chiptune.rs/fm2.rs's AllSoundOff arms), a voice being silenced while still audible should get the de-click ramp on every envelope that feeds an audible parameter — `voice.sweep.kill()` rather than `voice.sweep.silence()` — so the filter's centre glides to its rest frequency over the same window the amplitude fades, instead of snapping instantly.
+
+**Fix direction.** In noisedrum.rs's AllSoundOff arm (line 268), replace `voice.sweep.silence()` with `voice.sweep.kill()` so the sweep envelope de-clicks over the same window as amplitude, matching chiptune.rs and fm2.rs's AllSoundOff handling of their own modulation envelopes.
+
+**Written rule it breaks.** adsr.rs's doc comment for kill(): "the fixed de-click ramp to silence, used when an all-sound-off arrives" — versus silence()'s doc: "Drops to silence immediately, without any ramp."
+
+**Verifier's correction.** NoiseDrum's `AllSoundOff` handler (noisedrum.rs:264-271) is internally inconsistent with the crate's own de-click convention: it calls `voice.amplitude.kill()` (a ramped 2ms de-click, matching chiptune.rs/fm2.rs's equivalent handlers and adsr.rs's own doc comment for `kill()`) but `voice.sweep.silence()` (an instantaneous jump), and `render_segment` feeds the sweep straight into the still-ringing state-variable filter's centre-frequency computation without resetting filter state — so if this handler ever ran while a sweep envelope was mid-decay, the filter centre would snap by several octaves […]

@@ -1,6 +1,6 @@
 # Review findings: auris-engine
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 15 verified findings: 7 high, 3 medium, 5 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 19 verified findings: 8 high, 4 medium, 7 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -13,14 +13,18 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-099 | high | `crates/auris-engine/src/graph/strip.rs:70` | SmoothedGain::advance() ignores segment length, so loop/count-in edges collapse fader, pan and send ramps into an audible hard step instead of a smooth glide. |
 | F-104 | high | `crates/auris-engine/src/device.rs:423` | device.rs:423 leaves block_frames unclamped when SupportedBufferSize::Unknown, letting an oversized/corrupted value drive a huge eager allocation in […] |
 | F-121 | high | `crates/auris-engine/src/device.rs:703` | Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at […] |
+| F-351 | high | `crates/auris-engine/src/device.rs:190` | discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect. |
 | F-197 | medium | `crates/auris-engine/src/renderer.rs:457` | chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume. |
 | F-227 | medium | `crates/auris-engine/src/renderer.rs:374` | renderer.rs:374 casts a note's in-block offset to u32 with no upper clamp on block_frames, so an oversized block (>= 2^32 frames) would silently misplace […] |
 | F-255 | medium | `crates/auris-engine/src/graph/mod.rs:535` | An unclamped, plugin-reported latency value sizes a real delay-line allocation in RenderGraph::build, letting a misbehaving plugin crash graph construction. |
+| F-374 | medium | `crates/auris-engine/src/device.rs:99` | device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) […] |
 | F-228 | low | `crates/auris-engine/src/capture.rs:591` | note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback […] |
 | F-261 | low | `crates/auris-engine/src/device.rs:566` | AudioEngine::new's doc comment says "Nine arguments" but the constructor actually takes ten parameters. |
 | F-288 | low | `crates/auris-engine/src/meter.rs:67` | meter.rs's clip latch tests the raw peak while report() sanitizes its own copy, so a non-finite block flags a clip but the meter shows silence. |
 | F-297 | low | `crates/auris-engine/src/monitor.rs:138` | MonitorRing::set_enabled's live-edge reset (monitor.rs:138) can be silently overwritten by a concurrent in-flight read_into's unconditional final store […] |
 | F-310 | low | `crates/auris-engine/src/device.rs:685` | poll_commands' unconditional while-gate on the retired-graph stash also stalls non-retiring commands (Play/Stop/Seek) once the stash is full, not just […] |
+| F-354 | low | `crates/auris-engine/src/device.rs:4` | device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics. |
+| F-434 | low | `crates/auris-engine/src/testkit.rs:458` | Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next […] |
 
 ### F-077 · high · Automation writes to a hosted CLAP effect's parameter can change its reported latency without ever marking `latency_stale`, unlike the discrete SetEffectParam command path.
 
@@ -136,6 +140,22 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Verifier's correction.** The mechanism, line numbers, struct field order, and consequence are all correct as stated. Minor correction to the trigger: in this codebase "closing a project" (`Session::open`/`Session::new_project`) mutates the existing `Session` in place and does not drop `engine`/`device`, so it does not by itself exercise this path; the realistic trigger is dropping the whole `Session` (application quit, or any future code path that replaces `self.session` wholesale), during which the field-declaration-order drop (`engine` before `device`, with no pause/shutdown step anywhere in the tree) makes the […]
 
+### F-351 · high · discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect.
+
+`crates/auris-engine/src/device.rs:190` · concurrency · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** On macOS (and potentially other backends), when the current audio output device disconnects (USB/Bluetooth interface unplugged, laptop lid switches routes) while a command is in flight, the disconnect-report thread clears `running` before the CoreAudio render callback thread has actually stopped calling `poll_commands`. The engine's per-frame `discard_pending()` then sees `is_running() == false` and starts draining the same crossbeam channel the still-live callback is reading from, so a queued command (a graph swap, a parameter push, Play/Pause) can be silently thrown away instead of reaching the engine — the user's action appears to do nothing, with no error shown, until they retry it.
+
+**Trigger.** On macOS, disconnect or otherwise lose the current audio output device (unplug a USB/Bluetooth interface, close a laptop lid that switches routes, etc.) while the session has just queued a command for the engine (e.g. an edit produced `EngineCommand::SetGraph`) and `Session::poll()` — called once per rendered frame per its own doc comment at crates/auris-session/src/session/mod.rs:677 — runs on the very next frame.
+
+**Mechanism.** `discard_pending` (line 190) gates on `is_running()` (line 138: `self.stream.is_some() && self.running.load(Ordering::Relaxed)`) and, once it reads false, drains `idle_commands.try_iter()` — a second `Receiver` clone of the very command channel `AudioEngine::poll_commands` reads from on the callback thread (both clones of `command_rx`, see the `new_engine` closure and `idle_commands: Some(command_rx)` around lines 253/311). `running` is cleared by `on_error` (line 493, inside `build_stream`, lines 474-495) for any cpal error kind `stream_survives` (lines 459-472) does not name. The doc comment directly above `stream_survives` already states the danger in general terms: clearing `running` while the callback is still consuming 'would... start draining commands out from under it: two consumers on one queue, every later command landing on either at random' — but the mitigation only filters by error *kind* (`DeviceChanged`/`RealtimeDenied`), not by whether the report actually came from the callback thread. On macOS, vendored cpal 0.18.1's CoreAudio backend […]
+
+**Expected.** `discard_pending` should only become the sole consumer once the callback thread is actually guaranteed to have stopped touching the channel — which is exactly the invariant the comment above `stream_survives` says the design depends on — rather than as soon as an error of a fatal *kind* is reported, since on this backend that report is delivered asynchronously by a thread that is not the callback thread and does not wait for it to stop.
+
+**Fix direction.** Make the two consumers actually mutually exclusive instead of gating on the `running` flag alone: before `discard_pending` (or the code path that reacts to `is_running()==false`) touches `idle_commands`, have it take and drop `self.stream` (`self.stream.take()`) — dropping a `cpal::Stream` blocks until its callback is guaranteed not to run again — so draining only begins once the render thread has truly stopped, matching the invariant the `stream_survives` doc comment already claims holds.
+
+**Written rule it breaks.** "Treating those as fatal would clear `running` while the audio thread is still consuming the command queue, and `AudioDevice::discard_pending` would then start draining commands out from under it: two consumers on one queue, every later command landing on either at random." (doc comment above `stream_survives`, crates/auris-engine/src/device.rs)
+
 ### F-197 · medium · chase_notes re-triggers all overlapping same-pitch voices at the last note's velocity, losing each note's own dynamics on seek/loop/resume.
 
 `crates/auris-engine/src/renderer.rs:457` · correctness · confirmed (executed reproduction; reported independently 1×)
@@ -183,6 +203,22 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Clamp the value that reaches `LatencyDelay::new` (in `plan_latency` or at the `graph/mod.rs:535/537/540` call sites) to a sane maximum frame count — analogous to the existing `saturating_add`/`saturating_sub` treatment of `tail_frames()` — so a nonsense plugin-reported latency caps the delay-line size instead of sizing an unbounded allocation; add a regression test mirroring `a_nonsense_tail_saturates_instead_of_overflowing` for the latency path.
 
 **Written rule it breaks.** graph/strip.rs's tail_frames() doc: "Saturating rather than wrapping, because the figures come from plugins: one that reports a nonsense tail should pad an export, not overflow the length it is added to" — the same untrusted-plugin-value discipline is not applied to the latency path that actually sizes a real allocation.
+
+### F-374 · medium · device.rs's sample_rates loop keeps only a config range's min/max endpoints, so continuous-range devices lose all interior standard rates (44.1/48/88.2/96 kHz) from the Settings picker.
+
+`crates/auris-engine/src/device.rs:99` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** On a device that advertises a continuous sample-rate range (common for aggregate/virtual audio devices, e.g. min=8000, max=192000 as one config entry), the Settings window's sample-rate picker (auris-gpui/src/settings_window.rs, which clones AudioDeviceInfo::sample_rates verbatim into one button per rate) shows only the two endpoint values and omits every standard rate in between (44100, 48000, 88200, 96000). The user cannot select 48 kHz from the list for that device even though the stream would open fine at that rate — they're stuck choosing 8 kHz or 192 kHz, a working project rate becomes unreachable through the UI.
+
+**Trigger.** A device whose `supported_output_configs()`/`supported_input_configs()` reports one config entry spanning a genuine continuous range rather than one entry per discrete rate. This is not hypothetical: cpal's own CoreAudio backend source (cpal-0.18.1, src/host/coreaudio/macos/device.rs) says in its own comment 'Most hardware reports discrete rates (mMinimum == mMaximum); some aggregate or virtual devices report continuous ranges' -- e.g. an aggregate output on macOS reporting min=8000, max=192000 as one range.
+
+**Mechanism.** The loop `for rate in [config.min_sample_rate(), config.max_sample_rate()] { if !sample_rates.contains(&rate) { sample_rates.push(rate); } }` (device.rs:96-105, and the identical pattern in capture.rs:116-125 for input_devices) only ever inserts the two endpoints of each `SupportedStreamConfigRange` cpal hands back, never anything strictly between them.
+
+**Expected.** Either the full set of rates a UI should offer within each range should be produced (e.g. intersecting with the standard rate list, or exposing the range itself), or the doc comment on `sample_rates` should say these are just each range's endpoints rather than implying the full advertised set.
+
+**Fix direction.** Either intersect each config's [min, max] range with a fixed table of standard rates (44100, 48000, 88200, 96000, 176400, 192000, etc.) and push the ones that fall inside it, or change the doc comment on AudioDeviceInfo::sample_rates to state plainly that only each range's endpoints are recorded (not the interior standard rates) so the settings UI is not built on a false assumption. Apply the same fix to the identical loop in capture.rs (input_devices).
+
+**Written rule it breaks.** Sample rates the device advertises, ascending and deduplicated.
 
 ### F-228 · low · note_peak's load-then-store on shared.peak races with take_peak/begin_take's reset, so a UI peak-meter reset can be silently undone by the audio callback thread.
 
@@ -255,3 +291,35 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Expected.** Only a command that can itself produce a `Retired` value need be deferred by stash pressure; `Play`/`Stop`/`Seek`/note and parameter commands should still be applied every callback regardless of how full `self.retired` is.
 
 **Fix direction.** Give poll_commands visibility into whether the next queued command actually retires a graph, so non-retiring commands (Play/Stop/Seek/parameter changes) are always applied even when the retired stash is full — e.g. peek/classify before dispatch, or split retiring commands onto a separate bounded channel from the rest so the two can be gated independently. Keep the existing len()<RETIRED_GRAPH_SLOTS guard only around the retiring path, since it exists to cap unbounded allocation growth in `retired` on the audio thread.
+
+### F-354 · low · device.rs's module doc claims only two queues cross to the UI thread, but the callback also publishes playhead/count-in/playing/meters via shared atomics.
+
+`crates/auris-engine/src/device.rs:4` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** No end user or DAW behavior is affected — this is purely a doc-comment accuracy issue. A developer reading device.rs's module doc to understand the callback/UI boundary would be misled into thinking the atomics (playhead, count_in, playing, meters, latency_stale) don't exist as a communication path, which could lead them to add a new lock-free field there without recognizing the established pattern, or to miss it when auditing what crosses the realtime boundary.
+
+**Trigger.** Read the module doc's claim together with what `fill` actually publishes each block.
+
+**Mechanism.** The module doc (lines 1-6) states: 'It talks to the UI through two bounded queues and nothing else: commands come down one, retired graphs go back up the other.' But `AudioEngine::fill` (lines 641-661) also does `self.playhead.store(...)`, `self.count_in.store(...)`, `self.playing.store(...)`, and `self.publish_meters(...)` (which writes into `MeterBank`'s per-track and master atomics) every single callback -- none of these is a queue, and `EngineHandle` hands the underlying `Arc`s straight to the UI thread.
+
+**Expected.** Describe the two queues as what carries ownership of heap data (graphs, one-shot buffers) between the threads, and separately name the atomics used for live status telemetry -- or drop 'and nothing else.'
+
+**Fix direction.** Amend the module doc at device.rs:1-6 to acknowledge the third channel: e.g. "It talks to the UI through two bounded queues and a handful of shared atomics: commands come down one queue, retired graphs go back up the other so plugin instances and sample buffers are freed on the UI thread, while playhead position, count-in, play state and meter levels are published through lock-free Arc<Atomic*> fields on EngineHandle." No code change is needed since the atomics already satisfy the realtime-safety rules (no allocation/lock/blocking) the doc is trying to convey.
+
+**Written rule it breaks.** "It talks to the UI through two bounded queues and nothing else: commands come down one, retired graphs go back up the other so that plugin instances and sample buffers are freed on the UI thread." (crates/auris-engine/src/device.rs:3-5)
+
+### F-434 · low · Lookahead test-double's set_param resets the write cursor but not the ring buffers, so a live frames change leaks stale pre-resize samples for the next `frames` outputs.
+
+`crates/auris-engine/src/testkit.rs:458` · test-quality · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** No end user is affected — this is a test-only fixture (testkit.rs) used to simulate a latency-reporting plugin in engine tests, never linked into the shipped DAW. A developer writing a future test that asserts on Lookahead's actual audio samples across a live frames-parameter change would get spuriously wrong expected values (leftover audio from before the resize instead of correctly delayed silence/input), with no indication of why, until they traced it back to this omission.
+
+**Trigger.** Build a graph containing `Lookahead` at its default 64-frame delay, run it long enough to fill its delay lines with real (non-zero) audio, then send `EngineCommand::SetEffectParam` to change its `frames` value mid-stream -- exactly what device.rs's own `a_parameter_that_moves_a_plugins_latency_reports_the_graph_as_stale` test already does -- and keep rendering.
+
+**Mechanism.** `Lookahead::set_param` (454-460) sets `self.frames` and `self.write = 0` but never touches `self.lines`. `process` (487-505) always does `std::mem::swap(sample, &mut line[position])`, unconditionally handing back whatever sample was already sitting in that ring slot, whatever modulus wrote it there.
+
+**Expected.** `set_param` should clear/refill `self.lines` when `frames` changes, the way `reset()` (480-485) already correctly zeroes both `self.lines` and `self.write` together.
+
+**Fix direction.** In `Lookahead::set_param`, when `id.index() == 0` changes `self.frames`, also zero every line in `self.lines` (mirroring what `reset()` already does) so the ring starts clean under the new modulus, not just at write position 0.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".

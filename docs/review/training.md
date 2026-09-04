@@ -1,6 +1,6 @@
 # Review findings: training/ (the voice trainer)
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 20 verified findings: 1 critical, 5 high, 10 medium, 4 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 29 verified findings: 1 critical, 6 high, 15 medium, 7 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -12,6 +12,7 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-073 | high | `training/src/auris_singer/data/datamodule.py:110` | DistributedBucketSampler.epoch is set once at construction and never advanced, because use_distributed_sampler=False (train.py:103) disables Lightning's […] |
 | F-115 | high | `training/src/auris_singer/phoneme_levels.py:90` | phoneme_levels.py classes devoiced Japanese vowels as full vowels, so a whispered vowel becomes the loudness reference for the consonant before it, […] |
 | F-119 | high | `training/src/auris_singer/utils/audio.py:65` | A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in […] |
+| F-320 | high | `training/src/auris_singer/lightning_module.py:154` | load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file. |
 | F-127 | medium | `training/doc/architecture.md:148` | architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2. |
 | F-157 | medium | `training/src/auris_singer/losses.py:154` | EnvelopeLoss divides by the configured kernel count instead of the count actually used, silently underweighting the loss when a kernel exceeds the signal […] |
 | F-175 | medium | `training/src/auris_singer/modules/generator.py:161` | NsfHifiGanGenerator's own kernel>=rate guard admits rate=1/even-kernel stages whose output_padding=1 is invalid for stride=1, crashing on first forward instead […] |
@@ -22,10 +23,18 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-220 | medium | `training/src/auris_singer/host.py:156` | host.py's own MODEL_SILENCE = "<sil>" literal is a third, untested copy alongside ipa.SIL and Rust's score.rs constant. |
 | F-221 | medium | `training/src/auris_singer/export.py:436` | verify_onnx's two test cases both build durations that sum short of f0 length, so the exact-duration-fit contract the wrapper's docstring declares is never […] |
 | F-234 | medium | `training/src/auris_singer/data/dataset.py:147` | collate_batch crashes on batches whose n_fft-hop_length parity is odd, because spectrogram()'s frame count silently drops below the pre-truncated […] |
+| F-337 | medium | `training/src/auris_singer/data/dataset.py:233` | DistributedBucketSampler silently drops any utterance outside bucket_boundaries with no log or error unless every bucket ends up empty. |
+| F-384 | medium | `training/src/auris_singer/data/datamodule.py:119` | Under trainer.strategy=ddp, val_dataloader() (datamodule.py:119-126) stays unsharded because train.py:103 sets use_distributed_sampler=False Trainer-wide, so […] |
+| F-405 | medium | `training/src/auris_singer/infer.py:80` | resolve_speaker() in training/src/auris_singer/infer.py:80 silently accepts a JSON bool as speaker id 0/1 because bool is a subclass of int, bypassing […] |
+| F-413 | medium | `training/src/auris_singer/host_eval.py:143` | host_eval's Analyst always measures pitch with the FCPE default f0_min=40.0, ignoring the exported voice's own f0_min, silently skewing f0 metrics for voices […] |
+| F-414 | medium | `training/src/auris_singer/host_eval.py:807` | evaluate_score() hardcodes n_fft/win_length=2048 in its Analyst instead of reading the voice's own exported audio config, unlike evaluate()'s corpus-based path. |
 | F-194 | low | `training/src/auris_singer/data/dataset.py:95` | SingingDataset's unused hop_length/n_fft/win_length override params can silently desync f0/energy from the spectrogram, but no shipped caller ever passes them. |
 | F-235 | low | `training/src/auris_singer/preprocess/pipeline.py:88` | Unsanitized dataset.sources[].name in the local preprocessing config lets output_dir/f"{utt_id}.npz" traverse outside output_dir. |
 | F-260 | low | `training/pyproject.toml:43` | training/pyproject.toml:43 pins the optional `asr` extra's ReazonSpeech dep to a git branch tip, not a commit, so installs are unreproducible and unverifiable. |
 | F-271 | low | `training/src/auris_singer/text/__init__.py:67` | get_frontend's docstring promises kwargs are forwarded to the front-end constructor, but the ipa/none/raw branch silently drops them instead. |
+| F-366 | low | `training/src/auris_singer/model.py:288` | AurisSinger.infer() silently truncates to min(durations.sum, f0 length) instead of raising, contradicting its own docstring contract, though no current caller […] |
+| F-423 | low | `training/src/auris_singer/lightning_module.py:292` | kl_scale() reads global_step after opt_d.step() has already advanced it, shifting the KL warm-up ramp by one optimizer step. |
+| F-435 | low | `training/src/auris_singer/host_eval.py:487` | --speaker's docstring/help claim an unconditional "model's first" default, but corpus mode defaults per-utterance to the corpus's own recorded speaker instead. |
 
 ### F-013 · critical · A single corrupt WAV or non-UTF-8 transcript crashes preprocessing unhandled, discarding every already-computed .npz because the dataset manifest is written only after the loop completes without error.
 
@@ -116,6 +125,20 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Expected.** Either enforce a minimum admissible clip length tied to `(n_fft - hop_length) // 2` regardless of the configured `min_seconds`, or catch/skip a clip too short to frame instead of letting the exception abort the run.
 
 **Fix direction.** In `run_preprocess`, raise the length floor so it always exceeds the STFT reflect-pad requirement, e.g. skip when `wav.numel() < max(min_samples, n_fft)` (or at least `> 2*pad`) instead of `max(min_samples, hop_length)`, so a clip too short for `_pad_for_stft`'s reflect padding is filtered out with a normal "too short" skip rather than crashing; alternatively, have `_pad_for_stft` fall back to constant/replicate padding when the input is shorter than `pad`.
+
+### F-320 · high · load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file.
+
+`training/src/auris_singer/lightning_module.py:154` · security · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A user who runs training with --init-from or --resume pointing at a checkpoint they downloaded, received from a collaborator, or fetched from a shared model repo gets arbitrary code execution on their machine the instant torch.load runs — before load_weights does any of its own validation. This is a checkpoint-as-attachment scenario, not a hypothetical: pretrained checkpoints for transfer learning are routinely shared/downloaded exactly as this flag expects.
+
+**Trigger.** `training/scripts/train.py` passes `--init-from PATH` straight to `module.load_weights(PATH)` (line 75) and `--resume PATH` straight to `trainer.fit(..., ckpt_path=args.resume)` (line 106); a user who points either flag at a downloaded or shared `.ckpt` file that turns out to be crafted runs that file's embedded code with their own privileges the moment `torch.load` is called.
+
+**Mechanism.** `checkpoint = torch.load(path, map_location="cpu", weights_only=False)` unpickles the entire checkpoint object with Python's pickle protocol. `weights_only=False` is exactly the flag PyTorch's own docs warn against for untrusted files: pickle can execute arbitrary code (via `__reduce__`) during deserialization, before any of this function's shape/key validation ever runs.
+
+**Expected.** Load with `weights_only=True` (or PyTorch's `torch.serialization.add_safe_globals` for the specific Lightning classes actually needed) so a malicious checkpoint fails to deserialize instead of executing.
+
+**Fix direction.** Load with weights_only=True (PyTorch's safe unpickler restricted to tensors/plain containers) as the default; if the checkpoint format requires non-tensor objects, register them explicitly via torch.serialization.add_safe_globals rather than disabling the safety check wholesale. Apply the same fix to the --resume path if Lightning's ckpt loading can be configured the same way.
 
 ### F-127 · medium · architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2.
 
@@ -277,6 +300,82 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** audio.py's own module docstring: "the waveform is reflection-padded by (n_fft - hop_length) // 2 on both sides and analysed with center=False, so a waveform of L samples yields exactly L // hop_length frames." — this is false when n_fft - hop_length is odd, which is exactly the case collate_batch's line 147/153 mismatch depends on.
 
+### F-337 · medium · DistributedBucketSampler silently drops any utterance outside bucket_boundaries with no log or error unless every bucket ends up empty.
+
+`training/src/auris_singer/data/dataset.py:233` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If someone editing a training config widens data.max_frames (or narrows data.min_frames) without also widening data.bucket_boundaries to match, SingingDataset still keeps the longer/shorter utterances, but DistributedBucketSampler._create_buckets computes bucket = -1 for them and simply never appends their index anywhere -- no log line, no counter, no warning. Training silently runs on a shrunken dataset; the only thing that would ever raise is if every single utterance fell outside the boundaries (RuntimeError when all buckets are empty), which a partial mismatch never triggers. This only bites when a config's bucket_boundaries and min_frames/max_frames are edited out of sync -- the two shipped configs pass test_config.py's max_frames<=bucket_boundaries[-1] check (and boundaries[0]=0 already covers the default min_frames=32), so the default training path is unaffected.
+
+**Trigger.** A user edits `data.max_frames` (or `data.min_frames`) in a custom training config without also widening `data.bucket_boundaries` to match — e.g. raising `max_frames` from 1200 to 2000 to admit longer songs but leaving the shipped `bucket_boundaries` ending at 1200. `SingingDataset.__init__` still keeps every record with `min_frames <= n_frames <= max_frames` (dataset.py:62-64), so the longer utterances are in `self.records`/`self.lengths`, but every one of them gets `_bucket_of(length) == -1` and never appears in any batch for the entire run.
+
+**Mechanism.** `_bucket_of` (lines 222-226) returns -1 for any length that falls outside every `(boundaries[i], boundaries[i+1]]` interval; `_create_buckets` (lines 228-248) only appends an index when `bucket >= 0` (line 233), so a -1 index is dropped with no log, counter, or warning of any kind. The only failure mode that surfaces is `_create_buckets` raising when *every* bucket ends up empty (line 238-242) — a partial loss is invisible.
+
+**Expected.** Either clamp/raise on construction when an item falls outside the configured bucket range, or log a count of dropped utterances so a boundary/max_frames mismatch is visible instead of silently discarding data.
+
+**Fix direction.** In DistributedBucketSampler._create_buckets, count and log (or raise) the number of utterances for which _bucket_of returns -1 instead of silently discarding them, and/or add a constructor-time assertion that every dataset length lies within (boundaries[0], boundaries[-1]] -- mirroring test_config.py's existing max_frames<=bucket_boundaries[-1] check but enforced at runtime for any config, and covering the missing min_frames>=boundaries[0] side too.
+
+### F-384 · medium · Under trainer.strategy=ddp, val_dataloader() (datamodule.py:119-126) stays unsharded because train.py:103 sets use_distributed_sampler=False Trainer-wide, so every rank redundantly validates the full set.
+
+`training/src/auris_singer/data/datamodule.py:119` · concurrency · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Running the documented multi-GPU DDP training invocation (trainer.strategy=ddp trainer.devices=4, per doc/training.md) causes every rank to run the entire validation loop redundantly instead of splitting it, so validation takes roughly N times longer than intended on an N-GPU job. No output is wrong and single-GPU/CPU training is unaffected, but training wall-clock and cost scale up silently with no error or warning.
+
+**Trigger.** `training/doc/training.md`'s own "Multi-GPU" section instructs `trainer.devices=4 trainer.strategy=ddp`; running that command as documented puts every one of the 4 ranks through the identical, full, unsharded validation set every epoch.
+
+**Mechanism.** `val_dataloader()` returns a plain `DataLoader` with no `DistributedSampler`. `train.py` hardcodes `use_distributed_sampler=False` on the `Trainer` (line 103, unconditionally, not just under DDP) specifically so Lightning won't override `train_dataloader`'s own `DistributedBucketSampler` — but that same flag also stops Lightning from auto-wrapping `val_dataloader`, which has no sharding of its own. `_log_audio` (lightning_module.py:497-520) then calls `self.logger.experiment.add_audio(...)` directly for `batch_idx < log_audio_batches`, bypassing the `@rank_zero_only` guard that protects `self.log(...)`/`log_metrics`.
+
+**Expected.** Wrap `val_dataloader`'s dataset in a `DistributedSampler` (or otherwise shard it) to match the train loader, and guard `_log_audio`'s direct `experiment.*` calls with `self.trainer.is_global_zero`, consistent with the doc's claim that the sampler "shards across replicas by rank" under `trainer.strategy=ddp`.
+
+**Fix direction.** Shard the validation set explicitly: wrap self.val_dataset in a DistributedSampler (or a non-shuffling bucket sampler variant) inside val_dataloader() in training/src/auris_singer/data/datamodule.py, rather than relying on Trainer-wide use_distributed_sampler which train.py:103 disables for all dataloaders including validation.
+
+### F-405 · medium · resolve_speaker() in training/src/auris_singer/infer.py:80 silently accepts a JSON bool as speaker id 0/1 because bool is a subclass of int, bypassing speaker_to_id validation.
+
+`training/src/auris_singer/infer.py:80` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** If a score.json's "speaker" field is accidentally a JSON boolean (true/false) instead of a string or int index, `resolve_speaker` silently treats it as speaker id 1 or 0 rather than raising the KeyError that any other invalid speaker value would trigger. The synthesized audio comes out in the wrong speaker's voice with no error message, so the mistake is discovered only by listening to the output, if at all.
+
+**Trigger.** `scripts/infer.py` reads `speaker=payload.get("speaker")` straight out of a user- or tool-supplied `score.json` (the documented JSON control-file format). A JSON value of `"speaker": true` (a plausible mistake from JS-style tooling using boolean sentinels for 'unset') deserializes to Python `True`, which `resolve_speaker` maps to raw id `1` with no validation.
+
+**Mechanism.** `if isinstance(speaker, int): return speaker` (line 80) treats `speaker` as an already-resolved integer id and returns it unchanged, skipping the `speaker_to_id` membership check the `str` branch below it performs. Because Python's `bool` is a subclass of `int`, `isinstance(True, int)` and `isinstance(False, int)` are both `True`, so a boolean value is silently accepted as if it were a validated integer speaker id (`True` -> 1, `False` -> 0) instead of falling into the 'unknown speaker' `KeyError` path a bad non-int/non-str value should hit.
+
+**Expected.** A `bool` should not be treated as a valid raw speaker id; `resolve_speaker` should reject it (or route it through the same name-lookup/validation path as any other non-`int` value) so a malformed `speaker` field fails with the same clear error a bad string gets.
+
+**Fix direction.** Check `isinstance(speaker, bool)` before the `isinstance(speaker, int)` branch (or use `type(speaker) is int`) and either raise a clear TypeError/KeyError or fall through to the string-lookup branch so an invalid speaker value fails loudly instead of resolving to id 0/1.
+
+### F-413 · medium · host_eval's Analyst always measures pitch with the FCPE default f0_min=40.0, ignoring the exported voice's own f0_min, silently skewing f0 metrics for voices trained with a non-default pitch floor.
+
+`training/src/auris_singer/host_eval.py:143` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A developer training a voice with a non-default pitch floor (e.g. `model.generator.f0_min: 90.0` in the YAML config) exports it correctly — the metadata JSON/onnx sidecar faithfully records f0_min=90.0 — but running `scripts/evaluate_host.py` (or `--score`) against that voice silently re-analyses the rendered audio with FCPE searching [40, 1600] Hz instead of [90, 1600] Hz. The reported f0_rmse_cent, f0_accuracy, f0_corr, vuv_error and voiced_ratio_error numbers are computed with the wrong search range and no error or warning is raised, so a before/after regression comparison over such a voice is comparing numbers computed inconsistently with what the voice actually is.
+
+**Trigger.** Train a voice with `model: {generator: {f0_min: 90.0}}` in the YAML config (a real, wired-up per-module override, not a hypothetical field) and export it — the true 90.0 is correctly written into the .onnx/.json metadata — then run `scripts/evaluate_host.py --voice ... --checkpoint ... --data ...` (or `--score`).
+
+**Mechanism.** `export.metadata_block()` (training/src/auris_singer/export.py:287) writes `model.generator.source_generator.f0_min` into every exported voice's metadata, and `AurisSinger`'s `generator` constructor argument is documented as a per-module keyword override (training/src/auris_singer/model.py:69, forwarded to `SourceSignalGenerator` via `training/src/auris_singer/modules/generator.py:116`), so a training config can legitimately set a non-default `f0_min`. `VoiceInfo` (host_eval.py:124-132) and `voice_info()` (host_eval.py:143-163) read only `sample_rate`, `hop_length`, `symbols` and `name` out of that same JSON block and drop `f0_min` entirely. `evaluate()`'s `Analyst(...)` call (host_eval.py:588-597) and `evaluate_score()`'s (host_eval.py:806-810) never pass `f0_min`/`f0_max`, so `Analyst.__init__`'s hardcoded defaults (40.0/1600.0, host_eval.py:342-343) are used for every voice regardless of what it actually reports.
+
+**Expected.** `VoiceInfo` should carry the exported `f0_min` (and `f0_max` where relevant), and `Analyst` should be constructed with the voice's own value rather than the FCPE extractor's generic default.
+
+**Fix direction.** Add `f0_min: float` to `VoiceInfo` (read from `block["f0_min"]` in `voice_info()`, with a default matching `SourceSignalGenerator`'s 40.0 for older exports lacking the key), and pass `voice.f0_min` into both `Analyst(...)` call sites (host_eval.py:588 and 806) instead of relying on the constructor default.
+
+**Written rule it breaks.** Composed audio is calibrated by measurement — render and measure before touching a level or timing constant (project memory); training/doc/evaluation.md's before/after regression comparisons assume the Analyst's pitch measurement reflects the voice under test.
+
+**Verifier's correction.** Minor line-number correction only: `f0_min` is written into the metadata dict within `export.metadata_block()`'s dict literal around export.py:287 (confirmed at that location), and `Analyst.__init__`'s defaults are at host_eval.py:329/342-343 (f0_min default declared at 342, f0_max at 343) rather than exactly "342-343" as stated for the whole thing — negligible, the claim's substance is accurate. `Analyst`'s pitch-analysis path is only active when `pitch=True` (the default in Settings), which does not weaken the claim since that is the normal case for pitch metrics.
+
+### F-414 · medium · evaluate_score() hardcodes n_fft/win_length=2048 in its Analyst instead of reading the voice's own exported audio config, unlike evaluate()'s corpus-based path.
+
+`training/src/auris_singer/host_eval.py:807` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** Running `evaluate_host.py --score` against a voice trained with a non-default STFT window (n_fft/win_length other than 2048) silently computes the score-column's energy and mel metrics (energy_rmse_db, energy_bias_db, energy_corr, mel_l1) using the wrong analysis window, so those numbers can mask a real regression or manufacture a fake one — with no error, warning, or failing test, since every shipped config and test fixture happens to use 2048/2048.
+
+**Trigger.** Train with `audio: {n_fft: 1024, win_length: 1024, ...}` in the YAML config (`n_fft`/`win_length` are first-class, directly documented training-config keys — every shipped config just happens to use 2048/2048 today) and export, then run `scripts/evaluate_host.py --voice ... --score`.
+
+**Mechanism.** `evaluate()`'s `Analyst` (host_eval.py:588-597) correctly sources `n_fft`/`win_length` from `Corpus`, which reads them from the dataset's own `audio_config.json` (host_eval.py:214-218). `evaluate_score()` has no `Corpus` (only the exported voice), so it hardcodes `Analyst(info.sample_rate, 2048, info.hop_length, 2048, ...)` (host_eval.py:807) instead — even though the true values are already embedded in the export: `scripts/train.py` merges `"audio": datamodule.audio_config` (train.py:50) into the checkpoint's `metadata`, and `metadata_block()`'s `**(metadata or {})` merge (export.py:288) carries that whole `audio` sub-object into the exported JSON, but `VoiceInfo`/`voice_info()` never read it.
+
+**Expected.** `evaluate_score()` should use the voice's own `n_fft`/`win_length` (already present in the exported metadata's `audio` block), the way `evaluate()` uses the corpus's.
+
+**Fix direction.** Have `VoiceInfo`/`voice_info()` also read the `audio` sub-block already embedded by `export.py`'s `metadata_block()` (n_fft, win_length, defaulting to sample_rate/hop_length-consistent values if absent for old exports), and change `evaluate_score()`'s `Analyst(...)` construction at host_eval.py:807 to use `info.n_fft`/`info.win_length` instead of the literal `2048, ... 2048`, mirroring how `evaluate()` sources them from `Corpus`.
+
+**Written rule it breaks.** Composed audio is calibrated by measurement — render and measure before touching a level or timing constant (project convention: the evaluation tooling's numbers must be trustworthy, not silently computed on the wrong window)
+
 ### F-194 · low · SingingDataset's unused hop_length/n_fft/win_length override params can silently desync f0/energy from the spectrogram, but no shipped caller ever passes them.
 
 `training/src/auris_singer/data/dataset.py:95` · correctness · confirmed (executed reproduction; reported independently 1×)
@@ -336,3 +435,49 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Fix direction.** Either make `IpaFrontend.__init__` accept and validate the same kwargs (at minimum raise on unexpected ones, matching the `ja` branch's behavior), or narrow the docstring/signature so `get_frontend` documents that kwargs only apply to the `ja` frontend and raises if kwargs are given for `ipa`/`none`/`raw`.
 
 **Written rule it breaks.** **kwargs: forwarded to the front-end constructor.
+
+### F-366 · low · AurisSinger.infer() silently truncates to min(durations.sum, f0 length) instead of raising, contradicting its own docstring contract, though no current caller can trigger it.
+
+`training/src/auris_singer/model.py:288` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** No user-facing path currently reaches this: the only host-facing caller, Synthesizer.synthesize() in infer.py, already validates that f0/energy length equals durations.sum(1).max() and raises ValueError before calling AurisSinger.infer(), and every other in-repo caller derives durations from the model's own alignment output so the lengths are guaranteed equal by construction. A future direct caller of the low-level AurisSinger.infer() that passes a too-short f0/energy would get back a waveform silently shorter than requested, with no exception or warning, contradicting the method's own documented contract.
+
+**Trigger.** Any caller (in-repo or external) that passes `f0`/`energy` shorter than `durations.sum(1).max()` — e.g. a caller that mis-sized its curves, or that mixes durations from one source with f0/energy padded to a different, shorter length.
+
+**Mechanism.** The docstring at line 270 states the contract as `f0, energy: (B, T) with T == durations.sum(1).max()`, but line 288 computes `y_max = int(min(y_lengths.max().item(), f0.size(-1)))` — silently taking the shorter of the two instead of asserting they match. Every downstream tensor (`y_mask`, `attn`, `x_frame`, the sliced `f0`/`energy`/`voiced`) is then built at the truncated `y_max`, and the returned waveform is correspondingly shorter than the durations the caller asked for.
+
+**Expected.** Raise (e.g. a `ValueError` naming the two lengths) when `f0.size(-1) < durations.sum(1).max()`, matching the contract stated in the docstring, rather than silently truncating.
+
+**Fix direction.** Add the same guard infer.py's Synthesizer.synthesize() already uses: after computing y_lengths, assert or raise ValueError if f0.size(-1) (and energy.size(-1)) is less than y_lengths.max(), instead of silently taking min() at model.py:288. This is a small defense-in-depth change confined to one function.
+
+**Written rule it breaks.** f0, energy: (B, T) with T == durations.sum(1).max() (model.py:270 docstring)
+
+**Verifier's correction.** `AurisSinger.infer()` in training/src/auris_singer/model.py (line 288) silently truncates to `min(durations.sum(1).max(), f0.size(-1))` instead of raising when `f0`/`energy` are shorter than the documented contract (`T == durations.sum(1).max()`, docstring at line 270) requires — verified by reading and by execution. However, no reachable in-repo caller can actually trigger the mismatch: the host-facing `Synthesizer.synthesize()` in infer.py raises `ValueError` on any length mismatch before calling `model.infer()`, and every other direct caller (`lightning_module.py::validation_step`, […]
+
+### F-423 · low · kl_scale() reads global_step after opt_d.step() has already advanced it, shifting the KL warm-up ramp by one optimizer step.
+
+`training/src/auris_singer/lightning_module.py:292` · theory · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Training still converges normally; the only effect is that the KL warm-up ramp used in the generator loss is shifted forward by exactly one optimizer step (out of kl_warmup_steps, which itself already counts both the generator's and discriminator's steps per batch per the shipped configs), so the KL term reaches full weight one step earlier than a purely batch-indexed schedule would imply. No crash, no NaN, no wrong gradients — just a marginally different (and undocumented) warm-up curve.
+
+**Trigger.** Every training step from step 0 onward.
+
+**Mechanism.** `training_step` calls `opt_d.step()` at line 262 before `kl_scale = self.kl_scale()` at line 292. Under Lightning's manual optimization, `global_step` is Lightning's own `optim_step_progress.total.completed` counter, incremented by exactly one on every `LightningOptimizer.step()` call (confirmed by reading `.venv/Lib/site-packages/pytorch_lightning/loops/optimization/manual.py`'s `_on_after_step`), so by the time `kl_scale()` runs, `self.global_step` has already been bumped by the discriminator step that just happened in the same call.
+
+**Expected.** Read `self.global_step` for the ramp before `opt_d.step()` runs (or use a step counter incremented once per batch) so the KL weight at a given batch does not depend on discriminator-step bookkeeping that happened moments earlier in the same call.
+
+**Fix direction.** Capture kl_scale = self.kl_scale() before opt_d.step() runs (e.g. right after the forward pass, alongside the other loss computations), or switch to a counter incremented once per training_step call rather than relying on Lightning's per-optimizer-step global_step.
+
+### F-435 · low · --speaker's docstring/help claim an unconditional "model's first" default, but corpus mode defaults per-utterance to the corpus's own recorded speaker instead.
+
+`training/src/auris_singer/host_eval.py:487` · spec-mismatch · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** A user running evaluate_host.py in corpus mode reads the docstring or --help text for --speaker, which says leaving it unset picks "the model's first" speaker; in fact, in corpus mode each utterance's host/reference columns are rendered with that utterance's own recorded corpus speaker (record.get("speaker")) when --speaker is left unset. The unconditional-default claim only holds in score mode. This can mislead someone debugging why corpus-mode eval output varies by speaker across utterances despite not passing --speaker.
+
+**Trigger.** Run `evaluate_host.py --voice <multi-speaker.onnx> --checkpoint <ckpt> --data <a multi-speaker dataset>` with no `--speaker`, where the validation split includes an utterance whose recorded speaker isn't speaker id 0.
+
+**Mechanism.** `Settings.speaker`'s docstring reads '#: Which of the voice's speakers sings, by name; ``None`` is the model's first.' (host_eval.py:487), mirrored verbatim in the CLI help at training/scripts/evaluate_host.py:68 ('(default: its first)'). But in corpus mode, host_eval.py:630 resolves it as `speaker = settings.speaker or record.get("speaker")`, with the adjoining comment (line 628-629) 'Each utterance is sung by its own speaker — the corpus says whose it is — unless the run asks for one speaker throughout.' So leaving `--speaker` unset does not default to the model's first speaker for the host/reference columns; it defaults to each validation utterance's own recorded speaker from metadata.jsonl.
+
+**Expected.** The docstring and help text should say the corpus-mode default is each utterance's own recorded speaker, with 'the model's first' reserved for contexts that have no such per-utterance metadata (score mode) or the already-reported song-mode behavior.
+
+**Fix direction.** Reword the Settings.speaker docstring (host_eval.py:487) and the --speaker CLI help (evaluate_host.py:68) to state the mode-dependent behavior: in score mode None means the model's first speaker; in corpus mode None means each utterance is sung by its own corpus-recorded speaker unless overridden.

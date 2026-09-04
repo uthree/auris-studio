@@ -16,15 +16,15 @@ Only the verified findings below are the review's result. Titles are the verifie
 
 | | Count |
 |---|---|
-| Verified findings | 273 |
-| … critical | 15 |
-| … high | 79 |
-| … medium | 115 |
-| … low | 64 |
-| … confirmed by executing a reproduction | 205 |
-| … contradicting CLAUDE.md, the guide or a README | 22 |
-| Claims refuted by verification | 31 |
-| Claims left unverified | 7 |
+| Verified findings | 381 |
+| … critical | 16 |
+| … high | 101 |
+| … medium | 165 |
+| … low | 99 |
+| … confirmed by executing a reproduction | 285 |
+| … contradicting CLAUDE.md, the guide or a README | 32 |
+| Claims refuted by verification | 40 |
+| Claims left unverified | 34 |
 
 Severity, as the judges used it: **critical** = data loss or corruption, a crash on a common path, audio dropouts from a realtime violation, or memory unsafety; **high** = a wrong result on a realistic path; **medium** = a wrong result on an edge path, or a false claim in docs or tests that hides a real gap; **low** = minor.
 
@@ -32,45 +32,45 @@ Severity, as the judges used it: **critical** = data loss or corruption, a crash
 
 | Area | Findings | critical | high | medium | low |
 |---|---|---|---|---|---|
-| [auris-gpui](auris-gpui.md) | 72 | 1 | 19 | 31 | 21 |
-| [auris-session](auris-session.md) | 46 | 3 | 15 | 19 | 9 |
-| [auris-core](auris-core.md) | 24 | 3 | 8 | 9 | 4 |
-| [training](training.md) | 20 | 1 | 5 | 10 | 4 |
-| [auris-compose](auris-compose.md) | 18 | 0 | 4 | 11 | 3 |
-| [auris-engine](auris-engine.md) | 15 | 0 | 7 | 3 | 5 |
-| [auris-dsp](auris-dsp.md) | 11 | 0 | 4 | 5 | 2 |
-| [auris-clap](auris-clap.md) | 9 | 2 | 3 | 2 | 2 |
-| [auris-toolbox](auris-toolbox.md) | 9 | 1 | 4 | 3 | 1 |
-| [auris-vocal](auris-vocal.md) | 8 | 2 | 3 | 3 | 0 |
-| [repo/ci/docs](repo-ci-docs.md) | 7 | 0 | 0 | 3 | 4 |
-| [vendor/rustysynth](vendor-rustysynth.md) | 7 | 1 | 1 | 3 | 2 |
-| [auris-i18n](auris-i18n.md) | 5 | 0 | 1 | 0 | 4 |
-| [auris-io](auris-io.md) | 4 | 1 | 0 | 2 | 1 |
-| [auris-sampler](auris-sampler.md) | 4 | 0 | 1 | 3 | 0 |
-| [auris-cli](auris-cli.md) | 3 | 0 | 0 | 2 | 1 |
+| [auris-gpui](auris-gpui.md) | 98 | 1 | 22 | 42 | 33 |
+| [auris-session](auris-session.md) | 68 | 3 | 19 | 29 | 17 |
+| [auris-core](auris-core.md) | 32 | 3 | 10 | 13 | 6 |
+| [training](training.md) | 29 | 1 | 6 | 15 | 7 |
+| [auris-compose](auris-compose.md) | 25 | 0 | 6 | 16 | 3 |
+| [auris-engine](auris-engine.md) | 19 | 0 | 8 | 4 | 7 |
+| [auris-dsp](auris-dsp.md) | 18 | 0 | 6 | 8 | 4 |
+| [auris-toolbox](auris-toolbox.md) | 16 | 1 | 7 | 7 | 1 |
+| [auris-clap](auris-clap.md) | 10 | 2 | 4 | 2 | 2 |
+| [auris-vocal](auris-vocal.md) | 9 | 2 | 3 | 4 | 0 |
+| [vendor/rustysynth](vendor-rustysynth.md) | 9 | 1 | 1 | 4 | 3 |
+| [repo/ci/docs](repo-ci-docs.md) | 8 | 0 | 0 | 3 | 5 |
+| [auris-sampler](auris-sampler.md) | 7 | 0 | 4 | 3 | 0 |
+| [auris-cli](auris-cli.md) | 6 | 0 | 0 | 2 | 4 |
+| [auris-i18n](auris-i18n.md) | 6 | 0 | 1 | 0 | 5 |
+| [auris-gpu](auris-gpu.md) | 5 | 0 | 0 | 5 | 0 |
+| [auris-io](auris-io.md) | 5 | 2 | 0 | 2 | 1 |
+| [auris-synth](auris-synth.md) | 4 | 0 | 1 | 3 | 0 |
+| [auris-agent](auris-agent.md) | 3 | 0 | 1 | 2 | 0 |
 | [auris-singer](auris-singer.md) | 3 | 0 | 2 | 1 | 0 |
-| [auris-synth](auris-synth.md) | 3 | 0 | 1 | 2 | 0 |
-| [auris-agent](auris-agent.md) | 2 | 0 | 1 | 1 | 0 |
-| [auris-gpu](auris-gpu.md) | 2 | 0 | 0 | 2 | 0 |
 | [auris-mcp](auris-mcp.md) | 1 | 0 | 0 | 0 | 1 |
 
 ## By category
 
 | Category | Findings |
 |---|---|
-| correctness | 94 |
-| spec-mismatch | 62 |
-| ui | 34 |
-| dsp | 15 |
-| security | 13 |
-| persistence | 11 |
-| realtime | 9 |
-| theory | 8 |
-| test-quality | 7 |
-| concurrency | 5 |
-| platform | 5 |
-| other | 5 |
-| lifecycle | 3 |
+| correctness | 140 |
+| spec-mismatch | 83 |
+| ui | 48 |
+| dsp | 22 |
+| security | 15 |
+| persistence | 15 |
+| realtime | 10 |
+| theory | 10 |
+| test-quality | 9 |
+| concurrency | 8 |
+| platform | 7 |
+| other | 7 |
+| lifecycle | 5 |
 | architecture | 2 |
 
 ## Critical and high findings
@@ -94,6 +94,7 @@ The full entries, with trigger, mechanism and fix direction, are in the per-area
 | F-024 | critical | [auris-session](auris-session.md) | `crates/auris-session/src/session/hosted.rs:583` | HostedSlot::incoming silently force-loads stale document state onto a reused plugin instance when reclaim has already moved the live instance into spare, discarding […] |
 | F-025 | critical | [auris-session](auris-session.md) | `crates/auris-session/src/session/record.rs:966` | Recording with a count-in while the output falls back to `start_silent` silently trims real captured audio, since the shared count-in atomic is never decremented and is […] |
 | F-026 | critical | [auris-session](auris-session.md) | `crates/auris-session/src/session/mod.rs:269` | Session's field order drops the retired-graph channel before the live cpal stream, letting the audio callback free a RenderGraph on the realtime thread during shutdown. |
+| F-313 | critical | [auris-io](auris-io.md) | `crates/auris-io/src/soundfont.rs:62` | load_soundfont has no catch_unwind around SoundFont::new, so a malformed .sf2 with honest chunk sizes but bad pdta indices panics rustysynth and crashes the whole app on […] |
 | F-002 | high | [auris-session](auris-session.md) | `crates/auris-session/src/session/hosted.rs:611` | `HostedSlot::reclaim` overwrites `self.spare` via plain `Option` assignment without checking if it still holds a live effect, permanently leaking that CLAP plugin […] |
 | F-003 | high | [auris-core](auris-core.md) | `crates/auris-core/src/project/clip.rs:122` | A saved audio clip with an out-of-range loop_end hangs graph build on project open, with no cap in loop_passes and no validation on deserialize. |
 | F-004 | high | [vendor/rustysynth](vendor-rustysynth.md) | `vendor/rustysynth/src/zone.rs:25` | Zone::new panics on out-of-range slice index when a SoundFont's bag/generator chunk counts disagree, crashing Auris Studio instead of rejecting the broken file. |
@@ -173,6 +174,28 @@ The full entries, with trigger, mechanism and fix direction, are in the per-area
 | F-119 | high | [training](training.md) | `training/src/auris_singer/utils/audio.py:65` | A single too-short utterance (exactly one hop of samples) crashes `training`'s whole preprocessing run via an unhandled reflect-pad RuntimeError in […] |
 | F-121 | high | [auris-engine](auris-engine.md) | `crates/auris-engine/src/device.rs:703` | Session's field-order drop disconnects EngineHandle before the cpal stream stops, so retired graphs/buffers can be freed on the audio callback thread at shutdown. |
 | F-123 | high | [auris-toolbox](auris-toolbox.md) | `crates/auris-toolbox/src/lib.rs:326` | `render`'s stems/output path has no containment check, so it can silently overwrite the open project's own Audio/ assets via `write_wav`'s unconditional rename. |
+| F-314 | high | [auris-toolbox](auris-toolbox.md) | `crates/auris-toolbox/src/lib.rs:1558` | `add_part`'s unbounded `bars` argument lets one MCP/CLI call drive billions of generated notes, OOM-crashing the shared toolbox process. |
+| F-316 | high | [auris-compose](auris-compose.md) | `crates/auris-compose/src/parts/drums.rs:115` | drums.rs:115 gates the snare's ending fill on the snare's own pattern having hits, so the shipped "sparse" groove (empty snare row) permanently silences the fill despite […] |
+| F-317 | high | [auris-core](auris-core.md) | `crates/auris-core/src/theory/numeral.rs:519` | degree_of never checks accidental 0 against the major reference scale, so borrowed major-scale degrees in minor/modal keys are mislabeled with double accidentals instead […] |
+| F-320 | high | [training](training.md) | `training/src/auris_singer/lightning_module.py:154` | load_weights unpickles an unvalidated --init-from/--resume checkpoint via torch.load(weights_only=False), giving arbitrary code execution on a crafted file. |
+| F-322 | high | [auris-gpui](auris-gpui.md) | `crates/auris-gpui/src/ui/agent_chat.rs:524` | spawn_link discards auris-agent's stderr, so a startup failure (e.g. a misconfigured api_key_env) surfaces in chat only as the uninformative "The agent process ended." |
+| F-326 | high | [auris-toolbox](auris-toolbox.md) | `crates/auris-toolbox/src/lib.rs:2416` | track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one. |
+| F-327 | high | [auris-session](auris-session.md) | `crates/auris-session/src/session/clips.rs:566` | trim_clip_start rebases MIDI notes on front-trim but leaves bend/controller CurvePoints at stale offsets, misaligning automation with the trimmed clip's notes. |
+| F-328 | high | [auris-toolbox](auris-toolbox.md) | `crates/auris-toolbox/src/lib.rs:1933` | edit_notes validates a new note's start against the clip but not its end, letting a long `beats` value silently grow the clip via fit_length_to_notes with no mention in […] |
+| F-329 | high | [auris-session](auris-session.md) | `crates/auris-session/src/session/hosted.rs:853` | set_hosted_instrument swaps a CLAP plugin's id/state but skips remove_instrument_automation, leaving old-plugin automation lanes driving the new plugin's unrelated […] |
+| F-330 | high | [auris-clap](auris-clap.md) | `crates/auris-clap/src/plugin.rs:796` | Hosted CLAP stepped/enum parameters get ParamUnit::Choice with an empty `choices` list, so their picker menu renders with zero selectable options. |
+| F-331 | high | [auris-session](auris-session.md) | `crates/auris-session/src/session/accompany.rs:165` | accompany() snaps the chord/key write and the generated clip's start through two different grids, so parts can be composed against the wrong harmony. |
+| F-333 | high | [auris-dsp](auris-dsp.md) | `crates/auris-dsp/src/distortion.rs:146` | Distortion applies drive/output/mix as block-constant steps with no SmoothedValue ramp, causing zipper-noise clicks when those parameters are automated, unlike Delay and […] |
+| F-339 | high | [auris-dsp](auris-dsp.md) | `crates/auris-dsp/src/limiter.rs:115` | Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB allocation. |
+| F-341 | high | [auris-session](auris-session.md) | `crates/auris-session/src/session/mod.rs:1083` | Session::open clears self.hosted for id-reuse safety but never clears self.armed/self.monitored, so a new project can inherit stale arm/monitor state via colliding […] |
+| F-343 | high | [auris-sampler](auris-sampler.md) | `crates/auris-sampler/src/sampler.rs:148` | is_reserved() only shields CC11/43 (expression), letting automation on CC0/6/0x64/0x65 silently hijack the sampler's own bank-select and pitch-bend-range RPN state. |
+| F-345 | high | [auris-gpui](auris-gpui.md) | `crates/auris-gpui/src/ui/arrangement/lanes.rs:339` | clip_grab_at's symmetric end-edge check lets a press past a looped clip's raw end start a resize drag with no resize cursor shown there. |
+| F-346 | high | [auris-gpui](auris-gpui.md) | `crates/auris-gpui/src/ui/compose_sheet/dials.rs:878` | Gain dial's clamped display fraction is reused as drag start, so touching a part with legally out-of-range gain (-60..12 dB) silently snaps it into -30..0 dB on first […] |
+| F-347 | high | [auris-sampler](auris-sampler.md) | `crates/auris-sampler/src/sampler.rs:510` | Turning ADSR shaping off on a held sampler note snaps channel expression to full before the font's own release begins, producing an audible gain-jump click. |
+| F-350 | high | [auris-sampler](auris-sampler.md) | `crates/auris-sampler/src/sampler.rs:658` | let_go() misattributes a stolen shaped note's slot-less state to "never shaped", letting its note-off silence an unrelated held note of the same pitch. |
+| F-351 | high | [auris-engine](auris-engine.md) | `crates/auris-engine/src/device.rs:190` | discard_pending can race the still-live CoreAudio callback thread and silently steal a queued engine command during a device disconnect. |
+| F-352 | high | [auris-core](auris-core.md) | `crates/auris-core/src/project/routing.rs:390` | repair_routing is O(n^3) in track count and runs unconditionally, synchronously, on every project open, even when routing is already valid. |
+| F-375 | high | [auris-compose](auris-compose.md) | `crates/auris-compose/src/rhythm.rs:279` | Pattern::at_in_bar's middle==0 branch hard-codes every interior beat to the pattern's first beat instead of cycling, silencing the six-eight groove's snare backbeat […] |
 
 ## Rules the project wrote down that the code breaks
 
@@ -184,6 +207,8 @@ Each of these findings was judged to contradict a rule stated in `CLAUDE.md`, `a
 - F-096 (high, [auris-engine](auris-engine.md)): Windows output devices whose default WASAPI mix format is I24/I32/I64/F64/U8 (e.g. a common "24-bit" device default) silently fall back to a fully […]
 - F-103 (high, [auris-synth](auris-synth.md)): Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento […]
 - F-116 (high, [auris-toolbox](auris-toolbox.md)): auris-toolbox's `sing` tool result splices unsanitized voice-card name/speaker text from an untrusted .onnx file verbatim into agent-facing output — […]
+- F-326 (high, [auris-toolbox](auris-toolbox.md)): track_by_name in auris-toolbox silently resolves to the first of two same-named tracks, so by-name tools can act on the wrong one.
+- F-339 (high, [auris-dsp](auris-dsp.md)): Limiter::prepare has no upper bound on sample_rate, so a corrupted .auris file's sample_rate can abort the render/export process via a multi-GB […]
 - F-127 (medium, [training](training.md)): architecture.md's loss table lists KL (auxiliary) default as 1.0, but code, training.md, and the doc's own later prose all agree the default is 0.2.
 - F-146 (medium, [repo/ci/docs](repo-ci-docs.md)): docs/features.md:1270 says 29 tools; auris-toolbox declares 30 pub mod tool modules, confirmed by both frontends' own count-assertion tests.
 - F-154 (medium, [auris-session](auris-session.md)): record.rs's module doc still describes the pre-f0c836e single shared monitor ring, contradicting the current per-track monitor rings in monitor.rs […]
@@ -196,10 +221,18 @@ Each of these findings was judged to contradict a rule stated in `CLAUDE.md`, `a
 - F-205 (medium, [vendor/rustysynth](vendor-rustysynth.md)): rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually […]
 - F-220 (medium, [training](training.md)): host.py's own MODEL_SILENCE = "<sil>" literal is a third, untested copy alongside ipa.SIL and Rust's score.rs constant.
 - F-236 (medium, [repo/ci/docs](repo-ci-docs.md)): aesthetics.py keys per-file scores by bare filename stem, so same-named WAVs in different subdirectories silently overwrite each other in the […]
+- F-340 (medium, [auris-session](auris-session.md)): A clip with start=i64::MIN, only reachable via a hand-edited/corrupt .auris file since load_project never validates clip starts, panics on drag via […]
+- F-361 (medium, [auris-gpu](auris-gpu.md)): auris-gpu's crate and module docs falsely claim compute_peaks reruns on every zoom/scroll, when it actually runs once per source and is cached in […]
+- F-367 (medium, [auris-toolbox](auris-toolbox.md)): mixer/set_send in auris-toolbox never report send automation, unlike the parallel gain/pan/effect handling.
+- F-373 (medium, [auris-session](auris-session.md)): guide.rs:1238 wrongly claims an old build would silently misread a post-AssetPath path as absolute; it actually hard-fails to deserialize the whole […]
+- F-387 (medium, [auris-compose](auris-compose.md)): A pushed Held-figure chord is struck at 0.9x velocity instead of the intended 0.7x held multiplier, an unintended ~29% loudness jump.
 - F-135 (low, [repo/ci/docs](repo-ci-docs.md)): release.yml grants contents:write to all four jobs via workflow-root permissions, though only publish's release-creation step needs it.
 - F-264 (low, [auris-gpui](auris-gpui.md)): Panel::command's doc comment says "all five" panels but Panel::ALL has held six since the Agent panel shipped.
 - F-266 (low, [vendor/rustysynth](vendor-rustysynth.md)): PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any […]
 - F-285 (low, [auris-session](auris-session.md)): guide.rs:638 wrongly claims frontends call default_registry directly, duplicating the same misattribution already at line 89-90.
+- F-430 (low, [auris-core](auris-core.md)): TimeSignature::COMMON doc claims the full meter menu is 400 rows; it's actually 32x5=160.
+- F-443 (low, [vendor/rustysynth](vendor-rustysynth.md)): A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
+- F-454 (low, [auris-gpui](auris-gpui.md)): stepped()'s unwrap_or(0) fallback can jump menu keyboard highlight to the wrong row if a row's enabled state changes while the menu is open.
 
 ## Reading a finding
 

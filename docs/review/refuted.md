@@ -1,6 +1,6 @@
 # Claims the review made and then refuted
 
-Part of the [whole-repository adversarial review](README.md). These 31 claims were raised by a first-pass reviewer and then knocked down by the verification stage — usually because a guard, an invariant or a documented intent the reviewer missed rules the scenario out. They are kept because the next reviewer will raise them again.
+Part of the [whole-repository adversarial review](README.md). These 40 claims were raised by a first-pass reviewer and then knocked down by the verification stage — usually because a guard, an invariant or a documented intent the reviewer missed rules the scenario out. They are kept because the next reviewer will raise them again.
 
 ### F-010 · read_wave_data heap-buffer-overflows on odd-sized `smpl` chunk
 
@@ -242,4 +242,68 @@ The claim only becomes a live defect if the platform can actually deliver such a
 `crates/auris-engine/src/renderer.rs:448`
 
 **Why it does not hold.** Both verifiers agree the mechanism is real: chase_notes (renderer.rs:439-488) runs a for loop over events[..upto] at line 448, linear in prior event count, called from render_source on the RT audio callback thread whenever the playhead jumps (seek, loop, first block). The dispute is whether this breaches the project's realtime rule. It does not: CLAUDE.md, auris_session::guide::realtime, and device.rs's own module doc all state the same four-item contract (no allocation, no locking, no blocking, no I/O) for the audio callback thread, and chase_notes violates none of the four - counts/velocity
+
+### F-319 · Dead intra-doc link `Session::set_monitoring` breaks `cargo doc -D warnings`
+
+`crates/auris-session/src/session/record.rs:111`
+
+**Why it does not hold.** Both reviewers agree on the mechanism (record.rs:111 has a dead `[`Session::set_monitoring`]` link to a method renamed to `set_track_monitoring` by commit f0c836e) — that much is real. The dispute is the consequence: does it break `cargo doc --workspace --no-deps` under `RUSTDOCFLAGS=-D warnings`, which is CI's exact Document step? It does not, because the doc comment sits on `pub(super) struct Take` inside a plain (non-`pub`) `mod record;` (session/mod.rs:51), which is outside rustdoc's default-documented surface, and CI passes no `--document-private-items` flag (confirmed by grep across the
+
+### F-321 · menu_key's "every binding out of reach" claim is false; bound shortcuts fire while a menu is open
+
+`crates/auris-gpui/src/ui/root.rs:1397`
+
+**Why it does not hold.** The reviewer's gpui-internals analysis (dispatch_action_on_node fires before finish_dispatch_key_event/on_key_down) is accurate as far as it goes — I confirmed it against the vendored gpui-0.2.2 source (window.rs:3730-3852). But the reviewer missed the upstream guard that makes the trigger unreachable: the root element's KeyContext is not the static "Auris" context all the commands (Undo, DeleteTrack, DeleteSelection, etc.) are bound under — it is recomputed every render by `AurisApp::window_context()` (crates/auris-gpui/src/app.rs:1603), which calls the free function `window_context(claimed,
+
+### F-324 · A pitched-vocabulary program name on a drum part is accepted silently, playing the wrong kit
+
+`crates/auris-compose/src/spec/doc.rs:761`
+
+**Why it does not hold.** The mechanism the reviewer describes is real code — `Program::parse` (gm.rs:300-315) does search PROGRAMS then KITS with no role parameter, and `PartSpec::sound()` (spec/mod.rs:153-156) does pick bank/patch purely from `role.is_drum()`. But the crate states, in two places, that this cross-vocabulary reinterpretation is exactly the intended behavior, not an omitted check:
+
+1. gm.rs module doc (top of file): "So one field on a part covers both: on a pitched role it is a program, on a drum role it is a kit. **Which one it is read as is never a guess, because the role already says.**" — this is a
+
+### F-342 · set_param never clamps gain/send dB, letting db_to_gain overflow to Infinity/NaN
+
+`crates/auris-session/src/session/mixer.rs:363`
+
+**Why it does not hold.** The claim's premise is accurate: set_param/set_send_level store gain_db/level_db unclamped, unlike the automation path. But the claim's consequence is false: sane_gain() in strip.rs guards SmoothedGain::new/set_target/jump_to, so an Infinity gain from db_to_gain is replaced with 0.0 before ever reaching advance(), the only place gain touches a sample.
+
+### F-398 · render_stems discards which stems already succeeded when a later write fails
+
+`crates/auris-session/src/render.rs:359`
+
+**Why it does not hold.** The mechanism is real and both reviewers agree on it: render_stems (render.rs:322-368) builds `stems: Vec<StemSummary>` across a loop, and `write_wav(&path, &out, &settings)?;` at line 359 propagates any write error immediately via `?`, dropping the accumulated `stems`. The disagreement is whether this is a *defect* — i.e. an inconsistency with the crate's own documented policy, distinct from and worse than the already-accepted cancellation behavior, and analogous to `collect_assets`. On close reading it is not:
+
+1. The doc comment's actual promise (render.rs:317-318, "a cancellation leaves th
+
+### F-411 · write_vocal's Viterbi DP can silently pick an infeasible predecessor as if valid
+
+`crates/auris-compose/src/vocal.rs:329`
+
+**Why it does not hold.** The DP mechanism the reviewer describes is real as written: at crates/auris-compose/src/vocal.rs:355-357, `best` starts at `(f64::INFINITY, 0usize)` and only updates on `cost < best.0`, so if every transition into a candidate is `f64::INFINITY` (leap_cost's tritone/`>12`-semitone case, lines 201-211), `best` stays `(INFINITY, 0)` and the backtrack (lines 366-375) would treat predecessor index 0 as chosen without ever having compared it. That part of the reviewer's mechanism is accurate.
+
+But the claim fails on reachability, which the reviewer's own `from_suspicion` field already flags as uncon
+
+### F-450 · SingingDataset trusts metadata's has_durations over the npz's own durations key
+
+`training/src/auris_singer/data/dataset.py:74`
+
+**Why it does not hold.** Both verifiers agree on the code shape: dataset.py:74-76 computes self.labelled from metadata's has_durations, and __getitem__ (89-93) independently gates the durations tensor on the npz's own durations key. collate_batch's all-check means one item lacking the key silently drops it for the whole batch. That mechanism is real and undisputed. The disagreement is whether metadata.jsonl and the npz files can actually drift apart through any path this codebase provides. They cannot: pipeline.py's run_preprocess sets features[durations] and has_durations from the same local variable in the same loop
+
+### F-451 · ornament_vocal's closing Fall can silently land on no note at all
+
+`crates/auris-compose/src/vocal.rs:143`
+
+**Why it does not hold.** The mechanism the reviewer describes is real in isolation: `ornament_vocal` (vocal.rs:143-147) computes the closing-Fall target tick from `rhythm.phrases.last()` without consulting the notes actually returned, while `write_vocal` (vocal.rs:272-275) `continue`s past — silently dropping — any phrase whose `slots.iter().any(|slot| slot.candidates.is_empty())`. If that dropped phrase were the rhythm's last, `Some(note.start) == last` (line 155) would never match and the fall would land nowhere.
+
+But the claim's load-bearing assertion is that this is "exactly the call pattern both real callers... u
+
+### F-455 · Vendored rustysynth fork keeps upstream's exact version/repository metadata
+
+`vendor/rustysynth/Cargo.toml:15`
+
+**Why it does not hold.** The claim's mechanism has three problems that together sink it.
+
+First, reachability: the reviewer's own "trigger" is hypothetical — "any tool that reads this workspace's Cargo manifests... to produce a dependency listing, SBOM, or license/advisory report (cargo-license, cargo-cyclonedx, cargo-deny, etc.)". No such tool exists anywhere in this repo. `.github/workflows/ci.yml` runs only `cargo fmt --check`, `cargo clippy`, `cargo test`, and `cargo doc` — no license scanner, no SBOM generator, no `cargo-deny`. `.github/workflows/release.yml` likewise has nothing of the sort. There is no entry po
 

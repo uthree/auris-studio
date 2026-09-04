@@ -1,6 +1,6 @@
 # Review findings: vendor/rustysynth
 
-Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 7 verified findings: 1 critical, 1 high, 3 medium, 2 low.
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 9 verified findings: 1 critical, 1 high, 4 medium, 3 low.
 
 Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
 
@@ -11,8 +11,10 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 | F-205 | medium | `vendor/rustysynth/README.md:22` | rustysynth fork README's closed list of touched files (README.md:22-23) omits src/error.rs, which adds the InvalidModulatorList variant actually returned by […] |
 | F-240 | medium | `vendor/rustysynth/src/voice.rs:235` | Unclamped modulator-sum cents can overflow to inf/NaN in voice.rs's filter-cutoff math, permanently and silently bypassing the lowpass filter for that voice. |
 | F-241 | medium | `vendor/rustysynth/src/region_pair.rs:35` | Unbounded modulator summation in region_pair.rs can overflow filter cutoff to Infinity, silently disabling the low-pass filter on a crafted SoundFont. |
+| F-393 | medium | `vendor/rustysynth/src/modulator.rs:104` | SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, […] |
 | F-266 | low | `vendor/rustysynth/src/preset_region.rs:151` | PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real […] |
 | F-295 | low | `vendor/rustysynth/src/synthesizer.rs:258` | note_off_all(true)/note_off_all_channel(_, true) don't clear the pre-rendered block tail, leaving up to ~0.7ms of stale audio after an "immediate" stop […] |
+| F-443 | low | `vendor/rustysynth/src/zone_info.rs:43` | A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error. |
 
 ### F-018 · critical · A crafted/corrupt SF2 file's zone-index fields cause an unchecked out-of-bounds slice panic in vendor/rustysynth's Instrument/Preset construction, crashing the whole app instead of returning an error.
 
@@ -96,6 +98,22 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 
 **Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
 
+### F-393 · medium · SOURCE_NONE (No Controller) in the vendored rustysynth modulator feeds raw=127 through the decreasing/curve/bipolar pipeline instead of returning a fixed 1.0, so a font's constant modulator silently zeros or inverts when the decreasing/bipolar bits are set alongside it.
+
+`vendor/rustysynth/src/modulator.rs:104` · spec-mismatch · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A SoundFont zone that declares a "No Controller" (constant) modulator whose source byte also sets the decreasing or bipolar bit — a plausible leftover from a font editor, or a hostile/malformed file — has its constant filter-cutoff (or other generator) offset silently zeroed or sign-flipped at every note-on, instead of applying the font author's intended constant amount. The effect is inaudible-by-omission: the cutoff or depth for that region is just wrong, with no error or warning.
+
+**Trigger.** A modulator whose packed `source` field has controller index 0 (No Controller) but also has the decreasing bit set, e.g. `source = 0x0100` (index 0, direction=decreasing, curve=linear, unipolar) — a plausible leftover from a font editor that doesn't reset the direction flag when a modulator's source is switched to "No Controller", or a deliberately hostile file.
+
+**Mechanism.** `source_value` (lines 104-133) computes `raw = 127` for `SOURCE_NONE` (line 114) and then unconditionally runs it through the same decreasing/curve/bipolar pipeline as every other source (lines 120-131). A search of the SF2 spec text ('No Controller ... The output of this controller module should be treated as if its value were set to "1"') and FluidSynth's reference implementation (`fluid_mod_transform_source_value`: `if (mod_src == FLUID_MOD_NONE) { return 1.0f; }`, an unconditional early return *before* any of the direction/polarity/curve flag handling) both indicate the fixed value 1.0 should bypass those transforms entirely, not merely feed `raw=127` into them.
+
+**Expected.** `source_value` should special-case the controller index 0 (No Controller) to return `Some(1.0)` unconditionally, ignoring the decreasing/bipolar/curve bits on that source, matching the spec's 'treated as if its value were set to 1' language and FluidSynth's early return.
+
+**Fix direction.** In `Modulator::source_value`, special-case `spec & 0x7F == SOURCE_NONE` to return `Some(1.0)` immediately, before the decreasing/curve/bipolar pipeline runs (mirroring FluidSynth's `fluid_mod_transform_source_value` early return), and add a test with `source(SOURCE_NONE, true, true, curve)` combinations to pin the fix and stop the existing `no_controller_is_a_constant` test from certifying only the coincidentally-correct default-flags case.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
 ### F-266 · low · PresetRegion::get_initial_filter_cutoff_frequency returns a raw multiplying factor instead of Hz, but the method is dead code never called on any real synthesis path.
 
 `vendor/rustysynth/src/preset_region.rs:151` · correctness · confirmed (executed reproduction; reported independently 1×)
@@ -131,3 +149,19 @@ Each entry survived an independent skeptic and an independent reproducer (and a 
 **Written rule it breaks.** "immediate" - If `true`, notes will stop immediately without the release sound.
 
 **Verifier's correction.** The mechanism, trigger and consequence are correct as described. Two minor corrections: (1) the `self.voices.clear()` call the claim anchors to is at line 258, but the enclosing `note_off_all` function itself starts at line 256, not 258 (line 258 is accurate for the specific mutating statement, so this is not really an error). (2) In the one real caller in this codebase (`auris_sampler::Sampler::stop_everything`), `block_size` is fixed at `INTERNAL_BLOCK = 32`, not the claim's illustrative worst-case 1024 — so the actual leak in this project's current usage is bounded to at most 32 samples […]
+
+### F-443 · low · A malformed SF2 bag with non-monotonic generator_index silently empties a zone instead of raising a parse error.
+
+`vendor/rustysynth/src/zone_info.rs:43` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** Only with a malformed or corrupted .sf2 file whose bag chunk has a non-monotonic generator_index/modulator_index does this trigger: the affected zone silently loses all its generators/modulators (indistinguishable from a legitimate empty/global zone) instead of the loader reporting a parse error. On a well-formed SoundFont, which is every font any DAW user actually ships or downloads, generator_index is monotonic by construction and this path is never taken, so no instrument mis-plays or loses volume/filtering in practice.
+
+**Trigger.** A pbag/ibag chunk (not validated by auris-io's check_chunks, which only checks smpl parity and overall chunk-size-vs-file-length) whose generator_index for record i+1 is smaller than record i's — a spec violation but not one anything rejects before this point.
+
+**Mechanism.** `zones[i].generator_count = zones[i + 1].generator_index - zones[i].generator_index;` (and the modulator_count line right after it) computes a signed i32 difference with no check that generator_index is non-decreasing across bag records, unlike the sibling `size % 4 != 0` check a few lines above that does reject other malformed shapes.
+
+**Expected.** A non-monotonic bag record is malformed input; ZoneInfo::read_from_chunk already rejects other malformed shapes (`size == 0 || size % 4 != 0`) and should reject this one the same way instead of silently producing an under-specified zone.
+
+**Fix direction.** In ZoneInfo::read_from_chunk, after computing generator_count/modulator_count for each i in 0..count-1, check that the value is >= 0 (i.e. zones[i+1].generator_index >= zones[i].generator_index, same for modulator_index) and return SoundFontError::InvalidZoneList (or a new variant) instead of letting the negative value flow into Zone::new's empty range.
+
+**Written rule it breaks.** vendor/rustysynth/README.md documents what the fork added/left out and measured for the modulator-discarding bug it fixed; this gap is a further latent parser weakness of the same file the fork already touches, but it is not itself claimed fixed or covered by any written rule in CLAUDE.md.
