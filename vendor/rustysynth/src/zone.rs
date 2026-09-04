@@ -18,12 +18,22 @@ impl Zone {
         }
     }
 
-    fn new(info: &ZoneInfo, generators: &[Generator], modulators: &[Modulator]) -> Self {
-        let mut segment: Vec<Generator> = Vec::new();
-
-        for i in 0..info.generator_count {
-            segment.push(generators[(info.generator_index + i) as usize]);
-        }
+    fn new(
+        info: &ZoneInfo,
+        generators: &[Generator],
+        modulators: &[Modulator],
+    ) -> Result<Self, SoundFontError> {
+        let generator_start = usize::try_from(info.generator_index)
+            .map_err(|_| SoundFontError::InvalidGeneratorList)?;
+        let generator_count = usize::try_from(info.generator_count)
+            .map_err(|_| SoundFontError::InvalidGeneratorList)?;
+        let generator_end = generator_start
+            .checked_add(generator_count)
+            .ok_or(SoundFontError::InvalidGeneratorList)?;
+        let segment = generators
+            .get(generator_start..generator_end)
+            .ok_or(SoundFontError::InvalidGeneratorList)?
+            .to_vec();
 
         // A bag may name more modulators than the chunk holds, which is a broken file rather than
         // a reason to refuse one: what is there is taken and the rest is left alone.
@@ -34,10 +44,10 @@ impl Zone {
             }
         }
 
-        Self {
+        Ok(Self {
             generators: segment,
             modulators: modulator_segment,
-        }
+        })
     }
 
     pub(crate) fn create(
@@ -54,9 +64,60 @@ impl Zone {
 
         let mut zones: Vec<Zone> = Vec::new();
         for info in infos.iter().take(count) {
-            zones.push(Zone::new(info, generators, modulators));
+            zones.push(Zone::new(info, generators, modulators)?);
         }
 
         Ok(zones)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_zone_cannot_name_generators_outside_the_table() {
+        let infos = [
+            ZoneInfo {
+                generator_index: 1,
+                modulator_index: 0,
+                generator_count: 1,
+                modulator_count: 0,
+            },
+            ZoneInfo {
+                generator_index: 2,
+                modulator_index: 0,
+                generator_count: 0,
+                modulator_count: 0,
+            },
+        ];
+
+        assert!(matches!(
+            Zone::create(&infos, &[], &[]),
+            Err(SoundFontError::InvalidGeneratorList)
+        ));
+    }
+
+    #[test]
+    fn a_backwards_generator_span_is_an_error() {
+        let infos = [
+            ZoneInfo {
+                generator_index: 1,
+                modulator_index: 0,
+                generator_count: -1,
+                modulator_count: 0,
+            },
+            ZoneInfo {
+                generator_index: 0,
+                modulator_index: 0,
+                generator_count: 0,
+                modulator_count: 0,
+            },
+        ];
+
+        assert!(matches!(
+            Zone::create(&infos, &[], &[]),
+            Err(SoundFontError::InvalidGeneratorList)
+        ));
     }
 }

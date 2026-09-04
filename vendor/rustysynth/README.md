@@ -19,9 +19,14 @@ override. Playing harder made it quieter. With the modulators applied it runs -2
 -17.6, -14.3, -13.4, -12.1, -11.3 dBFS across velocities 70 to 115 — monotonic, and level with the
 rest of the font.
 
-The change is `src/modulator.rs` plus the lines that carry a modulator list from the file to a
+The modulator change is `src/modulator.rs` plus the lines that carry a modulator list from the file to a
 voice: `zone.rs`, `soundfont_parameters.rs`, `preset_region.rs`, `instrument_region.rs`,
 `region_pair.rs` and `voice.rs`. Every addition is marked "Added by the Auris fork".
+
+The fork also validates every preset, instrument, zone and generator span before slicing its
+tables. Upstream trusts those file-provided indices and can panic on a malformed SoundFont;
+Auris treats them as ordinary `SoundFontError` values so opening a bad library file cannot take
+down the application.
 
 ## What it does not do
 

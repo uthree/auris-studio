@@ -58,8 +58,11 @@ pub fn load_soundfont(path: &Path) -> Result<Arc<SoundFont>> {
         ))
     };
     check_chunks(&bytes).map_err(&refused)?;
-    let font =
-        SoundFont::new(&mut Cursor::new(bytes)).map_err(|error| refused(error.to_string()))?;
+    let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        SoundFont::new(&mut Cursor::new(bytes))
+    }))
+    .map_err(|_| refused("the SoundFont parser rejected malformed index data".to_string()))?;
+    let font = parsed.map_err(|error| refused(error.to_string()))?;
     Ok(Arc::new(font))
 }
 
@@ -83,7 +86,7 @@ fn check_chunks(bytes: &[u8]) -> std::result::Result<(), String> {
     // this walk.
     let mut at = 12;
     for _ in 0..3 {
-        at = check_chunk(bytes, at, true)?;
+        at = check_chunk(bytes, at, bytes.len(), true, false)?;
     }
     Ok(())
 }
@@ -94,14 +97,26 @@ fn check_chunks(bytes: &[u8]) -> std::result::Result<(), String> {
 /// Running out of file is `Ok` — the parser turns plain truncation into an error safely. The
 /// walk mirrors the parser's stream reads exactly, pad bytes included (there are none):
 /// stricter, and it would refuse fonts the parser plays; looser, and a lying size gets through.
-fn check_chunk(bytes: &[u8], at: usize, descend: bool) -> std::result::Result<usize, String> {
-    let Some(header) = bytes.get(at..at + 8) else {
+fn check_chunk(
+    bytes: &[u8],
+    at: usize,
+    limit: usize,
+    descend: bool,
+    inside_list: bool,
+) -> std::result::Result<usize, String> {
+    let Some(header_end) = at.checked_add(8) else {
+        return Err("a chunk header position overflows the file".to_string());
+    };
+    let Some(header) = bytes.get(at..header_end).filter(|_| header_end <= limit) else {
+        if inside_list {
+            return Err("a LIST ends part-way through a child chunk header".to_string());
+        }
         return Ok(bytes.len());
     };
     let id: [u8; 4] = header[..4].try_into().expect("sliced four bytes");
     let size = u32::from_le_bytes(header[4..8].try_into().expect("sliced four bytes")) as usize;
-    let body = at + 8;
-    let held = bytes.len() - body;
+    let body = header_end;
+    let held = limit - body;
     if size > held {
         return Err(format!(
             "chunk {} says it is {size} bytes long, but only {held} bytes follow it",
@@ -111,6 +126,12 @@ fn check_chunk(bytes: &[u8], at: usize, descend: bool) -> std::result::Result<us
     if id == *b"smpl" && !size.is_multiple_of(2) {
         return Err(format!("the sample data is an odd {size} bytes long"));
     }
+    if matches!(&id, b"ifil" | b"iver") && size != 4 {
+        return Err(format!(
+            "chunk {} must be exactly 4 bytes long, but says {size}",
+            String::from_utf8_lossy(&id),
+        ));
+    }
     if descend && id == *b"LIST" && size >= 4 {
         // Children are read while the parser's byte count sits short of the list's claimed
         // size; the count starts after the four-byte list type, and a child that overruns the
@@ -118,9 +139,12 @@ fn check_chunk(bytes: &[u8], at: usize, descend: bool) -> std::result::Result<us
         let end = body + size;
         let mut child = body + 4;
         while child < end {
-            child = check_chunk(bytes, child, false)?;
+            child = check_chunk(bytes, child, end, false, true)?;
         }
-        return Ok(child);
+        if child != end {
+            return Err("a child chunk runs past the end of its LIST".to_string());
+        }
+        return Ok(end);
     }
     Ok(body + size)
 }
@@ -291,6 +315,34 @@ mod tests {
             error.to_string().contains("4000000000"),
             "the message should say what was claimed: {error}"
         );
+    }
+
+    #[test]
+    fn a_child_chunk_cannot_borrow_bytes_past_its_list() {
+        let mut child = chunk(b"INAM", b"name");
+        child[4..8].copy_from_slice(&12_u32.to_le_bytes());
+        let mut first = list(b"INFO", &child);
+        first.extend_from_slice(&[0; 8]);
+        let file = font_file(&[
+            first,
+            list(b"sdta", &chunk(b"smpl", &[0; 8])),
+            list(b"pdta", &chunk(b"phdr", &[0; 76])),
+        ]);
+
+        let error = check_chunks(&file).unwrap_err();
+        assert!(error.contains("only 4 bytes follow"), "{error}");
+    }
+
+    #[test]
+    fn version_chunks_must_match_the_four_bytes_the_parser_reads() {
+        let file = font_file(&[
+            list(b"INFO", &chunk(b"ifil", &[2, 0])),
+            list(b"sdta", &chunk(b"smpl", &[0; 8])),
+            list(b"pdta", &chunk(b"phdr", &[0; 76])),
+        ]);
+
+        let error = check_chunks(&file).unwrap_err();
+        assert!(error.contains("exactly 4 bytes"), "{error}");
     }
 
     #[test]

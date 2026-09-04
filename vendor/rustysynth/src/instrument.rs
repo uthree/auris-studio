@@ -23,14 +23,21 @@ impl Instrument {
     ) -> Result<Self, SoundFontError> {
         let name = info.name.clone();
 
-        let zone_count = info.zone_end_index - info.zone_start_index + 1;
-        if zone_count <= 0 {
+        let Ok(span_start) = usize::try_from(info.zone_start_index) else {
+            return Err(SoundFontError::InvalidInstrument(instrument_id));
+        };
+        let Some(span_end) = usize::try_from(info.zone_end_index)
+            .ok()
+            .and_then(|end| end.checked_add(1))
+        else {
+            return Err(SoundFontError::InvalidInstrument(instrument_id));
+        };
+        let Some(zone_span) = zones.get(span_start..span_end) else {
+            return Err(SoundFontError::InvalidInstrument(instrument_id));
+        };
+        if zone_span.is_empty() {
             return Err(SoundFontError::InvalidInstrument(instrument_id));
         }
-
-        let span_start = info.zone_start_index as usize;
-        let span_end = span_start + zone_count as usize;
-        let zone_span = &zones[span_start..span_end];
         let regions = InstrumentRegion::create(instrument_id, zone_span, samples)?;
 
         Ok(Self { name, regions })
