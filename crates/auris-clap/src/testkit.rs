@@ -32,7 +32,10 @@
 
 use std::ffi::CStr;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+
+#[cfg(target_os = "windows")]
+use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::IsWindow};
 
 use clack_extensions::audio_ports::{
     AudioPortFlags, AudioPortInfo, AudioPortInfoWriter, AudioPortType, PluginAudioPorts,
@@ -107,6 +110,8 @@ pub mod gui_step {
     /// `set_parent` was called with a window to draw inside — the whole of what an embedded
     /// plugin needs and the whole of what Auris could not give one until it had a window to lend.
     pub const PARENTED: u32 = 128;
+    /// The embedded parent window was still valid when the plugin's `destroy` callback ran.
+    pub const PARENT_ALIVE_ON_DESTROY: u32 = 256;
 }
 
 /// How many input ports the fixture declares: a main one and a sidechain.
@@ -569,6 +574,8 @@ pub struct ToneShared {
     wheel: AtomicU32,
     /// Which of the [`gui_step`] calls the host has made.
     gui: AtomicU32,
+    /// The host window lent through `set_parent`, for checking its lifetime at `destroy`.
+    parent: AtomicIsize,
 }
 
 impl PluginShared<'_> for ToneShared {}
@@ -629,6 +636,15 @@ impl PluginGuiImpl for ToneMainThread<'_> {
     }
 
     fn destroy(&mut self) {
+        #[cfg(target_os = "windows")]
+        {
+            let hwnd = HWND(self.shared.parent.load(Ordering::Relaxed) as *mut _);
+            // SAFETY: `IsWindow` accepts stale handles and answers false for them; checking that
+            // distinction is the purpose of this fixture.
+            if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+                self.gui_did(gui_step::PARENT_ALIVE_ON_DESTROY);
+            }
+        }
         self.gui_did(gui_step::DESTROYED);
     }
 
@@ -647,7 +663,10 @@ impl PluginGuiImpl for ToneMainThread<'_> {
         Ok(())
     }
 
-    fn set_parent(&mut self, _window: Window) -> Result<(), PluginError> {
+    fn set_parent(&mut self, window: Window) -> Result<(), PluginError> {
+        if let Some(hwnd) = window.as_win32_hwnd() {
+            self.shared.parent.store(hwnd as isize, Ordering::Relaxed);
+        }
         self.gui_did(gui_step::PARENTED);
         Ok(())
     }
@@ -658,7 +677,10 @@ impl PluginGuiImpl for ToneMainThread<'_> {
 
     fn show(&mut self) -> Result<(), PluginError> {
         self.gui_did(gui_step::SHOWN);
-        Ok(())
+        match f32::from_bits(self.shared.level.load(Ordering::Relaxed)).is_sign_negative() {
+            true => Err(PluginError::Message("the fixture was asked to fail show")),
+            false => Ok(()),
+        }
     }
 
     fn hide(&mut self) -> Result<(), PluginError> {

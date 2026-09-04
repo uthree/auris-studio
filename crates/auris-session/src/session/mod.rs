@@ -266,8 +266,8 @@ pub struct Session {
     /// Whether composing ends by measuring the piece — see [`SessionOptions::balance_composed`].
     balance_composed: bool,
     registry: Arc<PluginRegistry>,
-    engine: EngineHandle,
     device: Option<AudioDevice>,
+    engine: EngineHandle,
     gpu: Option<Arc<GpuContext>>,
     /// What the audio backend was asked for, so a settings panel can show it back.
     audio: AudioPreferences,
@@ -519,8 +519,8 @@ impl Session {
             shipped_library: options.shipped_fonts,
             balance_composed: options.balance_composed,
             registry,
-            engine,
             device: Some(device),
+            engine,
             gpu,
             audio,
             headless: !options.audio,

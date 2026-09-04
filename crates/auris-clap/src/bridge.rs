@@ -211,8 +211,8 @@ impl Bridge {
         overwrite: bool,
         sidechain: Option<&AudioBuffer>,
     ) {
-        let frames = buffer.frame_count().min(self.max_frames);
-        if frames == 0 {
+        let total_frames = buffer.frame_count();
+        if total_frames == 0 {
             return;
         }
 
@@ -236,81 +236,94 @@ impl Bridge {
             ..
         } = self;
 
-        outgoing.clear();
-        replies.clear();
-        // Parameters before notes: an automated cutoff belongs to the block it was written for,
-        // and a note struck in the same block should hear it.
-        for (index, dirty) in changed.iter_mut().enumerate() {
-            if !std::mem::take(dirty) {
-                continue;
-            }
-            outgoing.push(&ParamValueEvent::new(
-                0,
-                params.clap_ids[index],
-                Pckn::match_all(),
-                values[index] as f64,
-                Cookie::empty(),
-            ));
-        }
-        if let Some(language) = *language {
-            for note in notes {
-                push_note(outgoing, *note, language);
-            }
-        }
-
-        // The track's audio in the main port, the key in the first spare one, and silence in
-        // everything either of them does not reach. Silence rather than "left alone" throughout:
-        // a channel the source is too narrow for, and a spare port on a block where nothing is
-        // keying, would otherwise still be holding whatever was last written there.
-        if let Some(port) = main_input.and_then(|index| input.get_mut(index)) {
-            fill_port(port, Some(buffer), frames);
-        }
-        if let Some(port) = sidechain_input.and_then(|index| input.get_mut(index)) {
-            fill_port(port, sidechain, frames);
-        }
-
         let Ok(processor) = processor.ensure_processing_started() else {
             // The plugin refused to start.
             if overwrite {
-                silence(buffer, frames);
+                silence(buffer, 0, total_frames);
             }
             return;
         };
 
-        let events = InputEvents::from_buffer(outgoing);
-        let mut event_replies = OutputEvents::from_buffer(replies);
+        // An offline renderer may hand us a block larger than the size at which CLAP was
+        // activated. CLAP cannot be resized in place, so drive it in legal-sized pieces while
+        // keeping the caller's block (and its event timestamps) whole.
+        let mut offset = 0;
+        while offset < total_frames {
+            let frames = (total_frames - offset).min(self.max_frames);
+            let end = offset + frames;
 
-        let audio_in = input_ports.with_input_buffers(input.iter_mut().map(|port| {
-            AudioPortBuffer {
-                latency: 0,
-                channels: AudioPortBufferType::f32_input_only(
-                    port.iter_mut()
-                        .map(|channel| InputChannel::variable(&mut channel[..frames])),
-                ),
+            outgoing.clear();
+            replies.clear();
+            // Parameters before notes: an automated cutoff belongs to the block it was written
+            // for, and a note struck in the same block should hear it. Dirty flags are only taken
+            // after start_processing succeeded, so a refused start retries them next time.
+            for (index, dirty) in changed.iter_mut().enumerate() {
+                if !std::mem::take(dirty) {
+                    continue;
+                }
+                outgoing.push(&ParamValueEvent::new(
+                    0,
+                    params.clap_ids[index],
+                    Pckn::match_all(),
+                    values[index] as f64,
+                    Cookie::empty(),
+                ));
             }
-        }));
-        let mut audio_out =
-            output_ports.with_output_buffers(output.iter_mut().map(|port| AudioPortBuffer {
-                latency: 0,
-                channels: AudioPortBufferType::f32_output_only(
-                    port.iter_mut().map(|channel| &mut channel[..frames]),
-                ),
+            if let Some(language) = *language {
+                for note in notes {
+                    let at = note.frame() as usize;
+                    if at >= offset && at < end {
+                        push_note(outgoing, note.with_frame((at - offset) as u32), language);
+                    }
+                }
+            }
+
+            // The track's audio in the main port, the key in the first spare one, and silence in
+            // everything either of them does not reach.
+            if let Some(port) = main_input.and_then(|index| input.get_mut(index)) {
+                fill_port(port, Some(buffer), offset, frames);
+            }
+            if let Some(port) = sidechain_input.and_then(|index| input.get_mut(index)) {
+                fill_port(port, sidechain, offset, frames);
+            }
+
+            let events = InputEvents::from_buffer(outgoing);
+            let mut event_replies = OutputEvents::from_buffer(replies);
+            let audio_in = input_ports.with_input_buffers(input.iter_mut().map(|port| {
+                AudioPortBuffer {
+                    latency: 0,
+                    channels: AudioPortBufferType::f32_input_only(
+                        port.iter_mut()
+                            .map(|channel| InputChannel::variable(&mut channel[..frames])),
+                    ),
+                }
             }));
+            let mut audio_out =
+                output_ports.with_output_buffers(output.iter_mut().map(|port| AudioPortBuffer {
+                    latency: 0,
+                    channels: AudioPortBufferType::f32_output_only(
+                        port.iter_mut().map(|channel| &mut channel[..frames]),
+                    ),
+                }));
 
-        let rendered = processor.process(
-            &audio_in,
-            &mut audio_out,
-            &events,
-            &mut event_replies,
-            Some(*steady_time),
-            None,
-        );
-        *steady_time = steady_time.wrapping_add(frames as u64);
+            let rendered = processor.process(
+                &audio_in,
+                &mut audio_out,
+                &events,
+                &mut event_replies,
+                Some(*steady_time),
+                None,
+            );
+            *steady_time = steady_time.wrapping_add(frames as u64);
 
-        match main_output.and_then(|index| output.get(index)) {
-            Some(port) if rendered.is_ok() => deliver_port(port, buffer, frames, overwrite),
-            _ if overwrite => silence(buffer, frames),
-            _ => {}
+            match main_output.and_then(|index| output.get(index)) {
+                Some(port) if rendered.is_ok() => {
+                    deliver_port(port, buffer, offset, frames, overwrite)
+                }
+                _ if overwrite => silence(buffer, offset, frames),
+                _ => {}
+            }
+            offset = end;
         }
     }
 }
@@ -324,19 +337,26 @@ impl Bridge {
 /// than hard left over a ghost. An effect (`overwrite == false`) leaves them holding the input,
 /// which is a mono insert passing the channels it cannot reach straight through. The input-side
 /// mirror of all this is [`fill_port`].
-fn deliver_port(port: &[Vec<f32>], buffer: &mut AudioBuffer, frames: usize, overwrite: bool) {
+fn deliver_port(
+    port: &[Vec<f32>],
+    buffer: &mut AudioBuffer,
+    offset: usize,
+    frames: usize,
+    overwrite: bool,
+) {
     for (index, channel) in port.iter().enumerate().take(buffer.channel_count()) {
-        buffer.channel_mut(index)[..frames].copy_from_slice(&channel[..frames]);
+        buffer.channel_mut(index)[offset..offset + frames].copy_from_slice(&channel[..frames]);
     }
     if !overwrite {
         return;
     }
     match port.is_empty() {
-        true => silence(buffer, frames),
+        true => silence(buffer, offset, frames),
         false => {
             for index in port.len()..buffer.channel_count() {
                 let source = &port[index % port.len()];
-                buffer.channel_mut(index)[..frames].copy_from_slice(&source[..frames]);
+                buffer.channel_mut(index)[offset..offset + frames]
+                    .copy_from_slice(&source[..frames]);
             }
         }
     }
@@ -348,13 +368,13 @@ fn deliver_port(port: &[Vec<f32>], buffer: &mut AudioBuffer, frames: usize, over
 /// something meant for it. Silence is what a channel gets when the source has none to give it —
 /// a stereo track feeding a four-channel port, or a port with nothing routed to it at all — and
 /// it has to be written rather than assumed, because the buffer is kept from block to block.
-fn fill_port(port: &mut [Vec<f32>], source: Option<&AudioBuffer>, frames: usize) {
+fn fill_port(port: &mut [Vec<f32>], source: Option<&AudioBuffer>, offset: usize, frames: usize) {
     for (index, channel) in port.iter_mut().enumerate() {
         let taken = source
             .and_then(|buffer| buffer.channels().get(index))
             .map_or(0, |samples| {
-                let count = frames.min(samples.len());
-                channel[..count].copy_from_slice(&samples[..count]);
+                let count = frames.min(samples.len().saturating_sub(offset));
+                channel[..count].copy_from_slice(&samples[offset..offset + count]);
                 count
             });
         channel[taken..frames].fill(0.0);
@@ -362,9 +382,9 @@ fn fill_port(port: &mut [Vec<f32>], source: Option<&AudioBuffer>, frames: usize)
 }
 
 /// Zeroes the first `frames` of every channel.
-fn silence(buffer: &mut AudioBuffer, frames: usize) {
+fn silence(buffer: &mut AudioBuffer, offset: usize, frames: usize) {
     for channel in 0..buffer.channel_count() {
-        buffer.channel_mut(channel)[..frames].fill(0.0);
+        buffer.channel_mut(channel)[offset..offset + frames].fill(0.0);
     }
 }
 
@@ -434,7 +454,7 @@ mod tests {
         // previous block's samples — a ghost of whatever played there before.
         let port = vec![vec![0.25f32; 8]];
         let mut buffer = stale(0.9, 8);
-        deliver_port(&port, &mut buffer, 8, true);
+        deliver_port(&port, &mut buffer, 0, 8, true);
         assert_eq!(buffer.channel(0), &[0.25; 8]);
         assert_eq!(
             buffer.channel(1),
@@ -449,7 +469,7 @@ mod tests {
         // other channel holding the input it was given.
         let port = vec![vec![0.25f32; 8]];
         let mut buffer = stale(0.9, 8);
-        deliver_port(&port, &mut buffer, 8, false);
+        deliver_port(&port, &mut buffer, 0, 8, false);
         assert_eq!(buffer.channel(0), &[0.25; 8]);
         assert_eq!(buffer.channel(1), &[0.9; 8], "the input passes through");
     }
@@ -458,7 +478,7 @@ mod tests {
     fn a_port_with_no_channels_owes_an_overwriting_buffer_silence() {
         let port: Vec<Vec<f32>> = Vec::new();
         let mut buffer = stale(0.9, 8);
-        deliver_port(&port, &mut buffer, 8, true);
+        deliver_port(&port, &mut buffer, 0, 8, true);
         assert_eq!(buffer.channel(0), &[0.0; 8]);
         assert_eq!(buffer.channel(1), &[0.0; 8]);
     }

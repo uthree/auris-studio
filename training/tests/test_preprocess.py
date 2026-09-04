@@ -149,6 +149,34 @@ def test_utterances_without_a_transcript_are_skipped(tmp_path):
     assert sum(u.text_path is None for u in utterances) == 1
 
 
+@pytest.mark.parametrize("broken", ["transcript", "audio"])
+def test_decode_errors_skip_only_the_broken_utterance(tmp_path, monkeypatch, broken):
+    """A bad corpus file must not orphan features already written for good files."""
+    write_corpus(tmp_path, n_utterances=2)
+    if broken == "transcript":
+        (tmp_path / "raw" / "singer" / "text" / "utt1.txt").write_bytes(b"\xff\xfe")
+    else:
+        (tmp_path / "raw" / "singer" / "wav" / "utt1.wav").write_bytes(b"not a wav")
+
+    class FakeExtractor:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __call__(self, _wav, _sample_rate, n_frames):
+            return torch.zeros(n_frames), torch.zeros(n_frames, dtype=torch.bool)
+
+    monkeypatch.setattr("auris_singer.preprocess.pipeline.FcpeExtractor", FakeExtractor)
+    out_dir = tmp_path / "processed"
+    summary = run_preprocess(build_config(tmp_path, out_dir))
+
+    assert summary["processed"] == 1
+    assert summary["skipped"] == 1
+    assert sum(value for key, value in summary.items() if "decode error" in key) == 1
+    records = [json.loads(line) for line in (out_dir / "metadata.jsonl").read_text().splitlines()]
+    assert [record["id"] for record in records] == ["singer/utt0"]
+    assert (out_dir / records[0]["path"]).is_file()
+
+
 def test_labelled_seconds_become_frames_that_sum_exactly():
     from auris_singer.preprocess.pipeline import seconds_to_frames
 

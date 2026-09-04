@@ -964,6 +964,9 @@ impl Session {
     /// `None` for a project that asks for none and for a transport that is already rolling; the
     /// rule, and the reason for it, is the free `count_in_for` at the foot of this module.
     pub fn count_in(&self) -> Option<CountIn> {
+        if !self.engine.is_running() {
+            return None;
+        }
         count_in_for(
             self.project.count_in_bars,
             self.is_playing(),
@@ -1349,6 +1352,10 @@ mod tests {
 
         session.set_count_in_bars(2);
         assert_eq!(session.count_in_bars(), 2);
+        assert!(
+            session.count_in().is_none(),
+            "a silent engine cannot play or consume a count-in"
+        );
         assert!(session.is_dirty(), "the setting has to reach the file");
         assert!(
             !session.can_undo(),

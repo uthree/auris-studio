@@ -570,7 +570,7 @@ impl HostedSlot {
         state: &PluginState,
         graveyard: &mut Vec<ClapPlugin>,
     ) -> Result<ClapPlugin, ClapError> {
-        self.reclaim(graveyard);
+        let reused_live = self.reclaim(graveyard);
 
         let mut plugin = match self.spare.take() {
             Some(plugin) => plugin,
@@ -580,9 +580,12 @@ impl HostedSlot {
         // Where the incoming instance's state comes from: the outgoing one if there is one, so a
         // preset the user loaded inside the plugin survives a rebuild; otherwise the document,
         // which is the case on the first build after opening a project.
-        let bytes = match self.live.as_mut() {
-            Some(outgoing) => outgoing.save_state().ok(),
-            None => state.hosted_bytes(),
+        let bytes = match (reused_live, self.live.as_mut()) {
+            // This is the very instance that was live. Its state is already newer than the
+            // document snapshot, so loading anything into it would only roll it backwards.
+            (true, _) => None,
+            (false, Some(outgoing)) => outgoing.save_state().ok(),
+            (false, None) => state.hosted_bytes(),
         };
         if let Some(bytes) = bytes
             && let Err(error) = plugin.load_state(&bytes)
@@ -606,8 +609,14 @@ impl HostedSlot {
     ///
     /// Keeps at most one spare, and prefers the most recently used, which is the one carrying the
     /// newest state. A slot that is rebuilt rarely ends up back at a single instance.
-    fn reclaim(&mut self, graveyard: &mut Vec<ClapPlugin>) {
-        if self.live.as_mut().is_some_and(ClapPlugin::release) {
+    fn reclaim(&mut self, graveyard: &mut Vec<ClapPlugin>) -> bool {
+        let reused_live = self.live.as_mut().is_some_and(ClapPlugin::release);
+        if reused_live {
+            if let Some(mut old_spare) = self.spare.take()
+                && !old_spare.release()
+            {
+                graveyard.push(old_spare);
+            }
             self.spare = self.live.take();
         }
         // A spare with an effect still out is not a spare: handing it to `activate` would be told
@@ -618,11 +627,13 @@ impl HostedSlot {
         //
         // This is not the two-instance case; it is the three-instance one, which an export
         // running while the transport plays produces.
-        if self.spare.as_mut().is_some_and(|spare| !spare.release())
+        if !reused_live
+            && self.spare.as_mut().is_some_and(|spare| !spare.release())
             && let Some(spare) = self.spare.take()
         {
             graveyard.push(spare);
         }
+        reused_live
     }
 }
 
@@ -1140,6 +1151,35 @@ mod tests {
     }
 
     #[test]
+    fn reclaim_parks_an_in_flight_spare_before_replacing_it() {
+        let library = fixture_library();
+        let mut slot = slot();
+        let state = PluginState::empty();
+        let mut graveyard = Vec::new();
+
+        let first = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("first");
+        let second = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("second");
+        drop(second);
+
+        let third = slot
+            .take_effect(&library, &state, &prepare(), &mut graveyard)
+            .expect("third");
+        assert_eq!(
+            graveyard.len(),
+            1,
+            "the first instance still has its rendering half and must be parked"
+        );
+
+        drop(first);
+        assert!(graveyard[0].release());
+        drop(third);
+    }
+
+    #[test]
     fn a_handover_carries_the_plugins_own_state_across() {
         // A preset loaded inside the plugin is not in the document, and a rebuild must not lose
         // it. The fixture's state *is* its gain, so this is visible in the audio.
@@ -1161,6 +1201,30 @@ mod tests {
             render(&mut second, 1.0),
             0.5,
             "the new instance must start where the old one left off"
+        );
+    }
+
+    #[test]
+    fn reusing_the_live_instance_does_not_reload_stale_document_state() {
+        let library = fixture_library();
+        let mut slot = slot();
+        let mut state = PluginState::empty();
+        state.set_hosted_bytes(&0.25f32.to_le_bytes());
+
+        let mut first = slot
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
+            .expect("first");
+        first.set_param(ParamId(0), 0.5);
+        assert_eq!(render(&mut first, 1.0), 0.5);
+        drop(first);
+
+        let mut second = slot
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
+            .expect("second");
+        assert_eq!(
+            render(&mut second, 1.0),
+            0.5,
+            "the returned live instance is newer than the saved document snapshot"
         );
     }
 

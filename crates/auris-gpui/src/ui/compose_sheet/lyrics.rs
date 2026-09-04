@@ -28,8 +28,8 @@ use super::dials::{SongDials, section_at};
 /// know which of the two is current.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LyricsEdit {
-    /// Index into the song sheet's `sections` of the box being edited.
-    pub section: usize,
+    /// Stable name of the section being edited.
+    pub section: String,
     /// The words being typed.
     pub field: TextField,
 }
@@ -58,11 +58,11 @@ const MAX_ROWS: usize = 12;
 impl AurisApp {
     /// Puts the keyboard into one section's lyrics box.
     pub(crate) fn focus_section_lyrics(&mut self, section: usize) {
-        let Some(lyrics) = self
+        let Some((section, lyrics)) = self
             .song_sheet
             .as_ref()
             .and_then(|dials| dials.sections.get(section))
-            .map(|spec| spec.lyrics.clone())
+            .map(|spec| (spec.name.clone(), spec.lyrics.clone()))
         else {
             return;
         };
@@ -84,11 +84,11 @@ impl AurisApp {
         let Some(edit) = self.lyrics_edit.as_ref() else {
             return;
         };
-        let (section, words) = (edit.section, edit.field.content().to_string());
+        let (section, words) = (edit.section.clone(), edit.field.content().to_string());
         if let Some(spec) = self
             .song_sheet
             .as_mut()
-            .and_then(|dials| dials.sections.get_mut(section))
+            .and_then(|dials| dials.sections.iter_mut().find(|spec| spec.name == section))
         {
             spec.lyrics = words;
         }
@@ -127,7 +127,12 @@ impl AurisApp {
                     .as_ref()
                     .map(sections_in_form_order)
                     .unwrap_or_default();
-                if let Some(at) = order.iter().position(|&index| index == edit.section) {
+                if let Some(at) = order.iter().position(|&index| {
+                    self.song_sheet
+                        .as_ref()
+                        .and_then(|dials| dials.sections.get(index))
+                        .is_some_and(|spec| spec.name == edit.section)
+                }) {
                     let next = match shift {
                         true => (at + order.len() - 1) % order.len(),
                         false => (at + 1) % order.len(),
@@ -211,7 +216,7 @@ impl AurisApp {
         let edit = self
             .lyrics_edit
             .as_ref()
-            .filter(|edit| edit.section == index);
+            .filter(|edit| edit.section == spec.name);
         let heading = format!(
             "{} · {} {}",
             spec.name,

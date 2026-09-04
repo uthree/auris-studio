@@ -646,6 +646,80 @@ fn a_shorter_block_than_the_plugin_was_activated_for_still_renders() {
 }
 
 #[test]
+fn a_failed_embedded_show_is_destroyed_before_its_parent_window() {
+    if !cfg!(target_os = "windows") || !crate::window::CAN_LEND {
+        return;
+    }
+
+    let mut plugin = tone();
+    plugin
+        .load_state(&(-1.0f32).to_bits().to_le_bytes())
+        .expect("the negative fixture state asks show to fail");
+    assert!(plugin.open_gui(None).is_err());
+    assert!(!plugin.gui_is_open());
+
+    let calls = plugin.value(ParamId(3)).expect("the window call report") as u32;
+    assert_eq!(calls & gui_step::PARENTED, gui_step::PARENTED);
+    assert_eq!(calls & gui_step::DESTROYED, gui_step::DESTROYED);
+    assert_eq!(
+        calls & gui_step::PARENT_ALIVE_ON_DESTROY,
+        gui_step::PARENT_ALIVE_ON_DESTROY,
+        "destroy must run while the host container and its child relationship are valid"
+    );
+}
+
+#[test]
+fn a_longer_block_than_the_plugin_was_activated_for_is_rendered_in_full() {
+    // Offline rendering defaults to blocks larger than the live engine's activation size. Every
+    // frame still has to pass through the plugin, in legal-sized calls behind this interface.
+    let mut plugin = hosted();
+    let mut effect = plugin.activate(&context()).expect("must activate");
+    effect.set_param(ParamId(0), 0.5);
+
+    let mut buffer = block(1.0, 145);
+    effect.process(&mut buffer, &playing(145));
+
+    assert!(
+        buffer
+            .iter_channels()
+            .all(|channel| channel.iter().all(|sample| *sample == 0.5)),
+        "the frames beyond the activated block size must not pass through dry"
+    );
+    plugin.deactivate(effect);
+}
+
+#[test]
+fn notes_in_later_chunks_keep_their_block_relative_time() {
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+    let mut buffer = empty(145);
+
+    instrument.process(
+        &[
+            NoteEvent::NoteOn {
+                frame: 70,
+                pitch: 60,
+                velocity: 0.75,
+            },
+            NoteEvent::NoteOff {
+                frame: 130,
+                pitch: 60,
+            },
+        ],
+        &mut buffer,
+        &playing(145),
+    );
+
+    assert_eq!(buffer.channel(0)[69], 0.0);
+    assert_eq!(buffer.channel(0)[70], 0.75);
+    assert_eq!(buffer.channel(1)[129], 0.75);
+    assert_eq!(buffer.channel(0)[130], 0.0);
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
 fn two_instances_of_one_plugin_do_not_share_a_parameter() {
     // The session keeps a second instance alive while the first is still rendering in a graph
     // the audio thread has not let go of. If they shared anything, a handover would take the

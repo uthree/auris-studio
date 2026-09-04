@@ -492,9 +492,43 @@ mod tests {
             assert_eq!(dials.sections[0].lyrics, "ひらり");
             assert_eq!(dials.sections[1].lyrics, "はらり");
             assert_eq!(
-                this.lyrics_edit.as_ref().map(|edit| edit.section),
-                Some(0),
+                this.lyrics_edit.as_ref().map(|edit| edit.section.as_str()),
+                Some(dials.sections[0].name.as_str()),
                 "two stops on the walk, however often the chorus plays: it wrapped"
+            );
+        });
+    }
+
+    /// Editing follows a section by name while form changes rebuild and reorder section storage.
+    #[gpui::test]
+    fn lyrics_edit_stays_with_its_section_when_the_form_reorders(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ComposeSong);
+        paint(&app, cx);
+
+        let edited = app.update(cx, |this, _| {
+            let dials = this.song_sheet.as_ref().expect("the song sheet is open");
+            let edited = dials.sections[1].name.clone();
+            this.focus_section_lyrics(1);
+            let dials = this.song_sheet.as_mut().expect("the song sheet is open");
+            crate::ui::compose_sheet::add_to_form(dials, 0, "bridge");
+            assert_ne!(dials.sections[1].name, edited, "the raw index moved");
+            edited
+        });
+        paint(&app, cx);
+        cx.simulate_input("ことば");
+
+        app.read_with(cx, |this, _| {
+            let dials = this.song_sheet.as_ref().unwrap();
+            let section = dials
+                .sections
+                .iter()
+                .find(|section| section.name == edited)
+                .expect("the edited section remains in the form");
+            assert_eq!(section.lyrics, "ことば");
+            assert_eq!(
+                dials.sections[1].lyrics, "",
+                "the section that inherited the old index was not overwritten"
             );
         });
     }

@@ -95,6 +95,15 @@ pub const ATTACK_SECONDS: f64 = 0.015;
 /// Seconds the energy takes to fall back to silence before a note's end.
 pub const RELEASE_SECONDS: f64 = 0.040;
 
+/// Smallest supported feature-frame hop, in seconds.
+///
+/// A smaller value approaches one frame per audio sample and can turn merely inspecting a
+/// malformed project into an unbounded allocation.
+const MIN_FRAME_HOP: f64 = 0.001;
+
+/// Largest supported feature-frame hop, in seconds.
+const MAX_FRAME_HOP: f64 = 0.100;
+
 /// A singer track sampled onto the model's clock.
 ///
 /// One entry per frame in each of the three sequences, which stay the same length by
@@ -162,10 +171,9 @@ struct TimedNote<'a> {
 
 /// Samples a singer track into the frames its voice model is fed.
 pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
-    let hop = if track.frame_hop.is_finite() && track.frame_hop > 0.0 {
-        track.frame_hop
-    } else {
-        default_frame_hop()
+    let hop = match track.frame_hop.is_finite() {
+        true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
+        false => default_frame_hop(),
     };
 
     let notes = timed_notes(track, tempo_map);
@@ -534,6 +542,20 @@ mod tests {
         assert!(frames.is_empty());
         assert_eq!(frames.inventory, [SILENCE]);
         assert_eq!(frames.hop_seconds, default_frame_hop());
+    }
+
+    #[test]
+    fn a_frame_hop_loaded_from_a_project_is_bounded_before_rendering() {
+        let mut singer = track(vec![sung(69, 0.0, 1.0, &["a"])]);
+        singer.frame_hop = 1e-9;
+        let frames = render_frames(&singer, &map());
+        assert_eq!(frames.hop_seconds, MIN_FRAME_HOP);
+        assert_eq!(frames.len(), 501);
+
+        singer.frame_hop = 99.0;
+        let frames = render_frames(&singer, &map());
+        assert_eq!(frames.hop_seconds, MAX_FRAME_HOP);
+        assert_eq!(frames.len(), 6);
     }
 
     #[test]

@@ -189,13 +189,19 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
         """Audio loading and grapheme-to-phoneme; safe to run in threads."""
         if utt.text_path is None:
             return utt, None, None, "missing transcript"
-        text = utt.text_path.read_text(encoding="utf-8").strip()
+        try:
+            text = utt.text_path.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeError) as error:
+            return utt, None, None, f"transcript decode error: {error}"
         if not text:
             return utt, None, None, "empty transcript"
         phonemes = frontend.g2p(text)
         if not phonemes:
             return utt, None, None, "empty phoneme sequence"
-        wav = _load_audio(utt.wav_path, sample_rate, peak_normalize, peak)
+        try:
+            wav = _load_audio(utt.wav_path, sample_rate, peak_normalize, peak)
+        except (OSError, RuntimeError, ValueError) as error:
+            return utt, None, None, f"audio decode error: {error}"
         return utt, wav, (text, phonemes), None
 
     records: list[dict] = []

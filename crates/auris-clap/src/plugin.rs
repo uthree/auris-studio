@@ -338,6 +338,10 @@ impl ClapPlugin {
         // early-return, and every later `open_gui` would answer `Ok` while doing nothing —
         // with `close_gui`, and the create/destroy balance, waiting on a window that never
         // existed.
+        // Kept outside the fallible setup closure so an embedded container remains alive while
+        // the error arm calls `destroy`. On Win32, dropping it first recursively destroys the
+        // plugin's newly parented child HWND.
+        let mut pending_container = None;
         let outcome = (|| {
             if plan.is_floating {
                 if let Some(parent) = parent.and_then(Window::from_window_handle) {
@@ -358,8 +362,13 @@ impl ClapPlugin {
             // can be read, because the scale belongs to the display it landed on, and the scale
             // has to be set before the size is asked for, or the plugin answers for a display
             // it was never told about.
-            let container = HostWindow::open(&plain_title, crate::window::PROVISIONAL, parent)
-                .ok_or_else(|| no_gui("this platform would not lend the plugin a window"))?;
+            pending_container = Some(
+                HostWindow::open(&plain_title, crate::window::PROVISIONAL, parent)
+                    .ok_or_else(|| no_gui("this platform would not lend the plugin a window"))?,
+            );
+            let container = pending_container
+                .as_ref()
+                .expect("the container was assigned above");
             if container.scale() != 1.0 {
                 let _ = gui.set_scale(&mut handle, container.scale());
             }
@@ -379,7 +388,7 @@ impl ClapPlugin {
             // Last: an empty window that fills a moment later reads as a flicker, and this way
             // the plugin has already drawn into it by the time anybody sees it.
             container.show();
-            Ok(Some(container))
+            Ok(pending_container.take())
         })();
 
         match outcome {
@@ -389,7 +398,10 @@ impl ClapPlugin {
                 Ok(())
             }
             Err(error) => {
+                // For an embedded GUI, `pending_container` still owns the parent window here.
+                // CLAP requires that window to remain valid until `destroy` returns.
                 gui.destroy(&mut handle);
+                drop(pending_container);
                 Err(error)
             }
         }

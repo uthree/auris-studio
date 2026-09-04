@@ -92,14 +92,14 @@ impl JapaneseDictionary {
     pub fn phonemes(&self, text: &str) -> Result<Vec<String>, VocalError> {
         let labels = self
             .inner
-            .run_frontend(text)
+            .extract_fullcontext(text)
             .map_err(|error| VocalError::Text {
                 text: text.to_string(),
                 detail: error.to_string(),
             })?;
         let mut phonemes = Vec::new();
         for label in &labels {
-            let name = label_phoneme(label).ok_or_else(|| VocalError::Text {
+            let name = label.phoneme.c.as_deref().ok_or_else(|| VocalError::Text {
                 text: text.to_string(),
                 detail: format!("unreadable label `{label}`"),
             })?;
@@ -162,17 +162,6 @@ impl JapaneseDictionary {
     }
 }
 
-/// The current phoneme of one full-context label: the stretch between `-` and `+`.
-///
-/// A label reads `xx^sil-k+o=N/A:…` — five phonemes of context around the current one, then
-/// the linguistic features. Only the current phoneme is wanted, and cutting it out here spares
-/// the crate a dependency on a label parser that would be thrown away above this line.
-fn label_phoneme(label: &str) -> Option<&str> {
-    let from = label.find('-')? + 1;
-    let to = from + label[from..].find('+')?;
-    Some(&label[from..to])
-}
-
 /// The phonemes of one note's lyric: the kana table, then the dictionary, then an honest error.
 ///
 /// An empty (or all-whitespace) lyric is an empty answer, not an error — it is what every note
@@ -201,13 +190,6 @@ pub fn lyric_phonemes(
 mod tests {
     use super::*;
 
-    #[test]
-    fn labels_give_up_their_phoneme() {
-        assert_eq!(label_phoneme("xx^sil-k+o=N/A:-3+1+5"), Some("k"));
-        assert_eq!(label_phoneme("k^o-N+n=i/A:0+2+4"), Some("N"));
-        assert_eq!(label_phoneme("no separators"), None);
-    }
-
     /// Runs only where `AURIS_JAPANESE_DICTIONARY` points at a compiled dictionary folder —
     /// the same silent-skip contract the singer's model tests keep, and for the same reason:
     /// CI has no dictionary, and a test that fails for that would teach people to ignore it.
@@ -217,6 +199,10 @@ mod tests {
             return;
         };
         let dictionary = JapaneseDictionary::load(Path::new(&folder)).expect("a loadable folder");
+        assert_eq!(
+            dictionary.phonemes("歌").expect("kanji reads"),
+            ["ɯ", "t", "a"]
+        );
         let phrases = dictionary
             .accent_phrases("端を渡る")
             .expect("plain text reads");

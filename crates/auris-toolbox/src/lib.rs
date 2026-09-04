@@ -1941,8 +1941,10 @@ pub mod edit_notes {
                     spec.bar, spec.beat
                 ));
             }
-            if spec.beats <= 0.0 {
-                return Err("`beats` is how long the note is held; give more than 0".into());
+            if !spec.beats.is_finite() || !(0.0..=MAX_TOOL_BEATS).contains(&spec.beats) {
+                return Err(format!(
+                    "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
+                ));
             }
             // Refused rather than clamped, like every other bounded number at this door: the
             // session would quietly pull it into range, and a success that placed a different
@@ -2507,13 +2509,21 @@ fn bar_after(start_bar: u32, bars: u32) -> Result<u32, String> {
 
 /// Where 1-based `bar` and `beat` land on the timeline.
 fn placed_at(project: &Project, bar: u32, beat: f64) -> Result<Ticks, String> {
-    if beat < 1.0 || !beat.is_finite() {
-        return Err(format!("beats count from 1; {beat} is before the bar"));
+    if !beat.is_finite() || !(1.0..=MAX_TOOL_BEATS).contains(&beat) {
+        return Err(format!(
+            "beats count from 1 and stop at {MAX_TOOL_BEATS}; {beat} is outside that range"
+        ));
     }
     let start = project.signatures.bar_start(bar.max(1));
     let per_beat = project.signatures.signature_at(start).ticks_per_beat();
     Ok(start + Ticks((per_beat.raw() as f64 * (beat - 1.0)).round() as i64))
 }
+
+/// Largest beat position or note duration accepted at the model-facing door.
+///
+/// This is 4,096 bars of common time: far beyond an ordinary clip, while still keeping every
+/// conversion and subsequent timeline calculation comfortably inside `Ticks`.
+const MAX_TOOL_BEATS: f64 = 16_384.0;
 
 /// A mixer strip address: a track by name, or `None` for the master bus as "master".
 fn strip_by_name(project: &Project, name: &str) -> Result<Option<TrackId>, String> {
@@ -3270,6 +3280,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(loud.contains("0-1"), "refused, not clamped: {loud}");
+        let too_long = place(
+            vec![edit_notes::NoteSpec {
+                beats: 1e16,
+                ..note("C4", 1, 1.0)
+            }],
+            None,
+        )
+        .unwrap_err();
+        assert!(too_long.contains("at most"), "refused safely: {too_long}");
+        let too_late = place(vec![note("C4", 1, 1e18)], None).unwrap_err();
+        assert!(
+            too_late.contains("outside that range"),
+            "refused safely: {too_late}"
+        );
 
         // The band, derived from the tune. The melody itself is untouched.
         let band = accompany::run(&accompany::Args {

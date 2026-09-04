@@ -122,11 +122,16 @@ impl Note {
 pub fn loop_passes(content: Ticks, loop_end: Ticks) -> impl Iterator<Item = (Ticks, Ticks)> {
     let span = content.raw().max(1);
     let total = loop_end.raw().max(span);
-    (0..).map_while(move |pass| {
-        let offset = pass * span;
-        (offset < total).then(|| (Ticks(offset), Ticks(span.min(total - offset))))
-    })
+    (0..)
+        .map_while(move |pass| {
+            let offset = pass * span;
+            (offset < total).then(|| (Ticks(offset), Ticks(span.min(total - offset))))
+        })
+        .take(MAX_LOOP_PASSES)
 }
+
+/// Safety ceiling for a loop length read from an untrusted project file.
+const MAX_LOOP_PASSES: usize = 16_384;
 
 /// How far a clip reaches on the timeline, repeats included.
 ///
@@ -414,9 +419,11 @@ impl MidiClip {
             .max()
             .unwrap_or(Ticks::ZERO);
         if needed > self.length {
-            // `i64::div_ceil` is still unstable, and `needed` is never negative here.
+            // Spell the ceiling division without `needed + grid - 1`: a malformed project can
+            // carry an enormous note, and rounding its end must not overflow the whole session.
             let grid = grid.0.max(1);
-            self.length = Ticks((needed.0 + grid - 1) / grid * grid);
+            let blocks = needed.0 / grid + i64::from(needed.0 % grid != 0);
+            self.length = Ticks(blocks.saturating_mul(grid));
         }
     }
 
@@ -1663,6 +1670,14 @@ mod tests {
     }
 
     #[test]
+    fn a_corrupt_loop_end_cannot_build_an_unbounded_schedule() {
+        assert_eq!(
+            loop_passes(Ticks(1), Ticks(i64::MAX)).count(),
+            MAX_LOOP_PASSES
+        );
+    }
+
+    #[test]
     fn the_last_pass_is_cut_wherever_the_loop_ends() {
         // A loop is a length rather than a count, which is what makes dragging its edge
         // continuous — so two and a half passes is a real answer, not a rounding error.
@@ -1829,6 +1844,14 @@ mod tests {
             .push(Note::new(60, Ticks::ZERO, Ticks::from_beats(3.5)));
         clip.fit_length_to_notes(Ticks(TICKS_PER_QUARTER));
         assert_eq!(clip.length, Ticks::from_beats(4.0));
+    }
+
+    #[test]
+    fn fitting_an_enormous_note_length_does_not_overflow() {
+        let mut clip = MidiClip::new(ClipId(1), "c", Ticks::ZERO, Ticks::QUARTER);
+        clip.notes.push(Note::new(60, Ticks::ZERO, Ticks(i64::MAX)));
+        clip.fit_length_to_notes(Ticks(TICKS_PER_QUARTER));
+        assert_eq!(clip.length, Ticks(i64::MAX));
     }
 
     #[test]

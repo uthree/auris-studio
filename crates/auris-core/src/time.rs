@@ -666,23 +666,32 @@ fn bars_between(from: Ticks, to: Ticks, signature: TimeSignature) -> u32 {
 /// that would land on top of its predecessor is dropped rather than moved: it named the same bar,
 /// and the later signature is the one the user asked for last.
 fn align_to_bars(points: &mut Vec<SignaturePoint>) {
-    let mut index = 1;
-    while index < points.len() {
-        let previous = points[index - 1];
+    // Keep the distances the writer supplied separate from the aligned positions. An earlier
+    // point can round forwards past the next point's original tick; measuring that next point
+    // from the moved predecessor would then mistake it for a same-bar collision and erase a
+    // genuine signature change.
+    let original = std::mem::take(points);
+    let mut original_previous = original[0].tick;
+    points.push(original[0]);
+    for mut point in original.into_iter().skip(1) {
+        let previous = *points.last().expect("the anchor was inserted above");
         let per_bar = previous.signature.ticks_per_bar().raw().max(1);
-        let offset = points[index].tick.raw() - previous.tick.raw();
+        let original_current = point.tick;
+        let offset = original_current.raw() - original_previous.raw();
         let bars = (offset as f64 / per_bar as f64).round() as i64;
         if bars < 1 {
             // The same bar as the change before it. Two signatures cannot both begin there, and
             // the one written later is the one that was meant.
-            points[index - 1].signature = points[index].signature;
-            points.remove(index);
-            // The cursor stays put rather than advancing: the predecessor's signature has just
-            // changed, so whatever follows has to be measured against a new bar length.
+            points
+                .last_mut()
+                .expect("the anchor was inserted above")
+                .signature = point.signature;
+            original_previous = original_current;
             continue;
         }
-        points[index].tick = previous.tick + Ticks(bars * per_bar);
-        index += 1;
+        point.tick = previous.tick + Ticks(bars * per_bar);
+        points.push(point);
+        original_previous = original_current;
     }
 }
 
@@ -1199,6 +1208,47 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn aligning_an_earlier_signature_forwards_does_not_swallow_the_next_one() {
+        let mut map = SignatureMap::from_points(vec![
+            SignaturePoint {
+                tick: Ticks::ZERO,
+                signature: TimeSignature::new(4, 4),
+            },
+            SignaturePoint {
+                tick: Ticks(7_680),
+                signature: TimeSignature::new(3, 4),
+            },
+            SignaturePoint {
+                tick: Ticks(10_560),
+                signature: TimeSignature::new(7, 8),
+            },
+        ]);
+
+        // The new opening bar moves the middle change forwards from 7,680 to 9,600. The final
+        // change was only 960 ticks beyond that *new* position, but it was a full 3/4 bar beyond
+        // the position the user supplied and must remain a separate change.
+        map.set_initial(TimeSignature::new(5, 2));
+
+        assert_eq!(
+            map.points(),
+            &[
+                SignaturePoint {
+                    tick: Ticks::ZERO,
+                    signature: TimeSignature::new(5, 2),
+                },
+                SignaturePoint {
+                    tick: Ticks(9_600),
+                    signature: TimeSignature::new(3, 4),
+                },
+                SignaturePoint {
+                    tick: Ticks(12_480),
+                    signature: TimeSignature::new(7, 8),
+                },
+            ]
+        );
     }
 
     #[test]
