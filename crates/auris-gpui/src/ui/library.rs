@@ -680,8 +680,8 @@ impl AurisApp {
     ///
     /// A voice is chosen the way a sound is: one row, one click, onto the selected singer
     /// track. Track → Choose Voice… keeps the file dialog for the one-off file somewhere
-    /// unusual; what this section holds is the shelf — every `.onnx` in a `Voices` folder
-    /// (beside the binaries, in the configuration directory) or in a folder registered below.
+    /// unusual; what this section holds is the shelf — Auris `.onnx` files, DiffSinger voicebanks,
+    /// and VOICEVOX connections in a `Voices` folder or in a folder registered below.
     fn voice_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let voices = self.voice_list();
         let mut rows = vec![self.section_row(
@@ -714,6 +714,12 @@ impl AurisApp {
         let theme = self.theme.clone();
         let accent = theme.group_color(group_hue(1, 3));
         let shown = path.display().to_string();
+        let backend = match auris_session::voice_source_kind(&path) {
+            Some(auris_session::VoiceSourceKind::Auris) => Key::VoiceBackendAuris,
+            Some(auris_session::VoiceSourceKind::DiffSinger) => Key::VoiceBackendDiffSinger,
+            Some(auris_session::VoiceSourceKind::Voicevox) => Key::VoiceBackendVoicevox,
+            None => Key::VoiceBackendAuris,
+        };
         div()
             .id(gpui::SharedString::from(format!("lib-voice-{shown}")))
             .flex()
@@ -732,6 +738,15 @@ impl AurisApp {
                     .text_xs()
                     .text_color(theme.text)
                     .child(name.to_string()),
+            )
+            .child(
+                div()
+                    .px_1()
+                    .rounded(Metrics::RADIUS_XS)
+                    .bg(theme.surface_raised)
+                    .text_xs()
+                    .text_color(accent)
+                    .child(self.t(backend)),
             )
             .child(
                 div()
@@ -799,6 +814,44 @@ impl AurisApp {
                     self.t(Key::BrowserAddVoiceFolder),
                     &theme,
                     cx.listener(|this, _, _, cx| this.add_voice_path(cx)),
+                ))
+                .into_any_element(),
+        );
+        rows.push(
+            div()
+                .pl(indent(1))
+                .pr_1()
+                .py_1()
+                .child(crate::ui::widgets::icon_label(
+                    "setup-voicevox",
+                    Icon::Sliders,
+                    self.t(Key::BrowserSetupVoicevox),
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.open_voice_setup(
+                            crate::voice_setup_window::VoiceSetupTab::Voicevox,
+                            cx,
+                        )
+                    }),
+                ))
+                .into_any_element(),
+        );
+        rows.push(
+            div()
+                .pl(indent(1))
+                .pr_1()
+                .py_1()
+                .child(crate::ui::widgets::icon_label(
+                    "setup-diffsinger",
+                    Icon::Sliders,
+                    self.t(Key::BrowserSetupDiffSinger),
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.open_voice_setup(
+                            crate::voice_setup_window::VoiceSetupTab::DiffSinger,
+                            cx,
+                        )
+                    }),
                 ))
                 .into_any_element(),
         );

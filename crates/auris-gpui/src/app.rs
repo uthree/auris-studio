@@ -38,6 +38,7 @@ use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::timeline::{PitchView, TimelineView};
 use crate::ui::typing_panel::TypingPanel;
+use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1376,6 +1377,8 @@ pub struct AurisApp {
     pub(crate) pointer: PointerGestures,
     /// The settings window, while it is open.
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
+    /// The external singing-backend setup window, while it is open.
+    pub(crate) voice_setup_window: Option<WindowHandle<VoiceSetupWindow>>,
     /// Where the drawn keyboard has been dragged to. See [`crate::ui::typing_panel`].
     pub(crate) typing_panel: TypingPanel,
     /// The key the pointer is holding down on the drawn keyboard, if any.
@@ -1569,6 +1572,7 @@ impl AurisApp {
             vst3_contents: std::collections::HashMap::new(),
             titled: String::new(),
             native_menu_snapshot: None,
+            voice_setup_window: None,
             choosing_export: false,
             status_failed: false,
             external_change: None,

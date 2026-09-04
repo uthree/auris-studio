@@ -243,6 +243,9 @@ section's own *Add Voice Folder…* row, remembered and never copied, the way pl
 are. **One click puts the voice on the selected singer track**, exactly as one click puts a
 sound on an instrument track, and the search box finds voices by name like everything else.
 **Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual.
+Auris ONNX, DiffSinger, and VOICEVOX entries carry backend badges on the shelf. The setup rows at
+the bottom of the section create a DiffSinger `dsconfig.yaml`, or start and verify a VOICEVOX
+Engine and save its URL and singing style IDs without editing configuration files by hand.
 A voice trained on several corpora carries one **speaker** per source, and **Track → Next
 Speaker** moves the track round that list, the status line saying who sings now and where
 they stand in it; a single-speaker voice says so and stays. The choice is the track's, saved

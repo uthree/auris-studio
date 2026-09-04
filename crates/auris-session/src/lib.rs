@@ -52,6 +52,7 @@ pub mod registry;
 pub mod render;
 pub mod session;
 pub mod settings;
+pub mod voice_setup;
 
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
@@ -63,7 +64,8 @@ pub use error::SessionError;
 pub use history::{Edit, History};
 pub use library::{
     DICTIONARY_DIR_VAR, DICTIONARY_FOLDER, GENERAL_MIDI, JAPANESE_DICTIONARY, LIBRARY_DIR_VAR,
-    LIBRARY_FOLDER, ShippedDictionary, ShippedFont, VOICES_DIR_VAR, VOICES_FOLDER,
+    LIBRARY_FOLDER, ShippedDictionary, ShippedFont, VOICES_DIR_VAR, VOICES_FOLDER, VoiceSourceKind,
+    voice_source_kind,
 };
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
@@ -82,6 +84,10 @@ pub use session::{
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir, migrate_legacy_config,
+};
+pub use voice_setup::{
+    DiffSingerSetup, VoiceSetupError, VoicevoxSetup, check_voicevox_connection,
+    start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
 };
 
 /// What a `.clap` file says is inside it, for a frontend listing one.

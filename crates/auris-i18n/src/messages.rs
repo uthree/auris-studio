@@ -913,6 +913,30 @@ messages! {
         en: "{name} copy",
         ja: "{name} のコピー"
     }
+
+    /// Confirmation that a VOICEVOX Engine process was started.
+    fn voicevox_engine_started(pid: u32) {
+        en: "VOICEVOX Engine started (PID {pid})",
+        ja: "VOICEVOX Engineを起動しました (PID {pid})"
+    }
+
+    /// Confirmation that the configured VOICEVOX Engine answered.
+    fn voicevox_engine_connected(version: &str) {
+        en: "Connected to VOICEVOX Engine {version}",
+        ja: "VOICEVOX Engine {version} に接続できました"
+    }
+
+    /// Confirmation that a singing-backend configuration was written.
+    fn voice_setup_saved(path: &str) {
+        en: "Saved {path}",
+        ja: "{path} に保存しました"
+    }
+
+    /// A numeric setup field could not be parsed.
+    fn voice_setup_invalid_field(field: &str) {
+        en: "Invalid {field}",
+        ja: "{field} の値が正しくありません"
+    }
 }
 
 #[cfg(test)]

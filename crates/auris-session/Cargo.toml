@@ -26,7 +26,9 @@ log.workspace = true
 midir.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 thiserror.workspace = true
+ureq.workspace = true
 
 [dev-dependencies]
 # The hosting tests need a CLAP plugin, and must not need one installed on the machine.

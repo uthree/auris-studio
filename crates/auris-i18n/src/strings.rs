@@ -1287,10 +1287,44 @@ new のオプション
     }
     BrowserVoices { en: "Voices", ja: "シンガーボイス" }
     BrowserNoVoices {
-        en: "Put .onnx voices in a Voices folder, or add a folder below",
-        ja: "Voices フォルダに .onnx を置くか、下からフォルダを追加してください"
+        en: "Add an Auris, DiffSinger, or VOICEVOX voice below",
+        ja: "下からAuris、DiffSinger、またはVOICEVOXのボイスを追加してください"
     }
     BrowserAddVoiceFolder { en: "Add Voice Folder…", ja: "ボイスフォルダを追加…" }
+    BrowserSetupVoicevox { en: "Set Up VOICEVOX…", ja: "VOICEVOXを設定…" }
+    BrowserSetupDiffSinger { en: "Set Up DiffSinger…", ja: "DiffSingerを設定…" }
+    VoiceSetupTitle { en: "Singing Backend Setup", ja: "歌声合成バックエンド設定" }
+    VoiceSetupVoicevox { en: "VOICEVOX Engine", ja: "VOICEVOX Engine設定" }
+    VoiceSetupDiffSinger { en: "DiffSinger", ja: "DiffSinger設定" }
+    VoiceSetupName { en: "Voice name", ja: "ボイス名" }
+    VoiceSetupUrl { en: "Engine URL", ja: "Engine接続先URL" }
+    VoiceSetupStyleName { en: "Style name", ja: "スタイル名" }
+    VoiceSetupQueryStyle { en: "Query style ID", ja: "クエリ用Style ID" }
+    VoiceSetupDecodeStyle { en: "Decode style ID", ja: "デコード用Style ID" }
+    VoiceSetupSampleRate { en: "Sample rate", ja: "サンプルレート" }
+    VoiceSetupFrameRate { en: "Frame rate", ja: "フレームレート" }
+    VoiceSetupEngine { en: "Engine executable", ja: "Engine実行ファイル" }
+    VoiceSetupChooseEngine { en: "Choose Engine…", ja: "Engineを選択…" }
+    VoiceSetupStartEngine { en: "Start Engine", ja: "Engineを起動" }
+    VoiceSetupCheck { en: "Check Connection", ja: "接続を確認" }
+    VoiceSetupChecking { en: "Checking VOICEVOX Engine…", ja: "VOICEVOX Engineへの接続を確認しています…" }
+    VoiceSetupSave { en: "Save Connection", ja: "接続を保存" }
+    VoiceSetupFolder { en: "Voicebank folder", ja: "ボイスバンクフォルダ" }
+    VoiceSetupChooseFolder { en: "Choose Folder…", ja: "フォルダを選択…" }
+    VoiceSetupPhonemes { en: "Phonemes file", ja: "音素ファイル" }
+    VoiceSetupAcoustic { en: "Acoustic model", ja: "音響モデル" }
+    VoiceSetupVocoder { en: "Vocoder folder", ja: "ボコーダーフォルダ" }
+    VoiceSetupHopSize { en: "Hop size", ja: "ホップサイズ" }
+    VoiceSetupMelBins { en: "Mel bins", ja: "メルビン数" }
+    VoiceSetupMelBase { en: "Mel base", ja: "メル対数の底" }
+    VoiceSetupContinuous { en: "Continuous acceleration", ja: "連続アクセラレーション" }
+    VoiceSetupVariableDepth { en: "Variable diffusion depth", ja: "可変Diffusion Depth" }
+    VoiceSetupKeyShift { en: "Key-shift input", ja: "キーシフト入力" }
+    VoiceSetupSpeed { en: "Speed input", ja: "速度入力" }
+    VoiceSetupWriteConfig { en: "Write dsconfig.yaml", ja: "dsconfig.yamlを書き出す" }
+    VoiceBackendAuris { en: "Auris ONNX", ja: "Auris形式" }
+    VoiceBackendDiffSinger { en: "DiffSinger", ja: "DiffSinger形式" }
+    VoiceBackendVoicevox { en: "VOICEVOX", ja: "VOICEVOX接続" }
     DialogVoiceFolder { en: "Choose a folder of voice models", ja: "ボイスモデルのフォルダを選択" }
     CliDictionary { en: "SHIPPED JAPANESE DICTIONARY", ja: "同梱日本語辞書" }
     CliDictionaryMissing {

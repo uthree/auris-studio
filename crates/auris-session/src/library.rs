@@ -254,6 +254,34 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
     voices
 }
 
+/// The backend implied by an installed voice entry's path.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum VoiceSourceKind {
+    /// A self-contained voice exported by the Auris trainer.
+    Auris,
+    /// An OpenUtau-compatible DiffSinger deployment.
+    DiffSinger,
+    /// A connection to a running VOICEVOX Engine.
+    Voicevox,
+}
+
+/// Identifies a voice shelf entry without loading its potentially large model.
+pub fn voice_source_kind(path: &Path) -> Option<VoiceSourceKind> {
+    let name = path.file_name()?.to_str()?;
+    if name.eq_ignore_ascii_case("dsconfig.yaml") {
+        Some(VoiceSourceKind::DiffSinger)
+    } else if name.to_ascii_lowercase().ends_with(".voicevox.json") {
+        Some(VoiceSourceKind::Voicevox)
+    } else if path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
+    {
+        Some(VoiceSourceKind::Auris)
+    } else {
+        None
+    }
+}
+
 /// Directories the shipped SoundFonts are looked for in, best first.
 pub fn library_roots() -> Vec<PathBuf> {
     roots_from(
@@ -550,6 +578,16 @@ mod tests {
         assert!(ritsu.1.starts_with(&first), "the first root wins the name");
         let momo = voices.iter().find(|(name, _)| name == "Momo").unwrap();
         assert_eq!(momo.1, diffsinger.join("dsconfig.yaml"));
+        assert_eq!(
+            voice_source_kind(&momo.1),
+            Some(VoiceSourceKind::DiffSinger)
+        );
+        let zundamon = voices.iter().find(|(name, _)| name == "Zundamon").unwrap();
+        assert_eq!(
+            voice_source_kind(&zundamon.1),
+            Some(VoiceSourceKind::Voicevox)
+        );
+        assert_eq!(voice_source_kind(&ritsu.1), Some(VoiceSourceKind::Auris));
 
         std::fs::remove_dir_all(&root).unwrap();
     }

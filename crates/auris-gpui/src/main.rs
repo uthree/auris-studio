@@ -26,6 +26,7 @@ mod logbook;
 mod menu;
 mod settings_window;
 mod theme;
+mod voice_setup_window;
 
 mod ui;
 
