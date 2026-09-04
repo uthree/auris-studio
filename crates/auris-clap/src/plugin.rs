@@ -401,6 +401,10 @@ impl ClapPlugin {
                 // For an embedded GUI, `pending_container` still owns the parent window here.
                 // CLAP requires that window to remain valid until `destroy` returns.
                 gui.destroy(&mut handle);
+                // The supported platform implementations release a native window in `Drop`.
+                // On unsupported platforms the uninhabited placeholder has no `Drop` impl,
+                // which makes this intentionally ordered destruction look redundant to Clippy.
+                #[allow(clippy::drop_non_drop)]
                 drop(pending_container);
                 Err(error)
             }
