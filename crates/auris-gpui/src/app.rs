@@ -2349,6 +2349,14 @@ impl AurisApp {
         }
     }
 
+    /// Turns note-length snapping on or off and remembers the choice.
+    pub(crate) fn apply_snap_note_lengths(&mut self, enabled: bool) {
+        self.settings.snap_note_lengths = enabled;
+        if let Err(error) = self.settings.save() {
+            log::warn!("could not save settings: {error}");
+        }
+    }
+
     /// Chooses where singer voices run their inference, and remembers the choice.
     ///
     /// Cannot fail here: the session only drops its cached models, and whether the GPU
@@ -2465,6 +2473,7 @@ impl AurisApp {
         let language = self.settings.language;
         let pointer = self.pointer;
         let autosave = self.session.autosave_enabled();
+        let snap_note_lengths = self.settings.snap_note_lengths;
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
@@ -2492,6 +2501,7 @@ impl AurisApp {
                         language,
                         pointer,
                         autosave,
+                        snap_note_lengths,
                         dictionary,
                         singer_acceleration,
                         export,

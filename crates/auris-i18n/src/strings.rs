@@ -368,6 +368,12 @@ strings! {
         en: "Saves a project that already has a folder, about every 30 seconds, once it has changed. Closing without saving stops being a way to undo an afternoon.",
         ja: "保存先が決まっているプロジェクトを、変更があれば30秒ごとに上書き保存します。「保存せずに閉じて元に戻す」はできなくなります。"
     }
+    SnapNoteLengths { en: "Snap Note Lengths", ja: "ノートの長さをスナップ" }
+    SnapNoteLengthsNote {
+        en: "Rounds a note's duration to the editing grid while its right edge is dragged.",
+        ja: "ノートの右端をドラッグしたとき、長さを編集グリッドに合わせます。"
+    }
+    CurrentChord { en: "Chord", ja: "コード" }
     JapaneseDictionaryHeading { en: "Japanese Dictionary", ja: "日本語辞書" }
     JapaneseDictionaryNote {
         en: "Reads kanji lyrics and the pitch accent a composed melody follows. A build ships with naist-jdic; choose a folder here only to override it, and Clear to return to the shipped one.",

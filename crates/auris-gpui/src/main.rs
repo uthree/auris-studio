@@ -53,6 +53,10 @@ fn main() {
     auris_session::migrate_legacy_config();
 
     Application::new().run(|cx: &mut App| {
+        // Installs the Markdown renderer's theme and language registry. The agent transcript uses
+        // gpui-component's TextView, as picocode does, while the rest of the window keeps Auris's
+        // own deliberately small widget set and palette.
+        gpui_component::init(cx);
         // The menu bar is built before the window, so the language comes from the settings file
         // rather than from the view that has not been created yet. `AurisApp` loads the same
         // file a moment later, and rebuilds these menus whenever the choice changes.

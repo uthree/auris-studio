@@ -24,6 +24,9 @@ log.workspace = true
 # The build-time path shells out to `xcrun metal`, which lives inside Xcode and is unreachable
 # while `xcode-select -p` points at the Command Line Tools.
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }
+# The agent transcript uses the same Markdown view as picocode, including fenced code-block
+# highlighting. It shares gpui's version and stays wholly inside this presentation crate.
+gpui-component = { version = "0.5", features = ["tree-sitter-languages"] }
 rfd = "0.17"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
