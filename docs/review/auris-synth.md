@@ -1,0 +1,63 @@
+# Review findings: auris-synth
+
+Part of the [whole-repository adversarial review](README.md) of commit `52d1702`. 3 verified findings: 1 high, 2 medium.
+
+Each entry survived an independent skeptic and an independent reproducer (and a tie-breaker when they disagreed); "executed reproduction" means the reproducer ran a test, a binary or a scratch program and observed the behaviour, "traced" means it followed the call path with concrete values.
+
+| ID | Severity | Location | Finding |
+|---|---|---|---|
+| F-103 | high | `crates/auris-synth/src/chiptune.rs:278` | Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs […] |
+| F-098 | medium | `crates/auris-synth/src/fm2.rs:279` | Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, […] |
+| F-239 | medium | `crates/auris-synth/src/chiptune.rs:486` | A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment […] |
+
+### F-103 · high · Chiptune::note_on stores the new note's target pitch into last_frequency instead of the previous voice's live gliding frequency, so rapid portamento runs jump-start from an unsounded pitch.
+
+`crates/auris-synth/src/chiptune.rs:278` · dsp · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** With Glide enabled and notes played faster than the glide settles (a normal legato/portamento performance), the third and later notes in a run start their pitch slide from a frequency that was never actually sounding — a phantom target the previous note was still gliding toward — rather than continuing smoothly from the audible pitch. The player hears a discontinuous jump in the middle of what should be a continuous slide, defeating the entire purpose of portamento.
+
+**Trigger.** Turn Glide on with a slow time (e.g. `glide = 1.0` -> ~1 s to settle within -80 dB per the `SEGMENT_TIME_CONSTANTS` convention used at line 198), then play three notes faster than the glide settles, e.g. note A (48), then ~50 ms later note B (84), then ~50 ms later note C (60). By the time C triggers, B's `voice.frequency` is still only partway from A's pitch toward B's target (per the one-pole update at line 426, at ~50 ms into a 1 s glide it is roughly 35-40% of the way there) — but C's glide starts at B's *target* (1046.5 Hz for pitch 84), a pitch nothing in the mix is actually sounding at that instant.
+
+**Mechanism.** `last_frequency` is documented at line 124 as "Frequency the last note started on, so a new note can glide from where the last one was", but `note_on` (lines 247-279) actually stores the just-triggered note's *destination* pitch into it: `let target = self.frequency_for(...)` (252) is what gets saved via `self.last_frequency = Some(target)` (278), while the note's real starting point `start` (253-257) is never recorded anywhere. A later note-on then seeds its own glide from `self.last_frequency.unwrap_or(target)` (256), i.e. from the *target* the previous note-on asked for, not from wherever that previous voice's `voice.frequency` one-pole filter has actually reached by then. Because every successive note repeats this (each note's `last_frequency` is simply the prior note's target), the chain tracks a sequence of un-sounded destination pitches rather than the audibly-current pitch.
+
+**Expected.** Per the doc comment on `last_frequency` ("so a new note can glide from where the last one was"), a new note's glide should start from the actual currently-sounding pitch of the most recently triggered voice (i.e. its live, possibly still-transitioning `voice.frequency`), not from that voice's eventual target. Either the field should be updated every sample to track the true current pitch of the most recent voice, or the doc comment is wrong about what is stored and the glide-chaining design […]
+
+**Fix direction.** Update `last_frequency` from the voice's live, per-sample-updated `voice.frequency` at the moment a new note-on reads it (e.g. read the stolen/most-recent voice's current `frequency` field in `note_on` before overwriting it) instead of storing `target`; alternatively store the assigned voice's frequency after `voice.frequency = start` is set for the *previous* note, updated each `render_segment` tick, so `last_frequency` always reflects where the sound currently is, matching its own doc comment.
+
+**Written rule it breaks.** // Frequency the last note started on, so a new note can glide from where the last one was. (doc comment on `Chiptune::last_frequency`, chiptune.rs:124); project rule: "DSP code lives behind unit tests that assert on numbers ... rather than on 'it runs'" (CLAUDE.md) — this numeric mismatch between documented and actual behavior would be caught by such a test but evidently isn't
+
+### F-098 · medium · Fm2's AllSoundOff handler silences the modulator envelope instantly instead of ramping it, but no shipped code path currently constructs AllSoundOff for FM2, so the click is real but presently unreachable outside the crate's own tests.
+
+`crates/auris-synth/src/fm2.rs:279` · dsp · confirmed (traced through the code; reported independently 1×)
+
+**What a user sees.** No current user-facing action reaches this code path: the shipped panic feature calls Instrument::reset() (which silences both envelopes symmetrically), never Fm2::handle_event(&NoteEvent::AllSoundOff). So today no user hears a click from this. The defect is real and audible in principle (worst-case sample deltas of 0.23-1.86 against a normal step of ~0.05, per the reproducer) and would surface the moment any future code path — a CLAP host sending MIDI all-sound-off, a new MCP/CLI panic command, or a refactor that routes panic through handle_event instead of reset() — starts constructing AllSoundOff for a sounding Fm2 voice.
+
+**Trigger.** Hold an Fm2 note with the default `index` (5.0) parameter for well under one `mod_decay` (default 0.35 s, e.g. ~40 ms in), then send `NoteEvent::AllSoundOff`. The modulator envelope is still well above zero at that point, so `mod_envelope.silence()` snaps a nonzero `offset` to zero in one sample while `envelope.kill()` has barely begun ramping.
+
+**Mechanism.** `AllSoundOff` (lines 275-282) calls `voice.envelope.kill()` (the 2 ms de-click ramp) on the audible amplitude envelope but `voice.mod_envelope.silence()` (an immediate, unramped drop to level 0, see `crates/auris-dsp/src/adsr.rs:180` `silence()` vs `:170` `kill()`) on the FM depth envelope. In `render_segment` (fm2.rs:335-337) `let depth = voice.mod_envelope.process() * index_cycles; let offset = voice.modulator.next(Waveform::Sine) * depth; let carrier = voice.carrier.next_modulated(Waveform::Sine, offset);` — `offset` directly shifts the carrier's *read phase* each sample. When `mod_envelope.silence()` fires, the very next `process()` call returns 0.0 outright (its `EnvelopeStage::Idle` arm), so `offset` can jump from whatever it was (up to `index_cycles` ≈ 3.82 cycles at the max `index` parameter, or ≈0.24 cycles at the default `index=5.0` mid-decay) to exactly 0 in one sample. That is precisely the discontinuity the file's own `MOD_ATTACK_SECONDS` doc comment (lines 40-49) describes and ramps away from on the note-on/steal path via `.trigger()` (continuous) — but on […]
+
+**Expected.** Per `Adsr::kill`'s doc comment ('Cutting a sounding voice to zero in one sample injects a step ... an audible click. Ramping over 2 ms...') and the file's own `MOD_ATTACK_SECONDS` reasoning, `mod_envelope` should be force-silenced the same continuous way as `envelope` — e.g. `voice.mod_envelope.kill()` — instead of `silence()`, so the FM offset fades out over the same 2 ms window rather than stepping.
+
+**Fix direction.** In the AllSoundOff arm of Fm2::handle_event (fm2.rs:277-282), replace voice.mod_envelope.silence() with voice.mod_envelope.kill() so the modulator's phase-offset depth ramps down over the same de-click window as the carrier's amplitude envelope, instead of stepping to zero while the voice is still rendering near full gain. Also extend the crate's regression test (fm2.rs:672-678) to sample inside the kill window (not skip past it) so this class of bug is caught by cargo test rather than requiring a live path.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+**Verifier's correction.** AllSoundOff hard-silences FM2's modulator envelope discontinuously (mod_envelope.silence() vs envelope.kill(), fm2.rs:279 vs :278), producing an audible click if this event ever reaches a sounding Fm2 voice — confirmed by direct calculation against the real Adsr/Oscillator code, and the crate's own regression test (fm2.rs:672-678) is structurally blind to it because it skips exactly the 192-sample window where the spike occurs. However, downgrade severity/framing: as of this snapshot no live code path constructs NoteEvent::AllSoundOff — the shipped "panic" feature (Session::panic -> […]
+
+### F-239 · medium · A huge-but-finite `--sample-rate` (e.g. 1e40) overflows to f32::INFINITY in Chiptune/FM2/NoiseDrum/Vocal `prepare`, zeroing the oscillator's phase increment and silently freezing the tone with no error.
+
+`crates/auris-synth/src/chiptune.rs:486` · correctness · confirmed (executed reproduction; reported independently 1×)
+
+**What a user sees.** A user who types an absurd sample-rate value (e.g. `auris new proj --sample-rate 1e40`) gets a project that opens and renders without error, but every built-in synth track (Chiptune, FM2, NoiseDrum, Vocal) is silently frozen: the oscillator's phase increment collapses to exactly 0.0, so the track outputs a stuck DC/constant value instead of an oscillating tone, with no warning, error, or crash anywhere in the pipeline.
+
+**Trigger.** Call `Instrument::prepare` with a `PrepareContext` whose `sample_rate` is `f64::INFINITY` (or any absurdly large finite value that overflows `f32::MAX`, e.g. 1e40), then play a note with a Square, Saw or Triangle waveform.
+
+**Mechanism.** `prepare()` does `self.sample_rate = if ctx.sample_rate > 0.0 { ctx.sample_rate as f32 } else { 48_000.0 };` (chiptune.rs:486-490; identical pattern at fm2.rs:366-370, noisedrum.rs:344-349, vocal.rs:338-342). The check only rejects non-positive values; `f64::INFINITY > 0.0` is true, and any sufficiently large finite f64 (e.g. 1e40) also becomes `f32::INFINITY` on the `as f32` cast (Rust's float narrowing cast saturates to infinity on overflow). `Oscillator::set_sample_rate` (oscillator.rs:178-182) then only checks `sample_rate > 0.0` too, so it accepts the infinite rate and sets `inv_sample_rate = 1.0/inf = 0.0`. Every subsequent `set_frequency(hz)` then computes `increment = hz * 0.0 = 0.0` (oscillator.rs:185-192), freezing the phase accumulator at 0 forever.
+
+**Expected.** The guard should reject non-finite rates the same way it already rejects non-positive ones (e.g. `if ctx.sample_rate.is_finite() && ctx.sample_rate > 0.0`), falling back to the 48 kHz default, consistent with how the rest of this crate treats untrusted numeric input (`finite_or` in params.rs) rather than only special-casing sign.
+
+**Fix direction.** Replace the `ctx.sample_rate > 0.0` guard (and the identical one in `Oscillator::set_sample_rate`) with `ctx.sample_rate.is_finite() && ctx.sample_rate > 0.0 && ctx.sample_rate <= f32::MAX as f64`, falling back to 48_000.0 otherwise; apply the same fix at every sibling site (`fm2.rs:366`, `noisedrum.rs:344`, `vocal.rs:338`, `oscillator.rs:178`) since they share the identical pattern, and ideally reject out-of-f32-range rates earlier at the CLI/`Project::new`/`RenderGraph::build_with`/`OfflineRender::new` boundaries too.
+
+**Written rule it breaks.** DSP code lives behind unit tests that assert on numbers (levels, frequencies, lengths) rather than on "it runs".
+
+**Verifier's correction.** Non-finite/positive-only sample-rate guard admits a huge-but-finite value that overflows to +Infinity on the narrowing f64→f32 cast, freezing the oscillator (crates/auris-synth/src/chiptune.rs:486, and identically in fm2.rs, noisedrum.rs, vocal.rs, and oscillator.rs's own `set_sample_rate`). Literal `f64::INFINITY`/NaN cannot reach this code through any real entry point — every real boundary (CLI `--sample-rate` flag, `Project::new`, `RenderGraph::build_with`, `OfflineRender::new`) filters with `is_finite() && > 0.0`. But none of those guards checks that the value fits in `f32`'s range, so a […]
