@@ -7,7 +7,7 @@ how a piece writes itself is in [Automatic composition](composition.md).
 
 * **Instrument tracks** — notes on a timeline, played by a software instrument.
 * **Singer tracks** — notes that carry words, for a singing-voice synthesiser; see
-  [Singer tracks](#singer-tracks).
+  [Singer tracks](#singer-tracks) and [Singing backends](singing-backends.md).
 * **Audio tracks** — imported audio, arranged as clips with trim, gain and fades.
 * **Buses** — mixing points with no clips of their own; see [Buses and sends](#buses-and-sends).
 * Every track carries a **colour**, tinting its header and its clips. A new one takes the next

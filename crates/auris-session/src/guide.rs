@@ -1033,14 +1033,19 @@ pub mod singing {
     //!
     //! # The voice, and the take
     //!
-    //! A voice is one self-contained ONNX file: the phoneme table, the audio parameters and a
-    //! presentational voice card all ride inside it, so
-    //! [`Session::set_singer_voice`](crate::Session::set_singer_voice) pointing at the file is
-    //! the whole installation. The file gets the policy a SoundFont gets — a library shared by
-    //! every project, referenced where it lies — while the card's display name is written into
-    //! the document the way a font's name is, so a header can say 波音リツ without opening two
-    //! hundred megabytes. Loaded models are kept for the session, keyed by path, shared by
-    //! every track that sings with them.
+    //! A voice enters through one path. For the native backend that is a self-contained ONNX
+    //! file carrying its phoneme table, audio parameters and voice card. For DiffSinger it is
+    //! the voicebank's `dsconfig.yaml`, which names its acoustic model, phoneme table and bundled
+    //! vocoder. [`SingingBackend`](crate::SingingBackend) is the boundary between either package and the
+    //! session: metadata and frame curves go in, mono audio comes out. The session therefore
+    //! caches and renders [`VoiceModel`](crate::VoiceModel) without knowing whether one ONNX
+    //! graph or an acoustic-model/vocoder pair is behind it. A new backend belongs behind that
+    //! boundary, not in a frontend or in the document model.
+    //!
+    //! The entry path gets the policy a SoundFont gets — a library shared by every project,
+    //! referenced where it lies — while its display name is written into the document, so a
+    //! track header does not load models merely to draw. Loaded voices are kept for the session,
+    //! keyed by path, shared by every track that sings with them.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a

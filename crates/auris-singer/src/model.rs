@@ -19,6 +19,7 @@ use auris_core::rng::{Key, Rng};
 use auris_vocal::SingerFrames;
 
 use crate::SingError;
+use crate::backend::{BackendKind, SingingBackend};
 use crate::metadata::{METADATA_KEY, VoiceInfo};
 use crate::score::{MAX_CHUNK_FRAMES, arrange, chunk_ranges};
 
@@ -74,7 +75,7 @@ fn gpu_provider() -> Option<(ExecutionProviderDispatch, bool)> {
 /// Loading costs a few hundred milliseconds and a couple of hundred megabytes; keep the model
 /// alive between renders rather than reopening it. Singing takes `&mut self` because the
 /// underlying runtime session does; share a voice across threads by owning it behind a lock.
-pub struct VoiceModel {
+pub(crate) struct AurisBackend {
     session: Session,
     info: VoiceInfo,
     path: PathBuf,
@@ -88,7 +89,10 @@ pub struct VoiceModel {
 }
 
 /// Builds the runtime session `acceleration`'s way, saying whether the GPU is in it.
-fn open_session(path: &Path, acceleration: Acceleration) -> Result<(Session, bool), SingError> {
+pub(crate) fn open_session(
+    path: &Path,
+    acceleration: Acceleration,
+) -> Result<(Session, bool), SingError> {
     let threads = std::thread::available_parallelism()
         .map(|cores| cores.get().saturating_sub(2).max(1))
         .unwrap_or(1);
@@ -127,7 +131,7 @@ fn open_session(path: &Path, acceleration: Acceleration) -> Result<(Session, boo
     }
 }
 
-impl VoiceModel {
+impl AurisBackend {
     /// Opens the model file and reads the metadata riding inside it.
     ///
     /// The inference threads are capped two under the machine's parallelism: a render runs
@@ -139,7 +143,7 @@ impl VoiceModel {
     /// refuses the session, and demotes itself to the CPU mid-render if the provider accepts
     /// the session and then refuses its shapes; [`Acceleration::Gpu`] makes every one of
     /// those refusals an error instead, because the GPU was asked for by name.
-    pub fn load(path: &Path, acceleration: Acceleration) -> Result<VoiceModel, SingError> {
+    pub(crate) fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
         let (session, on_gpu) = open_session(path, acceleration)?;
         let raw = {
             let load = |error: ort::Error| SingError::Load {
@@ -152,7 +156,7 @@ impl VoiceModel {
                 .ok_or(SingError::NotAVoice)?
         };
         let info = VoiceInfo::parse(&raw)?;
-        Ok(VoiceModel {
+        Ok(Self {
             session,
             info,
             path: path.to_path_buf(),
@@ -161,54 +165,12 @@ impl VoiceModel {
         })
     }
 
-    /// The model's own account of itself.
-    pub fn info(&self) -> &VoiceInfo {
-        &self.info
-    }
-
-    /// What [`Self::load`] was asked to run this voice on.
-    pub fn acceleration(&self) -> Acceleration {
-        self.acceleration
-    }
-
-    /// Whether the GPU provider is in the session right now.
-    ///
-    /// `false` under [`Acceleration::Cpu`], on a machine with nothing to offer, or after an
-    /// automatic voice was demoted mid-render.
-    pub fn on_gpu(&self) -> bool {
-        self.on_gpu
-    }
-
-    /// Where the model was loaded from.
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    /// Sings the frames and returns the waveform, mono at the model's sample rate.
-    ///
-    /// The waveform covers the whole timeline the frames cover — `frames.len()` hops of
-    /// samples, silence where nothing is sung — so the caller places it at time zero and it
-    /// lines up by construction. Same frames, same seed, same voice: same samples.
-    pub fn sing(
+    fn sing_with_dyn(
         &mut self,
         frames: &SingerFrames,
         speaker: u32,
         seed: u64,
-    ) -> Result<Vec<f32>, SingError> {
-        self.sing_with(frames, speaker, seed, |_, _| true)
-    }
-
-    /// [`sing`](Self::sing), reporting each chunk to `progress` as `(done, total)`.
-    ///
-    /// `progress` is called before every inference and once more when all are done; answering
-    /// `false` abandons the render with [`SingError::Cancelled`]. Chunks arrive in timeline
-    /// order, so `done / total` is honest about time as well as work.
-    pub fn sing_with(
-        &mut self,
-        frames: &SingerFrames,
-        speaker: u32,
-        seed: u64,
-        mut progress: impl FnMut(usize, usize) -> bool,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
         crate::validate_frames(frames)?;
         if speaker >= self.info.n_speakers {
@@ -324,13 +286,45 @@ impl VoiceModel {
     }
 }
 
+impl SingingBackend for AurisBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Auris
+    }
+
+    fn info(&self) -> &VoiceInfo {
+        &self.info
+    }
+
+    fn acceleration(&self) -> Acceleration {
+        self.acceleration
+    }
+
+    fn on_gpu(&self) -> bool {
+        self.on_gpu
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn sing_with(
+        &mut self,
+        frames: &SingerFrames,
+        speaker: u32,
+        seed: u64,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>, SingError> {
+        self.sing_with_dyn(frames, speaker, seed, progress)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn a_missing_file_is_an_error_rather_than_a_panic() {
-        match VoiceModel::load(Path::new("nowhere/no-such-voice.onnx"), Acceleration::Auto) {
+        match crate::VoiceModel::load(Path::new("nowhere/no-such-voice.onnx"), Acceleration::Auto) {
             Err(error) => assert!(matches!(error, SingError::Load { .. }), "{error}"),
             Ok(_) => panic!("a file that is not there must not load"),
         }

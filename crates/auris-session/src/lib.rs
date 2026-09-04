@@ -91,7 +91,7 @@ pub use settings::{
 /// Re-exported so a frontend can render a take on its own thread — the model behind
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
-pub use auris_singer::{Acceleration, SingError, VoiceModel};
+pub use auris_singer::{Acceleration, BackendKind, SingError, SingingBackend, VoiceModel};
 
 pub use auris_clap::ClapPluginInfo;
 /// What a VST3 bundle says is inside it, for a frontend listing one.

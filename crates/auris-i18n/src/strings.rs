@@ -822,7 +822,7 @@ strings! {
         ja: "先にシンガートラックを選択してください。フレームは 1 トラック分の特徴量です"
     }
     FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
-    FilterVoiceModel { en: "auris-singer voice model", ja: "auris-singer 声モデル" }
+    FilterVoiceModel { en: "singing voice model", ja: "歌声モデル" }
     DialogChooseVoice { en: "Choose a voice model", ja: "声のモデルを選択" }
     CmdChooseVoice { en: "Choose Voice…", ja: "声を選ぶ…" }
     CmdNextSpeaker { en: "Next Speaker", ja: "次の話者" }

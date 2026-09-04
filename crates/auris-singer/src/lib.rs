@@ -3,11 +3,10 @@
 //! This crate is the far end of the pipeline `auris-vocal` begins. That crate turns lyrics
 //! into phonemes and notes into [`SingerFrames`](auris_vocal::SingerFrames) — one phoneme, one
 //! pitch, one energy per hop; this one hands those frames to a trained voice and gets a
-//! waveform back. The model file is an ONNX export from the trainer in this repository's
-//! `training/` directory, self-contained by that project's design: the phoneme table, the audio
-//! parameters and the presentational voice card all ride inside the one file ([`VoiceInfo`]
-//! reads them), so pointing at a `.onnx` is the whole installation, exactly the policy a
-//! SoundFont gets.
+//! waveform back. [`SingingBackend`] is that boundary. [`VoiceModel`] selects the native Auris
+//! backend for a self-contained `.onnx` exported by this repository's trainer, or the DiffSinger
+//! backend for a voicebank's `dsconfig.yaml`; the session above it does not know which inference
+//! pipeline is running.
 //!
 //! The two halves being one repository is what lets them be *checked* against each other:
 //! `training/tests/test_host_contract.py` reads the constants below out of this crate's source
@@ -33,12 +32,15 @@
 
 #![warn(missing_docs)]
 
+mod backend;
+mod diffsinger;
 mod metadata;
 mod model;
 mod score;
 
+pub use backend::{BackendKind, SingingBackend, VoiceModel};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
-pub use model::{Acceleration, NOISE_SCALE, VoiceModel};
+pub use model::{Acceleration, NOISE_SCALE};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
 
 /// Why a voice could not be loaded, or frames could not be sung.
@@ -90,6 +92,14 @@ pub enum SingError {
     /// The runtime refused an inference mid-render.
     #[error("the voice model refused the score: {0}")]
     Inference(String),
+    /// A voice uses a valid backend format feature this build does not implement yet.
+    #[error("the {backend} backend does not support this voice: {reason}")]
+    Unsupported {
+        /// Backend that understood the voice entry file.
+        backend: &'static str,
+        /// The unsupported part of the voicebank contract.
+        reason: String,
+    },
     /// The progress callback asked the render to stop.
     #[error("the render was cancelled")]
     Cancelled,

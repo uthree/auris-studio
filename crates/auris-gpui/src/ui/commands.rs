@@ -928,7 +928,7 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogChooseVoice.get(language))
-                .add_filter(Key::FilterVoiceModel.get(language), &["onnx"])
+                .add_filter(Key::FilterVoiceModel.get(language), &["onnx", "yaml"])
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
