@@ -96,6 +96,14 @@ impl AurisApp {
                         this.scroll_lanes_by(-delta.y);
                         cx.notify();
                     }))
+                    // The list itself remains useful before it has a first row and below its
+                    // last one. A right-press there opens the same creation menu as empty space
+                    // in the arrangement, so making the first track does not require aiming at
+                    // the timeline and making the next one does not require finding a row first.
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        AurisApp::opens_menu(cx, |this, at| this.arrangement_menu(at)),
+                    )
                     .child(
                         // Pushed up by the shared offset rather than given its own scrollbar, so
                         // a header can never drift out of line with the lane it belongs to.
@@ -590,7 +598,42 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::{choose, right_press, with_a_clip};
+    use crate::ui::context_menu::MenuCommand;
     use auris_session::session::MIN_TRACK_HEIGHT;
+
+    #[gpui::test]
+    fn a_right_press_on_the_empty_track_list_can_create_a_track(cx: &mut gpui::TestAppContext) {
+        let (app, cx, _track, _clip) = with_a_clip(cx);
+        let empty = app.read_with(cx, |this, _| {
+            let lanes = this
+                .canvas
+                .lanes
+                .get()
+                .expect("the clip lanes were painted");
+            // The header list sits immediately left of, and has the same vertical span as, the
+            // lane canvas. The fixture has one row at the top, so its bottom is empty. That is
+            // the important half of this test: a press on the row already has a track menu.
+            gpui::point(
+                lanes.origin.x - this.panels.header_width / 2.0,
+                lanes.origin.y + lanes.size.height - px(8.0),
+            )
+        });
+        let before = app.read_with(cx, |this, _| this.project().tracks.len());
+
+        right_press(cx, empty);
+        choose(&app, cx, &MenuCommand::NewAudioTrack);
+
+        app.read_with(cx, |this, _| {
+            let tracks = &this.project().tracks;
+            assert_eq!(tracks.len(), before + 1);
+            assert!(
+                tracks
+                    .last()
+                    .is_some_and(|track| track.kind.as_audio().is_some())
+            );
+        });
+    }
 
     #[test]
     fn the_resize_strip_leaves_a_header_worth_pressing() {
