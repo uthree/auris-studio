@@ -109,7 +109,8 @@ options:
   -h, --help            this text
 
 --provider, --model, --url and --api-key-env fall back to the shared settings
-file when not given; the desktop application's agent settings write it.";
+file when not given; the desktop application's agent settings write it.
+Internet search uses BRAVE_SEARCH_API_KEY from the environment.";
 
 /// Reads a provider name — the one vocabulary shared by the flag and the preference.
 fn provider_named(name: &str) -> Result<Provider, String> {
@@ -386,6 +387,7 @@ macro_rules! text_tool {
 }
 
 text_tool!(SpecReference, spec_reference);
+session_tool!(SearchDocumentation, search_documentation);
 session_tool!(CheckSpec, check_spec);
 session_tool!(Compose, compose);
 session_tool!(Render, render);
@@ -416,10 +418,157 @@ session_tool!(WriteLyrics, write_lyrics);
 session_tool!(Sing, sing);
 session_tool!(ComposeLyrics, compose_lyrics);
 
+/// Arguments to the agent-only internet search tool.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct InternetSearchArgs {
+    /// Words or a short phrase to search for on the public internet.
+    query: String,
+    /// Maximum results to return, from 1 to 10. Defaults to 5.
+    limit: Option<usize>,
+}
+
+/// Public internet search for the rig agent.
+///
+/// This does not live in [`auris_toolbox`]: it is a capability of the agent that dials out,
+/// not a command over the Auris session, and the MCP host is expected to provide its own web
+/// access when it wants one.
+struct InternetSearch;
+
+impl Tool for InternetSearch {
+    const NAME: &'static str = "search_internet";
+    type Args = InternetSearchArgs;
+    type Output = String;
+    type Error = ToolFailed;
+
+    fn description(&self) -> String {
+        "Searches the public internet for current or external information. The query is sent to \
+         the Brave Search API and the answer contains result titles, URLs, and snippets; use \
+         `search_documentation` instead for Auris Studio's own behavior."
+            .to_string()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        schema::<Self::Args>()
+    }
+
+    fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
+        ToolExecutionError::other(error.0)
+    }
+
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<String, ToolFailed> {
+        search_internet(&args).await.map_err(ToolFailed)
+    }
+}
+
+const INTERNET_SEARCH_PATIENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[derive(Debug, serde::Deserialize)]
+struct SearchResponse {
+    web: Option<SearchWeb>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SearchWeb {
+    #[serde(default)]
+    results: Vec<SearchResult>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SearchResult {
+    title: String,
+    url: String,
+    #[serde(default)]
+    description: String,
+}
+
+async fn search_internet(args: &InternetSearchArgs) -> Result<String, String> {
+    let query = args.query.trim();
+    if query.is_empty() {
+        return Err("the internet search needs a non-empty query".to_string());
+    }
+    if query.chars().count() > 400 || query.split_whitespace().count() > 50 {
+        return Err(
+            "the internet search query must fit in 400 characters and 50 words".to_string(),
+        );
+    }
+    let key = std::env::var("BRAVE_SEARCH_API_KEY").map_err(|_| {
+        "internet search needs BRAVE_SEARCH_API_KEY in the auris-agent environment; create a \
+         Brave Search API key and restart the agent"
+            .to_string()
+    })?;
+    if key.trim().is_empty() {
+        return Err("BRAVE_SEARCH_API_KEY is set but empty".to_string());
+    }
+    let limit = args.limit.unwrap_or(5).clamp(1, 10);
+    let count = limit.to_string();
+    let client = reqwest::Client::builder()
+        .timeout(INTERNET_SEARCH_PATIENCE)
+        .user_agent(concat!("auris-agent/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|error| format!("could not build the internet search client: {error}"))?;
+    let response = client
+        .get("https://api.search.brave.com/res/v1/web/search")
+        .header("Accept", "application/json")
+        .header("X-Subscription-Token", key)
+        .query(&[("q", query), ("count", count.as_str())])
+        .send()
+        .await
+        .map_err(|error| format!("internet search could not reach Brave Search: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("Brave Search refused the internet search: {error}"))?;
+    let response = response
+        .json::<SearchResponse>()
+        .await
+        .map_err(|error| format!("could not read Brave Search's answer: {error}"))?;
+    let results = response.web.map(|web| web.results).unwrap_or_default();
+    if results.is_empty() {
+        return Ok(format!("No internet results matched `{query}`."));
+    }
+    let mut answer = format!("Internet search results for `{query}`:\n");
+    for (index, result) in results.iter().take(limit).enumerate() {
+        answer.push_str(&format!(
+            "\n{}. {}\n{}\n{}\n",
+            index + 1,
+            strip_markup(&result.title),
+            result.url,
+            strip_markup(&result.description)
+        ));
+    }
+    Ok(answer)
+}
+
+fn strip_markup(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut inside_tag = false;
+    for character in text.chars() {
+        match character {
+            '<' => inside_tag = true,
+            '>' => inside_tag = false,
+            _ if !inside_tag => plain.push(character),
+            _ => {}
+        }
+    }
+    plain
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
 /// Every tool in the box, onto one agent — the one list to keep when a tool is added.
 fn armed(builder: AgentBuilder) -> Agent {
     builder
         .preamble(&preamble())
+        .tool(SearchDocumentation)
+        .tool(InternetSearch)
         .tool(SpecReference)
         .tool(CheckSpec)
         .tool(Compose)
@@ -1597,6 +1746,8 @@ mod tests {
     fn every_tool_wears_its_toolbox_name_and_schema() {
         // The names the loop dispatches on are the toolbox constants, once each.
         let names = [
+            SearchDocumentation::NAME,
+            InternetSearch::NAME,
             Compose::NAME,
             Render::NAME,
             Describe::NAME,
@@ -1629,7 +1780,7 @@ mod tests {
             ComposeLyrics::NAME,
         ];
         let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), 30, "thirty tools, no name worn twice");
+        assert_eq!(unique.len(), 32, "thirty-two tools, no name worn twice");
 
         // The schema is the toolbox derive, fields and all — the same one the MCP door hands
         // its clients.
@@ -1639,5 +1790,22 @@ mod tests {
         assert!(fields.contains_key("spec"), "the flattened spec triangle");
         let none = schema::<NoArgs>();
         assert_eq!(none["type"], "object");
+    }
+
+    #[test]
+    fn internet_search_response_keeps_titles_urls_and_plain_snippets() {
+        let response: SearchResponse = serde_json::from_str(
+            r#"{"web":{"results":[
+                {"title":"A &amp; B","url":"https://example.com/a?x=1&y=2","description":"One <b>useful</b> result."},
+                {"title":"Second","url":"https://example.com/two","description":"Another <strong>result</strong>."}
+            ]}}"#,
+        )
+        .unwrap();
+        let results = response.web.unwrap().results;
+        assert_eq!(results.len(), 2);
+        assert_eq!(strip_markup(&results[0].title), "A & B");
+        assert_eq!(results[0].url, "https://example.com/a?x=1&y=2");
+        assert_eq!(strip_markup(&results[0].description), "One useful result.");
+        assert_eq!(strip_markup(&results[1].description), "Another result.");
     }
 }

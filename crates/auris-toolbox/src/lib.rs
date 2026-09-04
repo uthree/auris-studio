@@ -73,7 +73,217 @@ pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; the
     lyric's pitch accent where a Japanese dictionary is configured — with chords and a band, \
     saved as a new project ready to `sing`. \
     Give every path as an absolute path — the working directory is wherever the host process \
-    happened to be launched.";
+    happened to be launched. Use `search_documentation` for questions about Auris Studio itself \
+    instead of guessing how the application works.";
+
+/// Full-text search over the documentation shipped with this build.
+pub mod search_documentation {
+    /// The tool's name at every door.
+    pub const NAME: &str = "search_documentation";
+    /// The tool's model-facing description.
+    pub const DESCRIPTION: &str = "Searches the Auris Studio documentation embedded in this \
+        build. Use it for questions about features, workflows, composition, development, \
+        evaluation, and singing-voice training. Returns the most relevant passages with their \
+        document paths and section headings.";
+
+    /// A documentation search.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// Words or a short phrase to find in the Auris Studio documentation.
+        pub query: String,
+        /// Maximum passages to return, from 1 to 10. Defaults to 5.
+        pub limit: Option<usize>,
+    }
+
+    const DOCUMENTS: &[(&str, &str)] = &[
+        ("README.md", include_str!("../../../README.md")),
+        ("CHANGELOG.md", include_str!("../../../CHANGELOG.md")),
+        (
+            "docs/features.md",
+            include_str!("../../../docs/features.md"),
+        ),
+        (
+            "docs/composition.md",
+            include_str!("../../../docs/composition.md"),
+        ),
+        (
+            "docs/development.md",
+            include_str!("../../../docs/development.md"),
+        ),
+        (
+            "docs/evaluation.md",
+            include_str!("../../../docs/evaluation.md"),
+        ),
+        (
+            "training/README.md",
+            include_str!("../../../training/README.md"),
+        ),
+        (
+            "training/doc/architecture.md",
+            include_str!("../../../training/doc/architecture.md"),
+        ),
+        (
+            "training/doc/datasets.md",
+            include_str!("../../../training/doc/datasets.md"),
+        ),
+        (
+            "training/doc/development.md",
+            include_str!("../../../training/doc/development.md"),
+        ),
+        (
+            "training/doc/evaluation.md",
+            include_str!("../../../training/doc/evaluation.md"),
+        ),
+        (
+            "training/doc/inference.md",
+            include_str!("../../../training/doc/inference.md"),
+        ),
+        (
+            "training/doc/preprocessing.md",
+            include_str!("../../../training/doc/preprocessing.md"),
+        ),
+        (
+            "training/doc/training.md",
+            include_str!("../../../training/doc/training.md"),
+        ),
+    ];
+
+    const STOP_WORDS: &[&str] = &[
+        "a", "an", "and", "are", "can", "do", "does", "for", "how", "i", "in", "is", "it", "of",
+        "on", "the", "to", "what", "when", "where", "with",
+    ];
+
+    #[derive(Debug)]
+    struct Match<'a> {
+        score: usize,
+        path: &'a str,
+        heading: &'a str,
+        passage: String,
+    }
+
+    /// Searches the built-in documentation and formats model-readable passages.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let query = args.query.trim();
+        if query.is_empty() {
+            return Err("the documentation search needs a non-empty query".to_string());
+        }
+        let phrase = query.to_lowercase();
+        let mut terms: Vec<String> = phrase
+            .split(|character: char| {
+                !character.is_alphanumeric() && character != '-' && character != '_'
+            })
+            .filter(|term| {
+                !term.is_empty()
+                    && (!term.is_ascii() || term.len() > 1)
+                    && !STOP_WORDS.contains(term)
+            })
+            .map(String::from)
+            .collect();
+        terms.sort();
+        terms.dedup();
+        if terms.is_empty() {
+            terms.push(phrase.clone());
+        }
+
+        let mut matches = Vec::new();
+        for (path, document) in DOCUMENTS {
+            let mut heading = "Overview";
+            let mut paragraph = String::new();
+            for line in document.lines().chain(std::iter::once("")) {
+                if let Some(title) = line.trim_start().strip_prefix('#') {
+                    collect(path, heading, &paragraph, &phrase, &terms, &mut matches);
+                    paragraph.clear();
+                    heading = title.trim_start_matches('#').trim();
+                } else if line.trim().is_empty() {
+                    collect(path, heading, &paragraph, &phrase, &terms, &mut matches);
+                    paragraph.clear();
+                } else {
+                    if !paragraph.is_empty() {
+                        paragraph.push('\n');
+                    }
+                    paragraph.push_str(line);
+                }
+            }
+        }
+
+        matches.sort_by(|left, right| {
+            right
+                .score
+                .cmp(&left.score)
+                .then_with(|| left.path.cmp(right.path))
+                .then_with(|| left.heading.cmp(right.heading))
+        });
+        matches.dedup_by(|left, right| {
+            left.path == right.path
+                && left.heading == right.heading
+                && left.passage == right.passage
+        });
+        matches.truncate(args.limit.unwrap_or(5).clamp(1, 10));
+
+        if matches.is_empty() {
+            return Ok(format!(
+                "No Auris Studio documentation matched `{query}`. Try fewer or more specific terms."
+            ));
+        }
+        let mut answer = format!("Auris Studio documentation matches for `{query}`:\n");
+        for (index, found) in matches.iter().enumerate() {
+            answer.push_str(&format!(
+                "\n{}. {} — {}\n{}\n",
+                index + 1,
+                found.path,
+                found.heading,
+                found.passage
+            ));
+        }
+        Ok(answer)
+    }
+
+    fn collect<'a>(
+        path: &'a str,
+        heading: &'a str,
+        paragraph: &str,
+        phrase: &str,
+        terms: &[String],
+        matches: &mut Vec<Match<'a>>,
+    ) {
+        let passage = paragraph.trim();
+        if passage.is_empty() {
+            return;
+        }
+        let heading_lower = heading.to_lowercase();
+        let passage_lower = passage.to_lowercase();
+        let mut score = usize::from(heading_lower.contains(phrase)) * 120
+            + usize::from(passage_lower.contains(phrase)) * 80;
+        let mut matched_terms = 0;
+        for term in terms {
+            let in_heading = heading_lower.matches(term).count().min(3);
+            let in_passage = passage_lower.matches(term).count().min(5);
+            if in_heading + in_passage > 0 {
+                matched_terms += 1;
+                score += in_heading * 20 + in_passage * 4;
+            }
+        }
+        let needed = terms.len().div_ceil(2);
+        if matched_terms < needed {
+            return;
+        }
+        score += matched_terms * 10;
+        matches.push(Match {
+            score,
+            path,
+            heading,
+            passage: shorten(passage, 900),
+        });
+    }
+
+    fn shorten(text: &str, limit: usize) -> String {
+        let mut shortened: String = text.chars().take(limit).collect();
+        if text.chars().count() > limit {
+            shortened.push('…');
+        }
+        shortened
+    }
+}
 
 /// A song specification, however the three optional fields spell it.
 ///
@@ -2934,6 +3144,31 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documentation_search_finds_a_named_feature_and_limits_its_answer() {
+        let answer = search_documentation::run(&search_documentation::Args {
+            query: "Dragging files in".to_string(),
+            limit: Some(2),
+        })
+        .unwrap();
+        assert!(answer.contains("docs/features.md"), "{answer}");
+        assert!(answer.contains("Dragging files in"), "{answer}");
+        assert!(
+            !answer.contains("\n3. "),
+            "the requested limit is observed: {answer}"
+        );
+    }
+
+    #[test]
+    fn documentation_search_refuses_an_empty_query() {
+        let error = search_documentation::run(&search_documentation::Args {
+            query: "  ".to_string(),
+            limit: None,
+        })
+        .unwrap_err();
+        assert!(error.contains("non-empty"), "{error}");
+    }
 
     fn spec_args(spec: Option<&str>, preset: Option<&str>) -> SpecArgs {
         SpecArgs {

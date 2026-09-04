@@ -40,6 +40,18 @@ struct AurisMcp;
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
+    /// Searches the Auris Studio documentation embedded in this build. Use it for questions
+    /// about features, workflows, composition, development, evaluation, and singing-voice
+    /// training. Returns the most relevant passages with their document paths and section
+    /// headings.
+    #[tool]
+    async fn search_documentation(
+        &self,
+        Parameters(args): Parameters<toolbox::search_documentation::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finished(toolbox::search_documentation::run(&args))
+    }
+
     /// The `.asong` format, taught by example: a two-line song, then a specification using
     /// most of the vocabulary with a comment on every field. Read this before writing a spec.
     #[tool]
@@ -466,10 +478,14 @@ mod tests {
             accompany, add_clip, add_part, add_track, analyze, another_take, check_spec, compose,
             compose_lyrics, describe, edit_notes, forget_progression, list_instruments,
             list_presets, list_progressions, mixer, notes, remove_track, rename_track, render,
-            section_gain, set_effect, set_instrument, set_level, set_send, sing, spec_reference,
-            teach_progression, write_again, write_lyrics,
+            search_documentation, section_gain, set_effect, set_instrument, set_level, set_send,
+            sing, spec_reference, teach_progression, write_again, write_lyrics,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
+            (
+                search_documentation::NAME,
+                search_documentation::DESCRIPTION,
+            ),
             (spec_reference::NAME, spec_reference::DESCRIPTION),
             (check_spec::NAME, check_spec::DESCRIPTION),
             (compose::NAME, compose::DESCRIPTION),
@@ -505,7 +521,11 @@ mod tests {
         .collect();
 
         let served = AurisMcp::tool_router().list_all();
-        assert_eq!(served.len(), expected.len(), "thirty tools at this door");
+        assert_eq!(
+            served.len(),
+            expected.len(),
+            "thirty-one tools at this door"
+        );
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();
             let toolbox_text = expected
