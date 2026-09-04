@@ -680,6 +680,7 @@ fn hosted_slots(project: &Project) -> BTreeMap<EffectSlotId, HostedRequest<'_>> 
 
     strips
         .flat_map(|strip| strip.effects.iter())
+        .filter(|slot| slot.effect_id.starts_with(auris_clap::ID_PREFIX))
         .filter_map(|slot| {
             let file = slot.file.as_ref()?;
             // A plugin is always `External`, so resolving it needs no project folder — but going
@@ -707,6 +708,9 @@ fn hosted_instruments(project: &Project) -> BTreeMap<TrackId, HostedRequest<'_>>
         .iter()
         .filter_map(|track| {
             let inner = track.kind.as_instrument()?;
+            if !inner.instrument_id.starts_with(auris_clap::ID_PREFIX) {
+                return None;
+            }
             let file = inner.file.as_ref()?.resolve(None)?;
             Some((
                 track.id,
@@ -897,11 +901,19 @@ impl Session {
     /// command when this is `false` — there is nothing behind it.
     pub fn plugin_window_exists(&mut self, which: PluginWindow) -> bool {
         self.hosted.has_window(which)
+            || match which {
+                PluginWindow::Effect(slot) => self.vst3.has_effect_window(slot),
+                PluginWindow::Instrument(track) => self.vst3.has_instrument_window(track),
+            }
     }
 
     /// Whether a plugin's own window is on screen.
     pub fn plugin_window_is_open(&self, which: PluginWindow) -> bool {
         self.hosted.window_is_open(which)
+            || match which {
+                PluginWindow::Effect(slot) => self.vst3.effect_window_is_open(slot),
+                PluginWindow::Instrument(track) => self.vst3.instrument_window_is_open(track),
+            }
     }
 
     /// Opens or closes a plugin's own window.
@@ -914,6 +926,13 @@ impl Session {
         which: PluginWindow,
         open: bool,
     ) -> Result<(), SessionError> {
+        let handled = match which {
+            PluginWindow::Effect(slot) => self.vst3.set_effect_window_open(slot, open)?,
+            PluginWindow::Instrument(track) => self.vst3.set_instrument_window_open(track, open)?,
+        };
+        if handled {
+            return Ok(());
+        }
         Ok(self.hosted.set_window_open(which, open)?)
     }
 
@@ -922,17 +941,25 @@ impl Session {
     /// Empty until the plugin has been built, which is the first graph rebuild after it was
     /// added — and empty for good if it could not be loaded.
     pub fn hosted_parameters(&self, slot: EffectSlotId) -> &[ParamDescriptor] {
-        self.hosted.parameters(slot).unwrap_or(&[])
+        self.hosted
+            .parameters(slot)
+            .or_else(|| self.vst3.parameters(slot))
+            .unwrap_or(&[])
     }
 
     /// The parameters a track's hosted instrument declares.
     pub fn hosted_instrument_parameters(&self, track: TrackId) -> &[ParamDescriptor] {
-        self.hosted.instrument_parameters(track).unwrap_or(&[])
+        self.hosted
+            .instrument_parameters(track)
+            .or_else(|| self.vst3.instrument_parameters(track))
+            .unwrap_or(&[])
     }
 
     /// What a track's hosted instrument calls itself, or `None` when it is a built-in.
     pub fn hosted_instrument_name(&self, track: TrackId) -> Option<&str> {
-        self.hosted.instrument_name(track)
+        self.hosted
+            .instrument_name(track)
+            .or_else(|| self.vst3.instrument_name(track))
     }
 
     /// The parameters of whatever plays a track, hosted or built in.
@@ -967,7 +994,7 @@ impl Session {
     /// reverse-DNS string somebody else chose — `clap:org.surge-synth-team.surge-xt-fx` where a
     /// built-in would have said "Reverb".
     pub fn hosted_name(&self, slot: EffectSlotId) -> Option<&str> {
-        self.hosted.name(slot)
+        self.hosted.name(slot).or_else(|| self.vst3.name(slot))
     }
 
     /// The parameters of whatever is in an effect slot, hosted or built in.
@@ -1015,6 +1042,50 @@ impl Session {
         let tracks: Vec<TrackId> = hosted_instruments(&self.project).into_keys().collect();
         for id in tracks {
             let Some(bytes) = self.hosted.save_instrument_state(id) else {
+                continue;
+            };
+            if let Some(inner) = self
+                .project
+                .track_mut(id)
+                .and_then(|track| track.kind.as_instrument_mut())
+            {
+                inner.instrument_state.set_hosted_bytes(&bytes);
+            }
+        }
+
+        let vst_slots: Vec<EffectSlotId> = std::iter::once(&self.project.master)
+            .chain(self.project.tracks.iter().map(|track| &track.mixer))
+            .flat_map(|strip| &strip.effects)
+            .filter(|slot| slot.effect_id.starts_with(auris_vst3::ID_PREFIX))
+            .map(|slot| slot.id)
+            .collect();
+        for id in vst_slots {
+            let Some(bytes) = self.vst3.save_effect(id) else {
+                continue;
+            };
+            for strip in std::iter::once(&mut self.project.master)
+                .chain(self.project.tracks.iter_mut().map(|track| &mut track.mixer))
+            {
+                if let Some(slot) = strip.effects.iter_mut().find(|slot| slot.id == id) {
+                    slot.state.set_hosted_bytes(&bytes);
+                }
+            }
+        }
+        let vst_tracks: Vec<TrackId> = self
+            .project
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                track
+                    .kind
+                    .as_instrument()?
+                    .instrument_id
+                    .starts_with(auris_vst3::ID_PREFIX)
+                    .then_some(track.id)
+            })
+            .collect();
+        for id in vst_tracks {
+            let Some(bytes) = self.vst3.save_instrument(id) else {
                 continue;
             };
             if let Some(inner) = self

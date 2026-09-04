@@ -1024,6 +1024,7 @@ dependencies = [
  "auris-singer",
  "auris-synth",
  "auris-vocal",
+ "auris-vst3",
  "log",
  "serde",
  "serde_json",
@@ -1070,6 +1071,16 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "auris-vst3"
+version = "0.4.0"
+dependencies = [
+ "auris-core",
+ "log",
+ "thiserror 2.0.19",
+ "vst3-host",
 ]
 
 [[package]]
@@ -1881,6 +1892,12 @@ name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
+
+[[package]]
+name = "com-scrape-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ce183b975b8fc736a20919c4002717255fbd867df575c792aeefa9a56a73ad0"
 
 [[package]]
 name = "combine"
@@ -8900,6 +8917,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rtrb"
+version = "0.3.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fae8ee26b0371a29a77d2b2d6b3ae13aa81def6f9bf1b1b92a32d279a5e709b7"
+
+[[package]]
 name = "rubato"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11305,6 +11328,38 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "vst3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e31e3fe7a6f028ded8c5a9984cf283319e6dc63572c9b71da1d4ee9d71d3b6bf"
+dependencies = [
+ "com-scrape-types",
+]
+
+[[package]]
+name = "vst3-host"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ec579d54bd13b83c60c1fd8bb756cf234e36ccbfb4833ff756b417e64db7fea"
+dependencies = [
+ "core-foundation 0.10.0",
+ "crossbeam-queue",
+ "libc",
+ "libloading",
+ "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "rtrb",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "vst3",
+ "winapi",
+ "xcb",
 ]
 
 [[package]]

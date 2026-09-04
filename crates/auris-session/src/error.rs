@@ -27,6 +27,10 @@ pub enum SessionError {
     #[error(transparent)]
     Clap(#[from] auris_clap::ClapError),
 
+    /// A VST3 plugin could not be discovered, loaded, or driven.
+    #[error(transparent)]
+    Vst3(#[from] auris_vst3::Vst3Error),
+
     /// The requested track does not exist.
     #[error("no track with id {0}")]
     UnknownTrack(u64),

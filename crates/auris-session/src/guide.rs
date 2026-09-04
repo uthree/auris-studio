@@ -48,6 +48,7 @@ pub mod architecture {
     //!   auris-synth     built-in instruments                      → auris-dsp
     //!   auris-sampler   SoundFont playback: the bank and the sampler instrument → auris-dsp
     //!   auris-clap      hosting of third-party CLAP plugins        → auris-core only
+    //!   auris-vst3      hosting of third-party VST3 plugins        → auris-core only
     //!   auris-engine    render graph, transport, cpal in and out, offline renderer
     //!   auris-io        audio file import/export, project save/load
     //!   auris-gpu       optional wgpu compute for offline analysis

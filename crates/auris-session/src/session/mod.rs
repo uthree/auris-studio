@@ -53,6 +53,7 @@ mod singer;
 mod tracks;
 mod transport;
 mod typing;
+mod vst3;
 
 #[cfg(test)]
 mod fixtures;
@@ -399,6 +400,8 @@ pub struct Session {
     /// the half that answers questions has to stay on this thread and outlive any number of
     /// rebuilds. See [`hosted`] for what that costs and how it is paid.
     hosted: hosted::HostedPlugins,
+    /// Third-party VST3 instances, parallel to the CLAP host above.
+    vst3: vst3::Vst3Plugins,
 }
 
 /// What a Save As produced.
@@ -553,6 +556,7 @@ impl Session {
             voices: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             hosted: hosted::HostedPlugins::default(),
+            vst3: vst3::Vst3Plugins::default(),
         };
         session.install_shipped_fonts();
         session.install_shipped_dictionary();
@@ -691,6 +695,7 @@ impl Session {
         if self.hosted.service() {
             self.dirty = true;
         }
+        self.vst3.sweep();
     }
 
     /// The document.
@@ -812,8 +817,10 @@ impl Session {
             self.engine.max_block(),
             auris_engine::RENDER_CHANNELS,
         );
-        let placed = self.hosted.place(&project, &prepare);
-        let instruments = self.hosted.place_instruments(&project, &prepare);
+        let mut placed = self.hosted.place(&project, &prepare);
+        placed.extend(self.vst3.place(&project, &prepare));
+        let mut instruments = self.hosted.place_instruments(&project, &prepare);
+        instruments.extend(self.vst3.place_instruments(&project, &prepare));
         RenderJob::new(
             project,
             self.bank.clone(),
@@ -1038,7 +1045,9 @@ impl Session {
             auris_engine::RENDER_CHANNELS,
         );
         let mut placed = self.hosted.place(&self.project, &prepare);
+        placed.extend(self.vst3.place(&self.project, &prepare));
         let mut instruments = self.hosted.place_instruments(&self.project, &prepare);
+        instruments.extend(self.vst3.place_instruments(&self.project, &prepare));
 
         let mut graph = RenderGraph::build_with(
             &self.project,

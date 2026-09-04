@@ -680,6 +680,28 @@ impl AurisApp {
         }
     }
 
+    /// Adds a VST3 effect to the selected strip.
+    pub(crate) fn add_vst3_effect_to_selection(&mut self, file: &std::path::Path, class_id: &str) {
+        let track = self.selected_track;
+        if let Err(error) = self.session.add_vst3_effect(track, file, class_id) {
+            self.set_failed_status(self.failure(Key::MenuAddEffect, &error));
+        }
+    }
+
+    /// Points the selected track at a VST3 instrument.
+    pub(crate) fn set_vst3_instrument_on_selection(
+        &mut self,
+        file: &std::path::Path,
+        class_id: &str,
+    ) {
+        let Some(track) = self.selected_track else {
+            return;
+        };
+        if let Err(error) = self.session.set_vst3_instrument(track, file, class_id) {
+            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
+        }
+    }
+
     /// Replaces the selected track's instrument.
     pub(crate) fn set_track_instrument(&mut self, instrument_id: &str) {
         let Some(track) = self.selected_track else {

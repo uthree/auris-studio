@@ -296,6 +296,8 @@ enum Found {
     /// is loaded — and a result list that loads a shared library per row is a result list that
     /// runs somebody else's code to answer a keystroke.
     ClapFile(usize, String, std::path::PathBuf),
+    /// A `.vst3` bundle, represented without loading its executable code.
+    Vst3File(usize, String, std::path::PathBuf),
     /// A singer voice on the shelf: its name, and the file it is.
     Voice(String, std::path::PathBuf),
 }
@@ -546,6 +548,17 @@ impl AurisApp {
                 .unwrap_or_default();
             entries.push((name.clone(), Found::ClapFile(index, name, file)));
         }
+        let vst_offset = self.clap_files().len();
+        for (index, file) in self.vst3_files().to_vec().into_iter().enumerate() {
+            let name = file
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_default();
+            entries.push((
+                name.clone(),
+                Found::Vst3File(vst_offset + index, name, file),
+            ));
+        }
         for (name, path) in self.voice_list() {
             entries.push((name.clone(), Found::Voice(name, path)));
         }
@@ -604,6 +617,24 @@ impl AurisApp {
                 // row clears the search and opens the file's branch in the tree, which is where
                 // the plugins inside it are listed the way they always were.
                 Found::ClapFile(index, name, file) => {
+                    let branch = Branch::PluginFile(index);
+                    self.plugin_row(
+                        &LibraryPlugin {
+                            id: file.display().to_string(),
+                            name,
+                            description: file.display().to_string(),
+                        },
+                        Icon::Knob,
+                        PluginCategory::Utility,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.leave_library_search();
+                            this.library.set_open(Branch::Plugins, true);
+                            this.library.set_open(branch, true);
+                            cx.notify();
+                        }),
+                    )
+                }
+                Found::Vst3File(index, name, file) => {
                     let branch = Branch::PluginFile(index);
                     self.plugin_row(
                         &LibraryPlugin {
@@ -829,12 +860,13 @@ impl AurisApp {
     /// project to open, and the only thing known about a plugin before it is loaded.
     fn installed_plugin_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let files = self.clap_files().to_vec();
+        let vst3_files = self.vst3_files().to_vec();
 
         let mut rows = vec![self.section_row(
             Branch::Plugins,
             Key::BrowserPlugins,
             Icon::Knob,
-            files.len(),
+            files.len() + vst3_files.len(),
             cx,
         )];
         if !self.library.is_open(Branch::Plugins) {
@@ -842,7 +874,7 @@ impl AurisApp {
         }
         rows.push(self.note_row(
             1,
-            self.t(match files.is_empty() {
+            self.t(match files.is_empty() && vst3_files.is_empty() {
                 true => Key::BrowserNoPlugins,
                 false => Key::BrowserPluginsHint,
             }),
@@ -927,6 +959,78 @@ impl AurisApp {
                 ));
             }
         }
+        let offset = files.len();
+        for (vst_index, file) in vst3_files.iter().enumerate() {
+            let index = offset + vst_index;
+            let branch = Branch::PluginFile(index);
+            let open = self.library.is_open(branch);
+            let name = file
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| file.to_string_lossy().into_owned());
+            let listed = if open {
+                self.vst3_plugins_in(file)
+            } else {
+                Vec::new()
+            };
+            let theme = self.theme.clone();
+            rows.push(
+                self.branch_row(
+                    ("lib-vst3-file", 10_000 + index),
+                    1,
+                    open,
+                    true,
+                    None,
+                    name,
+                    if open {
+                        listed.len().to_string()
+                    } else {
+                        String::new()
+                    },
+                    self.row_style(theme.text, Some(category_hue(PluginCategory::Other))),
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        this.library.set_open(branch, !open);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+            if !open {
+                continue;
+            }
+            if listed.is_empty() {
+                rows.push(self.note_row(2, self.t(Key::BrowserPluginUnreadable)));
+                continue;
+            }
+            for info in listed {
+                let file = file.clone();
+                let class_id = info.class_id.clone();
+                let kind = info.kind;
+                rows.push(self.plugin_row(
+                    &LibraryPlugin {
+                        id: info.auris_id(),
+                        name: info.name.clone(),
+                        description: info.vendor.clone(),
+                    },
+                    match kind {
+                        PluginKind::Instrument => Icon::Keyboard,
+                        PluginKind::Effect => Icon::Knob,
+                    },
+                    info.category,
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        match kind {
+                            PluginKind::Instrument => {
+                                this.set_vst3_instrument_on_selection(&file, &class_id)
+                            }
+                            PluginKind::Effect => {
+                                this.add_vst3_effect_to_selection(&file, &class_id)
+                            }
+                        }
+                        cx.notify();
+                    }),
+                ));
+            }
+        }
         rows
     }
 
@@ -955,6 +1059,28 @@ impl AurisApp {
                 Vec::new()
             });
         self.clap_contents
+            .insert(file.to_path_buf(), listed.clone());
+        listed
+    }
+
+    /// The `.vst3` bundles installed on this machine, scanned once without loading them.
+    fn vst3_files(&mut self) -> &[std::path::PathBuf] {
+        self.vst3_files.get_or_insert_with(|| {
+            self.session
+                .installed_vst3_files(&self.settings.plugin_paths)
+        })
+    }
+
+    /// The audio classes exported by one VST3 bundle.
+    fn vst3_plugins_in(&mut self, file: &std::path::Path) -> Vec<auris_session::Vst3PluginInfo> {
+        if let Some(known) = self.vst3_contents.get(file) {
+            return known.clone();
+        }
+        let listed = self.session.vst3_plugins_in(file).unwrap_or_else(|error| {
+            log::warn!("cannot read VST3 `{}`: {error}", file.display());
+            Vec::new()
+        });
+        self.vst3_contents
             .insert(file.to_path_buf(), listed.clone());
         listed
     }

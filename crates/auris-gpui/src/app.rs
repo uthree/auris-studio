@@ -1242,6 +1242,8 @@ pub struct AurisApp {
     /// `None` until the plugins section is first drawn: walking three directory trees is not a
     /// thing to do on every frame, and not a thing to do at all for somebody who never opens it.
     pub(crate) clap_files: Option<Vec<std::path::PathBuf>>,
+    /// The `.vst3` bundles found on this machine, scanned with the same lazy policy as CLAP.
+    pub(crate) vst3_files: Option<Vec<std::path::PathBuf>>,
     /// The singer voices found on this machine, scanned once and kept — the
     /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
     pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
@@ -1252,6 +1254,9 @@ pub struct AurisApp {
     /// stays open in the session either way.
     pub(crate) clap_contents:
         std::collections::HashMap<std::path::PathBuf, Vec<auris_session::ClapPluginInfo>>,
+    /// VST3 audio classes cached after a bundle is first expanded.
+    pub(crate) vst3_contents:
+        std::collections::HashMap<std::path::PathBuf, Vec<auris_session::Vst3PluginInfo>>,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
     /// Whether the export destination dialog is open.
@@ -1493,8 +1498,10 @@ impl AurisApp {
             plugin_window: None,
             library: crate::ui::library::LibraryTree::default(),
             clap_files: None,
+            vst3_files: None,
             voices: None,
             clap_contents: std::collections::HashMap::new(),
+            vst3_contents: std::collections::HashMap::new(),
             titled: String::new(),
             choosing_export: false,
             status_failed: false,

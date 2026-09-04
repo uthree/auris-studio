@@ -240,6 +240,7 @@ impl Session {
         // and this document reusing an id would inherit the old plugin. The loaded *files* are
         // kept — a `.clap` is the same code whichever project is open.
         self.hosted.clear();
+        self.vst3.clear();
         self.adopt_project(project);
 
         let missing = self.reload_assets();
