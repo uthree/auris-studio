@@ -67,6 +67,10 @@ pub enum IoError {
         supported: u32,
     },
 
+    /// The document contains the largest possible object id, leaving no id for future edits.
+    #[error("project object ids have exhausted their supported range")]
+    ProjectIdsExhausted,
+
     /// Any other filesystem failure, such as a permission or disk-full error.
     #[error("I/O error on {path}: {source}")]
     Filesystem {

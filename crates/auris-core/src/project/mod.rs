@@ -458,7 +458,10 @@ impl Project {
 
     fn allocate_id(&mut self) -> u64 {
         let id = self.next_id;
-        self.next_id += 1;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .expect("the project id space is exhausted");
         id
     }
 
@@ -548,7 +551,11 @@ impl Project {
 
     /// Repairs a project loaded from disk: makes sure the id counter is past every id in use,
     /// so ids handed out later cannot collide with existing ones.
-    pub fn repair_id_counter(&mut self) {
+    ///
+    /// Returns false when an object already owns [`u64::MAX`], because no counter value can sit
+    /// past it. A loader must reject that document rather than wrap the counter and hand out an id
+    /// which may already belong to another object.
+    pub fn repair_id_counter(&mut self) -> bool {
         let mut highest = 0u64;
         for track in &self.tracks {
             highest = highest.max(track.id.0);
@@ -576,7 +583,11 @@ impl Project {
         for id in self.soundfonts.keys() {
             highest = highest.max(id.0);
         }
-        self.next_id = self.next_id.max(highest + 1);
+        let Some(after_highest) = highest.checked_add(1) else {
+            return false;
+        };
+        self.next_id = self.next_id.max(after_highest);
+        self.next_id < u64::MAX
     }
 }
 
@@ -625,7 +636,7 @@ mod tests {
 
         let mut reopened = project.clone();
         reopened.next_id = 0;
-        reopened.repair_id_counter();
+        assert!(reopened.repair_id_counter());
         assert!(reopened.next_id > font.0, "an id could be handed out twice");
     }
 
@@ -780,10 +791,20 @@ mod tests {
         let project = demo_project();
         let json = serde_json::to_string(&project).unwrap();
         let mut restored: Project = serde_json::from_str(&json).unwrap();
-        restored.repair_id_counter();
+        assert!(restored.repair_id_counter());
 
         let existing: Vec<u64> = restored.tracks.iter().map(|t| t.id.0).collect();
         let fresh = restored.add_audio_track("New");
         assert!(!existing.contains(&fresh.0));
+    }
+
+    #[test]
+    fn repair_id_counter_refuses_an_exhausted_id_space() {
+        let mut project = Project::new("Exhausted", 48_000.0);
+        let track = project.add_audio_track("Last");
+        project.tracks[0].id = TrackId(u64::MAX);
+
+        assert!(!project.repair_id_counter());
+        assert_ne!(track, project.tracks[0].id);
     }
 }

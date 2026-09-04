@@ -191,7 +191,9 @@ pub fn load_project(path: &Path) -> Result<Project> {
     }
 
     let mut project: Project = serde_json::from_str(&text)?;
-    project.repair_id_counter();
+    if !project.repair_id_counter() {
+        return Err(IoError::ProjectIdsExhausted);
+    }
     if project.repair_routing() {
         log::warn!(
             "{}: the routing named a bus that is not there, or looped back on itself; \
@@ -364,6 +366,19 @@ mod tests {
         }
         assert_eq!(fresh[1], fresh[0] + 1);
         assert_eq!(fresh[2], fresh[1] + 1);
+    }
+
+    #[test]
+    fn a_document_that_exhausts_the_id_space_is_rejected() {
+        let file = TempFile::new("exhausted-ids.auris");
+        let mut project = demo_project();
+        project.tracks[0].id.0 = u64::MAX;
+        std::fs::write(file.path(), serde_json::to_string_pretty(&project).unwrap()).unwrap();
+
+        assert!(matches!(
+            load_project(file.path()),
+            Err(IoError::ProjectIdsExhausted)
+        ));
     }
 
     #[test]
