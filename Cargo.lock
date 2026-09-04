@@ -11477,7 +11477,7 @@ dependencies = [
  "core-foundation 0.10.0",
  "crossbeam-queue",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "log",
  "objc2",
  "objc2-app-kit",
