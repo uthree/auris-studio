@@ -206,7 +206,8 @@ pub fn voice_roots() -> Vec<PathBuf> {
 ///
 /// No manifest, unlike the fonts: voices are the user's own exports, so this is enumeration
 /// rather than verification — every `.onnx` in a root and every child folder containing a
-/// DiffSinger `dsconfig.yaml`, first root to name a voice winning the way the font search wins.
+/// DiffSinger `dsconfig.yaml`, and every `*.voicevox.json` connection, first root to name a
+/// voice winning the way the font search wins.
 /// Nothing is opened here; whether a file really is a voice is found out by the one deliberate
 /// click that loads it.
 pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
@@ -223,6 +224,16 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
             {
                 (path.clone(), path.file_stem())
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
+            {
+                let stem = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| &name[..name.len() - ".voicevox.json".len()]);
+                (path.clone(), stem.map(std::ffi::OsStr::new))
             } else if path.is_dir() && path.join("dsconfig.yaml").is_file() {
                 (path.join("dsconfig.yaml"), path.file_name())
             } else {
@@ -523,6 +534,7 @@ mod tests {
         std::fs::write(first.join("notes.txt"), b"x").unwrap();
         std::fs::write(second.join("Ritsu.ONNX"), b"y").unwrap();
         std::fs::write(second.join("Alto.ONNX"), b"y").unwrap();
+        std::fs::write(first.join("Zundamon.voicevox.json"), b"{}").unwrap();
         let diffsinger = first.join("Momo");
         std::fs::create_dir_all(&diffsinger).unwrap();
         std::fs::write(diffsinger.join("dsconfig.yaml"), b"acoustic: acoustic.onnx").unwrap();
@@ -531,7 +543,7 @@ mod tests {
         let names: Vec<&str> = voices.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
-            ["Alto", "Momo", "Ritsu"],
+            ["Alto", "Momo", "Ritsu", "Zundamon"],
             "sorted, case-blind, no .txt"
         );
         let ritsu = voices.iter().find(|(name, _)| name == "Ritsu").unwrap();

@@ -1,7 +1,8 @@
 # Singing backends
 
-`auris-singer` renders a common `SingerFrames` timeline through a `SingingBackend`. The session
-loads a `VoiceModel` facade and does not depend on a concrete model layout. This keeps model
+`auris-singer` renders a common `SingerFrames` timeline and, when needed, its parallel
+`SingerScore` through a `SingingBackend`. The session loads a `VoiceModel` facade and does not
+depend on a concrete model layout. This keeps model
 discovery, caching, speaker selection, previewing, take rendering, and WAV output identical across
 backends.
 
@@ -27,3 +28,37 @@ This first backend covers acoustic voicebanks whose optional key-shift and speed
 neutral values. Voicebanks requiring language IDs, speaker embeddings, or energy, breathiness,
 voicing, or tension predictors are rejected while loading. Those packages need their auxiliary
 models and embedding-file semantics implemented before they can be rendered faithfully.
+
+## VOICEVOX Engine
+
+Start a [VOICEVOX Engine](https://github.com/VOICEVOX/voicevox_engine), then place a file named
+`NAME.voicevox.json` in a configured Voices
+directory (or choose it from the voice picker). The file is connection metadata, not a voicebank:
+
+```json
+{
+  "format_version": 1,
+  "name": "VOICEVOX singer",
+  "url": "http://127.0.0.1:50021",
+  "sample_rate": 24000,
+  "frame_rate": 93.75,
+  "styles": [
+    {
+      "name": "Singer / normal",
+      "query_style_id": 6000,
+      "decode_style_id": 3001
+    }
+  ]
+}
+```
+
+`url`, `sample_rate`, and `frame_rate` default to the standard local Engine values shown above.
+Find the two style IDs in `GET /singers`: `query_style_id` must name a `sing` or
+`singing_teacher` style, while `decode_style_id` must name a `frame_decode` style. Multiple entries
+become speaker choices in Auris Studio.
+
+The backend sends the lyric-bearing score to `POST /sing_frame_audio_query`, applies Auris'
+pitch and energy curves to the returned frame query, and sends that query to
+`POST /frame_synthesis`. The Engine must be running when rendering. Raw `SingerFrames` files do
+not contain lyrics and therefore cannot be rendered through this backend; full singer tracks and
+note previews can.

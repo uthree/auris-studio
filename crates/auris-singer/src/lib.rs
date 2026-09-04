@@ -5,8 +5,8 @@
 //! pitch, one energy per hop; this one hands those frames to a trained voice and gets a
 //! waveform back. [`SingingBackend`] is that boundary. [`VoiceModel`] selects the native Auris
 //! backend for a self-contained `.onnx` exported by this repository's trainer, or the DiffSinger
-//! backend for a voicebank's `dsconfig.yaml`; the session above it does not know which inference
-//! pipeline is running.
+//! backend for a voicebank's `dsconfig.yaml`, or the VOICEVOX backend for a `.voicevox.json`
+//! connection; the session above it does not know which inference pipeline is running.
 //!
 //! The two halves being one repository is what lets them be *checked* against each other:
 //! `training/tests/test_host_contract.py` reads the constants below out of this crate's source
@@ -37,6 +37,7 @@ mod diffsinger;
 mod metadata;
 mod model;
 mod score;
+mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, VoiceModel};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};

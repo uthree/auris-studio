@@ -1036,8 +1036,10 @@ pub mod singing {
     //! A voice enters through one path. For the native backend that is a self-contained ONNX
     //! file carrying its phoneme table, audio parameters and voice card. For DiffSinger it is
     //! the voicebank's `dsconfig.yaml`, which names its acoustic model, phoneme table and bundled
-    //! vocoder. [`SingingBackend`](crate::SingingBackend) is the boundary between either package and the
-    //! session: metadata and frame curves go in, mono audio comes out. The session therefore
+    //! vocoder. For VOICEVOX it is a `.voicevox.json` connection naming a running Engine and
+    //! its singing/query style pair. [`SingingBackend`](crate::SingingBackend) is the boundary
+    //! between those packages and the session: metadata, frame curves, and where necessary the
+    //! lyric-bearing score go in; mono audio comes out. The session therefore
     //! caches and renders [`VoiceModel`](crate::VoiceModel) without knowing whether one ONNX
     //! graph or an acoustic-model/vocoder pair is behind it. A new backend belongs behind that
     //! boundary, not in a frontend or in the document model.
@@ -1062,7 +1064,7 @@ pub mod singing {
     //! [`Session::sing`](crate::Session::sing) is the whole pipeline in one synchronous call;
     //! a window that must keep painting takes the three-step form —
     //! [`sing_plan`](crate::Session::sing_plan) checks and gathers everything up front,
-    //! [`VoiceModel::sing_with`](crate::VoiceModel::sing_with) runs on the caller's thread,
+    //! [`VoiceModel::sing_score_with`](crate::VoiceModel::sing_score_with) runs on the caller's thread,
     //! [`land_singer_take`](crate::Session::land_singer_take) files the result. The take lands
     //! in `Audio/` exactly as a recorded take does: an ordinary audio source, reloaded with
     //! everything else when the project reopens, played by the graph from the beginning of the

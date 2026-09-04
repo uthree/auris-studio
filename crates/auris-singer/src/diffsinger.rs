@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use auris_vocal::{SILENCE, SingerFrames};
+use auris_vocal::{SILENCE, SingerFrames, SingerScore};
 use ort::session::Session;
 use ort::value::Tensor;
 use serde::Deserialize;
@@ -277,6 +277,7 @@ impl SingingBackend for DiffSingerBackend {
     fn sing_with(
         &mut self,
         frames: &SingerFrames,
+        _score: Option<&SingerScore>,
         speaker: u32,
         _seed: u64,
         progress: &mut dyn FnMut(usize, usize) -> bool,

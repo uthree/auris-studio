@@ -16,7 +16,7 @@ use ort::session::Session;
 use ort::value::Tensor;
 
 use auris_core::rng::{Key, Rng};
-use auris_vocal::SingerFrames;
+use auris_vocal::{SingerFrames, SingerScore};
 
 use crate::SingError;
 use crate::backend::{BackendKind, SingingBackend};
@@ -310,6 +310,7 @@ impl SingingBackend for AurisBackend {
     fn sing_with(
         &mut self,
         frames: &SingerFrames,
+        _score: Option<&SingerScore>,
         speaker: u32,
         seed: u64,
         progress: &mut dyn FnMut(usize, usize) -> bool,

@@ -123,6 +123,24 @@ pub struct SingerFrames {
     pub energy: Vec<f32>,
 }
 
+/// One contiguous note or rest on a singing backend's frame clock.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SingerNote {
+    /// MIDI key for a sung note, or `None` for a rest.
+    pub key: Option<u8>,
+    /// Number of feature frames occupied by this note or rest.
+    pub frame_length: u32,
+    /// Text attached to the note. Rests carry an empty string.
+    pub lyric: String,
+}
+
+/// A singer track reduced to lyrics, notes, rests, and frame lengths.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SingerScore {
+    /// Notes and rests in timeline order.
+    pub notes: Vec<SingerNote>,
+}
+
 impl SingerFrames {
     /// How many frames there are.
     pub fn len(&self) -> usize {
@@ -143,6 +161,8 @@ struct TimedNote<'a> {
     end: f64,
     /// MIDI pitch.
     pitch: f32,
+    /// The lyric as written on the note.
+    lyric: String,
     /// Attack strength, 0 to 1.
     velocity: f32,
     /// The phonemes sung, `a` where none were written.
@@ -259,6 +279,61 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
     }
 }
 
+/// Reduces a singer track to the note/rest score expected by score-based backends.
+///
+/// The first frame is always a rest. VOICEVOX requires that opening boundary, and keeping it
+/// in the common score avoids shifting the rest of the song in an individual adapter.
+pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap) -> SingerScore {
+    let hop = match track.frame_hop.is_finite() {
+        true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
+        false => default_frame_hop(),
+    };
+    let notes = timed_notes(track, tempo_map);
+    let Some(end) = notes.last().map(|note| note.end) else {
+        return SingerScore::default();
+    };
+    let count = (end / hop).ceil() as usize + 1;
+    let mut score = SingerScore::default();
+    let mut walker = 0usize;
+    let mut previous_identity = None;
+    for frame in 0..count {
+        let t = frame as f64 * hop;
+        while walker < notes.len() && notes[walker].end <= t {
+            walker += 1;
+        }
+        let active = (frame != 0)
+            .then(|| notes.get(walker).filter(|note| note.start <= t))
+            .flatten();
+        let identity = active.map(|_| walker);
+        let (key, lyric) = match active {
+            Some(note) => {
+                let lyric = match note.lyric.trim() {
+                    "" | "+" => "ア",
+                    lyric => lyric,
+                };
+                (Some(note.pitch.round().clamp(0.0, 127.0) as u8), lyric)
+            }
+            None => (None, ""),
+        };
+        match score.notes.last_mut() {
+            Some(previous)
+                if previous_identity == identity
+                    && previous.key == key
+                    && previous.lyric == lyric =>
+            {
+                previous.frame_length = previous.frame_length.saturating_add(1);
+            }
+            _ => score.notes.push(SingerNote {
+                key,
+                frame_length: 1,
+                lyric: lyric.to_string(),
+            }),
+        }
+        previous_identity = identity;
+    }
+    score
+}
+
 /// Every note of every unmuted clip, repeats included, flattened, sorted and made monophonic.
 fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNote<'a>> {
     let widths = track
@@ -291,6 +366,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         start: 0.0,
                         end: 0.0,
                         pitch: f32::from(note.pitch),
+                        lyric: note.lyric.clone(),
                         velocity: note.velocity.clamp(0.0, 1.0),
                         phonemes,
                         phoneme_seconds,
@@ -549,6 +625,36 @@ mod tests {
         assert!(frames.is_empty());
         assert_eq!(frames.inventory, [SILENCE]);
         assert_eq!(frames.hop_seconds, default_frame_hop());
+    }
+
+    #[test]
+    fn a_score_opens_in_silence_and_keeps_repeated_notes_separate() {
+        let mut first = sung(60, 0.0, 0.5, &["a"]);
+        first.lyric = "ラ".into();
+        let mut second = sung(60, 0.5, 0.5, &["a"]);
+        second.lyric = "ラ".into();
+        let singer = track(vec![first, second]);
+        let score = render_score(&singer, &map());
+        assert_eq!(
+            score.notes[0].key, None,
+            "VOICEVOX requires an opening rest"
+        );
+        let sung: Vec<&SingerNote> = score
+            .notes
+            .iter()
+            .filter(|note| note.key.is_some())
+            .collect();
+        assert_eq!(sung.len(), 2, "two attacks remain two score notes");
+        assert!(sung.iter().all(|note| note.lyric == "ラ"));
+        let frames = render_frames(&singer, &map());
+        assert_eq!(
+            score
+                .notes
+                .iter()
+                .map(|note| note.frame_length as usize)
+                .sum::<usize>(),
+            frames.len()
+        );
     }
 
     #[test]

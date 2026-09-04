@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use auris_vocal::SingerFrames;
+use auris_vocal::{SingerFrames, SingerScore};
 
 use crate::{Acceleration, SingError, VoiceInfo};
 
@@ -13,9 +13,11 @@ pub enum BackendKind {
     Auris,
     /// An OpenUtau-compatible DiffSinger voicebank.
     DiffSinger,
+    /// A running VOICEVOX Engine reached through its HTTP API.
+    Voicevox,
 }
 
-/// The backend contract: metadata and frame curves in, mono waveform out.
+/// The backend contract: metadata, frame curves and an optional note score in; mono waveform out.
 ///
 /// Implementations may use one model or a pipeline of models. They are always called off the
 /// realtime audio thread. The trait is public so another engine can be added without teaching
@@ -35,6 +37,7 @@ pub trait SingingBackend: Send {
     fn sing_with(
         &mut self,
         frames: &SingerFrames,
+        score: Option<&SingerScore>,
         speaker: u32,
         seed: u64,
         progress: &mut dyn FnMut(usize, usize) -> bool,
@@ -47,16 +50,22 @@ pub struct VoiceModel {
 }
 
 impl VoiceModel {
-    /// Opens an Auris `.onnx` voice or a DiffSinger `dsconfig.yaml` voicebank.
+    /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, or `.voicevox.json` connection.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
         let is_diffsinger = path
             .file_name()
             .is_some_and(|name| name.eq_ignore_ascii_case("dsconfig.yaml"));
+        let is_voicevox = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"));
         let backend: Box<dyn SingingBackend> = if is_diffsinger {
             Box::new(crate::diffsinger::DiffSingerBackend::load(
                 path,
                 acceleration,
             )?)
+        } else if is_voicevox {
+            Box::new(crate::voicevox::VoicevoxBackend::load(path, acceleration)?)
         } else {
             Box::new(crate::model::AurisBackend::load(path, acceleration)?)
         };
@@ -106,6 +115,31 @@ impl VoiceModel {
         seed: u64,
         mut progress: impl FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
-        self.backend.sing_with(frames, speaker, seed, &mut progress)
+        self.backend
+            .sing_with(frames, None, speaker, seed, &mut progress)
+    }
+
+    /// Sings a note-level score, using its parallel frame curves where the backend supports it.
+    pub fn sing_score(
+        &mut self,
+        frames: &SingerFrames,
+        score: &SingerScore,
+        speaker: u32,
+        seed: u64,
+    ) -> Result<Vec<f32>, SingError> {
+        self.sing_score_with(frames, score, speaker, seed, |_, _| true)
+    }
+
+    /// [`Self::sing_score`], reporting progress as the backend advances.
+    pub fn sing_score_with(
+        &mut self,
+        frames: &SingerFrames,
+        score: &SingerScore,
+        speaker: u32,
+        seed: u64,
+        mut progress: impl FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>, SingError> {
+        self.backend
+            .sing_with(frames, Some(score), speaker, seed, &mut progress)
     }
 }
