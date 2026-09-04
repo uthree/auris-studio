@@ -525,7 +525,7 @@ pub fn degree_of(key: Key, class: PitchClass) -> (u8, i32) {
     }
     let major = Key::new(key.tonic, super::scale::ScaleId::Major);
     // Flat before sharp, and one accidental before two: `bVI` is how everybody writes that note.
-    for accidental in [-1, 1, -2, 2] {
+    for accidental in [0, -1, 1, -2, 2] {
         for degree in 1..=7u8 {
             if major.class(i32::from(degree) - 1).transposed(accidental) == class {
                 return (degree, accidental);
@@ -815,6 +815,13 @@ mod tests {
         // An unaltered numeral still comes from the key's own scale.
         assert_eq!(chord_of("VI", "A minor"), "F");
         assert_eq!(chord_of("vi", "A major"), "F#m");
+    }
+
+    #[test]
+    fn a_borrowed_major_scale_degree_in_minor_needs_no_accidental() {
+        let c_major = key("C major");
+        assert_eq!(degree_of(key("C minor"), c_major.class(5)), (6, 0));
+        assert_eq!(degree_of(key("C minor"), c_major.class(6)), (7, 0));
     }
 
     #[test]

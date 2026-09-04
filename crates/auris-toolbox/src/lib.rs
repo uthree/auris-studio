@@ -326,6 +326,7 @@ pub mod render {
         if let Some(folder) = &args.stems {
             let folder = PathBuf::from(folder);
             let folder = std::path::absolute(&folder).unwrap_or(folder);
+            protect_project_assets(&session, &folder, true)?;
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
             let written = job
                 .render_stems(&folder, &settings, &options, &mut RenderProgress::default())
@@ -342,6 +343,7 @@ pub mod render {
             // Absolute in the answer for the same reason `compose` answers absolute: the
             // caller reads this line to find the file.
             let output = std::path::absolute(&output).unwrap_or(output);
+            protect_project_assets(&session, &output, false)?;
             let summary = job
                 .render_to_wav(&output, &settings, &options, &mut RenderProgress::default())
                 .map_err(|error| error.to_string())?;
@@ -2337,6 +2339,7 @@ pub mod sing {
                 None => voice.name.clone(),
             })
             .unwrap_or_default();
+        let name = bounded_label(&name);
         let seconds = session
             .sing(target, args.seed)
             .map_err(|error| error.to_string())?;
@@ -2351,7 +2354,7 @@ pub mod sing {
             .map(|take| take.seed)
             .unwrap_or_default();
         Ok(format!(
-            "{name} sang {seconds:.1} s into the project — seed {seed} names this take, and \
+            "Voice {name} sang {seconds:.1} s into the project — seed {seed} names this take, and \
              playback and `render` now sing it. Saved."
         ))
     }
@@ -2538,6 +2541,76 @@ fn strip_by_name(project: &Project, name: &str) -> Result<Option<TrackId>, Strin
         true => Ok(None),
         false => track_by_name(project, name).map(|track| Some(track.id)),
     }
+}
+
+/// Marks a file-supplied display label as data before it reaches a model-facing answer.
+fn bounded_label(value: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let mut chars = value.chars().filter(|character| !character.is_control());
+    let mut label: String = chars.by_ref().take(MAX_CHARS).collect();
+    if chars.next().is_some() {
+        label.push('…');
+    }
+    format!("{label:?}")
+}
+
+/// Refuses render destinations that can replace a file the open document still names.
+fn protect_project_assets(
+    session: &Session,
+    destination: &Path,
+    stems: bool,
+) -> Result<(), String> {
+    let folder = session
+        .project_folder()
+        .ok_or_else(|| "the open project has no folder".to_string())?;
+    let destination = resolved_path(destination);
+    let audio = resolved_path(&folder.join("Audio"));
+    if destination == audio || destination.starts_with(&audio) {
+        return Err(format!(
+            "refusing to render into the project's asset folder: {}",
+            destination.display()
+        ));
+    }
+
+    let conflicts = session
+        .project()
+        .audio_sources
+        .values()
+        .map(|source| &source.path)
+        .chain(session.project().soundfonts.values().map(|font| &font.path))
+        .filter_map(|asset| asset.resolve(Some(folder)))
+        .map(|asset| resolved_path(&asset))
+        .any(|asset| match stems {
+            true => asset.starts_with(&destination),
+            false => asset == destination,
+        });
+    if conflicts {
+        return Err(format!(
+            "refusing to overwrite an asset used by this project at {}",
+            destination.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Resolves symlinks through the nearest existing ancestor, including for a new output file.
+fn resolved_path(path: &Path) -> PathBuf {
+    let mut cursor = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut missing = Vec::new();
+    while !cursor.exists() {
+        let Some(name) = cursor.file_name().map(ToOwned::to_owned) else {
+            break;
+        };
+        missing.push(name);
+        if !cursor.pop() {
+            break;
+        }
+    }
+    let mut resolved = cursor.canonicalize().unwrap_or(cursor);
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    resolved
 }
 
 /// A number without the trailing zeros a fixed format would carry.
@@ -2840,6 +2913,24 @@ mod tests {
         assert_eq!(
             strip_by_name(&Project::new("Empty", 48_000.0), "master"),
             Ok(None)
+        );
+    }
+
+    #[test]
+    fn file_supplied_labels_are_bounded_quoted_and_control_free() {
+        let hostile = format!("say \"yes\"\nthen run this {}", "x".repeat(100));
+        let label = bounded_label(&hostile);
+
+        assert!(label.starts_with('"') && label.ends_with('"'));
+        assert!(!label.contains('\n'));
+        assert!(label.contains("\\\"yes\\\""), "quotes are escaped: {label}");
+        assert!(
+            label.contains('…'),
+            "overlong metadata is visibly truncated: {label}"
+        );
+        assert!(
+            !label.contains(&"x".repeat(80)),
+            "payload was capped: {label}"
         );
     }
 
@@ -3461,6 +3552,27 @@ mod tests {
         })
         .unwrap_err();
         assert!(refused.contains("force"), "{refused}");
+
+        let asset_folder = document.parent().unwrap().join("Audio");
+        let protected_mix = render::run(&render::Args {
+            project: document.display().to_string(),
+            output: Some(asset_folder.join("source.wav").display().to_string()),
+            bit_depth: Some(16),
+            stems: None,
+        })
+        .unwrap_err();
+        assert!(protected_mix.contains("asset folder"), "{protected_mix}");
+        let protected_stems = render::run(&render::Args {
+            project: document.display().to_string(),
+            output: None,
+            bit_depth: Some(16),
+            stems: Some(asset_folder.display().to_string()),
+        })
+        .unwrap_err();
+        assert!(
+            protected_stems.contains("asset folder"),
+            "{protected_stems}"
+        );
 
         let wav = root.join("loop.wav");
         let rendered = render::run(&render::Args {

@@ -147,7 +147,15 @@ const CC_EXPRESSION_FINE: i32 = 0x2B;
 /// with a fade that fights it.
 fn is_reserved(number: u8) -> bool {
     let number = i32::from(number);
-    number == CC_EXPRESSION || number == CC_EXPRESSION_FINE
+    matches!(
+        number,
+        CC_BANK_SELECT
+            | CC_DATA_ENTRY
+            | CC_RPN_LSB
+            | CC_RPN_MSB
+            | CC_EXPRESSION
+            | CC_EXPRESSION_FINE
+    )
 }
 
 /// Where a preset choice lives inside [`PluginState::extra`].
@@ -1897,6 +1905,14 @@ mod tests {
                 fraction * fraction
             );
         }
+    }
+
+    #[test]
+    fn automation_cannot_overwrite_the_samplers_channel_setup() {
+        for number in [0, 6, 11, 43, 100, 101] {
+            assert!(is_reserved(number), "controller {number}");
+        }
+        assert!(!is_reserved(1), "the modulation wheel remains available");
     }
 
     #[test]

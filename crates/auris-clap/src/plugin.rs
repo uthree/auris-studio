@@ -702,6 +702,19 @@ impl std::fmt::Debug for ClapPlugin {
     }
 }
 
+/// Most parameter descriptions accepted from one plugin.
+///
+/// Large synths can legitimately expose thousands; a count near `u32::MAX` can only be corrupt
+/// and must not become an allocator request.
+const MAX_PARAMS: u32 = 4_096;
+
+/// Largest stepped range represented as a picker rather than a stepped plain control.
+const MAX_PARAM_CHOICES: u32 = 1_024;
+
+fn bounded_param_count(count: u32) -> u32 {
+    count.min(MAX_PARAMS)
+}
+
 /// Asks a freshly instantiated plugin what its parameters are.
 fn read_params(instance: &mut PluginInstance<AurisHost>) -> ParamList {
     let Some(params) = instance
@@ -714,7 +727,7 @@ fn read_params(instance: &mut PluginInstance<AurisHost>) -> ParamList {
         };
     };
 
-    let count = params.count(&mut instance.plugin_handle());
+    let count = bounded_param_count(params.count(&mut instance.plugin_handle()));
     let mut clap_ids = Vec::with_capacity(count as usize);
     let mut descriptors = Vec::with_capacity(count as usize);
     let mut buffer = ParamInfoBuffer::new();
@@ -786,10 +799,31 @@ fn describe(
         true => Some(((max - min).round() as u32).saturating_add(1)),
         false => None,
     };
-    let unit = match (stepped, min, max) {
+    let mut unit = match (stepped, min, max) {
         (true, 0.0, 1.0) => ParamUnit::Toggle,
         (true, _, _) => ParamUnit::Choice,
         _ => ParamUnit::Plain,
+    };
+    let choices: Cow<'static, [Cow<'static, str>]> = match (unit, steps) {
+        (ParamUnit::Choice, Some(count)) if count <= MAX_PARAM_CHOICES => Cow::Owned(
+            (0..count)
+                .map(|index| {
+                    let value = min + index as f32;
+                    Cow::Owned(if value.fract() == 0.0 {
+                        format!("{value:.0}")
+                    } else {
+                        value.to_string()
+                    })
+                })
+                .collect(),
+        ),
+        (ParamUnit::Choice, _) => {
+            // A menu with millions of rows is neither usable nor safe to allocate. It remains
+            // stepped, so the ordinary control still lands on the plugin's discrete values.
+            unit = ParamUnit::Plain;
+            Cow::Borrowed(&[])
+        }
+        _ => Cow::Borrowed(&[]),
     };
 
     ParamDescriptor {
@@ -805,7 +839,7 @@ fn describe(
         unit,
         curve: auris_core::param::ParamValueCurve::Linear,
         steps,
-        choices: Cow::Borrowed(&[]),
+        choices,
     }
 }
 
@@ -840,10 +874,25 @@ mod tests {
         let choice = describe(0, 2, "Mode", 0.0, 3.0, 0.0, true);
         assert_eq!(choice.unit, ParamUnit::Choice);
         assert_eq!(choice.steps, Some(4), "four positions, both ends included");
+        assert_eq!(
+            choice.choices.as_ref(),
+            ["0", "1", "2", "3"],
+            "a choice always has one selectable label per position"
+        );
 
         let continuous = describe(0, 3, "Drive", 0.0, 1.0, 0.5, false);
         assert_eq!(continuous.unit, ParamUnit::Plain);
         assert_eq!(continuous.steps, None);
+    }
+
+    #[test]
+    fn absurd_parameter_counts_and_choice_ranges_do_not_drive_allocations() {
+        let reported = std::hint::black_box(u32::MAX);
+        assert_eq!(bounded_param_count(reported), MAX_PARAMS);
+        let enormous = describe(0, 4, "Unsafe", 0.0, u32::MAX as f64, 0.0, true);
+        assert_eq!(enormous.unit, ParamUnit::Plain);
+        assert!(enormous.choices.is_empty());
+        assert_eq!(enormous.steps, Some(u32::MAX));
     }
 
     #[test]

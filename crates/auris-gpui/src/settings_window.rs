@@ -1310,6 +1310,7 @@ impl SettingsWindow {
                     &theme,
                     cx.listener(move |this, _, _, cx| {
                         this.keymap.clear(command);
+                        this.capturing = None;
                         this.apply_keymap(cx);
                     }),
                 )

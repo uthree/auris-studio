@@ -34,6 +34,13 @@ def test_spectrogram_accepts_unbatched_input():
     assert mel_spectrogram(wav, SAMPLE_RATE, N_FFT, HOP, WIN, 80).shape == (80, 12)
 
 
+def test_one_hop_clip_uses_safe_edge_padding():
+    wav = torch.randn(1, HOP) * 0.1
+
+    assert spectrogram(wav, N_FFT, HOP, WIN).shape == (1, N_FFT // 2 + 1, 1)
+    assert frame_energy(wav, N_FFT, HOP, WIN).shape == (1, 1)
+
+
 def test_spectrogram_peaks_at_the_tone_frequency():
     freq = 1000.0
     t = torch.arange(HOP * 40, dtype=torch.float32) / SAMPLE_RATE

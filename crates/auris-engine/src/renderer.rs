@@ -84,6 +84,7 @@ fn render_segment(
     frames: usize,
     offline: bool,
 ) {
+    let ramp_frames = graph.max_block();
     // Before anything is rendered, so the whole segment hears the values in force at its start.
     // A segment is bounded by the prepared block size and by the loop end, which means a wrap
     // re-reads the lanes at the loop start rather than carrying the values from its end across —
@@ -181,10 +182,10 @@ fn render_segment(
             strip,
             ..
         } = track;
-        deliver_sends(sends, scratch, bus_inputs, true);
-        strip.apply_gain_and_pan(scratch);
+        deliver_sends(sends, scratch, bus_inputs, true, ramp_frames);
+        strip.apply_gain_and_pan(scratch, ramp_frames);
         strip.apply_mute(scratch);
-        deliver_sends(sends, scratch, bus_inputs, false);
+        deliver_sends(sends, scratch, bus_inputs, false, ramp_frames);
 
         // `apply_mute` is what moves the fade, so this is the block it closed on and the last one
         // this track renders until the mute opens again. Anything the instrument is still holding
@@ -231,7 +232,7 @@ fn render_segment(
     graph
         .master
         .process_chain(master_scratch, sidechain_taps, &ctx);
-    graph.master.apply_gain_and_pan(master_scratch);
+    graph.master.apply_gain_and_pan(master_scratch, ramp_frames);
     // Mute is the last stage of the strip: the effects still run — so a reverb tail does not
     // freeze and un-muting does not pop — but nothing leaves the bus.
     graph.master.apply_mute(master_scratch);
@@ -269,6 +270,7 @@ fn deliver_sends(
     source: &AudioBuffer,
     bus_inputs: &mut [AudioBuffer],
     pre_fader: bool,
+    ramp_frames: usize,
 ) {
     for send in sends.iter_mut() {
         if send.pre_fader != pre_fader {
@@ -277,7 +279,7 @@ fn deliver_sends(
         let Some(input) = bus_inputs.get_mut(send.target) else {
             continue;
         };
-        let (from, to) = send.gain.advance();
+        let (from, to) = send.gain.advance(source.frame_count(), ramp_frames);
         // A send with no delay to apply is mixed straight from the tap. Only one that is actually
         // held back — because the bus it feeds looks ahead — needs a copy to hold.
         if send.delay.frames() == 0 {

@@ -124,6 +124,12 @@ impl LibraryTree {
     pub(crate) fn set_open(&mut self, branch: Branch, open: bool) {
         self.chosen.insert(branch, open);
     }
+
+    /// Forgets disclosures whose positional identities become invalid after a rescan.
+    pub(crate) fn forget_plugin_files(&mut self) {
+        self.chosen
+            .retain(|branch, _| !matches!(branch, Branch::PluginFile(_)));
+    }
 }
 
 /// One plugin, as the library lists it.
@@ -1625,6 +1631,18 @@ mod tests {
         tree.set_open(font, true);
         tree.set_open(font, true);
         assert!(tree.is_open(font));
+    }
+
+    #[test]
+    fn a_plugin_rescan_forgets_only_file_disclosures() {
+        let mut tree = LibraryTree::default();
+        tree.set_open(Branch::PluginFile(0), true);
+        tree.set_open(Branch::Instruments, false);
+
+        tree.forget_plugin_files();
+
+        assert!(!tree.is_open(Branch::PluginFile(0)));
+        assert!(!tree.is_open(Branch::Instruments));
     }
 
     /// How far apart two hues are, going whichever way round the wheel is shorter.

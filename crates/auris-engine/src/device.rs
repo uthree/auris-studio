@@ -10,7 +10,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use auris_core::AudioBuffer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, FromSample, Sample, SampleFormat, StreamConfig, SupportedBufferSize};
+use cpal::{
+    BufferSize, FromSample, I24, Sample, SampleFormat, StreamConfig, SupportedBufferSize, U24,
+};
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
 use crate::command::EngineCommand;
@@ -186,15 +188,26 @@ impl AudioDevice {
     /// died — nothing drains the queue, so after `command_capacity` sends every later command
     /// would be refused. A frontend's per-frame housekeeping should call this occasionally.
     /// Returns how many commands were discarded, and refuses to touch the queue while a live
-    /// audio thread is the consumer.
-    pub fn discard_pending(&self) -> usize {
+    /// audio thread is the consumer. When the backend has reported a fatal stream error, the
+    /// stream is dropped first so its callback has fully stopped before this thread drains the
+    /// callback's receiving end.
+    pub fn discard_pending(&mut self) -> usize {
         if self.is_running() {
             return 0;
         }
-        self.idle_commands
-            .as_ref()
-            .map_or(0, |commands| commands.try_iter().count())
+        let commands = &self.idle_commands;
+        after_stream_stopped(&mut self.stream, || {
+            commands
+                .as_ref()
+                .map_or(0, |commands| commands.try_iter().count())
+        })
     }
+}
+
+/// Runs UI-thread cleanup only after the possibly-live audio callback has been joined by Drop.
+fn after_stream_stopped<T, R>(stream: &mut Option<T>, cleanup: impl FnOnce() -> R) -> R {
+    drop(stream.take());
+    cleanup()
 }
 
 impl std::fmt::Debug for AudioDevice {
@@ -414,14 +427,7 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
     };
     let max_block = match settings.block_frames {
         Some(frames) => {
-            let frames = if max_buffer > 0 {
-                // `clamp` panics when its bounds cross, which a backend advertising a degenerate
-                // range would otherwise make happen inside what is supposed to be a fallible open.
-                let lowest = min_buffer.max(1).min(max_buffer);
-                frames.clamp(lowest, max_buffer)
-            } else {
-                frames.max(1)
-            };
+            let frames = preferred_block_size(frames, min_buffer, max_buffer);
             config.buffer_size = BufferSize::Fixed(frames);
             frames as usize
         }
@@ -437,6 +443,17 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
         sample_format,
         max_block: max_block.max(1),
     })
+}
+
+fn preferred_block_size(frames: u32, min_buffer: u32, max_buffer: u32) -> u32 {
+    if max_buffer > 0 {
+        // `clamp` panics when its bounds cross, which a backend advertising a degenerate range
+        // would otherwise make happen inside what is supposed to be a fallible open.
+        let lowest = min_buffer.max(1).min(max_buffer);
+        frames.clamp(lowest, max_buffer)
+    } else {
+        frames.max(1).min(DEFAULT_MAX_BLOCK as u32)
+    }
 }
 
 fn supports_rate(
@@ -495,6 +512,12 @@ fn build_stream(
     };
     let mut engine = engine;
     let stream = match format {
+        SampleFormat::I8 => device.build_output_stream(
+            config,
+            move |data: &mut [i8], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
         SampleFormat::F32 => device.build_output_stream(
             config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| engine.fill(data),
@@ -507,9 +530,57 @@ fn build_stream(
             on_error,
             None,
         )?,
+        SampleFormat::I24 => device.build_output_stream(
+            config,
+            move |data: &mut [I24], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::I32 => device.build_output_stream(
+            config,
+            move |data: &mut [i32], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::I64 => device.build_output_stream(
+            config,
+            move |data: &mut [i64], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::U8 => device.build_output_stream(
+            config,
+            move |data: &mut [u8], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
         SampleFormat::U16 => device.build_output_stream(
             config,
             move |data: &mut [u16], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::U24 => device.build_output_stream(
+            config,
+            move |data: &mut [U24], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::U32 => device.build_output_stream(
+            config,
+            move |data: &mut [u32], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::U64 => device.build_output_stream(
+            config,
+            move |data: &mut [u64], _: &cpal::OutputCallbackInfo| engine.fill(data),
+            on_error,
+            None,
+        )?,
+        SampleFormat::F64 => device.build_output_stream(
+            config,
+            move |data: &mut [f64], _: &cpal::OutputCallbackInfo| engine.fill(data),
             on_error,
             None,
         )?,
@@ -900,6 +971,27 @@ mod tests {
     const SAMPLE_RATE: f64 = 48_000.0;
 
     #[test]
+    fn failed_stream_is_dropped_before_its_command_queue_is_drained() {
+        struct DropSignal(Arc<AtomicBool>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let stopped = Arc::new(AtomicBool::new(false));
+        let mut stream = Some(DropSignal(Arc::clone(&stopped)));
+        let drained = after_stream_stopped(&mut stream, || {
+            assert!(stopped.load(Ordering::Relaxed));
+            2
+        });
+
+        assert!(stream.is_none());
+        assert_eq!(drained, 2);
+    }
+
+    #[test]
     fn a_rerouted_default_device_is_not_a_dead_stream() {
         // cpal documents both of these as errors the stream survives; treating them as deaths
         // hands the command queue to `discard_pending` while the callback is still consuming it.
@@ -1207,6 +1299,47 @@ mod tests {
         );
     }
 
+    fn assert_output_sample<T>(engine: &mut AudioEngine)
+    where
+        T: Sample + FromSample<f32> + Copy,
+        f32: FromSample<T>,
+    {
+        let mut data = vec![T::from_sample(0.0); 128];
+        engine.fill(&mut data);
+        let sample = f32::from_sample(data[0]);
+        assert!((sample - TONE_AMPLITUDE).abs() < 0.02, "got {sample}");
+    }
+
+    #[test]
+    fn every_pcm_output_format_is_converted() {
+        let (mut engine, commands, _graphs, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+
+        assert_output_sample::<i8>(&mut engine);
+        assert_output_sample::<i16>(&mut engine);
+        assert_output_sample::<I24>(&mut engine);
+        assert_output_sample::<i32>(&mut engine);
+        assert_output_sample::<i64>(&mut engine);
+        assert_output_sample::<u8>(&mut engine);
+        assert_output_sample::<u16>(&mut engine);
+        assert_output_sample::<U24>(&mut engine);
+        assert_output_sample::<u32>(&mut engine);
+        assert_output_sample::<u64>(&mut engine);
+        assert_output_sample::<f32>(&mut engine);
+        assert_output_sample::<f64>(&mut engine);
+    }
+
+    #[test]
+    fn an_unknown_device_buffer_range_bounds_the_preferred_block() {
+        assert_eq!(preferred_block_size(0, 0, 0), 1);
+        assert_eq!(
+            preferred_block_size(u32::MAX, 0, 0),
+            DEFAULT_MAX_BLOCK as u32
+        );
+        assert_eq!(preferred_block_size(512, 0, 0), 512);
+    }
+
     #[test]
     fn a_live_solo_resolution_fades_instead_of_stepping() {
         let (mut engine, commands, retired, _meters, _playhead) = engine();
@@ -1490,7 +1623,7 @@ mod tests {
 
     #[test]
     fn a_silent_engine_still_accepts_commands() {
-        let (device, handle) = start_silent(&AudioSettings::default());
+        let (mut device, handle) = start_silent(&AudioSettings::default());
         assert!(!handle.is_running());
         assert!(!device.is_running());
         assert_eq!(device.name(), "silent");

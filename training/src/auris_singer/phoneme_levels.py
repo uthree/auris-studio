@@ -62,6 +62,10 @@ MIN_SAMPLES = 20
 #: Frames whose RMS is below this are not a reading of anything but the noise floor.
 ENERGY_FLOOR = 1e-4
 
+#: Whispered Japanese vowels occupy their own consonant-like timing slot.  They must neither be
+#: skipped as a vowel nor used as the loudness reference for the consonant before them.
+DEVOICED_VOWELS = frozenset({"a\u0325", "i̥", "ɯ̥", "e̥", "o̥"})
+
 
 def measure(
     utterances: Iterable[tuple[list[str], list[int], np.ndarray]],
@@ -87,10 +91,17 @@ def measure(
             spans.append((symbol, at, at + int(frames)))
             at += int(frames)
         for index, (symbol, start, end) in enumerate(spans):
-            if symbol in SPECIAL_SYMBOLS or phoneme_class(symbol) in {"vowel", "special"}:
+            if symbol in SPECIAL_SYMBOLS or (
+                phoneme_class(symbol) == "vowel" and symbol not in DEVOICED_VOWELS
+            ):
                 continue
             vowel = next(
-                ((s, e) for q, s, e in spans[index + 1 :] if phoneme_class(q) == "vowel"), None
+                (
+                    (s, e)
+                    for q, s, e in spans[index + 1 :]
+                    if phoneme_class(q) == "vowel" and q not in DEVOICED_VOWELS
+                ),
+                None,
             )
             if vowel is None or end <= start:
                 continue

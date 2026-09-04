@@ -204,7 +204,8 @@ pub fn write_phrase(
     // part's business, and is set on the roster below.
     let grid = Grid::new(meter, Subdivision::default().steps_per_beat());
     let bar_ticks = grid.bar_ticks().raw().max(1);
-    let bars = (length.raw().max(0) / bar_ticks) as usize;
+    let positive_length = length.raw().max(0);
+    let bars = (positive_length / bar_ticks + i64::from(positive_length % bar_ticks != 0)) as usize;
     if bars == 0 {
         return Vec::new();
     }
@@ -403,6 +404,33 @@ mod tests {
                 assert!(note.end() <= BAR * 4, "{} past the clip", preset.name());
                 assert!(note.velocity > 0.0 && note.velocity <= 1.0);
             }
+        }
+    }
+
+    #[test]
+    fn bar_scoped_parts_write_into_a_fractional_final_bar() {
+        let length = BAR * 2 + Ticks::from_beats(3.0);
+        for preset in [
+            ClipPreset::Lead,
+            ClipPreset::Kick,
+            ClipPreset::Snare,
+            ClipPreset::Hat,
+            ClipPreset::Drums,
+        ] {
+            let notes = write_phrase(
+                &axis(),
+                Ticks::ZERO,
+                length,
+                four_four(),
+                &ClipRecipe::new(preset, 1),
+                None,
+            );
+            assert!(
+                notes.iter().any(|note| note.start >= BAR * 2),
+                "{} left the partial bar silent",
+                preset.name()
+            );
+            assert!(notes.iter().all(|note| note.end() <= length));
         }
     }
 
@@ -639,7 +667,7 @@ mod tests {
         );
         assert!(notes.is_empty());
 
-        // And a range shorter than a bar has nowhere to put a figure.
+        // A partial final bar is still writable; only the range without harmony stays silent.
         let short = write_phrase(
             &axis(),
             Ticks::ZERO,
@@ -648,7 +676,8 @@ mod tests {
             &ClipRecipe::new(ClipPreset::Chords, 1),
             None,
         );
-        assert!(short.is_empty());
+        assert!(!short.is_empty());
+        assert!(short.iter().all(|note| note.end() <= Ticks(960)));
     }
 
     #[test]

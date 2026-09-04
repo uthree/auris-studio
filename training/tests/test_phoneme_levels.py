@@ -28,6 +28,15 @@ def test_a_consonant_with_no_vowel_after_it_or_at_the_floor_is_not_a_reading():
     assert levels == {}
 
 
+def test_a_devoiced_vowel_is_measured_and_skipped_as_a_reference():
+    levels = measure(
+        [utterance([("s", 4, 0.02), ("ɯ̥", 5, 0.01), ("a", 20, 0.1)])]
+    )
+
+    assert levels["s"] == pytest.approx([-20.0 * np.log10(5.0)])
+    assert levels["ɯ̥"] == pytest.approx([-20.0])
+
+
 def test_the_block_ships_the_medians_that_earned_it_and_a_consonant_default():
     levels = {"k": [-22.0] * MIN_SAMPLES, "s": [-19.0, -21.0] * (MIN_SAMPLES // 2), "ɸʲ": [-15.0] * 3}
     block = summarize({"x": levels, "y": {"k": [-6.0] * MIN_SAMPLES}}, "a test corpus")

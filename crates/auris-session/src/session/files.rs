@@ -386,7 +386,7 @@ impl Session {
         self.save(&path)
     }
 
-    /// Copies every file the project refers to into its folder, however large.
+    /// Copies every loaded asset the project refers to into its folder, however large.
     ///
     /// The command for archiving a project or sending it to someone else: afterwards the folder
     /// holds everything, and nothing outside it is needed to open the project. Explicit rather
@@ -394,7 +394,9 @@ impl Session {
     /// paying that on every save to shorten a path nobody reads would be a poor trade.
     ///
     /// Returns how many files were copied in. Anything already inside is left alone, so running
-    /// this twice costs a directory listing.
+    /// this twice costs a directory listing. A reference that did not decode as the audio or
+    /// SoundFont it claims to be is left outside; a document received from elsewhere is not
+    /// authority to copy an arbitrary local file into an archive.
     ///
     /// A file that cannot be copied is skipped and the first failure reported *after* every
     /// other file has had its attempt — missing assets are reported, never fatal, and what was
@@ -411,14 +413,14 @@ impl Session {
             .project
             .audio_sources
             .values()
-            .filter(|source| !source.path.is_inside())
+            .filter(|source| !source.path.is_inside() && self.bank.get(source.id).is_some())
             .map(|source| (source.id, source.path.resolve(None)))
             .collect();
         let fonts: Vec<(SoundFontId, Option<PathBuf>)> = self
             .project
             .soundfonts
             .values()
-            .filter(|font| !font.path.is_inside())
+            .filter(|font| !font.path.is_inside() && self.fonts.contains(font.id))
             .map(|font| (font.id, font.path.resolve(None)))
             .collect();
 
@@ -1023,10 +1025,10 @@ mod tests {
     }
 
     #[test]
-    fn collecting_brings_the_fonts_in_too() {
-        let scratch = Scratch::new("collect");
-        let font = scratch.join("GM.sf2");
-        std::fs::write(&font, b"stand-in for a very large font").unwrap();
+    fn collecting_ignores_files_that_never_decoded_as_assets() {
+        let scratch = Scratch::new("collect-untrusted");
+        let secret = scratch.join("secret.txt");
+        std::fs::write(&secret, b"not audio and not a SoundFont").unwrap();
 
         let mut session = session();
         session
@@ -1034,30 +1036,35 @@ mod tests {
             .expect("saves");
         session
             .project
-            .add_soundfont("GM", AssetPath::external(&font), auris_io::byte_size(&font));
+            .add_audio_source("Private", AssetPath::external(&secret), 1, 48_000.0, 1);
+        session.project.add_soundfont(
+            "Private",
+            AssetPath::external(&secret),
+            auris_io::byte_size(&secret),
+        );
 
-        assert_eq!(session.collect_assets().expect("collects"), 1);
+        assert_eq!(session.collect_assets().expect("skips undecoded files"), 0);
         assert!(
-            scratch
+            !scratch
                 .join("MySong")
                 .join("Audio")
-                .join("GM.sf2")
-                .is_file()
+                .join("secret.txt")
+                .exists(),
+            "a document reference alone must not turn an arbitrary local file into an asset"
+        );
+        assert!(
+            session
+                .project()
+                .audio_sources
+                .values()
+                .all(|source| !source.path.is_inside())
         );
         assert!(
             session
                 .project()
                 .soundfonts
                 .values()
-                .next()
-                .unwrap()
-                .path
-                .is_inside()
-        );
-        assert_eq!(
-            session.collect_assets().expect("collects again"),
-            0,
-            "nothing is left outside, so a second run copies nothing"
+                .all(|font| !font.path.is_inside())
         );
     }
 
@@ -1074,12 +1081,16 @@ mod tests {
         session
             .save_as(&scratch.join("First.auris"))
             .expect("saves");
-        session.project.add_soundfont(
+        let font = session.project.add_soundfont(
             "GM",
             AssetPath::external(&library),
             auris_io::byte_size(&library),
         );
-        assert_eq!(session.collect_assets().expect("collects"), 1);
+        // This test is about carrying an already-owned file across Save As. The low-level copy
+        // establishes that state without pretending the stand-in bytes decoded as a SoundFont.
+        session
+            .collect_font(font, &library)
+            .expect("collects fixture");
         // The library it came from goes away, so nothing below can be reading the original.
         std::fs::remove_file(&library).unwrap();
 

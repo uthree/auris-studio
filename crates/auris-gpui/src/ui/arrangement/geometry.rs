@@ -261,7 +261,7 @@ pub(super) fn clip_grab_at(
     if y_in_clip < TITLE_HEIGHT && within(loop_x) {
         return Some(ClipGrab::Loop);
     }
-    if within(end_x) {
+    if x <= end_x && f32::from(end_x - x) <= grab {
         return Some(ClipGrab::Resize(ClipEdge::End));
     }
     if within(start_x) {
@@ -346,6 +346,11 @@ mod tests {
         assert_eq!(
             clip_grab_at(start, end, looped, end, below),
             Some(ClipGrab::Resize(ClipEdge::End))
+        );
+        assert_eq!(
+            clip_grab_at(start, end, looped, end + px(1.0), below),
+            None,
+            "a press beyond the raw end has no resize cursor and must not resize"
         );
         // Only the *loop* is confined to the name bar. The clip's own end answers at every
         // height, including inside the strip, because that is the edge people reach for.

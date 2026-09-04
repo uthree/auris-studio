@@ -12,6 +12,23 @@
 use clack_extensions::audio_ports::{AudioPortFlags, AudioPortInfoBuffer, PluginAudioPorts};
 use clack_host::prelude::PluginMainThreadHandle;
 
+/// Most audio ports accepted from one plugin, in either direction.
+///
+/// This is deliberately far above practical layouts while still bounding allocations made from
+/// an untrusted plugin's reported count.
+const MAX_AUDIO_PORTS: u32 = 256;
+
+/// Most channels accepted on one plugin audio port.
+const MAX_CHANNELS_PER_PORT: u32 = 64;
+
+fn bounded_port_count(count: u32) -> u32 {
+    count.min(MAX_AUDIO_PORTS)
+}
+
+fn bounded_channel_count(count: u32) -> u32 {
+    count.min(MAX_CHANNELS_PER_PORT)
+}
+
 /// The audio ports a plugin declares, in its own order.
 ///
 /// Channel counts rather than names, because that is all the rendering half needs: a buffer per
@@ -93,7 +110,7 @@ pub(crate) fn read_side(
     is_input: bool,
 ) -> (Vec<usize>, Option<usize>) {
     let mut buffer = AudioPortInfoBuffer::new();
-    let count = ports.count(handle, is_input);
+    let count = bounded_port_count(ports.count(handle, is_input));
     let mut channels = Vec::with_capacity(count as usize);
     let mut flagged = None;
 
@@ -107,7 +124,7 @@ pub(crate) fn read_side(
         if flagged.is_none() && info.flags.contains(AudioPortFlags::IS_MAIN) {
             flagged = Some(channels.len());
         }
-        channels.push(info.channel_count as usize);
+        channels.push(bounded_channel_count(info.channel_count) as usize);
     }
 
     let main = main_port(flagged, channels.len());
@@ -160,5 +177,12 @@ mod tests {
         assert_eq!(layout(vec![2], Some(0)).sidechain_input(), None);
         assert_eq!(layout(vec![2, 0], Some(0)).sidechain_input(), None);
         assert_eq!(layout(vec![2, 0, 2], Some(0)).sidechain_input(), Some(2));
+    }
+
+    #[test]
+    fn plugin_reported_audio_sizes_are_bounded_before_allocation() {
+        let reported = std::hint::black_box(u32::MAX);
+        assert_eq!(bounded_port_count(reported), MAX_AUDIO_PORTS);
+        assert_eq!(bounded_channel_count(reported), MAX_CHANNELS_PER_PORT);
     }
 }

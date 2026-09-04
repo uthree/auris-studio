@@ -671,7 +671,7 @@ impl Session {
     /// latency out from under the delay compensation.
     pub fn poll(&mut self) {
         self.engine.collect_garbage();
-        if let Some(device) = &self.device
+        if let Some(device) = &mut self.device
             && !device.is_running()
         {
             device.discard_pending();
@@ -825,9 +825,12 @@ impl Session {
 
     /// Starts a gesture. Mutations until [`Self::end_transaction`] become one undo step.
     ///
-    /// Nesting is not supported; a second call replaces the first, which is what a frontend
-    /// wants when a gesture is interrupted.
+    /// Nesting is not supported; a second call finishes the first before starting the next,
+    /// which preserves an interrupted gesture as its own undoable, rendered edit.
     pub fn begin_transaction(&mut self, edit: Edit) {
+        if self.transaction.is_some() {
+            self.end_transaction();
+        }
         self.transaction = Some(Transaction {
             edit,
             before: self.project.clone(),
@@ -1282,6 +1285,24 @@ mod tests {
         session.undo().unwrap();
         // One step takes the clip all the way back, not one beat back.
         assert_eq!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
+    }
+
+    #[test]
+    fn starting_a_second_transaction_finishes_the_interrupted_edit() {
+        let mut session = session();
+        session.forget_history();
+
+        session.begin_transaction(Edit::AddInstrumentTrack);
+        session.add_default_instrument_track("Lead").unwrap();
+        session.begin_transaction(Edit::MoveClip);
+
+        assert_eq!(session.project().tracks.len(), 1);
+        assert!(
+            !session.end_transaction(),
+            "the second gesture changed nothing"
+        );
+        assert_eq!(session.undo(), Some(Edit::AddInstrumentTrack));
+        assert!(session.project().tracks.is_empty());
     }
 
     #[test]

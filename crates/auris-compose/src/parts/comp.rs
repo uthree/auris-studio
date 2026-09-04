@@ -166,7 +166,7 @@ pub(super) fn comp(
     // Half a felt beat, the distance every push is early by.
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
 
-    for event in &section.events {
+    for (event_index, event) in section.events.iter().enumerate() {
         // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
         // rather than being folded into the triad as a second. The floor is whichever octave
         // leaves the chord nearest to where the last one sat — as much voice leading as a part
@@ -248,7 +248,24 @@ pub(super) fn comp(
         // Whether this change is pushed: the section's style, wherever there is half a beat
         // before the chord to borrow. The first chord of a section has none — its half-beat
         // belongs to the section before, which has already been written.
-        let push = pushing && !pad && !written && event.start >= push_early;
+        // A dense chart can leave less than half a beat between changes. Borrow at most half of
+        // that smaller gap, so both the outgoing chord and its anticipation retain an audible
+        // span instead of pushing the newcomer back past the old chord's own onset.
+        let pushed_by = section.events[..event_index]
+            .last()
+            .map(|previous| {
+                push_early.min(Ticks(
+                    event
+                        .start
+                        .raw()
+                        .saturating_sub(previous.start.raw())
+                        .max(0)
+                        / 2,
+                ))
+            })
+            .unwrap_or(push_early);
+        let push =
+            pushing && !pad && !written && pushed_by > Ticks::ZERO && event.start >= pushed_by;
         let mut onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
@@ -297,7 +314,7 @@ pub(super) fn comp(
         // that the chart does not say. Whatever was still sounding is let go at the strike —
         // two voicings overlapping is not an anticipation, it is a smear.
         if push {
-            let boundary = section.start + event.start - push_early;
+            let boundary = section.start + event.start - pushed_by;
             // The old chord's own strikes inside the borrowed half-beat go entirely — an
             // offbeat figure lands one exactly where the push lands, and the two voicings
             // struck together are the smear this block exists to prevent. Safe to drop by
@@ -319,10 +336,10 @@ pub(super) fn comp(
                     pitch: (*pitch).clamp(0, 127) as u8,
                     velocity: (velocity(weight, section.intensity, settings.dynamics)
                         * 0.9
-                        * phrase_shape(grid, section, event.start - push_early, settings.dynamics))
+                        * phrase_shape(grid, section, event.start - pushed_by, settings.dynamics))
                     .clamp(0.05, 1.0),
                     start: boundary,
-                    length: (sounds_to - (event.start - push_early)).max(Ticks(1)),
+                    length: (sounds_to - (event.start - pushed_by)).max(Ticks(1)),
                 });
             }
         }
@@ -571,6 +588,56 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_dense_chart_keeps_each_chord_audible_when_the_next_one_pushes() {
+        let mut exercised = false;
+        for seed in 1..=8u64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                    form = "verse"
+                    chords = "| I ii iii IV V vi vii I bII |"
+                    humanize = 0
+                    syncopation = 1
+                    ending = "none"
+                    seed = {seed}
+                    [section.verse]
+                    bars = 1
+                    [[part]]
+                    name = "chords"
+                    "#
+            ));
+            let section = &frame.sections[0];
+            let chords = part(&parts, "chords");
+            let [first, second, third, ..] = section.events.as_slice() else {
+                panic!("the dense chart needs at least three changes");
+            };
+            let third_arrives_early = chords.notes.iter().any(|note| {
+                note.start < third.start
+                    && note.start >= second.start
+                    && third.chord.contains_midi(i32::from(note.pitch))
+                    && !second.chord.contains_midi(i32::from(note.pitch))
+            });
+            if !third_arrives_early {
+                continue;
+            }
+            exercised = true;
+            assert!(
+                chords.notes.iter().any(|note| {
+                    note.start <= second.start
+                        && note.start + note.length > second.start
+                        && second.chord.contains_midi(i32::from(note.pitch))
+                        && !third.chord.contains_midi(i32::from(note.pitch))
+                }),
+                "seed {seed}: the second chord was erased by the third chord's push; first starts at {}",
+                first.start.raw()
+            );
+        }
+        assert!(
+            exercised,
+            "none of the deterministic seeds pushed the dense chart"
+        );
     }
 
     #[test]

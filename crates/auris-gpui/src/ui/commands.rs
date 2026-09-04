@@ -1990,6 +1990,10 @@ impl AurisApp {
         // The list of files was cached the first time the browser drew it, and the whole point
         // of this edit is that the answer has changed.
         self.clap_files = None;
+        // Plugin-file branches are indexed into that cached list. A rescan may put a different
+        // native binary at the same index, and stale disclosure state must never load it without
+        // a new click from the user.
+        self.library.forget_plugin_files();
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }

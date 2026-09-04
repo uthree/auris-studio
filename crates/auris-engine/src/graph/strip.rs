@@ -32,6 +32,8 @@ const PAN_CENTRE_NORMALISE: f32 = std::f32::consts::SQRT_2;
 pub struct SmoothedGain {
     current: f32,
     target: f32,
+    /// Frames left in the current linear ramp; `Some(0)` means the next segment starts it.
+    remaining: Option<usize>,
 }
 
 impl SmoothedGain {
@@ -41,6 +43,7 @@ impl SmoothedGain {
         Self {
             current: gain,
             target: gain,
+            remaining: None,
         }
     }
 
@@ -56,7 +59,11 @@ impl SmoothedGain {
 
     /// Aims at a new gain, reached by the end of the next block.
     pub fn set_target(&mut self, gain: f32) {
-        self.target = sane_gain(gain);
+        let gain = sane_gain(gain);
+        if gain != self.target {
+            self.target = gain;
+            self.remaining = Some(0);
+        }
     }
 
     /// Jumps to `gain` with no ramp at all.
@@ -64,14 +71,46 @@ impl SmoothedGain {
         let gain = sane_gain(gain);
         self.current = gain;
         self.target = gain;
+        self.remaining = None;
     }
 
-    /// Consumes one block, returning the `(start, end)` of its ramp.
-    pub(crate) fn advance(&mut self) -> (f32, f32) {
-        let start = self.current;
-        self.current = self.target;
-        (start, self.target)
+    /// Consumes one segment, returning the `(start, end)` of its part of the ramp.
+    pub(crate) fn advance(&mut self, frames: usize, ramp_frames: usize) -> (f32, f32) {
+        advance_linear(
+            &mut self.current,
+            self.target,
+            &mut self.remaining,
+            frames,
+            ramp_frames,
+        )
     }
+}
+
+fn advance_linear(
+    current: &mut f32,
+    target: f32,
+    remaining: &mut Option<usize>,
+    frames: usize,
+    ramp_frames: usize,
+) -> (f32, f32) {
+    let start = *current;
+    if start == target {
+        *remaining = None;
+        return (start, target);
+    }
+    let left = match *remaining {
+        Some(left) if left > 0 => left,
+        _ => ramp_frames.max(1),
+    };
+    let moving = frames.min(left);
+    let end = if moving == left {
+        target
+    } else {
+        start + (target - start) * moving as f32 / left as f32
+    };
+    *current = end;
+    *remaining = (moving < left).then_some(left - moving);
+    (start, end)
 }
 
 fn sane_gain(gain: f32) -> f32 {
@@ -246,6 +285,7 @@ pub struct RenderStrip {
     pub(crate) gain: SmoothedGain,
     pub(crate) pan: f32,
     pan_current: f32,
+    pan_remaining: Option<usize>,
     pub(crate) mute: bool,
     pub(crate) audible: bool,
     /// Mute and solo as a gain, so switching either one slides instead of stepping.
@@ -273,6 +313,7 @@ impl RenderStrip {
             gain: SmoothedGain::new(db_to_gain(gain_db)),
             pan,
             pan_current: pan,
+            pan_remaining: None,
             mute,
             audible,
             fade: MuteFade::new(audible && !mute, sample_rate),
@@ -377,7 +418,11 @@ impl RenderStrip {
 
     /// Moves the pan control; the change is ramped across the next block.
     pub fn set_pan(&mut self, pan: f32) {
-        self.pan = sane_pan(pan);
+        let pan = sane_pan(pan);
+        if pan != self.pan {
+            self.pan = pan;
+            self.pan_remaining = Some(0);
+        }
     }
 
     /// Puts the fader at `gain_db` with no ramp at all.
@@ -393,6 +438,7 @@ impl RenderStrip {
     pub fn jump_pan(&mut self, pan: f32) {
         self.pan = sane_pan(pan);
         self.pan_current = self.pan;
+        self.pan_remaining = None;
     }
 
     /// Sets the strip's own mute switch. The change is faded in or out, not stepped.
@@ -500,11 +546,16 @@ impl RenderStrip {
     }
 
     /// Applies the fader and the pan law to a stereo block, ramping both across it.
-    pub(crate) fn apply_gain_and_pan(&mut self, buffer: &mut AudioBuffer) {
-        let (gain_from, gain_to) = self.gain.advance();
-        let pan_from = self.pan_current;
-        let pan_to = self.pan;
-        self.pan_current = pan_to;
+    pub(crate) fn apply_gain_and_pan(&mut self, buffer: &mut AudioBuffer, ramp_frames: usize) {
+        let frames = buffer.frame_count();
+        let (gain_from, gain_to) = self.gain.advance(frames, ramp_frames);
+        let (pan_from, pan_to) = advance_linear(
+            &mut self.pan_current,
+            self.pan,
+            &mut self.pan_remaining,
+            frames,
+            ramp_frames,
+        );
 
         let (left_from, right_from) = pan_gains(pan_from);
         let (left_to, right_to) = pan_gains(pan_to);
@@ -755,10 +806,18 @@ mod tests {
     #[test]
     fn a_smoothed_gain_ramps_once_then_settles() {
         let mut gain = SmoothedGain::new(1.0);
-        assert_eq!(gain.advance(), (1.0, 1.0));
+        assert_eq!(gain.advance(4, 4), (1.0, 1.0));
         gain.set_target(0.5);
-        assert_eq!(gain.advance(), (1.0, 0.5));
-        assert_eq!(gain.advance(), (0.5, 0.5));
+        assert_eq!(gain.advance(4, 4), (1.0, 0.5));
+        assert_eq!(gain.advance(4, 4), (0.5, 0.5));
+    }
+
+    #[test]
+    fn a_smoothed_gain_keeps_its_slope_across_split_segments() {
+        let mut gain = SmoothedGain::new(1.0);
+        gain.set_target(0.0);
+        assert_eq!(gain.advance(1, 4), (1.0, 0.75));
+        assert_eq!(gain.advance(3, 4), (0.75, 0.0));
     }
 
     #[test]
@@ -766,7 +825,7 @@ mod tests {
         let mut strip = RenderStrip::new(0.0, 0.0, false, true, 48_000.0);
         let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
             .expect("planar buffer");
-        strip.apply_gain_and_pan(&mut buffer);
+        strip.apply_gain_and_pan(&mut buffer, 4);
         for channel in 0..2 {
             for sample in buffer.channel(channel) {
                 assert!((sample - 1.0).abs() < 1e-6, "got {sample}");
@@ -780,7 +839,7 @@ mod tests {
         strip.pan_current = 1.0;
         let mut buffer = AudioBuffer::from_planar(vec![vec![1.0; 4], vec![1.0; 4]], 48_000.0)
             .expect("planar buffer");
-        strip.apply_gain_and_pan(&mut buffer);
+        strip.apply_gain_and_pan(&mut buffer, 4);
         assert!(buffer.channel_peak(0) < 1e-6);
         // Constant power anchored at the centre puts the extremes 3 dB up: sqrt(2).
         assert!((buffer.channel_peak(1) - std::f32::consts::SQRT_2).abs() < 1e-5);

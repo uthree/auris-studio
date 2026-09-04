@@ -1530,11 +1530,9 @@ mod tests {
         // one chord in a minor key that is supposed to be chromatic and the only one that is.
         //
         // One chord is still a borrow that moves the root: `vi` read in the parallel major is an
-        // F sharp minor, and the numeral goes with it. What it becomes is `bbvii`, which looks
-        // strange and is the only pair that names that note — `degree_class` measures from the
-        // key's own scale at zero and from the major scale otherwise, so F sharp is out of reach
-        // of the sixth degree and is named from the seventh instead. Strange and right beats
-        // plain and wrong.
+        // F sharp minor, and the numeral goes with it. The source F minor and its moved F-sharp
+        // destination are both shown; the destination is the plain major-scale sixth rather than
+        // the double-flat seventh the old inverse spelling produced in a minor key.
         //
         // The count rose from 227 because a borrow used to *discard* a seventh already added in
         // the same pass, and now composes with it.
@@ -1554,7 +1552,7 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Gbm7 E7 |\n\
+            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Fm7→Gbm7 E7 |\n\
              ending·1 A minor | Am |\n\
              252 notes, digest fe792a40951da0c3\n"
         );

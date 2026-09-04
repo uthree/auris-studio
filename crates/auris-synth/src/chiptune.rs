@@ -121,8 +121,8 @@ pub struct Chiptune {
     unison_gain: f32,
     crush_levels: f32,
     output_gain: f32,
-    /// Frequency the last note started on, so a new note can glide from where the last one was.
-    last_frequency: Option<f32>,
+    /// Voice most recently triggered, so a new note can glide from its live frequency.
+    last_voice: Option<usize>,
 }
 
 impl Default for Chiptune {
@@ -154,7 +154,7 @@ impl Chiptune {
             unison_gain: 1.0,
             crush_levels: 0.0,
             output_gain: 1.0,
-            last_frequency: None,
+            last_voice: None,
         };
         synth.refresh();
         synth
@@ -253,7 +253,9 @@ impl Chiptune {
         let start = if self.glide_coeff >= 1.0 {
             target
         } else {
-            self.last_frequency.unwrap_or(target)
+            self.last_voice
+                .and_then(|index| self.voices.get(index))
+                .map_or(target, |voice| voice.frequency)
         };
         let stolen = assignment.stolen;
         let Some(voice) = self.voices.get_mut(assignment.index) else {
@@ -275,7 +277,7 @@ impl Chiptune {
             voice.vibrato.reset();
         }
         voice.envelope.trigger();
-        self.last_frequency = Some(target);
+        self.last_voice = Some(assignment.index);
     }
 
     fn note_off(&mut self, pitch: u8) {
@@ -379,7 +381,7 @@ impl SegmentRenderer for Chiptune {
                         voice.envelope.kill();
                     }
                 }
-                self.last_frequency = None;
+                self.last_voice = None;
             }
             NoteEvent::PitchBend { semitones, .. } => {
                 self.bend =
@@ -497,7 +499,7 @@ impl Instrument for Chiptune {
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
         self.modulation = 0.0;
-        self.last_frequency = None;
+        self.last_voice = None;
         self.refresh();
     }
 
@@ -511,7 +513,7 @@ impl Instrument for Chiptune {
         self.allocator.clear();
         self.bend = 0.0;
         self.modulation = 0.0;
-        self.last_frequency = None;
+        self.last_voice = None;
         self.refresh();
     }
 
@@ -585,6 +587,28 @@ mod tests {
             at_440 > below * 10.0 && at_440 > above * 10.0,
             "440 Hz bin {at_440:.4}, neighbours {below:.4} / {above:.4}"
         );
+    }
+
+    #[test]
+    fn rapid_glides_continue_from_the_last_voices_live_pitch() {
+        let mut synth = Chiptune::new();
+        synth.set_param_by_key("glide", 1.0);
+        synth.prepare(&PrepareContext::new(SAMPLE_RATE, 2_400, 2));
+        let mut out = AudioBuffer::stereo(2_400, SAMPLE_RATE);
+
+        synth.note_on(48, 1.0);
+        synth.render_segment(&mut out, 0, 2_400);
+        synth.note_on(84, 1.0);
+        synth.render_segment(&mut out, 0, 2_400);
+
+        let previous = synth.last_voice.expect("the second note has a voice");
+        let live_frequency = synth.voices[previous].frequency;
+        let unsounded_target = synth.voices[previous].target;
+        assert!((live_frequency - unsounded_target).abs() > 100.0);
+
+        synth.note_on(60, 1.0);
+        let newest = synth.last_voice.expect("the third note has a voice");
+        assert_eq!(synth.voices[newest].frequency, live_frequency);
     }
 
     #[test]

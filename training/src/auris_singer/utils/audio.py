@@ -63,7 +63,10 @@ def _mel_basis(
 
 def _pad_for_stft(wav: torch.Tensor, n_fft: int, hop_length: int) -> torch.Tensor:
     pad = (n_fft - hop_length) // 2
-    return torch.nn.functional.pad(wav.unsqueeze(1), (pad, pad), mode="reflect").squeeze(1)
+    # Reflection requires the input to be strictly longer than either pad.  A one-frame clip is
+    # still a valid feature input, so extend its edge instead of aborting the whole preprocess.
+    mode = "reflect" if wav.shape[-1] > pad else "replicate"
+    return torch.nn.functional.pad(wav.unsqueeze(1), (pad, pad), mode=mode).squeeze(1)
 
 
 def spectrogram(

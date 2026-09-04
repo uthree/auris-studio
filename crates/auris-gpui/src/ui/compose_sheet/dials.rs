@@ -24,7 +24,7 @@ pub const TEMPO: std::ops::RangeInclusive<f64> = 40.0..=220.0;
 pub const SWING: std::ops::RangeInclusive<u8> = 50..=75;
 
 /// How far a part's level trim reaches, in decibels.
-pub const GAIN_DB: std::ops::RangeInclusive<f32> = -30.0..=0.0;
+pub const GAIN_DB: std::ops::RangeInclusive<f32> = -60.0..=12.0;
 
 /// The section names a form is offered, in the order a song usually reaches them.
 ///
@@ -1354,6 +1354,17 @@ mod tests {
         }
         assert!(!remove_part(&mut dials, 0));
         assert_eq!(dials.parts.len(), 1);
+    }
+
+    #[test]
+    fn the_gain_dial_covers_the_specifications_full_legal_range() {
+        let mut part = SongDials::default().parts.remove(0);
+        for gain in [-60.0, -45.0, 0.0, 12.0] {
+            part.gain_db = gain;
+            let fraction = PartDial::Gain.fraction(&part);
+            PartDial::Gain.set(&mut part, fraction);
+            assert!((part.gain_db - gain).abs() < 1e-4, "gain {gain}");
+        }
     }
 
     #[test]

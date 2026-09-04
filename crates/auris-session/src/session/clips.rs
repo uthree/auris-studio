@@ -573,6 +573,24 @@ impl Session {
                 midi.length = length;
                 midi.length_is_explicit = true;
                 midi.notes = notes;
+                midi.bend.retain_mut(|point| {
+                    if point.at < by {
+                        false
+                    } else {
+                        point.at -= by;
+                        true
+                    }
+                });
+                for points in midi.controllers.values_mut() {
+                    points.retain_mut(|point| {
+                        if point.at < by {
+                            false
+                        } else {
+                            point.at -= by;
+                            true
+                        }
+                    });
+                }
                 // The same digest rule as the other edge: text the composer wrote is text the
                 // recipe vouches for, so trimming a generated clip is not a hand edit.
                 if let Some(recipe) = &mut midi.recipe {
@@ -1941,6 +1959,9 @@ mod tests {
         session
             .add_note(clip, Note::new(67, BAR, Ticks::QUARTER))
             .unwrap();
+        assert!(session.set_curve_point(clip, ClipCurve::Bend, Ticks::QUARTER, 0.25));
+        assert!(session.set_curve_point(clip, ClipCurve::Bend, Ticks::QUARTER * 3, 0.75));
+        assert!(session.set_curve_point(clip, ClipCurve::MODULATION, BAR, 0.5));
 
         session.trim_clip_start(clip, Ticks::QUARTER * 2).unwrap();
         let midi = session.midi_clip(clip).unwrap();
@@ -1958,6 +1979,20 @@ mod tests {
                 (64, 0, Ticks::QUARTER.raw() * 2),
                 (67, Ticks::QUARTER.raw() * 2, Ticks::QUARTER.raw()),
             ]
+        );
+        assert_eq!(
+            midi.bend,
+            vec![CurvePoint {
+                at: Ticks::QUARTER,
+                value: 0.75,
+            }]
+        );
+        assert_eq!(
+            midi.curve(ClipCurve::MODULATION),
+            &[CurvePoint {
+                at: Ticks::QUARTER * 2,
+                value: 0.5,
+            }]
         );
     }
 
