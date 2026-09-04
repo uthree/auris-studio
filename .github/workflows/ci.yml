@@ -29,6 +29,13 @@ jobs:
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
 
+      # ONNX Runtime's Core ML objects use Apple's availability checks. Rust drives the final
+      # linker directly, so carry the compiler runtime that provides those symbols with it.
+      - name: Link the Apple compiler runtime
+        run: |
+          clang_runtime="$(xcrun --sdk macosx clang -print-libgcc-file-name)"
+          echo "RUSTFLAGS=${RUSTFLAGS:-} -C link-arg=$clang_runtime" >> "$GITHUB_ENV"
+
       - name: Cache the build
         uses: actions/cache@v4
         with:
