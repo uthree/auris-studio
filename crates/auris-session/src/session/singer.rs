@@ -15,8 +15,8 @@ use auris_core::project::BEND_LIMIT;
 use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
 use auris_singer::VoiceModel;
 use auris_vocal::{
-    JapaneseDictionary, SingerFrames, lyric_phonemes, phoneme_moras, render_frames,
-    split_kana_lyric,
+    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_frames,
+    render_score, split_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -735,7 +735,7 @@ impl Session {
         let model = self.voice_model_at(&plan.voice)?;
         let samples = {
             let mut model = model.lock().expect("no thread panics holding a voice");
-            model.sing(&plan.frames, plan.speaker, plan.seed)?
+            model.sing_score(&plan.frames, &plan.score, plan.speaker, plan.seed)?
         };
         self.land_singer_take(&plan, &samples)
     }
@@ -756,6 +756,7 @@ impl Session {
             .or(singer.take.as_ref().map(|take| take.seed))
             .unwrap_or(0);
         let frames = render_frames(singer, &self.project.tempo_map);
+        let score = render_score(singer, &self.project.tempo_map);
         if frames.is_empty() {
             return Err(SessionError::NothingToSing(track.0));
         }
@@ -778,6 +779,7 @@ impl Session {
         Ok(SingPlan {
             track,
             frames,
+            score,
             voice: resolved,
             speaker,
             seed,
@@ -845,6 +847,35 @@ impl Session {
             frames.energy.push(0.0);
         }
         Ok(frames)
+    }
+
+    /// Builds the lyric-bearing score paired with [`Self::preview_note_frames`].
+    ///
+    /// The preview has no written lyric, so score-based engines receive the neutral Japanese
+    /// vowel `ア`; the full take always receives the note's actual lyric.
+    pub fn preview_note_score(&self, frames: &SingerFrames, pitch: u8) -> SingerScore {
+        let tail = (PREVIEW_TAIL_SECONDS / frames.hop_seconds).ceil() as u32;
+        let held = (frames.len() as u32).saturating_sub(tail);
+        let mut notes = vec![auris_vocal::SingerNote {
+            key: None,
+            frame_length: 1,
+            lyric: String::new(),
+        }];
+        if held > 1 {
+            notes.push(auris_vocal::SingerNote {
+                key: Some(pitch),
+                frame_length: held - 1,
+                lyric: "ア".into(),
+            });
+        }
+        if tail > 0 {
+            notes.push(auris_vocal::SingerNote {
+                key: None,
+                frame_length: tail,
+                lyric: String::new(),
+            });
+        }
+        SingerScore { notes }
     }
 
     /// Turns a preview render into the buffer the engine plays.
@@ -1074,6 +1105,8 @@ pub struct SingPlan {
     pub track: TrackId,
     /// The frames the model will be fed, at the track's hop.
     pub frames: SingerFrames,
+    /// The same timeline as lyric-bearing notes and rests for score-based backends.
+    pub score: SingerScore,
     /// The resolved path of the model file.
     pub voice: PathBuf,
     /// The id of the speaker who sings, in the model's own numbering.

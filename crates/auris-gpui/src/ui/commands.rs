@@ -928,7 +928,10 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogChooseVoice.get(language))
-                .add_filter(Key::FilterVoiceModel.get(language), &["onnx"])
+                .add_filter(
+                    Key::FilterVoiceModel.get(language),
+                    &["onnx", "yaml", "json"],
+                )
                 .pick_file()
                 .await;
             let Some(handle) = handle else { return };
@@ -1139,11 +1142,17 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_with(&plan.frames, plan.speaker, plan.seed, |done, total| {
-                            let fraction = done as f32 / total.max(1) as f32;
-                            progress.store(fraction.to_bits(), Ordering::Relaxed);
-                            !cancel.load(Ordering::Relaxed)
-                        })
+                        .sing_score_with(
+                            &plan.frames,
+                            &plan.score,
+                            plan.speaker,
+                            plan.seed,
+                            |done, total| {
+                                let fraction = done as f32 / total.max(1) as f32;
+                                progress.store(fraction.to_bits(), Ordering::Relaxed);
+                                !cancel.load(Ordering::Relaxed)
+                            },
+                        )
                         .map(|samples| (plan, samples))
                         .map_err(auris_session::SessionError::from)
                         .map_err(|error| (error.is_cancellation(), error))
@@ -1319,9 +1328,13 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_with(&plan.frames, plan.speaker, plan.seed, |_, _| {
-                            !cancel.load(Ordering::Relaxed)
-                        })
+                        .sing_score_with(
+                            &plan.frames,
+                            &plan.score,
+                            plan.speaker,
+                            plan.seed,
+                            |_, _| !cancel.load(Ordering::Relaxed),
+                        )
                         .map(|samples| (plan, samples))
                         .map_err(auris_session::SessionError::from)
                 })
@@ -1392,6 +1405,7 @@ impl AurisApp {
                 return;
             }
         };
+        let score = self.session.preview_note_score(&frames, key.2);
         let seed = key.1;
         self.sung_preview_rendering = true;
         cx.spawn(async move |this, cx| {
@@ -1401,7 +1415,7 @@ impl AurisApp {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     let rate = f64::from(model.info().sample_rate);
                     model
-                        .sing(&frames, speaker, seed)
+                        .sing_score(&frames, &score, speaker, seed)
                         .map(|samples| (samples, rate))
                 })
                 .await;

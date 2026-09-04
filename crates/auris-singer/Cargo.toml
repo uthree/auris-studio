@@ -21,6 +21,7 @@ rust-version.workspace = true
 [dependencies]
 auris-core.workspace = true
 auris-vocal.workspace = true
+hound.workspace = true
 log.workspace = true
 # Pinned to the release candidate `rig`'s optional fastembed support also names: Cargo resolves
 # optional dependencies whether or not they are built, so any other rc here is an unresolvable
@@ -28,7 +29,9 @@ log.workspace = true
 ort = "=2.0.0-rc.9"
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 thiserror.workspace = true
+ureq.workspace = true
 
 # The GPU execution providers, one per desktop platform, both riding the OS itself: DirectML
 # is part of Windows and Core ML part of macOS, so neither adds a runtime to ship. The

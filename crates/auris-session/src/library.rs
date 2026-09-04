@@ -205,9 +205,11 @@ pub fn voice_roots() -> Vec<PathBuf> {
 /// Every voice model found under `roots`, as `(name, path)`, sorted by name.
 ///
 /// No manifest, unlike the fonts: voices are the user's own exports, so this is enumeration
-/// rather than verification — every `.onnx` in every root, named by its file stem, first root
-/// to name a file winning the way the font search wins. Nothing is opened here; whether a
-/// file really is a voice is found out by the one deliberate click that loads it.
+/// rather than verification — every `.onnx` in a root and every child folder containing a
+/// DiffSinger `dsconfig.yaml`, and every `*.voicevox.json` connection, first root to name a
+/// voice winning the way the font search wins.
+/// Nothing is opened here; whether a file really is a voice is found out by the one deliberate
+/// click that loads it.
 pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut voices: Vec<(String, PathBuf)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -217,17 +219,27 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let named = path
+            let (voice, name_source) = if path
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
-                .then(|| {
-                    path.file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                })
-                .flatten();
-            let Some(_file) = named else { continue };
-            let name = path
-                .file_stem()
+            {
+                (path.clone(), path.file_stem())
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
+            {
+                let stem = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| &name[..name.len() - ".voicevox.json".len()]);
+                (path.clone(), stem.map(std::ffi::OsStr::new))
+            } else if path.is_dir() && path.join("dsconfig.yaml").is_file() {
+                (path.join("dsconfig.yaml"), path.file_name())
+            } else {
+                continue;
+            };
+            let name = name_source
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Voice".to_string());
             let identity = name.to_lowercase();
@@ -235,7 +247,7 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
                 continue;
             }
             seen.push(identity);
-            voices.push((name, path));
+            voices.push((name, voice));
         }
     }
     voices.sort_by(|a, b| a.0.cmp(&b.0));
@@ -522,12 +534,22 @@ mod tests {
         std::fs::write(first.join("notes.txt"), b"x").unwrap();
         std::fs::write(second.join("Ritsu.ONNX"), b"y").unwrap();
         std::fs::write(second.join("Alto.ONNX"), b"y").unwrap();
+        std::fs::write(first.join("Zundamon.voicevox.json"), b"{}").unwrap();
+        let diffsinger = first.join("Momo");
+        std::fs::create_dir_all(&diffsinger).unwrap();
+        std::fs::write(diffsinger.join("dsconfig.yaml"), b"acoustic: acoustic.onnx").unwrap();
 
         let voices = installed_voices_in(&[first.clone(), second]);
         let names: Vec<&str> = voices.iter().map(|(name, _)| name.as_str()).collect();
-        assert_eq!(names, ["Alto", "Ritsu"], "sorted, case-blind, no .txt");
+        assert_eq!(
+            names,
+            ["Alto", "Momo", "Ritsu", "Zundamon"],
+            "sorted, case-blind, no .txt"
+        );
         let ritsu = voices.iter().find(|(name, _)| name == "Ritsu").unwrap();
         assert!(ritsu.1.starts_with(&first), "the first root wins the name");
+        let momo = voices.iter().find(|(name, _)| name == "Momo").unwrap();
+        assert_eq!(momo.1, diffsinger.join("dsconfig.yaml"));
 
         std::fs::remove_dir_all(&root).unwrap();
     }
