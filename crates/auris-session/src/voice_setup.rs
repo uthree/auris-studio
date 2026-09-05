@@ -56,6 +56,46 @@ pub struct VoicevoxStyle {
     pub name: String,
 }
 
+/// A named pair of Engine styles that can be selected for a singer track.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoicevoxSpeakerChoice {
+    /// The singer and singing style shown to the user.
+    pub name: String,
+    /// Style used by `/sing_frame_audio_query`.
+    pub query_style_id: u32,
+    /// Style used by `/frame_synthesis`.
+    pub decode_style_id: u32,
+}
+
+/// An unchanged connection and speaker selection against which an Engine request was made.
+///
+/// Reading this snapshot never contacts the Engine or loads a neural model. Its private source
+/// bytes let a later selection refuse an outdated catalogue instead of overwriting a newer file.
+#[derive(Clone, Debug, PartialEq)]
+pub struct VoicevoxConnection {
+    /// The connection file resolved against the project folder.
+    pub path: PathBuf,
+    /// Connection name shown on the voice shelf.
+    pub name: String,
+    /// Base URL of the Engine to query.
+    pub url: String,
+    /// Sample rate returned by frame synthesis.
+    pub sample_rate: u32,
+    /// Frames per second used by the Engine.
+    pub frame_rate: f64,
+    /// The saved style name, or the first style's name for the default speaker.
+    pub speaker: String,
+    /// The selected style used by `/sing_frame_audio_query`.
+    pub query_style_id: u32,
+    /// The selected style used by `/frame_synthesis`.
+    pub decode_style_id: u32,
+    pub(crate) track: auris_core::TrackId,
+    saved_speaker: Option<String>,
+    raw: Vec<u8>,
+    styles: Vec<VoicevoxSpeakerChoice>,
+}
+
 impl VoicevoxStyle {
     /// The singer and style together, so identically named styles remain distinguishable.
     pub fn label(&self) -> String {
@@ -75,6 +115,50 @@ pub struct VoicevoxCatalog {
 }
 
 impl VoicevoxCatalog {
+    /// Offers every singing voice by name, retaining the selected melody style when valid.
+    ///
+    /// Engines may expose one singing teacher for many decoding voices. If the saved teacher
+    /// disappeared, prefer a query style belonging to the selected singer, then the first query
+    /// style the Engine advertises. Existing connection entries keep their names and positions.
+    pub fn speaker_choices(&self, connection: &VoicevoxConnection) -> Vec<VoicevoxSpeakerChoice> {
+        let mut choices = Vec::new();
+        for decode in &self.decode {
+            let query = self
+                .query
+                .iter()
+                .find(|style| style.id == connection.query_style_id)
+                .or_else(|| {
+                    self.query
+                        .iter()
+                        .find(|style| style.singer == decode.singer)
+                })
+                .or_else(|| self.query.first());
+            let Some(query) = query else { continue };
+            let label = decode.label();
+            let mut name = label.clone();
+            let mut suffix = 0;
+            while connection.styles.iter().chain(&choices).any(|style| {
+                style.name == name
+                    && (style.query_style_id != query.id || style.decode_style_id != decode.id)
+            }) {
+                suffix += 1;
+                name = match suffix {
+                    1 => format!("{label} ({})", decode.id),
+                    _ => format!("{label} ({}; {suffix})", decode.id),
+                };
+            }
+            let choice = VoicevoxSpeakerChoice {
+                name,
+                query_style_id: query.id,
+                decode_style_id: decode.id,
+            };
+            if !choices.contains(&choice) {
+                choices.push(choice);
+            }
+        }
+        choices
+    }
+
     /// Checks a configured pair against the Engine that supplied this catalogue.
     pub fn validate_styles(&self, setup: &VoicevoxSetup) -> Result<(), VoiceSetupError> {
         if !self
@@ -161,24 +245,158 @@ pub enum VoiceSetupError {
     Encode(String),
 }
 
-#[derive(Serialize)]
-struct VoicevoxFile<'a> {
-    format_version: u32,
-    name: &'a str,
-    url: &'a str,
-    sample_rate: u32,
-    frame_rate: f64,
-    styles: [VoicevoxStyleFile<'a>; 1],
+pub(crate) fn read_voicevox_connection(
+    path: &Path,
+    speaker: Option<&str>,
+    track: auris_core::TrackId,
+) -> Result<VoicevoxConnection, VoiceSetupError> {
+    let raw = std::fs::read(path)?;
+    let file: serde_json::Value = serde_json::from_slice(&raw)
+        .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+    if file
+        .get("format_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+    {
+        return Err(VoiceSetupError::Invalid(
+            "Unsupported VOICEVOX connection format".into(),
+        ));
+    }
+    let styles: Vec<VoicevoxSpeakerChoice> = serde_json::from_value(file["styles"].clone())
+        .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+    let style = match speaker {
+        Some(name) => styles.iter().find(|style| style.name == name),
+        None => styles.first(),
+    }
+    .ok_or_else(|| VoiceSetupError::Invalid("The selected VOICEVOX style is missing".into()))?;
+    let sample_rate = match file.get("sample_rate") {
+        Some(value) => value.as_u64().and_then(|rate| u32::try_from(rate).ok()),
+        None => Some(24_000),
+    }
+    .ok_or_else(|| VoiceSetupError::Invalid("Invalid VOICEVOX sample rate".into()))?;
+    let frame_rate = match file.get("frame_rate") {
+        Some(value) => value.as_f64(),
+        None => Some(93.75),
+    }
+    .ok_or_else(|| VoiceSetupError::Invalid("Invalid VOICEVOX frame rate".into()))?;
+    let text = |key: &str, default: &str| -> Result<String, VoiceSetupError> {
+        match file.get(key) {
+            Some(value) => value.as_str().map(str::to_string),
+            None => Some(default.to_string()),
+        }
+        .ok_or_else(|| VoiceSetupError::Invalid(format!("Invalid VOICEVOX {key}")))
+    };
+    let connection = VoicevoxConnection {
+        path: path.to_path_buf(),
+        name: text("name", "VOICEVOX")?,
+        url: text("url", "http://127.0.0.1:50021")?
+            .trim_end_matches('/')
+            .into(),
+        sample_rate,
+        frame_rate,
+        speaker: style.name.clone(),
+        query_style_id: style.query_style_id,
+        decode_style_id: style.decode_style_id,
+        track,
+        saved_speaker: speaker.map(str::to_string),
+        raw,
+        styles,
+    };
+    validate_voicevox_url(&connection.url)?;
+    if sample_rate == 0 || !frame_rate.is_finite() || frame_rate <= 0.0 {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX sample rate and frame rate must be positive".into(),
+        ));
+    }
+    Ok(connection)
 }
 
-#[derive(Serialize)]
-struct VoicevoxStyleFile<'a> {
-    name: &'a str,
-    query_style_id: u32,
-    decode_style_id: u32,
+pub(crate) fn append_voicevox_speaker(
+    connection: &VoicevoxConnection,
+    choice: &VoicevoxSpeakerChoice,
+) -> Result<(), VoiceSetupError> {
+    if choice.name.trim().is_empty() {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX style name cannot be empty".into(),
+        ));
+    }
+    if std::fs::read(&connection.path)? != connection.raw {
+        return Err(VoiceSetupError::Invalid(
+            "The VOICEVOX connection changed; fetch the singers again".into(),
+        ));
+    }
+    if let Some(existing) = connection
+        .styles
+        .iter()
+        .find(|style| style.name == choice.name)
+    {
+        return if existing == choice {
+            Ok(())
+        } else {
+            Err(VoiceSetupError::Invalid(
+                "The VOICEVOX style name already belongs to a different voice".into(),
+            ))
+        };
+    }
+    let mut file: serde_json::Value = serde_json::from_slice(&connection.raw)
+        .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+    file["styles"]
+        .as_array_mut()
+        .expect("the snapshot validated the styles")
+        .push(
+            serde_json::to_value(choice)
+                .map_err(|error| VoiceSetupError::Encode(error.to_string()))?,
+        );
+    let bytes = serde_json::to_vec_pretty(&file)
+        .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
+    replace_voicevox_file(&connection.path, &bytes, Some(&connection.raw))
+}
+
+fn replace_voicevox_file(
+    path: &Path,
+    bytes: &[u8],
+    expected: Option<&[u8]>,
+) -> Result<(), VoiceSetupError> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
+
+    let temporary = path.with_file_name(format!(
+        ".auris-voicevox-{}-{}.tmp",
+        std::process::id(),
+        NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let written = (|| -> Result<(), VoiceSetupError> {
+        output.write_all(bytes)?;
+        output.sync_all()?;
+        drop(output);
+        // Check again after the write: the catalogue may have been open for several minutes.
+        let unchanged = match expected {
+            Some(original) => std::fs::read(path)? == original,
+            None => !path.try_exists()?,
+        };
+        if !unchanged {
+            return Err(VoiceSetupError::Invalid(
+                "The VOICEVOX connection changed; fetch the singers again".into(),
+            ));
+        }
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    written
 }
 
 /// Writes a VOICEVOX connection into the application's managed Voices folder.
+///
+/// Updating an existing connection retains all other named styles. A selected style with the
+/// same name is updated in place; a new name is appended, so track selections remain valid.
 pub fn write_voicevox_connection(setup: &VoicevoxSetup) -> Result<PathBuf, VoiceSetupError> {
     let folder = config_dir().join(VOICES_FOLDER);
     write_voicevox_connection_in(setup, &folder)
@@ -191,21 +409,44 @@ fn write_voicevox_connection_in(
     validate_voicevox(setup)?;
     std::fs::create_dir_all(folder)?;
     let path = folder.join(format!("{}.voicevox.json", safe_name(&setup.name)));
-    let file = VoicevoxFile {
-        format_version: 1,
-        name: setup.name.trim(),
-        url: setup.url.trim().trim_end_matches('/'),
-        sample_rate: setup.sample_rate,
-        frame_rate: setup.frame_rate,
-        styles: [VoicevoxStyleFile {
-            name: setup.style_name.trim(),
-            query_style_id: setup.query_style_id,
-            decode_style_id: setup.decode_style_id,
-        }],
+    let original = match std::fs::read(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
     };
+    let mut styles: Vec<VoicevoxSpeakerChoice> = match &original {
+        Some(bytes) => {
+            // A corrupt or newer-format connection must not be silently replaced with defaults.
+            // VOICEVOX loading only reads JSON; it neither contacts the Engine nor runs inference.
+            auris_singer::VoiceModel::load(&path, auris_singer::Acceleration::Auto)
+                .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+            let file: serde_json::Value = serde_json::from_slice(bytes)
+                .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+            serde_json::from_value(file["styles"].clone())
+                .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?
+        }
+        None => Vec::new(),
+    };
+    let selected = VoicevoxSpeakerChoice {
+        name: setup.style_name.trim().into(),
+        query_style_id: setup.query_style_id,
+        decode_style_id: setup.decode_style_id,
+    };
+    match styles.iter_mut().find(|style| style.name == selected.name) {
+        Some(existing) => *existing = selected,
+        None => styles.push(selected),
+    }
+    let file = serde_json::json!({
+        "format_version": 1,
+        "name": setup.name.trim(),
+        "url": setup.url.trim().trim_end_matches('/'),
+        "sample_rate": setup.sample_rate,
+        "frame_rate": setup.frame_rate,
+        "styles": styles,
+    });
     let bytes = serde_json::to_vec_pretty(&file)
         .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
-    std::fs::write(&path, bytes)?;
+    replace_voicevox_file(&path, &bytes, original.as_deref())?;
     Ok(path)
 }
 
@@ -404,6 +645,88 @@ mod tests {
     use serde_json::Value;
     use std::io::{Read, Write};
 
+    #[test]
+    fn singer_choices_keep_a_valid_teacher_and_resolve_legacy_names_by_ids() {
+        let connection = VoicevoxConnection {
+            path: PathBuf::from("legacy.voicevox.json"),
+            name: "VOICEVOX singer".into(),
+            url: "http://127.0.0.1:50021".into(),
+            sample_rate: 24_000,
+            frame_rate: 93.75,
+            speaker: "Singer / normal".into(),
+            query_style_id: 6000,
+            decode_style_id: 3001,
+            track: auris_core::TrackId(1),
+            saved_speaker: None,
+            raw: Vec::new(),
+            styles: vec![VoicevoxSpeakerChoice {
+                name: "Singer / normal".into(),
+                query_style_id: 6000,
+                decode_style_id: 3001,
+            }],
+        };
+        let catalog = VoicevoxCatalog {
+            version: "0.25.2".into(),
+            query: vec![
+                VoicevoxStyle {
+                    id: 6000,
+                    singer: "波音リツ".into(),
+                    name: "ノーマル".into(),
+                },
+                VoicevoxStyle {
+                    id: 6010,
+                    singer: "ずんだもん".into(),
+                    name: "先生".into(),
+                },
+            ],
+            decode: vec![
+                VoicevoxStyle {
+                    id: 3001,
+                    singer: "ずんだもん".into(),
+                    name: "あまあま".into(),
+                },
+                VoicevoxStyle {
+                    id: 3003,
+                    singer: "ずんだもん".into(),
+                    name: "ノーマル".into(),
+                },
+            ],
+        };
+        let choices = catalog.speaker_choices(&connection);
+        assert_eq!(choices[0].name, "ずんだもん / あまあま");
+        assert_eq!(choices[0].decode_style_id, connection.decode_style_id);
+        assert_eq!(choices[1].name, "ずんだもん / ノーマル");
+        assert!(choices.iter().all(|choice| choice.query_style_id == 6000));
+
+        let mut outdated = connection.clone();
+        outdated.query_style_id = 9999;
+        assert!(
+            catalog
+                .speaker_choices(&outdated)
+                .iter()
+                .all(|choice| choice.query_style_id == 6010)
+        );
+        let mut one_teacher = catalog.clone();
+        one_teacher.query.truncate(1);
+        assert!(
+            one_teacher
+                .speaker_choices(&outdated)
+                .iter()
+                .all(|choice| choice.query_style_id == 6000)
+        );
+
+        let mut collision = connection;
+        collision.styles.push(VoicevoxSpeakerChoice {
+            name: "ずんだもん / あまあま".into(),
+            query_style_id: 6000,
+            decode_style_id: 9999,
+        });
+        assert_eq!(
+            catalog.speaker_choices(&collision)[0].name,
+            "ずんだもん / あまあま (3001)"
+        );
+    }
+
     fn catalog_server(body: &'static str) -> (String, std::thread::JoinHandle<Vec<String>>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -524,6 +847,62 @@ mod tests {
         assert_eq!(value["name"], "波音リツ");
         assert_eq!(value["styles"][0]["query_style_id"], 6000);
         assert_eq!(value["styles"][0]["decode_style_id"], 3009);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn saving_connection_settings_preserves_added_singers_and_rejects_corrupt_files() {
+        let folder = std::env::temp_dir().join(format!(
+            "auris-voicevox-preserve-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut setup = VoicevoxSetup::default();
+        let path = write_voicevox_connection_in(&setup, &folder).unwrap();
+        let snapshot = read_voicevox_connection(&path, None, auris_core::TrackId(1)).unwrap();
+        let added = VoicevoxSpeakerChoice {
+            name: "ずんだもん / ノーマル".into(),
+            query_style_id: 6000,
+            decode_style_id: 3003,
+        };
+        append_voicevox_speaker(&snapshot, &added).unwrap();
+        setup.url = "http://127.0.0.1:50022".into();
+        setup.sample_rate = 48_000;
+        setup.frame_rate = 100.0;
+        setup.query_style_id = 6010;
+        write_voicevox_connection_in(&setup, &folder).unwrap();
+        let updated: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(updated["styles"].as_array().unwrap().len(), 2);
+        assert_eq!(updated["styles"][0]["name"], "Singer / normal");
+        assert_eq!(updated["styles"][0]["query_style_id"], 6010);
+        assert_eq!(updated["styles"][0]["decode_style_id"], 3001);
+        assert_eq!(updated["styles"][1], serde_json::to_value(&added).unwrap());
+        assert_eq!(updated["url"], setup.url);
+        assert_eq!(updated["sample_rate"], 48_000);
+        assert_eq!(updated["frame_rate"], 100.0);
+
+        setup.style_name = "別の歌手 / 通常".into();
+        setup.decode_style_id = 3010;
+        write_voicevox_connection_in(&setup, &folder).unwrap();
+        let appended: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(appended["styles"].as_array().unwrap().len(), 3);
+        assert_eq!(appended["styles"][0], updated["styles"][0]);
+        assert_eq!(appended["styles"][1], updated["styles"][1]);
+        assert_eq!(appended["styles"][2]["decode_style_id"], 3010);
+
+        for corrupt in [
+            "not JSON",
+            r#"{"format_version":2,"styles":[]}"#,
+            r#"{"format_version":1,"styles":[]}"#,
+            r#"{"format_version":1,"styles":[{"name":"Old","query_style_id":6000,"decode_style_id":3001}],"unknown":true}"#,
+        ] {
+            std::fs::write(&path, corrupt).unwrap();
+            assert!(write_voicevox_connection_in(&setup, &folder).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+        }
         std::fs::remove_dir_all(folder).unwrap();
     }
 

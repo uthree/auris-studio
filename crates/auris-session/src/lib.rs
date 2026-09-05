@@ -86,9 +86,9 @@ pub use settings::{
     WindowPlacement, config_dir, migrate_legacy_config,
 };
 pub use voice_setup::{
-    DiffSingerSetup, VoiceSetupError, VoicevoxCatalog, VoicevoxSetup, VoicevoxStyle,
-    check_voicevox_connection, fetch_voicevox_catalog, start_voicevox_engine,
-    write_diffsinger_config, write_voicevox_connection,
+    DiffSingerSetup, VoiceSetupError, VoicevoxCatalog, VoicevoxConnection, VoicevoxSetup,
+    VoicevoxSpeakerChoice, VoicevoxStyle, check_voicevox_connection, fetch_voicevox_catalog,
+    start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
 };
 
 /// What a `.clap` file says is inside it, for a frontend listing one.

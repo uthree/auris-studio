@@ -1238,6 +1238,16 @@ pub struct AurisApp {
     /// Explicit requests that also re-render an otherwise current take, such as a changed
     /// VOICEVOX connection saved at the same path.
     pub(crate) sung_retry: BTreeSet<TrackId>,
+    /// Live VOICEVOX catalogues, tied to the exact connection and speaker that were queried.
+    pub(crate) voicevox_catalogs: std::collections::HashMap<
+        TrackId,
+        (
+            auris_session::VoicevoxConnection,
+            auris_session::VoicevoxCatalog,
+        ),
+    >,
+    /// Identifies the latest asynchronous speaker-menu request.
+    pub(crate) voicevox_menu_generation: u64,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1564,6 +1574,8 @@ impl AurisApp {
             auto_sing_seen: (0, std::time::Instant::now()),
             sung_failures: std::collections::HashMap::new(),
             sung_retry: BTreeSet::new(),
+            voicevox_catalogs: std::collections::HashMap::new(),
+            voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,

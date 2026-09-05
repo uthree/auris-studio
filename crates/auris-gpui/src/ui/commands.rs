@@ -1076,6 +1076,7 @@ impl AurisApp {
     /// Drops cached and pending auditions when the voice behind them changes.
     pub(crate) fn invalidate_sung_previews(&mut self) {
         self.stop_audition();
+        self.voicevox_catalogs.clear();
         self.sung_previews.clear();
         self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
     }

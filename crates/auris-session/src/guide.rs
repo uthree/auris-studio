@@ -1149,6 +1149,15 @@ pub mod singing {
     //! audition, a frames file — resolves it through one rule, so a stale name is refused
     //! at the command and never mid-render.
     //!
+    //! A VOICEVOX connection can also discover the running Engine's named singers through
+    //! [`crate::fetch_voicevox_catalog`]. Fetching only reads; it never rewrites the connection
+    //! or the document. [`Session::set_voicevox_speaker`](crate::Session::set_voicevox_speaker)
+    //! appends a chosen query/decoder pair while retaining every existing style's name, index
+    //! and IDs. Older projects therefore keep their original voices, including legacy default
+    //! names. The track's named selection is undoable; the shared library entry remains usable.
+    //! A stale connection snapshot is refused before a write, and only catalogue HTTP work
+    //! needs a background thread: reading or switching connection metadata never waits on singing.
+    //!
     //! # One vocabulary, two readers
     //!
     //! Lyrics in kana go through a built-in table ([`auris_vocal::kana`]) and need nothing

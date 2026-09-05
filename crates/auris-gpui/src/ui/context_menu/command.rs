@@ -37,6 +37,22 @@ pub enum MenuCommand {
         /// The speaker or style's stable name.
         speaker: String,
     },
+    /// Fetch current singing styles from this track's VOICEVOX Engine.
+    RefreshVoicevoxSpeakers {
+        /// The singer whose connection is queried.
+        track: TrackId,
+        /// Where the refreshed menu should remain anchored.
+        at: Point<Pixels>,
+    },
+    /// Add and select a named style advertised by the connected VOICEVOX Engine.
+    VoicevoxSpeaker {
+        /// The singer to change.
+        track: TrackId,
+        /// The unchanged connection that supplied these choices.
+        connection: std::sync::Arc<auris_session::VoicevoxConnection>,
+        /// The selected query/decode pair and its human-readable name.
+        choice: auris_session::VoicevoxSpeakerChoice,
+    },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
     /// Rename a track.
@@ -678,6 +694,16 @@ impl AurisApp {
             }
             MenuCommand::SingerSpeaker { track, speaker } => {
                 self.set_singer_speaker_for(track, speaker)
+            }
+            MenuCommand::RefreshVoicevoxSpeakers { track, at } => {
+                self.open_singer_speaker_menu(track, at, cx);
+            }
+            MenuCommand::VoicevoxSpeaker {
+                track,
+                connection,
+                choice,
+            } => {
+                self.choose_voicevox_speaker(track, connection, choice, cx);
             }
             MenuCommand::DuplicateTrack(track) => match self.session.duplicate_track(track) {
                 Ok(copy) => {

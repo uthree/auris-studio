@@ -108,6 +108,8 @@ pub struct ContextMenu {
     pub highlighted: Option<usize>,
     /// The rows' scroll position, shared with the keyboard so its highlight stays visible.
     pub scroll: ScrollHandle,
+    /// An optional background request allowed to replace this menu's rows.
+    pub(crate) async_request: Option<u64>,
 }
 
 impl ContextMenu {
@@ -119,6 +121,7 @@ impl ContextMenu {
             entries: Vec::new(),
             highlighted: None,
             scroll: ScrollHandle::new(),
+            async_request: None,
         }
     }
 

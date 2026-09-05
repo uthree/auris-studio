@@ -1,8 +1,16 @@
 //! The selected singer's voice, speaker and rendering state, kept beside its track controls.
 
+#[cfg(test)]
+#[path = "voicevox_speaker_tests.rs"]
+mod voicevox_speaker_tests;
+
 use auris_i18n::{Key, messages};
 use auris_session::{BackendKind, SingerTakeState, prelude::*};
+use auris_session::{
+    VoicevoxCatalog, VoicevoxConnection, VoicevoxSpeakerChoice, fetch_voicevox_catalog,
+};
 use gpui::{AnyElement, Context, IntoElement, Pixels, Point, div, prelude::*};
+use std::sync::Arc;
 
 use crate::app::AurisApp;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
@@ -13,7 +21,8 @@ impl AurisApp {
     /// The current voice and speaker, without loading a model during a repaint.
     pub(crate) fn singer_voice_label(&self, track: TrackId) -> Option<String> {
         let info = self.session.singer_voice_info(track).ok()??;
-        Some(match info.speaker {
+        let speaker = self.live_voicevox_speaker_label(track).or(info.speaker);
+        Some(match speaker {
             Some(speaker) => format!("{} · {speaker}", info.name),
             None => format!("{} · {}", info.name, self.t(Key::SingerDefaultSpeaker)),
         })
@@ -46,9 +55,9 @@ impl AurisApp {
             .as_ref()
             .map(|info| info.name.clone())
             .unwrap_or_else(|| self.t(Key::CmdChooseVoice).to_string());
-        let speaker = info
-            .as_ref()
-            .and_then(|info| info.speaker.clone())
+        let speaker = self
+            .live_voicevox_speaker_label(track)
+            .or_else(|| info.as_ref().and_then(|info| info.speaker.clone()))
             .unwrap_or_else(|| self.t(Key::SingerDefaultSpeaker).to_string());
         let mut rows = vec![
             div()
@@ -98,7 +107,10 @@ impl AurisApp {
                     false,
                     theme.accent,
                     &theme,
-                    Self::opens_menu(cx, move |this, at| this.singer_speaker_menu(track, at)),
+                    cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                        this.open_singer_speaker_menu(track, event.position(), cx);
+                        cx.stop_propagation();
+                    }),
                 )
                 .w_full()
                 .min_w_0()
@@ -235,6 +247,205 @@ impl AurisApp {
             }
         }
         menu
+    }
+
+    /// Resolves legacy labels by their actual Engine IDs without editing the document.
+    fn live_voicevox_speaker_label(&self, track: TrackId) -> Option<String> {
+        let (connection, catalog) = self.voicevox_catalogs.get(&track)?;
+        let info = self.session.singer_voice_info(track).ok()??;
+        if info.path != connection.path || info.speaker.as_deref() != Some(&connection.speaker) {
+            return None;
+        }
+        if !catalog
+            .query
+            .iter()
+            .any(|style| style.id == connection.query_style_id)
+        {
+            return None;
+        }
+        catalog
+            .decode
+            .iter()
+            .find(|style| style.id == connection.decode_style_id)
+            .map(|style| style.label())
+    }
+
+    /// Opens saved speakers immediately, then asks a VOICEVOX Engine for its current choices.
+    pub(crate) fn open_singer_speaker_menu(
+        &mut self,
+        track: TrackId,
+        at: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        let fallback = self.singer_speaker_menu(track, at);
+        if !self
+            .session
+            .singer_voice_info(track)
+            .ok()
+            .flatten()
+            .is_some_and(|info| info.backend == BackendKind::Voicevox)
+        {
+            self.open_menu(fallback);
+            cx.notify();
+            return;
+        }
+        let connection = match self.session.singer_voicevox_connection(track) {
+            Ok(connection) => connection,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdNextSpeaker, &error));
+                let menu = fallback.separator().item(
+                    self.t(Key::VoiceSetupLoadSingers),
+                    MenuCommand::RefreshVoicevoxSpeakers { track, at },
+                );
+                self.open_menu(menu);
+                cx.notify();
+                return;
+            }
+        };
+        self.voicevox_menu_generation = self.voicevox_menu_generation.wrapping_add(1);
+        let request = self.voicevox_menu_generation;
+        let voice_generation = self.sung_preview_generation;
+        let mut menu = fallback.separator().item_greyed_unless(
+            false,
+            self.t(Key::VoiceSetupChecking),
+            MenuCommand::RefreshVoicevoxSpeakers { track, at },
+        );
+        menu.async_request = Some(request);
+        self.open_menu(menu);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let url = connection.url.clone();
+            let result = cx
+                .background_executor()
+                .spawn(
+                    async move { fetch_voicevox_catalog(&url).map_err(|error| error.to_string()) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_voicevox_speakers(
+                    track,
+                    connection,
+                    request,
+                    voice_generation,
+                    result,
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// Updates only the menu that requested these rows, while its connection is unchanged.
+    pub(crate) fn finish_voicevox_speakers(
+        &mut self,
+        track: TrackId,
+        connection: VoicevoxConnection,
+        request: u64,
+        voice_generation: u64,
+        result: Result<VoicevoxCatalog, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(menu) = self
+            .menu
+            .as_ref()
+            .filter(|menu| menu.async_request == Some(request))
+        else {
+            return;
+        };
+        let at = menu.anchor;
+        if request != self.voicevox_menu_generation {
+            return;
+        }
+        if voice_generation != self.sung_preview_generation
+            || self.session.singer_voicevox_connection(track).ok().as_ref() != Some(&connection)
+        {
+            self.close_menu();
+            cx.notify();
+            return;
+        }
+        let menu = match result {
+            Ok(catalog) => {
+                let title = self.singer_speaker_menu(track, at).title;
+                let mut menu = ContextMenu::new(at, title);
+                let snapshot = Arc::new(connection.clone());
+                for choice in catalog.speaker_choices(&connection) {
+                    let checked = choice.query_style_id == connection.query_style_id
+                        && choice.decode_style_id == connection.decode_style_id;
+                    menu = menu.toggle(
+                        choice.name.clone(),
+                        MenuCommand::VoicevoxSpeaker {
+                            track,
+                            connection: Arc::clone(&snapshot),
+                            choice,
+                        },
+                        checked,
+                    );
+                }
+                self.voicevox_catalogs.insert(track, (connection, catalog));
+                menu
+            }
+            Err(error) => {
+                self.set_failed_status(error.clone());
+                self.singer_speaker_menu(track, at)
+                    .separator()
+                    .item_greyed_unless(
+                        false,
+                        error,
+                        MenuCommand::RefreshVoicevoxSpeakers { track, at },
+                    )
+            }
+        }
+        .separator()
+        .item(
+            self.t(Key::VoiceSetupLoadSingers),
+            MenuCommand::RefreshVoicevoxSpeakers { track, at },
+        );
+        self.open_menu(menu);
+        cx.notify();
+    }
+
+    /// Persists an explicitly chosen Engine style and invalidates audio from the old speaker.
+    pub(crate) fn choose_voicevox_speaker(
+        &mut self,
+        track: TrackId,
+        connection: Arc<VoicevoxConnection>,
+        choice: VoicevoxSpeakerChoice,
+        cx: &mut Context<Self>,
+    ) {
+        let catalog = self
+            .voicevox_catalogs
+            .get(&track)
+            .filter(|(known, catalog)| {
+                known == connection.as_ref() && catalog.speaker_choices(known).contains(&choice)
+            })
+            .map(|(_, catalog)| catalog.clone());
+        let Some(catalog) = catalog else {
+            return;
+        };
+        match self
+            .session
+            .set_voicevox_speaker(track, &connection, &choice)
+        {
+            Ok(()) => {
+                self.select_track(track);
+                self.invalidate_sung_previews();
+                if let Ok(connection) = self.session.singer_voicevox_connection(track) {
+                    self.voicevox_catalogs.insert(track, (connection, catalog));
+                }
+                self.sung_failures.remove(&track);
+                self.sung_badges.clear();
+                if self
+                    .auto_sing
+                    .as_ref()
+                    .is_some_and(|job| job.track == track)
+                {
+                    self.cancel_auto_sing();
+                }
+                self.set_status(choice.name);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::CmdNextSpeaker, &error)),
+        }
+        cx.notify();
     }
 }
 
