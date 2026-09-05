@@ -46,6 +46,7 @@ pub mod inspect_composition {
         }).collect();
         serde_json::to_string_pretty(&serde_json::json!({
             "original_specification": project.song_spec,
+            "playback": session.playback_readiness(),
             "grooves": groove_catalog().iter().map(|groove| groove.name).collect::<Vec<_>>(),
             "harmony": project.harmony, "tempo": project.tempo_map,
             "meter": project.signatures, "sections": project.sections, "tracks": tracks,
@@ -215,6 +216,10 @@ pub mod edit_recipe {
         pub groove: Option<String>,
         /// Beat subdivision: eighth, sixteenth, eighth-triplet or sixteenth-triplet.
         pub subdivision: Option<String>,
+        /// Relative scale steps, e.g. "0 2 4 2". Empty clears the authored motif.
+        pub motif: Option<String>,
+        /// Authored rhythm: x hit, X accent, o ghost, . rest. Empty clears it.
+        pub rhythm: Option<String>,
         /// Explicitly replace manual changes to this generated clip.
         #[serde(default)]
         pub replace_hand_edits: bool,
@@ -269,6 +274,27 @@ pub mod edit_recipe {
                 "subdivision must be eighth, sixteenth, eighth-triplet or sixteenth-triplet",
             )?;
         }
+        if let Some(motif) = &args.motif {
+            recipe.motif = if motif.trim().is_empty() {
+                Vec::new()
+            } else {
+                parse_motif(motif)?
+            };
+        }
+        if let Some(rhythm) = &args.rhythm {
+            if rhythm.len() > 4096 {
+                return Err("rhythm is limited to 4096 characters".into());
+            }
+            recipe.rhythm = if rhythm.trim().is_empty() {
+                None
+            } else {
+                Some(
+                    Pattern::parse(rhythm)
+                        .ok_or("rhythm uses x, X, o and . for hits, accents, ghosts and rests")?
+                        .to_text(),
+                )
+            };
+        }
         if session.clip_recipe(clip) == Some(&recipe) {
             return Ok("Recipe unchanged; no notes were rewritten.".into());
         }
@@ -291,11 +317,20 @@ pub mod edit_clip {
     /// The tool's wire name.
     pub const NAME: &str = "edit_clip";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Moves, duplicates, splits, resizes, removes, mutes or freezes one note clip. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.";
+    pub const DESCRIPTION: &str = "Moves, duplicates, copies to another note track, splits, resizes, removes, mutes or freezes one note clip. Copy can transpose stored notes; transposing freezes the copied recipe. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.";
     /// The requested clip operation.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum Action {
+        /// Copy the phrase to another note track, optionally transposing its stored notes.
+        Copy {
+            /// Destination note track name or id:N.
+            destination: String,
+            /// Destination bar, 1-based; absent keeps the original start.
+            bar: Option<u32>,
+            /// Semitones to transpose, -127 to 127. Nonzero freezes the copied recipe.
+            transpose: Option<i32>,
+        },
         /// Move to an absolute song position.
         Move {
             /// First bar, 1-based.
@@ -352,6 +387,48 @@ pub mod edit_clip {
         let track = track_by_name(session.project(), &args.track)?.id;
         let (clip, _) = clip_by_number(session.project(), track, args.clip)?;
         let result = match args.action {
+            Action::Copy {
+                ref destination,
+                bar,
+                transpose,
+            } => {
+                let destination = track_by_name(session.project(), destination)?;
+                if !destination.kind.holds_notes() {
+                    return Err("copy requires a note track destination".into());
+                }
+                let destination = destination.id;
+                let semitones = transpose.unwrap_or(0);
+                if !(-127..=127).contains(&semitones) {
+                    return Err("transpose must be -127 to 127".into());
+                }
+                let source = session.midi_clip(clip).ok_or("source has no notes")?;
+                if source
+                    .notes
+                    .iter()
+                    .any(|note| !(0..=127).contains(&(i32::from(note.pitch) + semitones)))
+                {
+                    return Err("transposition would move notes outside MIDI pitch range".into());
+                }
+                let at = bar
+                    .map(|bar| placed_at(session.project(), bar, 1.0))
+                    .transpose()?
+                    .unwrap_or(source.start);
+                let indices: Vec<_> = (0..source.notes.len()).collect();
+                session.copy_clips(&[clip]);
+                let copied = session
+                    .paste_clips(destination, at)
+                    .map_err(|e| e.to_string())?;
+                let copy = *copied
+                    .first()
+                    .ok_or("no clip could be copied to the destination")?;
+                if semitones != 0 {
+                    session
+                        .transpose_notes(copy, &indices, semitones)
+                        .map_err(|e| e.to_string())?;
+                    session.freeze_clip(copy).map_err(|e| e.to_string())?;
+                }
+                Ok(())
+            }
             Action::Move { bar, beat } => {
                 let at = placed_at(session.project(), bar, beat.unwrap_or(1.0))?;
                 session.move_clip(clip, at)
@@ -466,6 +543,112 @@ mod tests {
 
     fn args<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn motif_edits_persist_and_regeneration_keeps_them() {
+        let fixture = Fixture::new("motif");
+        edit_recipe::run(&args(
+            json!({"project":fixture.path,"track":"Lead","clip":1,"motif":"1 3 5 3"}),
+        ))
+        .unwrap();
+        let session = opened(&fixture.path).unwrap();
+        let recipe = session.clip_recipe(fixture.clip).unwrap().clone();
+        assert_eq!(recipe.motif, [1, 3, 5, 3]);
+        let expected = session.midi_clip(fixture.clip).unwrap().notes.clone();
+        drop(session);
+        write_again::run(&args(
+            json!({"project":fixture.path,"track":"Lead","clip":1}),
+        ))
+        .unwrap();
+        let session = opened(&fixture.path).unwrap();
+        assert_eq!(session.midi_clip(fixture.clip).unwrap().notes, expected);
+        assert_eq!(session.clip_recipe(fixture.clip), Some(&recipe));
+        drop(session);
+        edit_recipe::run(&args(
+            json!({"project":fixture.path,"track":"Lead","clip":1,"motif":"","rhythm":"x...x..."}),
+        ))
+        .unwrap();
+        let session = opened(&fixture.path).unwrap();
+        let recipe = session.clip_recipe(fixture.clip).unwrap();
+        assert!(recipe.motif.is_empty());
+        assert_eq!(recipe.rhythm.as_deref(), Some("x~~~x~~~"));
+    }
+
+    #[test]
+    fn phrase_copy_transposes_only_the_destination_and_freezes_its_recipe() {
+        let fixture = Fixture::new("phrase-copy");
+        let mut session = opened(&fixture.path).unwrap();
+        let destination = session.add_default_instrument_track("Flute").unwrap();
+        let original = session.midi_clip(fixture.clip).unwrap().clone();
+        session.save_in_place().unwrap();
+        drop(session);
+        edit_clip::run(&args(json!({"project":fixture.path,"track":"Lead","clip":1,"action":{"kind":"copy","destination":"Flute","bar":3,"transpose":12}}))).unwrap();
+        let session = opened(&fixture.path).unwrap();
+        let clips = session
+            .project()
+            .track(destination)
+            .unwrap()
+            .kind
+            .note_clips()
+            .unwrap();
+        assert_eq!(clips.len(), 1);
+        assert_eq!(clips[0].start, Ticks::QUARTER * 8);
+        assert_eq!(clips[0].notes.len(), original.notes.len());
+        for (before, after) in original.notes.iter().zip(&clips[0].notes) {
+            assert_eq!(after.pitch, before.pitch + 12);
+            assert_eq!(after.start, before.start);
+            assert_eq!(after.length, before.length);
+        }
+        assert!(clips[0].recipe.is_none());
+        assert_eq!(session.midi_clip(fixture.clip), Some(&original));
+        drop(session);
+        let saved = std::fs::read(&fixture.path).unwrap();
+        assert!(edit_clip::run(&args(json!({"project":fixture.path,"track":"Lead","clip":1,"action":{"kind":"copy","destination":"Flute","transpose":127}}))).is_err());
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), saved);
+    }
+
+    #[test]
+    fn effect_sidechains_and_automation_survive_reopening_and_reject_partial_edits() {
+        let fixture = Fixture::new("mix-editing");
+        let mut session = opened(&fixture.path).unwrap();
+        session.add_default_instrument_track("Kick").unwrap();
+        session.save_in_place().unwrap();
+        drop(session);
+        let effect = |operation| {
+            effects::run(&args(
+                json!({"project":fixture.path,"track":"Lead","operation":operation}),
+            ))
+        };
+        let added = effect(json!({"action":"add","effect":"auris.fx.compressor"})).unwrap();
+        let added: serde_json::Value = serde_json::from_str(&added).unwrap();
+        let number = added["chain"].as_array().unwrap().len();
+        assert_eq!(added["chain"][number - 1]["accepts_sidechain"], true);
+        effect(json!({"action":"sidechain","slot":number,"source":"Kick"})).unwrap();
+        let saved = std::fs::read(&fixture.path).unwrap();
+        assert!(effect(json!({"action":"sidechain","slot":number,"source":"Lead"})).is_err());
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), saved);
+        let automate = |mut operation: serde_json::Value| {
+            operation["param"] = "threshold_db".into();
+            automation::run(&args(
+                json!({"project":fixture.path,"track":"Lead","target":{"kind":"effect","slot":number},"operation":operation}),
+            ))
+        };
+        let read = automate(json!({"action":"set","points":[{"beat":0,"value":-6},{"beat":16,"value":-24}],"curve":"linear"})).unwrap();
+        let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(read["parameters"][0]["lane"]["points"][1]["value"], -24.0);
+        assert_eq!(read["parameters"][0]["lane"]["curve"], "linear");
+        let saved = std::fs::read(&fixture.path).unwrap();
+        assert!(automate(json!({"action":"set","replace":true,"points":[{"beat":0,"value":-12},{"beat":16,"value":999}]})).is_err());
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), saved);
+        effect(json!({"action":"remove","slot":number})).unwrap();
+        assert!(
+            opened(&fixture.path)
+                .unwrap()
+                .automation()
+                .lanes()
+                .is_empty()
+        );
     }
 
     struct Fixture {

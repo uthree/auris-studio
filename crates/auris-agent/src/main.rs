@@ -52,6 +52,10 @@ enum Provider {
 /// Everything the command line decided.
 #[derive(Debug, PartialEq, Eq)]
 struct Options {
+    /// Explicit Ollama request context, including tools, history and output.
+    context_tokens: u32,
+    /// Ollama thinking override.
+    thinking: Option<bool>,
     /// The API dialect.
     provider: Provider,
     /// Base URL override; each provider has its own default.
@@ -82,6 +86,12 @@ enum Command {
     Help,
 }
 
+impl Options {
+    fn context_limit(&self) -> Option<u32> {
+        (self.provider == Provider::Ollama).then_some(self.context_tokens)
+    }
+}
+
 const USAGE: &str = "auris-agent — drive Auris Studio with a language model
 
 usage: auris-agent [options] [prompt]
@@ -100,6 +110,8 @@ options:
   --api-key-env <VAR>   environment variable holding the API key; OPENAI_API_KEY
                         is used for openai when it is set and this is not given
   --max-turns <n>       model-call budget per prompt (default 40)
+  --context-tokens <n>  Ollama context window (default 32768; minimum 16384)
+  --thinking <mode>     Ollama thinking: on, off or auto (model default)
   --attach <file>       send an audio file with the prompt (wav, mp3, flac,
                         ogg, aac, aiff, m4a); repeat for more than one.
                         Needs --provider openai and a model that takes audio
@@ -141,6 +153,8 @@ fn parse_args(
     let mut model = None;
     let mut key_env = None;
     let mut max_turns = 40usize;
+    let mut context_tokens = prefs.context_tokens.unwrap_or(32768);
+    let mut thinking = prefs.thinking;
     let mut json = false;
     let mut attachments: Vec<String> = Vec::new();
     let mut prompt_words: Vec<&str> = Vec::new();
@@ -166,6 +180,19 @@ fn parse_args(
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
             "--json" => json = true,
+            "--context-tokens" => {
+                context_tokens = value_of("--context-tokens")?
+                    .parse()
+                    .map_err(|_| "--context-tokens needs a positive integer")?
+            }
+            "--thinking" => {
+                thinking = match value_of("--thinking")?.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    "auto" => None,
+                    _ => return Err("--thinking must be on, off or auto".into()),
+                }
+            }
             "--attach" => attachments.push(value_of("--attach")?),
             flag if flag.starts_with('-') => {
                 return Err(format!("unknown option '{flag}' — try --help"));
@@ -229,7 +256,15 @@ fn parse_args(
             return Err("--attach rides with a prompt; give one".to_string());
         }
     }
+    if provider == Provider::Ollama && context_tokens < 16384 {
+        return Err("Auris tools need at least 16384 context tokens; use --context-tokens 32768 or increase the Agent Panel context setting".into());
+    }
+    if max_turns == 0 {
+        return Err("--max-turns must be positive".into());
+    }
     Ok(Command::Run(Options {
+        context_tokens,
+        thinking,
         provider,
         url,
         model,
@@ -307,6 +342,7 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 struct NoArgs {}
 
 mod memory;
+mod runtime;
 
 /// One [`rig::tool::Tool`] over one `auris-toolbox` module that takes arguments.
 ///
@@ -389,6 +425,9 @@ macro_rules! text_tool {
 }
 
 session_tool!(AnalyzeMusic, analyze_music);
+session_tool!(Effects, effects);
+session_tool!(Automation, automation);
+session_tool!(Capabilities, capabilities);
 session_tool!(InspectComposition, inspect_composition);
 session_tool!(EditHarmony, edit_harmony);
 session_tool!(EditRecipe, edit_recipe);
@@ -580,6 +619,9 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(InspectComposition)
         .tool(EditHarmony)
         .tool(EditRecipe)
+        .tool(Effects)
+        .tool(Automation)
+        .tool(Capabilities)
         .tool(EditClip)
         .tool(Checkpoints)
         .tool(SearchDocumentation)
@@ -633,7 +675,13 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
                 builder = builder.base_url(url);
             }
             let client = builder.build().map_err(could_not)?;
-            Ok(armed(client.agent(&options.model)))
+            let mut params = serde_json::json!({"num_ctx":options.context_tokens});
+            if let Some(thinking) = options.thinking {
+                params["think"] = thinking.into();
+            }
+            Ok(armed(
+                client.agent(&options.model).additional_params(params),
+            ))
         }
         Provider::OpenAi => {
             // The chat-completions client, not the default responses-API one: compatible
@@ -764,6 +812,15 @@ async fn list_models(options: &Options) -> Result<String, String> {
                     model["context_length"] = serde_json::json!(window);
                 }
             }
+            for model in &mut models {
+                let maximum = model["context_length"].as_u64();
+                model["max_context_length"] = maximum.into();
+                model["context_length"] =
+                    serde_json::json!(maximum.map_or(u64::from(options.context_tokens), |max| {
+                        max.min(u64::from(options.context_tokens))
+                    }));
+                model["context_source"] = "requested_num_ctx".into();
+            }
             models
         }
         Provider::OpenAi => {
@@ -823,11 +880,19 @@ fn confined_to_working_directory(path: &Path) -> bool {
 /// in. Project contents are untrusted context; they must not be able to turn an inspection into
 /// an arbitrary filesystem write.
 fn write_destination(tool: &str, args: &str) -> Result<(), String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool) && tool != toolbox::preview::NAME {
+    if !toolbox::WRITES_PROJECTS.contains(&tool)
+        && tool != toolbox::preview::NAME
+        && tool != toolbox::render::NAME
+    {
         return Ok(());
     }
     let parsed: serde_json::Value = serde_json::from_str(args)
         .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
+    if matches!(tool, toolbox::effects::NAME | toolbox::automation::NAME)
+        && !toolbox::writes_project(tool, &parsed)
+    {
+        return Ok(());
+    }
     for field in ["project", "output", "stems"] {
         let Some(path) = parsed.get(field).and_then(|value| value.as_str()) else {
             continue;
@@ -917,7 +982,7 @@ fn changed_project(tool: &str, args: &str) -> Option<String> {
         return None;
     }
     let parsed: serde_json::Value = serde_json::from_str(args).ok()?;
-    if tool == toolbox::checkpoints::NAME && parsed.get("action")?.as_str()? != "restore" {
+    if !toolbox::writes_project(tool, &parsed) {
         return None;
     }
     let path = parsed
@@ -1085,17 +1150,26 @@ async fn converse(
     history: Vec<Message>,
     max_turns: usize,
     json: bool,
-) -> Result<(String, Vec<Message>, rig::completion::Usage), String> {
+    context_tokens: Option<u32>,
+) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
+    let guard = runtime::Guard::new(agent, context_tokens).await?;
+    let activity = guard.activity.clone();
     let asked = prompt.clone();
     let request = agent
         .prompt(prompt)
         .history(history.clone())
-        .max_turns(max_turns);
+        .max_turns(max_turns)
+        .add_hook(guard);
     let request = match json {
         true => request.add_hook(Reporter),
         false => request.add_hook(Narrator),
     };
-    let response = await_model_request(request.extended_details(), CONVERSATION_PATIENCE).await?;
+    let response = runtime::await_active(request.extended_details(), activity).await?;
+    // The run's usage sums every model call; only the final request measures occupied context.
+    let context_tokens = response
+        .completion_calls
+        .last()
+        .map_or(0, |call| call.usage.input_tokens);
     // The runner hands the accumulated transcript back; when it does not, the two ends of the
     // exchange are still worth keeping — better a thin memory than none.
     let history = response.messages.unwrap_or_else(|| {
@@ -1104,10 +1178,11 @@ async fn converse(
         kept.push(Message::assistant(&response.output));
         kept
     });
-    Ok((response.output, history, response.usage))
+    Ok((response.output, history, response.usage, context_tokens))
 }
 
 /// Waits for a provider operation without allowing a dead connection to park its caller forever.
+#[cfg(test)]
 async fn await_model_request<F, T, E>(
     request: F,
     patience: std::time::Duration,
@@ -1128,7 +1203,7 @@ where
 }
 
 /// The conversation: read a line, run the loop, print the answer, remember everything.
-async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
+async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
     let mut history: Vec<Message> = Vec::new();
     let stdin = std::io::stdin();
     loop {
@@ -1150,8 +1225,15 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
         if line.is_empty() {
             return Ok(());
         }
-        let (answer, kept, _) =
-            converse(agent, Message::user(line), history, max_turns, false).await?;
+        let (answer, kept, ..) = converse(
+            agent,
+            Message::user(line),
+            history,
+            options.max_turns,
+            false,
+            options.context_limit(),
+        )
+        .await?;
         history = kept;
         println!("{answer}\n");
     }
@@ -1230,8 +1312,17 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 continue;
             }
         };
-        match converse(agent, message, history.clone(), options.max_turns, true).await {
-            Ok((answer, _, usage)) => {
+        match converse(
+            agent,
+            message,
+            history.clone(),
+            options.max_turns,
+            true,
+            options.context_limit(),
+        )
+        .await
+        {
+            Ok((answer, _, usage, context_tokens)) => {
                 let display = serde_json::from_str::<serde_json::Value>(line)
                     .ok()
                     .and_then(|wire| {
@@ -1252,11 +1343,21 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 emit(serde_json::json!({
                     "event": "answer",
                     "text": answer,
-                    "input_tokens": usage.input_tokens,
+                    "input_tokens": context_tokens,
+                    "total_input_tokens": usage.input_tokens,
                     "output_tokens": usage.output_tokens,
                 }));
             }
             Err(message) => {
+                memory.push(&said, &format!("Turn interrupted: {message}. Saved tool edits may already exist. Inspect the project before continuing."));
+                history = memory.messages();
+                if let Some(path) = &memory_path
+                    && let Err(error) = memory.save(path)
+                {
+                    emit(
+                        serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}),
+                    );
+                }
                 emit(serde_json::json!({ "event": "error", "message": message }));
             }
         }
@@ -1322,6 +1423,7 @@ fn main() -> ExitCode {
         .and_then(|runtime| {
             runtime.block_on(async {
                 let agent = build_agent(&options)?;
+                runtime::preflight(&options).await?;
                 if options.json {
                     return json_conversation(&agent, &options).await;
                 }
@@ -1329,12 +1431,19 @@ fn main() -> ExitCode {
                     Some(prompt) => {
                         check_audio(options.provider, &options.attachments)?;
                         let message = framed_message(prompt, &options.attachments)?;
-                        let (answer, ..) =
-                            converse(&agent, message, Vec::new(), options.max_turns, false).await?;
+                        let (answer, ..) = converse(
+                            &agent,
+                            message,
+                            Vec::new(),
+                            options.max_turns,
+                            false,
+                            options.context_limit(),
+                        )
+                        .await?;
                         println!("{answer}");
                         Ok(())
                     }
-                    None => conversation(&agent, options.max_turns).await,
+                    None => conversation(&agent, &options).await,
                 }
             })
         });
@@ -1342,6 +1451,9 @@ fn main() -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
+            if options.json {
+                emit(serde_json::json!({"event":"error","message":message}));
+            }
             eprintln!("auris-agent: {message}");
             ExitCode::FAILURE
         }
@@ -1433,6 +1545,7 @@ mod tests {
             model: "saved-model".to_string(),
             url: "http://saved:1234/v1".to_string(),
             api_key_env: "SAVED_KEY".to_string(),
+            ..Default::default()
         };
         let env = |name: &str| (name == "SAVED_KEY").then(|| "from-saved".to_string());
 
@@ -1663,6 +1776,70 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn ollama_receives_the_requested_context_and_thinking_setting() {
+        let (url, seen) = mock_server(vec![
+            serde_json::json!({"capabilities":["tools"],"model_info":{"mock.context_length":262144}}).to_string(),
+            serde_json::json!({"model":"mock","created_at":"2026-09-06T00:00:00Z","message":{"role":"assistant","content":"ready"},"done":true,"prompt_eval_count":100,"eval_count":1}).to_string(),
+        ]);
+        let Command::Run(options) = parse(
+            &format!("--model mock --url {url} --context-tokens 32768 --thinking off"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        runtime::preflight(&options).await.unwrap();
+        let agent = build_agent(&options).unwrap();
+        let (answer, ..) = converse(
+            &agent,
+            Message::user("Ready?"),
+            Vec::new(),
+            2,
+            false,
+            options.context_limit(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "ready");
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let body: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
+        assert_eq!(body["options"]["num_ctx"], 32768);
+        assert_eq!(body["think"], false);
+        assert!(
+            body["options"].get("options").is_none(),
+            "Ollama options must not be nested twice"
+        );
+        assert!(parse("--model mock --context-tokens 4096", &no_env).is_err());
+    }
+
+    #[tokio::test]
+    async fn repeated_invalid_calls_stop_before_a_third_execution() {
+        let call = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"set_level","arguments":"{}"}}]}"#;
+        let (url, seen) = mock_server(vec![completion(call, "tool_calls"); 3]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let agent = build_agent(&options).unwrap();
+        let error = converse(
+            &agent,
+            Message::user("Set a level"),
+            Vec::new(),
+            8,
+            false,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("failed twice"), "{error}");
+        assert_eq!(seen.lock().unwrap().len(), 3);
+    }
+
     /// The whole loop against a scripted model: the "model" asks for `list_presets`, the tool
     /// really runs, its answer really goes back over the wire, and the final text reaches the
     /// caller. No network, no key, no model — but every seam of this frontend crossed once.
@@ -1670,12 +1847,19 @@ mod tests {
     async fn the_tool_loop_runs_end_to_end_against_a_scripted_model() {
         let call = r#"{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
         let done = r#"{"role":"assistant","content":"The presets are listed above."}"#;
+        let with_usage = |response: String, input, output| {
+            let mut response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            response["usage"] = serde_json::json!({"prompt_tokens":input,"completion_tokens":output,"total_tokens":input+output});
+            response.to_string()
+        };
         let (url, seen) = mock_server(vec![
-            completion(call, "tool_calls"),
-            completion(done, "stop"),
+            with_usage(completion(call, "tool_calls"), 10, 2),
+            with_usage(completion(done, "stop"), 20, 3),
         ]);
 
         let agent = build_agent(&Options {
+            context_tokens: 32768,
+            thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),
             model: "mock".to_string(),
@@ -1686,17 +1870,24 @@ mod tests {
             json: false,
         })
         .unwrap();
-        let (answer, history, _) = converse(
+        let (answer, history, usage, context_tokens) = converse(
             &agent,
             Message::user("What styles are there?"),
             Vec::new(),
             5,
             true,
+            None,
         )
         .await
         .unwrap();
 
         assert_eq!(answer, "The presets are listed above.");
+        assert_eq!(usage.input_tokens, 30);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(
+            context_tokens, 20,
+            "the context gauge must not sum successive requests"
+        );
         assert!(
             history.len() >= 2,
             "the transcript comes back for the next turn: {history:?}"
@@ -1741,6 +1932,8 @@ mod tests {
         let attachments = vec![clip.display().to_string()];
 
         let agent = build_agent(&Options {
+            context_tokens: 32768,
+            thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),
             model: "mock".to_string(),
@@ -1752,7 +1945,7 @@ mod tests {
         })
         .unwrap();
         let message = framed_message("How is this mix?", &attachments).unwrap();
-        let (answer, ..) = converse(&agent, message, Vec::new(), 5, false)
+        let (answer, ..) = converse(&agent, message, Vec::new(), 5, false, None)
             .await
             .unwrap();
         std::fs::remove_file(&clip).unwrap();
@@ -1814,6 +2007,9 @@ mod tests {
             SetLevel::NAME,
             SetSend::NAME,
             SetEffect::NAME,
+            Effects::NAME,
+            Automation::NAME,
+            Capabilities::NAME,
             SectionGain::NAME,
             AnotherTake::NAME,
             WriteAgain::NAME,

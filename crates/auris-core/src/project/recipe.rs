@@ -190,6 +190,12 @@ impl Subdivision {
 /// format — the way to keep a take is to freeze it, not to remember its number.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClipRecipe {
+    /// Authored scale-degree motif, retained when this clip is regenerated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub motif: Vec<i32>,
+    /// Authored rhythm in the composer's pattern notation; absent means generated rhythm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rhythm: Option<String>,
     /// What the clip is trying to be.
     pub preset: ClipPreset,
     /// The number every random choice is drawn from. A different one is a different take.
@@ -305,6 +311,8 @@ impl ClipRecipe {
     /// choosing it and hearing a pad, with the sound it was named for three dials away.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
         let mut recipe = Self {
+            motif: Vec::new(),
+            rhythm: None,
             preset,
             seed,
             density: 0.5,

@@ -129,6 +129,13 @@ pub mod architecture {
     //! a bounded set of immutable WAV resources for `resources/read`. It never interprets a
     //! resource URI as a filesystem path; reconnecting or eviction expires the old URI.
     //!
+    //! Availability is also session knowledge: [`Session::playback_readiness`](crate::Session::playback_readiness)
+    //! distinguishes loaded instruments from empty samplers and guide/stale vocals. Shared
+    //! voice discovery reads the same settings as the desktop library. Effect-chain tools call
+    //! the session's routing commands; [`Session::write_automation_points`](crate::Session::write_automation_points)
+    //! validates a whole parameter batch before making one undo step. Authored motif and rhythm
+    //! travel with each clip recipe, so local regeneration keeps those musical choices.
+    //!
     //! # A selection is an argument, never a field
     //!
     //! Several commands mean something different depending on what is selected, and none of them

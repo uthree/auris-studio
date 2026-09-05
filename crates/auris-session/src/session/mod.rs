@@ -51,6 +51,7 @@ mod musical_analysis;
 mod notes;
 mod perform;
 mod punch;
+mod readiness;
 mod record;
 mod singer;
 mod tracks;
@@ -76,6 +77,7 @@ pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
+pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,

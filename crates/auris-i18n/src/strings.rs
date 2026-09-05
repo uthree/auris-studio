@@ -1294,6 +1294,11 @@ new のオプション
     AgentProviderLabel { en: "Provider", ja: "プロバイダ" }
     AgentModelLabel { en: "Model", ja: "モデル" }
     AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
+    AgentContextTokens { en: "Context tokens", ja: "文脈長" }
+    AgentThinking { en: "Thinking", ja: "推論モード" }
+    AgentThinkingAuto { en: "Model default", ja: "モデルの標準設定" }
+    AgentThinkingOn { en: "On", ja: "有効" }
+    AgentThinkingOff { en: "Off", ja: "無効" }
     AgentKeyEnvLabel { en: "API key variable", ja: "APIキーの環境変数" }
     AgentWorking { en: "Working…", ja: "作業中…" }
     AgentEnded { en: "The agent process ended.", ja: "エージェントのプロセスが終了しました。" }

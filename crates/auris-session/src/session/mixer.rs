@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use auris_core::automation::{Automation, AutomationCurve};
+use auris_core::automation::{Automation, AutomationCurve, AutomationPoint};
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::PluginState;
 use auris_core::time::Ticks;
@@ -32,6 +32,55 @@ use crate::session::PluginWindow;
 use super::Session;
 
 impl Session {
+    /// Writes a validated automation batch in one undo step, optionally replacing its lane.
+    ///
+    /// Invalid targets, out-of-range values, negative ticks and duplicate positions leave the
+    /// document untouched. Discrete parameters retain hold interpolation.
+    pub fn write_automation_points(
+        &mut self,
+        target: ParamTarget,
+        points: &[AutomationPoint],
+        replace: bool,
+        curve: Option<AutomationCurve>,
+    ) -> Result<bool, SessionError> {
+        let invalid = |message: &str| SessionError::InvalidAutomation(message.into());
+        let descriptor = self
+            .automatable(target)
+            .ok_or_else(|| invalid("target cannot be automated"))?;
+        if points.is_empty() {
+            return Err(invalid("at least one point is required"));
+        }
+        let mut ticks = std::collections::BTreeSet::new();
+        for point in points {
+            if point.tick.raw() < 0
+                || !point.value.is_finite()
+                || !(descriptor.min..=descriptor.max).contains(&point.value)
+            {
+                return Err(invalid(
+                    "points require nonnegative ticks and finite values within the parameter range",
+                ));
+            }
+            if !ticks.insert(point.tick) {
+                return Err(invalid("duplicate point position"));
+            }
+        }
+        if curve == Some(AutomationCurve::Linear) && curve_for(&descriptor) == AutomationCurve::Hold
+        {
+            return Err(invalid("discrete parameters require hold interpolation"));
+        }
+        let curve = curve.or_else(|| self.automation().lane(target).map(|lane| lane.curve));
+        self.begin_transaction(Edit::WriteAutomation(target));
+        if replace {
+            self.clear_automation(target);
+        }
+        for point in points {
+            self.set_automation_point(target, point.tick, point.value);
+        }
+        if let Some(curve) = curve {
+            self.set_automation_curve(target, curve);
+        }
+        Ok(self.end_transaction())
+    }
     /// Adds an effect to a track's chain, or to the master bus when `track` is `None`.
     pub fn add_effect(
         &mut self,
@@ -774,7 +823,7 @@ impl Session {
     /// ever created, because a fader's descriptor is synthesised rather than looked up — so the
     /// existence check has to be made here, or a lane could be written into thin air and then
     /// dropped again by the graph builder without anyone being told.
-    fn automatable(&mut self, target: ParamTarget) -> Option<ParamDescriptor> {
+    pub fn automatable(&mut self, target: ParamTarget) -> Option<ParamDescriptor> {
         let present = match target {
             ParamTarget::MasterGain | ParamTarget::MasterPan => true,
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
@@ -857,6 +906,44 @@ mod tests {
 
     /// The compressor's registry id, which is the one built-in that listens to a key.
     const COMPRESSOR: &str = "auris.fx.compressor";
+
+    #[test]
+    fn automation_batches_validate_before_mutation_and_undo_as_one_edit() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Envelope").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        let points = [
+            AutomationPoint::new(Ticks::ZERO, -12.0),
+            AutomationPoint::new(Ticks::QUARTER * 4, 0.0),
+        ];
+        assert!(
+            session
+                .write_automation_points(target, &points, true, Some(AutomationCurve::Linear))
+                .unwrap()
+        );
+        assert_eq!(
+            session.automated_value(target, Ticks::QUARTER * 2),
+            Some(-6.0)
+        );
+        let saved = session.automation().clone();
+        for bad in [
+            vec![points[0], AutomationPoint::new(Ticks::QUARTER, f32::NAN)],
+            vec![points[0], AutomationPoint::new(Ticks(-1), 0.0)],
+            vec![points[0], points[0]],
+            Vec::new(),
+        ] {
+            assert!(
+                session
+                    .write_automation_points(target, &bad, true, None)
+                    .is_err()
+            );
+            assert_eq!(session.automation(), &saved);
+        }
+        session.undo();
+        assert!(!session.is_automated(target));
+        session.undo();
+        assert!(session.project().track(track).is_none());
+    }
 
     #[test]
     fn gain_offsets_keep_an_existing_curve_and_restore_both_edges() {

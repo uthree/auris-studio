@@ -134,6 +134,13 @@ impl Session {
         let fallback = self
             .registry
             .default_instrument_id()
+            .filter(|id| *id != SAMPLER_ID)
+            .or_else(|| {
+                self.registry
+                    .instruments()
+                    .find(|d| d.id != SAMPLER_ID)
+                    .map(|d| d.id.as_ref())
+            })
             .ok_or_else(|| SessionError::UnknownPlugin("<any instrument>".into()))?
             .to_string();
 
@@ -217,13 +224,15 @@ impl Session {
 
         for track in &composition.tracks {
             let sound = general_midi.and(track.sound);
-            let kept_instrument =
-                sound.is_none() && self.registry.has_instrument(&track.instrument);
+            // A registered sampler without a preset is not a playable fallback.
+            let kept_instrument = sound.is_none()
+                && track.instrument != SAMPLER_ID
+                && self.registry.has_instrument(&track.instrument);
             let instrument = match &sound {
                 // Choosing a sound is choosing the instrument that makes it, exactly as it is in
                 // `set_track_preset`.
                 Some(_) => SAMPLER_ID.to_string(),
-                None if self.registry.has_instrument(&track.instrument) => track.instrument.clone(),
+                None if kept_instrument => track.instrument.clone(),
                 None => {
                     report.substituted.push(track.instrument.clone());
                     fallback.clone()
@@ -798,6 +807,31 @@ mod tests {
             "the part keeps the plugin it named"
         );
         assert_eq!(session.track_preset(lead.id), None);
+    }
+
+    #[test]
+    fn a_sampler_without_its_font_falls_back_to_audible_notes() {
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            "form = [\"verse\"]\n[section.verse]\nbars = 2\n[[part]]\nname = \"lead\"\ninstrument = \"auris.sampler.soundfont\"\nprogram = 48",
+        ).unwrap();
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+        assert!(report.substituted.iter().any(|id| id == SAMPLER_ID));
+        let track = session
+            .project()
+            .tracks
+            .iter()
+            .find(|t| t.name == "lead")
+            .unwrap();
+        assert_ne!(
+            track.kind.as_instrument().unwrap().instrument_id,
+            SAMPLER_ID
+        );
+        let rendered = session
+            .render_job()
+            .render(&Default::default(), &mut Default::default())
+            .unwrap();
+        assert!(rendered.peak() > 0.001, "fallback must actually sound");
     }
 
     #[test]

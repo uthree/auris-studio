@@ -139,7 +139,11 @@ pub mod preview {
             .render_job()
             .render_to_wav(&path, &settings, &options, &mut RenderProgress::default())
             .map_err(|e| e.to_string())?;
-        let text = wrote_line(&path, &summary, &settings);
+        let text = format!(
+            "{}{}",
+            playback_warnings(&session),
+            wrote_line(&path, &summary, &settings)
+        );
         Ok(Preview { path, text })
     }
     /// Renders and names an audio file for the agent frontend.

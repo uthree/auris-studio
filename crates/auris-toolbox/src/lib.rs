@@ -38,18 +38,24 @@ use auris_session::prelude::*;
 use auris_session::{Session, SessionError, SessionOptions};
 
 mod audition;
+#[path = "capabilities.rs"]
+mod availability;
 mod editing;
+mod mix_editing;
 pub use audition::{RenderRange, preview};
+pub use availability::capabilities;
+use availability::playback_warnings;
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
+pub use mix_editing::{automation, effects};
 
 /// What a model is told before it has called anything.
 ///
 /// The one piece of text a model keeps in context for the whole conversation, so it carries
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
-pub const INSTRUCTIONS: &str = "Every track argument accepts a name or an id:<number> selector from describe; use IDs for duplicate names. Regeneration refuses hand edits unless replace_hand_edits is true. Use mixer to read section gain envelopes, section_gain with gain_delta_db for relative changes, and preview for a short playable audition. Auris Studio is a digital audio workstation; these tools drive \
+pub const INSTRUCTIONS: &str = "Check capabilities before choosing sounds or voices. Use effects to insert real effect slots and connect sidechains, and automation to discover parameter keys and draw curves; a bus name alone creates no processing. edit_recipe retains and can change the authored motif and rhythm. edit_clip with copy shares a phrase across tracks and can transpose it. Every track argument accepts a name or an id:<number> selector from describe; use IDs for duplicate names. Regeneration refuses hand edits unless replace_hand_edits is true. Use mixer to read section gain envelopes, section_gain with gain_delta_db for relative changes, and preview for a short playable audition. Auris Studio is a digital audio workstation; these tools drive \
     its document. Before editing an existing piece, use `inspect_composition` to read its \
     current harmony and recipes separately from its original specification. `edit_harmony` \
     changes chords, key, tempo and section labels without rewriting notes; `edit_recipe` \
@@ -110,6 +116,10 @@ pub mod search_documentation {
     }
 
     const DOCUMENTS: &[(&str, &str)] = &[
+        (
+            "docs/agent-workflows.md",
+            include_str!("../../../docs/agent-workflows.md"),
+        ),
         ("README.md", include_str!("../../../README.md")),
         ("CHANGELOG.md", include_str!("../../../CHANGELOG.md")),
         (
@@ -322,6 +332,8 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    effects::NAME,
+    automation::NAME,
     checkpoints::NAME,
     edit_clip::NAME,
     edit_harmony::NAME,
@@ -345,6 +357,21 @@ pub const WRITES_PROJECTS: &[&str] = &[
     write_lyrics::NAME,
     sing::NAME,
 ];
+
+/// Whether a particular invocation can rewrite a project, excluding read operations.
+pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
+    if !WRITES_PROJECTS.contains(&tool) {
+        return false;
+    }
+    match tool {
+        effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
+        automation::NAME => {
+            args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")
+        }
+        checkpoints::NAME => args.get("action").and_then(|v| v.as_str()) == Some("restore"),
+        _ => true,
+    }
+}
 
 /// The address of one project change: which clip, and which take of it.
 ///
@@ -546,7 +573,7 @@ pub mod render {
         let mut session = headless()?;
         let missing = session.open(source).map_err(|error| error.to_string())?;
         let options = args.range.options(&session)?;
-        let mut text = String::new();
+        let mut text = playback_warnings(&session);
         for path in &missing {
             text.push_str(&format!(
                 "Note: the audio file {} is missing; its track rendered silent.\n",
@@ -1010,6 +1037,8 @@ pub mod set_level {
 
     /// Arguments to `set_level`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(extend("anyOf" = [{"required": ["gain_db"], "properties": {"gain_db": {"type":"number"}}}, {"required": ["pan"], "properties": {"pan": {"type":"number"}}}]))]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
@@ -1706,14 +1735,15 @@ pub mod list_instruments {
     pub const NAME: &str = "list_instruments";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
-        `add_track` and `set_instrument` take. Any General MIDI sound is also available — name \
-        it in those tools' `sound` field instead, as a GM name or program number.";
+        `add_track` and `set_instrument` take. Reports whether the General MIDI library is \
+        loaded; when available, select a GM name or program number using sound.";
 
     /// Every registered instrument, one line each.
     pub fn run() -> String {
         let mut text = String::from("Instruments `add_track` and `set_instrument` accept:\n");
         match headless() {
             Ok(session) => {
+                text.push_str(&format!("General MIDI library loaded: {}. The sampler requires a loaded font and preset.\n", session.general_midi_available()));
                 for descriptor in session.registry().instruments() {
                     text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
                 }
@@ -2255,6 +2285,8 @@ pub mod edit_notes {
 
     /// Arguments to `edit_notes`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(extend("anyOf" = [{"required": ["add"], "properties": {"add": {"type":"array", "minItems":1}}}, {"required": ["remove"], "properties": {"remove": {"type":"array", "minItems":1}}}]))]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,

@@ -669,11 +669,7 @@ impl AurisApp {
     /// The singer voices this machine can offer, scanned once and kept.
     pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
         self.voices
-            .get_or_insert_with(|| {
-                let mut roots = auris_session::library::voice_roots();
-                roots.extend(self.settings.voice_paths.iter().cloned());
-                auris_session::library::installed_voices_in(&roots)
-            })
+            .get_or_insert_with(|| auris_session::library::voices_with_settings(&self.settings))
             .clone()
     }
 

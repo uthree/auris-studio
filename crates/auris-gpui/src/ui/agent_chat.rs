@@ -299,6 +299,10 @@ impl Drop for AgentLink {
 
 /// Everything the agent panel is, apart from its pixels.
 pub(crate) struct AgentChat {
+    /// Requested Ollama context, independent of the model's architectural maximum.
+    pub(crate) context_tokens: u32,
+    /// Ollama thinking override.
+    pub(crate) thinking: Option<bool>,
     /// The transcript, oldest first.
     pub(crate) entries: Vec<ChatEntry>,
     /// The message being written.
@@ -368,6 +372,8 @@ pub(crate) struct AgentChat {
 impl Default for AgentChat {
     fn default() -> Self {
         Self {
+            context_tokens: 32768,
+            thinking: None,
             entries: Vec::new(),
             input: TextField::new(String::new()),
             chosen_model: String::new(),
@@ -452,6 +458,8 @@ impl AgentChat {
 
     /// Copies the saved preferences into the settings section's fields.
     pub(crate) fn load_preferences(&mut self, prefs: &AgentPreferences) {
+        self.context_tokens = prefs.context_tokens.unwrap_or(32768);
+        self.thinking = prefs.thinking;
         self.provider_openai = prefs.provider.trim() == "openai";
         self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
@@ -469,6 +477,8 @@ impl AgentChat {
     /// The settings section's fields, read back out as preferences.
     pub(crate) fn preferences(&self) -> AgentPreferences {
         AgentPreferences {
+            context_tokens: Some(self.context_tokens),
+            thinking: self.thinking,
             provider: match self.provider_openai {
                 true => "openai".to_string(),
                 false => "ollama".to_string(),
@@ -768,6 +778,9 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOpt
     if !prefs.url.trim().is_empty() {
         command.arg("--url").arg(prefs.url.trim());
     }
+    command
+        .arg("--context-tokens")
+        .arg(prefs.context_tokens.unwrap_or(32768).to_string());
     if !prefs.api_key_env.trim().is_empty() {
         command.arg("--api-key-env").arg(prefs.api_key_env.trim());
     }
@@ -1670,6 +1683,57 @@ impl AurisApp {
                 self.agent_text_field("agent-key-env", AgentField::KeyEnv, cx),
                 &theme,
             ))
+            .when(!self.agent_chat.provider_openai, |this| {
+                this.child(button(
+                    "agent-context-tokens",
+                    format!(
+                        "{}: {}k",
+                        self.t(Key::AgentContextTokens),
+                        self.agent_chat.context_tokens / 1024
+                    ),
+                    ButtonStyle::Normal,
+                    true,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.agent_chat.context_tokens = match this.agent_chat.context_tokens {
+                            32768 => 65536,
+                            65536 => 131072,
+                            131072 => 262144,
+                            _ => 32768,
+                        };
+                        this.agent_chat.context_window =
+                            Some(u64::from(this.agent_chat.context_tokens));
+                        this.agent_write_through();
+                        cx.notify();
+                    }),
+                ))
+                .child(button(
+                    "agent-thinking",
+                    format!(
+                        "{}: {}",
+                        self.t(Key::AgentThinking),
+                        self.t(match self.agent_chat.thinking {
+                            None => Key::AgentThinkingAuto,
+                            Some(true) => Key::AgentThinkingOn,
+                            Some(false) => Key::AgentThinkingOff,
+                        })
+                    ),
+                    ButtonStyle::Normal,
+                    true,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.agent_chat.thinking = match this.agent_chat.thinking {
+                            None => Some(false),
+                            Some(false) => Some(true),
+                            Some(true) => None,
+                        };
+                        this.agent_write_through();
+                        cx.notify();
+                    }),
+                ))
+            })
             .child(div().flex().justify_end().child(button(
                 "agent-apply",
                 self.t(Key::AgentApply),
@@ -2125,6 +2189,7 @@ mod tests {
             model: String::new(),
             url: "http://saved.invalid".to_string(),
             api_key_env: String::new(),
+            ..Default::default()
         };
         let mut chat = AgentChat::default();
         chat.load_preferences_once(&saved);
@@ -2137,6 +2202,26 @@ mod tests {
         assert!(chat.provider_openai);
         assert_eq!(chat.url_field.content(), "https://being-typed.invalid/v1");
         assert_eq!(chat.key_env_field.content(), "MY_AGENT_KEY");
+    }
+
+    #[test]
+    fn runtime_preferences_roundtrip_through_the_panel() {
+        let mut chat = AgentChat::default();
+        let preferences = AgentPreferences {
+            context_tokens: Some(65536),
+            thinking: Some(false),
+            model: "local-tools".into(),
+            ..Default::default()
+        };
+        chat.load_preferences(&preferences);
+        assert_eq!(chat.context_tokens, 65536);
+        assert_eq!(chat.thinking, Some(false));
+        let saved = chat.preferences();
+        assert_eq!(saved.context_tokens, preferences.context_tokens);
+        assert_eq!(saved.thinking, preferences.thinking);
+        chat.load_preferences(&AgentPreferences::default());
+        assert_eq!(chat.context_tokens, 32768);
+        assert_eq!(chat.thinking, None);
     }
 
     #[test]

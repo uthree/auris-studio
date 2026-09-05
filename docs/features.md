@@ -1219,6 +1219,9 @@ auris render song.auris -o song.wav --bit-depth 24
 auris collect song.auris                       # gather every file it uses into its folder
 ```
 
+See [Agent composition and revision](agent-workflows.md) for sound/voice availability,
+motif-preserving regeneration, effect chains, sidechains, parameter automation and Ollama settings.
+
 `auris-mcp` is the third frontend: the same session behind the
 [Model Context Protocol](https://modelcontextprotocol.io), over stdio, so a language model's
 harness can drive it. The tools cover the loop of writing a song and hearing it —

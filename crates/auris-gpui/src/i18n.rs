@@ -215,6 +215,7 @@ pub fn track_kind_key(kind: &TrackKind) -> Key {
 pub fn error_text(error: &SessionError, language: Language) -> String {
     let with = |key: Key, detail: String| messages::detailed(language, key.get(language), &detail);
     match error {
+        SessionError::InvalidAutomation(detail) => with(Key::ErrorDocument, detail.clone()),
         SessionError::InvalidCheckpointName => Key::ErrorCheckpointName.get(language).to_string(),
         SessionError::ExternalChanges(_) => Key::ExternalChangeConflict.get(language).to_string(),
         SessionError::EditInProgress => Key::ErrorEditInProgress.get(language).to_string(),

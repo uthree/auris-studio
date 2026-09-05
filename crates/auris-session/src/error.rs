@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// An automation batch has an unavailable target or invalid points.
+    #[error("invalid automation: {0}")]
+    InvalidAutomation(String),
     /// A checkpoint name is empty, too long, or contains a path separator or punctuation.
     #[error("checkpoint names need 1-80 bytes of letters, digits, hyphens or underscores")]
     InvalidCheckpointName,
