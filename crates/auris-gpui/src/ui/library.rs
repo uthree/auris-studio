@@ -397,6 +397,7 @@ impl AurisApp {
 
         div()
             .id("library-search")
+            .debug_selector(|| "library-search".to_string())
             .flex()
             .items_center()
             // No gap after the icon: the text carries its own left inset, because the field

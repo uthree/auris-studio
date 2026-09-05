@@ -146,7 +146,7 @@ impl Render for AurisApp {
         let arrangement_pane = self.pane(Pane::Arrangement, window, cx);
         let status = self.render_status_bar(cx);
         let export_overlay = self.render_export_overlay(cx);
-        let song_sheet = self.render_song_sheet(cx);
+        let song_sheet = self.render_song_sheet(window, cx);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -1205,10 +1205,10 @@ impl AurisApp {
             || self.lyrics_key(event, cx)
             || self.menu_key(event, window, cx)
             || self.menu_bar_key(event, window, cx)
-            || self.library_search_key(event)
+            || self.library_search_key(event, cx)
             // Last, because everything above it is in front of the agent field on the screen and
             // has to answer for a key first.
-            || self.agent_key(event)
+            || self.agent_key(event, cx)
         {
             cx.stop_propagation();
             cx.notify();
@@ -1223,7 +1223,7 @@ impl AurisApp {
     /// gpui hands a field its insertions and nothing else. That list is
     /// [`TextField::apply_key`](crate::ui::text_field::TextField::apply_key), shared with every
     /// other field in the window — writing it out here is what left this box with no backspace.
-    fn library_search_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+    fn library_search_key(&mut self, event: &gpui::KeyDownEvent, cx: &mut Context<Self>) -> bool {
         if !self.library_search_focused {
             return false;
         }
@@ -1247,10 +1247,12 @@ impl AurisApp {
             }
         }
 
-        self.library_search.apply_key(
+        self.library_search.apply_key_with_clipboard(
             key,
             event.keystroke.modifiers.shift,
             event.keystroke.modifiers.secondary(),
+            false,
+            cx,
         ) != crate::ui::text_field::KeyEffect::Ignored
     }
 

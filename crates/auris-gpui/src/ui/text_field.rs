@@ -288,9 +288,7 @@ impl TextField {
     /// as Home and End, and a browser's search box has neither — so each caller answers those
     /// first and hands the rest here.
     ///
-    /// Cut, copy and paste are not here either, for a duller reason: the clipboard is reached
-    /// through the application context, which would have to be threaded in for the sake of three
-    /// keys. The rename sheet, which is where text is actually written, answers them itself.
+    /// Call [`Self::apply_key_with_clipboard`] from a view to include cut, copy and paste.
     pub fn apply_key(&mut self, key: &str, shift: bool, secondary: bool) -> KeyEffect {
         let before = self.content.len();
         match key {
@@ -322,6 +320,57 @@ impl TextField {
             KeyEffect::Moved
         } else {
             KeyEffect::Changed
+        }
+    }
+
+    /// Applies editing keys, including the platform's cut, copy and paste shortcuts.
+    ///
+    /// Single-line fields replace pasted line breaks with spaces. Multiline fields keep them,
+    /// normalizing Windows and classic Mac line endings so caret movement sees the same lines.
+    pub fn apply_key_with_clipboard(
+        &mut self,
+        key: &str,
+        shift: bool,
+        secondary: bool,
+        multiline: bool,
+        cx: &mut gpui::App,
+    ) -> KeyEffect {
+        if !secondary {
+            return self.apply_key(key, shift, secondary);
+        }
+        match key {
+            "c" | "x" => {
+                let selected = self.selected_text();
+                if selected.is_empty() {
+                    return KeyEffect::Moved;
+                }
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
+                if key == "x" {
+                    self.replace(self.selection(), "");
+                    KeyEffect::Changed
+                } else {
+                    KeyEffect::Moved
+                }
+            }
+            "v" => {
+                let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
+                    return KeyEffect::Moved;
+                };
+                let text = text.replace("\r\n", "\n").replace('\r', "\n");
+                let text = if multiline {
+                    text
+                } else {
+                    text.replace('\n', " ")
+                };
+                let before = self.content.clone();
+                self.insert(&text);
+                if self.content == before {
+                    KeyEffect::Moved
+                } else {
+                    KeyEffect::Changed
+                }
+            }
+            _ => self.apply_key(key, shift, secondary),
         }
     }
 
@@ -887,5 +936,76 @@ mod tests {
         assert_eq!(field.apply_key("home", false, false), KeyEffect::Moved);
         assert_eq!(field.apply_key("a", false, true), KeyEffect::Moved);
         assert_eq!(field.content(), "reverb");
+    }
+
+    #[gpui::test]
+    fn clipboard_copy_and_cut_use_the_unicode_selection(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let mut field = TextField::new("A歌B");
+            field.place_caret(1, false);
+            field.move_right(true);
+            assert_eq!(
+                field.apply_key_with_clipboard("c", false, true, false, cx),
+                KeyEffect::Moved
+            );
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("歌")
+            );
+            assert_eq!(field.content(), "A歌B");
+            assert_eq!(
+                field.apply_key_with_clipboard("x", false, true, false, cx),
+                KeyEffect::Changed
+            );
+            assert_eq!(field.content(), "AB");
+            assert_eq!(field.selection(), 1..1);
+            assert_eq!(
+                field.apply_key_with_clipboard("x", false, true, false, cx),
+                KeyEffect::Moved
+            );
+            assert_eq!(
+                field.content(),
+                "AB",
+                "cut with no selection must not backspace"
+            );
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("歌")
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn clipboard_paste_normalizes_lines_and_reports_equal_length_replacements(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("a\r\nb\rc\nd".into()));
+            let mut single = TextField::new("old");
+            assert_eq!(
+                single.apply_key_with_clipboard("v", false, true, false, cx),
+                KeyEffect::Changed
+            );
+            assert_eq!(single.content(), "a b c d");
+            let mut multi = TextField::new("old");
+            multi.apply_key_with_clipboard("v", false, true, true, cx);
+            assert_eq!(multi.content(), "a\nb\nc\nd");
+
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string("new".into()));
+            let mut field = TextField::new("old");
+            assert_eq!(
+                field.apply_key_with_clipboard("v", false, true, false, cx),
+                KeyEffect::Changed
+            );
+            assert_eq!(field.content(), "new");
+            assert_eq!(
+                field.apply_key_with_clipboard("v", false, false, false, cx),
+                KeyEffect::Ignored
+            );
+        });
     }
 }

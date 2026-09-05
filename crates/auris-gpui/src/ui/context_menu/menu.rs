@@ -10,9 +10,10 @@
 //! other.
 
 use gpui::{
-    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, SharedString,
-    Size, Window, div, point, prelude::*, px, size,
+    AnyElement, Context, IntoElement, MouseButton, MouseDownEvent, Pixels, Point, ScrollHandle,
+    SharedString, Size, Window, div, point, prelude::*, px, size,
 };
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use crate::app::AurisApp;
 use crate::theme::Metrics;
@@ -92,7 +93,7 @@ pub enum MenuEntry {
 }
 
 /// An open context menu.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ContextMenu {
     /// Where the pointer was when it opened, in window coordinates.
     pub anchor: Point<Pixels>,
@@ -105,6 +106,8 @@ pub struct ContextMenu {
     /// `None` until then, so a menu opened with the mouse does not draw a highlight nobody asked
     /// for — and so the first arrow key lands on the first row rather than the second.
     pub highlighted: Option<usize>,
+    /// The rows' scroll position, shared with the keyboard so its highlight stays visible.
+    pub scroll: ScrollHandle,
 }
 
 impl ContextMenu {
@@ -115,6 +118,7 @@ impl ContextMenu {
             title: title.into(),
             entries: Vec::new(),
             highlighted: None,
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -137,7 +141,9 @@ impl ContextMenu {
             return;
         };
         let Some(current) = self.highlighted else {
-            self.highlighted = Some(if delta >= 0 { first } else { last });
+            let next = if delta >= 0 { first } else { last };
+            self.highlighted = Some(next);
+            self.scroll.scroll_to_item(next);
             return;
         };
         // Where the current row sits among the choosable ones, or just before the next one down
@@ -149,6 +155,7 @@ impl ContextMenu {
         let count = choosable.len() as isize;
         let next = (at + delta).rem_euclid(count) as usize;
         self.highlighted = Some(choosable[next]);
+        self.scroll.scroll_to_item(choosable[next]);
     }
 
     /// The command the highlighted row would run.
@@ -303,7 +310,7 @@ impl ContextMenu {
             .any(|entry| matches!(entry, MenuEntry::Item(_)))
     }
 
-    /// How large the menu will be drawn.
+    /// The menu's natural size before constraining it to the window.
     pub fn size(&self) -> Size<Pixels> {
         let widest = self
             .entries
@@ -328,39 +335,40 @@ impl ContextMenu {
         size(px(width), height)
     }
 
+    /// The on-screen size: long menus scroll their rows beneath a fixed heading.
+    pub fn visible_size(&self, viewport: Size<Pixels>) -> Size<Pixels> {
+        let natural = self.size();
+        size(
+            natural.width.min(viewport.width),
+            natural.height.min(viewport.height),
+        )
+    }
+
     /// Where the menu's top-left corner goes inside a window of `viewport`.
     ///
-    /// A menu that would overflow is flipped to the other side of the pointer rather than merely
-    /// pushed back inside: pushing it back leaves it under the pointer, where it swallows the
-    /// click the user is about to make.
+    /// Flips to the other side of the pointer when there is room there. If neither side fits,
+    /// clamps inside the viewport so every command remains reachable.
     pub fn origin(&self, viewport: Size<Pixels>) -> Point<Pixels> {
-        let size = self.size();
+        let size = self.visible_size(viewport);
         let x = origin_on_axis(self.anchor.x, size.width, viewport.width);
         let y = origin_on_axis(self.anchor.y, size.height, viewport.height);
         point(x, y)
     }
 }
 
-/// Places one menu edge at the pointer when neither side can hold the whole menu.
-///
-/// In that narrow case keeping the menu entirely inside the viewport is incompatible with
-/// keeping it off the pointer. The latter matters more: overflow is clipped, while a menu under
-/// the pointer can execute a command on the next click.
+/// Keeps the pointer clear when possible, otherwise gives the whole menu room on screen.
+/// A menu opens on a right press or completed picker click; activation requires a fresh left
+/// press, so clamping it under the pointer cannot activate a command with its opening gesture.
 fn origin_on_axis(anchor: Pixels, extent: Pixels, viewport: Pixels) -> Pixels {
-    if extent > viewport {
-        // There is no placement that clears the pointer and fits; keep the first row on screen.
-        return px(0.0);
-    }
+    let extent = extent.min(viewport);
     let before = anchor.max(px(0.0)).min(viewport);
     let after = (viewport - anchor).max(px(0.0));
     if extent <= after {
         anchor.max(px(0.0))
     } else if extent <= before {
         anchor.min(viewport) - extent
-    } else if after >= before {
-        anchor.max(px(0.0))
     } else {
-        anchor.min(viewport) - extent
+        anchor.max(px(0.0)).min(viewport - extent)
     }
 }
 
@@ -443,7 +451,7 @@ impl AurisApp {
     ) -> Option<AnyElement> {
         let menu = self.menu.as_ref()?;
         let theme = self.theme.clone();
-        let size = menu.size();
+        let size = menu.visible_size(window.viewport_size());
         let origin = menu.origin(window.viewport_size());
 
         let rows: Vec<AnyElement> = menu
@@ -561,6 +569,7 @@ impl AurisApp {
                 )
                 .child(
                     div()
+                        .debug_selector(|| "context-menu-panel".to_string())
                         .absolute()
                         .left(origin.x)
                         .top(origin.y)
@@ -585,13 +594,35 @@ impl AurisApp {
                                 .flex()
                                 .items_center()
                                 .h(TITLE_HEIGHT)
+                                .flex_shrink_0()
                                 .px_1p5()
                                 .text_xs()
                                 .text_color(theme.text_faint)
                                 .truncate()
                                 .child(menu.title.clone()),
                         )
-                        .children(rows),
+                        .child(
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_h_0()
+                                .child(
+                                    div()
+                                        .id("context-menu-rows")
+                                        .debug_selector(|| "context-menu-rows".to_string())
+                                        .flex()
+                                        .flex_col()
+                                        .size_full()
+                                        .overflow_y_scroll()
+                                        .track_scroll(&menu.scroll)
+                                        .when(menu.size().height > size.height, |this| this.pr_3())
+                                        .children(rows),
+                                )
+                                .child(
+                                    Scrollbar::vertical(&menu.scroll)
+                                        .scrollbar_show(ScrollbarShow::Always),
+                                ),
+                        ),
                 )
                 .into_any_element(),
         )
@@ -711,7 +742,7 @@ mod tests {
     }
 
     #[test]
-    fn a_menu_in_a_narrow_gap_never_gets_clamped_over_the_pointer() {
+    fn a_menu_in_a_narrow_gap_keeps_every_command_inside_the_window() {
         let viewport = size(px(500.0), px(500.0));
         let menu = (0..12).fold(
             ContextMenu::new(point(px(250.0), px(250.0)), "Clip"),
@@ -731,22 +762,23 @@ mod tests {
 
         let origin = menu.origin(viewport);
         assert!(
-            origin.x >= px(250.0) || origin.x + menu_size.width <= px(250.0),
-            "the horizontal fallback must leave the pointer outside the menu"
+            origin.x >= px(0.0) && origin.x + menu_size.width <= viewport.width,
+            "horizontal clamping keeps the menu in the window"
         );
         assert!(
-            origin.y >= px(250.0) || origin.y + menu_size.height <= px(250.0),
-            "the vertical fallback must leave the pointer outside the menu"
+            origin.y >= px(0.0) && origin.y + menu_size.height <= viewport.height,
+            "vertical clamping keeps the last command reachable"
         );
     }
 
     #[test]
-    fn a_menu_larger_than_the_window_still_starts_on_screen() {
-        // Too tall to flip and too tall to fit: the top edge is what matters, because that is
-        // where the first item is.
+    fn a_menu_larger_than_the_window_scrolls_within_the_window() {
         let menu = menu(point(px(10.0), px(20.0)), 40);
-        let origin = menu.origin(size(px(400.0), px(200.0)));
+        let viewport = size(px(400.0), px(200.0));
+        let origin = menu.origin(viewport);
         assert_eq!(origin, point(px(10.0), px(0.0)));
+        assert_eq!(menu.visible_size(viewport).height, viewport.height);
+        assert!(menu.size().height > viewport.height);
     }
 
     #[test]
@@ -808,11 +840,57 @@ mod tests {
 /// nobody tries by hand.
 #[cfg(test)]
 mod window_tests {
-    use gpui::{TestAppContext, point, px};
+    use gpui::{TestAppContext, point, px, size};
 
     use auris_session::prelude::*;
 
-    use crate::harness::{open, with_a_clip};
+    use crate::harness::{open, paint, resize, with_a_clip};
+
+    #[gpui::test]
+    fn tall_menus_keep_the_keyboard_selection_visible_and_clickable(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        for height in [600.0, 480.0] {
+            let before = app.read_with(cx, |this, _| this.project().tracks.len());
+            let viewport = size(px(640.0), px(height));
+            resize(&app, cx, viewport);
+            app.update(cx, |this, _| {
+                let menu = (0..40).fold(
+                    super::ContextMenu::new(point(px(320.0), px(height / 2.0)), "Long menu"),
+                    |menu, index| {
+                        menu.item(format!("Item {index}"), super::MenuCommand::NewAudioTrack)
+                    },
+                );
+                this.open_menu(menu);
+            });
+            paint(&app, cx);
+            let panel = cx.debug_bounds("context-menu-panel").unwrap();
+            assert!(panel.top() >= px(0.0) && panel.bottom() <= viewport.height);
+            assert!(panel.left() >= px(0.0) && panel.right() <= viewport.width);
+            cx.simulate_keystrokes("up");
+            paint(&app, cx);
+            let last = cx.debug_bounds("menu-item-39").unwrap();
+            let rows = cx.debug_bounds("context-menu-rows").unwrap();
+            assert!(
+                last.top() >= rows.top() && last.bottom() <= rows.bottom(),
+                "Up reveals the last row: {last:?} inside {rows:?}"
+            );
+            cx.simulate_keystrokes("down");
+            paint(&app, cx);
+            let first = cx.debug_bounds("menu-item-0").unwrap();
+            assert!(
+                first.top() >= rows.top() && first.bottom() <= rows.bottom(),
+                "wrapping reveals the first row again"
+            );
+            cx.simulate_keystrokes("up");
+            paint(&app, cx);
+            let last = cx.debug_bounds("menu-item-39").unwrap();
+            cx.simulate_click(last.center(), gpui::Modifiers::none());
+            app.read_with(cx, |this, _| {
+                assert!(this.menu.is_none(), "the revealed command can be clicked");
+                assert_eq!(this.project().tracks.len(), before + 1);
+            });
+        }
+    }
 
     /// Where a menu is anchored. Nothing here depends on it.
     fn anchor() -> gpui::Point<gpui::Pixels> {

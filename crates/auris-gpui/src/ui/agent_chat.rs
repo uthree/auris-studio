@@ -883,7 +883,11 @@ impl AurisApp {
     ///
     /// The characters come through the platform's input handler like every other field's; this
     /// sees what that leaves out. Enter in the chat field sends; in a settings field it applies.
-    pub(crate) fn agent_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+    pub(crate) fn agent_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        cx: &mut gpui::Context<Self>,
+    ) -> bool {
         let Some(focused) = self.agent_chat.focused else {
             return false;
         };
@@ -915,7 +919,8 @@ impl AurisApp {
         let shift = event.keystroke.modifiers.shift;
         let secondary = event.keystroke.modifiers.secondary();
         self.agent_chat.field_mut().is_some_and(|field| {
-            field.apply_key(key, shift, secondary) != crate::ui::text_field::KeyEffect::Ignored
+            field.apply_key_with_clipboard(key, shift, secondary, false, cx)
+                != crate::ui::text_field::KeyEffect::Ignored
         })
     }
 
@@ -1579,6 +1584,51 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn agent_chat_and_connection_fields_accept_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.settings.agent.model = "offline-fixture".to_string();
+            this.agent_chat.configuring = true;
+            this.agent_chat.models_error = Some("offline fixture".to_string());
+            this.panels.show(crate::dock::Panel::Agent);
+        });
+        crate::harness::paint(&app, cx);
+        for (selector, field, text) in [
+            ("agent-input", AgentField::Chat, "make the bass quieter"),
+            ("agent-url", AgentField::Url, "https://example.invalid/v1"),
+            ("agent-key-env", AgentField::KeyEnv, "MY_AGENT_KEY"),
+        ] {
+            crate::harness::click(selector, cx);
+            crate::harness::paint(&app, cx);
+            cx.update(|_, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(text.into()));
+            });
+            cx.simulate_keystrokes("secondary-a secondary-v");
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.agent_chat.focused, Some(field));
+                assert_eq!(this.agent_chat.field().unwrap().content(), text);
+            });
+            cx.simulate_keystrokes("secondary-a secondary-c secondary-x");
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.agent_chat.field().unwrap().content(), "");
+            });
+            cx.update(|_, cx| {
+                assert_eq!(
+                    cx.read_from_clipboard()
+                        .and_then(|item| item.text())
+                        .as_deref(),
+                    Some(text)
+                );
+            });
+            cx.simulate_keystrokes("secondary-v");
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.agent_chat.field().unwrap().content(), text);
+            });
+        }
+    }
 
     #[test]
     fn repaint_seeding_does_not_replace_an_unconfigured_form_in_progress() {

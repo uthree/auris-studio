@@ -1724,7 +1724,25 @@ impl AurisApp {
     /// Puts the keyboard in `pane`, which is what clicking one does.
     pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
         self.last_pane = pane;
-        window.focus(self.panes.handle(pane));
+        // Panel fields do not cover the rest of the window. Leaving their pane releases their
+        // claim on the keyboard while preserving the draft for the next visit.
+        if pane != Pane::Library && self.library_search_focused {
+            self.library_search_focused = false;
+            self.library_search.unmark();
+        }
+        if pane != Pane::Agent {
+            if let Some(field) = self.agent_chat.field_mut() {
+                field.unmark();
+            }
+            self.agent_chat.focused = None;
+        }
+        // A same-pane click must not blur its field during capture, before the field's own
+        // listener sees the press. Modal fields likewise keep their existing input handle.
+        if self.taking_text_input() {
+            window.focus(&self.focus);
+        } else {
+            window.focus(self.panes.handle(pane));
+        }
     }
 
     /// Moves the keyboard between a panel and an open sheet as one opens and closes.
@@ -1738,6 +1756,24 @@ impl AurisApp {
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
     pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
+        // A dock switch can hide a field without clicking another pane. Hidden fields must not
+        // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
+        if !self.panels.is_open(Panel::Library) {
+            self.library_search_focused = false;
+            self.library_search.unmark();
+            if self.last_pane == Pane::Library {
+                self.last_pane = Pane::Arrangement;
+            }
+        }
+        if !self.panels.is_open(Panel::Agent) {
+            if let Some(field) = self.agent_chat.field_mut() {
+                field.unmark();
+            }
+            self.agent_chat.focused = None;
+            if self.last_pane == Pane::Agent {
+                self.last_pane = Pane::Arrangement;
+            }
+        }
         // [`Self::taking_text_input`] rather than a list written out again here. The library's
         // search box is in a panel and covers nothing, but as far as *this* question goes it is
         // a sheet: something is being typed into, and the handle it is typed through has to be
@@ -2664,6 +2700,188 @@ mod audition_selection_tests {
         let selected = [1, 4].into_iter().collect();
         assert_eq!(audition_note_index(Some(4), &selected), Some(4));
         assert_eq!(audition_note_index(None, &selected), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod panel_input_tests {
+    use super::*;
+    use crate::harness::{click, lane_point, paint, with_a_clip};
+
+    #[gpui::test]
+    fn selecting_a_clip_releases_panel_text_without_losing_the_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for panel in [Panel::Agent, Panel::Library] {
+            let (app, cx, track, clip) = with_a_clip(cx);
+            app.update(cx, |this, _| {
+                this.panels = Default::default();
+                this.settings.agent.model = "offline-fixture".to_string();
+                this.agent_chat.configuring = false;
+                this.agent_chat.models_error = Some("offline fixture".to_string());
+                this.panels.show(panel);
+            });
+            paint(&app, cx);
+            let selector = if panel == Panel::Agent {
+                "agent-input"
+            } else {
+                "library-search"
+            };
+            click(selector, cx);
+            paint(&app, cx);
+            cx.simulate_input("draft");
+            app.read_with(cx, |this, _| {
+                assert!(this.taking_text_input());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(field.content(), "draft");
+            });
+
+            let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            paint(&app, cx);
+            app.read_with(cx, |this, _| assert_eq!(this.selected_clip, Some(clip)));
+            cx.simulate_keystrokes("backspace");
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.session.midi_clip(clip).is_none(),
+                    "Backspace deletes the selected clip"
+                );
+                assert!(!this.taking_text_input());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(
+                    field.content(),
+                    "draft",
+                    "leaving a pane preserves its draft"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn clicking_the_active_agent_field_keeps_its_input_and_preedit(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.settings.agent.model = "offline-fixture".to_string();
+            this.agent_chat.configuring = false;
+            this.agent_chat.models_error = Some("offline fixture".to_string());
+            this.panels.show(Panel::Agent);
+        });
+        paint(&app, cx);
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.simulate_input("draft");
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.simulate_input("!");
+        app.update(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "draft!");
+            this.agent_chat.input.replace_and_mark(6..6, "かな", None);
+        });
+        paint(&app, cx);
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.focus.is_focused(window));
+                assert_eq!(this.agent_chat.input.marked(), Some(6..12));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn pane_focus_does_not_dismiss_an_open_prompt(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.panels.show(Panel::Library);
+            this.library_search_focused = true;
+            this.open_prompt(crate::ui::prompt::Prompt::new(
+                "Time signature",
+                crate::ui::prompt::PromptTarget::Signature(Ticks::ZERO),
+                "4/4",
+            ));
+            this.panels.hide(Panel::Library);
+        });
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, _| {
+                this.focus_pane(Pane::Arrangement, window);
+                assert!(this.prompt.is_some());
+                assert!(this.focus.is_focused(window));
+            });
+        });
+        cx.simulate_input("3/4");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.prompt
+                    .as_ref()
+                    .and_then(crate::ui::prompt::Prompt::field)
+                    .unwrap()
+                    .content(),
+                "3/4"
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+mod hidden_panel_input_tests {
+    use super::*;
+    use crate::harness::{click, lane_point, paint, with_a_clip};
+
+    #[gpui::test]
+    fn hiding_a_panel_releases_its_text_and_restores_arrangement_keys(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for panel in [Panel::Agent, Panel::Library] {
+            let (app, cx, track, clip) = with_a_clip(cx);
+            app.update(cx, |this, _| {
+                this.panels = Default::default();
+                this.settings.agent.model = "offline-fixture".to_string();
+                this.agent_chat.configuring = false;
+                this.agent_chat.models_error = Some("offline fixture".to_string());
+                this.panels.show(panel);
+            });
+            paint(&app, cx);
+            let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            let selector = if panel == Panel::Agent {
+                "agent-input"
+            } else {
+                "library-search"
+            };
+            click(selector, cx);
+            paint(&app, cx);
+            cx.simulate_input("draft");
+            match panel {
+                Panel::Agent => cx.dispatch_action(actions::ToggleAgent),
+                Panel::Library => cx.dispatch_action(actions::ToggleLibrary),
+                _ => unreachable!(),
+            }
+            paint(&app, cx);
+            cx.simulate_keystrokes("backspace");
+            app.read_with(cx, |this, _| {
+                assert!(!this.panels.is_open(panel));
+                assert!(!this.taking_text_input());
+                assert_eq!(this.last_pane, Pane::Arrangement);
+                assert!(this.session.midi_clip(clip).is_none());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(field.content(), "draft");
+            });
+        }
     }
 }
 

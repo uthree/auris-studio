@@ -266,6 +266,7 @@ impl VoiceSetupWindow {
             .child(
                 div()
                     .id(("voice-setup-field", field as usize))
+                    .debug_selector(move || format!("voice-setup-field-{}", field as usize))
                     .h(px(28.0))
                     .flex_1()
                     .min_w_0()
@@ -652,10 +653,12 @@ impl VoiceSetupWindow {
             cx.notify();
             return true;
         }
-        let effect = self.field_for_mut(self.active).apply_key(
+        let effect = self.field_for_mut(self.active).apply_key_with_clipboard(
             key,
             event.keystroke.modifiers.shift,
             event.keystroke.modifiers.secondary(),
+            false,
+            cx,
         );
         if effect != KeyEffect::Ignored {
             cx.notify();
@@ -776,6 +779,48 @@ fn parse<T: std::str::FromStr>(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn voice_connection_fields_accept_clipboard_shortcuts(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        crate::harness::click("voice-setup-field-1", cx);
+        cx.update(|_, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                "http://voice.invalid:50021".into(),
+            ));
+        });
+        cx.simulate_keystrokes("secondary-v");
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.active, Field::VoicevoxUrl);
+                assert_eq!(this.voicevox.url.content(), "http://voice.invalid:50021");
+            })
+            .unwrap();
+        cx.simulate_keystrokes("secondary-a secondary-c secondary-x");
+        handle
+            .update(cx, |this, _, _| assert_eq!(this.voicevox.url.content(), ""))
+            .unwrap();
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some("http://voice.invalid:50021")
+            );
+        });
+        cx.simulate_keystrokes("secondary-v");
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.voicevox.url.content(), "http://voice.invalid:50021");
+            })
+            .unwrap();
+    }
 
     #[gpui::test]
     fn the_setup_window_opens_on_the_requested_backend(cx: &mut TestAppContext) {
