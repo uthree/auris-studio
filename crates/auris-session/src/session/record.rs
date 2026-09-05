@@ -274,7 +274,15 @@ impl Session {
     /// [`output_devices`](Session::output_devices) is: an interface plugged in while the window
     /// was open should appear in the list without a restart.
     pub fn input_devices(&self) -> Vec<auris_engine::AudioDeviceInfo> {
-        auris_engine::input_devices()
+        if self.audio.uses_asio() {
+            return self
+                .device
+                .as_ref()
+                .and_then(auris_engine::shared_input_device)
+                .into_iter()
+                .collect();
+        }
+        auris_engine::input_devices_for_host(self.audio.host.as_deref())
     }
 
     /// Every track that has been armed by hand, and the channels each one reads.
@@ -395,14 +403,18 @@ impl Session {
             // opened later is still read from.
             return 2;
         }
-        let wanted = self.audio.input_device.clone();
-        let found =
-            auris_engine::input_devices()
-                .into_iter()
-                .find(|device| match wanted.as_deref() {
-                    Some(name) => device.name == name,
-                    None => device.is_default,
-                });
+        let wanted = if self.audio.uses_asio() {
+            None
+        } else {
+            self.audio.input_device.clone()
+        };
+        let found = self
+            .input_devices()
+            .into_iter()
+            .find(|device| match wanted.as_deref() {
+                Some(name) => device.name == name,
+                None => device.is_default,
+            });
         // Two, when there is no device to ask. It is what a laptop has, and the alternative is
         // arming a track to a device with no channels at all.
         let channels = found.map_or(2, |device| (device.max_channels as usize).max(1));
@@ -502,13 +514,22 @@ impl Session {
             return Ok(());
         }
         let settings = CaptureSettings {
+            host: self.audio.host.clone(),
             device: self.audio.input_device.clone(),
             // The rate the project renders at, so a take needs no resampling on the way in. A
             // device that cannot do it is recorded at whatever it can and resampled below.
             sample_rate: Some(self.project.sample_rate.round().max(1.0) as u32),
             block_frames: Some(self.audio.block_frames),
         };
-        self.input = Some(auris_engine::start_capture(&settings, &self.engine)?);
+        let output = self
+            .device
+            .as_ref()
+            .ok_or_else(|| SessionError::AudioRestart("no output device".to_owned()))?;
+        self.input = Some(auris_engine::start_capture_for_output(
+            &settings,
+            &self.engine,
+            output,
+        )?);
         Ok(())
     }
 

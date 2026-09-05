@@ -25,11 +25,14 @@ pub const CONFIG_DIR_VAR: &str = "AURIS_CONFIG_DIR";
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioPreferences {
+    /// Audio backend name. `None` selects the platform default.
+    pub host: Option<String>,
     /// Output device to open, by name. `None` follows the system default.
     pub device: Option<String>,
     /// Input device to record from, by name. `None` follows the system default.
     ///
-    /// Its own field rather than a shared one: recording through an interface while listening on
+    /// ASIO uses the output's driver; the session normalizes this field to match `device`.
+    /// Other hosts keep their own field: recording through an interface while listening on
     /// the laptop's own output is the ordinary arrangement, not the exotic one. The rate and
     /// block size are not repeated — a take asks for the project's rate and the same block size
     /// as playback, and a second pair of controls for numbers nobody would set differently would
@@ -44,6 +47,7 @@ pub struct AudioPreferences {
 impl Default for AudioPreferences {
     fn default() -> Self {
         Self {
+            host: None,
             device: None,
             input_device: None,
             sample_rate: None,
@@ -55,6 +59,13 @@ impl Default for AudioPreferences {
 }
 
 impl AudioPreferences {
+    /// Whether input and output must share one ASIO driver.
+    pub fn uses_asio(&self) -> bool {
+        self.host
+            .as_deref()
+            .is_some_and(|host| host.eq_ignore_ascii_case("ASIO"))
+    }
+
     /// Buffer sizes offered in a settings panel, in frames.
     pub const BLOCK_CHOICES: [u32; 6] = [64, 128, 256, 512, 1024, 2048];
 
@@ -63,8 +74,7 @@ impl AudioPreferences {
 
     /// Latency one block represents at `sample_rate`, in milliseconds.
     ///
-    /// This is the number that actually means something to a musician; "512 frames" does not
-    /// until it is divided by a rate.
+    /// This is the requested duration of one buffer, not measured device or round-trip latency.
     pub fn block_latency_ms(&self, sample_rate: f64) -> f64 {
         if sample_rate <= 0.0 {
             0.0
@@ -475,6 +485,7 @@ mod tests {
         let settings: Settings = serde_json::from_str(r#"{"audio":{"block_frames":128}}"#).unwrap();
         assert_eq!(settings.audio.block_frames, 128);
         assert_eq!(settings.audio.device, None);
+        assert_eq!(settings.audio.host, None);
         assert_eq!(settings.audio.sample_rate, None);
         assert!(settings.snap_note_lengths);
 
@@ -491,6 +502,17 @@ mod tests {
         assert!((prefs.block_latency_ms(48_000.0) - 10.666_667).abs() < 1e-4);
         // A nonsense rate must not produce a nonsense number.
         assert_eq!(prefs.block_latency_ms(0.0), 0.0);
+    }
+
+    #[test]
+    fn an_explicit_host_survives_a_settings_round_trip() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"audio":{"host":"ASIO","device":"Interface","block_frames":128}}"#,
+        )
+        .unwrap();
+        assert!(settings.audio.uses_asio());
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&saved).unwrap(), settings);
     }
 
     #[test]

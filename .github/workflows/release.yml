@@ -107,6 +107,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Prepare LLVM for ASIO
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
+            choco install llvm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed' }
+          }
+          'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> $env:GITHUB_ENV
+
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal
 

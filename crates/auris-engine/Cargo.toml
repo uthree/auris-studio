@@ -15,3 +15,6 @@ cpal.workspace = true
 crossbeam-channel.workspace = true
 log.workspace = true
 thiserror.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+cpal = { workspace = true, features = ["asio", "realtime"] }
