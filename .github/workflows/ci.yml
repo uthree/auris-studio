@@ -74,14 +74,23 @@ jobs:
   # gpui's `platform` modifier is ⌘ on macOS and the Windows key on Windows, and half the
   # behaviour that follows from that is decided by `cfg!` rather than by types.
   #
-  # No system libraries: cpal talks to WASAPI through the `windows` crate, wgpu loads its
-  # backends at run time, and gpui's DirectX renderer needs nothing beyond the Windows SDK the
-  # runner already has.
+  # ASIO needs the C++ toolchain and libclang to build its SDK bindings.
   windows:
     name: Test on Windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Prepare LLVM for ASIO
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
+            choco install llvm --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed' }
+          }
+          'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> $env:GITHUB_ENV
 
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy

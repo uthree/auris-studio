@@ -84,8 +84,23 @@ Training itself wants a card; everything else here is content on the CPU.
 
 ### Windows
 
-Nothing to install beyond the Rust toolchain — audio goes through WASAPI and the window is
-drawn by gpui's DirectX renderer, both of which come with the system.
+Build with the Rust MSVC toolchain, Visual Studio C++ Build Tools, and LLVM/Clang.
+Set `LIBCLANG_PATH` to LLVM's `bin` directory (normally `C:\Program Files\LLVM\bin`).
+Windows builds include WASAPI and ASIO. CPAL's ASIO dependency downloads the ASIO SDK on
+the first build; set `CPAL_ASIO_DIR` to an extracted SDK directory to use a local copy.
+Run Cargo from a Visual Studio developer terminal. CI and release builds set up LLVM too.
+
+In Settings → Audio, select the audio driver, device, sample rate and requested buffer size.
+WASAPI uses shared mode and requests elevated audio thread priority. ASIO requires an installed
+device driver and uses the same interface for input and output. Both directions share the
+output's rate and buffer size. Switching drivers stops playback and reopens monitoring;
+settings cannot change during a recording take.
+
+The applied buffer readout comes from the running backend, and may differ from the requested
+size when the driver clamps it or rejects a fixed size. Its duration is for one buffer, not
+the time from a key press to sound or the input-to-output round trip. Start with 128 or 256
+frames and increase the size if audio drops out. Measure end-to-end latency with a hardware
+loopback when evaluating a particular interface.
 
 Two differences are worth knowing about. Commands bound to ⌘ on macOS are bound to Ctrl here,
 including the ⌘-click that places a note; the settings window shows whichever the keyboard in

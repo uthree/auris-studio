@@ -138,6 +138,16 @@ pub mod architecture {
     //!
     //! # The two threads
     //!
+    //! Audio preferences select a host as well as a device. Windows builds include WASAPI
+    //! (the default shared-mode host) and ASIO, with CPAL's realtime priority support enabled.
+    //! ASIO input clones the output's device so both directions share the same driver, stream
+    //! state, sample rate and buffer size. A host or output change closes capture before output
+    //! and reattaches monitoring to the new engine; a recording take refuses such changes.
+    //! ASIO output capabilities are cached before opening a stream, because enumerating other
+    //! drivers while one is loaded is not supported. Hardware buffer size is queried from the
+    //! stream on the control thread; renderer chunk size and requested size are not evidence of
+    //! hardware latency. A buffer's duration is not a round-trip latency measurement.
+    //!
     //! The UI thread owns the [`Project`](auris_core::project::Project), which is the editable
     //! document. The audio thread owns an [`auris_engine::RenderGraph`], which is that document
     //! flattened into something renderable without a single allocation: live plugin instances,

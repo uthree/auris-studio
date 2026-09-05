@@ -50,6 +50,8 @@ pub(crate) fn add_sample_rate_range(rates: &mut Vec<u32>, min: u32, max: u32) {
 /// What to ask the audio backend for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioSettings {
+    /// Backend name, such as `ASIO` or `WASAPI`. `None` uses the platform default.
+    pub host: Option<String>,
     /// Name of the output device to open. `None` uses the system default.
     ///
     /// Matched by name because that is the only stable handle cpal offers across runs — a
@@ -68,6 +70,7 @@ pub struct AudioSettings {
 impl Default for AudioSettings {
     fn default() -> Self {
         Self {
+            host: None,
             device: None,
             sample_rate: None,
             block_frames: None,
@@ -97,7 +100,34 @@ pub struct AudioDeviceInfo {
 /// being queried is skipped rather than failing the whole list — one broken aggregate device
 /// should not hide the working ones.
 pub fn output_devices() -> Vec<AudioDeviceInfo> {
-    let host = cpal::default_host();
+    output_devices_for_host(None)
+}
+
+/// Names of the audio backends available on this platform.
+pub fn audio_hosts() -> Vec<String> {
+    cpal::available_hosts()
+        .into_iter()
+        .map(|id| id.name().to_owned())
+        .collect()
+}
+
+/// Resolves a backend without silently selecting a different one.
+pub(crate) fn audio_host(name: Option<&str>) -> Result<cpal::Host, EngineError> {
+    let Some(name) = name else {
+        return Ok(cpal::default_host());
+    };
+    let id = cpal::available_hosts()
+        .into_iter()
+        .find(|id| id.name().eq_ignore_ascii_case(name))
+        .ok_or_else(|| EngineError::HostUnavailable(name.to_owned()))?;
+    Ok(cpal::host_from_id(id)?)
+}
+
+/// Every output device visible to the selected backend.
+pub fn output_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
+    let Ok(host) = audio_host(name) else {
+        return Vec::new();
+    };
     // `Display` is what `open_output` already records as the device name and what the status
     // bar shows, so matching on it keeps every place that names a device in agreement.
     let default_name = host
@@ -137,6 +167,10 @@ pub fn output_devices() -> Vec<AudioDeviceInfo> {
 /// A running (or silently idle) output stream.
 pub struct AudioDevice {
     stream: Option<cpal::Stream>,
+    // ASIO input must clone this device: re-enumeration creates separate stream state.
+    pub(crate) hardware: Option<cpal::Device>,
+    host: Option<String>,
+    outputs: Vec<AudioDeviceInfo>,
     /// A second reading end of the command queue, so that a queue nothing is consuming — no
     /// device at all, or a stream that died — can still be drained from the UI thread.
     idle_commands: Option<Receiver<EngineCommand>>,
@@ -151,6 +185,28 @@ pub struct AudioDevice {
 }
 
 impl AudioDevice {
+    /// Backend actually opened, or `None` in silent mode.
+    pub fn host(&self) -> Option<&str> {
+        self.host.as_deref()
+    }
+
+    /// Hardware buffer size reported by the stream, never the renderer's chunk size.
+    pub fn buffer_frames(&self) -> Option<u32> {
+        if !self.is_running() {
+            return None;
+        }
+        self.stream
+            .as_ref()?
+            .buffer_size()
+            .ok()
+            .filter(|frames| *frames > 0)
+    }
+
+    /// ASIO devices captured before opening the driver, which then prevents enumeration.
+    pub fn cached_outputs(&self) -> &[AudioDeviceInfo] {
+        &self.outputs
+    }
+
     /// `true` when a real output stream is open and still alive.
     ///
     /// A stream whose device was unplugged still *exists* — cpal only reports the error — so
@@ -340,6 +396,9 @@ fn start_with_device(
     };
     let device = AudioDevice {
         stream: Some(stream),
+        hardware: Some(setup.device),
+        host: Some(setup.host),
+        outputs: setup.outputs,
         // The clone matters: while the stream is alive its engine is the queue's consumer and
         // `discard_pending` refuses to compete with it, but the moment the error callback
         // declares the stream dead, this is what lets the queue be drained at all.
@@ -387,6 +446,9 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
     };
     let device = AudioDevice {
         stream: None,
+        hardware: None,
+        host: None,
+        outputs: Vec::new(),
         idle_commands: Some(command_rx),
         running: Arc::clone(&handle.running),
         name: "silent".to_string(),
@@ -400,6 +462,8 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
 
 /// Everything resolved about the chosen output before a stream exists.
 struct DeviceSetup {
+    host: String,
+    outputs: Vec<AudioDeviceInfo>,
     device: cpal::Device,
     config: StreamConfig,
     sample_format: SampleFormat,
@@ -408,7 +472,12 @@ struct DeviceSetup {
 }
 
 fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
-    let host = cpal::default_host();
+    let host = audio_host(settings.host.as_deref())?;
+    let outputs = if host.id().name() == "ASIO" {
+        output_devices_for_host(settings.host.as_deref())
+    } else {
+        Vec::new()
+    };
     // A named device that has since been unplugged falls back to the default rather than
     // refusing to start: losing the interface should not also lose the session.
     let device = settings
@@ -455,6 +524,8 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
     };
 
     Ok(DeviceSetup {
+        host: host.id().name().to_owned(),
+        outputs,
         name: device.to_string(),
         device,
         config,
@@ -1709,12 +1780,22 @@ mod tests {
         assert!(!handle.is_running());
         assert!(!device.is_running());
         assert_eq!(device.name(), "silent");
+        assert_eq!(device.host(), None);
+        assert_eq!(device.buffer_frames(), None);
         assert_eq!(handle.sample_rate(), 48_000.0);
         handle.send(EngineCommand::Play).expect("queued");
         handle.set_graph(*graph()).expect("queued");
         assert_eq!(handle.collect_garbage(), 0);
         assert_eq!(handle.playhead_frames(), 0);
         assert_eq!(device.discard_pending(), 2);
+    }
+
+    #[test]
+    fn an_unavailable_host_does_not_select_the_default_backend() {
+        assert!(matches!(
+            audio_host(Some("nonexistent-auris-test-host")),
+            Err(EngineError::HostUnavailable(_))
+        ));
     }
 
     #[test]

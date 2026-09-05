@@ -339,6 +339,10 @@ fn core_error_text(error: &CoreError, language: Language) -> String {
 
 fn engine_error_text(error: &EngineError, language: Language) -> String {
     let (english, japanese) = match error {
+        EngineError::HostUnavailable(host) => (
+            format!("audio driver `{host}` is not available"),
+            format!("オーディオドライバー `{host}` は利用できません"),
+        ),
         EngineError::NoOutputDevice => (
             "no default audio output device is available".to_string(),
             "既定のオーディオ出力デバイスがありません".to_string(),

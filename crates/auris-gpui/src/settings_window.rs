@@ -59,6 +59,7 @@ pub struct SettingsWindow {
     tab: SettingsTab,
     /// What the host can see, read once when the window opens.
     devices: AudioDevices,
+    hosts: Vec<String>,
     audio: AudioPreferences,
     keymap: Keymap,
     /// Stored language preference; `None` follows the system.
@@ -143,6 +144,7 @@ impl SettingsWindow {
             theme,
             tab: SettingsTab::General,
             devices,
+            hosts: Session::audio_hosts(),
             audio,
             live: Some(live),
             keymap,
@@ -252,6 +254,7 @@ impl SettingsWindow {
 
     /// Hands new audio preferences to the session and reports what happened.
     fn apply_audio(&mut self, audio: AudioPreferences, cx: &mut Context<Self>) {
+        let refresh_devices = self.audio.host != audio.host || self.audio.uses_asio();
         let requested = audio.clone();
         let Ok(outcome) = self
             .app
@@ -261,7 +264,10 @@ impl SettingsWindow {
         };
         self.status = match outcome {
             Ok(status) => {
-                self.audio = requested;
+                self.audio = self
+                    .app
+                    .read_with(cx, |app, _| app.session.audio_preferences().clone())
+                    .unwrap_or(requested);
                 status
             }
             Err(error) => crate::i18n::error_text(&error, self.language),
@@ -271,6 +277,14 @@ impl SettingsWindow {
             .app
             .read_with(cx, |app, _| app.session.audio_status())
             .ok();
+        if refresh_devices
+            && let Ok(devices) = self.app.read_with(cx, |app, _| AudioDevices {
+                output: app.session.output_devices(),
+                input: app.session.input_devices(),
+            })
+        {
+            self.devices = devices;
+        }
         cx.notify();
     }
 
@@ -637,11 +651,58 @@ impl SettingsWindow {
 
         let mut rows: Vec<AnyElement> = Vec::new();
 
+        rows.push(section_title(self.t(Key::AudioHost), &theme));
+        let mut hosts: Vec<Option<String>> = vec![None];
+        hosts.extend(self.hosts.iter().cloned().map(Some));
+        if !hosts.contains(&audio.host) {
+            hosts.push(audio.host.clone());
+        }
+        rows.push(
+            div()
+                .flex()
+                .flex_wrap()
+                .gap_1()
+                .children(hosts.into_iter().enumerate().map(|(index, host)| {
+                    button(
+                        ("audio-host", index),
+                        host.clone()
+                            .unwrap_or_else(|| self.t(Key::SystemDefaultDevice).to_owned()),
+                        ButtonStyle::Normal,
+                        audio.host == host,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            if this.audio.host != host {
+                                this.apply_audio(
+                                    AudioPreferences {
+                                        host: host.clone(),
+                                        device: None,
+                                        input_device: None,
+                                        sample_rate: None,
+                                        ..this.audio.clone()
+                                    },
+                                    cx,
+                                );
+                            }
+                        }),
+                    )
+                }))
+                .into_any_element(),
+        );
+        rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::OutputDevice), &theme));
         rows.push(self.device_row(
             "device-default",
-            self.t(Key::SystemDefaultDevice),
-            self.t(Key::SystemDefaultDeviceDetail),
+            self.t(if audio.uses_asio() {
+                Key::FirstAsioDevice
+            } else {
+                Key::SystemDefaultDevice
+            }),
+            self.t(if audio.uses_asio() {
+                Key::FirstAsioDeviceDetail
+            } else {
+                Key::SystemDefaultDeviceDetail
+            }),
             None,
             DeviceSlot::Output,
             cx,
@@ -660,25 +721,29 @@ impl SettingsWindow {
 
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::InputDevice), &theme));
-        rows.push(note(self.t(Key::InputDeviceNote), &theme));
-        rows.push(self.device_row(
-            "input-default",
-            self.t(Key::SystemDefaultDevice),
-            self.t(Key::SystemDefaultDeviceDetail),
-            None,
-            DeviceSlot::Input,
-            cx,
-        ));
-        for (index, device) in self.devices.input.clone().into_iter().enumerate() {
-            let detail = describe(&device, self.language);
+        if audio.uses_asio() {
+            rows.push(note(self.t(Key::AsioInputNote), &theme));
+        } else {
+            rows.push(note(self.t(Key::InputDeviceNote), &theme));
             rows.push(self.device_row(
-                ("input", index),
-                &device.name.clone(),
-                &detail,
-                Some(device.name),
+                "input-default",
+                self.t(Key::SystemDefaultDevice),
+                self.t(Key::SystemDefaultDeviceDetail),
+                None,
                 DeviceSlot::Input,
                 cx,
             ));
+            for (index, device) in self.devices.input.clone().into_iter().enumerate() {
+                let detail = describe(&device, self.language);
+                rows.push(self.device_row(
+                    ("input", index),
+                    &device.name.clone(),
+                    &detail,
+                    Some(device.name),
+                    DeviceSlot::Input,
+                    cx,
+                ));
+            }
         }
 
         rows.push(divider(&theme).into_any_element());
@@ -707,6 +772,20 @@ impl SettingsWindow {
 
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::BufferSize), &theme));
+        rows.push(note(self.t(Key::RequestedBufferNote), &theme));
+        let actual = live
+            .as_ref()
+            .and_then(|status| {
+                let frames = status.buffer_frames?;
+                Some(messages::actual_buffer(
+                    self.language,
+                    status.host.as_deref().unwrap_or(""),
+                    frames,
+                    f64::from(frames) / status.sample_rate.max(1.0) * 1000.0,
+                ))
+            })
+            .unwrap_or_else(|| self.t(Key::ActualBufferUnknown).to_owned());
+        rows.push(note(&actual, &theme));
         rows.push(
             div()
                 .flex()

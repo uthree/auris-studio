@@ -6,6 +6,10 @@
 //! are different pieces of hardware, on their own crystals. What follows is what that costs and
 //! what is done about it.
 //!
+//! ASIO keeps the two streams on one cloned device and shares its clock and buffers. Use
+//! [`start_capture_for_output`] for that arrangement; re-enumerating the driver would create
+//! independent stream state and lose the output buffers when input is prepared.
+//!
 //! # Where a take lands on the timeline
 //!
 //! The first block to arrive reads the engine's playhead and writes it down, so a take begins at
@@ -57,7 +61,7 @@ use cpal::{
 };
 use crossbeam_channel::{Receiver, Sender};
 
-use crate::device::{AudioDeviceInfo, add_sample_rate_range};
+use crate::device::{AudioDevice, AudioDeviceInfo, add_sample_rate_range, audio_host};
 use crate::error::EngineError;
 use crate::handle::EngineHandle;
 use crate::monitor::MonitorRing;
@@ -101,7 +105,14 @@ const NOT_STARTED: u64 = u64::MAX;
 /// talks to the OS audio server, so call it when a settings panel opens rather than every frame,
 /// and a device that errors while being queried is skipped rather than losing the whole list.
 pub fn input_devices() -> Vec<AudioDeviceInfo> {
-    let host = cpal::default_host();
+    input_devices_for_host(None)
+}
+
+/// Every input device visible to the selected backend.
+pub fn input_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
+    let Ok(host) = audio_host(name) else {
+        return Vec::new();
+    };
     let default_name = host.default_input_device().map(|device| device.to_string());
 
     let Ok(devices) = host.input_devices() else {
@@ -141,6 +152,8 @@ pub fn input_devices() -> Vec<AudioDeviceInfo> {
 /// ordinary case, not the exotic one.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CaptureSettings {
+    /// Backend name. `None` uses the platform default.
+    pub host: Option<String>,
     /// Name of the input device to open. `None` uses the system default.
     pub device: Option<String>,
     /// Preferred sample rate in Hz. Ignored when the device cannot do it.
@@ -676,7 +689,52 @@ pub fn start_capture(
     settings: &CaptureSettings,
     engine: &EngineHandle,
 ) -> Result<Capture, EngineError> {
-    let setup = open_input(settings)?;
+    start_capture_with_setup(open_input(settings)?, engine)
+}
+
+/// Opens ASIO input on the output device's shared driver and clock.
+/// Other backends retain independent input device selection.
+pub fn start_capture_for_output(
+    settings: &CaptureSettings,
+    engine: &EngineHandle,
+    output: &AudioDevice,
+) -> Result<Capture, EngineError> {
+    if settings
+        .host
+        .as_deref()
+        .is_some_and(|host| host.eq_ignore_ascii_case("ASIO"))
+        && (output.host() != Some("ASIO") || !output.is_running())
+    {
+        return Err(EngineError::NotRunning);
+    }
+    if output.host() != Some("ASIO") {
+        return start_capture(settings, engine);
+    }
+    let device = output.hardware.clone().ok_or(EngineError::NoInputDevice)?;
+    let settings = CaptureSettings {
+        sample_rate: Some(output.sample_rate() as u32),
+        block_frames: output.buffer_frames().or(settings.block_frames),
+        ..settings.clone()
+    };
+    start_capture_with_setup(input_setup(&settings, device)?, engine)
+}
+
+/// Input capabilities of an already-open output driver, without loading another driver.
+pub fn shared_input_device(output: &AudioDevice) -> Option<AudioDeviceInfo> {
+    let device = output.hardware.as_ref()?;
+    let config = device.default_input_config().ok()?;
+    Some(AudioDeviceInfo {
+        name: device.to_string(),
+        is_default: true,
+        sample_rates: vec![output.sample_rate() as u32],
+        max_channels: config.channels(),
+    })
+}
+
+fn start_capture_with_setup(
+    setup: InputSetup,
+    engine: &EngineHandle,
+) -> Result<Capture, EngineError> {
     let channels = setup.config.channels as usize;
     let sample_rate = f64::from(setup.config.sample_rate);
 
@@ -686,22 +744,26 @@ pub fn start_capture(
     sink.channels = channels;
     shared.running.store(true, Ordering::Relaxed);
 
-    if !matches!(
-        setup.sample_format,
-        SampleFormat::F32 | SampleFormat::I16 | SampleFormat::U16
-    ) {
-        return Err(EngineError::UnsupportedSampleFormat(
-            setup.sample_format.to_string(),
-        ));
-    }
-
     let stream = input_with_buffer_fallback(setup.config, |config| {
         let on_error = input_error_handler(Arc::clone(&shared));
         match setup.sample_format {
             SampleFormat::F32 => input_stream::<f32>(&setup.device, config, sink.clone(), on_error),
             SampleFormat::I16 => input_stream::<i16>(&setup.device, config, sink.clone(), on_error),
             SampleFormat::U16 => input_stream::<u16>(&setup.device, config, sink.clone(), on_error),
-            _ => unreachable!("the input sample format was validated above"),
+            SampleFormat::I8 => input_stream::<i8>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::I24 => {
+                input_stream::<cpal::I24>(&setup.device, config, sink.clone(), on_error)
+            }
+            SampleFormat::I32 => input_stream::<i32>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::I64 => input_stream::<i64>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::U8 => input_stream::<u8>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::U24 => {
+                input_stream::<cpal::U24>(&setup.device, config, sink.clone(), on_error)
+            }
+            SampleFormat::U32 => input_stream::<u32>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::U64 => input_stream::<u64>(&setup.device, config, sink.clone(), on_error),
+            SampleFormat::F64 => input_stream::<f64>(&setup.device, config, sink.clone(), on_error),
+            format => Err(EngineError::UnsupportedSampleFormat(format.to_string())),
         }
     })?;
     stream.play()?;
@@ -779,7 +841,7 @@ struct InputSetup {
 }
 
 fn open_input(settings: &CaptureSettings) -> Result<InputSetup, EngineError> {
-    let host = cpal::default_host();
+    let host = audio_host(settings.host.as_deref())?;
     // A named device that has since been unplugged falls back to the default, exactly as the
     // output does: losing the interface should not also lose the take about to be played.
     let device = settings
@@ -797,6 +859,13 @@ fn open_input(settings: &CaptureSettings) -> Result<InputSetup, EngineError> {
         })
         .or_else(|| host.default_input_device())
         .ok_or(EngineError::NoInputDevice)?;
+    input_setup(settings, device)
+}
+
+fn input_setup(
+    settings: &CaptureSettings,
+    device: cpal::Device,
+) -> Result<InputSetup, EngineError> {
     let supported = device.default_input_config()?;
     let sample_format = supported.sample_format();
     let mut config = supported.config();
@@ -895,6 +964,31 @@ mod tests {
         // test for *that* is `an_open_device_with_no_take_running_records_nothing`.
         capture.begin_take();
         (capture, reader, sink, playhead)
+    }
+
+    #[test]
+    fn asio_input_requires_a_live_shared_output() {
+        let (output, engine) = crate::start_silent(&crate::AudioSettings::default());
+        let settings = CaptureSettings {
+            host: Some("ASIO".to_owned()),
+            ..CaptureSettings::default()
+        };
+        assert!(matches!(
+            start_capture_for_output(&settings, &engine, &output),
+            Err(EngineError::NotRunning)
+        ));
+    }
+
+    #[test]
+    fn high_resolution_integer_input_keeps_polarity_and_level() {
+        let (_capture, mut reader, mut sink, _) = wired(1);
+        sink.push(&[i32::MIN, 0, 1_073_741_824]);
+        assert_eq!(drained(&mut reader), vec![-1.0, 0.0, 0.5]);
+        sink.push(&[
+            cpal::I24::new(-8_388_608).unwrap(),
+            cpal::I24::new(4_194_304).unwrap(),
+        ]);
+        assert_eq!(drained(&mut reader), vec![-1.0, 0.5]);
     }
 
     /// Everything `drain` hands over, in one buffer.

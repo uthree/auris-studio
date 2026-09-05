@@ -211,6 +211,10 @@ impl SessionOptions {
 /// What the audio backend ended up doing.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioStatus {
+    /// Backend actually opened, or `None` when running silently.
+    pub host: Option<String>,
+    /// Hardware buffer size, when the backend can report it. Not round-trip latency.
+    pub buffer_frames: Option<u32>,
     /// Device name, or a placeholder when running silently.
     pub device: String,
     /// `true` when a real output stream is open.
@@ -490,9 +494,13 @@ impl Session {
         let fonts = SoundFontBank::shared();
         let registry = default_registry(Arc::clone(&fonts));
         let project = Project::new("Untitled", options.sample_rate);
-        let audio = options.audio_preferences.clone();
+        let mut audio = options.audio_preferences.clone();
+        if audio.uses_asio() {
+            audio.input_device = audio.device.clone();
+        }
 
         let settings = AudioSettings {
+            host: audio.host.clone(),
             device: audio.device.clone(),
             sample_rate: audio.sample_rate.or_else(|| {
                 // A headless engine has no device to ask, so it needs to be told a rate.
@@ -582,6 +590,11 @@ impl Session {
     /// What the audio backend ended up doing, for a status line.
     pub fn audio_status(&self) -> AudioStatus {
         AudioStatus {
+            host: self
+                .device
+                .as_ref()
+                .and_then(|d| d.host().map(str::to_owned)),
+            buffer_frames: self.device.as_ref().and_then(|d| d.buffer_frames()),
             device: self
                 .device
                 .as_ref()
@@ -598,10 +611,20 @@ impl Session {
 
     /// Every output device the host can see, and what each can do.
     ///
-    /// Queried on demand rather than cached: devices come and go while the application runs,
-    /// and this is only called when a settings panel opens.
+    /// Queried when a settings panel opens. ASIO returns the snapshot taken before opening
+    /// output: an active driver prevents enumeration of the other drivers.
     pub fn output_devices(&self) -> Vec<AudioDeviceInfo> {
-        auris_engine::output_devices()
+        if let Some(device) = &self.device
+            && device.host() == Some("ASIO")
+        {
+            return device.cached_outputs().to_vec();
+        }
+        auris_engine::output_devices_for_host(self.audio.host.as_deref())
+    }
+
+    /// Audio backends compiled for and available on this platform.
+    pub fn audio_hosts() -> Vec<String> {
+        auris_engine::audio_hosts()
     }
 
     /// The audio preferences this session was opened with.
@@ -624,10 +647,13 @@ impl Session {
     /// stale engine either way; this is the enforcement its doc comment already assumed.
     pub fn set_audio_preferences(
         &mut self,
-        preferences: AudioPreferences,
+        mut preferences: AudioPreferences,
     ) -> Result<(), SessionError> {
         if self.take.is_some() {
             return Err(SessionError::RecordingInProgress);
+        }
+        if preferences.uses_asio() {
+            preferences.input_device = preferences.device.clone();
         }
         let input_changed = self.audio.input_device != preferences.input_device;
         if !output_changed(&self.audio, &preferences) {
@@ -646,12 +672,16 @@ impl Session {
         // rate, and frames counted at the old one would land somewhere else entirely.
         let playhead = self.engine.playhead_seconds();
         let settings = AudioSettings {
+            host: preferences.host.clone(),
             device: preferences.device.clone(),
             sample_rate: preferences.sample_rate,
             block_frames: Some(preferences.block_frames.max(16)),
             ..AudioSettings::default()
         };
 
+        // Release both directions before loading a different ASIO driver.
+        let had_input = self.input.take().is_some();
+        self.input_channels = None;
         self.device = None;
         let (device, engine) = if self.headless {
             auris_engine::start_silent(&settings)
@@ -666,7 +696,14 @@ impl Session {
         // The capture reads the *engine's* playhead atomic to stamp where a take begins, and this
         // is a different engine. An input left open across the swap would be stamping takes
         // against a clock nothing moves any more.
-        self.restart_input();
+        if had_input && !self.monitored.is_empty() {
+            if let Err(error) = self.open_input() {
+                log::warn!("could not reopen the input device: {error}");
+                self.monitored.clear();
+            } else {
+                self.publish_monitors();
+            }
+        }
         // The new engine starts with no graph, no loop and a playhead at zero.
         self.rebuild_graph();
         self.publish_loop();
@@ -1132,7 +1169,8 @@ impl Session {
 /// starts, so changing it costs nothing that is already running — and restarting for it would
 /// mean the settings window silenced the song to change a microphone.
 fn output_changed(before: &AudioPreferences, after: &AudioPreferences) -> bool {
-    before.device != after.device
+    before.host != after.host
+        || before.device != after.device
         || before.sample_rate != after.sample_rate
         || before.block_frames != after.block_frames
 }
@@ -1171,6 +1209,28 @@ mod tests {
     use auris_core::{ClipId, EffectSlotId, Note};
 
     #[test]
+    fn asio_preferences_share_the_output_device_and_reopen_the_engine() {
+        let mut session = session();
+        session
+            .set_audio_preferences(AudioPreferences {
+                host: Some("ASIO".to_owned()),
+                device: Some("Interface".to_owned()),
+                input_device: Some("Other microphone".to_owned()),
+                sample_rate: Some(96_000),
+                ..AudioPreferences::default()
+            })
+            .unwrap();
+        assert_eq!(
+            session.audio_preferences().input_device.as_deref(),
+            Some("Interface")
+        );
+        assert_eq!(session.sample_rate(), 96_000.0);
+        // A headless engine must never claim that its internal block is a hardware buffer.
+        assert_eq!(session.audio_status().buffer_frames, None);
+        assert_eq!(session.audio_status().host, None);
+    }
+
+    #[test]
     fn choosing_a_microphone_does_not_reopen_the_speakers() {
         // The settings window applies the whole preferences object for any change in it, so
         // without this a user picking an input device would have the song stop, the graph rebuild
@@ -1181,6 +1241,10 @@ mod tests {
         assert!(!output_changed(&base, &input));
 
         for changed in [
+            AudioPreferences {
+                host: Some("ASIO".to_string()),
+                ..input.clone()
+            },
             AudioPreferences {
                 device: Some("Speakers".to_string()),
                 ..input.clone()

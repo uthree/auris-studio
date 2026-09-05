@@ -5,6 +5,10 @@ use thiserror::Error;
 /// Everything that can go wrong in the engine.
 #[derive(Debug, Error)]
 pub enum EngineError {
+    /// A requested host is not available in this build or on this platform.
+    #[error("audio host `{0}` is not available")]
+    HostUnavailable(String),
+
     /// The host reported no default output device.
     #[error("no default audio output device is available")]
     NoOutputDevice,

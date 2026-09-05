@@ -447,6 +447,12 @@ messages! {
         ja: "{frames} · {latency_ms:.1} ms"
     }
 
+    /// The backend's reported buffer size, distinct from the requested size.
+    fn actual_buffer(host: &str, frames: u32, duration_ms: f64) {
+        en: "{host} · Applied output buffer: {frames} frames ({duration_ms:.1} ms per buffer)",
+        ja: "{host} · 適用された出力バッファ: {frames}フレーム（1バッファ {duration_ms:.1} ms）"
+    }
+
     /// What the audio backend is doing right now.
     fn running_device(device: &str, rate: f64, channels: usize, suffix: &str) {
         en: "Running: {device} · {rate:.0} Hz · {channels} ch{suffix}",

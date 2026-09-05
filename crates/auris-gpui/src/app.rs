@@ -2251,8 +2251,8 @@ impl AurisApp {
         &mut self,
         audio: AudioPreferences,
     ) -> Result<String, SessionError> {
-        self.session.set_audio_preferences(audio.clone())?;
-        self.settings.audio = audio;
+        self.session.set_audio_preferences(audio)?;
+        self.settings.audio = self.session.audio_preferences().clone();
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }

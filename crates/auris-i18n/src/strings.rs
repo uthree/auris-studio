@@ -215,6 +215,15 @@ strings! {
         ja: "選んだ時点で表示が切り替わります。プラグイン名は訳がある範囲で追従します。"
     }
     OutputDevice { en: "Output Device", ja: "出力デバイス" }
+    AudioHost { en: "Audio Driver", ja: "オーディオドライバー" }
+    FirstAsioDevice { en: "First Available Driver", ja: "最初に見つかったドライバー" }
+    FirstAsioDeviceDetail { en: "Uses the first available ASIO driver", ja: "最初に利用できるASIOドライバーを使用します" }
+    AsioInputNote { en: "Input and output use the same ASIO driver.", ja: "入力と出力に同じASIOドライバーを使用します。" }
+    RequestedBufferNote {
+        en: "Requested size. The device may use a different size. Milliseconds describe one buffer, not total latency.",
+        ja: "要求するサイズです。デバイスが別のサイズを採用する場合があります。msはバッファ1つ分の時間で、全体の遅延ではありません。"
+    }
+    ActualBufferUnknown { en: "Applied buffer size: unavailable", ja: "適用されたバッファサイズ: 取得できません" }
     InputDevice { en: "Input Device", ja: "入力デバイス" }
     InputDeviceNote {
         en: "Opened only while recording, so changing it does not interrupt playback.",
