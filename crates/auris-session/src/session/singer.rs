@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use auris_core::project::BEND_LIMIT;
 use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
-use auris_singer::VoiceModel;
+use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
     JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_frames,
     render_score, split_kana_lyric,
@@ -21,6 +21,9 @@ use auris_vocal::{
 
 use crate::error::SessionError;
 use crate::history::Edit;
+use crate::voice_setup::{
+    VoicevoxConnection, VoicevoxSpeakerChoice, append_voicevox_speaker, read_voicevox_connection,
+};
 
 use super::Session;
 
@@ -40,6 +43,32 @@ pub const PREVIEW_NOTE_SECONDS: f64 = 0.5;
 
 /// Silence appended after the held note, where the voice lets go of the syllable.
 const PREVIEW_TAIL_SECONDS: f64 = 0.3;
+
+/// A singer's saved identity and any already-loaded metadata, safe to read while rendering.
+#[derive(Clone, Debug)]
+pub struct SingerVoiceInfo {
+    /// The voice's display name saved in the track.
+    pub name: String,
+    /// The entry file resolved against the project folder.
+    pub path: PathBuf,
+    /// The synthesis backend selected by that file.
+    pub backend: BackendKind,
+    /// Available speakers in model order; empty until the voice has been loaded.
+    pub speakers: Vec<String>,
+    /// The selected speaker, or the default speaker when its name is already known.
+    pub speaker: Option<String>,
+    /// Corrections this backend consumes during synthesis.
+    pub capabilities: VoiceCapabilities,
+}
+
+/// Inference stays behind a mutex; immutable metadata is copied once before sharing the model.
+#[derive(Clone)]
+pub(super) struct LoadedVoice {
+    stamp: Option<VoiceStamp>,
+    info: Arc<VoiceInfo>,
+    backend: BackendKind,
+    model: Arc<Mutex<VoiceModel>>,
+}
 
 /// The narrowest a phoneme may be pinned, in seconds.
 ///
@@ -134,6 +163,7 @@ impl Session {
     /// The escape hatch the stored-phonemes design exists for: a reading the table or the
     /// dictionary got wrong, or a language neither knows, corrected symbol by symbol. Empty
     /// tokens are dropped rather than stored — a phoneme with no symbol is nothing to sing.
+    /// A voice must support manual phoneme corrections; otherwise the edit is refused.
     pub fn set_note_phonemes(
         &mut self,
         clip: ClipId,
@@ -141,6 +171,7 @@ impl Session {
         phonemes: Vec<String>,
     ) -> Result<(), SessionError> {
         self.require_note(clip, index)?;
+        self.require_phoneme_support(clip, false)?;
         self.record(Edit::SetPhonemes);
         if let Some(note) = self
             .project
@@ -233,6 +264,7 @@ impl Session {
     /// many-note command extends to a stale selection — and so is a note with no phonemes,
     /// whose placeholder vowel is nothing a person ever placed. Repeated pins on one
     /// boundary fold into one undo step, because a drag arrives as repeats.
+    /// A voice must support manual phoneme timing; otherwise the edit is refused.
     pub fn set_phoneme_duration(
         &mut self,
         clip: ClipId,
@@ -241,6 +273,7 @@ impl Session {
         seconds: Option<f64>,
     ) -> Result<(), SessionError> {
         self.require_note(clip, note)?;
+        self.require_phoneme_support(clip, true)?;
         let count = self
             .project
             .midi_clip(clip)
@@ -281,6 +314,7 @@ impl Session {
     /// Takes every pin off one note, handing the whole syllable back to the timing rule.
     pub fn clear_phoneme_timing(&mut self, clip: ClipId, note: usize) -> Result<(), SessionError> {
         self.require_note(clip, note)?;
+        self.require_phoneme_support(clip, true)?;
         let pinned = self
             .project
             .midi_clip(clip)
@@ -551,7 +585,7 @@ impl Session {
             let render_seconds = singing.elapsed().as_secs_f64();
             let sample_rate = model.info().sample_rate;
             let sung = SungFrames {
-                voice: voice_name(&model, voice),
+                voice: voice_name(model.info(), voice),
                 speaker: model.info().speakers()[speaker as usize].clone(),
                 seconds: samples.len() as f64 / f64::from(sample_rate),
                 sample_rate,
@@ -585,21 +619,16 @@ impl Session {
         self.require_singer(track)?;
         let chosen = match path {
             Some(file) => {
-                let model = self.voice_model_at(file)?;
-                let (name, hop, consonants, levels) = {
-                    let model = model.lock().expect("no thread panics holding a voice");
-                    let name = voice_name(&model, file);
-                    // The consonant widths ride into the document beside the name, for the
-                    // name's reason: the phoneme timing must lay out the same before the
-                    // model file is opened again — or on a machine that does not have it.
-                    (
-                        name,
-                        model.info().hop_seconds(),
-                        // The first speaker's, until one is chosen.
-                        model.info().consonant_widths(0),
-                        model.info().consonant_levels(0),
-                    )
-                };
+                let loaded = self.loaded_voice_at(file)?;
+                let info = &loaded.info;
+                let name = voice_name(info, file);
+                // Copy the first speaker's timing tables into the document, so its layout
+                // does not depend on the model being open or available on another machine.
+                let (hop, consonants, levels) = (
+                    info.hop_seconds(),
+                    info.consonant_widths(0),
+                    info.consonant_levels(0),
+                );
                 let relative = self.project_folder().and_then(|folder| {
                     file.strip_prefix(folder)
                         .ok()
@@ -650,6 +679,129 @@ impl Session {
         Ok(self.require_singer(track)?.voice.as_ref())
     }
 
+    /// Reads a VOICEVOX connection for fetching its current Engine's singer catalogue.
+    ///
+    /// This reads only the small connection JSON: no HTTP request, model load, inference lock,
+    /// file write or project edit occurs. Keep the snapshot with the asynchronous request and
+    /// pass it to [`Self::set_voicevox_speaker`] when the user chooses a result.
+    pub fn singer_voicevox_connection(
+        &self,
+        track: TrackId,
+    ) -> Result<VoicevoxConnection, SessionError> {
+        let path = self.singer_voice_path(track)?;
+        if BackendKind::from_path(&path) != BackendKind::Voicevox {
+            return Err(auris_singer::SingError::Metadata(
+                "This singer does not use a VOICEVOX connection".into(),
+            )
+            .into());
+        }
+        let speaker = self
+            .require_singer(track)?
+            .voice
+            .as_ref()
+            .and_then(|voice| voice.speaker.as_deref());
+        read_voicevox_connection(&path, speaker, track)
+            .map_err(|error| auris_singer::SingError::Metadata(error.to_string()).into())
+    }
+
+    /// Selects an Engine-advertised singing voice without changing existing connection entries.
+    ///
+    /// The caller obtains `choice` from [`crate::VoicevoxCatalog::speaker_choices`]. The snapshot
+    /// must still match this track's connection and speaker, including the connection file's
+    /// original bytes. A new named pair is appended with an atomic file replacement, preserving
+    /// every existing style's name, index and Engine IDs for other tracks and saved projects.
+    /// The track's speaker change is one ordinary undoable edit; Undo keeps the library entry.
+    pub fn set_voicevox_speaker(
+        &mut self,
+        track: TrackId,
+        connection: &VoicevoxConnection,
+        choice: &VoicevoxSpeakerChoice,
+    ) -> Result<(), SessionError> {
+        if &self.singer_voicevox_connection(track)? != connection {
+            return Err(auris_singer::SingError::Metadata(
+                "The VOICEVOX connection or selected speaker changed; fetch the singers again"
+                    .into(),
+            )
+            .into());
+        }
+        // Validate the original configuration through the actual backend before writing. Loading
+        // VOICEVOX reads JSON only, and the copied metadata never waits for an in-flight render.
+        self.loaded_voice_at(&connection.path)?;
+        append_voicevox_speaker(connection, choice).map_err(|error| {
+            SessionError::from(auris_singer::SingError::Metadata(error.to_string()))
+        })?;
+        // Appending can leave a filesystem stamp unchanged on a coarse clock. Explicit eviction
+        // also keeps already-running models alive through their worker's Arc without blocking.
+        self.voices.remove(&connection.path);
+        self.set_singer_speaker(track, Some(&choice.name))
+    }
+
+    /// Snapshots the selected voice for an artwork worker without any I/O or inference lock.
+    ///
+    /// Repainting may call this method. Run [`crate::load_singer_portrait`] on a worker only
+    /// when the source changes or the user requests a refresh, and cache missing artwork and
+    /// errors too. The default speaker stays `None` even after model metadata is loaded.
+    pub fn singer_portrait_source(
+        &self,
+        track: TrackId,
+    ) -> Result<Option<crate::SingerPortraitSource>, SessionError> {
+        let Some(voice) = self.require_singer(track)?.voice.as_ref() else {
+            return Ok(None);
+        };
+        let path = voice
+            .path
+            .resolve(self.project_folder())
+            .ok_or(SessionError::NoVoice(track.0))?;
+        Ok(Some(crate::SingerPortraitSource {
+            track,
+            backend: BackendKind::from_path(&path),
+            path,
+            speaker: voice.speaker.clone(),
+        }))
+    }
+
+    /// Reads saved and cached voice details without opening files or waiting for inference.
+    ///
+    /// The speaker list remains empty for a cold voice. An explicit action may call
+    /// [`Self::singer_speakers`] to load it; repainting a window must not load a model.
+    pub fn singer_voice_info(
+        &self,
+        track: TrackId,
+    ) -> Result<Option<SingerVoiceInfo>, SessionError> {
+        let Some(voice) = self.require_singer(track)?.voice.as_ref() else {
+            return Ok(None);
+        };
+        let path = voice
+            .path
+            .resolve(self.project_folder())
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let loaded = self.voices.get(&path);
+        let backend = loaded.map_or_else(|| BackendKind::from_path(&path), |voice| voice.backend);
+        let speakers = loaded
+            .map(|voice| voice.info.speakers())
+            .unwrap_or_default();
+        let speaker = voice.speaker.clone().or_else(|| speakers.first().cloned());
+        Ok(Some(SingerVoiceInfo {
+            name: voice.name.clone(),
+            path,
+            backend,
+            speakers,
+            speaker,
+            capabilities: backend.capabilities(),
+        }))
+    }
+
+    /// The corrections a track's backend can use, without loading the voice.
+    ///
+    /// A track with no voice supports authoring phonemes and timing for a future voice.
+    pub fn singer_capabilities(&self, track: TrackId) -> Result<VoiceCapabilities, SessionError> {
+        let singer = self.require_singer(track)?;
+        let backend = singer.voice.as_ref().map_or(BackendKind::Auris, |voice| {
+            BackendKind::from_path(voice.path.as_stored())
+        });
+        Ok(backend.capabilities())
+    }
+
     /// Tells a singer track which of its voice's speakers sings: a name from
     /// [`Session::singer_speakers`], or `None` for the model's first.
     ///
@@ -660,10 +812,9 @@ impl Session {
         track: TrackId,
         speaker: Option<&str>,
     ) -> Result<(), SessionError> {
-        let model = self.singer_voice_model(track)?;
+        let info = self.singer_metadata(track)?;
         let (chosen, consonants, levels) = {
-            let model = model.lock().expect("no thread panics holding a voice");
-            let offered = model.info().speakers();
+            let offered = info.speakers();
             let id = match speaker {
                 Some(name) => offered
                     .iter()
@@ -679,8 +830,8 @@ impl Session {
             // whether the model file is present.
             (
                 speaker.map(str::to_string),
-                model.info().consonant_widths(id),
-                model.info().consonant_levels(id),
+                info.consonant_widths(id),
+                info.consonant_levels(id),
             )
         };
         self.record(Edit::SetSingerSpeaker);
@@ -702,9 +853,7 @@ impl Session {
     /// Opens the model, so it costs what choosing the voice cost; a track with no voice
     /// refuses the way singing does.
     pub fn singer_speakers(&mut self, track: TrackId) -> Result<Vec<String>, SessionError> {
-        let model = self.singer_voice_model(track)?;
-        let model = model.lock().expect("no thread panics holding a voice");
-        Ok(model.info().speakers())
+        Ok(self.singer_metadata(track)?.speakers())
     }
 
     /// The id the track's chosen speaker has in its voice model, for a caller's own render.
@@ -717,9 +866,8 @@ impl Session {
             .voice
             .as_ref()
             .and_then(|voice| voice.speaker.clone());
-        let model = self.singer_voice_model(track)?;
-        let model = model.lock().expect("no thread panics holding a voice");
-        speaker_id(model.info(), chosen.as_deref())
+        let info = self.singer_metadata(track)?;
+        speaker_id(&info, chosen.as_deref())
     }
 
     /// Renders a singer track through its voice model and keeps the result as its take.
@@ -768,14 +916,9 @@ impl Session {
             .resolve(Some(folder))
             .ok_or(SessionError::NoVoice(track.0))?;
         let fingerprint = take_fingerprint(&frames, &voice.path, voice.speaker.as_deref(), seed);
-        let model = self.voice_model_at(&resolved)?;
-        let (speaker, sample_rate) = {
-            let model = model.lock().expect("no thread panics holding a voice");
-            (
-                speaker_id(model.info(), voice.speaker.as_deref())?,
-                model.info().sample_rate,
-            )
-        };
+        let loaded = self.loaded_voice_at(&resolved)?;
+        let speaker = speaker_id(&loaded.info, voice.speaker.as_deref())?;
+        let sample_rate = loaded.info.sample_rate;
         Ok(SingPlan {
             track,
             frames,
@@ -797,13 +940,25 @@ impl Session {
         &mut self,
         track: TrackId,
     ) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
-        let singer = self.require_singer(track)?;
-        let voice = singer.voice.clone().ok_or(SessionError::NoVoice(track.0))?;
-        let resolved = voice
+        let resolved = self.singer_voice_path(track)?;
+        self.voice_model_at(&resolved)
+    }
+
+    fn singer_voice_path(&self, track: TrackId) -> Result<PathBuf, SessionError> {
+        let voice = self
+            .require_singer(track)?
+            .voice
+            .as_ref()
+            .ok_or(SessionError::NoVoice(track.0))?;
+        voice
             .path
             .resolve(self.project_folder())
-            .ok_or(SessionError::NoVoice(track.0))?;
-        self.voice_model_at(&resolved)
+            .ok_or(SessionError::NoVoice(track.0))
+    }
+
+    fn singer_metadata(&mut self, track: TrackId) -> Result<Arc<VoiceInfo>, SessionError> {
+        let path = self.singer_voice_path(track)?;
+        Ok(self.loaded_voice_at(&path)?.info)
     }
 
     /// The frames one auditioned note would sing, in a singer track's voice.
@@ -923,18 +1078,28 @@ impl Session {
 
     /// The loaded model behind a plan's voice, for rendering on a caller's thread.
     pub fn voice_model_at(&mut self, file: &Path) -> Result<Arc<Mutex<VoiceModel>>, SessionError> {
+        Ok(self.loaded_voice_at(file)?.model)
+    }
+
+    fn loaded_voice_at(&mut self, file: &Path) -> Result<LoadedVoice, SessionError> {
         let stamp = voice_stamp(file);
-        if let Some((cached_stamp, loaded)) = self.voices.get(file)
-            && stamp.as_ref() == Some(cached_stamp)
+        if let Some(loaded) = self.voices.get(file)
+            && stamp.is_some()
+            && stamp == loaded.stamp
         {
-            return Ok(Arc::clone(loaded));
+            return Ok(loaded.clone());
         }
-        let model = Arc::new(Mutex::new(VoiceModel::load(file, self.acceleration)?));
-        if let Some(stamp) = stamp {
-            self.voices
-                .insert(file.to_path_buf(), (stamp, Arc::clone(&model)));
+        let model = VoiceModel::load(file, self.acceleration)?;
+        let loaded = LoadedVoice {
+            stamp,
+            info: Arc::new(model.info().clone()),
+            backend: model.backend_kind(),
+            model: Arc::new(Mutex::new(model)),
+        };
+        if stamp.is_some() {
+            self.voices.insert(file.to_path_buf(), loaded.clone());
         }
-        Ok(model)
+        Ok(loaded)
     }
 
     /// Chooses where singer voices run their inference, from now on.
@@ -1050,18 +1215,69 @@ impl Session {
         let Some(take) = &singer.take else {
             return Ok(SingerTakeState::Absent);
         };
-        let Some(voice) = &singer.voice else {
+        if singer.voice.is_none() {
             // The voice was taken away after the take was rendered; whatever the notes say now,
             // nothing could render them again unchanged.
             return Ok(SingerTakeState::Behind);
-        };
-        let frames = render_frames(singer, &self.project.tempo_map);
-        match take_fingerprint(&frames, &voice.path, voice.speaker.as_deref(), take.seed)
-            == take.fingerprint
-        {
+        }
+        match self.singer_input_fingerprint(track)? == take.fingerprint {
             true => Ok(SingerTakeState::Current),
             false => Ok(SingerTakeState::Behind),
         }
+    }
+
+    /// Identifies the track's current synthesis inputs without loading or locking its model.
+    pub fn singer_input_fingerprint(&self, track: TrackId) -> Result<u64, SessionError> {
+        let singer = self.require_singer(track)?;
+        let voice = singer
+            .voice
+            .as_ref()
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let seed = singer.take.as_ref().map_or(0, |take| take.seed);
+        let frames = render_frames(singer, &self.project.tempo_map);
+        Ok(take_fingerprint(
+            &frames,
+            &voice.path,
+            voice.speaker.as_deref(),
+            seed,
+        ))
+    }
+
+    fn require_phoneme_support(&self, clip: ClipId, timing: bool) -> Result<(), SessionError> {
+        let (track, _) = self
+            .project
+            .midi_clip(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        // Note edits also apply to ordinary MIDI tracks, where phonemes can be authored before
+        // the material is moved to a singer. Only a selected backend can limit the operation.
+        let Some(singer) = self
+            .project
+            .track(track)
+            .and_then(|track| track.kind.as_singer())
+        else {
+            return Ok(());
+        };
+        let Some(voice) = &singer.voice else {
+            return Ok(());
+        };
+        let capabilities = BackendKind::from_path(voice.path.as_stored()).capabilities();
+        if if timing {
+            capabilities.phoneme_timing
+        } else {
+            capabilities.manual_phonemes
+        } {
+            return Ok(());
+        }
+        Err(auris_singer::SingError::Unsupported {
+            backend: "VOICEVOX",
+            reason: if timing {
+                "manual phoneme timing"
+            } else {
+                "manual IPA pronunciation"
+            }
+            .into(),
+        }
+        .into())
     }
 
     /// The note, or the error naming what was missing — asked before an edit is recorded.
@@ -1147,8 +1363,8 @@ pub struct SungFrames {
 }
 
 /// The name a voice goes by in a document: its card's, or its file's where the card has none.
-fn voice_name(model: &VoiceModel, file: &Path) -> String {
-    let card = model.info().display_name();
+fn voice_name(info: &VoiceInfo, file: &Path) -> String {
+    let card = info.display_name();
     match card.is_empty() {
         true => file
             .file_stem()
@@ -1255,7 +1471,7 @@ pub fn take_fingerprint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::fixtures::session;
+    use crate::session::fixtures::{Scratch, session};
     use auris_core::time::Ticks;
     use auris_core::{Note, default_frame_hop};
 
@@ -1275,6 +1491,430 @@ mod tests {
                 .unwrap();
         }
         (session, track, clip)
+    }
+
+    fn voicevox_fixture(scratch: &Scratch) -> PathBuf {
+        let path = scratch.join("test.voicevox.json");
+        std::fs::write(
+            &path,
+            r#"{
+            "format_version": 1, "name": "Test voice", "url": "http://127.0.0.1:1",
+            "styles": [
+                {"name": "First", "query_style_id": 6000, "decode_style_id": 3001},
+                {"name": "Second", "query_style_id": 6000, "decode_style_id": 3002}
+            ]
+        }"#,
+        )
+        .unwrap();
+        path
+    }
+
+    #[test]
+    fn selecting_an_engine_singer_preserves_legacy_styles_and_survives_save_and_undo() {
+        let scratch = Scratch::new("voicevox-catalog-selection");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        let other = session.add_singer_track("Other singer");
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        session.set_singer_voice(other, Some(&path)).unwrap();
+        session.set_singer_speaker(other, Some("Second")).unwrap();
+        let old_model = session.singer_voice_model(track).unwrap();
+        let original: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        session.voices.clear();
+        let before = session.revision();
+        let connection = session.singer_voicevox_connection(track).unwrap();
+        assert_eq!(connection.speaker, "First");
+        assert_eq!(connection.query_style_id, 6000);
+        assert_eq!(connection.decode_style_id, 3001);
+        assert!(
+            session.voices.is_empty(),
+            "reading a catalogue snapshot cannot load a model"
+        );
+        assert_eq!(
+            before,
+            session.revision(),
+            "discovery cannot edit the project"
+        );
+        assert_eq!(
+            original,
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&path).unwrap()).unwrap()
+        );
+
+        let choice = VoicevoxSpeakerChoice {
+            name: "ずんだもん / ノーマル".into(),
+            query_style_id: 6000,
+            decode_style_id: 3003,
+        };
+        // A worker can keep using the previous backend while the UI chooses a new speaker.
+        let held = old_model.lock().unwrap();
+        session
+            .set_voicevox_speaker(track, &connection, &choice)
+            .unwrap();
+        drop(held);
+        assert_eq!(session.singer_speaker(track).unwrap(), 2);
+        assert_eq!(session.singer_speaker(other).unwrap(), 1);
+        assert_eq!(
+            session.singer_speakers(track).unwrap(),
+            ["First", "Second", "ずんだもん / ノーマル"]
+        );
+        assert!(!Arc::ptr_eq(
+            &old_model,
+            &session.singer_voice_model(track).unwrap()
+        ));
+        let updated: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(updated["styles"][0], original["styles"][0]);
+        assert_eq!(updated["styles"][1], original["styles"][1]);
+        assert_eq!(updated["styles"][2]["decode_style_id"], 3003);
+        let saved = session.save_as(&scratch.join("Song.auris")).unwrap();
+        assert_eq!(session.sing_plan(track, None).unwrap().speaker, 2);
+        let mut reopened = crate::session::fixtures::session();
+        reopened.open(&saved.document).unwrap();
+        assert_eq!(reopened.singer_speaker(track).unwrap(), 2);
+        assert_eq!(reopened.singer_speaker(other).unwrap(), 1);
+        session.undo();
+        assert!(
+            session
+                .singer_voice(track)
+                .unwrap()
+                .unwrap()
+                .speaker
+                .is_none()
+        );
+        assert_eq!(session.singer_speaker(track).unwrap(), 0);
+        assert_eq!(session.singer_speaker(other).unwrap(), 1);
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            serde_json::to_vec_pretty(&updated).unwrap(),
+            "undo leaves the added library entry available"
+        );
+    }
+
+    #[test]
+    fn stale_or_conflicting_engine_choices_cannot_change_the_document_or_connection() {
+        let scratch = Scratch::new("voicevox-stale-catalog");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let connection = session.singer_voicevox_connection(track).unwrap();
+        let choice = VoicevoxSpeakerChoice {
+            name: "New singer / Normal".into(),
+            query_style_id: 6000,
+            decode_style_id: 3003,
+        };
+        let other = session.add_singer_track("Same connection");
+        session.set_singer_voice(other, Some(&path)).unwrap();
+        let revision = session.revision();
+        assert!(
+            session
+                .set_voicevox_speaker(other, &connection, &choice)
+                .is_err()
+        );
+        assert_eq!(session.revision(), revision);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        session.set_singer_speaker(track, Some("Second")).unwrap();
+        let revision = session.revision();
+        assert!(
+            session
+                .set_voicevox_speaker(track, &connection, &choice)
+                .is_err()
+        );
+        assert_eq!(session.revision(), revision);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let connection = session.singer_voicevox_connection(track).unwrap();
+        let external_edit = [original.as_slice(), b"\n"].concat();
+        std::fs::write(&path, &external_edit).unwrap();
+        assert!(
+            session
+                .set_voicevox_speaker(track, &connection, &choice)
+                .is_err()
+        );
+        assert_eq!(session.revision(), revision);
+        assert_eq!(std::fs::read(&path).unwrap(), external_edit);
+
+        let connection = session.singer_voicevox_connection(track).unwrap();
+        for name in ["First", "  "] {
+            let invalid = VoicevoxSpeakerChoice {
+                name: name.into(),
+                ..choice.clone()
+            };
+            assert!(
+                session
+                    .set_voicevox_speaker(track, &connection, &invalid)
+                    .is_err()
+            );
+            assert_eq!(session.revision(), revision);
+            assert_eq!(std::fs::read(&path).unwrap(), external_edit);
+        }
+        assert_eq!(
+            session
+                .singer_voice(track)
+                .unwrap()
+                .unwrap()
+                .speaker
+                .as_deref(),
+            Some("Second")
+        );
+    }
+
+    #[test]
+    fn a_selected_catalog_pair_reaches_both_engine_endpoints() {
+        use std::io::{Read, Write};
+        let scratch = Scratch::new("voicevox-selected-engine-ids");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = voicevox_fixture(&scratch);
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("127.0.0.1:1", &address.to_string());
+        std::fs::write(&path, text).unwrap();
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let connection = session.singer_voicevox_connection(track).unwrap();
+        session
+            .set_voicevox_speaker(
+                track,
+                &connection,
+                &VoicevoxSpeakerChoice {
+                    name: "Engine singer / Soft".into(),
+                    query_style_id: 6010,
+                    decode_style_id: 3099,
+                },
+            )
+            .unwrap();
+        session.save_as(&scratch.join("Song.auris")).unwrap();
+        let plan = session.sing_plan(track, None).unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut paths = Vec::new();
+            let deadline = Instant::now() + std::time::Duration::from_secs(5);
+            for index in 0..2 {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(
+                                Instant::now() < deadline,
+                                "Engine request {index} did not arrive"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                        }
+                        Err(error) => panic!("Engine test listener failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let mut chunk = [0; 4096];
+                let header_end = loop {
+                    let count = stream.read(&mut chunk).unwrap();
+                    assert!(count > 0);
+                    bytes.extend_from_slice(&chunk[..count]);
+                    if let Some(at) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break at + 4;
+                    }
+                };
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                paths.push(headers.split_whitespace().nth(1).unwrap().to_string());
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                while bytes.len() < header_end + length {
+                    let read = stream.read(&mut chunk).unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+                let body = if index == 0 {
+                    let request: serde_json::Value =
+                        serde_json::from_slice(&bytes[header_end..header_end + length]).unwrap();
+                    let count: usize = request["notes"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|note| note["frame_length"].as_u64().unwrap() as usize)
+                        .sum();
+                    serde_json::json!({"f0": vec![0.0; count], "volume": vec![0.0; count]})
+                        .to_string()
+                } else {
+                    "{}".into()
+                };
+                let status = if index == 0 {
+                    "200 OK"
+                } else {
+                    "500 Test complete"
+                };
+                write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+            paths
+        });
+        let model = session.singer_voice_model(track).unwrap();
+        assert!(
+            model
+                .lock()
+                .unwrap()
+                .sing_score(&plan.frames, &plan.score, plan.speaker, plan.seed)
+                .is_err()
+        );
+        assert_eq!(
+            worker.join().unwrap(),
+            [
+                "/sing_frame_audio_query?speaker=6010",
+                "/frame_synthesis?speaker=3099"
+            ]
+        );
+    }
+
+    #[test]
+    fn speaker_commands_and_planning_do_not_wait_for_an_active_render() {
+        let scratch = Scratch::new("voice-metadata-lock");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, clip) = sung(1);
+        session.set_note_lyric(clip, 0, "か").unwrap();
+        session.save_as(&scratch.join("Song.auris")).unwrap();
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let notes = session.midi_clip(clip).unwrap().notes.clone();
+        let model = session.singer_voice_model(track).unwrap();
+        let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let worker_model = Arc::clone(&model);
+        let worker = std::thread::spawn(move || {
+            let _render = worker_model.lock().unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .is_ok()
+        });
+        locked_rx.recv().unwrap();
+
+        assert_eq!(session.singer_speakers(track).unwrap(), ["First", "Second"]);
+        session.set_singer_speaker(track, Some("Second")).unwrap();
+        assert_eq!(session.singer_speaker(track).unwrap(), 1);
+        let info = session.singer_voice_info(track).unwrap().unwrap();
+        assert_eq!(info.speaker.as_deref(), Some("Second"));
+        assert_eq!(info.backend, BackendKind::Voicevox);
+        let plan = session.sing_plan(track, None).unwrap();
+        assert_eq!(plan.speaker, 1);
+        assert_eq!(
+            plan.fingerprint,
+            session.singer_input_fingerprint(track).unwrap()
+        );
+        assert!(
+            !session
+                .preview_note_frames(track, 60, &["a".into()])
+                .unwrap()
+                .is_empty()
+        );
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        assert!(Arc::ptr_eq(
+            &model,
+            &session.singer_voice_model(track).unwrap()
+        ));
+        let released = release_tx.send(()).is_ok();
+        let completed_without_timeout = worker.join().unwrap();
+        assert!(
+            released && completed_without_timeout,
+            "metadata reads or switching waited for the render mutex"
+        );
+        assert_eq!(
+            session.midi_clip(clip).unwrap().notes,
+            notes,
+            "switching preserves the notes and lyrics"
+        );
+    }
+
+    #[test]
+    fn reading_voice_details_does_not_open_a_cold_or_missing_model() {
+        let (mut session, track, _) = sung(1);
+        put_voice(&mut session, track);
+        let voice = session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice
+            .as_mut()
+            .unwrap();
+        voice.path = AssetPath::external("/missing/cold.voicevox.json");
+        let info = session.singer_voice_info(track).unwrap().unwrap();
+        assert_eq!(info.backend, BackendKind::Voicevox);
+        assert!(info.speakers.is_empty());
+        assert!(info.speaker.is_none());
+        assert!(!info.capabilities.manual_phonemes);
+        assert!(!info.capabilities.phoneme_timing);
+        assert!(
+            session.voices.is_empty(),
+            "painting the voice details must not load a model"
+        );
+    }
+
+    #[test]
+    fn voicevox_rejects_unsupported_manual_corrections_without_losing_existing_ones() {
+        let scratch = Scratch::new("voicevox-corrections");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, clip) = sung(1);
+        session.set_note_lyric(clip, 0, "か").unwrap();
+        session.set_phoneme_duration(clip, 0, 0, Some(0.1)).unwrap();
+        let notes = session.midi_clip(clip).unwrap().notes.clone();
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let revision = session.revision();
+        for result in [
+            session.set_note_phonemes(clip, 0, vec!["s".into(), "a".into()]),
+            session.set_phoneme_duration(clip, 0, 0, Some(0.2)),
+            session.clear_phoneme_timing(clip, 0),
+        ] {
+            assert!(matches!(
+                result,
+                Err(SessionError::Sing(
+                    auris_singer::SingError::Unsupported { .. }
+                ))
+            ));
+        }
+        assert_eq!(
+            session.revision(),
+            revision,
+            "a rejected edit costs no history entry"
+        );
+        assert_eq!(session.midi_clip(clip).unwrap().notes, notes);
+        session.set_singer_voice(track, None).unwrap();
+        assert!(session.singer_capabilities(track).unwrap().manual_phonemes);
+        session
+            .set_note_phonemes(clip, 0, vec!["s".into(), "a".into()])
+            .unwrap();
+    }
+
+    #[test]
+    fn changed_connection_files_refresh_metadata_beside_the_model() {
+        let scratch = Scratch::new("voice-metadata-refresh");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let old = session.singer_voice_model(track).unwrap();
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("First", "Replacement");
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(
+            session.singer_speakers(track).unwrap(),
+            ["Replacement", "Second"]
+        );
+        let info = session.singer_voice_info(track).unwrap().unwrap();
+        assert_eq!(info.speaker.as_deref(), Some("Replacement"));
+        assert!(!Arc::ptr_eq(
+            &old,
+            &session.singer_voice_model(track).unwrap()
+        ));
     }
 
     #[test]

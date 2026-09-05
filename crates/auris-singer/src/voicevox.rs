@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
-use auris_vocal::{SingerFrames, SingerScore};
+use auris_vocal::{SingerFrames, SingerNote, SingerScore};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -13,6 +13,9 @@ use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
 use crate::{Acceleration, SingError, validate_frames};
 
 const NAME: &str = "VOICEVOX";
+
+/// Gives consonants room before a first-beat note and the decoder context at both boundaries.
+const BOUNDARY_SECONDS: f64 = 1.0;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +54,33 @@ fn default_sample_rate() -> u32 {
 
 fn default_frame_rate() -> f64 {
     93.75
+}
+
+/// Extends boundary rests instead of leaving a one-frame rest immediately before a consonant.
+/// VOICEVOX 0.25.2 rounds that consonant down to zero frames and fails its score query.
+fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingError> {
+    let mut score = score.clone();
+    let rest = || SingerNote {
+        key: None,
+        frame_length: padding,
+        lyric: String::new(),
+    };
+    let extend = |note: &mut SingerNote| -> Result<(), SingError> {
+        note.frame_length = note
+            .frame_length
+            .checked_add(padding)
+            .ok_or_else(|| SingError::Inference("VOICEVOX boundary rest is too long".into()))?;
+        Ok(())
+    };
+    match score.notes.first_mut() {
+        Some(note) if note.key.is_none() && note.lyric.is_empty() => extend(note)?,
+        _ => score.notes.insert(0, rest()),
+    }
+    match score.notes.last_mut() {
+        Some(note) if note.key.is_none() && note.lyric.is_empty() => extend(note)?,
+        _ => score.notes.push(rest()),
+    }
+    Ok(score)
 }
 
 pub(crate) struct VoicevoxBackend {
@@ -234,30 +264,32 @@ impl SingingBackend for VoicevoxBackend {
                 frames.len()
             )));
         }
+        if frames.is_empty() {
+            return Ok(Vec::new());
+        }
         if !progress(0, 2) {
             return Err(SingError::Cancelled);
         }
+        let padding = (self.config.frame_rate * BOUNDARY_SECONDS).ceil() as u32;
+        let padded = padded_score(score, padding)?;
+        let padding = padding as usize;
+        let query_frames = frames.len() + 2 * padding;
         let mut query = self.post_json(
             "/sing_frame_audio_query",
             style.query_style_id,
-            json!({ "notes": score.notes }),
+            json!({ "notes": padded.notes }),
         )?;
         let f0 = query.get("f0").and_then(Value::as_array).map(Vec::len);
         let volume = query.get("volume").and_then(Value::as_array).map(Vec::len);
-        if f0 != Some(frames.len()) || volume != Some(frames.len()) {
+        if f0 != Some(query_frames) || volume != Some(query_frames) {
             return Err(SingError::Inference(format!(
-                "VOICEVOX query returned {f0:?} pitch and {volume:?} volume frames for {} score frames",
-                frames.len()
+                "VOICEVOX query returned {f0:?} pitch and {volume:?} volume frames for {query_frames} score frames"
             )));
         }
-        let mut pitch = frames.f0_hz.clone();
-        let mut energy = frames.energy.clone();
-        if let Some(first) = pitch.first_mut() {
-            *first = 0.0;
-        }
-        if let Some(first) = energy.first_mut() {
-            *first = 0.0;
-        }
+        let mut pitch = vec![0.0; query_frames];
+        let mut energy = vec![0.0; query_frames];
+        pitch[padding..padding + frames.len()].copy_from_slice(&frames.f0_hz);
+        energy[padding..padding + frames.len()].copy_from_slice(&frames.energy);
         query["f0"] = json!(pitch);
         query["volume"] = json!(energy);
         query["outputSamplingRate"] = json!(self.info.sample_rate);
@@ -269,7 +301,19 @@ impl SingingBackend for VoicevoxBackend {
         if !progress(2, 2) {
             return Err(SingError::Cancelled);
         }
-        self.decode_wav(wav)
+        let mut samples = self.decode_wav(wav)?;
+        let hop = self.info.hop_length as usize;
+        let expected = query_frames * hop;
+        if samples.len() != expected {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX returned {} samples for {query_frames} frames; expected {expected}",
+                samples.len()
+            )));
+        }
+        // The padding belongs to this adapter, never to the track's saved score or timeline.
+        samples.drain(..padding * hop);
+        samples.truncate(frames.len() * hop);
+        Ok(samples)
     }
 }
 
@@ -312,8 +356,7 @@ mod tests {
         String::from_utf8(bytes).unwrap()
     }
 
-    fn wav() -> Vec<u8> {
-        let samples = [0_i16, 16_384_i16];
+    fn wav(samples: &[i16]) -> Vec<u8> {
         let data_len = (samples.len() * 2) as u32;
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
@@ -344,22 +387,41 @@ mod tests {
         stream.write_all(body).unwrap();
     }
 
-    #[test]
-    fn score_query_and_frame_synthesis_round_trip_through_the_engine_api() {
+    fn mock_round_trip(
+        frame_rate: f64,
+        padding: usize,
+        opening_rest: bool,
+        short_wave: bool,
+    ) -> (Result<Vec<f32>, SingError>, Vec<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let hop = (24_000.0 / frame_rate).round() as usize;
+        let query_frames = 2 * padding + 2;
         let server = thread::spawn(move || {
             let mut requests = Vec::new();
             let (mut query, _) = listener.accept().unwrap();
             requests.push(read_request(&mut query));
+            let response = json!({
+                "f0": vec![0.0; query_frames],
+                "volume": vec![0.0; query_frames],
+                "phonemes": [],
+                "outputSamplingRate": 24000,
+                "outputStereo": false,
+            });
             answer(
                 &mut query,
                 "application/json",
-                br#"{"f0":[0.0,0.0],"volume":[0.0,0.0],"phonemes":[],"outputSamplingRate":24000,"outputStereo":false}"#,
+                &serde_json::to_vec(&response).unwrap(),
             );
             let (mut synthesis, _) = listener.accept().unwrap();
             requests.push(read_request(&mut synthesis));
-            answer(&mut synthesis, "audio/wav", &wav());
+            let mut samples = vec![-16_384; query_frames * hop];
+            samples[padding * hop..(padding + 1) * hop].fill(8_192);
+            samples[(padding + 1) * hop..(padding + 2) * hop].fill(16_384);
+            if short_wave {
+                samples.pop();
+            }
+            answer(&mut synthesis, "audio/wav", &wav(&samples));
             requests
         });
 
@@ -374,7 +436,7 @@ mod tests {
         std::fs::write(
             &path,
             format!(
-                r#"{{"format_version":1,"name":"Mock singer","url":"http://{address}","sample_rate":24000,"frame_rate":100.0,"styles":[{{"name":"Mock style","query_style_id":6000,"decode_style_id":3001}}]}}"#
+                r#"{{"format_version":1,"name":"Mock singer","url":"http://{address}","sample_rate":24000,"frame_rate":{frame_rate},"styles":[{{"name":"Mock style","query_style_id":6000,"decode_style_id":3001}}]}}"#
             ),
         )
         .unwrap();
@@ -382,18 +444,18 @@ mod tests {
         assert_eq!(model.backend_kind(), BackendKind::Voicevox);
         assert_eq!(model.info().speakers(), ["Mock style"]);
         let frames = SingerFrames {
-            hop_seconds: 0.01,
+            hop_seconds: hop as f64 / 24_000.0,
             inventory: vec!["<sil>".into(), "a".into()],
             phonemes: vec![0, 1],
-            f0_hz: vec![0.0, 440.0],
-            energy: vec![0.0, 0.8],
+            f0_hz: vec![if opening_rest { 0.0 } else { 220.0 }, 440.0],
+            energy: vec![if opening_rest { 0.0 } else { 0.4 }, 0.8],
         };
         let score = SingerScore {
             notes: vec![
                 SingerNote {
-                    key: None,
+                    key: (!opening_rest).then_some(57),
                     frame_length: 1,
-                    lyric: String::new(),
+                    lyric: if opening_rest { "" } else { "ア" }.into(),
                 },
                 SingerNote {
                     key: Some(69),
@@ -402,14 +464,183 @@ mod tests {
                 },
             ],
         };
-        let samples = model.sing_score(&frames, &score, 0, 0).unwrap();
-        assert_eq!(samples, [0.0, 0.5]);
+        let samples = model.sing_score(&frames, &score, 0, 0);
         let requests = server.join().unwrap();
-        assert!(requests[0].starts_with("POST /sing_frame_audio_query?speaker=6000 "));
-        assert!(requests[0].contains("\"lyric\":\"ラ\""));
-        assert!(requests[1].starts_with("POST /frame_synthesis?speaker=3001 "));
-        assert!(requests[1].contains("\"outputSamplingRate\":24000"));
-        assert!(requests[1].contains("440.0"));
         std::fs::remove_file(path).unwrap();
+        (samples, requests)
+    }
+
+    fn request_body(request: &str) -> Value {
+        serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    #[test]
+    fn score_query_and_frame_synthesis_preserve_timeline_after_boundary_padding() {
+        for (frame_rate, padding, hop) in [(93.75, 94, 256), (100.0, 100, 240)] {
+            let (samples, requests) = mock_round_trip(frame_rate, padding, true, false);
+            let samples = samples.unwrap();
+            assert_eq!(samples.len(), 2 * hop);
+            assert_eq!(samples[..hop], vec![0.25; hop]);
+            assert_eq!(samples[hop..], vec![0.5; hop]);
+            assert!(requests[0].starts_with("POST /sing_frame_audio_query?speaker=6000 "));
+            assert!(requests[1].starts_with("POST /frame_synthesis?speaker=3001 "));
+            let score = request_body(&requests[0]);
+            assert_eq!(
+                score["notes"],
+                json!([
+                    {"key": null, "frame_length": padding + 1, "lyric": ""},
+                    {"key": 69, "frame_length": 1, "lyric": "ラ"},
+                    {"key": null, "frame_length": padding, "lyric": ""},
+                ])
+            );
+            let query = request_body(&requests[1]);
+            assert_eq!(query["outputSamplingRate"], 24000);
+            assert_eq!(query["outputStereo"], false);
+            let mut pitch = vec![0.0; 2 * padding + 2];
+            let mut energy = pitch.clone();
+            pitch[padding + 1] = 440.0;
+            energy[padding + 1] = 0.8_f32;
+            assert_eq!(query["f0"], json!(pitch));
+            assert_eq!(query["volume"], json!(energy));
+        }
+    }
+
+    #[test]
+    fn a_score_without_boundary_rests_keeps_its_first_pitch_and_energy() {
+        let (samples, requests) = mock_round_trip(93.75, 94, false, false);
+        assert_eq!(samples.unwrap().len(), 2 * 256);
+        let score = request_body(&requests[0]);
+        assert_eq!(
+            score["notes"][0],
+            json!({"key": null, "frame_length": 94, "lyric": ""})
+        );
+        assert_eq!(score["notes"][1]["lyric"], "ア");
+        let query = request_body(&requests[1]);
+        assert_eq!(query["f0"][94], json!(220.0_f32));
+        assert_eq!(query["volume"][94], json!(0.4_f32));
+    }
+
+    #[test]
+    fn boundary_padding_merges_existing_rests_without_rewriting_the_score() {
+        let score = SingerScore {
+            notes: vec![
+                SingerNote {
+                    key: None,
+                    frame_length: 1,
+                    lyric: String::new(),
+                },
+                SingerNote {
+                    key: Some(60),
+                    frame_length: 46,
+                    lyric: "か".into(),
+                },
+                SingerNote {
+                    key: None,
+                    frame_length: 5,
+                    lyric: String::new(),
+                },
+                SingerNote {
+                    key: Some(62),
+                    frame_length: 46,
+                    lyric: "え".into(),
+                },
+                SingerNote {
+                    key: None,
+                    frame_length: 1,
+                    lyric: String::new(),
+                },
+            ],
+        };
+        let padded = padded_score(&score, 94).unwrap();
+        assert_eq!(padded.notes.len(), score.notes.len());
+        assert_eq!(padded.notes[0].frame_length, 95);
+        assert_eq!(padded.notes[4].frame_length, 95);
+        assert_eq!(padded.notes[1..4], score.notes[1..4]);
+        assert_eq!(score.notes[0].frame_length, 1);
+        assert_eq!(score.notes[4].frame_length, 1);
+    }
+
+    #[test]
+    fn truncated_audio_is_rejected_instead_of_cropping_away_the_last_note() {
+        let (samples, _) = mock_round_trip(93.75, 94, true, true);
+        let error = samples.unwrap_err().to_string();
+        assert!(error.contains("48639 samples"), "{error}");
+        assert!(error.contains("expected 48640"), "{error}");
+    }
+
+    #[test]
+    fn first_beat_consonants_sing_through_a_running_voicevox_engine() {
+        let Ok(url) = std::env::var("AURIS_VOICEVOX_TEST_URL") else {
+            return;
+        };
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "auris-voicevox-live-{}-{unique}.voicevox.json",
+            std::process::id()
+        ));
+        let config = json!({
+            "format_version": 1,
+            "name": "Live test singer",
+            "url": url,
+            "sample_rate": 24000,
+            "frame_rate": 93.75,
+            "styles": [{
+                "name": "Live test style",
+                "query_style_id": 6000,
+                "decode_style_id": 3001,
+            }],
+        });
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let mut model = crate::VoiceModel::load(&path, Acceleration::Auto).unwrap();
+        let mut frames = SingerFrames {
+            hop_seconds: 256.0 / 24000.0,
+            inventory: vec!["<sil>".into(), "a".into()],
+            phonemes: vec![0; 140],
+            f0_hz: vec![0.0; 140],
+            energy: vec![0.0; 140],
+        };
+        let rest = || SingerNote {
+            key: None,
+            frame_length: 1,
+            lyric: String::new(),
+        };
+        let mut score = SingerScore {
+            notes: vec![rest()],
+        };
+        for (index, (pitch, lyric)) in [(60_u8, "か"), (62, "え"), (64, "る")]
+            .into_iter()
+            .enumerate()
+        {
+            score.notes.push(SingerNote {
+                key: Some(pitch),
+                frame_length: 46,
+                lyric: lyric.into(),
+            });
+            let range = 1 + index * 46..1 + (index + 1) * 46;
+            frames.phonemes[range.clone()].fill(1);
+            frames.f0_hz[range.clone()]
+                .fill(440.0 * 2.0_f32.powf((f32::from(pitch) - 69.0) / 12.0));
+            frames.energy[range].fill(0.15);
+        }
+        score.notes.push(rest());
+        let result = model.sing_score(&frames, &score, 0, 0);
+        std::fs::remove_file(path).unwrap();
+        let samples = result.unwrap();
+        assert_eq!(samples.len(), 140 * 256);
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+        let rms = (samples
+            .iter()
+            .map(|sample| f64::from(*sample).powi(2))
+            .sum::<f64>()
+            / samples.len() as f64)
+            .sqrt();
+        assert!(rms > 1.0e-5, "the live Engine returned silence: RMS {rms}");
+        eprintln!(
+            "VOICEVOX live score: {} samples, RMS {rms:.6}",
+            samples.len()
+        );
     }
 }

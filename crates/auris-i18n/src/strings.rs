@@ -841,6 +841,27 @@ strings! {
     DialogChooseVoice { en: "Choose a voice model", ja: "声のモデルを選択" }
     CmdChooseVoice { en: "Choose Voice…", ja: "声を選ぶ…" }
     CmdNextSpeaker { en: "Next Speaker", ja: "次の話者" }
+    SingerVoiceLabel { en: "Voice", ja: "声" }
+    SingerSpeakerLabel { en: "Speaker / style", ja: "話者・スタイル" }
+    SingerDefaultSpeaker { en: "Default speaker", ja: "既定の話者" }
+    SingerPortraitRetry { en: "Retry portrait", ja: "立ち絵を再読み込み" }
+    SingerNoVoice { en: "Choose a voice to sing", ja: "歌唱に使う声を選択してください" }
+    SingerSelectTrack { en: "Select a singer track to choose its voice", ja: "声を変更するシンガートラックを選択してください" }
+    SingerTakeAbsent { en: "Not rendered", ja: "未レンダリング" }
+    SingerTakeCurrent { en: "Up to date", ja: "最新の歌声" }
+    SingerTakeBehind { en: "Needs rendering", ja: "再レンダリング待ち" }
+    SingerRetry { en: "Retry", ja: "再試行" }
+    SingerQueued { en: "Waiting to render", ja: "レンダリング開始待ち" }
+    VoicevoxPhonemesHint {
+        en: "VOICEVOX sets pronunciation and phoneme timing. Change pronunciation through lyrics; pitch and volume remain editable.",
+        ja: "VOICEVOXでは発音と音素の長さをエンジンが決めます。発音は歌詞で変更してください。音程・音量は編集できます。"
+    }
+    VoicevoxPhonemesMenu { en: "VOICEVOX: edit lyrics instead", ja: "VOICEVOX: 発音は歌詞で変更" }
+    VoiceSetupLoadSingers { en: "Load singers", ja: "歌手一覧を取得" }
+    VoiceSetupChooseSingers { en: "Connect to the Engine to choose singing voices by name.", ja: "Engineに接続して、名前から歌声を選んでください。" }
+    VoiceSetupQueryVoice { en: "Melody guide voice", ja: "メロディー生成用の声" }
+    VoiceSetupDecodeVoice { en: "Singing voice", ja: "歌声" }
+    VoiceSetupAdvanced { en: "Advanced settings", ja: "詳細設定" }
     ErrorOneSpeaker { en: "this voice has only one speaker", ja: "この声には話者が 1 人しかいません" }
     CmdSing { en: "Sing", ja: "歌わせる" }
     SingCancelled { en: "Singing stopped; the previous take stands", ja: "歌唱を中止しました。前のテイクのままです" }

@@ -1527,7 +1527,11 @@ impl SettingsWindow {
             // Backspace, the caret, Select All. Shared with every field in the main window
             // rather than written out again here — this box was the fourth copy of the same
             // table, and the four had already drifted apart.
-            key => self.search.apply_key(key, shift, secondary) != KeyEffect::Ignored,
+            key => {
+                self.search
+                    .apply_key_with_clipboard(key, shift, secondary, false, cx)
+                    != KeyEffect::Ignored
+            }
         };
         if claimed {
             cx.notify();

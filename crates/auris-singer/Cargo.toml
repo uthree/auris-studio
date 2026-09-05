@@ -21,6 +21,7 @@ rust-version.workspace = true
 [dependencies]
 auris-core.workspace = true
 auris-vocal.workspace = true
+base64.workspace = true
 hound.workspace = true
 log.workspace = true
 # Pinned to the release candidate `rig`'s optional fastembed support also names: Cargo resolves

@@ -288,14 +288,28 @@ fn relative_luminance(color: Hsla) -> f32 {
     0.2126 * linear(rgba.r) + 0.7152 * linear(rgba.g) + 0.0722 * linear(rgba.b)
 }
 
-/// Near-black or near-white, whichever can be read on `color`, tinted to match a scheme's greys.
-fn readable_on(color: Hsla, scheme: &Scheme) -> Hsla {
-    hsla(
-        scheme.hue,
-        scheme.chroma,
-        if color.l > 0.55 { 0.06 } else { 0.97 },
-        1.0,
-    )
+/// A contrasting label on an opaque fill, tinted to match the scheme's neutral colours.
+fn readable_on(color: Hsla, neutral: Hsla) -> Hsla {
+    let dark = hsla(neutral.h, neutral.s, 0.06, 1.0);
+    let light = hsla(neutral.h, neutral.s, 0.97, 1.0);
+    let (dark_ratio, light_ratio) = (contrast_ratio(dark, color), contrast_ratio(light, color));
+    let best = if dark_ratio >= light_ratio {
+        dark
+    } else {
+        light
+    };
+    if dark_ratio.max(light_ratio) >= 4.5 {
+        return best;
+    }
+    // Near-black and near-white can both fall short on a mid-tone fill. At that boundary,
+    // untinted black or white guarantees readable small text without changing the fill.
+    let black = hsla(0.0, 0.0, 0.0, 1.0);
+    let white = hsla(0.0, 0.0, 1.0, 1.0);
+    if contrast_ratio(black, color) >= contrast_ratio(white, color) {
+        black
+    } else {
+        white
+    }
 }
 
 /// The application colour palette.
@@ -435,7 +449,7 @@ impl Theme {
                 l: (accent.l + 0.18 * scheme.direction()).clamp(0.0, 1.0),
                 ..accent
             },
-            text_on_accent: readable_on(accent, scheme),
+            text_on_accent: readable_on(accent, scheme.shade(0.0)),
             loop_region: Hsla {
                 s: accent.s * 0.6,
                 ..accent
@@ -489,19 +503,15 @@ impl Theme {
         Self::named(DEFAULT_SCHEME)
     }
 
-    /// A label colour that can be read on `color`.
+    /// A label colour with at least 4.5:1 contrast on the opaque fill `color`.
     ///
     /// [`Theme::text_on_accent`] answers this for the accent, and is the right answer only for
     /// the accent. A track's colour is chosen by the user and a meter's by its level, so a label
     /// on either has to ask about *that* colour — a light scheme puts white on its dark accent,
-    /// which is exactly the wrong thing to print on a pale yellow track.
+    /// which is exactly the wrong thing to print on a pale yellow track. Composite translucent
+    /// fills over their backdrop before asking, since their RGB values alone are not the fill.
     pub fn text_on(&self, color: Hsla) -> Hsla {
-        Hsla {
-            h: self.background.h,
-            s: self.background.s,
-            l: if color.l > 0.55 { 0.06 } else { 0.97 },
-            a: 1.0,
-        }
+        readable_on(color, self.background)
     }
 
     /// Colour of a note struck at `velocity`, from softest to hardest.
@@ -779,7 +789,7 @@ mod tests {
                 entry.name
             );
             assert!(
-                (theme.text_on_accent.l - theme.accent.l).abs() > 0.35,
+                contrast_ratio(theme.text_on_accent, theme.accent) >= 4.5,
                 "{}: a label on the accent is unreadable",
                 entry.name
             );
@@ -823,6 +833,33 @@ mod tests {
             (0.15..0.45).contains(&middle),
             "half velocity came out at hue {middle}, which is not on the warm side of green"
         );
+    }
+
+    #[test]
+    fn note_labels_remain_readable_across_every_velocity_and_scheme() {
+        for entry in SCHEMES {
+            let theme = Theme::from_scheme(entry);
+            for velocity in 0..=127 {
+                let fill = theme.velocity_color(velocity as f32 / 127.0);
+                let ratio = contrast_ratio(theme.text_on(fill), fill);
+                assert!(
+                    ratio >= 4.5,
+                    "{}: velocity {velocity} has only {ratio:.2}:1 label contrast",
+                    entry.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn saturated_yellow_and_blue_need_different_label_colours_at_the_same_lightness() {
+        let theme = Theme::named("daylight");
+        let yellow = hsla(1.0 / 6.0, 1.0, 0.5, 1.0);
+        let blue = hsla(2.0 / 3.0, 1.0, 0.5, 1.0);
+        assert!(theme.text_on(yellow).l < 0.5);
+        assert!(theme.text_on(blue).l > 0.5);
+        assert!(contrast_ratio(theme.text_on(yellow), yellow) >= 4.5);
+        assert!(contrast_ratio(theme.text_on(blue), blue) >= 4.5);
     }
 
     #[test]

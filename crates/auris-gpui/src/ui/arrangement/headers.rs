@@ -159,6 +159,7 @@ impl AurisApp {
         // Asked before the track is borrowed: the answer is cached on `self` against the
         // document revision, and reading the cache needs the borrow the track would hold.
         let take_state = self.singer_take_badge(track_id);
+        let singer_label = self.singer_voice_label(track_id);
         let Some(track) = self.project().track(track_id) else {
             return div().into_any_element();
         };
@@ -178,13 +179,8 @@ impl AurisApp {
                 // label, with the one fact about the take worth a glance: whether it is still
                 // what the notes say. Behind is a badge and never a fallback; the take keeps
                 // playing, and this is what says to sing it again.
-                let voice = track
-                    .kind
-                    .as_singer()
-                    .and_then(|singer| singer.voice.as_ref())
-                    .map(|voice| voice.name.clone());
+                let voice = singer_label;
                 let behind = take_state == auris_session::SingerTakeState::Behind;
-                let behind_tip = self.tip(Key::TakeBehind, "");
                 // The voice at work in the background. It outranks `behind` on the badge —
                 // a take being re-sung is behind by definition, and "working on it" is the
                 // truer word — and it is the on-screen sign the CPU is being spent, which
@@ -193,7 +189,11 @@ impl AurisApp {
                     .auto_sing
                     .as_ref()
                     .is_some_and(|auto| auto.track == track_id);
-                let singing_tip = self.tip(Key::TakeRendering, "");
+                let voice_status = match (singing, behind) {
+                    (true, _) => Some(self.t(Key::TakeRendering)),
+                    (false, true) => Some(self.t(Key::TakeBehind)),
+                    (false, false) => None,
+                };
                 let level_db = gain_to_db(self.track_level(index));
                 // Latched by the engine and only put out by asking, so a transient that went
                 // over is still saying so long after the meter beside it has fallen back.
@@ -342,12 +342,24 @@ impl AurisApp {
                                     )
                                     .child(div().text_xs().text_color(theme.text_faint).child(kind))
                                     .when_some(voice, |this, voice| {
+                                        let label_tip = crate::ui::tooltip::keyed_tip(
+                                            match voice_status {
+                                                Some(status) => format!("{voice} · {status}"),
+                                                None => voice.clone(),
+                                            },
+                                            "",
+                                            &theme,
+                                        );
                                         this.child(
                                             div()
                                                 .id(("voice-badge", index))
+                                                .debug_selector(move || {
+                                                    format!("voice-badge-{index}")
+                                                })
                                                 .text_xs()
                                                 .max_w(px(120.0))
                                                 .truncate()
+                                                .tooltip(label_tip)
                                                 .text_color(if singing {
                                                     theme.accent
                                                 } else if behind {
@@ -362,10 +374,6 @@ impl AurisApp {
                                                     (true, _) => format!("… ♪ {voice}"),
                                                     (false, true) => format!("! ♪ {voice}"),
                                                     (false, false) => format!("♪ {voice}"),
-                                                })
-                                                .when(singing, |this| this.tooltip(singing_tip))
-                                                .when(behind && !singing, |this| {
-                                                    this.tooltip(behind_tip)
                                                 }),
                                         )
                                     }),
@@ -601,6 +609,54 @@ mod tests {
     use crate::harness::{choose, right_press, with_a_clip};
     use crate::ui::context_menu::MenuCommand;
     use auris_session::session::MIN_TRACK_HEIGHT;
+
+    #[gpui::test]
+    fn a_singer_badge_can_render_with_current_behind_and_running_feedback(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let path = crate::ui::singer::voicevox_test_file();
+        let (app, cx, track, _) = crate::harness::with_a_singer_clip(cx);
+        let badge_selector = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session.set_singer_voice(track, Some(&path)).unwrap();
+            this.select_track(track);
+            let index = this
+                .project()
+                .tracks
+                .iter()
+                .position(|candidate| candidate.id == track)
+                .unwrap();
+            format!("voice-badge-{index}")
+        });
+        // gpui's selector API retains a static string; one short name lives for this test run.
+        let badge_selector: &'static str = badge_selector.leak();
+        for (state, running) in [
+            (auris_session::SingerTakeState::Current, false),
+            (auris_session::SingerTakeState::Behind, false),
+            (auris_session::SingerTakeState::Behind, true),
+        ] {
+            app.update(cx, |this, _| {
+                // The header consumes this revision-keyed result; no inference is needed to
+                // exercise the three presentations of an otherwise identical singer.
+                let revision = this.session.revision();
+                this.sung_badges_revision = revision;
+                this.sung_badges.insert(track, state);
+                this.auto_sing = running.then(|| crate::app::AutoSing {
+                    track,
+                    fingerprint: 0,
+                    cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    checked: revision,
+                });
+            });
+            crate::harness::paint(&app, cx);
+            assert!(
+                cx.debug_bounds(badge_selector).is_some(),
+                "the voice and state are drawn together"
+            );
+        }
+        app.update(cx, |this, _| this.auto_sing = None);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[gpui::test]
     fn a_right_press_on_the_empty_track_list_can_create_a_track(cx: &mut gpui::TestAppContext) {

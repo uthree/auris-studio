@@ -1058,6 +1058,19 @@ pub mod singing {
     //! referenced where it lies — while its display name is written into the document, so a
     //! track header does not load models merely to draw. Loaded voices are kept for the session,
     //! keyed by path, shared by every track that sings with them.
+    //! [`Session::singer_voice_info`](crate::Session::singer_voice_info) reads the saved identity
+    //! and cached metadata without opening a file or taking the inference mutex. Metadata is
+    //! copied before the model is shared, so inspecting a speaker list or changing the speaker
+    //! does not wait for a running render. A cold voice has no cached speaker list yet; an
+    //! explicit picker action may load it, while repainting the inspector must not.
+    //! Artwork follows a separate path: [`Session::singer_portrait_source`](crate::Session::singer_portrait_source)
+    //! snapshots the selected voice without I/O, and [`load_singer_portrait`](crate::load_singer_portrait)
+    //! reads its optional image on a worker. Native portraits come from `voice.portrait` in ONNX
+    //! metadata without loading the neural graph. VOICEVOX resolves the decoding style's singer
+    //! UUID and requests `/singer_info` in URL format, downloading only the selected style's
+    //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
+    //! missing artwork and failures too, and only displays results for the current saved source
+    //! and view generation. Neither an absent image nor a disconnected Engine changes a singer's take.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a
@@ -1092,8 +1105,10 @@ pub mod singing {
     //! buffer across the command channel — the `SetGraph` discipline in miniature. The
     //! callback only adds the buffer into the track's scratch; a replaced or spent buffer is
     //! never freed there, it travels back up the retired-data channel with the graphs. A
-    //! frontend is expected to cache renders (same voice, seed, pitch and phonemes are the
-    //! same audio) so a drag across pitches is instant everywhere it has already been.
+    //! frontend is expected to cache renders by voice entry path, speaker, seed, pitch and
+    //! phonemes, so a drag across pitches is instant everywhere it has already been. A display
+    //! name does not identify a voice or its speaker, and results from an earlier voice selection
+    //! must not repopulate the cache after that selection changes.
     //!
     //! # A take is kept, never silently rewritten
     //!
@@ -1117,6 +1132,15 @@ pub mod singing {
     //! reading by hand, which only a stored list can remember. The command that sets a lyric
     //! writes both fields; [`Session::set_note_phonemes`](crate::Session::set_note_phonemes)
     //! writes the phonemes alone and leaves the word as spelt.
+    //!
+    //! Which corrections reach the sound is a backend capability, exposed through
+    //! [`Session::singer_capabilities`](crate::Session::singer_capabilities) and
+    //! [`VoiceCapabilities`](crate::VoiceCapabilities). VOICEVOX derives pronunciation and
+    //! phoneme timing from the lyric-bearing score in its Engine; manual IPA and timing pins
+    //! are therefore refused without changing the document. Frontends use these capabilities
+    //! to disable those edits and explain the restriction, while keeping notes, lyrics, pitch
+    //! and volume editable. A track without a voice still permits phoneme authoring for a voice
+    //! chosen later.
     //!
     //! The frame-level representation is never stored. It is a pure function of the track and
     //! the tempo map — [`auris_vocal::render_frames`] — sampled at the track's
@@ -1142,6 +1166,15 @@ pub mod singing {
     //! against the model before recording it, and every path that sings — the take, the
     //! audition, a frames file — resolves it through one rule, so a stale name is refused
     //! at the command and never mid-render.
+    //!
+    //! A VOICEVOX connection can also discover the running Engine's named singers through
+    //! [`crate::fetch_voicevox_catalog`]. Fetching only reads; it never rewrites the connection
+    //! or the document. [`Session::set_voicevox_speaker`](crate::Session::set_voicevox_speaker)
+    //! appends a chosen query/decoder pair while retaining every existing style's name, index
+    //! and IDs. Older projects therefore keep their original voices, including legacy default
+    //! names. The track's named selection is undoable; the shared library entry remains usable.
+    //! A stale connection snapshot is refused before a write, and only catalogue HTTP work
+    //! needs a background thread: reading or switching connection metadata never waits on singing.
     //!
     //! # One vocabulary, two readers
     //!

@@ -521,6 +521,8 @@ pub struct Prompt {
     pub title: SharedString,
     /// What it is asking for.
     pub body: PromptBody,
+    /// The last rejected answer, kept beside the field until it is accepted or cancelled.
+    error: Option<SharedString>,
     /// A Tab walk in progress: what was typed when it began, and how far along it is.
     ///
     /// The text Tab started from has to be kept, because completing *into* the field narrows the
@@ -544,6 +546,7 @@ impl Prompt {
                 target,
                 field: TextField::new(text),
             },
+            error: None,
             completing: None,
         }
     }
@@ -553,6 +556,7 @@ impl Prompt {
         Self {
             title: title.into(),
             body: PromptBody::Ask(question),
+            error: None,
             completing: None,
         }
     }
@@ -565,6 +569,7 @@ impl Prompt {
         Self {
             title: title.into(),
             body: PromptBody::Notice(lines.into_iter().collect()),
+            error: None,
             completing: None,
         }
     }
@@ -655,31 +660,37 @@ impl AurisApp {
         self.prompt = Some(prompt);
     }
 
-    /// Applies the prompt and closes it.
+    /// Applies the prompt, closing it only when its answer is accepted.
     ///
     /// For a question that is the affirmative answer, which is what Return means on a sheet with
     /// a default button.
     pub(crate) fn commit_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(prompt) = self.prompt.take() else {
+        let Some(prompt) = self.prompt.as_ref() else {
             return;
         };
-        let (target, field) = match prompt.body {
-            PromptBody::Text { target, field } => (target, field),
+        let (target, text) = match &prompt.body {
+            // Keep the field itself alive through validation: rebuilding it from the answer
+            // would discard the caret, selection direction and any IME pre-edit.
+            PromptBody::Text { target, field } => (*target, field.content().trim().to_string()),
             PromptBody::Ask(question) => {
+                let question = question.clone();
+                self.close_accepted_prompt();
                 self.answer(question, Answer::Confirm, window, cx);
                 return;
             }
             // Nothing to apply — it has been read, and taking it off the screen is the whole
             // action.
-            PromptBody::Notice(_) => return,
+            PromptBody::Notice(_) => {
+                self.close_accepted_prompt();
+                return;
+            }
         };
-        let text = field.content().trim().to_string();
         // Emptiness means something on the singing fields — take the word or the correction off
         // the note — where everywhere else it would leave an unlabelled row the user cannot
         // tell apart from its neighbours, and an empty key or chord is not a key or a chord.
         let empty_clears = empty_prompt_is_meaningful(target);
         if text.is_empty() && !empty_clears {
-            self.set_status(self.t(Key::NameCannotBeEmpty));
+            self.reject_prompt(self.t(Key::NameCannotBeEmpty));
             return;
         }
         let outcome = match target {
@@ -688,6 +699,7 @@ impl AurisApp {
             PromptTarget::Lyric { clip, index } => {
                 match self.session.set_note_lyric(clip, index, &text) {
                     Ok(()) => {
+                        self.close_accepted_prompt();
                         // Walk on to the next note in sung order, carrying the sheet along, so
                         // Return after Return lays a whole line in. The walk ends where the
                         // words do: on the last note the sheet simply closes.
@@ -700,7 +712,7 @@ impl AurisApp {
                         // Under the field's own name, not under "Rename" — the error worth
                         // reading here names the dictionary setting, and it needs the right
                         // heading to be believed.
-                        self.set_failed_status(self.failure(Key::PromptLyric, &error));
+                        self.reject_prompt(self.failure(Key::PromptLyric, &error));
                         return;
                     }
                 }
@@ -709,9 +721,12 @@ impl AurisApp {
                 let phonemes: Vec<String> =
                     text.split_whitespace().map(|token| token.into()).collect();
                 match self.session.set_note_phonemes(clip, index, phonemes) {
-                    Ok(()) => return,
+                    Ok(()) => {
+                        self.close_accepted_prompt();
+                        return;
+                    }
                     Err(error) => {
-                        self.set_failed_status(self.failure(Key::PromptPhonemes, &error));
+                        self.reject_prompt(self.failure(Key::PromptPhonemes, &error));
                         return;
                     }
                 }
@@ -720,11 +735,12 @@ impl AurisApp {
                 let indices: Vec<usize> = self.selected_notes.iter().copied().collect();
                 match self.session.write_lyrics(clip, &indices, &text) {
                     Ok(filled) => {
+                        self.close_accepted_prompt();
                         self.set_status(messages::lyrics_written(self.language(), filled));
                         return;
                     }
                     Err(error) => {
-                        self.set_failed_status(self.failure(Key::PromptLyrics, &error));
+                        self.reject_prompt(self.failure(Key::PromptLyrics, &error));
                         return;
                     }
                 }
@@ -742,6 +758,7 @@ impl AurisApp {
                     .compose_from_lyrics(&text, &auris_session::DEFAULT_PARTS, seed)
                 {
                     Ok(report) => {
+                        self.close_accepted_prompt();
                         // Land the person in front of what was written.
                         self.open_clip_in_editor(report.clip);
                         let written = match report.accented {
@@ -762,7 +779,7 @@ impl AurisApp {
                         return;
                     }
                     Err(error) => {
-                        self.set_failed_status(self.failure(Key::PromptComposeLyrics, &error));
+                        self.reject_prompt(self.failure(Key::PromptComposeLyrics, &error));
                         return;
                     }
                 }
@@ -775,7 +792,7 @@ impl AurisApp {
                     Ok(())
                 }
                 None => {
-                    self.set_failed_status(messages::not_a_key(self.language(), &text));
+                    self.reject_prompt(messages::not_a_key(self.language(), &text));
                     return;
                 }
             },
@@ -785,7 +802,7 @@ impl AurisApp {
                     Ok(())
                 }
                 None => {
-                    self.set_failed_status(messages::not_a_chord(self.language(), &text));
+                    self.reject_prompt(messages::not_a_chord(self.language(), &text));
                     return;
                 }
             },
@@ -812,7 +829,7 @@ impl AurisApp {
                     Ok(())
                 }
                 None => {
-                    self.set_failed_status(messages::not_a_key(self.language(), &text));
+                    self.reject_prompt(messages::not_a_key(self.language(), &text));
                     return;
                 }
             },
@@ -824,7 +841,7 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_failed_status(messages::not_a_seed(self.language(), &text));
+                    self.reject_prompt(messages::not_a_seed(self.language(), &text));
                     return;
                 }
             },
@@ -838,7 +855,7 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
+                    self.reject_prompt(messages::not_a_signature(self.language(), &text));
                     return;
                 }
             },
@@ -846,14 +863,14 @@ impl AurisApp {
             // be two parts writing the same notes — and the format refuses it outright.
             PromptTarget::SongPartName(index) => {
                 if text.trim().is_empty() {
-                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    self.reject_prompt(self.t(Key::NameCannotBeEmpty).to_string());
                     return;
                 }
                 let renamed = self.song_sheet.as_mut().is_some_and(|dials| {
                     crate::ui::compose_sheet::rename_part(dials, index, &text)
                 });
                 if !renamed {
-                    self.set_failed_status(self.t(Key::NameAlreadyUsed).to_string());
+                    self.reject_prompt(self.t(Key::NameAlreadyUsed).to_string());
                     return;
                 }
                 Ok(())
@@ -875,7 +892,7 @@ impl AurisApp {
                             Ok(())
                         }
                         Err(_) => {
-                            self.set_failed_status(messages::not_a_motif(self.language(), &text));
+                            self.reject_prompt(messages::not_a_motif(self.language(), &text));
                             return;
                         }
                     }
@@ -886,7 +903,7 @@ impl AurisApp {
             // the same picker, under that name.
             PromptTarget::SongSectionChart(index) => {
                 let Some(chart) = Chart::parse(&text) else {
-                    self.set_failed_status(messages::not_a_chord(self.language(), &text));
+                    self.reject_prompt(messages::not_a_chord(self.language(), &text));
                     return;
                 };
                 let name = self
@@ -909,18 +926,21 @@ impl AurisApp {
                         .find(|(name, _)| name == &section.chords)?;
                     Some(chart.clone())
                 });
-                let Some(chart) = held else { return };
+                let Some(chart) = held else {
+                    self.close_accepted_prompt();
+                    return;
+                };
                 if text.trim().is_empty() {
-                    self.set_failed_status(self.t(Key::NameCannotBeEmpty).to_string());
+                    self.reject_prompt(self.t(Key::NameCannotBeEmpty).to_string());
                     return;
                 }
                 if !self.progressions.keep(&text, &chart, chart.mode) {
                     // A name the built-in catalogue already uses, or none at all.
-                    self.set_failed_status(self.t(Key::NameAlreadyUsed).to_string());
+                    self.reject_prompt(self.t(Key::NameAlreadyUsed).to_string());
                     return;
                 }
                 if let Err(error) = self.progressions.save() {
-                    self.set_failed_status(messages::failed(
+                    self.reject_prompt(messages::failed(
                         self.language(),
                         self.t(Key::SongKeepProgression),
                         &error.to_string(),
@@ -941,7 +961,7 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_failed_status(messages::not_a_seed(self.language(), &text));
+                    self.reject_prompt(messages::not_a_seed(self.language(), &text));
                     return;
                 }
             },
@@ -954,7 +974,7 @@ impl AurisApp {
                     Ok(())
                 }
                 _ => {
-                    self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                    self.reject_prompt(messages::not_a_tempo(self.language(), &text));
                     return;
                 }
             },
@@ -964,7 +984,7 @@ impl AurisApp {
                     Ok(())
                 }
                 _ => {
-                    self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                    self.reject_prompt(messages::not_a_tempo(self.language(), &text));
                     return;
                 }
             },
@@ -972,6 +992,7 @@ impl AurisApp {
             // not a number at all is turned away.
             PromptTarget::Param(param) => {
                 let Some(descriptor) = self.session.descriptor_for(param) else {
+                    self.close_accepted_prompt();
                     return;
                 };
                 match crate::ui::plugin_editor::parse_param_value(&text) {
@@ -980,7 +1001,7 @@ impl AurisApp {
                         Ok(())
                     }
                     None => {
-                        self.set_failed_status(messages::not_a_number(self.language(), &text));
+                        self.reject_prompt(messages::not_a_number(self.language(), &text));
                         return;
                     }
                 }
@@ -988,7 +1009,7 @@ impl AurisApp {
             PromptTarget::ClipGain(clip) => match text.parse::<f32>() {
                 Ok(gain_db) if gain_db.is_finite() => self.session.set_clip_gain(clip, gain_db),
                 _ => {
-                    self.set_failed_status(messages::not_a_gain(self.language(), &text));
+                    self.reject_prompt(messages::not_a_gain(self.language(), &text));
                     return;
                 }
             },
@@ -1001,7 +1022,7 @@ impl AurisApp {
                         self.session.set_clip_source_bpm(clip, Some(bpm))
                     }
                     _ => {
-                        self.set_failed_status(messages::not_a_tempo(self.language(), &text));
+                        self.reject_prompt(messages::not_a_tempo(self.language(), &text));
                         return;
                     }
                 },
@@ -1015,7 +1036,7 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
+                    self.reject_prompt(messages::not_a_signature(self.language(), &text));
                     return;
                 }
             },
@@ -1025,7 +1046,7 @@ impl AurisApp {
                     Ok(())
                 }
                 Err(_) => {
-                    self.set_failed_status(messages::not_a_signature(self.language(), &text));
+                    self.reject_prompt(messages::not_a_signature(self.language(), &text));
                     return;
                 }
             },
@@ -1036,14 +1057,34 @@ impl AurisApp {
                         Ok(())
                     }
                     None => {
-                        self.set_failed_status(messages::not_a_position(self.language(), &text));
+                        self.reject_prompt(messages::not_a_position(self.language(), &text));
                         return;
                     }
                 }
             }
         };
         if let Err(error) = outcome {
-            self.set_failed_status(self.failure(Key::Rename, &error));
+            self.reject_prompt(self.failure(Key::Rename, &error));
+        } else {
+            self.close_accepted_prompt();
+        }
+    }
+
+    /// Reports a rejected answer where it can be corrected, above any underlying song sheet.
+    fn reject_prompt(&mut self, error: impl Into<String>) {
+        let error = error.into();
+        if let Some(prompt) = self.prompt.as_mut() {
+            prompt.error = Some(error.clone().into());
+        }
+        self.set_failed_status(error);
+    }
+
+    /// Clears a corrected answer's old diagnostic without overwriting a command's new status.
+    fn close_accepted_prompt(&mut self) {
+        if let Some(error) = self.prompt.take().and_then(|prompt| prompt.error)
+            && self.status == error.as_ref()
+        {
+            self.set_status("");
         }
     }
 
@@ -1212,39 +1253,9 @@ impl AurisApp {
             "down" if multiline => field.move_down(shift),
             "up" => field.move_home(shift),
             "down" => field.move_end(shift),
-            // Copy, cut and paste. A rename box that cannot take a name off the clipboard means
-            // retyping a chord symbol or a path by hand every time, and there is nowhere else in
-            // the application to type text.
-            "c" if command => {
-                let selected = field.selected_text();
-                if !selected.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
-                }
-            }
-            "x" if command => {
-                let selected = field.selected_text();
-                if !selected.is_empty() {
-                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(selected));
-                    field.backspace();
-                }
-            }
-            "v" if command => {
-                let pasted = cx.read_from_clipboard().and_then(|item| item.text());
-                if let Some(text) = pasted {
-                    // One line, unless the field draws several. A clipboard full of newlines
-                    // would otherwise be typed into a field with exactly one row of text —
-                    // and on the lyric field those newlines are the phrase breaks the person
-                    // pasted them for.
-                    match multiline {
-                        true => field.insert(&text.replace("\r\n", "\n").replace('\r', "\n")),
-                        false => field.insert(&text.replace(['\n', '\r'], " ")),
-                    }
-                }
-            }
-            // Everything else that is not a character: backspace, the caret, Select All. Shared
-            // with every other field in the window rather than written out again here.
+            // Editing and clipboard shortcuts are shared with every other text field.
             key => {
-                return field.apply_key(key, shift, command)
+                return field.apply_key_with_clipboard(key, shift, command, multiline, cx)
                     != crate::ui::text_field::KeyEffect::Ignored;
             }
         }
@@ -1281,6 +1292,19 @@ impl AurisApp {
                             )
                             .into_any_element(),
                     })
+                    .children(prompt.error.as_ref().map(|error| {
+                        div()
+                            .id("prompt-error")
+                            .debug_selector(|| "prompt-error".into())
+                            .w_full()
+                            .min_w_0()
+                            .max_h(px(96.0))
+                            .overflow_hidden()
+                            .overflow_y_scroll()
+                            .text_xs()
+                            .text_color(theme.danger)
+                            .child(error.clone())
+                    }))
                     .children(
                         target
                             .hint()
@@ -1331,9 +1355,9 @@ impl AurisApp {
                 .absolute()
                 .inset_0()
                 .flex()
-                .items_start()
+                .items_center()
                 .justify_center()
-                .pt(px(120.0))
+                .p_4()
                 .bg(Theme::translucent(theme.background, 0.55))
                 // A sheet asking a question has to be answered, so nothing behind it is hit by
                 // any button or by the wheel. Stopping left-click propagation was not enough: a
@@ -1356,6 +1380,8 @@ impl AurisApp {
                         // Wider for a field that holds verses: a phrase per line wants the
                         // room a name never needed.
                         .w(px(if multiline { 480.0 } else { 360.0 }))
+                        .max_w_full()
+                        .max_h_full()
                         .p_3()
                         .rounded(Metrics::RADIUS_LG)
                         .bg(theme.surface_raised)
@@ -1366,8 +1392,22 @@ impl AurisApp {
                             MouseButton::Left,
                             |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
                         )
-                        .child(div().text_sm().text_color(theme.text).child(title))
-                        .child(body)
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .text_sm()
+                                .text_color(theme.text)
+                                .child(title),
+                        )
+                        // A long verse or diagnostic scrolls inside the sheet; the answers
+                        // stay reachable even when the window is shorter than the text.
+                        .child(
+                            div()
+                                .id("prompt-body")
+                                .min_h_0()
+                                .overflow_y_scroll()
+                                .child(body),
+                        )
                         .child(buttons),
                 ),
         )
@@ -1559,6 +1599,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         div()
             .flex()
+            .flex_shrink_0()
             .justify_end()
             .gap_2()
             .child(button(
@@ -2184,10 +2225,262 @@ mod tests {
 /// here: the sheet's three buttons carry names a test can find them by.
 #[cfg(test)]
 mod window_tests {
+    use auris_session::prelude::*;
     use gpui::TestAppContext;
 
+    use super::{Prompt, PromptTarget};
     use crate::actions;
-    use crate::harness::{CLIP_LENGTH, click, open, paint, with_a_clip};
+    use crate::harness::{
+        CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
+    };
+
+    #[gpui::test]
+    fn a_rejected_meter_keeps_the_selection_and_can_be_corrected(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_prompt(Prompt::new(
+                "Time signature",
+                PromptTarget::Signature(Ticks::ZERO),
+                "4/4",
+            ));
+        });
+        paint(&app, cx);
+        cx.simulate_input("5/3");
+        cx.simulate_keystrokes("shift-left");
+        let rejected = app.read_with(cx, |this, _| {
+            this.prompt.as_ref().unwrap().field().unwrap().clone()
+        });
+        assert_eq!(rejected.selected_text(), "3");
+        assert!(rejected.is_reversed());
+
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the answer can be corrected");
+            assert_eq!(prompt.field(), Some(&rejected));
+            assert!(prompt.error.is_some());
+            assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "4/4");
+        });
+        assert!(cx.debug_bounds("prompt-error").is_some());
+
+        cx.simulate_input("8");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert!(
+                !this.status_failed,
+                "the corrected answer is no longer an error"
+            );
+            assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "5/8");
+        });
+    }
+
+    #[gpui::test]
+    fn an_empty_name_stays_open_until_cancelled(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.open_prompt(Prompt::new("Clip name", PromptTarget::Clip(clip), "Clip"));
+        });
+        paint(&app, cx);
+        cx.simulate_input("  ");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            let prompt = this
+                .prompt
+                .as_ref()
+                .expect("an empty name can be corrected");
+            assert_eq!(prompt.field().unwrap().content(), "  ");
+            assert!(prompt.error.is_some());
+        });
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.session.midi_clip(clip).unwrap().name, "Clip");
+        });
+    }
+
+    #[gpui::test]
+    fn long_song_answers_remain_editable_with_the_error_above_the_song_sheet(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(actions::ComposeSong);
+        for (target, rejected, corrected) in [
+            (
+                PromptTarget::SongMotif,
+                format!("{}wrong", "0 2 4 2 ".repeat(80)),
+                "0 2 4 2",
+            ),
+            (
+                PromptTarget::SongSectionChart(0),
+                format!("{}| H7 |", "| I | V ".repeat(80)),
+                "| I | V |",
+            ),
+        ] {
+            app.update(cx, |this, _| {
+                this.open_prompt(Prompt::new("Song", target, ""));
+            });
+            paint(&app, cx);
+            let song = app.read_with(cx, |this, _| this.song_sheet.clone());
+            cx.simulate_input(&rejected);
+            cx.simulate_keystrokes("enter");
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                let prompt = this.prompt.as_ref().expect("the song answer was retained");
+                assert_eq!(prompt.target(), Some(target));
+                assert_eq!(prompt.field().unwrap().content(), rejected);
+                assert!(prompt.error.as_ref().unwrap().contains(&rejected));
+                assert_eq!(
+                    this.song_sheet, song,
+                    "rejection does not partly edit the song"
+                );
+            });
+            let error = cx
+                .debug_bounds("prompt-error")
+                .expect("an inline error is drawn");
+            let confirm = cx
+                .debug_bounds("prompt-ok")
+                .expect("the answer button is drawn");
+            assert!(error.size.height <= gpui::px(96.0));
+            assert!(error.bottom() <= confirm.top());
+
+            cx.simulate_keystrokes("secondary-a");
+            cx.simulate_input(corrected);
+            cx.simulate_keystrokes("enter");
+            app.read_with(cx, |this, _| {
+                assert!(this.prompt.is_none());
+                let dials = this
+                    .song_sheet
+                    .as_ref()
+                    .expect("only the answer sheet closed");
+                match target {
+                    PromptTarget::SongMotif => {
+                        assert_eq!(dials.motif, parse_motif(corrected).unwrap());
+                    }
+                    PromptTarget::SongSectionChart(index) => {
+                        let (_, chart) = dials
+                            .charts
+                            .iter()
+                            .find(|(name, _)| name == &dials.sections[index].chords)
+                            .expect("the corrected chart was kept");
+                        assert_eq!(*chart, Chart::parse(corrected).unwrap());
+                    }
+                    _ => unreachable!(),
+                }
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn a_rejected_lyric_waits_for_correction_before_advancing(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(62, Ticks::QUARTER, Ticks::QUARTER))
+                .unwrap();
+            this.open_lyric_prompt(clip, 0);
+        });
+        paint(&app, cx);
+        // The fixture has no Japanese dictionary, so kanji is refused before the note changes.
+        cx.simulate_input("漢字");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            let prompt = this
+                .prompt
+                .as_ref()
+                .expect("the rejected word stays on its note");
+            assert_eq!(
+                prompt.target(),
+                Some(PromptTarget::Lyric { clip, index: 0 })
+            );
+            assert_eq!(prompt.field().unwrap().content(), "漢字");
+            assert!(prompt.error.is_some());
+            assert!(
+                this.session.midi_clip(clip).unwrap().notes[0]
+                    .lyric
+                    .is_empty()
+            );
+        });
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("か");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the next note is ready");
+            assert_eq!(
+                prompt.target(),
+                Some(PromptTarget::Lyric { clip, index: 1 })
+            );
+            assert!(prompt.error.is_none());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].lyric, "か");
+        });
+        paint(&app, cx);
+        cx.simulate_input("な");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.is_none(),
+                "the last accepted word closes the sheet"
+            );
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes[1].lyric, "な");
+        });
+    }
+
+    #[gpui::test]
+    fn a_rejected_verse_keeps_every_line_and_the_caret(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        resize(&app, cx, gpui::size(gpui::px(640.0), gpui::px(480.0)));
+        cx.dispatch_action(actions::ComposeFromLyrics);
+        paint(&app, cx);
+        let verse = format!("{}漢字", "さくら さいた\n".repeat(20));
+        cx.simulate_input(&verse);
+        cx.simulate_keystrokes("shift-left");
+        let rejected = app.read_with(cx, |this, _| {
+            this.prompt.as_ref().unwrap().field().unwrap().clone()
+        });
+        cx.simulate_keystrokes("secondary-enter");
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this
+                .prompt
+                .as_ref()
+                .expect("the verse is available to correct");
+            assert_eq!(prompt.field(), Some(&rejected));
+            assert_eq!(prompt.field().unwrap().content(), verse);
+            assert!(prompt.error.is_some());
+        });
+        let confirm = cx.debug_bounds("prompt-ok").expect("the action is drawn");
+        assert!(confirm.top() >= gpui::px(0.0));
+        assert!(confirm.bottom() <= gpui::px(480.0));
+        click("prompt-cancel", cx);
+        app.read_with(cx, |this, _| assert!(this.prompt.is_none()));
+    }
+
+    #[gpui::test]
+    fn clicking_confirm_on_invalid_ime_preedit_keeps_the_composition(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let mut prompt = Prompt::new("Key", PromptTarget::Key(Ticks::ZERO), "");
+            prompt
+                .field_mut()
+                .unwrap()
+                .replace_and_mark(0..0, "調", Some(0..3));
+            this.open_prompt(prompt);
+        });
+        paint(&app, cx);
+        let rejected = app.read_with(cx, |this, _| {
+            this.prompt.as_ref().unwrap().field().unwrap().clone()
+        });
+        click("prompt-ok", cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the composition stays open");
+            assert_eq!(prompt.field(), Some(&rejected));
+            assert_eq!(prompt.field().unwrap().marked(), Some(0..3));
+            assert!(prompt.error.is_some());
+        });
+    }
 
     /// Whether a sheet is open, and what it is asking.
     fn asking(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> bool {

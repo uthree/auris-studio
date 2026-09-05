@@ -87,6 +87,26 @@ pub(super) fn paint_automation(
 /// points to add a third one in.
 const POINT_RADIUS: Pixels = px(3.0);
 
+/// The name strip and its ink, including the body underneath a muted strip.
+fn clip_title_colors(
+    theme: &Theme,
+    track: gpui::Hsla,
+    selected: bool,
+    muted: bool,
+) -> (gpui::Hsla, gpui::Hsla) {
+    let fill = if selected {
+        theme.selection
+    } else {
+        // Resolve the translucent layers into one opaque colour so the grid and loop tint
+        // cannot change the background against which this small label must remain readable.
+        theme
+            .surface_sunken
+            .blend(Theme::translucent(track, if muted { 0.08 } else { 0.30 }))
+            .blend(Theme::translucent(track, if muted { 0.28 } else { 0.85 }))
+    };
+    (fill, theme.text_on(fill))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn paint_lane(
     window: &mut Window,
@@ -111,6 +131,7 @@ pub(super) fn paint_lane(
             size: size(width.max(px(3.0)), bounds.size.height - CLIP_INSET * 2.0),
         };
         let selected = lane.selected.contains(&clip.id);
+        let (title_fill, title_ink) = clip_title_colors(theme, lane.color, selected, clip.muted);
         let body = if clip.muted {
             Theme::translucent(lane.color, 0.08)
         } else {
@@ -133,16 +154,7 @@ pub(super) fn paint_lane(
                 bottom_right: px(0.0),
                 bottom_left: px(0.0),
             },
-            if selected {
-                theme.selection
-            } else if clip.muted {
-                // Mute used to be a body fill two per cent more transparent than an unmuted
-                // clip's — about 1.1:1 apart, which is to say invisible. It is the title strip
-                // that has to say it, because that is the part with the colour in it.
-                Theme::translucent(lane.color, 0.28)
-            } else {
-                Theme::translucent(lane.color, 0.85)
-            },
+            title_fill,
         );
         // A selected clip gets an outline as well as a lit title bar, so the selection reads
         // at a glance on a lane packed with clips.
@@ -164,7 +176,7 @@ pub(super) fn paint_lane(
                     size: size(dot, dot),
                 },
                 dot / 2.0,
-                theme.text_on(lane.color),
+                title_ink,
             );
         }
 
@@ -288,9 +300,7 @@ pub(super) fn paint_lane(
                 ),
                 name,
                 px(9.0),
-                // Read against the track's own colour rather than against the accent: the user
-                // chooses one and the scheme the other, and only one of them is behind this text.
-                theme.text_on(lane.color),
+                title_ink,
             );
         }
 
@@ -330,5 +340,45 @@ pub(super) fn paint_lane(
                 theme.text_on(theme.accent_soft),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clip_title_colors;
+    use crate::theme::{SCHEMES, Theme, contrast_ratio};
+    use auris_session::prelude::Color;
+
+    #[test]
+    fn clip_names_remain_readable_when_selected_or_muted() {
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            for track in Color::PALETTE {
+                for (selected, muted) in
+                    [(false, false), (false, true), (true, false), (true, true)]
+                {
+                    let (fill, ink) =
+                        clip_title_colors(&theme, theme.track_color(track.0), selected, muted);
+                    assert_eq!(fill.a, 1.0, "the name has a stable, opaque backdrop");
+                    assert!(
+                        contrast_ratio(fill, ink) >= 4.5,
+                        "{}: track {track:?}, selected={selected}, muted={muted} is unreadable",
+                        scheme.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn selecting_a_daylight_clip_changes_both_its_title_and_ink() {
+        let theme = Theme::named("daylight");
+        let track = theme.track_color(0x4f9dde);
+        let (plain, plain_ink) = clip_title_colors(&theme, track, false, false);
+        let (selected, selected_ink) = clip_title_colors(&theme, track, true, false);
+        assert_ne!(plain, selected);
+        assert_eq!(selected, theme.selection);
+        assert!(plain_ink.l < 0.5);
+        assert!(selected_ink.l > 0.5);
     }
 }

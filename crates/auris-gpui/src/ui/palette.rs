@@ -398,7 +398,10 @@ impl AurisApp {
         let Some(palette) = self.palette.as_mut() else {
             return false;
         };
-        match palette.field.apply_key(key, shift, secondary) {
+        match palette
+            .field
+            .apply_key_with_clipboard(key, shift, secondary, false, cx)
+        {
             KeyEffect::Ignored => false,
             // Anything that narrows the list starts again at the top, or the highlight would sit
             // on whatever row happened to inherit its position. A caret move narrows nothing,

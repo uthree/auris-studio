@@ -52,6 +52,7 @@ pub mod registry;
 pub mod render;
 pub mod session;
 pub mod settings;
+pub mod singer_portrait;
 pub mod voice_setup;
 
 /// Workspace-owned error variants exposed for frontend localisation.
@@ -76,17 +77,19 @@ pub use session::{
     DEFAULT_VELOCITY, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport,
     MIN_PHONEME_SECONDS, MixAnalysis, MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize,
     RecordingReport, RecordingStatus, Release, SaveReport, SectionLoudness, Session,
-    SessionOptions, SingPlan, SingerTakeState, Struck, SungFrames, TARGET_LUFS, TYPING_BEND,
-    TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio,
-    fader_for, faders_lift_db, input_level_of, master_gain_db, quantized, read_soundfont,
-    shadows_musical_typing, take_fingerprint,
+    SessionOptions, SingPlan, SingerTakeState, SingerVoiceInfo, Struck, SungFrames, TARGET_LUFS,
+    TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
+    decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
+    read_soundfont, shadows_musical_typing, take_fingerprint,
 };
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir, migrate_legacy_config,
 };
+pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use voice_setup::{
-    DiffSingerSetup, VoiceSetupError, VoicevoxSetup, check_voicevox_connection,
+    DiffSingerSetup, VoiceSetupError, VoicevoxCatalog, VoicevoxConnection, VoicevoxSetup,
+    VoicevoxSpeakerChoice, VoicevoxStyle, check_voicevox_connection, fetch_voicevox_catalog,
     start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
 };
 
@@ -97,7 +100,10 @@ pub use voice_setup::{
 /// Re-exported so a frontend can render a take on its own thread — the model behind
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
-pub use auris_singer::{Acceleration, BackendKind, SingError, SingingBackend, VoiceModel};
+pub use auris_singer::{
+    Acceleration, BackendKind, SingError, SingingBackend, VoiceCapabilities, VoiceModel,
+    VoicePortrait,
+};
 
 pub use auris_clap::ClapPluginInfo;
 /// What a VST3 bundle says is inside it, for a frontend listing one.

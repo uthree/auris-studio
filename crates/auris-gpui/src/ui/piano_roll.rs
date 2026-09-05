@@ -492,6 +492,9 @@ impl AurisApp {
         let clip_length = clip.length;
         let notes = clip.notes.clone();
         let singing = self.editing_a_singer_clip();
+        let manual_phonemes = self
+            .selected_clip
+            .is_some_and(|clip| self.clip_accepts_phonemes(clip));
         let ghosts = self.neighbouring_notes();
         let mut note_ends = self.note_end_zones(clip_start, &notes);
         // The phoneme boundaries wear the same arrow: both zones drag a vertical edge.
@@ -728,20 +731,22 @@ impl AurisApp {
                                                 &pitch_view,
                                                 &theme,
                                                 singing,
-                                                geometry.is_some(),
+                                                geometry.is_some() || !manual_phonemes,
                                             );
                                             if let Some(geometry) = &geometry {
-                                                paint_phoneme_spans(
-                                                    window,
-                                                    cx,
-                                                    bounds,
-                                                    &geometry.phonemes,
-                                                    &notes,
-                                                    clip_start,
-                                                    &view,
-                                                    &pitch_view,
-                                                    &theme,
-                                                );
+                                                if manual_phonemes {
+                                                    paint_phoneme_spans(
+                                                        window,
+                                                        cx,
+                                                        bounds,
+                                                        &geometry.phonemes,
+                                                        &notes,
+                                                        clip_start,
+                                                        &view,
+                                                        &pitch_view,
+                                                        &theme,
+                                                    );
+                                                }
                                                 paint_f0_curve(
                                                     window,
                                                     bounds,
@@ -1308,7 +1313,11 @@ impl AurisApp {
     /// The same coordinate frame as [`Self::note_end_zones`], and appended to its answer:
     /// both wear the left-right resize arrow, because both drag a vertical edge.
     fn phoneme_divider_zones(&self, clip_start: Ticks, notes: &[Note]) -> Vec<Bounds<Pixels>> {
-        if self.tool != RollTool::Pointer || !self.editing_a_singer_clip() {
+        if self.tool != RollTool::Pointer
+            || !self
+                .selected_clip
+                .is_some_and(|clip| self.clip_accepts_phonemes(clip))
+        {
             return Vec::new();
         }
         let widths = self.editing_voice_widths();
@@ -1389,7 +1398,10 @@ impl AurisApp {
         clip_start: Ticks,
         x: Pixels,
     ) -> Option<(usize, f64, f64)> {
-        if !self.editing_a_singer_clip() {
+        if !self
+            .selected_clip
+            .is_some_and(|clip| self.clip_accepts_phonemes(clip))
+        {
             return None;
         }
         let tempo = &self.project().tempo_map;
@@ -1516,6 +1528,10 @@ impl AurisApp {
 
     /// Opens the sheet that corrects one note's phonemes.
     pub(crate) fn open_phonemes_prompt(&mut self, clip: ClipId, index: usize) {
+        if !self.clip_accepts_phonemes(clip) {
+            self.set_failed_status(self.t(Key::VoicevoxPhonemesHint).to_string());
+            return;
+        }
         let Some(note) = self
             .session
             .midi_clip(clip)
@@ -2316,6 +2332,43 @@ impl AurisApp {
             .move_curve_point(clip, which, at, to, curve_of_row(which, row))
     }
 }
+#[cfg(test)]
+mod backend_window_tests {
+    use super::*;
+
+    #[gpui::test]
+    fn voicevox_boundaries_do_not_offer_an_inaudible_drag(cx: &mut gpui::TestAppContext) {
+        let path = crate::ui::singer::voicevox_test_file();
+        let (app, cx, track, clip) = crate::harness::with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.select_track(track);
+            let mut note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+            note.phonemes = vec!["k".into(), "a".into()];
+            note.phoneme_seconds = vec![0.1, 0.0];
+            this.session.add_note(clip, note.clone()).unwrap();
+            let cut = this.project().tempo_map.seconds_to_ticks(Seconds(0.1));
+            let x = this.timeline.tick_to_x(cut);
+            assert!(
+                !this
+                    .phoneme_divider_zones(Ticks::ZERO, &[note.clone()])
+                    .is_empty()
+            );
+            assert!(this.grabbed_boundary_at(&note, Ticks::ZERO, x).is_some());
+            this.session.set_singer_voice(track, Some(&path)).unwrap();
+            assert!(
+                this.phoneme_divider_zones(Ticks::ZERO, &[note.clone()])
+                    .is_empty()
+            );
+            assert!(this.grabbed_boundary_at(&note, Ticks::ZERO, x).is_none());
+            assert!(
+                !this.note_end_zones(Ticks::ZERO, &[note]).is_empty(),
+                "ordinary note length stays editable"
+            );
+        });
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

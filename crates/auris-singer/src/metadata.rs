@@ -139,9 +139,9 @@ fn one() -> u32 {
 
 /// What a host shows a person browsing voices, as opposed to what it feeds the model.
 ///
-/// Every field is free-form prose from whoever exported the model; the portrait image the
-/// format can also carry is deliberately not read here — it is base64 the size of a picture,
-/// and nothing below the frontends wants it in memory.
+/// Every field is free-form prose from whoever exported the model. Artwork is read separately
+/// by [`crate::read_voice_portrait`], so opening a voice for inference does not retain a second
+/// copy of the image and browsing artwork never has to load the inference runtime.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct VoiceCard {
     /// The voice's display name — 波音リツ, not `auris_singer_ritsu_40k.onnx`.

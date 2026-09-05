@@ -17,6 +17,44 @@ pub enum BackendKind {
     Voicevox,
 }
 
+impl BackendKind {
+    /// The backend selected by an entry file's name, without opening the file.
+    pub fn from_path(path: &Path) -> Self {
+        if path
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("dsconfig.yaml"))
+        {
+            Self::DiffSinger
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
+        {
+            Self::Voicevox
+        } else {
+            Self::Auris
+        }
+    }
+
+    /// The score corrections this backend consumes during synthesis.
+    pub fn capabilities(self) -> VoiceCapabilities {
+        let direct_phonemes = self != Self::Voicevox;
+        VoiceCapabilities {
+            manual_phonemes: direct_phonemes,
+            phoneme_timing: direct_phonemes,
+        }
+    }
+}
+
+/// Editable vocal details that a synthesis backend can honour.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct VoiceCapabilities {
+    /// Whether manually corrected IPA phonemes affect the voice's pronunciation.
+    pub manual_phonemes: bool,
+    /// Whether per-phoneme duration pins affect the voice's pronunciation timing.
+    pub phoneme_timing: bool,
+}
+
 /// The backend contract: metadata, frame curves and an optional note score in; mono waveform out.
 ///
 /// Implementations may use one model or a pipeline of models. They are always called off the
@@ -52,22 +90,15 @@ pub struct VoiceModel {
 impl VoiceModel {
     /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, or `.voicevox.json` connection.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
-        let is_diffsinger = path
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("dsconfig.yaml"));
-        let is_voicevox = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"));
-        let backend: Box<dyn SingingBackend> = if is_diffsinger {
-            Box::new(crate::diffsinger::DiffSingerBackend::load(
+        let backend: Box<dyn SingingBackend> = match BackendKind::from_path(path) {
+            BackendKind::DiffSinger => Box::new(crate::diffsinger::DiffSingerBackend::load(
                 path,
                 acceleration,
-            )?)
-        } else if is_voicevox {
-            Box::new(crate::voicevox::VoicevoxBackend::load(path, acceleration)?)
-        } else {
-            Box::new(crate::model::AurisBackend::load(path, acceleration)?)
+            )?),
+            BackendKind::Voicevox => {
+                Box::new(crate::voicevox::VoicevoxBackend::load(path, acceleration)?)
+            }
+            BackendKind::Auris => Box::new(crate::model::AurisBackend::load(path, acceleration)?),
         };
         Ok(Self { backend })
     }
@@ -141,5 +172,24 @@ impl VoiceModel {
     ) -> Result<Vec<f32>, SingError> {
         self.backend
             .sing_with(frames, Some(score), speaker, seed, &mut progress)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capabilities_follow_the_backend_that_consumes_the_score() {
+        for (entry, kind, phonemes) in [
+            ("voice.onnx", BackendKind::Auris, true),
+            ("bank/DSCONFIG.YAML", BackendKind::DiffSinger, true),
+            ("voice.VOICEVOX.JSON", BackendKind::Voicevox, false),
+        ] {
+            let backend = BackendKind::from_path(Path::new(entry));
+            assert_eq!(backend, kind);
+            assert_eq!(backend.capabilities().manual_phonemes, phonemes);
+            assert_eq!(backend.capabilities().phoneme_timing, phonemes);
+        }
     }
 }

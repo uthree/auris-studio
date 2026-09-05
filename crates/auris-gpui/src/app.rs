@@ -1050,6 +1050,18 @@ pub struct AutoSing {
     pub checked: u64,
 }
 
+/// One track's failed render, held until its input changes or the person asks to retry.
+pub struct SingerFailure {
+    /// The last document revision checked against this failure's input.
+    pub revision: u64,
+    /// The score and voice that failed.
+    pub fingerprint: u64,
+    /// Saving an untitled project supplies the folder a previous attempt lacked.
+    pub folder: Option<std::path::PathBuf>,
+    /// The diagnostic shown beside this track's synthesis controls.
+    pub message: String,
+}
+
 /// A sung pitch contour: one run of (tick, fractional MIDI pitch) points per voiced span.
 ///
 /// Split at silences so a rest is a gap in the drawn line rather than a dive to nowhere,
@@ -1080,10 +1092,21 @@ pub struct SungGeometry {
 
 /// The address a rendered preview note is cached under.
 ///
-/// The voice's display name stands in for its file — resolving the real path on every
-/// pointer move would buy nothing the name does not already give — and the seed and
-/// phonemes are part of the sound, so they are part of the address.
-pub type SungPreviewKey = (String, u64, u8, Vec<String>);
+/// Resolving an asset reference is lexical, without filesystem access. A display name cannot
+/// identify the model or its speaker: two tracks may share a name while singing different voices.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SungPreviewKey {
+    /// The resolved voice entry file.
+    pub voice: std::path::PathBuf,
+    /// The chosen speaker, or the model's first speaker.
+    pub speaker: Option<String>,
+    /// The take's pinned random choice.
+    pub seed: u64,
+    /// The auditioned MIDI pitch.
+    pub pitch: u8,
+    /// The pronunciation of this note.
+    pub phonemes: Vec<String>,
+}
 
 /// One preview note the audition path has asked for and the model has not sung yet.
 ///
@@ -1210,11 +1233,23 @@ pub struct AurisApp {
     pub(crate) auto_sing: Option<AutoSing>,
     /// The revision the auto-render debounce last saw, and when it saw it arrive.
     pub(crate) auto_sing_seen: (u64, std::time::Instant),
-    /// The revision whose auto-render was refused, so a standing refusal — an unsaved
-    /// project, an empty track — waits for the next edit instead of retrying every frame.
-    pub(crate) auto_sing_refused: Option<u64>,
-    /// The refusal last said out loud, so the same excuse is not repeated per edit.
-    pub(crate) auto_sing_excuse: Option<String>,
+    /// Failures belong to individual tracks, so one unavailable voice cannot stop the others.
+    pub(crate) sung_failures: std::collections::HashMap<TrackId, SingerFailure>,
+    /// Explicit requests that also re-render an otherwise current take, such as a changed
+    /// VOICEVOX connection saved at the same path.
+    pub(crate) sung_retry: BTreeSet<TrackId>,
+    /// Live VOICEVOX catalogues, tied to the exact connection and speaker that were queried.
+    pub(crate) voicevox_catalogs: std::collections::HashMap<
+        TrackId,
+        (
+            auris_session::VoicevoxConnection,
+            auris_session::VoicevoxCatalog,
+        ),
+    >,
+    /// Identifies the latest asynchronous speaker-menu request.
+    pub(crate) voicevox_menu_generation: u64,
+    /// Bounded artwork cache and the current background image request.
+    pub(crate) singer_portraits: crate::ui::singer_portrait::SingerPortraits,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1232,6 +1267,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_wish: Option<SungPreviewWish>,
     /// Whether a preview render is on the background executor right now.
     pub(crate) sung_preview_rendering: bool,
+    /// Invalidates results started before a voice or its connection settings changed.
+    pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
     ///
     /// State of the sheet rather than of the document: nothing here has been written until Write
@@ -1499,6 +1536,7 @@ impl AurisApp {
                         // And a grabbed note's preview is sung here too, because the
                         // pointer handler that wished for it had no executor in hand.
                         this.poll_sung_preview(cx);
+                        this.poll_singer_portrait(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1537,11 +1575,15 @@ impl AurisApp {
             sung_badges_revision: 0,
             auto_sing: None,
             auto_sing_seen: (0, std::time::Instant::now()),
-            auto_sing_refused: None,
-            auto_sing_excuse: None,
+            sung_failures: std::collections::HashMap::new(),
+            sung_retry: BTreeSet::new(),
+            voicevox_catalogs: std::collections::HashMap::new(),
+            singer_portraits: Default::default(),
+            voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
+            sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
@@ -1724,7 +1766,25 @@ impl AurisApp {
     /// Puts the keyboard in `pane`, which is what clicking one does.
     pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
         self.last_pane = pane;
-        window.focus(self.panes.handle(pane));
+        // Panel fields do not cover the rest of the window. Leaving their pane releases their
+        // claim on the keyboard while preserving the draft for the next visit.
+        if pane != Pane::Library && self.library_search_focused {
+            self.library_search_focused = false;
+            self.library_search.unmark();
+        }
+        if pane != Pane::Agent {
+            if let Some(field) = self.agent_chat.field_mut() {
+                field.unmark();
+            }
+            self.agent_chat.focused = None;
+        }
+        // A same-pane click must not blur its field during capture, before the field's own
+        // listener sees the press. Modal fields likewise keep their existing input handle.
+        if self.taking_text_input() {
+            window.focus(&self.focus);
+        } else {
+            window.focus(self.panes.handle(pane));
+        }
     }
 
     /// Moves the keyboard between a panel and an open sheet as one opens and closes.
@@ -1738,6 +1798,24 @@ impl AurisApp {
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
     pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
+        // A dock switch can hide a field without clicking another pane. Hidden fields must not
+        // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
+        if !self.panels.is_open(Panel::Library) {
+            self.library_search_focused = false;
+            self.library_search.unmark();
+            if self.last_pane == Pane::Library {
+                self.last_pane = Pane::Arrangement;
+            }
+        }
+        if !self.panels.is_open(Panel::Agent) {
+            if let Some(field) = self.agent_chat.field_mut() {
+                field.unmark();
+            }
+            self.agent_chat.focused = None;
+            if self.last_pane == Pane::Agent {
+                self.last_pane = Pane::Arrangement;
+            }
+        }
         // [`Self::taking_text_input`] rather than a list written out again here. The library's
         // search box is in a panel and covers nothing, but as far as *this* question goes it is
         // a sheet: something is being typed into, and the handle it is typed through has to be
@@ -2108,12 +2186,16 @@ impl AurisApp {
             return false;
         };
         let seed = singer.take.as_ref().map(|take| take.seed).unwrap_or(0);
-        let key: SungPreviewKey = (
-            voice.name.clone(),
+        let Some(resolved) = voice.path.resolve(self.session.project_folder()) else {
+            return false;
+        };
+        let key = SungPreviewKey {
+            voice: resolved,
+            speaker: voice.speaker.clone(),
             seed,
             pitch,
-            self.selected_phonemes(track, note_index),
-        );
+            phonemes: self.selected_phonemes(track, note_index),
+        };
         if let Some(buffer) = self.sung_previews.get(&key) {
             let buffer = Arc::clone(buffer);
             self.session.play_singer_preview(track, &buffer);
@@ -2366,6 +2448,9 @@ impl AurisApp {
     /// Cannot fail here: the session only drops its cached models, and whether the GPU
     /// actually answers is found out — and reported — by the next render that asks for it.
     pub(crate) fn apply_singer_acceleration(&mut self, acceleration: Acceleration) {
+        self.cancel_auto_sing();
+        self.invalidate_sung_previews();
+        self.sung_failures.clear();
         self.session.set_singer_acceleration(acceleration);
         self.settings.singer_acceleration = acceleration;
         if let Err(error) = self.settings.save() {
@@ -2651,6 +2736,10 @@ impl AurisApp {
     }
 }
 
+#[cfg(test)]
+#[path = "singer_tests.rs"]
+mod singer_tests;
+
 fn audition_note_index(grabbed: Option<usize>, selected: &BTreeSet<usize>) -> Option<usize> {
     grabbed.or_else(|| selected.iter().next().copied())
 }
@@ -2664,6 +2753,188 @@ mod audition_selection_tests {
         let selected = [1, 4].into_iter().collect();
         assert_eq!(audition_note_index(Some(4), &selected), Some(4));
         assert_eq!(audition_note_index(None, &selected), Some(1));
+    }
+}
+
+#[cfg(test)]
+mod panel_input_tests {
+    use super::*;
+    use crate::harness::{click, lane_point, paint, with_a_clip};
+
+    #[gpui::test]
+    fn selecting_a_clip_releases_panel_text_without_losing_the_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for panel in [Panel::Agent, Panel::Library] {
+            let (app, cx, track, clip) = with_a_clip(cx);
+            app.update(cx, |this, _| {
+                this.panels = Default::default();
+                this.settings.agent.model = "offline-fixture".to_string();
+                this.agent_chat.configuring = false;
+                this.agent_chat.models_error = Some("offline fixture".to_string());
+                this.panels.show(panel);
+            });
+            paint(&app, cx);
+            let selector = if panel == Panel::Agent {
+                "agent-input"
+            } else {
+                "library-search"
+            };
+            click(selector, cx);
+            paint(&app, cx);
+            cx.simulate_input("draft");
+            app.read_with(cx, |this, _| {
+                assert!(this.taking_text_input());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(field.content(), "draft");
+            });
+
+            let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            paint(&app, cx);
+            app.read_with(cx, |this, _| assert_eq!(this.selected_clip, Some(clip)));
+            cx.simulate_keystrokes("backspace");
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.session.midi_clip(clip).is_none(),
+                    "Backspace deletes the selected clip"
+                );
+                assert!(!this.taking_text_input());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(
+                    field.content(),
+                    "draft",
+                    "leaving a pane preserves its draft"
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn clicking_the_active_agent_field_keeps_its_input_and_preedit(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.settings.agent.model = "offline-fixture".to_string();
+            this.agent_chat.configuring = false;
+            this.agent_chat.models_error = Some("offline fixture".to_string());
+            this.panels.show(Panel::Agent);
+        });
+        paint(&app, cx);
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.simulate_input("draft");
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.simulate_input("!");
+        app.update(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "draft!");
+            this.agent_chat.input.replace_and_mark(6..6, "かな", None);
+        });
+        paint(&app, cx);
+        click("agent-input", cx);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.focus.is_focused(window));
+                assert_eq!(this.agent_chat.input.marked(), Some(6..12));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn pane_focus_does_not_dismiss_an_open_prompt(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.panels.show(Panel::Library);
+            this.library_search_focused = true;
+            this.open_prompt(crate::ui::prompt::Prompt::new(
+                "Time signature",
+                crate::ui::prompt::PromptTarget::Signature(Ticks::ZERO),
+                "4/4",
+            ));
+            this.panels.hide(Panel::Library);
+        });
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.update(cx, |this, _| {
+                this.focus_pane(Pane::Arrangement, window);
+                assert!(this.prompt.is_some());
+                assert!(this.focus.is_focused(window));
+            });
+        });
+        cx.simulate_input("3/4");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.prompt
+                    .as_ref()
+                    .and_then(crate::ui::prompt::Prompt::field)
+                    .unwrap()
+                    .content(),
+                "3/4"
+            );
+        });
+    }
+}
+
+#[cfg(test)]
+mod hidden_panel_input_tests {
+    use super::*;
+    use crate::harness::{click, lane_point, paint, with_a_clip};
+
+    #[gpui::test]
+    fn hiding_a_panel_releases_its_text_and_restores_arrangement_keys(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        for panel in [Panel::Agent, Panel::Library] {
+            let (app, cx, track, clip) = with_a_clip(cx);
+            app.update(cx, |this, _| {
+                this.panels = Default::default();
+                this.settings.agent.model = "offline-fixture".to_string();
+                this.agent_chat.configuring = false;
+                this.agent_chat.models_error = Some("offline fixture".to_string());
+                this.panels.show(panel);
+            });
+            paint(&app, cx);
+            let at = lane_point(&app, cx, track, Ticks(2 * TICKS_PER_QUARTER));
+            cx.simulate_click(at, gpui::Modifiers::none());
+            let selector = if panel == Panel::Agent {
+                "agent-input"
+            } else {
+                "library-search"
+            };
+            click(selector, cx);
+            paint(&app, cx);
+            cx.simulate_input("draft");
+            match panel {
+                Panel::Agent => cx.dispatch_action(actions::ToggleAgent),
+                Panel::Library => cx.dispatch_action(actions::ToggleLibrary),
+                _ => unreachable!(),
+            }
+            paint(&app, cx);
+            cx.simulate_keystrokes("backspace");
+            app.read_with(cx, |this, _| {
+                assert!(!this.panels.is_open(panel));
+                assert!(!this.taking_text_input());
+                assert_eq!(this.last_pane, Pane::Arrangement);
+                assert!(this.session.midi_clip(clip).is_none());
+                let field = if panel == Panel::Agent {
+                    &this.agent_chat.input
+                } else {
+                    &this.library_search
+                };
+                assert_eq!(field.content(), "draft");
+            });
+        }
     }
 }
 
