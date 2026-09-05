@@ -1,0 +1,68 @@
+title = "Summit at Dawn"
+key = "D minor"
+tempo = 100
+meter = "4/4"
+seed = 609063
+motif = "0 2 4 3 2 0"
+groove = "sparse"
+chords = "| i | VI | iv | V |"
+form = ["intro", "theme", "development", "finale"]
+[harmony]
+ending = "| I | IV | V | I |"
+[section.intro]
+bars = 4
+intensity = 0.25
+parts = "strings low_strings"
+[section.theme]
+bars = 8
+intensity = 0.5
+parts = "strings low_strings"
+[section.development]
+bars = 8
+intensity = 0.65
+parts = "woodwind low_strings timpani"
+[section.finale]
+bars = 4
+intensity = 0.85
+parts = "brass strings low_strings timpani"
+chords = "ending"
+[section.development.part.low_strings]
+gate = 0.35
+[section.finale.part.strings]
+gate = 0.95
+[[part]]
+name = "strings"
+role = "lead"
+instrument = "auris.sampler.soundfont"
+program = 48
+octave = 4
+gate = 0.9
+pan = -0.3
+[[part]]
+name = "woodwind"
+role = "lead"
+instrument = "auris.sampler.soundfont"
+program = 73
+octave = 5
+pan = 0.25
+[[part]]
+name = "brass"
+role = "lead"
+instrument = "auris.sampler.soundfont"
+program = 60
+octave = 4
+[[part]]
+name = "low_strings"
+role = "arp"
+instrument = "auris.sampler.soundfont"
+program = 42
+octave = 2
+subdivision = "8"
+gate = 0.6
+[[part]]
+name = "timpani"
+role = "bass"
+instrument = "auris.sampler.soundfont"
+program = 47
+octave = 2
+density = 0.25
