@@ -1050,8 +1050,8 @@ strings! {
         ja: "そのサウンドフォントはこのプロジェクトにありません"
     }
     ExternalChangeConflict {
-        en: "the project changed on disk while this window holds unsaved work — Reload takes the disk's version, saving keeps this one",
-        ja: "未保存の変更がある間にプロジェクトがディスク上で変更されました。「再読み込み」でディスク側を、保存でこちら側を残します"
+        en: "The project changed on disk. Accept its changes (Undo keeps your edits), or save your work to another project.",
+        ja: "ディスク上の変更を取り込むか、手編集を別のプロジェクトに保存してください。取り込んだ後もUndoで手編集に戻せます。"
     }
     ErrorLibraryMissing {
         en: "the shipped sound library is not installed, so General MIDI sounds are unavailable",
@@ -1298,14 +1298,24 @@ new のオプション
     AgentWorking { en: "Working…", ja: "作業中…" }
     AgentEnded { en: "The agent process ended.", ja: "エージェントのプロセスが終了しました。" }
     AgentReloaded {
-        en: "The agent changed this project; the window reloaded it.",
-        ja: "エージェントがこのプロジェクトを変更したため、読み込み直しました。"
+        en: "Accepted the project changes. Undo can restore the previous version.",
+        ja: "プロジェクトの変更を取り込みました。Undoで以前の状態に戻せます。"
     }
     AgentReloadOffer {
         en: "The agent changed this project, but the window holds unsaved edits.",
         ja: "エージェントがこのプロジェクトを変更しましたが、ウィンドウに未保存の編集があります。"
     }
-    AgentReload { en: "Reload", ja: "再読み込み" }
+    AgentReload { en: "Accept changes (undoable)", ja: "変更を取り込む（取消可能）" }
+    AgentResolveFirst { en: "Accept the pending changes before sending another message. Undo can recover your local edits.", ja: "先に保留中の変更を取り込んでください。手編集はUndoで戻せます。" }
+    EditExternalChanges { en: "external changes", ja: "外部からの変更" }
+    AgentSaveFirst { en: "Save this project before sending it to the agent.", ja: "エージェントに送る前にプロジェクトを保存してください。" }
+    AgentNewConversation { en: "New conversation", ja: "新しい会話" }
+    AgentStop { en: "Stop", ja: "停止" }
+    AgentAttachAudio { en: "Attach audio", ja: "音声を添付" }
+    AgentOpenResult { en: "Open created project", ja: "生成した曲を開く" }
+    AgentConversationReset { en: "Started a new conversation for this project.", ja: "このプロジェクトについて新しい会話を始めました。" }
+    ErrorEditInProgress { en: "Finish the current edit before accepting changes.", ja: "現在の編集を終えてから変更を取り込んでください。" }
+    ErrorCheckpointName { en: "Use letters, digits, hyphens or underscores for a checkpoint name (up to 80 bytes).", ja: "保存名には文字・数字・ハイフン・アンダースコアを使ってください（80バイトまで）。" }
     AgentChooseModel { en: "Choose a model…", ja: "モデルを選択…" }
     AgentModelsFetch { en: "Refresh", ja: "更新" }
     AgentModelsFetching { en: "Asking the provider for its models…", ja: "モデル一覧を取得中…" }

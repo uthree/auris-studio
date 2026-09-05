@@ -1216,6 +1216,22 @@ pub mod singing {
 }
 
 pub mod documents {
+    //! External editors share a saved document, not the window's undo stack. Saving in place
+    //! checks the last disk snapshot and refuses to overwrite another editor's changes.
+    //! [`Session::reload_external_changes`](crate::Session::reload_external_changes) accepts
+    //! the disk version as one undoable edit, retaining the window's previous edits. The agent
+    //! panel collects writes until the end of a turn before accepting them. When local edits
+    //! overlap a turn, accepting the disk version keeps the local version on the undo stack;
+    //! another prompt cannot save over the unresolved disk version.
+    //!
+    //! Headless editing tools call [`Session::save_with_checkpoint`](crate::Session::save_with_checkpoint)
+    //! because their undo stack ends with the process. The preceding document is stored under
+    //! `.auris-history/` in the same project folder, so relative asset references keep their
+    //! meaning. Named checkpoints support comparisons across calls; restoring one is an
+    //! undoable document replacement. Snapshots contain no audio and do not collect assets.
+    //! In-place writers hold `.auris-write.lock` while comparing the disk document with their
+    //! saved base and replacing it, preventing two cooperating writers from losing an edit.
+    //!
     //! What a project is on disk, and how it refers to files it does not contain.
     //!
     //! # A folder, not a file

@@ -2263,6 +2263,10 @@ impl AurisApp {
     /// lost, offer a button where something would, withdraw the offer once the file is ours
     /// again (a manual save takes it back).
     pub(crate) fn watch_disk(&mut self, cx: &mut gpui::Context<Self>) {
+        // The panel accepts the whole turn as one edit, after its last tool has finished.
+        if self.agent_chat.busy {
+            return;
+        }
         const DISK_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
         if self
             .last_disk_watch
@@ -2284,7 +2288,7 @@ impl AurisApp {
             ExternalChange::Reload => {
                 self.external_change = None;
                 if let Some(path) = self.session.path().map(std::path::Path::to_path_buf) {
-                    self.open_project_at(path, cx);
+                    self.accept_agent_changes(path, cx);
                 }
             }
             ExternalChange::Offer => {

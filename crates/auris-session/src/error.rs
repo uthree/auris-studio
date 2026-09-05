@@ -7,6 +7,16 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// A checkpoint name is empty, too long, or contains a path separator or punctuation.
+    #[error("checkpoint names need 1-80 bytes of letters, digits, hyphens or underscores")]
+    InvalidCheckpointName,
+    /// Another editor changed the saved document after this session read it.
+    #[error("the project changed on disk: {0}; reload its changes or save your work elsewhere")]
+    ExternalChanges(PathBuf),
+
+    /// A gesture must finish before replacing the document from disk.
+    #[error("finish the current edit before accepting external changes")]
+    EditInProgress,
     /// A file could not be read, written, decoded or encoded.
     #[error(transparent)]
     Io(#[from] auris_io::IoError),

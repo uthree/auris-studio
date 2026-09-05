@@ -69,7 +69,7 @@ impl AurisApp {
                     cx.listener(|this, _, _, cx| {
                         if let Some(path) = this.external_change.take() {
                             this.set_status(String::new());
-                            this.open_project_at(path, cx);
+                            this.accept_agent_changes(path, cx);
                         }
                         cx.notify();
                     }),

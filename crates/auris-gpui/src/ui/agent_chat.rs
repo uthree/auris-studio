@@ -8,7 +8,7 @@
 //!
 //! The one genuinely new problem is that both ends hold the same file. The panel's answer:
 //! the window **saves before every message**, so the agent always reads the document as it
-//! stands — and when an event says the agent wrote the project back, the window reloads it,
+//! stands — and at the end of a turn the window accepts the collected writes as one undoable edit,
 //! automatically while it has nothing unsaved and by an offered button when it does. The
 //! decisions behind that live in [`AgentChat::absorb`], which is plain data in and plain
 //! instruction out, so the whole policy is tested without a window.
@@ -61,6 +61,16 @@ pub(crate) enum ChatEntry {
 /// One event off the agent's wire, already parsed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AgentEvent {
+    /// Previously completed text turns recovered for this project.
+    History {
+        /// User and assistant text, oldest first.
+        turns: Vec<(String, String)>,
+    },
+    /// A nonfatal message, which does not end the active turn.
+    Notice {
+        /// What happened.
+        message: String,
+    },
     /// The process is up, and named what answered the phone.
     Ready {
         /// The model the agent resolved to.
@@ -119,6 +129,22 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             .to_string()
     };
     Some(match parsed.get("event")?.as_str()? {
+        "history" => AgentEvent::History {
+            turns: parsed
+                .get("turns")?
+                .as_array()?
+                .iter()
+                .filter_map(|turn| {
+                    Some((
+                        turn.get("user")?.as_str()?.to_string(),
+                        turn.get("answer")?.as_str()?.to_string(),
+                    ))
+                })
+                .collect(),
+        },
+        "notice" => AgentEvent::Notice {
+            message: text("message"),
+        },
         "ready" => AgentEvent::Ready {
             model: text("model"),
         },
@@ -322,6 +348,18 @@ pub(crate) struct AgentChat {
     pub(crate) model_label: String,
     /// A project the agent rewrote while the window held unsaved edits, awaiting the button.
     pub(crate) pending_reload: Option<PathBuf>,
+    /// Writes collected until the current turn ends, so a whole turn is one undo step.
+    turn_project: Option<PathBuf>,
+    /// The document whose folder and model history the running child belongs to.
+    bound_project: Option<PathBuf>,
+    /// Audio files selected by the user for the next message.
+    attachments: Vec<PathBuf>,
+    /// A different project produced by the last turn, ready to open explicitly.
+    produced_project: Option<PathBuf>,
+    /// The next child should replace its persisted text memory with an empty conversation.
+    fresh_history: bool,
+    /// Apply changed provider settings after the current reply has finished.
+    restart_after_turn: bool,
     /// Where the transcript is scrolled to.
     pub(crate) scroll: gpui::ScrollHandle,
     link: Option<AgentLink>,
@@ -353,6 +391,12 @@ impl Default for AgentChat {
             busy: false,
             model_label: String::new(),
             pending_reload: None,
+            turn_project: None,
+            bound_project: None,
+            attachments: Vec::new(),
+            produced_project: None,
+            fresh_history: false,
+            restart_after_turn: false,
             scroll: gpui::ScrollHandle::new(),
             link: None,
         }
@@ -452,6 +496,25 @@ impl AgentChat {
         dirty: bool,
     ) -> Absorbed {
         match event {
+            AgentEvent::History { turns } => {
+                let current = match self.entries.last() {
+                    Some(ChatEntry::You(text)) => Some(text.clone()),
+                    _ => None,
+                };
+                self.entries.clear();
+                self.open_tools.clear();
+                self.expanded.clear();
+                for (user, answer) in turns {
+                    self.push_entry(ChatEntry::You(user));
+                    self.push_entry(ChatEntry::Agent(answer));
+                }
+                if let Some(current) = current {
+                    self.push_entry(ChatEntry::You(current));
+                }
+            }
+            AgentEvent::Notice { message } => {
+                self.push_entry(ChatEntry::Error(message));
+            }
             AgentEvent::Ready { model } => {
                 self.model_label = model;
             }
@@ -505,6 +568,14 @@ impl AgentChat {
                 }
             }
             AgentEvent::Changed { project } => {
+                if self.busy {
+                    if open.is_some_and(|open| same_file(&project, open)) {
+                        self.turn_project = Some(project);
+                    } else {
+                        self.produced_project = Some(project);
+                    }
+                    return Absorbed::Nothing;
+                }
                 if let Some(open) = open
                     && same_file(&project, open)
                 {
@@ -512,9 +583,10 @@ impl AgentChat {
                         self.pending_reload = Some(project);
                         self.push_entry(ChatEntry::Note(Key::AgentReloadOffer));
                     } else {
-                        self.push_entry(ChatEntry::Note(Key::AgentReloaded));
                         return Absorbed::Reload(project);
                     }
+                } else {
+                    self.produced_project = Some(project);
                 }
             }
             AgentEvent::Answer {
@@ -530,18 +602,28 @@ impl AgentChat {
                 }
                 self.tokens_out += output_tokens;
                 self.push_entry(ChatEntry::Agent(text));
+                return self.finish_reload(open, dirty);
             }
             AgentEvent::Error { message } => {
                 self.busy = false;
                 self.push_entry(ChatEntry::Error(message));
+                return self.finish_reload(open, dirty);
             }
             AgentEvent::Ended => {
                 self.busy = false;
                 self.link = None;
                 self.push_entry(ChatEntry::Note(Key::AgentEnded));
+                return self.finish_reload(open, dirty);
             }
         }
         Absorbed::Nothing
+    }
+
+    fn finish_reload(&mut self, open: Option<&Path>, dirty: bool) -> Absorbed {
+        match self.turn_project.take() {
+            Some(project) => self.absorb(AgentEvent::Changed { project }, open, dirty),
+            None => Absorbed::Nothing,
+        }
     }
 }
 
@@ -577,7 +659,7 @@ fn agent_binary() -> Result<PathBuf, String> {
 /// beside the song. The reader thread owns stdout for the child's whole life and speaks to the
 /// window only through the channel; the window polls that channel on its repaint tick, the
 /// same way it reads everything else another thread writes.
-fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
+fn spawn_link(folder: Option<&Path>, fresh_history: bool) -> Result<AgentLink, String> {
     let binary = agent_binary()?;
     let mut command = Command::new(&binary);
     command
@@ -587,6 +669,14 @@ fn spawn_link(folder: Option<&Path>) -> Result<AgentLink, String> {
         .stderr(Stdio::piped());
     if let Some(folder) = folder {
         command.current_dir(folder);
+        command.env(
+            "AURIS_AGENT_HISTORY",
+            folder.join(".auris-conversation.json"),
+        );
+    }
+    command.env_remove("AURIS_AGENT_FRESH_HISTORY");
+    if fresh_history {
+        command.env("AURIS_AGENT_FRESH_HISTORY", "1");
     }
     // Windows-only API, not a `cfg!` choice: without this flag a windowless application
     // spawning a console binary flashes a console window up over the music.
@@ -701,6 +791,85 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOpt
 }
 
 impl AurisApp {
+    /// Frames the selection using the same clip and note numbers as the model tools.
+    fn agent_selection_context(&self) -> serde_json::Value {
+        let project = self.project();
+        let clips: Vec<_> = project
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                track.kind.note_clips().into_iter().flatten().enumerate()
+                .filter(|(_, clip)| self.selected_clips.contains(&clip.id))
+                .map(|(index, clip)| serde_json::json!({
+                    "track": track.name, "clip": index + 1, "id": clip.id.0,
+                    "primary": self.selected_clip == Some(clip.id),
+                    "start_bar": project.signatures.bar_of(clip.start),
+                    "start_tick": clip.start.raw(), "end_tick": (clip.start + clip.length).raw()
+                }))
+            })
+            .collect();
+        let mut notes = Vec::new();
+        if let Some((_, clip)) = self.selected_clip.and_then(|id| project.midi_clip(id)) {
+            let mut ordered: Vec<_> = clip.notes.iter().enumerate().collect();
+            ordered.sort_by_key(|(index, note)| (note.start, note.pitch, *index));
+            notes = ordered
+                .iter()
+                .enumerate()
+                .filter(|(_, (index, _))| self.selected_notes.contains(index))
+                .map(|(number, _)| number + 1)
+                .collect();
+        }
+        serde_json::json!({
+            "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
+            "selected_clips": clips, "selected_note_numbers": notes,
+            "playhead_tick": self.session.playhead().raw(),
+            "playhead_bar": project.signatures.bar_of(self.session.playhead()),
+            "loop_region_ticks": project.loop_region.map(|(start, end)| (start.raw(), end.raw())),
+            "addressing": "Clip and note numbers are 1-based as describe and notes report. The selection is context, not authorization to change unselected material."
+        })
+    }
+
+    /// Starts fresh model history and rebinds the next child to the current document.
+    pub(crate) fn agent_reset_conversation(&mut self) {
+        self.agent_chat.link = None;
+        self.agent_chat.busy = false;
+        self.agent_chat.bound_project = None;
+        self.agent_chat.fresh_history = false;
+        self.agent_chat.restart_after_turn = false;
+        self.agent_chat.produced_project = None;
+        self.agent_chat.turn_project = None;
+        self.agent_chat.pending_reload = None;
+        self.agent_chat.open_tools.clear();
+        self.agent_chat.model_label.clear();
+        self.agent_chat.tokens_in = 0;
+        self.agent_chat.tokens_out = 0;
+        if !self.agent_chat.entries.is_empty() {
+            self.agent_chat
+                .push_entry(ChatEntry::Note(Key::AgentConversationReset));
+        }
+    }
+
+    /// Stops the subprocess and checks for completed writes, which remain undoable.
+    fn agent_stop(&mut self, cx: &mut gpui::Context<Self>) {
+        self.agent_chat.link = None;
+        self.agent_chat.busy = false;
+        if self.session.externally_modified()
+            && let Some(path) = self.session.path().map(Path::to_path_buf)
+        {
+            self.agent_chat.turn_project = Some(path);
+        }
+        let open = self.session.path().map(Path::to_path_buf);
+        if let Absorbed::Reload(path) = self
+            .agent_chat
+            .finish_reload(open.as_deref(), self.session.is_dirty())
+        {
+            self.accept_agent_changes(path, cx);
+        }
+        self.agent_chat.open_tools.clear();
+        self.agent_chat.push_entry(ChatEntry::Note(Key::AgentEnded));
+        cx.notify();
+    }
+
     /// Sends what is in the input field, starting the agent if it is not running.
     ///
     /// The window saves first, so the model reads the document as it stands — the other half
@@ -708,6 +877,11 @@ impl AurisApp {
     pub(crate) fn agent_send(&mut self) {
         let text = self.agent_chat.input.content().trim().to_string();
         if text.is_empty() || self.agent_chat.busy {
+            return;
+        }
+        if self.agent_chat.pending_reload.is_some() {
+            self.agent_chat
+                .push_entry(ChatEntry::Note(Key::AgentResolveFirst));
             return;
         }
         if self.agent_chat.configuring {
@@ -735,12 +909,25 @@ impl AurisApp {
             }
             return;
         }
+        if self.session.path().is_none() {
+            self.agent_chat
+                .push_entry(ChatEntry::Note(Key::AgentSaveFirst));
+            return;
+        }
+        if self.agent_chat.link.is_some()
+            && self.agent_chat.bound_project.as_deref() != self.session.path()
+        {
+            self.agent_reset_conversation();
+        }
         if self.session.is_dirty()
             && self.session.path().is_some()
             && let Err(error) = self.session.save_in_place()
         {
             self.agent_chat
-                .push_entry(ChatEntry::Error(error.to_string()));
+                .push_entry(ChatEntry::Error(crate::i18n::error_text(
+                    &error,
+                    self.language(),
+                )));
             return;
         }
 
@@ -750,8 +937,12 @@ impl AurisApp {
                 .path()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
-            match spawn_link(folder.as_deref()) {
-                Ok(link) => self.agent_chat.link = Some(link),
+            match spawn_link(folder.as_deref(), self.agent_chat.fresh_history) {
+                Ok(link) => {
+                    self.agent_chat.link = Some(link);
+                    self.agent_chat.bound_project = self.session.path().map(Path::to_path_buf);
+                    self.agent_chat.fresh_history = false;
+                }
                 Err(error) => {
                     self.agent_chat.push_entry(ChatEntry::Error(error));
                     return;
@@ -759,8 +950,13 @@ impl AurisApp {
             }
         }
 
-        let framed = framed_say(&text, self.session.path());
-        let wire = serde_json::json!({ "say": framed }).to_string();
+        let framed = format!(
+            "[Window context: {}]\n{}",
+            self.agent_selection_context(),
+            framed_say(&text, self.session.path())
+        );
+        let wire =
+            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments }).to_string();
         if let Some(link) = self.agent_chat.link.as_mut()
             && let Err(error) = writeln!(link.to_child, "{wire}")
         {
@@ -772,6 +968,7 @@ impl AurisApp {
         self.agent_chat.push_entry(ChatEntry::You(text));
         self.agent_chat.busy = true;
         self.agent_chat.input = TextField::new(String::new());
+        self.agent_chat.attachments.clear();
     }
 
     /// Drains the agent's channel, obeying what each event asks for.
@@ -814,8 +1011,12 @@ impl AurisApp {
             match self.agent_chat.absorb(event, open.as_deref(), dirty) {
                 Absorbed::Nothing => cx.notify(),
                 Absorbed::Reload(path) => {
-                    self.open_project_at(path, cx);
+                    self.accept_agent_changes(path, cx);
                 }
+            }
+            if !self.agent_chat.busy && self.agent_chat.restart_after_turn {
+                self.agent_chat.link = None;
+                self.agent_chat.restart_after_turn = false;
             }
         }
     }
@@ -837,12 +1038,47 @@ impl AurisApp {
 
     /// Reloads the project the agent rewrote, once the person says so.
     pub(crate) fn agent_reload(&mut self, cx: &mut gpui::Context<Self>) {
-        if let Some(path) = self.agent_chat.pending_reload.take() {
-            self.agent_chat
-                .entries
-                .push(ChatEntry::Note(Key::AgentReloaded));
-            self.open_project_at(path, cx);
+        if !self.agent_chat.busy
+            && let Some(path) = self.agent_chat.pending_reload.clone()
+        {
+            self.accept_agent_changes(path, cx);
         }
+    }
+
+    pub(crate) fn accept_agent_changes(&mut self, path: PathBuf, cx: &mut gpui::Context<Self>) {
+        if !self
+            .session
+            .path()
+            .is_some_and(|open| same_file(open, &path))
+        {
+            return;
+        }
+        match self.session.reload_external_changes() {
+            Ok(missing) => {
+                self.agent_chat.pending_reload = None;
+                self.external_change = None;
+                self.resync_selection();
+                self.cancel_auto_sing();
+                self.invalidate_sung_previews();
+                self.agent_chat
+                    .push_entry(ChatEntry::Note(Key::AgentReloaded));
+                for path in missing {
+                    self.agent_chat.push_entry(ChatEntry::Error(format!(
+                        "Missing asset: {}",
+                        path.display()
+                    )));
+                }
+            }
+            Err(error) => {
+                self.agent_chat.pending_reload = Some(path);
+                self.agent_chat
+                    .push_entry(ChatEntry::Error(crate::i18n::error_text(
+                        &error,
+                        self.language(),
+                    )));
+            }
+        }
+        cx.notify();
     }
 
     /// Writes a complete form straight into the shared preferences, leaving the section open.
@@ -860,7 +1096,11 @@ impl AurisApp {
             log::warn!("the agent settings did not save: {error}");
         }
         // The child read its configuration at spawn; the next message spawns a fresh one.
-        self.agent_chat.link = None;
+        if self.agent_chat.busy {
+            self.agent_chat.restart_after_turn = true;
+        } else {
+            self.agent_chat.link = None;
+        }
         self.agent_chat.model_label = String::new();
     }
 
@@ -873,7 +1113,11 @@ impl AurisApp {
         if let Err(error) = self.settings.save() {
             log::warn!("the agent settings did not save: {error}");
         }
-        self.agent_chat.link = None;
+        if self.agent_chat.busy {
+            self.agent_chat.restart_after_turn = true;
+        } else {
+            self.agent_chat.link = None;
+        }
         self.agent_chat.model_label = String::new();
         self.agent_chat.configuring = false;
         self.agent_chat.focused = None;
@@ -886,6 +1130,7 @@ impl AurisApp {
     pub(crate) fn agent_key(
         &mut self,
         event: &gpui::KeyDownEvent,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         let Some(focused) = self.agent_chat.focused else {
@@ -904,6 +1149,17 @@ impl AurisApp {
                 }
                 ("enter", AgentField::Chat) => {
                     self.agent_send();
+                    if self.session.path().is_none()
+                        && self.settings.agent.is_configured()
+                        && !self.agent_chat.input.content().trim().is_empty()
+                        && !self.agent_chat.busy
+                    {
+                        self.save_as_then(
+                            Some(crate::ui::prompt::PendingAction::AgentSend),
+                            window,
+                            cx,
+                        );
+                    }
                     return true;
                 }
                 // A finished URL or key name changes what the provider would answer, so the
@@ -984,7 +1240,8 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .h(Metrics::PANEL_HEADER_HEIGHT)
+                    .min_h(Metrics::PANEL_HEADER_HEIGHT)
+                    .flex_wrap()
                     .px_2()
                     .bg(theme.surface_raised)
                     .border_b_1()
@@ -992,6 +1249,63 @@ impl AurisApp {
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(div().child(self.t(Key::AgentPanel)))
+                    .when(self.agent_chat.produced_project.is_some(), |this| {
+                        this.child(button(
+                            "agent-open-result",
+                            self.t(Key::AgentOpenResult),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                if let Some(path) = this.agent_chat.produced_project.clone()
+                                    && this.confirm_discard(
+                                        crate::ui::prompt::PendingAction::OpenDropped(path.clone()),
+                                    )
+                                {
+                                    this.open_project_at(path, cx);
+                                }
+                            }),
+                        ))
+                    })
+                    .child(button(
+                        "agent-new-conversation",
+                        self.t(Key::AgentNewConversation),
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.agent_stop(cx);
+                            // A conflict must remain available after clearing model history.
+                            let pending = this.agent_chat.pending_reload.clone();
+                            this.agent_reset_conversation();
+                            this.agent_chat.pending_reload = pending;
+                            this.agent_chat.fresh_history = true;
+                            this.agent_chat.entries.clear();
+                            if let Some(folder) = this.session.project_folder() {
+                                let history = folder.join(".auris-conversation.json");
+                                if let Err(error) = std::fs::remove_file(&history)
+                                    && error.kind() != std::io::ErrorKind::NotFound
+                                {
+                                    this.agent_chat
+                                        .push_entry(ChatEntry::Error(error.to_string()));
+                                }
+                            }
+                            cx.notify();
+                        }),
+                    ))
+                    .when(busy, |this| {
+                        this.child(button(
+                            "agent-stop",
+                            self.t(Key::AgentStop),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.warning,
+                            &theme,
+                            cx.listener(|this, _, _, cx| this.agent_stop(cx)),
+                        ))
+                    })
                     .child(
                         div()
                             .flex_1()
@@ -1472,6 +1786,7 @@ impl AurisApp {
     /// The message field and its border, at the bottom of the panel.
     fn agent_input_row(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
+        let attachments = self.agent_chat.attachments.clone();
         let focused = self.agent_chat.focused == Some(AgentField::Chat);
         let empty = self.agent_chat.input.content().is_empty();
         let placeholder = self.t(Key::AgentPlaceholder).to_string();
@@ -1479,6 +1794,64 @@ impl AurisApp {
             .p_1()
             .border_t_1()
             .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(button(
+                        "agent-attach-audio",
+                        self.t(Key::AgentAttachAudio),
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            let language = this.language();
+                            cx.spawn(async move |this, cx| {
+                                let files = rfd::AsyncFileDialog::new()
+                                    .set_title(Key::AgentAttachAudio.get(language))
+                                    .add_filter(
+                                        "Audio",
+                                        &["wav", "mp3", "flac", "ogg", "aac", "aiff", "m4a"],
+                                    )
+                                    .pick_files()
+                                    .await;
+                                if let Some(files) = files {
+                                    let _ = this.update(cx, |this, cx| {
+                                        for file in files {
+                                            let path = file.path().to_path_buf();
+                                            if !this.agent_chat.attachments.contains(&path) {
+                                                this.agent_chat.attachments.push(path);
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                }
+                            })
+                            .detach();
+                        }),
+                    ))
+                    .children(attachments.iter().enumerate().map(|(index, path)| {
+                        button(
+                            ("agent-attachment", index),
+                            format!(
+                                "{} ×",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                if index < this.agent_chat.attachments.len() {
+                                    this.agent_chat.attachments.remove(index);
+                                }
+                                cx.notify();
+                            }),
+                        )
+                    })),
+            )
             .child(self.panel_field(
                 "agent-input",
                 AgentField::Chat,
@@ -1584,6 +1957,121 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_session::prelude::{Note, Ticks};
+
+    #[gpui::test]
+    fn pending_changes_block_send_before_saving_or_starting_a_model(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.agent_chat.pending_reload = Some(PathBuf::from("pending.auris"));
+            this.agent_chat.input = TextField::new("change the bass");
+            let before = this.project().clone();
+            this.agent_send();
+            assert_eq!(this.project(), &before);
+            assert_eq!(this.agent_chat.input.content(), "change the bass");
+            assert!(this.agent_chat.link.is_none());
+            assert!(!this.agent_chat.busy);
+            assert_eq!(
+                this.agent_chat.entries.last(),
+                Some(&ChatEntry::Note(Key::AgentResolveFirst))
+            );
+        });
+    }
+
+    #[test]
+    fn a_turn_collects_tool_writes_and_offers_conflicts_only_when_finished() {
+        let path = PathBuf::from("song.auris");
+        let mut chat = AgentChat {
+            busy: true,
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            assert_eq!(
+                chat.absorb(
+                    AgentEvent::Changed {
+                        project: path.clone()
+                    },
+                    Some(&path),
+                    false
+                ),
+                Absorbed::Nothing
+            );
+        }
+        let other = PathBuf::from("another-song.auris");
+        chat.absorb(
+            AgentEvent::Changed {
+                project: other.clone(),
+            },
+            Some(&path),
+            false,
+        );
+        assert_eq!(chat.produced_project, Some(other));
+        assert_eq!(
+            chat.absorb(
+                AgentEvent::Error {
+                    message: "provider stopped".into()
+                },
+                Some(&path),
+                true
+            ),
+            Absorbed::Nothing
+        );
+        assert!(!chat.busy);
+        assert_eq!(chat.pending_reload, Some(path));
+        assert!(chat.turn_project.is_none());
+    }
+
+    #[gpui::test]
+    fn selection_context_numbers_notes_in_the_same_order_as_the_tool(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let track = this
+                .session
+                .add_default_instrument_track("Selected lead")
+                .unwrap();
+            let clip = this
+                .session
+                .add_midi_clip(track, "Idea", Ticks::ZERO, Ticks::QUARTER * 4)
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(72, Ticks::QUARTER, Ticks::QUARTER))
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.selected_track = Some(track);
+            this.selected_clip = Some(clip);
+            this.selected_clips.insert(clip);
+            this.selected_notes.insert(0);
+            let context = this.agent_selection_context();
+            assert_eq!(context["selected_track"], "Selected lead");
+            assert_eq!(context["selected_note_numbers"], serde_json::json!([2]));
+            assert_eq!(context["selected_clips"][0]["clip"], 1);
+        });
+    }
+
+    #[test]
+    fn resumed_history_keeps_the_message_just_submitted() {
+        let mut chat = AgentChat::default();
+        chat.push_entry(ChatEntry::You("continue".into()));
+        chat.absorb(
+            AgentEvent::History {
+                turns: vec![("old request".into(), "old answer".into())],
+            },
+            None,
+            false,
+        );
+        assert_eq!(
+            chat.entries,
+            vec![
+                ChatEntry::You("old request".into()),
+                ChatEntry::Agent("old answer".into()),
+                ChatEntry::You("continue".into())
+            ]
+        );
+    }
 
     #[gpui::test]
     fn agent_chat_and_connection_fields_accept_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {

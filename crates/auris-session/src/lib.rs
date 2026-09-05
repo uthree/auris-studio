@@ -71,6 +71,7 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
+pub use session::MusicalClipAnalysis;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS,

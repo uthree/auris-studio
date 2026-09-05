@@ -18,6 +18,8 @@ use crate::param::ParamTarget;
 /// variant makes every frontend's `match` fail to compile, which is the reminder we want.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Edit {
+    /// Changes made by an external editor were accepted from disk.
+    ExternalChanges,
     /// Cycle playback was turned on or off.
     ToggleLoop,
     /// The cycle region was moved.

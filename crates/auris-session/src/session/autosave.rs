@@ -71,8 +71,8 @@ pub fn should_autosave(state: AutosaveState) -> bool {
         && state.dirty
         && !state.gesture_open
         // Another writer's version is on disk. Automatically writing over it would silently
-        // destroy work this window never saw; a save while that stands has to be a person's
-        // own hand on ⌘S, deciding.
+        // destroy work this window never saw. In-place saves refuse too; accepting the disk
+        // changes or saving to another project resolves the disagreement.
         && !state.overwritten
         && state.since_last_save >= AUTOSAVE_INTERVAL
 }

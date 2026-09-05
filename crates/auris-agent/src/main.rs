@@ -306,6 +306,8 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NoArgs {}
 
+mod memory;
+
 /// One [`rig::tool::Tool`] over one `auris-toolbox` module that takes arguments.
 ///
 /// The work runs in `spawn_blocking` for the same two reasons as at the MCP door: it blocks
@@ -386,6 +388,12 @@ macro_rules! text_tool {
     };
 }
 
+session_tool!(AnalyzeMusic, analyze_music);
+session_tool!(InspectComposition, inspect_composition);
+session_tool!(EditHarmony, edit_harmony);
+session_tool!(EditRecipe, edit_recipe);
+session_tool!(EditClip, edit_clip);
+session_tool!(Checkpoints, checkpoints);
 text_tool!(SpecReference, spec_reference);
 session_tool!(SearchDocumentation, search_documentation);
 session_tool!(CheckSpec, check_spec);
@@ -567,6 +575,12 @@ fn strip_markup(text: &str) -> String {
 fn armed(builder: AgentBuilder) -> Agent {
     builder
         .preamble(&preamble())
+        .tool(AnalyzeMusic)
+        .tool(InspectComposition)
+        .tool(EditHarmony)
+        .tool(EditRecipe)
+        .tool(EditClip)
+        .tool(Checkpoints)
         .tool(SearchDocumentation)
         .tool(InternetSearch)
         .tool(SpecReference)
@@ -901,6 +915,9 @@ fn changed_project(tool: &str, args: &str) -> Option<String> {
         return None;
     }
     let parsed: serde_json::Value = serde_json::from_str(args).ok()?;
+    if tool == toolbox::checkpoints::NAME && parsed.get("action")?.as_str()? != "restore" {
+        return None;
+    }
     let path = parsed
         .get("project")
         .or_else(|| parsed.get("output"))?
@@ -1148,6 +1165,22 @@ async fn conversation(agent: &Agent, max_turns: usize) -> Result<(), String> {
 /// may carry `"audio": ["file.wav", …]` — files sent along with the words, for a provider
 /// whose API has an audio field.
 async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), String> {
+    let memory_path = std::env::var_os("AURIS_AGENT_HISTORY").map(PathBuf::from);
+    if let Some(path) = &memory_path
+        && !confined_to_working_directory(path)
+    {
+        return Err("conversation history must stay inside the agent's working directory".into());
+    }
+    let mut memory = match &memory_path {
+        Some(path) if std::env::var_os("AURIS_AGENT_FRESH_HISTORY").is_none() => {
+            memory::Memory::load(path)?
+        }
+        _ => memory::Memory::default(),
+    };
+    if let Some(path) = &memory_path {
+        memory.save(path)?;
+    }
+    emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
     emit(serde_json::json!({
         "event": "ready",
         "provider": match options.provider {
@@ -1156,7 +1189,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         },
         "model": options.model,
     }));
-    let mut history: Vec<Message> = Vec::new();
+    let mut history = memory.messages();
     let stdin = std::io::stdin();
     loop {
         let mut line = String::new();
@@ -1196,8 +1229,24 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
             }
         };
         match converse(agent, message, history.clone(), options.max_turns, true).await {
-            Ok((answer, kept, usage)) => {
-                history = kept;
+            Ok((answer, _, usage)) => {
+                let display = serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|wire| {
+                        wire.get("display")
+                            .and_then(|value| value.as_str())
+                            .map(String::from)
+                    })
+                    .unwrap_or_else(|| said.clone());
+                memory.push(&display, &answer);
+                history = memory.messages();
+                if let Some(path) = &memory_path
+                    && let Err(error) = memory.save(path)
+                {
+                    emit(
+                        serde_json::json!({ "event": "notice", "message": format!("Conversation history was not saved: {error}") }),
+                    );
+                }
                 emit(serde_json::json!({
                     "event": "answer",
                     "text": answer,
@@ -1746,6 +1795,12 @@ mod tests {
     fn every_tool_wears_its_toolbox_name_and_schema() {
         // The names the loop dispatches on are the toolbox constants, once each.
         let names = [
+            AnalyzeMusic::NAME,
+            InspectComposition::NAME,
+            EditHarmony::NAME,
+            EditRecipe::NAME,
+            EditClip::NAME,
+            Checkpoints::NAME,
             SearchDocumentation::NAME,
             InternetSearch::NAME,
             Compose::NAME,
@@ -1780,7 +1835,7 @@ mod tests {
             ComposeLyrics::NAME,
         ];
         let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), 32, "thirty-two tools, no name worn twice");
+        assert_eq!(unique.len(), names.len(), "no name worn twice");
 
         // The schema is the toolbox derive, fields and all — the same one the MCP door hands
         // its clients.

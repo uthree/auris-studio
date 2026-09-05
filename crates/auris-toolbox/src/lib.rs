@@ -37,12 +37,24 @@ use std::path::{Path, PathBuf};
 use auris_session::prelude::*;
 use auris_session::{Session, SessionError, SessionOptions};
 
+mod editing;
+pub use editing::{
+    analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
+};
+
 /// What a model is told before it has called anything.
 ///
 /// The one piece of text a model keeps in context for the whole conversation, so it carries
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
 pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; these tools drive \
+    its document. Before editing an existing piece, use `inspect_composition` to read its \
+    current harmony and recipes separately from its original specification. `edit_harmony` \
+    changes chords, key, tempo and section labels without rewriting notes; `edit_recipe` \
+    changes one generated clip's musical controls. `edit_clip` moves, copies, splits, resizes \
+    or freezes a clip. Use `checkpoints` to name alternatives and restore an earlier document; \
+    editing tools automatically preserve the previous document. Re-read clip numbers after \
+    arrangement edits. Do not recompose the whole project for a local change. These tools drive \
     its headless session. A song is written as a `.asong` specification — TOML in which every \
     field has a default, so two lines are already a valid song. The flow: `spec_reference` once \
     to learn the format, `check_spec` to validate a draft (errors name lines and fields, and a \
@@ -308,6 +320,10 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    checkpoints::NAME,
+    edit_clip::NAME,
+    edit_harmony::NAME,
+    edit_recipe::NAME,
     compose::NAME,
     compose_lyrics::NAME,
     another_take::NAME,
@@ -1010,7 +1026,9 @@ pub mod set_level {
             }
             session.set_param(pan_target, pan);
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let (gain, pan) = match strip {
             Some(id) => {
@@ -1104,7 +1122,9 @@ pub mod set_send {
         session
             .set_send_level(track_id, send_id, args.level_db)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!(
             "{} => {} at {:+.1} dB. Saved.",
             args.track, args.to, args.level_db
@@ -1278,7 +1298,9 @@ pub mod set_effect {
         let before = session.param_value(target, &descriptor);
         let automated = session.is_automated(target);
         session.set_param(target, args.value);
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let mut text = format!(
             "{effect_id} {}: {} -> {}. Saved.",
@@ -1343,7 +1365,9 @@ pub mod section_gain {
             if !session.clear_automation(target) {
                 return Err(format!("nothing is automated on '{}'", args.track));
             }
-            session.save_in_place().map_err(|error| error.to_string())?;
+            session
+                .save_with_checkpoint()
+                .map_err(|error| error.to_string())?;
             return Ok(format!(
                 "The gain lane on '{}' is gone; the fader rules everywhere again. Saved.",
                 args.track
@@ -1411,7 +1435,9 @@ pub mod section_gain {
                 args.track
             ));
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         text.push_str(
             "The fader keeps ruling outside the stretch. Saved — `analyze` will show the arc.",
         );
@@ -1715,7 +1741,9 @@ pub mod add_track {
                 ));
             }
         };
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if kind == "instrument" {
             text.push_str(" The track holds no clips yet; `add_part` writes one.");
@@ -1838,7 +1866,9 @@ pub mod add_part {
         let clip = session
             .generate_clip(track, start, length, ClipRecipe::new(preset, seed))
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let notes = session
             .project()
@@ -1916,7 +1946,9 @@ pub mod set_instrument {
                 .map_err(|error| format!("{error} — `list_instruments` names the real ones"))?;
         }
         let voiced = add_track::voice(&mut session, track, &args.sound, args.drums, &None)?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!("{} — now {voiced}. Saved.", args.track))
     }
 }
@@ -1952,7 +1984,9 @@ pub mod rename_track {
         session
             .rename_track(track, args.name.trim())
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!(
             "'{}' is now '{}'. Saved.",
             args.track,
@@ -1987,7 +2021,9 @@ pub mod remove_track {
         session
             .remove_track(track)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!(
             "Removed '{}' — {} tracks remain. Saved.",
             args.track,
@@ -2035,7 +2071,9 @@ pub mod add_clip {
         let clip = session
             .add_midi_clip(track, name, start, length)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let number = clip_number(session.project(), track, clip).unwrap_or(0);
         Ok(format!(
             "Opened clip [{number}] '{name}' on {} — bars {start_bar}-{}, empty. Saved. \
@@ -2242,7 +2280,9 @@ pub mod edit_notes {
                 .add_note(id, note)
                 .map_err(|error| error.to_string())?;
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let now = session
             .project()
@@ -2318,7 +2358,9 @@ pub mod accompany {
         let report = session
             .accompany(id, &parts, args.seed.unwrap_or(0))
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let band: Vec<String> = report
             .parts
@@ -2414,7 +2456,9 @@ pub mod write_lyrics {
         let filled = session
             .write_lyrics(id, &indices, &args.text)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!(
             "Laid '{}' across {filled} notes starting at [{from}]. Saved.",
             args.text.trim()
@@ -2612,7 +2656,9 @@ pub mod sing {
             .map_err(|error| error.to_string())?;
         // A take names its audio by a pointer in the document; a pointer that only lived in
         // memory would leave the rendered file orphaned on disk.
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let seed = session
             .project()
             .track(target)
@@ -3136,7 +3182,9 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
             ));
         }
     }
-    session.save_in_place().map_err(|error| error.to_string())?;
+    session
+        .save_with_checkpoint()
+        .map_err(|error| error.to_string())?;
     text.push_str("Saved. Render again to hear it.");
     Ok(text)
 }
@@ -3295,7 +3343,7 @@ mod tests {
             session.add_effect(Some(probe), "auris.fx.limiter").unwrap();
             let bus = session.add_bus_track("Wash");
             session.add_send(probe, bus).unwrap();
-            session.save_in_place().unwrap();
+            session.save_with_checkpoint().unwrap();
         }
         let read = || {
             mixer::run(&mixer::Args {

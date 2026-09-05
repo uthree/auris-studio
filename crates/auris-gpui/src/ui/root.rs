@@ -1209,7 +1209,7 @@ impl AurisApp {
             || self.library_search_key(event, cx)
             // Last, because everything above it is in front of the agent field on the screen and
             // has to answer for a key first.
-            || self.agent_key(event, cx)
+            || self.agent_key(event, window, cx)
         {
             cx.stop_propagation();
             cx.notify();

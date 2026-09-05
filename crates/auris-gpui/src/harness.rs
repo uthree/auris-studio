@@ -956,9 +956,16 @@ mod tests {
             assert!(
                 !matches!(
                     this.agent_chat.entries.last(),
-                    Some(crate::ui::agent_chat::ChatEntry::Note(_))
+                    Some(crate::ui::agent_chat::ChatEntry::Note(
+                        auris_i18n::Key::AgentNotConfigured
+                    ))
                 ),
                 "a complete form is not refused"
+            );
+            assert_eq!(
+                this.agent_chat.input.content(),
+                "make it louder",
+                "an unsaved document keeps the message for after Save As"
             );
         });
     }

@@ -40,6 +40,60 @@ struct AurisMcp;
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
+    /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.
+    #[tool]
+    async fn analyze_music(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_music::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_music::run(&args)).await
+    }
+
+    /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
+    #[tool]
+    async fn inspect_composition(
+        &self,
+        Parameters(args): Parameters<toolbox::inspect_composition::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::inspect_composition::run(&args)).await
+    }
+
+    /// Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call write_again on the parts that should follow the new harmony.
+    #[tool]
+    async fn edit_harmony(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_harmony::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_harmony::run(&args)).await
+    }
+
+    /// Changes a generated clip's recipe and regenerates that clip only. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.
+    #[tool]
+    async fn edit_recipe(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_recipe::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_recipe::run(&args)).await
+    }
+
+    /// Moves, duplicates, splits, resizes, removes, mutes or freezes one note clip. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.
+    #[tool]
+    async fn edit_clip(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_clip::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_clip::run(&args)).await
+    }
+
+    /// Lists, creates or restores document checkpoints in the project folder. Editing tools automatically keep the previous document. Create a named checkpoint for an A/B comparison; restore brings its notes, harmony and mix back and saves, keeping the current version in another automatic checkpoint. Assets are referenced, not copied.
+    #[tool]
+    async fn checkpoints(
+        &self,
+        Parameters(args): Parameters<toolbox::checkpoints::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::checkpoints::run(&args)).await
+    }
+
     /// Searches the Auris Studio documentation embedded in this build. Use it for questions
     /// about features, workflows, composition, development, evaluation, and singing-voice
     /// training. Returns the most relevant passages with their document paths and section
@@ -482,6 +536,27 @@ mod tests {
             sing, spec_reference, teach_progression, write_again, write_lyrics,
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
+            (
+                toolbox::analyze_music::NAME,
+                toolbox::analyze_music::DESCRIPTION,
+            ),
+            (
+                toolbox::inspect_composition::NAME,
+                toolbox::inspect_composition::DESCRIPTION,
+            ),
+            (
+                toolbox::edit_harmony::NAME,
+                toolbox::edit_harmony::DESCRIPTION,
+            ),
+            (
+                toolbox::edit_recipe::NAME,
+                toolbox::edit_recipe::DESCRIPTION,
+            ),
+            (toolbox::edit_clip::NAME, toolbox::edit_clip::DESCRIPTION),
+            (
+                toolbox::checkpoints::NAME,
+                toolbox::checkpoints::DESCRIPTION,
+            ),
             (
                 search_documentation::NAME,
                 search_documentation::DESCRIPTION,

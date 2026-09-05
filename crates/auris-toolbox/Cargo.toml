@@ -17,3 +17,4 @@ auris-session.workspace = true
 # protocol, so a field documented here is documented identically at both doors.
 schemars = "1"
 serde.workspace = true
+serde_json.workspace = true

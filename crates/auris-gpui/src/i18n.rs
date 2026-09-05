@@ -94,6 +94,7 @@ impl AurisApp {
 /// What an undo step is called.
 pub fn edit_key(edit: Edit) -> Key {
     match edit {
+        Edit::ExternalChanges => Key::EditExternalChanges,
         Edit::ToggleLoop => Key::EditToggleLoop,
         Edit::SetLoopRegion => Key::EditSetLoopRegion,
         Edit::SetPunchRegion => Key::EditSetPunchRegion,
@@ -214,6 +215,9 @@ pub fn track_kind_key(kind: &TrackKind) -> Key {
 pub fn error_text(error: &SessionError, language: Language) -> String {
     let with = |key: Key, detail: String| messages::detailed(language, key.get(language), &detail);
     match error {
+        SessionError::InvalidCheckpointName => Key::ErrorCheckpointName.get(language).to_string(),
+        SessionError::ExternalChanges(_) => Key::ExternalChangeConflict.get(language).to_string(),
+        SessionError::EditInProgress => Key::ErrorEditInProgress.get(language).to_string(),
         SessionError::Io(inner) => with(Key::ErrorFile, io_error_text(inner, language)),
         SessionError::Engine(inner) => with(Key::ErrorEngine, engine_error_text(inner, language)),
         // The plugin's own words: it names a file, an id or a refusal that came from somebody

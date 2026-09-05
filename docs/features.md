@@ -1270,7 +1270,22 @@ installed (`notes` reads the words back beside the pitches); and `sing` renders 
 through its voice model — chosen once with `voice`, an absolute path to an exported `.onnx`
 file — into the take that playback and `render` then play. The same determinism as in the
 window: the same notes, lyrics, voice and seed render the same take on any machine.
-Thirty tools in all, identical at both model doors.
+The same tool set is available at both model doors.
+
+Existing songs can be revised without composing a replacement. `inspect_composition` reads
+the original specification separately from the current harmony, tempo, sections and clip
+recipes. `edit_harmony` changes a specified bar range while leaving notes and the mix intact;
+`write_again` explicitly updates the parts that should follow it. `edit_recipe` changes one
+clip's density, intensity, rhythm, octave or groove, retaining its seed and unspecified
+controls. Hand-edited notes need an explicit replacement flag. `edit_clip` moves, duplicates,
+splits, resizes, removes, mutes or freezes a note clip. `analyze_music` measures stored notes'
+pitch range, density and exact bar-pattern repetition; these are descriptive measurements,
+not an aesthetic score.
+
+Editing tools preserve the preceding document in `.auris-history/`. The `checkpoints` tool
+lists these snapshots, creates named alternatives and restores one while keeping the current
+version as another snapshot. Snapshots share the project's assets; they do not duplicate audio
+or replace collecting assets for an archive.
 
 Registering the server with a client is one line:
 
@@ -1280,10 +1295,11 @@ claude mcp add auris -- ./target/release/auris-mcp
 
 A project open in the desktop application follows edits made through this door (or by
 anything else that writes the file): the window watches the file's modification time and
-reloads when it changes — silently while the window holds nothing unsaved, by a Reload button
-in the status bar when it does. While that choice stands, autosave holds its fire rather than
-write over the other writer's version; saving by hand is how this window's version is chosen
-deliberately.
+accepts changes while the window holds nothing unsaved, or offers an undoable acceptance when
+it does. Both autosave and manual in-place saves refuse to overwrite a newer disk version.
+Accepting the changes retains the previous window document on the undo stack; Save As can
+also preserve it separately. Cooperating writers serialize the check and save with a project
+file lock.
 
 `auris-agent` is the fourth frontend, and the mirror of the third: instead of waiting for a
 model's harness to dial in, Auris dials the model — a local [Ollama](https://ollama.com)
@@ -1323,8 +1339,17 @@ asks the provider what it serves via `auris-agent models` — and the URL and ke
 set beside them, all saved to the shared settings file, where the command line reads them as
 its defaults too. A context gauge over the input shows the last turn's prompt tokens against
 the chosen model's window, and each tool call's row opens on a click to the full answer the
-model saw. The window saves the project before each message so the model
-reads it as it stands, and when a tool call writes the project back the window reloads it —
-automatically while nothing is unsaved, by an offered button when something is. Each tool call
-shows in the transcript as it runs, with its answer's first line when it lands.
+model saw. The window saves the project before each message, asking for a location on the first
+message in an unsaved project. It includes selected tracks, clips and note numbers, the
+playhead and the loop range. Each tool call shows in the transcript as it runs, with its
+answer's first line when it lands. The turn's document changes are accepted together as one
+undoable edit, or offered for acceptance when local edits overlap the turn. An unresolved
+conflict blocks the next message from saving over those changes.
+
+The panel can attach audio, stop a running turn, open a newly created project and start a new
+conversation. Opening another document rebinds the agent to that project's folder. Successful
+user/answer pairs are saved locally in `.auris-conversation.json` and resumed on the next
+message. This text memory keeps at most 24 turns and 24,000 characters; old turns are dropped,
+long text is truncated, and tool payloads and encoded audio are not retained. The current
+selection is sent afresh with each message. New conversation clears the saved text memory.
 
