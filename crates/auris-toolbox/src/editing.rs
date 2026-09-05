@@ -191,6 +191,7 @@ pub mod edit_recipe {
         /// Absolute project path.
         pub project: String,
         /// Track name from describe.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// 1-based clip number.
         pub clip: usize,
@@ -338,6 +339,7 @@ pub mod edit_clip {
         /// Absolute project path.
         pub project: String,
         /// Track name from describe.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// 1-based clip number.
         pub clip: usize,
@@ -506,6 +508,140 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn regeneration_preflights_the_entire_track_and_requires_explicit_replacement() {
+        let fixture = Fixture::new("regenerate-guard");
+        let mut session = opened(&fixture.path).unwrap();
+        let second = session.duplicate_clip(fixture.clip).unwrap();
+        session
+            .add_note(second, Note::new(102, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.save_in_place().unwrap();
+        let before = std::fs::read(&fixture.path).unwrap();
+        let request = args(json!({"project":fixture.path,"track":"Lead"}));
+        assert!(
+            another_take::run(&request)
+                .unwrap_err()
+                .contains("No clips were changed")
+        );
+        assert!(write_again::run(&request).is_err());
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+        another_take::run(&args(
+            json!({"project":fixture.path,"track":"Lead","replace_hand_edits":true}),
+        ))
+        .unwrap();
+        let changed = opened(&fixture.path).unwrap();
+        assert!(
+            !changed
+                .midi_clip(second)
+                .unwrap()
+                .notes
+                .iter()
+                .any(|note| note.pitch == 102)
+        );
+        assert!(!changed.checkpoints().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ids_resolve_existing_duplicates_and_new_names_remain_unique() {
+        let fixture = Fixture::new("track-id");
+        assert!(add_track::run(&args(json!({"project":fixture.path,"name":"LEAD"}))).is_err());
+        let mut session = opened(&fixture.path).unwrap();
+        let second = session.add_default_instrument_track("Lead").unwrap();
+        session.save_in_place().unwrap();
+        assert!(
+            rename_track::run(&args(
+                json!({"project":fixture.path,"track":"Lead","name":"Extra"})
+            ))
+            .is_err()
+        );
+        rename_track::run(&args(
+            json!({"project":fixture.path,"track":format!("id:{}",second.0),"name":"Extra"}),
+        ))
+        .unwrap();
+        assert!(
+            rename_track::run(&args(
+                json!({"project":fixture.path,"track":"Extra","name":"Lead"})
+            ))
+            .is_err()
+        );
+        remove_track::run(&args(
+            json!({"project":fixture.path,"track":format!("id:{}",fixture.track.0)}),
+        ))
+        .unwrap();
+        let final_session = opened(&fixture.path).unwrap();
+        assert_eq!(final_session.project().tracks.len(), 1);
+        assert_eq!(final_session.project().tracks[0].id, second);
+    }
+
+    #[test]
+    fn relative_gain_accumulates_and_mixer_reads_the_automated_value() {
+        let fixture = Fixture::new("relative-gain");
+        let mut session = opened(&fixture.path).unwrap();
+        session.set_section(Ticks::ZERO, Some("verse".into()));
+        session.save_in_place().unwrap();
+        let before = session
+            .project()
+            .track(fixture.track)
+            .unwrap()
+            .mixer
+            .gain_db;
+        for _ in 0..2 {
+            section_gain::run(&args(
+                json!({"project":fixture.path,"track":"Lead","section":"verse","gain_delta_db":-3}),
+            ))
+            .unwrap();
+        }
+        let changed = opened(&fixture.path).unwrap();
+        assert!(
+            (changed
+                .automated_value(ParamTarget::TrackGain(fixture.track), Ticks::QUARTER * 8)
+                .unwrap()
+                - (before - 6.0))
+                .abs()
+                < 0.001
+        );
+        let readback = mixer::run(&args(json!({"project":fixture.path}))).unwrap();
+        assert!(readback.contains("gain envelope"));
+        assert!(readback.contains(&format!("midpoint: {:+.3} dB", before - 6.0)));
+        let bytes = std::fs::read(&fixture.path).unwrap();
+        assert!(section_gain::run(&args(json!({"project":fixture.path,"track":"Lead","section":"verse","gain_db":-2,"gain_delta_db":-3}))).is_err());
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn preview_by_section_matches_bars_and_keeps_the_document() {
+        let fixture = Fixture::new("preview");
+        let mut session = opened(&fixture.path).unwrap();
+        session.set_section(Ticks::ZERO, Some("intro".into()));
+        session.set_section(Ticks::QUARTER * 8, Some("chorus".into()));
+        session.save_in_place().unwrap();
+        let before = std::fs::read(&fixture.path).unwrap();
+        let by_bar = preview::create(&args(
+            json!({"project":fixture.path,"start_bar":3,"bars":2}),
+        ))
+        .unwrap();
+        let by_section =
+            preview::create(&args(json!({"project":fixture.path,"section":"chorus"}))).unwrap();
+        let bytes = std::fs::read(by_bar.path).unwrap();
+        assert!(bytes.starts_with(b"RIFF"));
+        assert_eq!(bytes, std::fs::read(by_section.path).unwrap());
+        assert!(bytes.len() < 600_000);
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+        assert!(
+            preview::create(&args(
+                json!({"project":fixture.path,"start_bar":4,"bars":2})
+            ))
+            .is_err()
+        );
+        assert!(
+            preview::create(&args(
+                json!({"project":fixture.path,"section":"chorus","start_bar":3,"bars":2})
+            ))
+            .is_err()
+        );
     }
 
     #[test]

@@ -399,6 +399,7 @@ session_tool!(SearchDocumentation, search_documentation);
 session_tool!(CheckSpec, check_spec);
 session_tool!(Compose, compose);
 session_tool!(Render, render);
+session_tool!(Preview, preview);
 session_tool!(Describe, describe);
 session_tool!(Analyze, analyze);
 session_tool!(Mixer, mixer);
@@ -587,6 +588,7 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(CheckSpec)
         .tool(Compose)
         .tool(Render)
+        .tool(Preview)
         .tool(Describe)
         .tool(Analyze)
         .tool(Mixer)
@@ -821,7 +823,7 @@ fn confined_to_working_directory(path: &Path) -> bool {
 /// in. Project contents are untrusted context; they must not be able to turn an inspection into
 /// an arbitrary filesystem write.
 fn write_destination(tool: &str, args: &str) -> Result<(), String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool) {
+    if !toolbox::WRITES_PROJECTS.contains(&tool) && tool != toolbox::preview::NAME {
         return Ok(());
     }
     let parsed: serde_json::Value = serde_json::from_str(args)
@@ -1805,6 +1807,7 @@ mod tests {
             InternetSearch::NAME,
             Compose::NAME,
             Render::NAME,
+            Preview::NAME,
             Describe::NAME,
             Analyze::NAME,
             Mixer::NAME,

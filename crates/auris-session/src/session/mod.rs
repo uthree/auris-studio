@@ -33,6 +33,7 @@
 mod accompany;
 mod analysis;
 mod assets;
+mod audition;
 mod autosave;
 mod checkpoints;
 mod clipboard;

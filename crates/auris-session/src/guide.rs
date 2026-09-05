@@ -121,6 +121,14 @@ pub mod architecture {
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
     //!
+    //! [`Session::offset_gain_range`](crate::Session::offset_gain_range) shifts an existing
+    //! envelope, preserving its shape and the values outside the requested range.
+    //! [`Session::render_range_options`](crate::Session::render_range_options) converts a
+    //! timeline selection through the tempo map. The toolbox presents these commands as
+    //! section-relative gain and audition tools. The MCP frontend keeps only transport state:
+    //! a bounded set of immutable WAV resources for `resources/read`. It never interprets a
+    //! resource URI as a filesystem path; reconnecting or eviction expires the old URI.
+    //!
     //! # A selection is an argument, never a field
     //!
     //! Several commands mean something different depending on what is selected, and none of them

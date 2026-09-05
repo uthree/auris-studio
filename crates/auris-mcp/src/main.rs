@@ -23,6 +23,7 @@
 #![warn(missing_docs)]
 
 use auris_toolbox as toolbox;
+mod previews;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -30,16 +31,45 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
-/// The server. Stateless on purpose — the state lives in project files, and
-/// [`auris_toolbox`]'s account of the design says why.
-#[derive(Clone, Copy, Debug, Default)]
-struct AurisMcp;
+/// Project state lives on disk; only the connection's bounded audio resources live here.
+#[derive(Clone, Debug, Default)]
+struct AurisMcp {
+    previews: std::sync::Arc<std::sync::Mutex<previews::Previews>>,
+}
 
 // Every method is one tool: the method name is the tool's wire name, the doc comment its
 // description (held equal to the toolbox constant by test), and argument type and work both
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
+    /// Renders a short WAV audition of one section or bar range (at most 120 seconds, without effect tails). Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.
+    #[tool]
+    async fn preview(
+        &self,
+        Parameters(args): Parameters<toolbox::preview::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let rendered = tokio::task::spawn_blocking(move || {
+            let preview = toolbox::preview::create(&args)?;
+            let bytes = std::fs::read(&preview.path).map_err(|e| e.to_string())?;
+            Ok::<_, String>((preview.text, bytes))
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        match rendered {
+            Ok((text, bytes)) => {
+                let resource = self
+                    .previews
+                    .lock()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+                    .insert(bytes)?;
+                Ok(CallToolResult::success(vec![
+                    ContentBlock::text(text),
+                    ContentBlock::resource_link(resource),
+                ]))
+            }
+            Err(error) => finished(Err(error)),
+        }
+    }
     /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.
     #[tool]
     async fn analyze_music(
@@ -137,8 +167,7 @@ impl AurisMcp {
         blocking(move || toolbox::compose::run(&args)).await
     }
 
-    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and
-    /// reports each file's length, channels and peak level.
+    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.
     #[tool]
     async fn render(
         &self,
@@ -170,10 +199,7 @@ impl AurisMcp {
         blocking(move || toolbox::analyze::run(&args)).await
     }
 
-    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and
-    /// each effect's parameters with key, value and range — the vocabulary `set_level`,
-    /// `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane,
-    /// not its stored value.
+    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
     #[tool]
     async fn mixer(
         &self,
@@ -219,14 +245,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_effect::run(&args)).await
     }
 
-    /// Holds a track's gain at a level across one named section — dynamics without rewriting
-    /// a note. `track` may be "master"; the section is addressed by the label `analyze`
-    /// shows, every occurrence unless `instance` picks one. Writes gain automation with short
-    /// ramps at the edges: the fader keeps ruling outside the stretch, and holds on different
-    /// sections compose. `clear: true` removes the track's whole gain lane instead, giving
-    /// the fader back everywhere. The change is saved. The master fader sits after the master
-    /// chain, so a boost there is not limited and can clip — widen contrast by holding the
-    /// louder sections down instead.
+    /// Holds a track's gain at a level across one named section — dynamics without rewriting a note. `track` may be "master"; the section is addressed by the label `analyze` shows, every occurrence unless `instance` picks one. Writes gain automation with short ramps at the edges: the fader keeps ruling outside the stretch, and holds on different sections compose. `clear: true` removes the track's whole gain lane instead, giving the fader back everywhere. The change is saved. The master fader sits after the master chain, so a boost there is not limited and can clip — widen contrast by holding the louder sections down instead. Use gain_delta_db instead of gain_db to offset the existing envelope; mixer reads it back.
     #[tool]
     async fn section_gain(
         &self,
@@ -235,11 +254,7 @@ impl AurisMcp {
         blocking(move || toolbox::section_gain::run(&args)).await
     }
 
-    /// Writes another take of a generated clip: the same ask, the next seed, different notes.
-    /// The change is saved into the project — render again to hear it. Aim it with `track`
-    /// and the clip number `describe` shows; without a number, every generated clip on the
-    /// track gets a new take. Every answer names its seed, and passing `seed` takes that
-    /// exact take again — how a rewrite that measured worse is rolled back.
+    /// Writes another take of a generated clip: the same ask, the next seed, different notes. The change is saved into the project — render again to hear it. Aim it with `track` and the clip number `describe` shows; without a number, every generated clip on the track gets a new take. Every answer names its seed, and passing `seed` takes that exact take again — how a rewrite that measured worse is rolled back. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
     #[tool]
     async fn another_take(
         &self,
@@ -248,9 +263,7 @@ impl AurisMcp {
         blocking(move || toolbox::another_take::run(&args)).await
     }
 
-    /// Writes a generated clip again with its own seed, following the key and chords as they
-    /// stand now — the tool to reach for after changing the harmony under an existing piece.
-    /// The change is saved into the project. Addressed exactly like `another_take`.
+    /// Writes a generated clip again with its own seed, following the key and chords as they stand now — the tool to reach for after changing the harmony under an existing piece. The change is saved into the project. Addressed exactly like `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
     #[tool]
     async fn write_again(
         &self,
@@ -340,8 +353,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_instrument::run(&args)).await
     }
 
-    /// Renames a track. Every other tool addresses tracks by name, so the new name is the
-    /// address from here on. The change is saved.
+    /// Renames a track. Every other tool addresses tracks by name, or `id:<number>`. The ID survives a rename; a new name must be unique. The change is saved.
     #[tool]
     async fn rename_track(
         &self,
@@ -453,12 +465,43 @@ impl AurisMcp {
 
 #[tool_handler]
 impl ServerHandler for AurisMcp {
+    async fn list_resources(
+        &self,
+        _: Option<rmcp::model::PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ListResourcesResult, ErrorData> {
+        let resources = self
+            .previews
+            .lock()
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .list();
+        Ok(rmcp::model::ListResourcesResult {
+            resources,
+            ..Default::default()
+        })
+    }
+    async fn read_resource(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
+        let bytes = self
+            .previews
+            .lock()
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .bytes(&request.uri)?;
+        let content = previews::Previews::content(request.uri, &bytes);
+        Ok(rmcp::model::ReadResourceResult::new(vec![content]).into())
+    }
     fn get_info(&self) -> ServerInfo {
         // Field by field because the type is `non_exhaustive`, which rules the literal out.
         // Named explicitly rather than via `Implementation::from_build_env`, whose `env!` was
         // expanded when *rmcp* was compiled — a server introducing itself as "rmcp 3.1.4".
         let mut info = ServerInfo::default();
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .build();
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.instructions = Some(toolbox::INSTRUCTIONS.into());
         info
@@ -500,7 +543,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     auris_session::migrate_legacy_config();
 
     tokio::runtime::Runtime::new()?.block_on(async {
-        let service = AurisMcp.serve(rmcp::transport::stdio()).await?;
+        let service = AurisMcp::default().serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
         Ok(())
     })
@@ -512,7 +555,7 @@ mod tests {
 
     #[test]
     fn the_server_introduces_itself_and_carries_the_shared_instructions() {
-        let info = AurisMcp.get_info();
+        let info = AurisMcp::default().get_info();
         // The name is this crate's, not the SDK's — the `from_build_env` trap in `get_info`.
         assert_eq!(info.server_info.name, "auris-mcp");
         assert_eq!(
@@ -565,6 +608,7 @@ mod tests {
             (check_spec::NAME, check_spec::DESCRIPTION),
             (compose::NAME, compose::DESCRIPTION),
             (render::NAME, render::DESCRIPTION),
+            (toolbox::preview::NAME, toolbox::preview::DESCRIPTION),
             (describe::NAME, describe::DESCRIPTION),
             (analyze::NAME, analyze::DESCRIPTION),
             (mixer::NAME, mixer::DESCRIPTION),

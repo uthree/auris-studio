@@ -579,6 +579,72 @@ impl Session {
         self.end_transaction()
     }
 
+    /// Offsets a gain envelope in a range, preserving its shape and all values outside it.
+    ///
+    /// Short linear ramps inside the range blend the offset in and out. Returns false for
+    /// an invalid target, range, nonfinite delta, or values outside the gain limits. Validation
+    /// finishes before any edit; a successful operation is one undo step.
+    pub fn offset_gain_range(
+        &mut self,
+        target: ParamTarget,
+        from: Ticks,
+        to: Ticks,
+        delta: f32,
+    ) -> bool {
+        if !matches!(target, ParamTarget::TrackGain(_) | ParamTarget::MasterGain)
+            || !delta.is_finite()
+            || from < Ticks::ZERO
+            || to - from < Ticks(4)
+        {
+            return false;
+        }
+        let Some(descriptor) = self.automatable(target) else {
+            return false;
+        };
+        let ramp = Ticks((Ticks::QUARTER.0 / 8).min((to - from).0 / 4).max(1));
+        let first = from + ramp;
+        let last = to - ramp;
+        let mut ticks = vec![from, first, last, to];
+        if let Some(lane) = self.project.automation.lane(target) {
+            ticks.extend(
+                lane.points()
+                    .iter()
+                    .map(|point| point.tick)
+                    .filter(|tick| *tick > from && *tick < to),
+            );
+        } else if from > Ticks::ZERO {
+            ticks.push(Ticks::ZERO);
+        }
+        ticks.sort();
+        ticks.dedup();
+        let mut points = Vec::new();
+        for tick in ticks {
+            let original = self
+                .automated_value(target, tick)
+                .unwrap_or_else(|| self.param_value(target, &descriptor));
+            let weight = if tick <= from || tick >= to {
+                0.0
+            } else if tick < first {
+                (tick - from).0 as f32 / ramp.0 as f32
+            } else if tick > last {
+                (to - tick).0 as f32 / ramp.0 as f32
+            } else {
+                1.0
+            };
+            let value = original + delta * weight;
+            if !value.is_finite() || value < descriptor.min || value > descriptor.max {
+                return false;
+            }
+            points.push((tick, value));
+        }
+        self.begin_transaction(Edit::WriteAutomation(target));
+        for (tick, value) in points {
+            self.set_automation_point(target, tick, value);
+        }
+        self.end_transaction();
+        true
+    }
+
     /// Moves a point along its lane, taking a new value with it.
     ///
     /// Returns where it landed, which is not always where it was asked to go: dropped onto
@@ -791,6 +857,42 @@ mod tests {
 
     /// The compressor's registry id, which is the one built-in that listens to a key.
     const COMPRESSOR: &str = "auris.fx.compressor";
+
+    #[test]
+    fn gain_offsets_keep_an_existing_curve_and_restore_both_edges() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Envelope").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        for (beat, value) in [(0, -12.0), (4, -10.0), (8, -6.0), (12, -8.0), (16, -12.0)] {
+            session.set_automation_point(target, Ticks::QUARTER * beat, value);
+        }
+        let before = session.project().clone();
+        assert!(session.offset_gain_range(target, Ticks::QUARTER * 4, Ticks::QUARTER * 12, -3.0));
+        for beat in [0, 2, 4, 12, 14, 16] {
+            assert_eq!(
+                session.automated_value(target, Ticks::QUARTER * beat),
+                before.automation.value_at(target, Ticks::QUARTER * beat)
+            );
+        }
+        for beat in [5, 6, 8, 10, 11] {
+            assert!(
+                (session
+                    .automated_value(target, Ticks::QUARTER * beat)
+                    .unwrap()
+                    - before
+                        .automation
+                        .value_at(target, Ticks::QUARTER * beat)
+                        .unwrap()
+                    + 3.0)
+                    .abs()
+                    < 0.001
+            );
+        }
+        session.undo();
+        assert_eq!(session.project(), &before);
+        assert!(!session.offset_gain_range(target, Ticks::QUARTER * 4, Ticks::QUARTER * 12, 40.0));
+        assert_eq!(session.project(), &before);
+    }
 
     #[test]
     fn a_hold_covers_its_stretch_and_nothing_else() {

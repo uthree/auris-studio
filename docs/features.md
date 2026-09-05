@@ -1282,6 +1282,31 @@ splits, resizes, removes, mutes or freezes a note clip. `analyze_music` measures
 pitch range, density and exact bar-pattern repetition; these are descriptive measurements,
 not an aesthetic score.
 
+Every `track` argument also accepts a stable selector such as `id:4`, shown by `describe`
+and `mixer`. IDs continue to address the same track after a rename, including in documents
+that already contain duplicate names. Adding or renaming a track through the tools requires
+a unique name. `write_again` and `another_take` check every targeted clip before changing
+anything; hand edits require `replace_hand_edits: true`, just as with `edit_recipe`.
+
+`section_gain` accepts either an absolute `gain_db` or a relative `gain_delta_db`. A relative
+change shifts the existing envelope, preserves its shape and blends the adjustment in and
+out inside the section. `mixer` lists the gain envelope's points and each section's midpoint
+value, so a model can read the automation instead of mistaking the base fader for playback.
+
+`render` can export a contiguous range with `start_bar` and `bars`, or a `section` label and
+its 1-based `instance`. Repeated section labels require an instance. Range exports omit effect
+tails by default; `include_tail: true` retains them. A requested range outside the arrangement
+is refused. Whole-project exports retain their previous behavior.
+
+`preview` uses the same range selectors for an audition of at most 120 seconds. It writes
+a 24 kHz, 16-bit WAV without effect tails under `.auris-previews/`, leaving the document
+unchanged. On MCP its answer also carries an `audio/wav` resource link: `resources/read`
+returns the WAV bytes, and `resources/list` lists the connection's previews. The server keeps
+the newest eight resources, available until eviction or disconnection. A resource is a copy
+of the rendered bytes, so a later file edit cannot change an earlier A/B preview. The agent
+frontend receives the local WAV path, which can be attached in the panel. Both export paths
+warn when the rendered signal would clip in an integer WAV.
+
 Editing tools preserve the preceding document in `.auris-history/`. The `checkpoints` tool
 lists these snapshots, creates named alternatives and restores one while keeping the current
 version as another snapshot. Snapshots share the project's assets; they do not duplicate audio
