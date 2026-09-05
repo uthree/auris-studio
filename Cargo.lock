@@ -968,6 +968,7 @@ dependencies = [
  "env_logger",
  "gpui",
  "gpui-component",
+ "image",
  "log",
  "rfd",
  "serde",
@@ -1054,6 +1055,7 @@ version = "0.5.0"
 dependencies = [
  "auris-core",
  "auris-vocal",
+ "base64 0.22.1",
  "hound",
  "log",
  "ort",

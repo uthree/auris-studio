@@ -36,12 +36,14 @@ mod backend;
 mod diffsinger;
 mod metadata;
 mod model;
+mod portrait;
 mod score;
 mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, VoiceCapabilities, VoiceModel};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE};
+pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
 
 /// Why a voice could not be loaded, or frames could not be sung.

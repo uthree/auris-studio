@@ -49,6 +49,7 @@ struct DrawnDocks {
 
 impl Render for AurisApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.singer_portraits.release_images(window);
         if cfg!(target_os = "macos") {
             let state = crate::menu::MenuState {
                 can_undo: self.session.can_undo(),

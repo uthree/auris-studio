@@ -835,6 +835,7 @@ strings! {
     SingerVoiceLabel { en: "Voice", ja: "声" }
     SingerSpeakerLabel { en: "Speaker / style", ja: "話者・スタイル" }
     SingerDefaultSpeaker { en: "Default speaker", ja: "既定の話者" }
+    SingerPortraitRetry { en: "Retry portrait", ja: "立ち絵を再読み込み" }
     SingerNoVoice { en: "Choose a voice to sing", ja: "歌唱に使う声を選択してください" }
     SingerSelectTrack { en: "Select a singer track to choose its voice", ja: "声を変更するシンガートラックを選択してください" }
     SingerTakeAbsent { en: "Not rendered", ja: "未レンダリング" }

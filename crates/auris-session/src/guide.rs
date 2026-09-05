@@ -1053,6 +1053,14 @@ pub mod singing {
     //! copied before the model is shared, so inspecting a speaker list or changing the speaker
     //! does not wait for a running render. A cold voice has no cached speaker list yet; an
     //! explicit picker action may load it, while repainting the inspector must not.
+    //! Artwork follows a separate path: [`Session::singer_portrait_source`](crate::Session::singer_portrait_source)
+    //! snapshots the selected voice without I/O, and [`load_singer_portrait`](crate::load_singer_portrait)
+    //! reads its optional image on a worker. Native portraits come from `voice.portrait` in ONNX
+    //! metadata without loading the neural graph. VOICEVOX resolves the decoding style's singer
+    //! UUID and requests `/singer_info` in URL format, downloading only the selected style's
+    //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
+    //! missing artwork and failures too, and only displays results for the current saved source
+    //! and view generation. Neither an absent image nor a disconnected Engine changes a singer's take.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a

@@ -52,6 +52,7 @@ pub mod registry;
 pub mod render;
 pub mod session;
 pub mod settings;
+pub mod singer_portrait;
 pub mod voice_setup;
 
 /// Workspace-owned error variants exposed for frontend localisation.
@@ -85,6 +86,7 @@ pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir, migrate_legacy_config,
 };
+pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use voice_setup::{
     DiffSingerSetup, VoiceSetupError, VoicevoxCatalog, VoicevoxConnection, VoicevoxSetup,
     VoicevoxSpeakerChoice, VoicevoxStyle, check_voicevox_connection, fetch_voicevox_catalog,
@@ -100,6 +102,7 @@ pub use voice_setup::{
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
 pub use auris_singer::{
     Acceleration, BackendKind, SingError, SingingBackend, VoiceCapabilities, VoiceModel,
+    VoicePortrait,
 };
 
 pub use auris_clap::ClapPluginInfo;

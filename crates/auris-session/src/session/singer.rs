@@ -736,6 +736,30 @@ impl Session {
         self.set_singer_speaker(track, Some(&choice.name))
     }
 
+    /// Snapshots the selected voice for an artwork worker without any I/O or inference lock.
+    ///
+    /// Repainting may call this method. Run [`crate::load_singer_portrait`] on a worker only
+    /// when the source changes or the user requests a refresh, and cache missing artwork and
+    /// errors too. The default speaker stays `None` even after model metadata is loaded.
+    pub fn singer_portrait_source(
+        &self,
+        track: TrackId,
+    ) -> Result<Option<crate::SingerPortraitSource>, SessionError> {
+        let Some(voice) = self.require_singer(track)?.voice.as_ref() else {
+            return Ok(None);
+        };
+        let path = voice
+            .path
+            .resolve(self.project_folder())
+            .ok_or(SessionError::NoVoice(track.0))?;
+        Ok(Some(crate::SingerPortraitSource {
+            track,
+            backend: BackendKind::from_path(&path),
+            path,
+            speaker: voice.speaker.clone(),
+        }))
+    }
+
     /// Reads saved and cached voice details without opening files or waiting for inference.
     ///
     /// The speaker list remains empty for a cold voice. An explicit action may call

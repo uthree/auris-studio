@@ -1248,6 +1248,8 @@ pub struct AurisApp {
     >,
     /// Identifies the latest asynchronous speaker-menu request.
     pub(crate) voicevox_menu_generation: u64,
+    /// Bounded artwork cache and the current background image request.
+    pub(crate) singer_portraits: crate::ui::singer_portrait::SingerPortraits,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1534,6 +1536,7 @@ impl AurisApp {
                         // And a grabbed note's preview is sung here too, because the
                         // pointer handler that wished for it had no executor in hand.
                         this.poll_sung_preview(cx);
+                        this.poll_singer_portrait(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1575,6 +1578,7 @@ impl AurisApp {
             sung_failures: std::collections::HashMap::new(),
             sung_retry: BTreeSet::new(),
             voicevox_catalogs: std::collections::HashMap::new(),
+            singer_portraits: Default::default(),
             voicevox_menu_generation: 0,
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,

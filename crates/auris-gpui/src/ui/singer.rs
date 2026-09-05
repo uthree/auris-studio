@@ -183,6 +183,11 @@ impl AurisApp {
                 .into_any_element(),
             );
         }
+        // Artwork arrives asynchronously; keep the voice and synthesis controls above it so
+        // they cannot move away from a pointer while the image is loading.
+        if let Some(portrait) = self.singer_portrait_row(track, cx) {
+            rows.push(portrait);
+        }
         rows.push(divider(&theme).into_any_element());
         rows
     }
