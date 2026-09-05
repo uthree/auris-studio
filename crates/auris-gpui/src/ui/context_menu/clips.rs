@@ -311,6 +311,7 @@ impl AurisApp {
         // The lyric rows, only where there are words to edit: on an instrument track they would
         // be three rows about a feature the track does not have.
         let singing = self.editing_a_singer_clip();
+        let manual_phonemes = self.clip_accepts_phonemes(clip);
         // Which ornaments the note under the pointer wears, for the toggle rows below.
         let worn = under_pointer
             .and_then(|index| {
@@ -327,169 +328,182 @@ impl AurisApp {
             })
             .unwrap_or((false, false, false));
 
-        ContextMenu::new(anchor, title)
-            .item_if(
-                singing && under_pointer.is_some(),
-                self.t(Key::MenuEditLyric),
-                MenuCommand::EditLyric {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                },
-            )
-            .item_if(
-                singing && under_pointer.is_some(),
-                self.t(Key::MenuEditPhonemes),
+        let menu = ContextMenu::new(anchor, title);
+        let menu = if singing && under_pointer.is_some() && !manual_phonemes {
+            menu.item_greyed_unless(
+                false,
+                self.t(Key::VoicevoxPhonemesMenu),
                 MenuCommand::EditPhonemes {
                     clip,
                     index: under_pointer.unwrap_or(0),
                 },
             )
-            .item_if(
-                singing && has_selection,
-                self.t(Key::MenuWriteLyrics),
-                MenuCommand::WriteLyrics { clip },
-            )
-            // Only where a pin actually stands: a reset over nothing is a row that lies.
-            .item_if(
-                singing
-                    && under_pointer.is_some_and(|index| {
-                        self.session
-                            .midi_clip(clip)
-                            .and_then(|target| target.notes.get(index))
-                            .is_some_and(|note| !note.phoneme_seconds.is_empty())
-                    }),
-                self.t(Key::MenuResetPhonemeTiming),
-                MenuCommand::ResetPhonemeTiming {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                },
-            )
-            // Each ornament row reads the note and toggles, and the label says which way. A
-            // full reset appears only over two or more, where it is shorter than the removes
-            // it stands for — over one it would be a remove wearing a longer name.
-            .item_if(
-                singing && under_pointer.is_some(),
-                self.t(match worn.0 {
-                    true => Key::MenuRemoveScoop,
-                    false => Key::MenuAddScoop,
+        } else {
+            menu
+        };
+        menu.item_if(
+            singing && under_pointer.is_some(),
+            self.t(Key::MenuEditLyric),
+            MenuCommand::EditLyric {
+                clip,
+                index: under_pointer.unwrap_or(0),
+            },
+        )
+        .item_if(
+            singing && manual_phonemes && under_pointer.is_some(),
+            self.t(Key::MenuEditPhonemes),
+            MenuCommand::EditPhonemes {
+                clip,
+                index: under_pointer.unwrap_or(0),
+            },
+        )
+        .item_if(
+            singing && has_selection,
+            self.t(Key::MenuWriteLyrics),
+            MenuCommand::WriteLyrics { clip },
+        )
+        // Only where a pin actually stands: a reset over nothing is a row that lies.
+        .item_if(
+            singing
+                && manual_phonemes
+                && under_pointer.is_some_and(|index| {
+                    self.session
+                        .midi_clip(clip)
+                        .and_then(|target| target.notes.get(index))
+                        .is_some_and(|note| !note.phoneme_seconds.is_empty())
                 }),
-                MenuCommand::SetScoop {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                    on: !worn.0,
-                },
-            )
-            .item_if(
-                singing && under_pointer.is_some(),
-                self.t(match worn.1 {
-                    true => Key::MenuRemoveFall,
-                    false => Key::MenuAddFall,
-                }),
-                MenuCommand::SetFall {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                    on: !worn.1,
-                },
-            )
-            .item_if(
-                singing && under_pointer.is_some(),
-                self.t(match worn.2 {
-                    true => Key::MenuRemoveVibrato,
-                    false => Key::MenuAddVibrato,
-                }),
-                MenuCommand::SetVibrato {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                    on: !worn.2,
-                },
-            )
-            .item_if(
-                singing && [worn.0, worn.1, worn.2].iter().filter(|on| **on).count() >= 2,
-                self.t(Key::MenuResetOrnaments),
-                MenuCommand::ResetOrnaments {
-                    clip,
-                    index: under_pointer.unwrap_or(0),
-                },
-            )
-            .separator()
-            .item_if(has_selection, self.t(Key::MenuCut), MenuCommand::CutNotes)
-            .item_if(has_selection, self.t(Key::MenuCopy), MenuCommand::CopyNotes)
-            // Offered whenever there is something to paste, selection or no selection: a paste
-            // is aimed at the playhead rather than at whatever happens to be picked out.
-            .item_if(
-                !self.session.clipboard().is_empty(),
-                self.t(Key::MenuPaste),
-                MenuCommand::PasteNotes,
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuDuplicate),
-                MenuCommand::DuplicateNotes,
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuDelete),
-                MenuCommand::DeleteNotes,
-            )
-            .separator()
-            .item_if(
-                has_selection,
-                self.t(Key::MenuOctaveUp),
-                MenuCommand::TransposeNotes(12),
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuOctaveDown),
-                MenuCommand::TransposeNotes(-12),
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuSemitoneUp),
-                MenuCommand::TransposeNotes(1),
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuSemitoneDown),
-                MenuCommand::TransposeNotes(-1),
-            )
-            .separator()
-            // The three quantise passes, spelt out rather than hidden behind one row that moves
-            // whichever number the last person chose. They snap to the editing grid, which is on
-            // screen above the notes being snapped.
-            .item_if(
-                has_selection,
-                self.t(Key::MenuQuantizeStarts),
-                MenuCommand::QuantizeNotes(Quantize::Starts),
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuQuantizeLengths),
-                MenuCommand::QuantizeNotes(Quantize::Lengths),
-            )
-            .item_if(
-                has_selection,
-                self.t(Key::MenuQuantizeBoth),
-                MenuCommand::QuantizeNotes(Quantize::Both),
-            )
-            .separator()
-            // Dynamics rather than a number, because that is what a musician means by "softer".
-            // The roll has coloured notes by velocity since it was written and nothing could
-            // change one; six markings cover the range a part is actually written in.
-            .items_if(
-                has_selection,
-                DYNAMICS
-                    .iter()
-                    .map(|(label, velocity)| (*label, MenuCommand::SetNoteVelocity(*velocity))),
-            )
-            .separator()
-            .item_if(
-                under_pointer.is_none(),
-                self.t(Key::MenuAddNoteHere),
-                MenuCommand::NewNote { pitch, start },
-            )
-            .item(self.t(Key::MenuSelectAllNotes), MenuCommand::SelectAllNotes)
-            .separator()
-            .item(self.t(Key::MenuRenameClip), MenuCommand::RenameClip(clip))
+            self.t(Key::MenuResetPhonemeTiming),
+            MenuCommand::ResetPhonemeTiming {
+                clip,
+                index: under_pointer.unwrap_or(0),
+            },
+        )
+        // Each ornament row reads the note and toggles, and the label says which way. A
+        // full reset appears only over two or more, where it is shorter than the removes
+        // it stands for — over one it would be a remove wearing a longer name.
+        .item_if(
+            singing && under_pointer.is_some(),
+            self.t(match worn.0 {
+                true => Key::MenuRemoveScoop,
+                false => Key::MenuAddScoop,
+            }),
+            MenuCommand::SetScoop {
+                clip,
+                index: under_pointer.unwrap_or(0),
+                on: !worn.0,
+            },
+        )
+        .item_if(
+            singing && under_pointer.is_some(),
+            self.t(match worn.1 {
+                true => Key::MenuRemoveFall,
+                false => Key::MenuAddFall,
+            }),
+            MenuCommand::SetFall {
+                clip,
+                index: under_pointer.unwrap_or(0),
+                on: !worn.1,
+            },
+        )
+        .item_if(
+            singing && under_pointer.is_some(),
+            self.t(match worn.2 {
+                true => Key::MenuRemoveVibrato,
+                false => Key::MenuAddVibrato,
+            }),
+            MenuCommand::SetVibrato {
+                clip,
+                index: under_pointer.unwrap_or(0),
+                on: !worn.2,
+            },
+        )
+        .item_if(
+            singing && [worn.0, worn.1, worn.2].iter().filter(|on| **on).count() >= 2,
+            self.t(Key::MenuResetOrnaments),
+            MenuCommand::ResetOrnaments {
+                clip,
+                index: under_pointer.unwrap_or(0),
+            },
+        )
+        .separator()
+        .item_if(has_selection, self.t(Key::MenuCut), MenuCommand::CutNotes)
+        .item_if(has_selection, self.t(Key::MenuCopy), MenuCommand::CopyNotes)
+        // Offered whenever there is something to paste, selection or no selection: a paste
+        // is aimed at the playhead rather than at whatever happens to be picked out.
+        .item_if(
+            !self.session.clipboard().is_empty(),
+            self.t(Key::MenuPaste),
+            MenuCommand::PasteNotes,
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuDuplicate),
+            MenuCommand::DuplicateNotes,
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuDelete),
+            MenuCommand::DeleteNotes,
+        )
+        .separator()
+        .item_if(
+            has_selection,
+            self.t(Key::MenuOctaveUp),
+            MenuCommand::TransposeNotes(12),
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuOctaveDown),
+            MenuCommand::TransposeNotes(-12),
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuSemitoneUp),
+            MenuCommand::TransposeNotes(1),
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuSemitoneDown),
+            MenuCommand::TransposeNotes(-1),
+        )
+        .separator()
+        // The three quantise passes, spelt out rather than hidden behind one row that moves
+        // whichever number the last person chose. They snap to the editing grid, which is on
+        // screen above the notes being snapped.
+        .item_if(
+            has_selection,
+            self.t(Key::MenuQuantizeStarts),
+            MenuCommand::QuantizeNotes(Quantize::Starts),
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuQuantizeLengths),
+            MenuCommand::QuantizeNotes(Quantize::Lengths),
+        )
+        .item_if(
+            has_selection,
+            self.t(Key::MenuQuantizeBoth),
+            MenuCommand::QuantizeNotes(Quantize::Both),
+        )
+        .separator()
+        // Dynamics rather than a number, because that is what a musician means by "softer".
+        // The roll has coloured notes by velocity since it was written and nothing could
+        // change one; six markings cover the range a part is actually written in.
+        .items_if(
+            has_selection,
+            DYNAMICS
+                .iter()
+                .map(|(label, velocity)| (*label, MenuCommand::SetNoteVelocity(*velocity))),
+        )
+        .separator()
+        .item_if(
+            under_pointer.is_none(),
+            self.t(Key::MenuAddNoteHere),
+            MenuCommand::NewNote { pitch, start },
+        )
+        .item(self.t(Key::MenuSelectAllNotes), MenuCommand::SelectAllNotes)
+        .separator()
+        .item(self.t(Key::MenuRenameClip), MenuCommand::RenameClip(clip))
     }
 
     /// The clips a menu command should act on.

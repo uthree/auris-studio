@@ -15,7 +15,7 @@ use auris_session::SingerTakeState;
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
-use crate::app::{AurisApp, AutoSing, Drag, ExportState};
+use crate::app::{AurisApp, AutoSing, Drag, ExportState, SingerFailure};
 use crate::i18n::{edit_key, error_text};
 use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
 
@@ -150,6 +150,7 @@ impl AurisApp {
         if self.selected_track == Some(track) {
             return;
         }
+        self.stop_audition();
         self.selected_track = Some(track);
         self.selected_notes.clear();
         // The clip selection must always be recomputed, never left behind: keeping the previous
@@ -682,6 +683,11 @@ impl AurisApp {
     /// no command for going back — the scroll is not part of the document, so nothing restored
     /// it either.
     pub(crate) fn reset_view(&mut self) {
+        self.cancel_auto_sing();
+        self.invalidate_sung_previews();
+        self.sung_failures.clear();
+        self.sung_retry.clear();
+        self.sung_badges.clear();
         self.timeline.scroll_ticks = Ticks::ZERO;
         self.lane_scroll = gpui::px(0.0);
     }
@@ -872,7 +878,7 @@ impl AurisApp {
     /// The selected track when it is a singer; otherwise the project's only singer track, so
     /// the ordinary one-singer song never asks which. Two singers with neither selected is a
     /// genuine question, answered with `None` — the caller's status line says what to do.
-    fn singer_target(&self) -> Option<TrackId> {
+    pub(crate) fn singer_target(&self) -> Option<TrackId> {
         self.selected_track
             .filter(|track| {
                 self.project()
@@ -975,18 +981,33 @@ impl AurisApp {
             .and_then(|name| speakers.iter().position(|known| *known == name))
             .unwrap_or(0);
         let next = (current + 1) % speakers.len();
-        match self
-            .session
-            .set_singer_speaker(track, Some(&speakers[next]))
-        {
+        self.set_singer_speaker_for(track, speakers[next].clone());
+    }
+
+    /// Chooses a named speaker for an explicit track from the inspector or the next-speaker action.
+    pub(crate) fn set_singer_speaker_for(&mut self, track: TrackId, speaker: String) {
+        match self.session.set_singer_speaker(track, Some(&speaker)) {
             Ok(()) => {
-                // Renders of the old speaker must not answer for the new one.
-                self.sung_previews.clear();
+                self.select_track(track);
+                self.invalidate_sung_previews();
+                self.sung_failures.remove(&track);
+                if self
+                    .auto_sing
+                    .as_ref()
+                    .is_some_and(|auto| auto.track == track)
+                {
+                    self.cancel_auto_sing();
+                }
+                let speakers = self.session.singer_speakers(track).unwrap_or_default();
+                let index = speakers
+                    .iter()
+                    .position(|name| name == &speaker)
+                    .unwrap_or(0);
                 let language = self.language();
                 self.set_status(messages::speaker_chosen(
                     language,
-                    &speakers[next],
-                    next + 1,
+                    &speaker,
+                    index + 1,
                     speakers.len(),
                 ));
             }
@@ -1000,10 +1021,28 @@ impl AurisApp {
     /// Points a singer track at a voice file and says what happened — the shared tail of
     /// the file picker above and the library's voice rows.
     pub(crate) fn apply_singer_voice(&mut self, track: TrackId, path: &std::path::Path) {
+        if self
+            .session
+            .singer_voice_info(track)
+            .ok()
+            .flatten()
+            .is_some_and(|voice| voice.path == path)
+        {
+            self.select_track(track);
+            return;
+        }
         match self.session.set_singer_voice(track, Some(path)) {
             Ok(()) => {
-                // Renders of the old voice must not answer for the new one.
-                self.sung_previews.clear();
+                self.select_track(track);
+                self.invalidate_sung_previews();
+                self.sung_failures.remove(&track);
+                if self
+                    .auto_sing
+                    .as_ref()
+                    .is_some_and(|auto| auto.track == track)
+                {
+                    self.cancel_auto_sing();
+                }
                 let name = self
                     .session
                     .singer_voice(track)
@@ -1032,6 +1071,70 @@ impl AurisApp {
             return;
         };
         self.apply_singer_voice(track, path);
+    }
+
+    /// Drops cached and pending auditions when the voice behind them changes.
+    pub(crate) fn invalidate_sung_previews(&mut self) {
+        self.stop_audition();
+        self.sung_previews.clear();
+        self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
+    }
+
+    /// Refreshes the shelf and re-sings tracks using a connection that was just saved.
+    pub(crate) fn singer_configuration_changed(&mut self, path: &Path, cx: &mut Context<Self>) {
+        self.voices = None;
+        self.invalidate_sung_previews();
+        let tracks: Vec<_> = self
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| {
+                let voice = track.kind.as_singer()?.voice.as_ref()?;
+                (voice.path.resolve(self.session.project_folder()).as_deref() == Some(path))
+                    .then_some(track.id)
+            })
+            .collect();
+        for track in tracks {
+            self.sung_failures.remove(&track);
+            if self
+                .auto_sing
+                .as_ref()
+                .is_some_and(|auto| auto.track == track)
+            {
+                self.cancel_auto_sing();
+            }
+            let speaker = self
+                .session
+                .singer_voice(track)
+                .ok()
+                .flatten()
+                .and_then(|voice| voice.speaker.clone());
+            match self.session.set_singer_voice(track, Some(path)) {
+                Ok(()) => {
+                    if let Some(speaker) = speaker
+                        && self
+                            .session
+                            .singer_speakers(track)
+                            .is_ok_and(|speakers| speakers.contains(&speaker))
+                    {
+                        let _ = self.session.set_singer_speaker(track, Some(&speaker));
+                    }
+                    self.sung_retry.insert(track);
+                }
+                Err(error) => {
+                    if let Ok(fingerprint) = self.session.singer_input_fingerprint(track) {
+                        self.record_singer_failure(
+                            track,
+                            fingerprint,
+                            self.session.project_folder().map(Path::to_path_buf),
+                            &error,
+                        );
+                    }
+                }
+            }
+        }
+        self.sung_badges.clear();
+        cx.notify();
     }
 
     /// Asks for a folder of voice models to put on the library shelf, and remembers it.
@@ -1128,6 +1231,10 @@ impl AurisApp {
 
         let progress = Arc::new(AtomicU32::new(0));
         let cancel = Arc::new(AtomicBool::new(false));
+        let landing_cancel = Arc::clone(&cancel);
+        let fingerprint = plan.fingerprint;
+        let folder = self.session.project_folder().map(Path::to_path_buf);
+        let generation = self.sung_preview_generation;
         self.export = Some(ExportState {
             path: PathBuf::from(track_name),
             progress: Arc::clone(&progress),
@@ -1160,9 +1267,27 @@ impl AurisApp {
                 .await;
 
             let _ = this.update(cx, |this, cx| {
+                // Another window can change the connection, or reload the document, while
+                // this overlay is open. A completed old performance must not replace it.
+                if landing_cancel.load(Ordering::Relaxed)
+                    || generation != this.sung_preview_generation
+                    || this.session.singer_input_fingerprint(track).ok() != Some(fingerprint)
+                    || this.session.project_folder() != folder.as_deref()
+                {
+                    let text = this.t(Key::SingCancelled).to_string();
+                    this.set_status(text.clone());
+                    if let Some(export) = this.export.as_mut() {
+                        export.cancel();
+                        export.result = Some(Ok(text));
+                    }
+                    cx.notify();
+                    return;
+                }
                 let message = match sung {
                     Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
                         Ok(seconds) => {
+                            this.sung_failures.remove(&track);
+                            this.sung_retry.remove(&track);
                             let language = this.language();
                             let text = messages::take_sung(language, &voice_name, seconds);
                             this.set_status(text.clone());
@@ -1206,6 +1331,88 @@ impl AurisApp {
         }
     }
 
+    /// The last failed attempt for this track, cleared when its input changes.
+    pub(crate) fn singer_failure(&self, track: TrackId) -> Option<&str> {
+        self.sung_failures
+            .get(&track)
+            .map(|failure| failure.message.as_str())
+    }
+
+    /// Explicitly retries a track, including a current take whose connection was changed.
+    pub(crate) fn retry_singer_take(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        if self.project().track(track).is_some_and(|track| {
+            track
+                .kind
+                .as_singer()
+                .is_some_and(|singer| singer.clips.iter().all(|clip| clip.notes.is_empty()))
+        }) {
+            self.sung_retry.remove(&track);
+            let error = auris_session::SessionError::NothingToSing(track.0);
+            self.set_failed_status(self.failure(Key::CmdSing, &error));
+            cx.notify();
+            return;
+        }
+        self.sung_failures.remove(&track);
+        self.sung_retry.insert(track);
+        if self
+            .auto_sing
+            .as_ref()
+            .is_some_and(|auto| auto.track == track)
+        {
+            self.cancel_auto_sing();
+        }
+        self.auto_sing_seen = (
+            self.session.revision(),
+            std::time::Instant::now() - AUTO_SING_DEBOUNCE,
+        );
+        self.poll_auto_sing(cx);
+        cx.notify();
+    }
+
+    /// Keeps an unrelated edit from repeatedly retrying an unavailable voice.
+    fn refresh_singer_failures(&mut self) {
+        let revision = self.session.revision();
+        let folder = self.session.project_folder().map(Path::to_path_buf);
+        self.sung_failures.retain(|track, failure| {
+            if failure.folder != folder {
+                return false;
+            }
+            if failure.revision != revision {
+                if self.session.singer_input_fingerprint(*track).ok() != Some(failure.fingerprint) {
+                    return false;
+                }
+                failure.revision = revision;
+            }
+            true
+        });
+    }
+
+    /// Reports a failure only if the track still describes the attempted performance.
+    fn record_singer_failure(
+        &mut self,
+        track: TrackId,
+        fingerprint: u64,
+        folder: Option<PathBuf>,
+        error: &auris_session::SessionError,
+    ) {
+        if self.session.singer_input_fingerprint(track).ok() != Some(fingerprint)
+            || self.session.project_folder() != folder.as_deref()
+        {
+            return;
+        }
+        let message = self.failure(Key::CmdSing, error);
+        self.set_failed_status(message.clone());
+        self.sung_failures.insert(
+            track,
+            SingerFailure {
+                revision: self.session.revision(),
+                fingerprint,
+                folder,
+                message,
+            },
+        );
+    }
+
     /// Keeps voiced singer tracks' takes abreast of their notes, from the repaint timer.
     ///
     /// Editing the score *is* the ask — pressing Sing after every word was the workflow this
@@ -1213,11 +1420,11 @@ impl AurisApp {
     /// is the on-screen sign the voice is at work. Three rules keep it civil. It waits for
     /// [`AUTO_SING_DEBOUNCE`] of stillness, so a run of keystrokes costs one render, not
     /// one per key. It renders one track at a time and yields to the export overlay, so it
-    /// never doubles the machine's load. And a refusal — an unsaved project, an empty track
-    /// — is remembered per revision and said once, so the status line is not thirty excuses
-    /// a second; a track without a voice is simply not its business.
+    /// never doubles the machine's load. Failures are remembered per track and input, while
+    /// empty or voiceless tracks are skipped so the other singers keep moving.
     pub(crate) fn poll_auto_sing(&mut self, cx: &mut Context<Self>) {
         let revision = self.session.revision();
+        self.refresh_singer_failures();
 
         // A render in flight: once per edit, ask whether the edit outdated it.
         if let Some(auto) = &mut self.auto_sing {
@@ -1225,10 +1432,7 @@ impl AurisApp {
                 auto.checked = revision;
                 let track = auto.track;
                 let fingerprint = auto.fingerprint;
-                let stale = match self.session.sing_plan(track, None) {
-                    Ok(plan) => plan.fingerprint != fingerprint,
-                    Err(_) => true,
-                };
+                let stale = self.session.singer_input_fingerprint(track).ok() != Some(fingerprint);
                 if stale {
                     self.cancel_auto_sing();
                 }
@@ -1245,9 +1449,6 @@ impl AurisApp {
         if now.duration_since(self.auto_sing_seen.1) < AUTO_SING_DEBOUNCE {
             return;
         }
-        if self.auto_sing_refused == Some(revision) {
-            return;
-        }
         if self.auto_sing.is_some()
             || self.choosing_export
             || self.export.as_ref().is_some_and(|e| e.result.is_none())
@@ -1255,56 +1456,54 @@ impl AurisApp {
             return;
         }
 
-        // The first voiced singer track whose take no longer says what the notes say.
-        let voiced: Vec<TrackId> = self
+        // Explicit retries go first; an empty or failed track never holds up its neighbours.
+        let mut voiced: Vec<TrackId> = self
             .project()
             .tracks
             .iter()
             .filter(|track| {
-                track
-                    .kind
-                    .as_singer()
-                    .is_some_and(|singer| singer.voice.is_some())
+                track.kind.as_singer().is_some_and(|singer| {
+                    singer.voice.is_some() && singer.clips.iter().any(|clip| !clip.notes.is_empty())
+                })
             })
             .map(|track| track.id)
             .collect();
-        let Some(track) = voiced
-            .into_iter()
-            .find(|track| self.singer_take_badge(*track) != SingerTakeState::Current)
-        else {
-            return;
-        };
-
-        let plan = match self.session.sing_plan(track, None) {
-            Ok(plan) => plan,
-            Err(error) => {
-                self.auto_sing_refused = Some(revision);
-                // An empty track is not a problem, just nothing to do yet. The rest — no
-                // folder to land in, a voice that stopped loading — is worth one line, once,
-                // because the person is otherwise left listening to the preview and
-                // wondering; the original report behind this feature was exactly that.
-                if !matches!(error, auris_session::SessionError::NothingToSing(_)) {
-                    let line = self.failure(Key::CmdSing, &error);
-                    if self.auto_sing_excuse.as_deref() != Some(line.as_str()) {
-                        self.set_failed_status(line.clone());
-                        self.auto_sing_excuse = Some(line);
+        self.sung_retry.retain(|track| voiced.contains(track));
+        voiced.sort_by_key(|track| !self.sung_retry.contains(track));
+        let mut chosen = None;
+        for track in voiced {
+            if self.sung_failures.contains_key(&track) {
+                continue;
+            }
+            let retry = self.sung_retry.remove(&track);
+            if !retry && self.singer_take_badge(track) == SingerTakeState::Current {
+                continue;
+            }
+            let Ok(fingerprint) = self.session.singer_input_fingerprint(track) else {
+                continue;
+            };
+            let folder = self.session.project_folder().map(Path::to_path_buf);
+            let plan = match self.session.sing_plan(track, None) {
+                Ok(plan) => plan,
+                Err(error) => {
+                    if !matches!(error, auris_session::SessionError::NothingToSing(_)) {
+                        self.record_singer_failure(track, fingerprint, folder, &error);
                     }
+                    continue;
                 }
-                return;
-            }
-        };
-        let model = match self.session.voice_model_at(&plan.voice) {
-            Ok(model) => model,
-            Err(error) => {
-                self.auto_sing_refused = Some(revision);
-                let line = self.failure(Key::CmdSing, &error);
-                if self.auto_sing_excuse.as_deref() != Some(line.as_str()) {
-                    self.set_failed_status(line.clone());
-                    self.auto_sing_excuse = Some(line);
+            };
+            match self.session.voice_model_at(&plan.voice) {
+                Ok(model) => {
+                    chosen = Some((plan, model));
+                    break;
                 }
-                return;
+                Err(error) => self.record_singer_failure(track, fingerprint, folder, &error),
             }
-        };
+        }
+        let Some((plan, model)) = chosen else { return };
+        let track = plan.track;
+        let fingerprint = plan.fingerprint;
+        let folder = self.session.project_folder().map(Path::to_path_buf);
         let voice_name = self
             .session
             .singer_voice(track)
@@ -1322,6 +1521,7 @@ impl AurisApp {
         });
         cx.notify();
 
+        let landing_cancel = Arc::clone(&cancel);
         cx.spawn(async move |this, cx| {
             let sung = cx
                 .background_executor()
@@ -1342,24 +1542,32 @@ impl AurisApp {
 
             let _ = this.update(cx, |this, cx| {
                 this.auto_sing = None;
+                if landing_cancel.load(Ordering::Relaxed) {
+                    cx.notify();
+                    return;
+                }
+                if this.session.singer_input_fingerprint(track).ok() != Some(fingerprint)
+                    || this.session.project_folder() != folder.as_deref()
+                {
+                    cx.notify();
+                    return;
+                }
                 match sung {
                     Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
                         Ok(seconds) => {
-                            this.auto_sing_excuse = None;
+                            this.sung_failures.remove(&track);
                             let language = this.language();
                             this.set_status(messages::take_sung(language, &voice_name, seconds));
                         }
                         Err(error) => {
-                            let line = this.failure(Key::CmdSing, &error);
-                            this.set_failed_status(line);
+                            this.record_singer_failure(track, fingerprint, folder.clone(), &error);
                         }
                     },
                     // Cancelled: a newer edit or a manual render took the stage, and the
                     // next quiet moment starts over. Anything else is worth its line.
                     Err(error) if error.is_cancellation() => {}
                     Err(error) => {
-                        let line = this.failure(Key::CmdSing, &error);
-                        this.set_failed_status(line);
+                        this.record_singer_failure(track, fingerprint, folder, &error);
                     }
                 }
                 cx.notify();
@@ -1384,6 +1592,19 @@ impl AurisApp {
         };
         let track = wish.track;
         let key = wish.key.clone();
+        if !self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .is_some_and(|voice| {
+                voice.path.resolve(self.session.project_folder()).as_ref() == Some(&key.voice)
+                    && voice.speaker == key.speaker
+            })
+        {
+            self.sung_preview_wish = None;
+            return;
+        }
         let speaker = match self.session.singer_speaker(track) {
             Ok(speaker) => speaker,
             Err(_) => {
@@ -1398,15 +1619,19 @@ impl AurisApp {
                 return;
             }
         };
-        let frames = match self.session.preview_note_frames(track, key.2, &key.3) {
+        let frames = match self
+            .session
+            .preview_note_frames(track, key.pitch, &key.phonemes)
+        {
             Ok(frames) => frames,
             Err(_) => {
                 self.sung_preview_wish = None;
                 return;
             }
         };
-        let score = self.session.preview_note_score(&frames, key.2);
-        let seed = key.1;
+        let score = self.session.preview_note_score(&frames, key.pitch);
+        let seed = key.seed;
+        let generation = self.sung_preview_generation;
         self.sung_preview_rendering = true;
         cx.spawn(async move |this, cx| {
             let sung = cx
@@ -1420,31 +1645,59 @@ impl AurisApp {
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                this.sung_preview_rendering = false;
-                let Ok((samples, rate)) = sung else {
-                    // A voice that cannot sing half a second will have said why through
-                    // the auto-render's status line; the preview just stays quiet.
-                    this.sung_preview_wish = None;
-                    return;
-                };
-                let buffer = this.session.singer_preview_buffer(&samples, rate);
-                if this.sung_previews.len() >= SUNG_PREVIEW_CACHE {
-                    this.sung_previews.clear();
-                }
-                this.sung_previews.insert(key.clone(), Arc::clone(&buffer));
-                // Played only while the hand is still down on this very note.
-                if this
-                    .sung_preview_wish
-                    .as_ref()
-                    .is_some_and(|wish| wish.track == track && wish.key == key)
-                {
-                    this.session.play_singer_preview(track, &buffer);
-                    this.sung_preview_wish = None;
-                }
+                this.finish_sung_preview(track, key, generation, sung.map_err(|_| ()));
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Lands an asynchronous audition without replacing a newer voice or note request.
+    pub(crate) fn finish_sung_preview(
+        &mut self,
+        track: TrackId,
+        key: crate::app::SungPreviewKey,
+        generation: u64,
+        sung: Result<(Vec<f32>, f64), ()>,
+    ) {
+        self.sung_preview_rendering = false;
+        if generation != self.sung_preview_generation {
+            return;
+        }
+        let still_requested = self
+            .sung_preview_wish
+            .as_ref()
+            .is_some_and(|wish| wish.track == track && wish.key == key);
+        let Ok((samples, rate)) = sung else {
+            if still_requested {
+                self.sung_preview_wish = None;
+            }
+            return;
+        };
+        let same_voice = self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .is_some_and(|voice| {
+                voice.path.resolve(self.session.project_folder()).as_ref() == Some(&key.voice)
+                    && voice.speaker == key.speaker
+            });
+        if !same_voice {
+            if still_requested {
+                self.sung_preview_wish = None;
+            }
+            return;
+        }
+        let buffer = self.session.singer_preview_buffer(&samples, rate);
+        if self.sung_previews.len() >= SUNG_PREVIEW_CACHE {
+            self.sung_previews.clear();
+        }
+        self.sung_previews.insert(key, Arc::clone(&buffer));
+        if still_requested {
+            self.session.play_singer_preview(track, &buffer);
+            self.sung_preview_wish = None;
+        }
     }
 
     /// Writes the singer track's frame features — phonemes, pitch, energy — to a JSON file.

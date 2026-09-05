@@ -1050,6 +1050,18 @@ pub struct AutoSing {
     pub checked: u64,
 }
 
+/// One track's failed render, held until its input changes or the person asks to retry.
+pub struct SingerFailure {
+    /// The last document revision checked against this failure's input.
+    pub revision: u64,
+    /// The score and voice that failed.
+    pub fingerprint: u64,
+    /// Saving an untitled project supplies the folder a previous attempt lacked.
+    pub folder: Option<std::path::PathBuf>,
+    /// The diagnostic shown beside this track's synthesis controls.
+    pub message: String,
+}
+
 /// A sung pitch contour: one run of (tick, fractional MIDI pitch) points per voiced span.
 ///
 /// Split at silences so a rest is a gap in the drawn line rather than a dive to nowhere,
@@ -1080,10 +1092,21 @@ pub struct SungGeometry {
 
 /// The address a rendered preview note is cached under.
 ///
-/// The voice's display name stands in for its file — resolving the real path on every
-/// pointer move would buy nothing the name does not already give — and the seed and
-/// phonemes are part of the sound, so they are part of the address.
-pub type SungPreviewKey = (String, u64, u8, Vec<String>);
+/// Resolving an asset reference is lexical, without filesystem access. A display name cannot
+/// identify the model or its speaker: two tracks may share a name while singing different voices.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct SungPreviewKey {
+    /// The resolved voice entry file.
+    pub voice: std::path::PathBuf,
+    /// The chosen speaker, or the model's first speaker.
+    pub speaker: Option<String>,
+    /// The take's pinned random choice.
+    pub seed: u64,
+    /// The auditioned MIDI pitch.
+    pub pitch: u8,
+    /// The pronunciation of this note.
+    pub phonemes: Vec<String>,
+}
 
 /// One preview note the audition path has asked for and the model has not sung yet.
 ///
@@ -1210,11 +1233,11 @@ pub struct AurisApp {
     pub(crate) auto_sing: Option<AutoSing>,
     /// The revision the auto-render debounce last saw, and when it saw it arrive.
     pub(crate) auto_sing_seen: (u64, std::time::Instant),
-    /// The revision whose auto-render was refused, so a standing refusal — an unsaved
-    /// project, an empty track — waits for the next edit instead of retrying every frame.
-    pub(crate) auto_sing_refused: Option<u64>,
-    /// The refusal last said out loud, so the same excuse is not repeated per edit.
-    pub(crate) auto_sing_excuse: Option<String>,
+    /// Failures belong to individual tracks, so one unavailable voice cannot stop the others.
+    pub(crate) sung_failures: std::collections::HashMap<TrackId, SingerFailure>,
+    /// Explicit requests that also re-render an otherwise current take, such as a changed
+    /// VOICEVOX connection saved at the same path.
+    pub(crate) sung_retry: BTreeSet<TrackId>,
     /// Preview notes the voice has already sung, at the engine's rate.
     ///
     /// What makes dragging a note across pitches instant the second time it passes one.
@@ -1232,6 +1255,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_wish: Option<SungPreviewWish>,
     /// Whether a preview render is on the background executor right now.
     pub(crate) sung_preview_rendering: bool,
+    /// Invalidates results started before a voice or its connection settings changed.
+    pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
     ///
     /// State of the sheet rather than of the document: nothing here has been written until Write
@@ -1537,11 +1562,12 @@ impl AurisApp {
             sung_badges_revision: 0,
             auto_sing: None,
             auto_sing_seen: (0, std::time::Instant::now()),
-            auto_sing_refused: None,
-            auto_sing_excuse: None,
+            sung_failures: std::collections::HashMap::new(),
+            sung_retry: BTreeSet::new(),
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
+            sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
@@ -2144,12 +2170,16 @@ impl AurisApp {
             return false;
         };
         let seed = singer.take.as_ref().map(|take| take.seed).unwrap_or(0);
-        let key: SungPreviewKey = (
-            voice.name.clone(),
+        let Some(resolved) = voice.path.resolve(self.session.project_folder()) else {
+            return false;
+        };
+        let key = SungPreviewKey {
+            voice: resolved,
+            speaker: voice.speaker.clone(),
             seed,
             pitch,
-            self.selected_phonemes(track, note_index),
-        );
+            phonemes: self.selected_phonemes(track, note_index),
+        };
         if let Some(buffer) = self.sung_previews.get(&key) {
             let buffer = Arc::clone(buffer);
             self.session.play_singer_preview(track, &buffer);
@@ -2402,6 +2432,9 @@ impl AurisApp {
     /// Cannot fail here: the session only drops its cached models, and whether the GPU
     /// actually answers is found out — and reported — by the next render that asks for it.
     pub(crate) fn apply_singer_acceleration(&mut self, acceleration: Acceleration) {
+        self.cancel_auto_sing();
+        self.invalidate_sung_previews();
+        self.sung_failures.clear();
         self.session.set_singer_acceleration(acceleration);
         self.settings.singer_acceleration = acceleration;
         if let Err(error) = self.settings.save() {
@@ -2686,6 +2719,10 @@ impl AurisApp {
         )
     }
 }
+
+#[cfg(test)]
+#[path = "singer_tests.rs"]
+mod singer_tests;
 
 fn audition_note_index(grabbed: Option<usize>, selected: &BTreeSet<usize>) -> Option<usize> {
     grabbed.or_else(|| selected.iter().next().copied())

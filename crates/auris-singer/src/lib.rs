@@ -39,7 +39,7 @@ mod model;
 mod score;
 mod voicevox;
 
-pub use backend::{BackendKind, SingingBackend, VoiceModel};
+pub use backend::{BackendKind, SingingBackend, VoiceCapabilities, VoiceModel};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};

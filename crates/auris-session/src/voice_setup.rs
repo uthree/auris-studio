@@ -8,7 +8,6 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::library::VOICES_FOLDER;
 use crate::settings::config_dir;
@@ -43,6 +42,56 @@ impl Default for VoicevoxSetup {
             query_style_id: 6000,
             decode_style_id: 3001,
         }
+    }
+}
+
+/// One named singing style advertised by a VOICEVOX Engine.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoicevoxStyle {
+    /// Engine style ID, written to the connection file after a name is chosen.
+    pub id: u32,
+    /// Singer's display name.
+    pub singer: String,
+    /// Style's display name within that singer.
+    pub name: String,
+}
+
+impl VoicevoxStyle {
+    /// The singer and style together, so identically named styles remain distinguishable.
+    pub fn label(&self) -> String {
+        format!("{} / {}", self.singer, self.name)
+    }
+}
+
+/// A connected Engine's version and the two kinds of singing styles it supports.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VoicevoxCatalog {
+    /// Engine version reported by `/version`.
+    pub version: String,
+    /// Styles accepted by `/sing_frame_audio_query`.
+    pub query: Vec<VoicevoxStyle>,
+    /// Styles accepted by `/frame_synthesis`.
+    pub decode: Vec<VoicevoxStyle>,
+}
+
+impl VoicevoxCatalog {
+    /// Checks a configured pair against the Engine that supplied this catalogue.
+    pub fn validate_styles(&self, setup: &VoicevoxSetup) -> Result<(), VoiceSetupError> {
+        if !self
+            .query
+            .iter()
+            .any(|style| style.id == setup.query_style_id)
+            || !self
+                .decode
+                .iter()
+                .any(|style| style.id == setup.decode_style_id)
+        {
+            return Err(VoiceSetupError::Connection(format!(
+                "VOICEVOX styles were not found (query {}, decode {})",
+                setup.query_style_id, setup.decode_style_id
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -145,7 +194,7 @@ fn write_voicevox_connection_in(
     let file = VoicevoxFile {
         format_version: 1,
         name: setup.name.trim(),
-        url: setup.url.trim_end_matches('/'),
+        url: setup.url.trim().trim_end_matches('/'),
         sample_rate: setup.sample_rate,
         frame_rate: setup.frame_rate,
         styles: [VoicevoxStyleFile {
@@ -163,43 +212,76 @@ fn write_voicevox_connection_in(
 /// Contacts VOICEVOX and verifies that both configured singing style IDs are advertised.
 pub fn check_voicevox_connection(setup: &VoicevoxSetup) -> Result<String, VoiceSetupError> {
     validate_voicevox(setup)?;
+    let catalog = fetch_voicevox_catalog(&setup.url)?;
+    catalog.validate_styles(setup)?;
+    Ok(catalog.version)
+}
+
+/// Fetches named singing styles without requiring a caller to know any Engine style IDs.
+///
+/// This is a blocking HTTP operation; a graphical frontend must run it on a worker thread.
+pub fn fetch_voicevox_catalog(url: &str) -> Result<VoicevoxCatalog, VoiceSetupError> {
+    let root = url.trim().trim_end_matches('/');
+    validate_voicevox_url(root)?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(3))
         .build();
-    let root = setup.url.trim_end_matches('/');
     let version = agent
         .get(&format!("{root}/version"))
         .call()
         .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /version: {error}")))?
         .into_string()
         .map_err(|error| VoiceSetupError::Connection(error.to_string()))?;
-    let singers: Value = agent
+    let singers: Vec<EngineSinger> = agent
         .get(&format!("{root}/singers"))
         .call()
         .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /singers: {error}")))?
         .into_json()
         .map_err(|error| VoiceSetupError::Connection(error.to_string()))?;
-    let styles = singers
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|singer| singer["styles"].as_array().into_iter().flatten());
-    let advertised: Vec<(u64, &str)> = styles
-        .filter_map(|style| Some((style["id"].as_u64()?, style["type"].as_str()?)))
-        .collect();
-    let has_query = advertised.iter().any(|(id, kind)| {
-        *id == u64::from(setup.query_style_id) && matches!(*kind, "sing" | "singing_teacher")
-    });
-    let has_decode = advertised
-        .iter()
-        .any(|(id, kind)| *id == u64::from(setup.decode_style_id) && *kind == "frame_decode");
-    if !has_query || !has_decode {
-        return Err(VoiceSetupError::Connection(format!(
-            "VOICEVOX styles were not found (query {}, decode {})",
-            setup.query_style_id, setup.decode_style_id
-        )));
+    let mut catalog = VoicevoxCatalog {
+        version: version.trim_matches(['"', '\n', '\r']).to_string(),
+        query: Vec::new(),
+        decode: Vec::new(),
+    };
+    for singer in singers {
+        for style in singer.styles {
+            let destination = match style.kind.as_str() {
+                "sing" | "singing_teacher" => &mut catalog.query,
+                "frame_decode" => &mut catalog.decode,
+                _ => continue,
+            };
+            if singer.name.trim().is_empty() || style.name.trim().is_empty() {
+                return Err(VoiceSetupError::Connection(
+                    "VOICEVOX advertised an unnamed singing style".into(),
+                ));
+            }
+            destination.push(VoicevoxStyle {
+                id: style.id,
+                singer: singer.name.clone(),
+                name: style.name,
+            });
+        }
     }
-    Ok(version.trim_matches(['"', '\n', '\r']).to_string())
+    if catalog.query.is_empty() || catalog.decode.is_empty() {
+        return Err(VoiceSetupError::Connection(
+            "VOICEVOX did not advertise both melody and singing styles".into(),
+        ));
+    }
+    Ok(catalog)
+}
+
+#[derive(Deserialize)]
+struct EngineSinger {
+    name: String,
+    styles: Vec<EngineStyle>,
+}
+
+#[derive(Deserialize)]
+struct EngineStyle {
+    id: u32,
+    name: String,
+    #[serde(rename = "type")]
+    kind: String,
 }
 
 /// Starts a user-selected VOICEVOX Engine executable and returns its child handle.
@@ -282,14 +364,19 @@ fn validate_voicevox(setup: &VoicevoxSetup) -> Result<(), VoiceSetupError> {
             "VOICEVOX name and style name cannot be empty".into(),
         ));
     }
-    if !setup.url.starts_with("http://") && !setup.url.starts_with("https://") {
-        return Err(VoiceSetupError::Invalid(
-            "VOICEVOX URL must begin with http:// or https://".into(),
-        ));
-    }
+    validate_voicevox_url(setup.url.trim())?;
     if setup.sample_rate == 0 || !setup.frame_rate.is_finite() || setup.frame_rate <= 0.0 {
         return Err(VoiceSetupError::Invalid(
             "VOICEVOX sample rate and frame rate must be positive".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_voicevox_url(url: &str) -> Result<(), VoiceSetupError> {
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX URL must begin with http:// or https://".into(),
         ));
     }
     Ok(())
@@ -314,7 +401,91 @@ fn safe_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::io::{Read, Write};
+
+    fn catalog_server(body: &'static str) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut paths = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 2048];
+                let count = stream.read(&mut request).unwrap();
+                let request = String::from_utf8_lossy(&request[..count]);
+                let path = request.split_whitespace().nth(1).unwrap().to_string();
+                let response = if path == "/version" {
+                    r#""0.25.0""#
+                } else {
+                    body
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}", response.len()).unwrap();
+                paths.push(path);
+            }
+            paths
+        });
+        (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn the_catalog_preserves_singer_names_and_filters_styles_by_singing_role() {
+        let (url, server) = catalog_server(
+            r#"[
+            {"name":"波音リツ","styles":[{"id":71,"name":"通常","type":"sing"},{"id":81,"name":"通常","type":"frame_decode"},{"id":1,"name":"話す","type":"talk"}]},
+            {"name":"先生","styles":[{"id":72,"name":"ガイド","type":"singing_teacher"}]},
+            {"name":"別の歌手","styles":[{"id":82,"name":"通常","type":"frame_decode"}]}
+        ]"#,
+        );
+        let catalog = fetch_voicevox_catalog(&format!(" {url}/ ")).unwrap();
+        assert_eq!(catalog.version, "0.25.0");
+        assert_eq!(
+            catalog
+                .query
+                .iter()
+                .map(|style| style.id)
+                .collect::<Vec<_>>(),
+            [71, 72]
+        );
+        assert_eq!(
+            catalog
+                .decode
+                .iter()
+                .map(|style| style.id)
+                .collect::<Vec<_>>(),
+            [81, 82]
+        );
+        assert_eq!(catalog.decode[0].label(), "波音リツ / 通常");
+        assert_eq!(catalog.decode[1].label(), "別の歌手 / 通常");
+        let mut setup = VoicevoxSetup {
+            query_style_id: 72,
+            decode_style_id: 82,
+            ..VoicevoxSetup::default()
+        };
+        assert!(catalog.validate_styles(&setup).is_ok());
+        setup.decode_style_id = 72;
+        assert!(
+            catalog.validate_styles(&setup).is_err(),
+            "a teacher cannot be selected as a decoder"
+        );
+        assert_eq!(server.join().unwrap(), ["/version", "/singers"]);
+    }
+
+    #[test]
+    fn malformed_or_incomplete_singer_catalogs_are_reported() {
+        for body in [
+            r#"{"styles":[]}"#,
+            r#"[{"name":"Singer","styles":[{"id":71,"name":"Normal","type":"sing"}]}]"#,
+            r#"[{"name":"Singer","styles":[{"id":71,"name":"","type":"sing"},{"id":81,"name":"Normal","type":"frame_decode"}]}]"#,
+        ] {
+            let (url, server) = catalog_server(body);
+            assert!(
+                fetch_voicevox_catalog(&url).is_err(),
+                "unusable catalog: {body}"
+            );
+            assert_eq!(server.join().unwrap(), ["/version", "/singers"]);
+        }
+    }
 
     #[test]
     fn connection_names_are_safe_on_every_platform() {
@@ -403,7 +574,7 @@ mod tests {
                 let body = if request.starts_with("GET /version ") {
                     r#""0.24.0""#
                 } else {
-                    r#"[{"styles":[{"id":6000,"type":"sing"},{"id":3009,"type":"frame_decode"}]}]"#
+                    r#"[{"name":"Ritsu","styles":[{"id":6000,"name":"Normal","type":"sing"},{"id":3009,"name":"Normal","type":"frame_decode"}]}]"#
                 };
                 write!(
                     stream,

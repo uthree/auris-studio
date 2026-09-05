@@ -30,6 +30,7 @@ pub mod prompt;
 pub mod root;
 pub mod scrollbars;
 pub mod selection;
+pub mod singer;
 pub mod status_bar;
 pub mod text_area;
 pub mod text_field;

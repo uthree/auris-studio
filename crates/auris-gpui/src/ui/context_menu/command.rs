@@ -21,6 +21,22 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Choose a voice file for one explicit singer track.
+    ChooseSingerVoice(TrackId),
+    /// Apply one installed voice to the explicit singer track.
+    SingerVoice {
+        /// The track to change.
+        track: TrackId,
+        /// The voice entry file.
+        path: std::path::PathBuf,
+    },
+    /// Choose a named speaker or backend style for an explicit singer track.
+    SingerSpeaker {
+        /// The track to change.
+        track: TrackId,
+        /// The speaker or style's stable name.
+        speaker: String,
+    },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
     /// Rename a track.
@@ -652,6 +668,17 @@ impl AurisApp {
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
         match command {
+            MenuCommand::ChooseSingerVoice(track) => {
+                self.select_track(track);
+                self.choose_singer_voice(cx);
+            }
+            MenuCommand::SingerVoice { track, path } => {
+                self.select_track(track);
+                self.apply_singer_voice(track, &path);
+            }
+            MenuCommand::SingerSpeaker { track, speaker } => {
+                self.set_singer_speaker_for(track, speaker)
+            }
             MenuCommand::DuplicateTrack(track) => match self.session.duplicate_track(track) {
                 Ok(copy) => {
                     self.select_track(copy);
@@ -677,7 +704,11 @@ impl AurisApp {
             MenuCommand::EditLyric { clip, index } => self.open_lyric_prompt(clip, index),
             MenuCommand::EditPhonemes { clip, index } => self.open_phonemes_prompt(clip, index),
             MenuCommand::ResetPhonemeTiming { clip, index } => {
-                let _ = self.session.clear_phoneme_timing(clip, index);
+                if self.clip_accepts_phonemes(clip) {
+                    let _ = self.session.clear_phoneme_timing(clip, index);
+                } else {
+                    self.set_failed_status(self.t(Key::VoicevoxPhonemesHint).to_string());
+                }
             }
             MenuCommand::SetScoop { clip, index, on } => {
                 let _ = self

@@ -1048,6 +1048,11 @@ pub mod singing {
     //! referenced where it lies — while its display name is written into the document, so a
     //! track header does not load models merely to draw. Loaded voices are kept for the session,
     //! keyed by path, shared by every track that sings with them.
+    //! [`Session::singer_voice_info`](crate::Session::singer_voice_info) reads the saved identity
+    //! and cached metadata without opening a file or taking the inference mutex. Metadata is
+    //! copied before the model is shared, so inspecting a speaker list or changing the speaker
+    //! does not wait for a running render. A cold voice has no cached speaker list yet; an
+    //! explicit picker action may load it, while repainting the inspector must not.
     //!
     //! Where a model runs its inference is the settings' choice, applied through
     //! [`Session::set_singer_acceleration`](crate::Session::set_singer_acceleration) — a
@@ -1082,8 +1087,10 @@ pub mod singing {
     //! buffer across the command channel — the `SetGraph` discipline in miniature. The
     //! callback only adds the buffer into the track's scratch; a replaced or spent buffer is
     //! never freed there, it travels back up the retired-data channel with the graphs. A
-    //! frontend is expected to cache renders (same voice, seed, pitch and phonemes are the
-    //! same audio) so a drag across pitches is instant everywhere it has already been.
+    //! frontend is expected to cache renders by voice entry path, speaker, seed, pitch and
+    //! phonemes, so a drag across pitches is instant everywhere it has already been. A display
+    //! name does not identify a voice or its speaker, and results from an earlier voice selection
+    //! must not repopulate the cache after that selection changes.
     //!
     //! # A take is kept, never silently rewritten
     //!
@@ -1107,6 +1114,15 @@ pub mod singing {
     //! reading by hand, which only a stored list can remember. The command that sets a lyric
     //! writes both fields; [`Session::set_note_phonemes`](crate::Session::set_note_phonemes)
     //! writes the phonemes alone and leaves the word as spelt.
+    //!
+    //! Which corrections reach the sound is a backend capability, exposed through
+    //! [`Session::singer_capabilities`](crate::Session::singer_capabilities) and
+    //! [`VoiceCapabilities`](crate::VoiceCapabilities). VOICEVOX derives pronunciation and
+    //! phoneme timing from the lyric-bearing score in its Engine; manual IPA and timing pins
+    //! are therefore refused without changing the document. Frontends use these capabilities
+    //! to disable those edits and explain the restriction, while keeping notes, lyrics, pitch
+    //! and volume editable. A track without a voice still permits phoneme authoring for a voice
+    //! chosen later.
     //!
     //! The frame-level representation is never stored. It is a pure function of the track and
     //! the tempo map — [`auris_vocal::render_frames`] — sampled at the track's

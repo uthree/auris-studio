@@ -287,6 +287,12 @@ messages! {
         ja: "このトラックは {name} が歌います"
     }
 
+    /// Names the track a library voice choice will change.
+    fn voice_target(track: &str) {
+        en: "Voice for {track}",
+        ja: "{track} の声を選択"
+    }
+
     /// Confirmation that a speaker of the track's voice was chosen, and where it stands in
     /// the voice's list.
     fn speaker_chosen(name: &str, index: usize, count: usize) {

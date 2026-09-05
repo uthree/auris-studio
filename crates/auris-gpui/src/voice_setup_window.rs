@@ -8,8 +8,8 @@ use std::process::Child;
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::{
-    DiffSingerSetup, VoicevoxSetup, check_voicevox_connection, start_voicevox_engine,
-    write_diffsinger_config, write_voicevox_connection,
+    DiffSingerSetup, VoicevoxCatalog, VoicevoxSetup, VoicevoxStyle, fetch_voicevox_catalog,
+    start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
 };
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
@@ -153,9 +153,15 @@ pub struct VoiceSetupWindow {
     tab: VoiceSetupTab,
     active: Field,
     voicevox: VoicevoxFields,
+    catalog: Option<VoicevoxCatalog>,
+    styles_selected: bool,
+    advanced: bool,
+    checking: bool,
+    request_generation: u64,
     diffsinger: DiffSingerFields,
     engine: Option<Child>,
     status: String,
+    status_failed: bool,
     focus: FocusHandle,
 }
 
@@ -180,9 +186,15 @@ impl VoiceSetupWindow {
             tab,
             active: Field::first(tab),
             voicevox: VoicevoxFields::default(),
+            catalog: None,
+            styles_selected: false,
+            advanced: false,
+            checking: false,
+            request_generation: 0,
             diffsinger: DiffSingerFields::default(),
             engine: None,
             status: String::new(),
+            status_failed: false,
             focus: cx.focus_handle(),
         }
     }
@@ -306,6 +318,7 @@ impl VoiceSetupWindow {
                 theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
+                    this.invalidate_request();
                     this.tab = VoiceSetupTab::Voicevox;
                     this.active = Field::first(this.tab);
                     cx.notify();
@@ -319,6 +332,7 @@ impl VoiceSetupWindow {
                 theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
+                    this.invalidate_request();
                     this.tab = VoiceSetupTab::DiffSinger;
                     this.active = Field::first(this.tab);
                     cx.notify();
@@ -336,56 +350,196 @@ impl VoiceSetupWindow {
             .children([
                 self.render_field(Field::VoicevoxName, Key::VoiceSetupName, cx),
                 self.render_field(Field::VoicevoxUrl, Key::VoiceSetupUrl, cx),
-                self.render_field(Field::VoicevoxStyle, Key::VoiceSetupStyleName, cx),
-                self.render_field(Field::VoicevoxQuery, Key::VoiceSetupQueryStyle, cx),
-                self.render_field(Field::VoicevoxDecode, Key::VoiceSetupDecodeStyle, cx),
-                self.render_field(Field::VoicevoxSampleRate, Key::VoiceSetupSampleRate, cx),
-                self.render_field(Field::VoicevoxFrameRate, Key::VoiceSetupFrameRate, cx),
-                self.render_field(Field::VoicevoxEngine, Key::VoiceSetupEngine, cx),
             ])
+            .when(self.catalog.is_none(), |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::VoiceSetupChooseSingers)),
+                )
+            })
+            .when_some(self.catalog.as_ref(), |this, catalog| {
+                this.child(self.render_styles(&catalog.query, true, cx))
+                    .child(self.render_styles(&catalog.decode, false, cx))
+            })
+            .child(button(
+                "voicevox-advanced",
+                self.t(Key::VoiceSetupAdvanced),
+                ButtonStyle::Ghost,
+                self.advanced,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.invalidate_request();
+                    this.advanced = !this.advanced;
+                    if !this.advanced
+                        && !matches!(this.active, Field::VoicevoxName | Field::VoicevoxUrl)
+                    {
+                        this.active = Field::VoicevoxName;
+                    }
+                    cx.notify();
+                }),
+            ))
+            .when(self.advanced, |this| {
+                this.children([
+                    self.render_field(Field::VoicevoxStyle, Key::VoiceSetupStyleName, cx),
+                    self.render_field(Field::VoicevoxQuery, Key::VoiceSetupQueryStyle, cx),
+                    self.render_field(Field::VoicevoxDecode, Key::VoiceSetupDecodeStyle, cx),
+                    self.render_field(Field::VoicevoxSampleRate, Key::VoiceSetupSampleRate, cx),
+                    self.render_field(Field::VoicevoxFrameRate, Key::VoiceSetupFrameRate, cx),
+                    self.render_field(Field::VoicevoxEngine, Key::VoiceSetupEngine, cx),
+                ])
+            })
+            .into_any_element()
+    }
+
+    fn render_styles(
+        &self,
+        styles: &[VoicevoxStyle],
+        query: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let selected = if query {
+            &self.voicevox.query
+        } else {
+            &self.voicevox.decode
+        };
+        let selected = selected.content().trim().parse::<u32>().ok();
+        let id = if query {
+            "voicevox-query-options"
+        } else {
+            "voicevox-decode-options"
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
             .child(
                 div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(button(
-                        "voicevox-choose-engine",
-                        self.t(Key::VoiceSetupChooseEngine),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.choose_engine(cx)),
-                    ))
-                    .child(button(
-                        "voicevox-start",
-                        self.t(Key::VoiceSetupStartEngine),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.start_engine(cx)),
-                    ))
-                    .child(button(
-                        "voicevox-check",
-                        self.t(Key::VoiceSetupCheck),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.check_connection(cx)),
-                    ))
-                    .child(button(
-                        "voicevox-save",
-                        self.t(Key::VoiceSetupSave),
-                        ButtonStyle::Primary,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.save_voicevox(cx)),
-                    )),
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(if query {
+                        Key::VoiceSetupQueryVoice
+                    } else {
+                        Key::VoiceSetupDecodeVoice
+                    })),
+            )
+            .child(
+                div()
+                    .id(id)
+                    .max_h(px(120.0))
+                    .overflow_y_scroll()
+                    .children(styles.iter().map(|style| {
+                        let chosen = style.clone();
+                        let style_id = style.id;
+                        button(
+                            (id, style.id as usize),
+                            style.label(),
+                            ButtonStyle::Normal,
+                            selected == Some(style.id),
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.select_style(&chosen, query);
+                                cx.notify();
+                            }),
+                        )
+                        .debug_selector(move || format!("{id}-{style_id}"))
+                        .w_full()
+                        .justify_start()
+                        .h_auto()
+                        .min_h(Metrics::CONTROL_HEIGHT)
+                        .py_1()
+                    })),
             )
             .into_any_element()
+    }
+
+    fn render_actions(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let actions = div()
+            .flex()
+            .flex_wrap()
+            .flex_shrink_0()
+            .justify_end()
+            .gap_2()
+            .p_2()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.surface_raised);
+        match self.tab {
+            VoiceSetupTab::Voicevox => actions
+                .child(button(
+                    "voicevox-choose-engine",
+                    self.t(Key::VoiceSetupChooseEngine),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.choose_engine(cx)),
+                ))
+                .child(button(
+                    "voicevox-start",
+                    self.t(Key::VoiceSetupStartEngine),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.start_engine(cx)),
+                ))
+                .child(
+                    button(
+                        "voicevox-check",
+                        self.t(if self.checking {
+                            Key::VoiceSetupChecking
+                        } else {
+                            Key::VoiceSetupLoadSingers
+                        }),
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            if !this.checking {
+                                this.check_connection(cx);
+                            }
+                        }),
+                    )
+                    .when(self.checking, |this| this.opacity(0.6)),
+                )
+                .child(button(
+                    "voicevox-save",
+                    self.t(Key::VoiceSetupSave),
+                    ButtonStyle::Primary,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.save_voicevox(cx)),
+                ))
+                .into_any_element(),
+            VoiceSetupTab::DiffSinger => actions
+                .child(button(
+                    "diff-choose-folder",
+                    self.t(Key::VoiceSetupChooseFolder),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.choose_voicebank(cx)),
+                ))
+                .child(button(
+                    "diff-save",
+                    self.t(Key::VoiceSetupWriteConfig),
+                    ButtonStyle::Primary,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.save_diffsinger(cx)),
+                ))
+                .into_any_element(),
+        }
     }
 
     fn render_diffsinger(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -445,30 +599,6 @@ impl VoiceSetupWindow {
                             }),
                         )
                     })),
-            )
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(button(
-                        "diff-choose-folder",
-                        self.t(Key::VoiceSetupChooseFolder),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.choose_voicebank(cx)),
-                    ))
-                    .child(button(
-                        "diff-save",
-                        self.t(Key::VoiceSetupWriteConfig),
-                        ButtonStyle::Primary,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.save_diffsinger(cx)),
-                    )),
             )
             .into_any_element()
     }
@@ -538,6 +668,8 @@ impl VoiceSetupWindow {
                 let _ = this.update(cx, |this, cx| {
                     this.voicevox.engine = TextField::new(path);
                     this.active = Field::VoicevoxEngine;
+                    this.advanced = true;
+                    this.text_changed();
                     cx.notify();
                 });
             }
@@ -561,6 +693,7 @@ impl VoiceSetupWindow {
     }
 
     fn start_engine(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_request();
         match start_voicevox_engine(PathBuf::from(self.voicevox.engine.content().trim()).as_path())
         {
             Ok(child) => {
@@ -568,43 +701,138 @@ impl VoiceSetupWindow {
                 self.engine = Some(child);
                 self.status = messages::voicevox_engine_started(self.language, pid);
             }
-            Err(error) => self.status = error.to_string(),
+            Err(error) => {
+                self.status = error.to_string();
+                self.status_failed = true;
+            }
         }
         cx.notify();
     }
 
     fn check_connection(&mut self, cx: &mut Context<Self>) {
-        let setup = match self.voicevox_setup() {
-            Ok(setup) => setup,
-            Err(error) => {
-                self.status = error;
-                cx.notify();
-                return;
-            }
-        };
+        self.invalidate_request();
+        let generation = self.request_generation;
+        let url = self.voicevox.url.content().trim().to_string();
+        self.checking = true;
         self.status = self.t(Key::VoiceSetupChecking).into();
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let result = check_voicevox_connection(&setup);
+            let result = cx
+                .background_executor()
+                .spawn(
+                    async move { fetch_voicevox_catalog(&url).map_err(|error| error.to_string()) },
+                )
+                .await;
             let _ = this.update(cx, |this, cx| {
-                this.status = match result {
-                    Ok(version) => messages::voicevox_engine_connected(this.language, &version),
-                    Err(error) => error.to_string(),
-                };
+                this.finish_connection(generation, result);
                 cx.notify();
             });
         })
         .detach();
     }
 
+    fn finish_connection(&mut self, generation: u64, result: Result<VoicevoxCatalog, String>) {
+        if generation != self.request_generation {
+            return;
+        }
+        self.checking = false;
+        match result {
+            Ok(catalog) => {
+                // A failed refresh or changed Engine must never silently replace a chosen
+                // performer. Keep explicit IDs even when they are absent from the new list.
+                if !self.styles_selected && !self.advanced {
+                    let query = catalog.query.first().cloned();
+                    let decode = catalog
+                        .decode
+                        .iter()
+                        .find(|style| {
+                            query
+                                .as_ref()
+                                .is_some_and(|query| query.singer == style.singer)
+                        })
+                        .or_else(|| catalog.decode.first())
+                        .cloned();
+                    if let Some(query) = query {
+                        self.select_style(&query, true);
+                    }
+                    if let Some(decode) = decode {
+                        self.select_style(&decode, false);
+                    }
+                }
+                self.styles_selected = true;
+                let selection = self.voicevox_setup().and_then(|setup| {
+                    catalog
+                        .validate_styles(&setup)
+                        .map_err(|error| error.to_string())
+                });
+                self.status_failed = selection.is_err();
+                self.status = match selection {
+                    Ok(()) => messages::voicevox_engine_connected(self.language, &catalog.version),
+                    Err(error) => error,
+                };
+                self.catalog = Some(catalog);
+            }
+            Err(error) => {
+                self.catalog = None;
+                self.status = error;
+                self.status_failed = true;
+            }
+        }
+    }
+
+    fn select_style(&mut self, style: &VoicevoxStyle, query: bool) {
+        self.invalidate_request();
+        self.styles_selected = true;
+        if query {
+            self.voicevox.query = TextField::new(style.id.to_string());
+        } else {
+            let previous = self.catalog.as_ref().and_then(|catalog| {
+                catalog.decode.iter().find(|entry| {
+                    Some(entry.id) == self.voicevox.decode.content().trim().parse::<u32>().ok()
+                })
+            });
+            let default_name = VoicevoxSetup::default().name;
+            if self.voicevox.name.content() == default_name
+                || previous.is_some_and(|entry| entry.singer == self.voicevox.name.content())
+            {
+                self.voicevox.name = TextField::new(style.singer.clone());
+            }
+            self.voicevox.decode = TextField::new(style.id.to_string());
+            self.voicevox.style = TextField::new(style.label());
+        }
+    }
+
+    fn invalidate_request(&mut self) {
+        self.request_generation = self.request_generation.wrapping_add(1);
+        self.checking = false;
+        self.status.clear();
+        self.status_failed = false;
+    }
+
     fn save_voicevox(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_request();
+        if self.catalog.is_none() && !self.advanced {
+            self.status = self.t(Key::VoiceSetupChooseSingers).into();
+            self.status_failed = true;
+            cx.notify();
+            return;
+        }
         let result = self
             .voicevox_setup()
             .map_err(|error| error.to_string())
-            .and_then(|setup| write_voicevox_connection(&setup).map_err(|error| error.to_string()));
+            .and_then(|setup| {
+                if let Some(catalog) = &self.catalog {
+                    catalog
+                        .validate_styles(&setup)
+                        .map_err(|error| error.to_string())?;
+                }
+                write_voicevox_connection(&setup).map_err(|error| error.to_string())
+            });
         self.finish_save(result, None, cx);
     }
 
     fn save_diffsinger(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_request();
         let (result, root) = match self.diffsinger_setup() {
             Ok(setup) => {
                 let root = setup.folder.parent().map(PathBuf::from);
@@ -624,6 +852,7 @@ impl VoiceSetupWindow {
         voice_root: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) {
+        self.status_failed = result.is_err();
         self.status = match result {
             Ok(path) => {
                 let _ = self.app.update(cx, |app, cx| {
@@ -635,7 +864,7 @@ impl VoiceSetupWindow {
                             log::warn!("could not save the DiffSinger voice folder: {error}");
                         }
                     }
-                    app.voices = None;
+                    app.singer_configuration_changed(&path, cx);
                     cx.notify();
                 });
                 messages::voice_setup_saved(self.language, &path.display().to_string())
@@ -648,7 +877,14 @@ impl VoiceSetupWindow {
     fn on_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
         let key = event.keystroke.key.as_str();
         if key == "tab" && !event.keystroke.modifiers.modified() {
-            self.active = self.active.next();
+            self.active = if self.tab == VoiceSetupTab::Voicevox && !self.advanced {
+                match self.active {
+                    Field::VoicevoxName => Field::VoicevoxUrl,
+                    _ => Field::VoicevoxName,
+                }
+            } else {
+                self.active.next()
+            };
             self.field_for_mut(self.active).select_all();
             cx.notify();
             return true;
@@ -661,6 +897,9 @@ impl VoiceSetupWindow {
             cx,
         );
         if effect != KeyEffect::Ignored {
+            if effect == KeyEffect::Changed {
+                self.text_changed();
+            }
             cx.notify();
             true
         } else {
@@ -676,6 +915,19 @@ impl HasTextField for VoiceSetupWindow {
 
     fn readable_field(&self) -> Option<&TextField> {
         Some(self.field_for(self.active))
+    }
+
+    fn text_changed(&mut self) {
+        self.invalidate_request();
+        if matches!(
+            self.active,
+            Field::VoicevoxStyle | Field::VoicevoxQuery | Field::VoicevoxDecode
+        ) {
+            self.styles_selected = true;
+        }
+        if self.active == Field::VoicevoxUrl {
+            self.catalog = None;
+        }
     }
 }
 
@@ -708,10 +960,23 @@ impl Render for VoiceSetupWindow {
                 }
             }))
             .child(self.render_tabs(cx))
-            .child(div().flex_1().min_h_0().overflow_hidden().p_3().child(body))
             .child(
                 div()
-                    .h(Metrics::STATUS_HEIGHT)
+                    .id("voice-setup-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .child(body),
+            )
+            .child(self.render_actions(cx))
+            .child(
+                div()
+                    .id("voice-setup-status")
+                    .min_h(Metrics::STATUS_HEIGHT)
+                    .max_h(px(84.0))
+                    .flex_shrink_0()
+                    .overflow_y_scroll()
                     .px_3()
                     .flex()
                     .items_center()
@@ -719,7 +984,11 @@ impl Render for VoiceSetupWindow {
                     .border_t_1()
                     .border_color(theme.border)
                     .text_xs()
-                    .text_color(theme.text_muted)
+                    .text_color(if self.status_failed {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
                     .child(self.status.clone()),
             )
     }
@@ -731,6 +1000,7 @@ impl AurisApp {
         if let Some(handle) = self.voice_setup_window
             && handle
                 .update(cx, |view, window, cx| {
+                    view.invalidate_request();
                     view.tab = tab;
                     view.active = Field::first(tab);
                     window.activate_window();
@@ -779,6 +1049,263 @@ fn parse<T: std::str::FromStr>(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    fn catalog() -> VoicevoxCatalog {
+        let style = |id, singer: &str, name: &str| VoicevoxStyle {
+            id,
+            singer: singer.into(),
+            name: name.into(),
+        };
+        VoicevoxCatalog {
+            version: "0.25.0".into(),
+            query: vec![style(71, "Alpha", "Guide"), style(72, "Teacher", "Guide")],
+            decode: vec![
+                style(81, "Alpha", "Normal"),
+                style(82, "Setup test singer", "Soft"),
+            ],
+        }
+    }
+
+    #[gpui::test]
+    fn named_singing_styles_save_the_advertised_ids_without_typing_numbers(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        handle
+            .update(cx, |this, _, cx| {
+                this.finish_connection(this.request_generation, Ok(catalog()));
+                assert_eq!(
+                    this.voicevox_setup().unwrap().decode_style_id,
+                    81,
+                    "prefer the query singer's matching voice"
+                );
+                cx.notify();
+            })
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("voice-setup-field-3").is_none(),
+            "numeric IDs belong to Advanced"
+        );
+        crate::harness::click("voicevox-query-options-72", cx);
+        crate::harness::click("voicevox-decode-options-82", cx);
+        handle
+            .update(cx, |this, _, _| {
+                let setup = this.voicevox_setup().unwrap();
+                assert_eq!(setup.query_style_id, 72);
+                assert_eq!(setup.decode_style_id, 82);
+                assert_eq!(setup.name, "Setup test singer");
+                assert_eq!(setup.style_name, "Setup test singer / Soft");
+            })
+            .unwrap();
+        cx.simulate_resize(size(px(480.0), px(360.0)));
+        cx.run_until_parked();
+        let save = cx
+            .debug_bounds("voicevox-save")
+            .expect("the save action remains visible");
+        assert!(save.left() >= px(0.0) && save.right() <= px(480.0));
+        assert!(save.top() >= px(0.0) && save.bottom() <= px(360.0));
+        crate::harness::click("voicevox-save", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert!(!this.status_failed, "{}", this.status)
+            })
+            .unwrap();
+        let path = auris_session::config_dir()
+            .join("Voices")
+            .join("Setup test singer.voicevox.json");
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["format_version"], 1);
+        assert_eq!(saved["styles"][0]["query_style_id"], 72);
+        assert_eq!(saved["styles"][0]["decode_style_id"], 82);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[gpui::test]
+    fn editing_fields_discards_stale_connection_success_and_failure(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        for (field, text, result) in [
+            (
+                "voice-setup-field-1",
+                "http://new-engine.invalid:50021",
+                Ok(catalog()),
+            ),
+            (
+                "voice-setup-field-0",
+                "My renamed voice",
+                Err("old connection failed".into()),
+            ),
+        ] {
+            let generation = handle
+                .update(cx, |this, _, cx| {
+                    this.checking = true;
+                    this.status = this.t(Key::VoiceSetupChecking).into();
+                    cx.notify();
+                    this.request_generation
+                })
+                .unwrap();
+            cx.run_until_parked();
+            crate::harness::click(field, cx);
+            cx.simulate_input(text);
+            handle
+                .update(cx, |this, _, _| {
+                    assert!(
+                        !this.checking,
+                        "an edit ends the obsolete checking indication"
+                    );
+                    assert!(this.status.is_empty());
+                    this.finish_connection(generation, result);
+                    assert!(
+                        this.catalog.is_none(),
+                        "a reply for the old input must not choose a voice"
+                    );
+                    assert!(
+                        this.status.is_empty(),
+                        "a reply for old input must not replace the current status"
+                    );
+                    assert!(!this.status_failed);
+                    assert_eq!(this.field_for(this.active).content(), text);
+                })
+                .unwrap();
+        }
+    }
+
+    #[gpui::test]
+    fn refreshing_singers_preserves_the_chosen_performer_after_failure(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        handle
+            .update(cx, |this, _, cx| {
+                this.finish_connection(this.request_generation, Ok(catalog()));
+                cx.notify();
+            })
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        crate::harness::click("voicevox-query-options-72", cx);
+        crate::harness::click("voicevox-decode-options-82", cx);
+        handle
+            .update(cx, |this, _, cx| {
+                let chosen = this.voicevox_setup().unwrap();
+                this.finish_connection(
+                    this.request_generation,
+                    Err("Engine is temporarily unavailable".into()),
+                );
+                assert!(this.status_failed);
+                assert!(this.catalog.is_none());
+                this.finish_connection(this.request_generation, Ok(catalog()));
+                assert!(!this.status_failed, "{}", this.status);
+                assert_eq!(this.voicevox_setup().unwrap(), chosen);
+
+                let mut changed = catalog();
+                changed.decode.retain(|style| style.id != 82);
+                this.finish_connection(this.request_generation, Ok(changed));
+                assert!(this.status_failed, "a missing performer needs correction");
+                assert_eq!(this.voicevox_setup().unwrap(), chosen);
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        crate::harness::click("voicevox-save", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert!(this.status_failed, "a missing performer cannot be saved");
+                assert_eq!(this.voicevox_setup().unwrap().decode_style_id, 82);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn fetching_singers_and_saving_do_not_replace_an_unfinished_style_id(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        crate::harness::click("voicevox-advanced", cx);
+        crate::harness::click("voice-setup-field-3", cx);
+        cx.simulate_input("72x");
+        cx.simulate_keystrokes("shift-left");
+        let selection = handle
+            .update(cx, |this, _, _| this.voicevox.query.selection())
+            .unwrap();
+        crate::harness::click("voicevox-advanced", cx);
+        handle
+            .update(cx, |this, _, cx| {
+                this.finish_connection(this.request_generation, Ok(catalog()));
+                assert!(this.status_failed);
+                assert_eq!(this.voicevox.query.content(), "72x");
+                assert_eq!(this.voicevox.query.selection(), selection);
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        crate::harness::click("voicevox-save", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert!(this.status_failed);
+                assert_eq!(this.voicevox.query.content(), "72x");
+                assert_eq!(this.voicevox.query.selection(), selection);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn advanced_fields_scroll_but_actions_stay_reachable_on_both_tabs(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.simulate_resize(size(px(480.0), px(320.0)));
+        cx.run_until_parked();
+        crate::harness::click("voicevox-advanced", cx);
+        cx.run_until_parked();
+        for action in ["voicevox-check", "voicevox-save"] {
+            let bounds = cx.debug_bounds(action).unwrap();
+            assert!(bounds.bottom() <= px(320.0) && bounds.right() <= px(480.0));
+        }
+        crate::harness::click("voice-tab-diffsinger", cx);
+        cx.run_until_parked();
+        for action in ["diff-choose-folder", "diff-save"] {
+            let bounds = cx.debug_bounds(action).unwrap();
+            assert!(bounds.bottom() <= px(320.0) && bounds.right() <= px(480.0));
+        }
+        crate::harness::click("voice-tab-voicevox", cx);
+        cx.run_until_parked();
+        crate::harness::click("voicevox-advanced", cx);
+        cx.simulate_keystrokes("tab tab");
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(
+                    this.active,
+                    Field::VoicevoxName,
+                    "Tab skips the now-hidden numeric fields"
+                )
+            })
+            .unwrap();
+    }
 
     #[gpui::test]
     fn voice_connection_fields_accept_clipboard_shortcuts(cx: &mut TestAppContext) {

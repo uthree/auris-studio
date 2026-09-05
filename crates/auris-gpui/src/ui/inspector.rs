@@ -207,6 +207,8 @@ impl AurisApp {
                 .into_any_element(),
         );
 
+        sections.extend(self.singer_rows(track_id, cx));
+
         if let Some(instrument_id) = instrument_id {
             let name = self.instrument_label(track_id, &instrument_id);
             sections.push(

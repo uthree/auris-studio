@@ -74,7 +74,7 @@ pub use monitor::MonitorStatus;
 pub use notes::{Quantize, quantized};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
-    SungFrames, take_fingerprint,
+    SingerVoiceInfo, SungFrames, take_fingerprint,
 };
 
 pub use record::{
@@ -88,7 +88,7 @@ pub use typing::{
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use auris_core::param::ParamDescriptor;
@@ -381,8 +381,9 @@ pub struct Session {
     /// same reason: the same file is the same voice whichever project is open, and a model is a
     /// couple of hundred megabytes that takes a third of a second to load — worth doing once a
     /// session, not once a song. Behind `Arc<Mutex<_>>` because a frontend renders takes on a
-    /// worker thread while the session keeps answering commands; see [`singer`].
-    voices: HashMap<PathBuf, (singer::VoiceStamp, Arc<Mutex<auris_singer::VoiceModel>>)>,
+    /// worker thread while the session keeps answering commands. Immutable metadata sits beside
+    /// that handle so selecting a speaker never waits for inference; see [`singer`].
+    voices: HashMap<PathBuf, singer::LoadedVoice>,
     /// Where those models run their inference — the settings' choice, applied to every load.
     ///
     /// Kept beside the cache it governs: changing it empties [`Self::voices`], which is what

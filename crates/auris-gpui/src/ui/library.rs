@@ -667,7 +667,7 @@ impl AurisApp {
     }
 
     /// The singer voices this machine can offer, scanned once and kept.
-    fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
+    pub(crate) fn voice_list(&mut self) -> Vec<(String, std::path::PathBuf)> {
         self.voices
             .get_or_insert_with(|| {
                 let mut roots = auris_session::library::voice_roots();
@@ -695,6 +695,13 @@ impl AurisApp {
         if !self.library.is_open(Branch::Voices) {
             return rows;
         }
+        let target = self
+            .singer_target()
+            .and_then(|track| self.project().track(track));
+        let hint = target
+            .map(|track| auris_i18n::messages::voice_target(self.language(), &track.name))
+            .unwrap_or_else(|| self.t(Key::SingerSelectTrack).to_string());
+        rows.push(self.note_row(1, &hint));
         if voices.is_empty() {
             rows.push(self.note_row(1, self.t(Key::BrowserNoVoices)));
         }
@@ -715,6 +722,16 @@ impl AurisApp {
         let theme = self.theme.clone();
         let accent = theme.group_color(group_hue(1, 3));
         let shown = path.display().to_string();
+        let target = self.singer_target();
+        let selected = target
+            .and_then(|track| self.session.singer_voice_info(track).ok().flatten())
+            .is_some_and(|info| info.path == path);
+        let target_label = target
+            .and_then(|track| self.project().track(track))
+            .map(|track| auris_i18n::messages::voice_target(self.language(), &track.name))
+            .unwrap_or_else(|| self.t(Key::SingerSelectTrack).to_string());
+        let tooltip =
+            crate::ui::tooltip::keyed_tip(format!("{target_label} · {name} · {shown}"), "", &theme);
         let backend = match auris_session::voice_source_kind(&path) {
             Some(auris_session::VoiceSourceKind::Auris) => Key::VoiceBackendAuris,
             Some(auris_session::VoiceSourceKind::DiffSinger) => Key::VoiceBackendDiffSinger,
@@ -723,40 +740,45 @@ impl AurisApp {
         };
         div()
             .id(gpui::SharedString::from(format!("lib-voice-{shown}")))
+            .debug_selector(|| format!("lib-voice-{shown}"))
             .flex()
-            .items_center()
-            .gap_1p5()
+            .flex_col()
+            .min_w_0()
             .pl(indent(2))
             .px_1p5()
             .py_0p5()
             .rounded(Metrics::RADIUS_SM)
             .cursor_pointer()
+            .when(selected, |this| this.bg(theme.accent_soft))
             .hover(|this| this.bg(theme.surface_hover))
-            .child(swatch(accent))
-            .child(crate::ui::icons::icon(Icon::Notes, px(11.0), accent))
+            .tooltip(tooltip)
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(name.to_string()),
-            )
-            .child(
-                div()
-                    .px_1()
-                    .rounded(Metrics::RADIUS_XS)
-                    .bg(theme.surface_raised)
-                    .text_xs()
-                    .text_color(accent)
-                    .child(self.t(backend)),
-            )
-            .child(
-                div()
-                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .w_full()
                     .min_w_0()
+                    .child(crate::ui::icons::icon(
+                        if selected { Icon::Check } else { Icon::Notes },
+                        px(11.0),
+                        accent,
+                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.text)
+                            .child(name.to_string()),
+                    ),
+            )
+            .child(
+                div()
                     .text_xs()
-                    .text_color(theme.text_faint)
-                    .truncate()
-                    .child(shown),
+                    .text_color(theme.text_muted)
+                    .child(self.t(backend)),
             )
             .on_mouse_down(
                 MouseButton::Left,
