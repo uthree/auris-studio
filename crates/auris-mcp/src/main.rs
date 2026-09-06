@@ -124,7 +124,7 @@ impl AurisMcp {
         blocking(move || toolbox::edit_harmony::run(&args)).await
     }
 
-    /// Changes a generated clip's recipe and regenerates that clip only. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.
+    /// Changes a generated clip's recipe and regenerates that clip only. With drum_voice, edits only the named writer within a drum kit. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.
     #[tool]
     async fn edit_recipe(
         &self,
@@ -210,6 +210,15 @@ impl AurisMcp {
         Parameters(args): Parameters<toolbox::analyze::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze::run(&args)).await
+    }
+
+    /// Renders an instrument's notes at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
+    #[tool]
+    async fn analyze_drum_kit(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_drum_kit::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_drum_kit::run(&args)).await
     }
 
     /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
@@ -490,6 +499,9 @@ fn finished(outcome: Result<String, String>) -> Result<CallToolResult, ErrorData
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(code) = auris_session::handle_drum_probe_worker() {
+        std::process::exit(code);
+    }
     // Stderr, and only stderr: stdout is the protocol channel, and one stray line on it is a
     // broken connection.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
@@ -574,6 +586,10 @@ mod tests {
             (toolbox::preview::NAME, toolbox::preview::DESCRIPTION),
             (describe::NAME, describe::DESCRIPTION),
             (analyze::NAME, analyze::DESCRIPTION),
+            (
+                toolbox::analyze_drum_kit::NAME,
+                toolbox::analyze_drum_kit::DESCRIPTION,
+            ),
             (mixer::NAME, mixer::DESCRIPTION),
             (set_level::NAME, set_level::DESCRIPTION),
             (set_send::NAME, set_send::DESCRIPTION),

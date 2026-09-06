@@ -28,14 +28,6 @@ fn main() {
         let grid = Grid::new(base.meter, 4);
         let step = grid.step_ticks().raw().max(1);
 
-        // name → role, off the roster; every track came from a part.
-        let role_of = |name: &str| {
-            base.parts
-                .iter()
-                .find(|part| part.name == name)
-                .map(|part| part.role)
-        };
-
         // (part name) → summed metrics over the seeds, in roster order.
         let mut rows: Vec<(String, Vec<f64>, usize)> = Vec::new();
         for seed in seeds {
@@ -45,24 +37,33 @@ fn main() {
             // neighbouring step and the measure would read the smear.
             spec.swing = 50;
             let piece = compose(&spec);
-            for track in &piece.tracks {
-                let Some(role) = role_of(&track.name) else {
-                    continue;
-                };
-                let notes: Vec<auris_core::Note> = track
-                    .clips
+            for part in &base.parts {
+                let role = part.role;
+                let notes: Vec<auris_core::Note> = piece
+                    .tracks
                     .iter()
+                    .filter(|track| {
+                        track.name == part.name
+                            || track.drum_parts.iter().any(|voice| voice.name == part.name)
+                    })
+                    .flat_map(|track| &track.clips)
                     .flat_map(|clip| {
-                        clip.notes.iter().map(|note| auris_core::Note {
-                            velocity: note.velocity,
-                            ..auris_core::Note::new(
-                                note.pitch,
-                                clip.start + note.start,
-                                note.length,
-                            )
-                        })
+                        clip.notes
+                            .iter()
+                            .filter(|note| !role.is_drum() || note.drum_voice == part.name)
+                            .map(|note| auris_core::Note {
+                                velocity: note.velocity,
+                                ..auris_core::Note::new(
+                                    note.pitch,
+                                    clip.start + note.start,
+                                    note.length,
+                                )
+                            })
                     })
                     .collect();
+                if notes.is_empty() {
+                    continue;
+                }
                 let values = if role.is_drum() {
                     // The part as one long pattern: onset per nearest step, the constant lean
                     // rounded away.
@@ -105,14 +106,14 @@ fn main() {
                 } else {
                     continue;
                 };
-                match rows.iter_mut().find(|(name, ..)| *name == track.name) {
+                match rows.iter_mut().find(|(name, ..)| *name == part.name) {
                     Some((_, sums, count)) => {
                         for (sum, value) in sums.iter_mut().zip(&values) {
                             *sum += value;
                         }
                         *count += 1;
                     }
-                    None => rows.push((track.name.clone(), values, 1)),
+                    None => rows.push((part.name.clone(), values, 1)),
                 }
             }
         }

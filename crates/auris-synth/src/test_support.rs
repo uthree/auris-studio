@@ -5,6 +5,58 @@
 
 use auris_core::param::gain_to_db;
 use auris_core::{AudioBuffer, Instrument, NoteEvent, PrepareContext, ProcessContext};
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
+thread_local! {
+    static WATCHING: Cell<bool> = const { Cell::new(false) };
+    static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts allocations on the calling thread without counting concurrent test cases.
+pub(crate) fn count_allocations(body: impl FnOnce()) -> usize {
+    struct Guard;
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            WATCHING.with(|watching| watching.set(false));
+        }
+    }
+    ALLOCATIONS.with(|count| count.set(0));
+    WATCHING.with(|watching| watching.set(true));
+    let guard = Guard;
+    body();
+    drop(guard);
+    ALLOCATIONS.with(Cell::get)
+}
+
+fn allocation() {
+    if WATCHING.try_with(Cell::get).unwrap_or(false) {
+        let _ = ALLOCATIONS.try_with(|count| count.set(count.get() + 1));
+    }
+}
+
+struct CountingAllocator;
+
+// SAFETY: all storage operations forward unchanged to System. The const-initialized thread
+// locals contain only Cells and allocate nothing; try_with also handles thread teardown.
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        allocation();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        allocation();
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 /// Drives an instrument block by block, the way the engine will.
 pub(crate) struct Rig {

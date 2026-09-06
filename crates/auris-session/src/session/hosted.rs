@@ -123,6 +123,33 @@ struct HostedSlot {
 }
 
 impl HostedPlugins {
+    /// Snapshots the actual instrument for an independent measurement worker.
+    pub(super) fn drum_probe_state(
+        &mut self,
+        track: TrackId,
+        saved: &PluginState,
+    ) -> Result<PluginState, SessionError> {
+        let plugin = self
+            .instruments
+            .get_mut(&track)
+            .and_then(HostedSlot::plugin_mut)
+            .ok_or_else(|| {
+                SessionError::DrumAnalysis("the CLAP instrument is unavailable".into())
+            })?;
+        let mut state = saved.clone();
+        state.set_hosted_bytes(&plugin.save_state()?);
+        let descriptors = plugin.parameters().to_vec();
+        for descriptor in descriptors {
+            let value = plugin.value(descriptor.id).ok_or_else(|| {
+                SessionError::DrumAnalysis(
+                    "the CLAP instrument could not snapshot a parameter".into(),
+                )
+            })?;
+            state.params.insert(descriptor.key.to_string(), value);
+        }
+        Ok(state)
+    }
+
     /// Loads a `.clap` file and lists what is inside it, reusing an already-open one.
     ///
     /// # Safety

@@ -40,10 +40,11 @@ pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
 pub use metrics::{pitch_class_entropy, syncopation};
 pub use perform::{clip_performance, part_performance};
 pub use phrase::{
-    SEED_RANGE, clip_seed, default_instrument, preset_of, recipe_for, roles_of, write_phrase,
+    SEED_RANGE, apply_drum_map, clip_seed, default_instrument, preset_of, recipe_for, roles_of,
+    write_phrase,
 };
 pub use preset::{PRESETS, SongPreset, preset};
-pub use render::{ClipDraft, Composition, EffectDraft, TrackDraft, compose};
+pub use render::{ClipDraft, Composition, DrumPartDraft, EffectDraft, TrackDraft, compose};
 pub use spec::{Ending, Mood, PartSpec, Role, SectionSpec, SongSpec, SpecError};
 pub use vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};
 

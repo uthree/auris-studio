@@ -561,7 +561,7 @@ impl Session {
         self.require_clip(clip)?;
         let grid = Ticks(self.project.grid.raw().max(1));
 
-        if let Some((was, length, recipe)) = self
+        if let Some((was, length, mut recipe)) = self
             .project
             .midi_clip(clip)
             .map(|(_, midi)| (midi.start, midi.length, midi.recipe.clone()))
@@ -580,6 +580,9 @@ impl Session {
                 return Ok(());
             }
             let length = length - by;
+            if let Some(recipe) = &mut recipe {
+                recipe.trim_drum_accents(by);
+            }
             let notes = match &recipe {
                 Some(recipe) => self.phrase(now, length, recipe),
                 None => self
@@ -594,6 +597,7 @@ impl Session {
                 midi.length = length;
                 midi.length_is_explicit = true;
                 midi.notes = notes;
+                midi.recipe = recipe;
                 midi.bend.retain_mut(|point| {
                     if point.at < by {
                         false

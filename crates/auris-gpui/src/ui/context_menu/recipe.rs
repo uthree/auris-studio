@@ -250,14 +250,63 @@ impl AurisApp {
 
     /// The rows a generated clip adds to its own menu.
     pub(super) fn generated_clip_rows(&self, menu: ContextMenu, clip: ClipId) -> ContextMenu {
-        generated_clip_rows(
+        let anchor = menu.anchor;
+        let menu = generated_clip_rows(
             menu,
             clip,
             self.session.clip_recipe(clip).is_some(),
             self.t(Key::MenuRerollClip),
             self.t(Key::MenuRegenerateClip),
             self.t(Key::MenuFreezeClip),
+        );
+        let has_voices = self.session.clip_recipe(clip).is_some_and(|recipe| {
+            recipe.drum_voices.iter().any(|voice| {
+                voice.recipe.is_some()
+                    && recipe
+                        .drum_map
+                        .as_ref()
+                        .is_none_or(|map| map.voices.contains_key(&voice.role))
+            })
+        });
+        menu.item_if(
+            has_voices,
+            self.t(Key::PresetDrums),
+            MenuCommand::DrumVoicesMenu { clip, anchor },
         )
+    }
+
+    /// The independent rhythmic writers inside a kit, using the clip's stored names.
+    pub(crate) fn drum_voices_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        drum_voice_rows(
+            ContextMenu::new(anchor, self.t(Key::PresetDrums)),
+            clip,
+            self.session.clip_recipe(clip),
+            self.t(Key::MenuRegenerateClip),
+            self.t(Key::MenuRerollClip),
+        )
+    }
+
+    /// Rewrites one kit voice and refreshes note selection after the stored indices change.
+    pub(crate) fn rewrite_drum_voice(&mut self, clip: ClipId, voice: &str, reroll: bool) {
+        let result = if reroll {
+            self.session.reroll_drum_voice(clip, voice)
+        } else {
+            self.session.regenerate_drum_voice(clip, voice)
+        };
+        match result {
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
+            Err(error) => self.set_failed_status(self.failure(
+                if reroll {
+                    Key::MenuRerollClip
+                } else {
+                    Key::MenuRegenerateClip
+                },
+                &error,
+            )),
+        }
     }
 
     /// A seed nobody has used yet, for the next clip that needs one.
@@ -336,6 +385,44 @@ fn generated_clip_rows(
         .item(freeze.to_string(), MenuCommand::FreezeClip(clip))
 }
 
+/// Fixed accents and unassigned voices have no generic writer to offer in a menu.
+fn drum_voice_rows(
+    mut menu: ContextMenu,
+    clip: ClipId,
+    recipe: Option<&ClipRecipe>,
+    regenerate: &str,
+    reroll: &str,
+) -> ContextMenu {
+    if let Some(recipe) = recipe {
+        for voice in &recipe.drum_voices {
+            if voice.recipe.is_none()
+                || recipe
+                    .drum_map
+                    .as_ref()
+                    .is_some_and(|map| !map.voices.contains_key(&voice.role))
+            {
+                continue;
+            }
+            menu = menu
+                .item(
+                    format!("{} · {regenerate}", voice.name),
+                    MenuCommand::RegenerateDrumVoice {
+                        clip,
+                        voice: voice.name.clone(),
+                    },
+                )
+                .item(
+                    format!("{} · {reroll}", voice.name),
+                    MenuCommand::RerollDrumVoice {
+                        clip,
+                        voice: voice.name.clone(),
+                    },
+                );
+        }
+    }
+    menu
+}
+
 /// A seed no clip in the project is using, for the next one that needs one.
 ///
 /// Counted up from the highest in use rather than drawn at random, so a session writes the same
@@ -394,6 +481,45 @@ mod tests {
                 MenuEntry::Separator => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_voice_menu_offers_only_assigned_rhythmic_writers() {
+        let piece = compose(&SongSpec::default());
+        let kit = piece
+            .tracks
+            .iter()
+            .find(|track| !track.drum_parts.is_empty())
+            .unwrap();
+        let mut recipe = kit.clips[0].recipe.clone().unwrap();
+        let mut accent = recipe.drum_voices[0].clone();
+        accent.name = "fixed-accent".into();
+        accent.recipe = None;
+        recipe.drum_voices.push(accent);
+        recipe.drum_map = Some(DrumMap {
+            voices: [(DrumRole::Snare, 73)].into_iter().collect(),
+        });
+        let clip = ClipId(7);
+        let menu = drum_voice_rows(
+            ContextMenu::new(point(px(0.0), px(0.0)), "Drums"),
+            clip,
+            Some(&recipe),
+            "rewrite",
+            "again",
+        );
+        assert_eq!(
+            commands(&menu),
+            vec![
+                MenuCommand::RegenerateDrumVoice {
+                    clip,
+                    voice: "snare".into()
+                },
+                MenuCommand::RerollDrumVoice {
+                    clip,
+                    voice: "snare".into()
+                },
+            ]
+        );
     }
 
     #[test]

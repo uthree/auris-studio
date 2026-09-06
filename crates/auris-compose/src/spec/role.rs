@@ -109,10 +109,22 @@ impl Role {
         })
     }
 
+    /// The musical assignment used by a stored kit map, independent of its MIDI note.
+    pub fn drum_role(self) -> Option<auris_core::project::DrumRole> {
+        use auris_core::project::DrumRole;
+        Some(match self {
+            Role::Kick => DrumRole::Kick,
+            Role::Snare => DrumRole::Snare,
+            Role::Hat => DrumRole::ClosedHat,
+            Role::Crash => DrumRole::Crash,
+            _ => return None,
+        })
+    }
+
     /// The instrument a part of this role gets when none is named.
     pub fn default_instrument(self) -> &'static str {
         if self.is_drum() {
-            "auris.synth.noisedrum"
+            "auris.synth.drumkit"
         } else if matches!(self, Role::Bass | Role::Pad) {
             "auris.synth.fm2"
         } else {

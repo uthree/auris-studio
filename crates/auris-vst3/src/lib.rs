@@ -322,6 +322,12 @@ impl std::fmt::Debug for Vst3Instrument {
     }
 }
 impl Vst3Instrument {
+    /// Whether rendering, MIDI delivery or access to the processor failed for this instance.
+    /// Offline measurement must distinguish failed processing from a silent sound.
+    pub fn processing_failed(&self) -> bool {
+        self.0.processing_failed
+    }
+
     fn new(shared: Arc<Shared>) -> Result<Self, Vst3Error> {
         Ok(Self(Bridge::new(shared)?))
     }
@@ -332,6 +338,7 @@ struct Bridge {
     buffers: BusAudioBuffers,
     values: Vec<f32>,
     latency: usize,
+    processing_failed: bool,
 }
 
 impl Bridge {
@@ -356,6 +363,7 @@ impl Bridge {
             buffers,
             values,
             latency,
+            processing_failed: false,
         })
     }
 
@@ -388,6 +396,7 @@ impl Bridge {
             return;
         }
         let Ok(mut plugin) = self.shared.plugin.try_lock() else {
+            self.processing_failed = true;
             if overwrite {
                 buffer.clear();
             }
@@ -397,7 +406,9 @@ impl Bridge {
         let _ = plugin.set_playing(ctx.is_playing);
         for event in events {
             let midi = translate_event(*event);
-            let _ = plugin.send_midi_event_at(midi, event.frame() as i32);
+            self.processing_failed |= plugin
+                .send_midi_event_at(midi, event.frame() as i32)
+                .is_err();
         }
         self.buffers.block_size = frames;
         self.buffers.sample_rate = ctx.sample_rate;
@@ -409,12 +420,14 @@ impl Bridge {
             copy_into_bus(key.channels.as_mut_slice(), sidechain, frames);
         }
         if plugin.process_bus_audio(&mut self.buffers).is_err() {
+            self.processing_failed = true;
             if overwrite {
                 buffer.clear();
             }
             return;
         }
         let Some(main) = self.buffers.outputs.iter().find(|bus| bus.active) else {
+            self.processing_failed = true;
             if overwrite {
                 buffer.clear();
             }

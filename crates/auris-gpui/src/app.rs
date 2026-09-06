@@ -1267,6 +1267,10 @@ pub struct AurisApp {
     pub(crate) sung_preview_wish: Option<SungPreviewWish>,
     /// Whether a preview render is on the background executor right now.
     pub(crate) sung_preview_rendering: bool,
+    /// Last acoustic drum measurement, kept separate from accepted musical assignments.
+    pub(crate) drum_analysis: Option<auris_session::DrumKitAnalysis>,
+    /// Cancellation for the currently supervised probe process.
+    pub(crate) drum_analysis_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
@@ -1461,6 +1465,14 @@ fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>)
     primary.or_else(|| clips.iter().next().copied())
 }
 
+impl Drop for AurisApp {
+    fn drop(&mut self) {
+        if let Some(cancel) = &self.drum_analysis_cancel {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
+
 impl AurisApp {
     /// Builds the application, starting audio and opening an empty document.
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -1583,6 +1595,8 @@ impl AurisApp {
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
+            drum_analysis: None,
+            drum_analysis_cancel: None,
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,

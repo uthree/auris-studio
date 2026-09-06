@@ -650,6 +650,7 @@ Deliberately simple chiptune voices, enough to hear the engine working:
 | `auris.synth.chiptune` | Chiptune | Sine / square / saw / triangle / LFSR noise with pulse width, ADSR, glide, vibrato, unison and bit-crush |
 | `auris.synth.fm2` | FM 2-Op | A two-operator FM voice, included to show a different synthesis method dropping in unchanged |
 | `auris.synth.noisedrum` | Noise Drum | Pitch-swept noise through a band-pass, for percussion |
+| `auris.synth.drumkit` | Drum Kit | One polyphonic kit with kicks, snares, hats, cymbals and toms; shared hat choking |
 
 Square and saw are PolyBLEP band-limited, so high notes stay clean instead of aliasing.
 

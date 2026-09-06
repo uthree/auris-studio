@@ -491,6 +491,47 @@ pub fn unused_part_name(dials: &SongDials, stem: &str) -> String {
         .unwrap_or_else(|| stem.to_string())
 }
 
+/// The first writer sharing this part's instrument, which owns the kit's source picker.
+pub fn part_source_owner(dials: &SongDials, index: usize) -> Option<usize> {
+    part_source_group(dials, index).first().copied()
+}
+
+/// Changes the instrument for a pitched part or every writer of its current drum kit.
+pub fn set_part_instrument(dials: &mut SongDials, index: usize, instrument: &str) {
+    for index in part_source_group(dials, index) {
+        dials.parts[index].instrument = instrument.to_string();
+        dials.parts[index].program = None;
+    }
+}
+
+/// Changes the SoundFont program for a pitched part or every writer of its current drum kit.
+pub fn set_part_program(dials: &mut SongDials, index: usize, program: gm::Program) {
+    for index in part_source_group(dials, index) {
+        dials.parts[index].program = Some(program);
+    }
+}
+
+/// The shared kit is exactly the group the composer will merge, before the source is changed.
+fn part_source_group(dials: &SongDials, index: usize) -> Vec<usize> {
+    let Some(selected) = dials.parts.get(index) else {
+        return Vec::new();
+    };
+    if !selected.role.is_drum() {
+        return vec![index];
+    }
+    dials
+        .parts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, part)| {
+            (part.role.is_drum()
+                && part.instrument == selected.instrument
+                && part.program == selected.program)
+                .then_some(index)
+        })
+        .collect()
+}
+
 /// Adds a part of `role`, named after it.
 pub fn add_part(dials: &mut SongDials, role: Role) {
     let name = unused_part_name(dials, role.name());
@@ -990,6 +1031,53 @@ impl DialTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_source_picker_changes_every_voice_of_only_its_current_kit() {
+        let mut dials = SongDials::default();
+        let drums: Vec<_> = dials
+            .parts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, part)| part.role.is_drum().then_some(index))
+            .collect();
+        let owner = drums[0];
+        for index in &drums {
+            assert_eq!(part_source_owner(&dials, *index), Some(owner));
+        }
+        let melodic: Vec<_> = dials
+            .parts
+            .iter()
+            .filter(|part| !part.role.is_drum())
+            .cloned()
+            .collect();
+        let mut separate = PartSpec::of_role("second-kit", Role::Kick);
+        separate.program = Some(gm::Program(25));
+        dials.parts.push(separate.clone());
+        set_part_instrument(&mut dials, drums[1], "external.drumkit");
+        for index in &drums {
+            assert_eq!(dials.parts[*index].instrument, "external.drumkit");
+            assert_eq!(dials.parts[*index].program, None);
+        }
+        assert_eq!(dials.parts.last(), Some(&separate));
+        assert_eq!(
+            dials
+                .parts
+                .iter()
+                .filter(|part| !part.role.is_drum())
+                .cloned()
+                .collect::<Vec<_>>(),
+            melodic
+        );
+        set_part_program(&mut dials, owner, gm::Program(8));
+        assert!(
+            drums
+                .iter()
+                .all(|index| dials.parts[*index].program == Some(gm::Program(8)))
+        );
+        assert_eq!(dials.parts.last(), Some(&separate));
+        assert_eq!(part_source_owner(&dials, usize::MAX), None);
+    }
 
     #[test]
     fn the_sheet_opens_on_the_key_the_document_is_in_now() {

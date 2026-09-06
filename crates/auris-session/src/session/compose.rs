@@ -12,6 +12,7 @@
 //! [`kit_trim_db`] is the table and [`composed_gain_db`] is how it is added to the mix the
 //! composer actually wrote.
 
+use auris_core::project::DrumMap;
 use auris_core::time::{SignatureMap, Ticks};
 use auris_core::{AuxSend, Output, PresetRef, Project, TrackId};
 use auris_sampler::{SAMPLER_ID, store_preset};
@@ -49,11 +50,9 @@ const MASTER_CEILING_DB: f32 = -0.3;
 ///
 /// # The table
 ///
-/// Measured on the shipped font, at unity, on the note each kit's kick is written at. The kick,
-/// because it is what the excursion is made of: the composer writes three drums, and once each
-/// role's own level is on, the kick is the loudest of the three in every one of these kits — by
-/// two thirds of a decibel in the closest and by six in the widest. The reference is the quietest
-/// of them, the TR-808's, at -1.44 dBFS.
+/// Measured on the shipped font, at unity, on the note each kit's kick is written at. The
+/// reference is the quietest of them, the TR-808's, at -1.44 dBFS. This provides an initial trim;
+/// the subsequent balance pass measures the complete kit, including simultaneous voices.
 ///
 /// | kit | patch | kick at unity | trim |
 /// |---|---|---|---|
@@ -72,12 +71,9 @@ const MASTER_CEILING_DB: f32 = -0.3;
 ///
 /// # What these numbers are not
 ///
-/// They are not a musical balance. Nothing here says a kick should be 7.95 dB under a brush kit;
-/// the levels a piece is *mixed* at are
-/// [`Role::default_gain_db`](auris_compose::Role::default_gain_db) and whatever the specification
-/// writes over it, and this is added to that rather than replacing it. This is a calibration of
-/// one file, and a different General MIDI font — a leaner one, or somebody's own — will want
-/// entirely different numbers or none at all.
+/// This is a calibration of one file, not the musical balance of its pads. The composer sets a
+/// loudness target for the complete kit, and the session measures that target after installation.
+/// A different General MIDI font will want different initial trims or none at all.
 ///
 /// A patch that is not in the table gets 0 dB, and so does every pitched program. A font is free
 /// to put a kit anywhere in bank 128 and almost none do; a sound nobody has measured is a sound
@@ -103,17 +99,15 @@ pub fn kit_trim_db(sound: auris_compose::gm::Sound) -> f32 {
     }
 }
 
-/// The gain a composed part's mixer strip is set to.
+/// The initial gain a composed track's mixer strip is set to.
 ///
-/// The part's own gain **plus** whatever [`kit_trim_db`] says about the sound it landed on, never
-/// instead of it: the first is the mix the composer wrote and the second is an apology for the
-/// font, and collapsing the two would mean a specification that says `gain = -12` could not be
-/// read off the strip it produced.
+/// The draft's gain plus the shipped font's calibration, before the balance pass measures it.
+/// A grouped kit has one draft gain and one fader for all of its voices.
 ///
 /// `None` is a part that stayed on a built-in instrument, because no General MIDI font is
 /// installed or because it never asked for one — and it is left exactly where the composer put it.
-/// That is the half of this worth stating: the built-in kit is already 21.5 dB under its own
-/// pitched parts and a trim aimed at a SoundFont would push it under the floor.
+/// A SoundFont calibration does not describe the built-in kit; the balance pass measures that
+/// instrument's complete output against the kit's loudness target instead.
 pub fn composed_gain_db(part_gain_db: f32, sound: Option<auris_compose::gm::Sound>) -> f32 {
     part_gain_db + sound.map_or(0.0, kit_trim_db)
 }
@@ -259,12 +253,23 @@ impl Session {
                     .track_mut(track_id)
                     .and_then(|entry| entry.kind.as_instrument_mut())
             {
-                // Only where the part stayed on the plugin it named. The composer's voicing is
-                // written for that plugin's own parameters — a crash asks the noise drum for a
-                // long decay and no pitch sweep — and the branch above has just put this track on
-                // the sampler instead, where the same keys mean nothing and the sound is a
-                // recording of a cymbal that needs no help being one.
+                // Only where the part stayed on the plugin it named: parameter keys belonging
+                // to a built-in synth must not become unrelated controls on the sampler.
                 inner.instrument_state = track.state.clone();
+            }
+            if !track.drum_parts.is_empty()
+                && let Some(inner) = project
+                    .track_mut(track_id)
+                    .and_then(|entry| entry.kind.as_instrument_mut())
+            {
+                // These are assignments the score authored, not labels obtained by listening.
+                // A later acoustic scan is an explicit command. Per-section changes remain in
+                // each clip's voice recipe; the first assignment is the default for new clips.
+                let mut map = DrumMap::default();
+                for part in &track.drum_parts {
+                    map.voices.entry(part.role).or_insert(part.note);
+                }
+                map.store(&mut inner.instrument_state);
             }
             if let Some(entry) = project.track_mut(track_id) {
                 // The composer's colour, not the palette's. `add_instrument_track` takes the next
@@ -505,6 +510,162 @@ mod tests {
     }
 
     #[test]
+    fn one_kit_preserves_the_score_and_its_authored_assignments() {
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = "verse chorus"
+                [section.verse]
+                bars = 4
+                [section.chorus]
+                bars = 4
+                [[part]]
+                name = "low"
+                role = "kick"
+                note = 50
+                [[part]]
+                name = "backbeat"
+                role = "snare"
+                [[part]]
+                name = "time"
+                role = "hat"
+                [[part]]
+                name = "accent"
+                role = "crash"
+            "#,
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        assert_eq!(piece.tracks.len(), 1, "the writers share one kit");
+        let draft = &piece.tracks[0];
+        assert_eq!(draft.drum_parts.len(), 4);
+        let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+        let report = session.compose(&piece).unwrap();
+        assert_eq!(report.tracks, 1);
+        assert_eq!(
+            session.project().tracks.len(),
+            1,
+            "a kit needs no empty bus"
+        );
+        assert_eq!(report.clips, draft.clips.len());
+        assert_eq!(
+            report.notes,
+            draft
+                .clips
+                .iter()
+                .map(|clip| clip.notes.len())
+                .sum::<usize>()
+        );
+        let tracks: Vec<_> = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_instrument().map(|inner| (track, inner)))
+            .collect();
+        assert_eq!(
+            tracks.len(),
+            1,
+            "there is one instrument state and mixer strip"
+        );
+        let (track, inner) = tracks[0];
+        assert_eq!(inner.instrument_id, auris_synth::DrumKit::ID);
+        assert_eq!(track.output, Output::Master);
+        assert!(
+            !session
+                .project()
+                .tracks
+                .iter()
+                .any(|track| track.kind.is_bus() && track.name == "Drums")
+        );
+        let map = DrumMap::load(&inner.instrument_state).expect("authored mapping");
+        assert_eq!(
+            map.voices[&auris_core::project::DrumRole::Kick],
+            50,
+            "the score's assignment survives even when it is not a conventional kick key"
+        );
+        assert_eq!(map.voices.len(), 4, "only the authored roles are assigned");
+        assert_eq!(inner.clips.len(), draft.clips.len());
+        for (actual, expected) in inner.clips.iter().zip(&draft.clips) {
+            assert_eq!(actual.notes, expected.notes);
+            assert_eq!(actual.start, expected.start);
+            assert_eq!(actual.length, expected.length);
+            assert_eq!(actual.transforms, expected.performance);
+            assert!(actual.length_is_explicit);
+            assert!(actual.notes.iter().all(|note| !note.drum_voice.is_empty()));
+            assert_eq!(
+                actual.recipe.as_ref().unwrap().drum_voices,
+                expected.recipe.as_ref().unwrap().drum_voices
+            );
+        }
+    }
+
+    #[test]
+    fn balancing_measures_the_complete_kit_against_its_combined_loudness_target() {
+        let spec = auris_compose::SongSpec::parse(
+            r#"
+                form = "verse"
+                [section.verse]
+                bars = 4
+                [[part]]
+                name = "kick"
+                role = "kick"
+                [[part]]
+                name = "snare"
+                role = "snare"
+                [[part]]
+                name = "hat"
+                role = "hat"
+            "#,
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        assert_eq!(piece.tracks.len(), 1);
+        let mut session = Session::new(SessionOptions::headless().with_balance(true)).unwrap();
+        let report = session
+            .compose(&piece)
+            .unwrap()
+            .balance
+            .expect("the kit rendered");
+        assert_eq!(
+            report.tracks.len(),
+            1,
+            "the kit is measured as one instrument"
+        );
+        let level = &report.tracks[0];
+        let target = level.target_lufs.unwrap();
+        assert!(
+            (target + 22.27).abs() < 0.02,
+            "combined target was {target} LUFS"
+        );
+        assert!(level.measured_lufs.unwrap().is_finite());
+        let corrected = level.reached_lufs().unwrap();
+        assert!(
+            (corrected - (target + report.lift_db)).abs() < 1.0e-4,
+            "kit fader correction aimed at {:.2} LUFS, reached {corrected:.2} LUFS",
+            target + report.lift_db
+        );
+        let id = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.is_instrument())
+            .unwrap()
+            .id;
+        let measured = session
+            .measure_alone(id)
+            .unwrap()
+            .expect("the complete kit sounds");
+        // Solo measurement retains the master limiter but resets its fader to unity. The
+        // limiter can take some of the shared lift back, so verify the independently rendered
+        // kit against the report's measured final mix, rather than its pre-limiter target.
+        let final_lufs = report.now_lufs.expect("the complete mix sounds");
+        assert!(
+            (measured + report.master_db - final_lufs).abs() < 0.01,
+            "kit measured {:.2} LUFS after mastering, report {final_lufs:.2} LUFS",
+            measured + report.master_db
+        );
+    }
+
+    #[test]
     fn a_fading_piece_arrives_with_its_ride_written_into_the_lanes() {
         // The composer's automation lands as automation — a lane a person can find, reshape or
         // delete in the same view as one they drew — rather than as arithmetic in the renderer.
@@ -573,14 +734,14 @@ mod tests {
             .copied()
             .filter(|clip| session.clip_recipe(*clip).is_some())
             .collect();
-        // The ending clips are the deliberate exception: a recipe promises another take of the
-        // same part, and another take of a held landing would be a figure over the tonic.
+        // Pitched landings are fixed text. Drum landings carry a composite recipe whose fixed
+        // voices preserve their exact notes when the rest of the kit is regenerated.
         let landings = clips
             .iter()
             .filter(|clip| {
                 session
                     .midi_clip(**clip)
-                    .is_some_and(|clip| clip.name.starts_with("ending"))
+                    .is_some_and(|clip| clip.name.starts_with("ending") && clip.recipe.is_none())
             })
             .count();
         assert!(landings > 0, "the piece arrived without its ending");
@@ -724,11 +885,7 @@ mod tests {
     }
 
     #[test]
-    fn a_cymbal_that_stayed_on_its_plugin_arrives_voiced() {
-        // The composer knows a crash wants a long decay and no pitch sweep and has never heard of
-        // the instrument that will play one. This is where the two meet, and it is the only place
-        // a composed track's parameters are set at all — so a crash arriving at the shipped
-        // quarter-second decay is this seam having quietly come apart.
+    fn a_cymbal_uses_the_kits_assigned_pad() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
             r#"
@@ -746,14 +903,20 @@ mod tests {
             .project()
             .tracks
             .iter()
-            .find(|track| track.name == "crash")
+            .find(|track| track.name == "Drums")
             .and_then(|track| track.kind.as_instrument())
             .expect("the cymbal has a track");
+        assert_eq!(crash.instrument_id, auris_synth::DrumKit::ID);
+        let map = DrumMap::load(&crash.instrument_state).expect("the authored cymbal assignment");
+        assert_eq!(map.voices[&auris_core::project::DrumRole::Crash], 49);
         assert!(
-            crash.instrument_state.params["decay"] > 1.0,
-            "the cymbal arrived at the noise drum's own decay: {:?}",
-            crash.instrument_state.params
+            crash
+                .clips
+                .iter()
+                .flat_map(|clip| &clip.notes)
+                .all(|note| { note.pitch == 49 && note.drum_voice == "crash" })
         );
+        assert!(!crash.instrument_state.params.contains_key("decay"));
 
         // And nothing else is touched. A composed piece is a mix, not a set of edited plugins.
         let lead = session
@@ -909,8 +1072,7 @@ mod tests {
             composed_gain_db(role, Some(room))
         );
         assert!(composed_gain_db(role, Some(room)) < role.min(kit_trim_db(room)));
-        // A part that never reached a font keeps exactly the level it was written at — which is
-        // what leaves the built-in kit, already far under its own pitched parts, alone.
+        // A part that never reached a font keeps the level it was written at until measured.
         assert_eq!(composed_gain_db(role, None), role);
 
         // And the document `compose` actually builds says the same. Whether the two hundred
@@ -946,9 +1108,9 @@ mod tests {
         let part = piece
             .tracks
             .iter()
-            .find(|track| track.name == "kick")
+            .find(|track| track.name == "Drums")
             .expect("the part was written");
-        assert_eq!(part.gain_db, role, "the part is at its role's level");
+        assert_eq!(part.gain_db, 0.0, "the shared kit starts at unity");
         assert_eq!(part.sound, Some(room), "and it asked for the Room Kit");
 
         session.compose(&piece).unwrap();
@@ -956,7 +1118,7 @@ mod tests {
             .project()
             .tracks
             .iter()
-            .find(|track| track.name == "kick")
+            .find(|track| track.name == "Drums")
             .expect("the part became a track")
             .mixer
             .gain_db;
@@ -964,14 +1126,14 @@ mod tests {
         // stated as the rule rather than as a number: the strip is the part's level put through
         // the same decision, and it moves off that level exactly when there is a kit playing.
         let on_a_kit = !session.project().soundfonts.is_empty();
-        let expected = composed_gain_db(role, on_a_kit.then_some(room));
+        let expected = composed_gain_db(part.gain_db, on_a_kit.then_some(room));
         assert!(
             close(strip, expected),
             "the strip is at {strip} dB and should be at {expected}"
         );
         assert_eq!(
             on_a_kit,
-            strip < role,
+            strip < part.gain_db,
             "a composed part is trimmed exactly when it landed on the font the trim is for"
         );
     }
@@ -1095,12 +1257,19 @@ mod tests {
                 .find(|track| track.kind.is_bus() && track.name == name)
                 .unwrap_or_else(|| panic!("no {name} bus"))
         };
-        let drums = bus("Drums").id;
         let room = bus("Room").id;
 
         // The kit under one fader, and the room fed rather than routed through.
         let track = |name: &str| project.tracks.iter().find(|t| t.name == name).unwrap();
-        assert_eq!(track("kick").output, Output::Bus(drums));
+        assert_eq!(track("Drums").output, Output::Master);
+        assert!(track("Drums").kind.is_instrument());
+        assert!(track("Drums").sends.is_empty());
+        assert!(
+            !project
+                .tracks
+                .iter()
+                .any(|entry| entry.kind.is_bus() && entry.name == "Drums")
+        );
         assert_eq!(track("lead").output, Output::Master);
         assert_eq!(track("lead").sends[0].target, room);
         assert!(track("bass").sends.is_empty());

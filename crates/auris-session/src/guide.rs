@@ -973,6 +973,27 @@ pub mod composition {
     //!
     //! # Getting the result into a document
     //!
+    //! **A drum kit is one instrument track.** Kick, snare, hat and crash remain separate
+    //! writers, with their own random streams, but parts sharing a sound are collected into one
+    //! track and one clip per section. A composite recipe keeps each voice's instructions;
+    //! voice-scoped performance transforms keep its timing separate from the written notes.
+    //! Fixed accents survive local regeneration. Distinct sound sources form distinct kits.
+    //! The kit's stereo output has one fader, pan and effect path. Its internal balance belongs
+    //! to the instrument; strike velocity is not a substitute for an audio fader.
+    //!
+    //! **Drum analysis listens to the instrument.** A separate instance renders individual
+    //! notes at several velocities. The classifier receives samples and measurement settings,
+    //! never note names, General MIDI numbers or author labels. Spectral energy, noise content
+    //! and the attack and decay produce role-fit scores, not probabilities. A kit may have no
+    //! suitable sound for a role. Measurements, role fitness and a composition's chosen note
+    //! mapping are separate results: choosing to use a tom as a kick does not change what was
+    //! measured. Accepting a map is an explicit edit; opening a project never scans its sounds
+    //! or rewrites its saved notes. The accepted mapping travels with the instrument state.
+    //!
+    //! Signal measurements belong in `auris-dsp`; session commands own probing, source state
+    //! and applying a mapping. The composer only reads musical instructions and mappings, and
+    //! never loads a SoundFont or a hosted plugin to decide what to write.
+    //!
     //! [`Session::compose`](crate::Session::compose) installs a
     //! [`Composition`](auris_compose::Composition) as the open project — one undo step for the
     //! whole piece, and one graph rebuild rather than one per note. A part naming an instrument

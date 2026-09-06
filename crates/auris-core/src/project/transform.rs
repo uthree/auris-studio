@@ -46,6 +46,13 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Performs only notes belonging to one independent drum writer in a shared kit clip.
+    ForDrumVoice {
+        /// The part name recorded on [`Note::drum_voice`].
+        voice: String,
+        /// The voice's transforms, applied in order before the following clip transforms.
+        transforms: Vec<NoteTransform>,
+    },
     /// Wanders timing and velocity, so the clip stops sounding quantised.
     ///
     /// The wander is a *time*, not a count of ticks: the dial reaches the same number of
@@ -108,6 +115,13 @@ pub enum NoteTransform {
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
         note = match transform {
+            NoteTransform::ForDrumVoice { voice, transforms } => {
+                if note.drum_voice == *voice {
+                    performed(note, transforms, pass, bpm)
+                } else {
+                    note
+                }
+            }
             NoteTransform::Humanize { amount, seed } => humanized(note, *amount, *seed, pass, bpm),
             NoteTransform::Lean { ticks } => leaned(note, *ticks),
             NoteTransform::Swing {
@@ -200,6 +214,30 @@ mod tests {
     fn an_empty_stack_is_the_identity() {
         let original = note(60, 480, 240);
         assert_eq!(performed(original.clone(), &[], 0, 120.0), original);
+    }
+
+    #[test]
+    fn kit_performance_follows_the_writer_even_when_two_voices_share_a_pitch() {
+        let stack = vec![
+            NoteTransform::ForDrumVoice {
+                voice: "backbeat".into(),
+                transforms: vec![NoteTransform::Lean { ticks: 10 }],
+            },
+            NoteTransform::ForDrumVoice {
+                voice: "timekeeper".into(),
+                transforms: vec![NoteTransform::Lean { ticks: -8 }],
+            },
+        ];
+        for (voice, expected) in [("backbeat", 490), ("timekeeper", 472), ("", 480)] {
+            let mut original = note(60, 480, 120);
+            original.drum_voice = voice.into();
+            assert_eq!(performed(original, &stack, 0, 120.0).start, Ticks(expected));
+        }
+        let stored = serde_json::to_string(&stack).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<NoteTransform>>(&stored).unwrap(),
+            stack
+        );
     }
 
     #[test]

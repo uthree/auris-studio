@@ -44,6 +44,13 @@ nobody can read — and the built-in plugins under a rule below them. A drum par
 eight kits instead, because on a drum part that number is a whole kit. Choosing a plugin clears the
 program, so the row never says one thing while the piece plays another.
 
+Drum parts sharing an instrument and sound program form one kit track. The first part in each
+kit has the shared sound picker; each part keeps its own rhythm, density and gate. Each section
+becomes one clip containing those voices. The track fader, pan, inserts and sends belong to the
+whole kit. A clip's **Drums** context submenu can rewrite or reroll one voice while preserving
+the other voices' notes and performance settings. Distinct kit sounds remain distinct tracks.
+See [Drum sound measurement](drums.md) for assigning a configured instrument by its actual audio.
+
 A row in the form is a *playing*, not a section: a name that appears twice is one section played
 twice, and editing either row edits the one section, because that is what makes it recognisably
 the same chorus. The section picker offers the song's own names first — choosing one of those is a

@@ -35,6 +35,12 @@ use super::{ClipId, Project, SourceId, TrackId};
 /// both are empty and neither is written into the file.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Note {
+    /// The independent drum writer this note belongs to, for scoped kit performance.
+    ///
+    /// It identifies a musical part rather than a MIDI pitch, so two voices may intentionally
+    /// trigger the same sound while retaining different timing. Empty on ordinary notes.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub drum_voice: String,
     /// MIDI note number, 0..=127.
     pub pitch: u8,
     /// Attack strength, 0.0..=1.0.
@@ -82,6 +88,7 @@ impl Note {
     /// A note with a default velocity and nothing sung on it.
     pub fn new(pitch: u8, start: Ticks, length: Ticks) -> Self {
         Self {
+            drum_voice: String::new(),
             pitch,
             velocity: 0.8,
             start,
@@ -1012,6 +1019,9 @@ impl Project {
             right.start = at;
             right.length = clip.end() - at;
             right.notes = split_notes_right(&clip.notes, offset);
+            if let Some(recipe) = &mut right.recipe {
+                recipe.trim_drum_accents(offset);
+            }
             right.bend = split_curve_right(&clip.bend, offset);
             for points in right.controllers.values_mut() {
                 *points = split_curve_right(points, offset);
@@ -1022,6 +1032,11 @@ impl Project {
             let new_id = right.id;
             let left = self.midi_clip_mut(id)?;
             left.notes = split_notes_left(&clip.notes, offset);
+            if let Some(recipe) = &mut left.recipe {
+                for voice in &mut recipe.drum_voices {
+                    voice.fixed_notes = split_notes_left(&voice.fixed_notes, offset);
+                }
+            }
             left.bend = split_curve_left(&clip.bend, offset);
             for points in left.controllers.values_mut() {
                 *points = split_curve_left(points, offset);
@@ -1485,6 +1500,14 @@ pub fn notes_digest(notes: &[Note]) -> u64 {
                 mix(vibrato.fade_in.to_bits());
             }
             None => mix(0),
+        }
+        // Keep pre-kit digests unchanged for ordinary notes in existing projects.
+        if !note.drum_voice.is_empty() {
+            mix(0x6472_756d);
+            mix(note.drum_voice.len() as u64);
+            for byte in note.drum_voice.bytes() {
+                mix(u64::from(byte));
+            }
         }
     }
     digest.max(1)

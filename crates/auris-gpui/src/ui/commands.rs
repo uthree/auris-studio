@@ -537,6 +537,8 @@ impl AurisApp {
 
     /// Replaces the document with an empty project.
     pub(crate) fn new_project(&mut self) {
+        self.cancel_drum_analysis();
+        self.drum_analysis = None;
         self.agent_reset_conversation();
         self.session.new_project();
         self.resync_selection();
@@ -730,6 +732,8 @@ impl AurisApp {
     /// The end of both ways in: the file dialog picks a path and lands here, and a dropped
     /// project arrives here already knowing one.
     pub(crate) fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.cancel_drum_analysis();
+        self.drum_analysis = None;
         // A reload offer belongs to the document that was open when the agent changed it. Take
         // it down before the asynchronous open starts so it cannot be clicked during the switch.
         self.agent_chat.pending_reload = None;
@@ -1867,6 +1871,8 @@ impl AurisApp {
     /// built from its dials and never wrote down. Everything after the parse is the same for
     /// both, and a second copy of it would be a second answer to "what happens after Write".
     pub(crate) fn compose_spec(&mut self, spec: &SongSpec) {
+        self.cancel_drum_analysis();
+        self.drum_analysis = None;
         let language = self.language();
         let piece = compose(spec);
         let seed = piece.seed;

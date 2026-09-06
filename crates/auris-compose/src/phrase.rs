@@ -48,10 +48,8 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
 /// would be a picker entry that wrote nothing whenever the range it was given had no arrival in
 /// it, which is most ranges.
 ///
-/// [`ClipPreset::Drums`] is not the answer for anything here, and deliberately: it is three roles
-/// in one clip, so no single role maps back to it. A whole song keeps its kick, snare and hat on
-/// tracks of their own — that is what makes a kit mixable — and each of those maps to the preset
-/// of the same name.
+/// [`ClipPreset::Drums`] names the composite recipe; each independent writer inside it uses
+/// the preset of its own role.
 pub fn preset_of(role: Role) -> Option<ClipPreset> {
     Some(match role {
         Role::Melody => ClipPreset::Lead,
@@ -135,6 +133,9 @@ pub fn recipe_for(
 ) -> Option<ClipRecipe> {
     let preset = preset_of(part.role)?;
     Some(ClipRecipe {
+        drum_map: None,
+        drum_voices: Vec::new(),
+        drum_note: part.drum_note(),
         motif: settings.motif.clone(),
         rhythm: part.rhythm.as_ref().map(crate::rhythm::Pattern::to_text),
         preset,
@@ -201,6 +202,40 @@ pub fn write_phrase(
     recipe: &ClipRecipe,
     section: Option<(&str, usize)>,
 ) -> Vec<Note> {
+    if recipe.preset == ClipPreset::Drums && !recipe.drum_voices.is_empty() {
+        let mut notes = Vec::new();
+        for voice in &recipe.drum_voices {
+            let note = match &recipe.drum_map {
+                Some(map) => match map.voices.get(&voice.role) {
+                    Some(note) => *note,
+                    None => continue,
+                },
+                None => voice.note,
+            };
+            let written = match &voice.recipe {
+                Some(writer) => {
+                    let mut writer = *writer.clone();
+                    // Nested kits have no musical meaning; keep malformed stored recipes bounded.
+                    writer.drum_voices.clear();
+                    writer.drum_map = None;
+                    writer.drum_note = Some(note.min(127));
+                    write_phrase(harmony, start, length, meter, &writer, section)
+                }
+                None => voice.fixed_notes.clone(),
+            };
+            notes.extend(written.into_iter().filter_map(|mut written| {
+                if written.start < Ticks::ZERO || written.start >= length {
+                    return None;
+                }
+                written.drum_voice = voice.name.clone();
+                written.pitch = note.min(127);
+                written.length = written.length.min(length - written.start).max(Ticks(1));
+                Some(written)
+            }));
+        }
+        notes.sort_by_key(|note| (note.start.raw(), note.pitch));
+        return notes;
+    }
     // The reference grid: the meter at the default subdivision. It decides the bar and the drums,
     // both of which every subdivision agrees on. Which grid a part's own figures land on is the
     // part's business, and is set on the roster below.
@@ -287,12 +322,18 @@ pub fn write_phrase(
 
     let roster: Vec<PartSpec> = roles_of(recipe.preset)
         .iter()
-        .map(|role| {
+        .filter_map(|role| {
             let mut part = PartSpec::of_role(role.name(), *role);
             part.rhythm = recipe
                 .rhythm
                 .as_deref()
                 .and_then(crate::rhythm::Pattern::parse);
+            part.note = recipe.drum_note;
+            if let Some(map) = &recipe.drum_map
+                && let Some(role) = role.drum_role()
+            {
+                part.note = Some(*map.voices.get(&role)?);
+            }
             // A register somebody asked for, on top of the one the role implies. The one the
             // part chooses for itself is drawn from the seed, which is right for a take and no
             // use at all when the answer wanted is "the same thing, an octave up".
@@ -305,15 +346,26 @@ pub fn write_phrase(
             // the choice the moment anything else on the panel was touched.
             part.subdivision = recipe.subdivision;
             part.gate = recipe.gate;
-            part
+            Some(part)
         })
         .collect();
 
     let mut notes: Vec<Note> = write_parts(&settings, &roster, &frame)
         .into_iter()
-        .flat_map(|draft| draft.notes)
-        .filter(|draft| draft.start >= Ticks::ZERO && draft.start < length)
-        .map(|draft| Note {
+        .flat_map(|draft| {
+            let voice = if recipe.preset.is_drums() {
+                draft.name
+            } else {
+                String::new()
+            };
+            draft
+                .notes
+                .into_iter()
+                .map(move |note| (voice.clone(), note))
+        })
+        .filter(|(_, draft)| draft.start >= Ticks::ZERO && draft.start < length)
+        .map(|(voice, draft)| Note {
+            drum_voice: voice,
             velocity: draft.velocity.clamp(0.0, 1.0),
             // Truncate rather than overhang: the scheduler drops a note that runs past its clip.
             ..Note::new(
@@ -325,6 +377,28 @@ pub fn write_phrase(
         .collect();
     notes.sort_by_key(|note| (note.start.raw(), note.pitch));
     notes
+}
+
+/// Applies an accepted sound assignment to future writes of this recipe.
+///
+/// Missing roles are omitted, including when the accepted map is empty. The mapping describes
+/// musical use and carries no acoustic label or confidence override.
+pub fn apply_drum_map(recipe: &mut ClipRecipe, map: &auris_core::project::DrumMap) {
+    if !recipe.preset.is_drums() {
+        return;
+    }
+    recipe.drum_map = Some(map.clone());
+    for voice in &mut recipe.drum_voices {
+        if let Some(note) = map.voices.get(&voice.role) {
+            voice.note = *note;
+            for accent in &mut voice.fixed_notes {
+                accent.pitch = *note;
+            }
+            if let Some(writer) = &mut voice.recipe {
+                writer.drum_note = Some(*note);
+            }
+        }
+    }
 }
 
 /// The mood a recipe implies.
@@ -348,6 +422,45 @@ mod tests {
     use super::*;
     use auris_core::theory::chart::Chart;
     use auris_core::theory::key::Key;
+
+    #[test]
+    fn accepted_assignments_never_fill_missing_roles_with_conventional_notes() {
+        use auris_core::project::{DrumMap, DrumRole};
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 4);
+        let harmony = axis();
+        let meter = TimeSignature::default();
+        // A silent map stays silent even though this preset would otherwise write a whole kit.
+        apply_drum_map(&mut recipe, &DrumMap::default());
+        assert!(
+            write_phrase(
+                &harmony,
+                Ticks::ZERO,
+                meter.ticks_per_bar(),
+                meter,
+                &recipe,
+                None
+            )
+            .is_empty()
+        );
+        let map = DrumMap {
+            voices: [(DrumRole::Kick, 73)].into_iter().collect(),
+        };
+        apply_drum_map(&mut recipe, &map);
+        let notes = write_phrase(
+            &harmony,
+            Ticks::ZERO,
+            meter.ticks_per_bar() * 4,
+            meter,
+            &recipe,
+            None,
+        );
+        assert!(!notes.is_empty());
+        assert!(
+            notes
+                .iter()
+                .all(|note| note.pitch == 73 && note.drum_voice == "kick")
+        );
+    }
 
     const BAR: Ticks = Ticks(3840);
 
@@ -405,8 +518,7 @@ mod tests {
 
     #[test]
     fn a_single_drum_voice_writes_only_itself() {
-        // What the whole kit could not be asked for one piece at a time. A kit on one track is
-        // three voices no fader can separate; three tracks is a mix.
+        // A voice can be written independently while sharing its instrument with the whole kit.
         let pitches = |preset| {
             let mut out: Vec<u8> = phrase(preset, 3).iter().map(|note| note.pitch).collect();
             out.sort_unstable();

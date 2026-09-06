@@ -3,6 +3,7 @@
 use auris_core::{PluginPack, PluginRegistry};
 
 use crate::chiptune::Chiptune;
+use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
@@ -24,6 +25,7 @@ impl PluginPack for SynthPack {
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
+        registry.register_instrument(|| Box::new(DrumKit::new()));
         registry.register_instrument(|| Box::new(Vocal::new()));
     }
 }
@@ -35,7 +37,7 @@ mod tests {
         AudioBuffer, Instrument, NoteEvent, PluginCategory, PrepareContext, ProcessContext,
     };
 
-    /// One fresh instance of every instrument in the pack, so a fourth instrument added later
+    /// One fresh instance of every instrument in the pack, so an instrument added later
     /// is covered by the shape and determinism tests below without touching them.
     fn every_instrument() -> Vec<(String, Box<dyn Instrument>)> {
         let mut registry = PluginRegistry::new();
@@ -100,12 +102,13 @@ mod tests {
             ids,
             vec![
                 "auris.synth.chiptune",
+                "auris.synth.drumkit",
                 "auris.synth.fm2",
                 "auris.synth.noisedrum",
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 4);
+        assert_eq!(registry.len(), 5);
         assert_eq!(registry.effects().count(), 0);
     }
 
@@ -118,7 +121,7 @@ mod tests {
             .filter(|d| d.category == PluginCategory::Drum)
             .map(|d| d.id.as_ref())
             .collect();
-        assert_eq!(drums, vec!["auris.synth.noisedrum"]);
+        assert_eq!(drums, vec!["auris.synth.drumkit", "auris.synth.noisedrum"]);
     }
 
     #[test]
@@ -133,7 +136,7 @@ mod tests {
             let mut buffer = AudioBuffer::stereo(256, 44_100.0);
             let events = [auris_core::NoteEvent::NoteOn {
                 frame: 8,
-                pitch: 60,
+                pitch: if id == DrumKit::ID { 36 } else { 60 },
                 velocity: 0.8,
             }];
             let ctx = ProcessContext::realtime(44_100.0, 256, 0, 120.0, true);
@@ -159,7 +162,8 @@ mod tests {
         // single-channel bus is a real configuration, and indexing channel 1 would panic.
         for (id, mut instrument) in every_instrument() {
             instrument.prepare(&PrepareContext::new(48_000.0, 512, 1));
-            let rendered = render(instrument.as_mut(), 512, 512, 1, &[note_on(0, 60)]);
+            let pitch = if id == DrumKit::ID { 36 } else { 60 };
+            let rendered = render(instrument.as_mut(), 512, 512, 1, &[note_on(0, pitch)]);
             assert_eq!(rendered.len(), 512);
             assert!(peak(&rendered) > 0.0, "{id} was silent on a mono buffer");
             assert!(
@@ -175,7 +179,8 @@ mod tests {
         // produce an empty range, and the event still has to land on its own frame.
         for (id, mut instrument) in every_instrument() {
             instrument.prepare(&PrepareContext::new(48_000.0, 512, 2));
-            let rendered = render(instrument.as_mut(), 64, 1, 2, &[note_on(3, 60)]);
+            let pitch = if id == DrumKit::ID { 36 } else { 60 };
+            let rendered = render(instrument.as_mut(), 64, 1, 2, &[note_on(3, pitch)]);
             assert!(
                 rendered[..3].iter().all(|s| *s == 0.0),
                 "{id} sounded before its event in one-frame blocks"
@@ -189,7 +194,7 @@ mod tests {
         // The realtime contract requires identical output for identical input and state, so
         // that an offline export matches what was heard. Any uninitialised or clock-derived
         // state — an unseeded noise register above all — would break this.
-        let events = [note_on(10, 60), note_on(300, 67), note_on(1_000, 72)];
+        let events = [note_on(10, 36), note_on(300, 38), note_on(1_000, 42)];
         for ((id, mut first), (_, mut second)) in
             every_instrument().into_iter().zip(every_instrument())
         {
