@@ -249,8 +249,9 @@ pub struct Settings {
     pub singer_acceleration: auris_singer::Acceleration,
     /// Extra folders holding singer voice models, on top of the `Voices` library folders.
     ///
-    /// Each is a directory walked for `.onnx` files — the [`Self::plugin_paths`]
-    /// arrangement, and a fact about the machine for the same reason: a voice is hundreds of
+    /// Each is a directory searched for supported voice entries by
+    /// [`crate::library::installed_voices_in`] — the [`Self::plugin_paths`] arrangement,
+    /// and a fact about the machine for the same reason: a voice is hundreds of
     /// megabytes somebody keeps where they keep it, and registering it in the library means
     /// remembering where it lies, never copying it.
     pub voice_paths: Vec<PathBuf>,

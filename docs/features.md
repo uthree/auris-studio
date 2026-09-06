@@ -237,25 +237,27 @@ formant filter singing one open vowel), so a melody with words on it can be hear
 written.
 
 A voice lives on the **library shelf, with the instruments**: the browser's Voices section
-lists every `.onnx` found in a `Voices` folder — beside the binaries, in the configuration
+lists voices found in a `Voices` folder — beside the binaries, in the configuration
 directory (`AURIS_VOICES` overrides the search), or in any folder registered from the
 section's own *Add Voice Folder…* row, remembered and never copied, the way plugin folders
 are. **One click puts the voice on the selected singer track**, exactly as one click puts a
 sound on an instrument track, and the search box finds voices by name like everything else.
 **Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual.
-Auris ONNX, DiffSinger, and VOICEVOX entries carry backend badges on the shelf. The setup rows at
+Auris ONNX, DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf. A
+LeapSinger voice enters through a `.leapsinger.json` file naming its exported acoustic model,
+NHVSing vocoder, and phoneme dictionary; [setup and export instructions](singing-backends.md#leapsinger-voices)
+cover the supported variants and speaker choices. The setup rows at
 the bottom of the section create a DiffSinger `dsconfig.yaml`, or start and verify a VOICEVOX
 Engine and save its URL and singing style IDs without editing configuration files by hand.
 A voice trained on several corpora carries one **speaker** per source, and **Track → Next
 Speaker** moves the track round that list, the status line saying who sings now and where
 they stand in it; a single-speaker voice says so and stays. The choice is the track's, saved
 with the document, and a take is pinned by the speaker the way it is by the seed. Either way
-the track is pointed at a trained
-voice model — one self-contained `.onnx` file, left where it lies, trained by the project in the
-repository's `training/` directory — and from then on the track sings for real. The render is a **take**: an ordinary audio file in `Audio/` that
-plays, exports and reopens with everything else, pinned by a seed so the same notes, lyrics,
-voice and seed sing the same performance again — and kept as audio in the project, so what
-was frozen is what every machine plays. **The window keeps the take abreast of
+the track is pointed at a voice entry, left where it lies, and from then on the track sings for
+real. The render is a **take**: an ordinary audio file in `Audio/` that plays, exports and reopens
+with everything else. Native Auris voices receive their random inputs from the document's seed;
+LeapSinger's graphs generate noise internally, so repeating the seed can produce a different
+waveform. The saved audio preserves the performance on every machine. **The window keeps the take abreast of
 the score by itself**: shortly after an edit settles, the voice re-renders in the background
 — the header badge reads *… ♪ voice* while it works, and an edit landing mid-render throws
 the stale work away and starts over at the next quiet moment. **Track → Sing** remains as
@@ -1270,9 +1272,9 @@ The song can also sing through this door. `add_track` with kind `singer` makes a
 notes carry lyrics; `write_lyrics` lays a phrase across a clip's notes one syllable each, kana
 through the built-in table and anything else through the Japanese dictionary where one is
 installed (`notes` reads the words back beside the pitches); and `sing` renders the track
-through its voice model — chosen once with `voice`, an absolute path to an exported `.onnx`
-file — into the take that playback and `render` then play. The same determinism as in the
-window: the same notes, lyrics, voice and seed render the same take on any machine.
+through its voice model — chosen once with `voice`, an absolute path to the backend's voice
+entry — into the take that playback and `render` then play. It uses the same rendering pipeline
+as the window, including each backend's seed behavior, and preserves the result as audio.
 The same tool set is available at both model doors.
 
 Existing songs can be revised without composing a replacement. `inspect_composition` reads

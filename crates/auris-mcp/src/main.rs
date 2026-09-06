@@ -401,7 +401,7 @@ impl AurisMcp {
         blocking(move || toolbox::write_lyrics::run(&args)).await
     }
 
-    /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to an exported `.onnx` voice, which the track keeps. A take is deterministic: the same notes, lyrics, voice and `seed` render the same audio, and another seed is another take. The change is saved.
+    /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to an Auris `.onnx` voice, DiffSinger `dsconfig.yaml`, VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, which the track keeps. Native Auris voices use `seed` to reproduce a take. LeapSinger generates noise internally, so repeated renders can differ even with the same seed. The rendered audio and the change are saved.
     #[tool]
     async fn sing(
         &self,

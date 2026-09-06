@@ -89,6 +89,7 @@ impl AurisApp {
                         BackendKind::Auris => Key::VoiceBackendAuris,
                         BackendKind::DiffSinger => Key::VoiceBackendDiffSinger,
                         BackendKind::Voicevox => Key::VoiceBackendVoicevox,
+                        BackendKind::LeapSinger => Key::VoiceBackendLeapSinger,
                     }))
                     .into_any_element(),
             );

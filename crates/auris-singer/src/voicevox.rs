@@ -321,6 +321,7 @@ impl SingingBackend for VoicevoxBackend {
 mod tests {
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -425,12 +426,16 @@ mod tests {
             requests
         });
 
+        // A clock reading is not a unique ID: concurrent mocks can otherwise overwrite each
+        // other's Engine URL and leave one server waiting for requests that went elsewhere.
+        static NEXT_MOCK: AtomicU64 = AtomicU64::new(0);
+        let sequence = NEXT_MOCK.fetch_add(1, Ordering::Relaxed);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "auris-voicevox-{}-{unique}.voicevox.json",
+            "auris-voicevox-{}-{unique}-{sequence}.voicevox.json",
             std::process::id()
         ));
         std::fs::write(

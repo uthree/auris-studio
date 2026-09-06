@@ -2680,9 +2680,11 @@ pub mod sing {
     pub const DESCRIPTION: &str = "Renders a singer track through its voice model and keeps \
         the audio as the track's take, which is what playback and `render` then play. Aims at \
         the project's only singer track when `track` is left out. `voice` chooses a model the \
-        first time — an absolute path to an exported `.onnx` voice, which the track keeps. A \
-        take is deterministic: the same notes, lyrics, voice and `seed` render the same audio, \
-        and another seed is another take. The change is saved.";
+        first time — an absolute path to an Auris `.onnx` voice, DiffSinger `dsconfig.yaml`, \
+        VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, \
+        which the track keeps. Native Auris voices use `seed` to reproduce a take. LeapSinger \
+        generates noise internally, so repeated renders can differ even with the same seed. \
+        The rendered audio and the change are saved.";
 
     /// Arguments to `sing`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2692,8 +2694,9 @@ pub mod sing {
         /// The singer track, by name as `describe` lists it. The project's only singer track
         /// when left out.
         pub track: Option<String>,
-        /// An absolute path to a voice model (`.onnx`) to choose before singing. The track
-        /// keeps the voice, so later takes need not name it again.
+        /// An absolute path to a voice entry (`.onnx`, `dsconfig.yaml`, `.voicevox.json`, or
+        /// `.leapsinger.json`) to choose before singing. The track keeps the voice, so later
+        /// takes need not name it again.
         pub voice: Option<String>,
         /// Which of the voice's speakers sings, by name, for a model trained on several. The
         /// track keeps the choice. Left out, the track's current speaker sings — the model's
