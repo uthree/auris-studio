@@ -8,10 +8,14 @@
 use auris_i18n::Key;
 use auris_session::prelude::*;
 
-use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, div, prelude::*, px};
+use gpui::{
+    AnyElement, Bounds, IntoElement, MouseDownEvent, Pixels, Point, canvas, div, point, prelude::*,
+    px, size,
+};
 
 use crate::app::{AurisApp, Drag};
 use crate::theme::Metrics;
+use crate::ui::paint;
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
     ButtonStyle, RowColumn, SliderFill, button, divider, dragged, picker_row, value_slider,
@@ -133,7 +137,10 @@ pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
     // and where it plays is which groove it plays. It ignores the subdivision too, which is why
     // its swing is the one that is never inert. The fill is its alone — nothing else has a last
     // bar to announce.
-    if recipe.preset == ClipPreset::Drums {
+    if recipe.preset.is_drums() {
+        if matches!(recipe.preset, ClipPreset::Kick | ClipPreset::Hat) {
+            return &[Dial::Density, Dial::Intensity, Dial::Dynamics, Dial::Swing];
+        }
         return &[
             Dial::Density,
             Dial::Fill,
@@ -197,7 +204,7 @@ pub fn octave_text(octave: i32) -> String {
 
 /// Whether a preset's groove is worth offering, which is to say whether anything reads it.
 pub fn takes_a_groove(preset: ClipPreset) -> bool {
-    matches!(preset, ClipPreset::Drums)
+    preset.is_drums()
 }
 
 /// Whether a preset's subdivision is worth offering.
@@ -205,7 +212,7 @@ pub fn takes_a_groove(preset: ClipPreset) -> bool {
 /// Everything but the kit, for the reason the composer gives: a groove is sixteen steps read by
 /// index, so a kit on any other grid would scramble it rather than divide it.
 pub fn takes_a_subdivision(preset: ClipPreset) -> bool {
-    !matches!(preset, ClipPreset::Drums)
+    !preset.is_drums()
 }
 
 /// Whether a preset's register is worth offering.
@@ -213,7 +220,50 @@ pub fn takes_a_subdivision(preset: ClipPreset) -> bool {
 /// Everything but the kit, whose pitches are General MIDI drum numbers rather than notes: moving
 /// a kick up an octave would not raise it, it would turn it into a different drum.
 pub fn takes_an_octave(preset: ClipPreset) -> bool {
-    !matches!(preset, ClipPreset::Drums)
+    !preset.is_drums()
+}
+
+/// Whether a drum control reaches at least one writer rather than an authored fixed rhythm.
+fn drum_control_applies(recipe: &ClipRecipe, dial: Dial) -> bool {
+    if !recipe.drum_voices.is_empty() {
+        return recipe.drum_voices.iter().any(|voice| {
+            recipe
+                .drum_map
+                .as_ref()
+                .is_none_or(|map| map.voices.contains_key(&voice.role))
+                && voice
+                    .recipe
+                    .as_deref()
+                    .is_some_and(|writer| drum_control_applies(writer, dial))
+        });
+    }
+    match dial {
+        Dial::Density => recipe.rhythm.is_none(),
+        Dial::Fill => {
+            recipe.rhythm.is_none()
+                && matches!(recipe.preset, ClipPreset::Drums | ClipPreset::Snare)
+        }
+        Dial::Intensity | Dial::Dynamics | Dial::Swing => true,
+        Dial::Gate | Dial::Syncopation => false,
+    }
+}
+
+/// The recipe under the pad: right adds complexity and up plays harder.
+fn with_drummer_position(
+    recipe: &ClipRecipe,
+    bounds: Bounds<Pixels>,
+    at: Point<Pixels>,
+) -> ClipRecipe {
+    let mut next = recipe.clone();
+    Dial::Density.set(
+        &mut next,
+        f32::from(at.x - bounds.origin.x) / f32::from(bounds.size.width).max(1.0),
+    );
+    Dial::Intensity.set(
+        &mut next,
+        1.0 - f32::from(at.y - bounds.origin.y) / f32::from(bounds.size.height).max(1.0),
+    );
+    next
 }
 
 /// The recipe a clip takes when its preset changes.
@@ -284,9 +334,25 @@ impl AurisApp {
         };
         let theme = self.theme.clone();
         let straight = self.t(Key::PartStraight);
+        let drummer = self
+            .project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .is_some_and(|track| track.kind.is_drum());
+        let has_pad = drummer && drum_control_applies(&recipe, Dial::Density);
 
         let mut rows: Vec<AnyElement> = vec![
-            self.group_heading(Key::PartHeading).into_any_element(),
+            self.group_heading(if drummer {
+                Key::DrummerHeading
+            } else {
+                Key::PartHeading
+            })
+            .into_any_element(),
+        ];
+        if has_pad {
+            rows.push(self.drummer_pad(clip, &recipe, cx));
+        }
+        rows.push(
             self.picker_row(
                 "part-preset",
                 Key::PartPreset,
@@ -295,7 +361,7 @@ impl AurisApp {
                 Self::opens_menu(cx, move |this, at| this.clip_preset_menu(at, clip)),
             )
             .into_any_element(),
-        ];
+        );
 
         if takes_a_subdivision(recipe.preset) {
             rows.push(
@@ -324,6 +390,12 @@ impl AurisApp {
 
         for dial in dials_for(&recipe) {
             let dial = *dial;
+            if drummer
+                && (!drum_control_applies(&recipe, dial)
+                    || (has_pad && matches!(dial, Dial::Density | Dial::Intensity)))
+            {
+                continue;
+            }
             let fraction = dial.fraction(&recipe);
             rows.push(
                 value_slider(
@@ -343,20 +415,35 @@ impl AurisApp {
                         });
                     }),
                 )
+                .debug_selector(move || format!("part-dial-{}", dial_element_key(dial)))
                 .into_any_element(),
             );
         }
 
-        if takes_a_groove(recipe.preset) {
+        if takes_a_groove(recipe.preset) && drum_control_applies(&recipe, Dial::Density) {
             rows.push(
                 self.picker_row(
                     "part-groove",
                     Key::PartGroove,
-                    recipe.groove.clone(),
+                    groove_catalog()
+                        .iter()
+                        .find(|groove| groove.name == recipe.groove)
+                        .map(|groove| {
+                            auris_i18n::audio::theory_description(
+                                groove.description,
+                                self.language(),
+                            )
+                            .to_string()
+                        })
+                        .unwrap_or_else(|| recipe.groove.clone()),
                     Self::opens_menu(cx, move |this, at| this.clip_groove_menu(at, clip)),
                 )
                 .into_any_element(),
             );
+        }
+
+        if drummer {
+            rows.extend(self.drummer_voice_rows(clip, &recipe, cx));
         }
 
         // The seed is shown, and typeable, because "another take" is the *next* seed and not a
@@ -426,6 +513,252 @@ impl AurisApp {
         );
         rows.push(divider(&theme).into_any_element());
         rows
+    }
+
+    /// Two musical decisions in one gesture, committed together by the normal drag transaction.
+    fn drummer_pad(
+        &self,
+        clip: ClipId,
+        recipe: &ClipRecipe,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme.clone();
+        let painted = theme.clone();
+        let recorded = std::rc::Rc::new(std::cell::Cell::new(None));
+        let pressed = recorded.clone();
+        let density = Dial::Density.fraction(recipe);
+        let intensity = Dial::Intensity.fraction(recipe);
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(format!(
+                        "{} {}%",
+                        self.t(Key::DrummerComplexity),
+                        (density * 100.0).round() as u8
+                    ))
+                    .child(format!(
+                        "{} {}%",
+                        self.t(Key::PartIntensity),
+                        (intensity * 100.0).round() as u8
+                    )),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::DrummerLoud)),
+            )
+            .child(
+                div()
+                    .id("drummer-pad")
+                    .debug_selector(|| "drummer-pad".to_string())
+                    .h(px(124.0))
+                    .w_full()
+                    .flex_shrink_0()
+                    .p_2()
+                    .bg(theme.surface_sunken)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded(Metrics::RADIUS_SM)
+                    .cursor_pointer()
+                    .child(
+                        canvas(
+                            move |bounds, _, _| recorded.set(Some(bounds)),
+                            move |bounds, _, window, _| {
+                                let x = bounds.origin.x + bounds.size.width * density;
+                                let y = bounds.origin.y + bounds.size.height * (1.0 - intensity);
+                                paint::vline(
+                                    window,
+                                    bounds,
+                                    bounds.center().x,
+                                    px(1.0),
+                                    painted.border_subtle,
+                                );
+                                paint::hline(
+                                    window,
+                                    bounds,
+                                    bounds.center().y,
+                                    painted.border_subtle,
+                                );
+                                paint::vline(window, bounds, x, px(1.0), painted.accent_soft);
+                                paint::hline(window, bounds, y, painted.accent_soft);
+                                paint::rounded_rect(
+                                    window,
+                                    Bounds {
+                                        origin: point(x - px(6.0), y - px(6.0)),
+                                        size: size(px(12.0), px(12.0)),
+                                    },
+                                    px(6.0),
+                                    painted.accent,
+                                );
+                            },
+                        )
+                        .size_full(),
+                    )
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                            if let Some(bounds) = pressed.get() {
+                                this.begin_drag(Drag::DrummerPad { clip, bounds });
+                                this.drag_drummer_pad(clip, bounds, event.position);
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::DrummerSimple))
+                    .child(self.t(Key::DrummerSoft))
+                    .child(self.t(Key::DrummerComplex)),
+            )
+            .into_any_element()
+    }
+
+    /// Independent writers keep their sound assignments and their neighbours' stored notes.
+    fn drummer_voice_rows(
+        &self,
+        clip: ClipId,
+        recipe: &ClipRecipe,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let mut rows = Vec::new();
+        for (index, voice) in recipe.drum_voices.iter().enumerate() {
+            let Some(writer) = voice.recipe.as_deref() else {
+                continue;
+            };
+            if recipe
+                .drum_map
+                .as_ref()
+                .is_some_and(|map| !map.voices.contains_key(&voice.role))
+            {
+                continue;
+            }
+            if rows.is_empty() {
+                rows.push(self.group_heading(Key::DrummerKitPieces).into_any_element());
+            }
+            let retake = voice.name.clone();
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .text_xs()
+                    .text_color(theme.text)
+                    .child(format!(
+                        "{} · {}",
+                        self.t(crate::ui::drums::role_key(voice.role)),
+                        voice.name
+                    ))
+                    .child(button(
+                        ("drummer-voice-reroll", index),
+                        self.t(Key::MenuRerollClip),
+                        ButtonStyle::Ghost,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.rewrite_drum_voice(clip, &retake, true);
+                            cx.notify();
+                        }),
+                    ))
+                    .into_any_element(),
+            );
+            for dial in [Dial::Density, Dial::Intensity] {
+                if !drum_control_applies(writer, dial) {
+                    continue;
+                }
+                let name = voice.name.clone();
+                let fraction = dial.fraction(writer);
+                rows.push(
+                    value_slider(
+                        ("drummer-voice-dial", index * 2 + dial_element_key(dial)),
+                        self.t(if dial == Dial::Density {
+                            Key::DrummerComplexity
+                        } else {
+                            dial.label()
+                        }),
+                        dial_text(dial, writer, self.t(Key::PartStraight)),
+                        fraction,
+                        theme.accent,
+                        SliderFill::FromStart,
+                        &theme,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            this.begin_drag(Drag::DrumVoiceDial {
+                                clip,
+                                voice: name.clone(),
+                                dial,
+                                start_fraction: fraction,
+                                start_x: event.position.x,
+                            });
+                        }),
+                    )
+                    .debug_selector(move || {
+                        format!("drummer-voice-dial-{index}-{}", dial_element_key(dial))
+                    })
+                    .into_any_element(),
+                );
+            }
+        }
+        rows
+    }
+
+    /// Moves both pad coordinates through one recipe command, preserving the take's seed.
+    pub(crate) fn drag_drummer_pad(
+        &mut self,
+        clip: ClipId,
+        bounds: Bounds<Pixels>,
+        at: Point<Pixels>,
+    ) {
+        let Some(current) = self.session.clip_recipe(clip) else {
+            return;
+        };
+        let recipe = with_drummer_position(current, bounds, at);
+        if &recipe != current && self.session.set_clip_recipe(clip, recipe).is_ok() {
+            self.forget_rewritten_notes(clip);
+        }
+    }
+
+    /// Rewrites only the kit piece whose dial is held, using the session's scoped command.
+    pub(crate) fn drag_drum_voice_dial(
+        &mut self,
+        clip: ClipId,
+        voice: &str,
+        dial: Dial,
+        start_fraction: f32,
+        delta: f32,
+    ) {
+        let Some(current) = self.session.clip_recipe(clip).and_then(|recipe| {
+            recipe
+                .drum_voices
+                .iter()
+                .find(|part| part.name == voice)
+                .and_then(|part| part.recipe.as_deref())
+        }) else {
+            return;
+        };
+        let mut recipe = current.clone();
+        dial.set(&mut recipe, dragged(start_fraction, delta));
+        if &recipe != current
+            && self
+                .session
+                .set_drum_voice_recipe(clip, voice, recipe)
+                .is_ok()
+        {
+            self.forget_rewritten_notes(clip);
+        }
     }
 
     /// A muted line naming the group of controls under it.
@@ -500,9 +833,227 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::{click, drag, open, paint};
+    use gpui::TestAppContext;
 
     fn recipe(preset: ClipPreset) -> ClipRecipe {
         ClipRecipe::new(preset, 1)
+    }
+
+    #[test]
+    fn drummer_pad_maps_both_axes_and_keeps_the_take_and_other_settings() {
+        let original = recipe(ClipPreset::Drums);
+        let bounds = Bounds {
+            origin: point(px(10.0), px(20.0)),
+            size: size(px(200.0), px(100.0)),
+        };
+        let quiet = with_drummer_position(&original, bounds, point(px(-10.0), px(200.0)));
+        assert_eq!((quiet.density, quiet.intensity), (0.0, 0.0));
+        let busy = with_drummer_position(&original, bounds, point(px(300.0), px(0.0)));
+        assert_eq!((busy.density, busy.intensity), (1.0, 1.0));
+        let mut middle = with_drummer_position(&original, bounds, point(px(61.0), px(45.0)));
+        assert_eq!((middle.density, middle.intensity), (0.26, 0.75));
+        middle.density = original.density;
+        middle.intensity = original.intensity;
+        assert_eq!(middle, original);
+    }
+
+    #[test]
+    fn authored_drum_rhythms_have_no_complexity_or_fill_controls() {
+        let mut authored = recipe(ClipPreset::Snare);
+        authored.rhythm = Some("x...x...".into());
+        assert!(!drum_control_applies(&authored, Dial::Density));
+        assert!(!drum_control_applies(&authored, Dial::Fill));
+        assert!(drum_control_applies(&authored, Dial::Intensity));
+        let piece = compose(&SongSpec::default());
+        let mut kit = piece
+            .tracks
+            .iter()
+            .find_map(|track| {
+                track.clips.iter().find_map(|clip| {
+                    clip.recipe
+                        .as_ref()
+                        .filter(|recipe| !recipe.drum_voices.is_empty())
+                        .cloned()
+                })
+            })
+            .unwrap();
+        assert!(drum_control_applies(&kit, Dial::Density));
+        kit.drum_map = Some(DrumMap::default());
+        assert!(!drum_control_applies(&kit, Dial::Density));
+        assert!(!drum_control_applies(&kit, Dial::Intensity));
+    }
+
+    #[gpui::test]
+    fn drummer_pad_is_one_undoable_gesture_and_freezing_removes_it(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (clip, original) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            let track = this
+                .session
+                .add_drum_track("Kit", "auris.synth.drumkit")
+                .unwrap();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            let clip = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Drums),
+                )
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (clip, this.session.midi_clip(clip).unwrap().clone())
+        });
+        paint(&app, cx);
+        let bounds = cx
+            .debug_bounds("drummer-pad")
+            .expect("drum recipe draws its pad");
+        drag(
+            cx,
+            bounds.center(),
+            point(
+                bounds.origin.x + bounds.size.width - px(12.0),
+                bounds.origin.y + px(12.0),
+            ),
+        );
+        app.update(cx, |this, _| {
+            let changed = this.session.midi_clip(clip).unwrap();
+            let settings = changed.recipe.as_ref().unwrap();
+            assert!(settings.density > 0.9 && settings.intensity > 0.9);
+            assert_eq!(settings.seed, original.recipe.as_ref().unwrap().seed);
+            assert_ne!(changed.notes, original.notes);
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.session.midi_clip(clip), Some(&original));
+        });
+        paint(&app, cx);
+        click("part-freeze", cx);
+        paint(&app, cx);
+        app.update(cx, |this, cx| {
+            assert!(this.session.clip_recipe(clip).is_none());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original.notes);
+            // gpui retains old debug bounds after removing an element; inspect the renderer's
+            // current rows rather than treating that historical map as a visibility query.
+            assert!(this.part_rows(cx).is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn an_authored_drum_pattern_keeps_an_intensity_slider_without_an_inert_pad(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        let (clip, original) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            let track = this
+                .session
+                .add_drum_track("Snare", "auris.synth.drumkit")
+                .unwrap();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            let mut recipe = recipe(ClipPreset::Snare);
+            recipe.rhythm = Some("x...x...x...x...".into());
+            let clip = this
+                .session
+                .generate_clip(track, Ticks::ZERO, Ticks::QUARTER * 4, recipe)
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (clip, this.session.midi_clip(clip).unwrap().clone())
+        });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("drummer-pad").is_none());
+        assert!(cx.debug_bounds("part-dial-0").is_none());
+        assert!(cx.debug_bounds("perform-dial-0").is_some());
+        assert!(cx.debug_bounds("perform-dial-2").is_none());
+        let intensity = cx
+            .debug_bounds("part-dial-1")
+            .expect("the authored rhythm still has an intensity control");
+        drag(
+            cx,
+            intensity.center(),
+            point(intensity.center().x - px(70.0), intensity.center().y),
+        );
+        app.update(cx, |this, _| {
+            let changed = this.session.midi_clip(clip).unwrap();
+            let hits = |midi: &MidiClip| {
+                midi.notes
+                    .iter()
+                    .map(|note| (note.start, note.pitch))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(hits(changed), hits(&original));
+            assert_ne!(changed.notes, original.notes);
+        });
+    }
+
+    #[gpui::test]
+    fn a_kit_piece_dial_changes_only_that_voice_and_undo_restores_the_clip(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        let (clip, voice, original) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            let spec = SongSpec::parse(
+                r#"
+                form = "verse"
+                ending = "none"
+                [section.verse]
+                bars = 2
+                [[part]]
+                name = "kick"
+                role = "kick"
+                [[part]]
+                name = "snare"
+                role = "snare"
+            "#,
+            )
+            .unwrap();
+            this.session.compose(&compose(&spec)).unwrap();
+            let track = this
+                .project()
+                .tracks
+                .iter()
+                .find(|track| track.kind.is_drum())
+                .unwrap();
+            let clip = track.kind.note_clips().unwrap()[0].id;
+            let track = track.id;
+            let original = this.session.midi_clip(clip).unwrap().clone();
+            let voice = original.recipe.as_ref().unwrap().drum_voices[0]
+                .name
+                .clone();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (clip, voice, original)
+        });
+        paint(&app, cx);
+        let bounds = cx
+            .debug_bounds("drummer-voice-dial-0-1")
+            .expect("kit writer has intensity");
+        drag(
+            cx,
+            bounds.center(),
+            point(bounds.center().x - px(90.0), bounds.center().y),
+        );
+        app.update(cx, |this, _| {
+            let changed = this.session.midi_clip(clip).unwrap();
+            let other = |midi: &MidiClip| {
+                midi.notes
+                    .iter()
+                    .filter(|note| note.drum_voice != voice)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(other(changed), other(&original));
+            assert_ne!(changed.notes, original.notes);
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.session.midi_clip(clip), Some(&original));
+        });
     }
 
     #[test]
@@ -566,11 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn a_drum_kit_is_offered_a_groove_where_every_other_preset_is_offered_a_density() {
-        // The same rule `a_drum_kit_takes_its_density_from_its_groove_and_not_from_the_dial` pins
-        // in the composer, stated where the interface can break it: a density dial on a kit would
-        // be a control that does nothing, and no groove picker on one would leave the only dial a
-        // kit *does* read unreachable.
+    fn every_drum_writer_offers_only_controls_its_generator_reads() {
         for preset in ClipPreset::ALL {
             let dials = dials_for(&recipe(preset));
             // Every preset reads the density, the kit included: it leans on the groove rather
@@ -585,10 +1132,10 @@ mod tests {
                 "{} offers the wrong gate row",
                 preset.name()
             );
-            // And the fill is the kit's alone — nothing else has a last bar to announce.
+            // Fills are played by the snare, alone or inside the full kit.
             assert_eq!(
                 dials.contains(&Dial::Fill),
-                takes_a_groove(preset),
+                matches!(preset, ClipPreset::Drums | ClipPreset::Snare),
                 "{} offers the wrong fill row",
                 preset.name()
             );
@@ -624,7 +1171,7 @@ mod tests {
         // its groove and a pad sounds the chord where the chord is; a dial on either would sweep
         // its whole travel and move not one note.
         for preset in ClipPreset::ALL {
-            let rolls_its_own = !matches!(preset, ClipPreset::Drums | ClipPreset::Pad);
+            let rolls_its_own = !preset.is_drums() && preset != ClipPreset::Pad;
             assert_eq!(
                 dials_for(&recipe(preset)).contains(&Dial::Syncopation),
                 rolls_its_own,

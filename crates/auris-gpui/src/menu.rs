@@ -373,6 +373,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 "track.add_instrument",
             ),
             command(
+                t(Key::CmdAddDrumTrack),
+                actions::AddDrumTrack,
+                "track.add_drum",
+            ),
+            command(
                 t(Key::CmdAddSingerTrack),
                 actions::AddSingerTrack,
                 "track.add_singer",

@@ -186,6 +186,7 @@ impl AurisApp {
                 .into_any_element();
         };
         let track_name = track.name.clone();
+        let is_drum = track.kind.is_drum();
         let instrument_id = track
             .kind
             .as_instrument()
@@ -210,7 +211,6 @@ impl AurisApp {
         sections.extend(self.singer_rows(track_id, cx));
 
         if let Some(instrument_id) = instrument_id {
-            sections.extend(self.drum_analysis_rows(track_id, cx));
             let name = self.instrument_label(track_id, &instrument_id);
             sections.push(
                 div()
@@ -241,6 +241,9 @@ impl AurisApp {
                     ))
                     .into_any_element(),
             );
+            if is_drum {
+                sections.extend(self.drum_analysis_rows(track_id, cx));
+            }
             sections.push(divider(&theme).into_any_element());
         }
 

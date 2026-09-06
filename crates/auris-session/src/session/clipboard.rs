@@ -86,6 +86,8 @@ pub enum CopiedContent {
     /// Notes, and everything else a MIDI clip carries — including its recipe, so a pasted
     /// generated clip is still a generated clip.
     Midi(Box<MidiClip>),
+    /// Percussion notes, accepted only by drum tracks.
+    Drum(Box<MidiClip>),
     /// A reference to imported audio, with its trim and its fades.
     Audio(Box<AudioClip>),
 }
@@ -187,7 +189,12 @@ impl Session {
                 .flatten()
                 .filter(|clip| clips.contains(&clip.id))
             {
-                found.push((row, midi.start, CopiedContent::Midi(Box::new(midi.clone()))));
+                let content = if track.kind.is_drum() {
+                    CopiedContent::Drum(Box::new(midi.clone()))
+                } else {
+                    CopiedContent::Midi(Box::new(midi.clone()))
+                };
+                found.push((row, midi.start, content));
             }
             if let Some(inner) = track.kind.as_audio() {
                 for audio in inner.clips.iter().filter(|clip| clips.contains(&clip.id)) {
@@ -259,7 +266,8 @@ impl Session {
                     // "Holds notes" rather than "is an instrument track", the same test every
                     // other clip command asks: a melody pastes onto a singer track as freely as
                     // it moves there, lyrics and all.
-                    (CopiedContent::Midi(_), kind) => kind.holds_notes(),
+                    (CopiedContent::Midi(_), kind) => kind.holds_notes() && !kind.is_drum(),
+                    (CopiedContent::Drum(_), kind) => kind.is_drum(),
                     (CopiedContent::Audio(audio), TrackKind::Audio(_)) => {
                         self.project.audio_sources.contains_key(&audio.source)
                     }
@@ -278,7 +286,7 @@ impl Session {
             let id = self.project.next_clip_id();
             let start = at + copied.offset;
             match copied.content {
-                CopiedContent::Midi(midi) => {
+                CopiedContent::Midi(midi) | CopiedContent::Drum(midi) => {
                     let mut clip = *midi;
                     clip.id = id;
                     clip.start = start;

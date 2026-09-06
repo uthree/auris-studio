@@ -115,6 +115,11 @@ struct FormatVersionProbe {
     format_version: u32,
 }
 
+#[derive(Deserialize)]
+struct LegacyVersionProbe {
+    format_version: Option<u32>,
+}
+
 /// Files written before the field existed are treated as the current version, matching the
 /// `serde` default on [`Project`] itself.
 fn assumed_format_version() -> u32 {
@@ -193,6 +198,12 @@ pub fn load_project(path: &Path) -> Result<Project> {
     }
 
     let mut project: Project = serde_json::from_str(&text)?;
+    if serde_json::from_str::<LegacyVersionProbe>(&text)?
+        .format_version
+        .is_none_or(|version| version < 21)
+    {
+        migrate_drum_tracks(&mut project);
+    }
     if !project.repair_id_counter() {
         return Err(IoError::ProjectIdsExhausted);
     }
@@ -212,11 +223,148 @@ pub fn load_project(path: &Path) -> Result<Project> {
     Ok(project)
 }
 
+/// Promotes legacy percussion using authored metadata, never a name or a pitch guess.
+fn migrate_drum_tracks(project: &mut Project) {
+    use auris_core::project::{DrumMap, TrackKind};
+
+    for track in &mut project.tracks {
+        let TrackKind::Instrument(inner) = &track.kind else {
+            continue;
+        };
+        let drum_source = matches!(
+            inner.instrument_id.as_str(),
+            "auris.synth.drumkit" | "auris.synth.noisedrum"
+        ) || (inner.instrument_id == "auris.sampler.soundfont"
+            && inner
+                .instrument_state
+                .extra
+                .get("preset")
+                .and_then(|preset| preset.get("bank"))
+                .and_then(serde_json::Value::as_i64)
+                == Some(128));
+        let drum_metadata = DrumMap::load(&inner.instrument_state).is_some()
+            || inner.clips.iter().any(|clip| {
+                clip.recipe.as_ref().is_some_and(|recipe| {
+                    recipe.preset.is_drums() || !recipe.drum_voices.is_empty()
+                }) || clip.notes.iter().any(|note| !note.drum_voice.is_empty())
+            });
+        if drum_source || drum_metadata {
+            let TrackKind::Instrument(inner) = std::mem::replace(&mut track.kind, TrackKind::Bus)
+            else {
+                unreachable!()
+            };
+            track.kind = TrackKind::Drum(inner);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::TempFile;
     use auris_core::{AssetPath, Note, Ticks};
+
+    #[test]
+    fn legacy_drums_migrate_without_changing_the_saved_performance() {
+        use auris_core::project::{DrumMap, DrumRole};
+        use auris_core::{ClipPreset, ClipRecipe, NoteTransform};
+        let file = TempFile::new("legacy-drums.auris");
+        let mut project = Project::new("Legacy", 48_000.0);
+        project.format_version = 20;
+        let builtin = project.add_instrument_track("Unlabelled", "auris.synth.drumkit");
+        let mapped = project.add_instrument_track("Third party", "clap.custom");
+        let sampler = project.add_instrument_track("Library", "auris.sampler.soundfont");
+        let recipe_track = project.add_instrument_track("Written", "custom");
+        let tagged = project.add_instrument_track("Frozen", "custom");
+        let melodic = project.add_instrument_track("Drums", "auris.synth.chiptune");
+        let map = DrumMap {
+            voices: [(DrumRole::Snare, 84)].into_iter().collect(),
+        };
+        map.store(
+            &mut project
+                .track_mut(mapped)
+                .unwrap()
+                .kind
+                .as_instrument_mut()
+                .unwrap()
+                .instrument_state,
+        );
+        project
+            .track_mut(sampler)
+            .unwrap()
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state
+            .extra = serde_json::json!({"preset": {"font": 1, "bank": 128, "patch": 0}});
+        for track in [builtin, mapped, sampler, recipe_track, tagged, melodic] {
+            let clip = project
+                .add_midi_clip(track, "Take", Ticks::QUARTER, Ticks::from_beats(4.0))
+                .unwrap();
+            let midi = project.midi_clip_mut(clip).unwrap();
+            midi.notes.push(Note::new(36, Ticks(17), Ticks(53)));
+            midi.transforms.push(NoteTransform::Humanize {
+                amount: 0.12,
+                seed: 19,
+            });
+            if track == recipe_track {
+                midi.recipe = Some(ClipRecipe::new(ClipPreset::Drums, 29));
+            }
+            if track == tagged {
+                midi.notes[0].drum_voice = "snare".into();
+            }
+        }
+        std::fs::write(file.path(), serde_json::to_string(&project).unwrap()).unwrap();
+        let mut loaded = load_project(file.path()).unwrap();
+        for track in [builtin, mapped, sampler, recipe_track, tagged] {
+            assert!(loaded.track(track).unwrap().kind.is_drum());
+            assert_eq!(
+                loaded.track(track).unwrap().kind.as_instrument(),
+                project.track(track).unwrap().kind.as_instrument()
+            );
+        }
+        assert!(
+            !loaded.track(melodic).unwrap().kind.is_drum(),
+            "a name and a conventional pitch are not drum metadata"
+        );
+        save_project(file.path(), &mut loaded).unwrap();
+        assert_eq!(load_project(file.path()).unwrap(), loaded);
+    }
+
+    #[test]
+    fn versionless_migration_ignores_nested_version_keys_and_current_kinds_are_explicit() {
+        let file = TempFile::new("versionless-drums.auris");
+        let mut project = Project::new("Legacy", 48_000.0);
+        let track = project.add_instrument_track("Kit", "auris.synth.drumkit");
+        project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state
+            .extra = serde_json::json!({"format_version": 99});
+        let mut json = serde_json::to_value(&project).unwrap();
+        json.as_object_mut().unwrap().remove("format_version");
+        std::fs::write(file.path(), serde_json::to_string(&json).unwrap()).unwrap();
+        assert!(
+            load_project(file.path())
+                .unwrap()
+                .track(track)
+                .unwrap()
+                .kind
+                .is_drum()
+        );
+        save_project(file.path(), &mut project).unwrap();
+        assert!(
+            !load_project(file.path())
+                .unwrap()
+                .track(track)
+                .unwrap()
+                .kind
+                .is_drum()
+        );
+    }
 
     fn demo_project() -> Project {
         let mut project = Project::new("Demo", 48_000.0);

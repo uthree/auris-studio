@@ -46,7 +46,7 @@ mod mix_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
-pub use drums::analyze_drum_kit;
+pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
@@ -335,6 +335,7 @@ pub struct SpecArgs {
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
     analyze_drum_kit::NAME,
+    set_drum_assignment::NAME,
     effects::NAME,
     automation::NAME,
     checkpoints::NAME,
@@ -689,6 +690,9 @@ pub mod describe {
                         inner.instrument_id,
                         inner.clips.len()
                     )
+                }
+                TrackKind::Drum(inner) => {
+                    format!("drum {} — {} clips", inner.instrument_id, inner.clips.len())
                 }
                 TrackKind::Singer(inner) => {
                     format!(
@@ -1773,7 +1777,7 @@ pub mod add_track {
     pub const DESCRIPTION: &str = "Adds a track to an existing project and saves. An instrument \
         track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` \
         (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a \
-        singer track (notes that carry lyrics, sung by a voice model), an audio track or a \
+        drum track (percussion with a drum editor), a singer track (notes that carry lyrics, sung by a voice model), an audio track or a \
         bus. A new instrument track has no clips: `add_part` writes one.";
 
     /// Arguments to `add_track`.
@@ -1792,7 +1796,7 @@ pub mod add_track {
         /// Read `sound`'s number as a drum kit rather than a melodic program.
         #[serde(default)]
         pub drums: bool,
-        /// "instrument" (the default), "singer", "audio", or "bus".
+        /// "instrument" (the default), "drum", "singer", "audio", or "bus".
         pub kind: Option<String>,
     }
 
@@ -1802,11 +1806,20 @@ pub mod add_track {
             return Err("the track needs a name — a blank one no tool can address again".into());
         }
         let mut session = opened(&args.project)?;
-        let kind = args.kind.as_deref().unwrap_or("instrument");
+        let kind = args
+            .kind
+            .as_deref()
+            .unwrap_or(if args.drums { "drum" } else { "instrument" });
         validate_track_name(session.project(), &args.name, None)?;
         let voiced = match kind {
-            "instrument" => {
+            "instrument" | "drum" => {
                 let id = match &args.instrument {
+                    Some(id) if kind == "drum" => session
+                        .add_drum_track(&args.name, id)
+                        .map_err(|error| error.to_string())?,
+                    None if kind == "drum" => session
+                        .add_default_drum_track(&args.name)
+                        .map_err(|error| error.to_string())?,
                     Some(id) => session
                         .add_instrument_track(&args.name, id)
                         .map_err(|error| {
@@ -1816,7 +1829,13 @@ pub mod add_track {
                         .add_default_instrument_track(&args.name)
                         .map_err(|error| error.to_string())?,
                 };
-                voice(&mut session, id, &args.sound, args.drums, &args.instrument)?
+                voice(
+                    &mut session,
+                    id,
+                    &args.sound,
+                    args.drums || kind == "drum",
+                    &args.instrument,
+                )?
             }
             "singer" | "audio" | "bus" => {
                 if args.instrument.is_some() || args.sound.is_some() {
@@ -1837,7 +1856,7 @@ pub mod add_track {
             }
             other => {
                 return Err(format!(
-                    "`kind` is \"instrument\", \"singer\", \"audio\" or \"bus\", not \"{other}\""
+                    "`kind` is \"instrument\", \"drum\", \"singer\", \"audio\" or \"bus\", not \"{other}\""
                 ));
             }
         };
@@ -1845,7 +1864,7 @@ pub mod add_track {
             .save_with_checkpoint()
             .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
-        if kind == "instrument" {
+        if matches!(kind, "instrument" | "drum") {
             text.push_str(" The track holds no clips yet; `add_part` writes one.");
         }
         if kind == "singer" {

@@ -239,6 +239,9 @@ mod tests {
                             Err(error) => panic!("fixture accept: {error}"),
                         }
                     };
+                    // Windows can inherit the listener's nonblocking mode on accepted sockets.
+                    // Header reads use the read timeout instead of the listener's polling loop.
+                    stream.set_nonblocking(false).unwrap();
                     stream
                         .set_read_timeout(Some(Duration::from_secs(3)))
                         .unwrap();

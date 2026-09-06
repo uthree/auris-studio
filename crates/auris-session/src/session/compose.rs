@@ -232,7 +232,24 @@ impl Session {
                     fallback.clone()
                 }
             };
-            let track_id = project.add_instrument_track(&track.name, instrument);
+            let is_drum = !track.drum_parts.is_empty()
+                || track
+                    .sound
+                    .is_some_and(|sound| sound.bank == auris_compose::gm::DRUM_BANK)
+                || matches!(
+                    track.instrument.as_str(),
+                    auris_synth::DrumKit::ID | auris_synth::NoiseDrum::ID
+                )
+                || track.clips.iter().any(|clip| {
+                    clip.recipe
+                        .as_ref()
+                        .is_some_and(|recipe| recipe.preset.is_drums())
+                });
+            let track_id = if is_drum {
+                project.add_drum_track(&track.name, instrument)
+            } else {
+                project.add_instrument_track(&track.name, instrument)
+            };
             if let Some((sound, font)) = sound.zip(general_midi) {
                 if let Some(inner) = project
                     .track_mut(track_id)
@@ -567,6 +584,7 @@ mod tests {
             "there is one instrument state and mixer strip"
         );
         let (track, inner) = tracks[0];
+        assert!(track.kind.is_drum());
         assert_eq!(inner.instrument_id, auris_synth::DrumKit::ID);
         assert_eq!(track.output, Output::Master);
         assert!(

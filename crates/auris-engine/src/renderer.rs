@@ -584,6 +584,21 @@ mod tests {
         )
     }
 
+    #[test]
+    fn a_drum_track_renders_the_same_saved_notes_and_performance() {
+        let mut project = one_note_project(Ticks::ZERO, Ticks::QUARTER);
+        let mut before = build(&project, 512);
+        let expected = render_range(&mut before, &mut Transport::playing_from(0), 4_096, 512);
+        let source = project.tracks[0].kind.as_instrument().unwrap().clone();
+        project.tracks[0].kind = auris_core::TrackKind::Drum(source);
+        let mut after = build(&project, 512);
+        let actual = render_range(&mut after, &mut Transport::playing_from(0), 4_096, 512);
+        assert!(actual.channel(0).iter().any(|sample| sample.abs() > 0.001));
+        for channel in 0..RENDER_CHANNELS {
+            assert_eq!(actual.channel(channel), expected.channel(channel));
+        }
+    }
+
     /// Two tone tracks, the second keyed from the first through a [`testkit::KeyedGain`].
     ///
     /// `keyed_first` stores the listening track *before* the one it listens to, which is what

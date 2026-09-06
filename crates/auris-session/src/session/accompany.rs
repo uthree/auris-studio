@@ -82,9 +82,20 @@ impl Session {
         parts: &[ClipPreset],
         seed: u64,
     ) -> Result<AccompanyReport, SessionError> {
-        let Some((_, midi)) = self.project.midi_clip(clip) else {
+        let Some((track, midi)) = self.project.midi_clip(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
+        if self
+            .project
+            .track(track)
+            .is_some_and(|track| track.kind.is_drum())
+        {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: "Drum",
+                expected: "a melodic instrument or singer track",
+            });
+        }
         if midi.notes.is_empty() {
             return Err(SessionError::NothingToAccompany(clip.0));
         }
@@ -147,7 +158,12 @@ impl Session {
         };
 
         for (index, preset) in parts.iter().enumerate() {
-            let Ok(track) = self.add_default_instrument_track(part_name(*preset)) else {
+            let added = if preset.is_drums() {
+                self.add_default_drum_track(part_name(*preset))
+            } else {
+                self.add_default_instrument_track(part_name(*preset))
+            };
+            let Ok(track) = added else {
                 // No instrument in the registry at all, which no build has — and if one did, the
                 // chords are still written and worth keeping.
                 continue;
@@ -163,7 +179,7 @@ impl Session {
                     },
                 );
             }
-            let recipe = ClipRecipe::new(*preset, seed.wrapping_add(index as u64));
+            let recipe = backing_part_recipe(*preset, seed.wrapping_add(index as u64));
             match self.generate_clip(track, start, length, recipe) {
                 Ok(clip) => {
                     report.notes += self.midi_clip(clip).map_or(0, |midi| midi.notes.len());
@@ -176,6 +192,24 @@ impl Session {
         }
         report
     }
+}
+
+/// The backing commands author General MIDI percussion, including when no library is installed.
+///
+/// Keep those score addresses on the recipe: selecting the sampler clears the built-in source's
+/// state, and a generic unassigned drum preset correctly writes nothing after that switch.
+/// This is a decision of these composing commands, never an inference about an arbitrary track.
+pub(super) fn backing_part_recipe(preset: ClipPreset, seed: u64) -> ClipRecipe {
+    let mut recipe = ClipRecipe::new(preset, seed);
+    if preset.is_drums() {
+        recipe.drum_map = Some(auris_core::DrumMap {
+            voices: auris_compose::roles_of(preset)
+                .iter()
+                .filter_map(|role| Some((role.drum_role()?, role.drum_voice()?.pitch())))
+                .collect(),
+        });
+    }
+    recipe
 }
 
 /// What a written part's track is called.
@@ -196,6 +230,73 @@ fn part_name(preset: ClipPreset) -> String {
 mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, session};
+
+    #[test]
+    fn scored_backing_drums_keep_their_addresses_after_selecting_a_gm_sampler() {
+        use crate::session::fixtures::named_font;
+        let mut session = session();
+        let font = named_font(&mut session, "General MIDI");
+        for preset in [
+            ClipPreset::Drums,
+            ClipPreset::Kick,
+            ClipPreset::Snare,
+            ClipPreset::Hat,
+        ] {
+            let track = session.add_default_drum_track(preset.name()).unwrap();
+            let sound = analysis::sound_for(preset);
+            session
+                .set_track_preset(
+                    track,
+                    PresetRef {
+                        font,
+                        bank: i32::from(sound.bank),
+                        patch: i32::from(sound.patch),
+                    },
+                )
+                .unwrap();
+            assert_eq!(
+                session.drum_assignments(track),
+                Some(auris_core::DrumMap::default())
+            );
+            let recipe = backing_part_recipe(preset, 7);
+            let authored = recipe.drum_map.clone().unwrap();
+            let clip = session
+                .generate_clip(track, Ticks::ZERO, BAR, recipe)
+                .unwrap();
+            let written = session.midi_clip(clip).unwrap();
+            assert!(
+                !written.notes.is_empty(),
+                "{} lost its authored percussion",
+                preset.name()
+            );
+            assert!(
+                written
+                    .notes
+                    .iter()
+                    .all(|note| authored.voices.values().any(|pitch| *pitch == note.pitch))
+            );
+            assert_eq!(written.recipe.as_ref().unwrap().drum_map, Some(authored));
+        }
+    }
+
+    #[test]
+    fn accompanying_a_drum_clip_does_not_interpret_addresses_as_harmony() {
+        let mut session = session();
+        let drum = session.add_default_drum_track("Kit").unwrap();
+        let clip = session
+            .add_midi_clip(drum, "Hits", Ticks::ZERO, BAR)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(38, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.forget_history();
+        assert!(matches!(
+            session.accompany(clip, &DEFAULT_PARTS, 1),
+            Err(SessionError::WrongTrackKind { .. })
+        ));
+        assert!(!session.can_undo());
+        assert_eq!(session.project().tracks.len(), 1);
+    }
 
     /// A session holding one four-bar melody in C major, and the clip it is in.
     fn with_a_melody() -> (Session, TrackId, ClipId) {

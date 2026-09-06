@@ -191,9 +191,9 @@ pub fn default_instrument(preset: ClipPreset) -> &'static str {
 /// document's own tempo map is in force; the text a phrase writes never cared how fast its
 /// ticks go by.
 ///
-/// An empty answer is a real answer: a range with no chords written under it, or one shorter than
-/// a bar, has nothing for a part to play, and inventing something would mean inventing harmony the
-/// person did not ask for.
+/// Melodic parts need chords under the range. Drum parts use the range's meter and groove
+/// directly, so they also play on an empty timeline without adding any harmony. A positive
+/// partial bar is written and clipped to the requested length; an empty range writes nothing.
 pub fn write_phrase(
     harmony: &Harmony,
     start: Ticks,
@@ -258,9 +258,11 @@ pub fn write_phrase(
     for event in &mut events {
         event.start -= start;
     }
-    if events.is_empty() {
+    if events.is_empty() && !recipe.preset.is_drums() {
         return Vec::new();
     }
+    // Drum writers read the grid and section length, not harmonic events or the melodic
+    // skeleton. Passing an empty frame through keeps their existing groove and seed behavior.
 
     // The key at the range's start goes on the section plan, but nothing melodic hangs off it
     // any more: the skeleton and the melody's scale walk both read each event's own key, which
@@ -530,6 +532,73 @@ mod tests {
         assert_eq!(pitches(ClipPreset::Hat), vec![42]);
         // And together they are the kit: the same three voices the one preset writes at once.
         assert_eq!(pitches(ClipPreset::Drums), vec![36, 38, 42]);
+    }
+
+    #[test]
+    fn drum_presets_keep_the_same_take_without_harmony() {
+        let empty = Harmony::in_key(Key::parse("C major").unwrap());
+        for meter in [four_four(), TimeSignature::new(7, 8)] {
+            let length = meter.ticks_per_bar() * 2 + Ticks::QUARTER;
+            for groove in ["basic-rock", "bossa-nova"] {
+                for preset in ClipPreset::ALL
+                    .into_iter()
+                    .filter(|preset| preset.is_drums())
+                {
+                    for seed in [1, 7] {
+                        let mut recipe = ClipRecipe::new(preset, seed);
+                        recipe.groove = groove.to_string();
+                        recipe.swing = 63;
+                        let write = |harmony: &Harmony| {
+                            write_phrase(
+                                harmony,
+                                Ticks::ZERO,
+                                length,
+                                meter,
+                                &recipe,
+                                Some(("Verse", 2)),
+                            )
+                        };
+                        let notes = write(&empty);
+                        assert!(!notes.is_empty(), "{preset:?}, {meter:?}, {groove}, {seed}");
+                        assert_eq!(
+                            notes,
+                            write(&axis()),
+                            "chords must not change the drum take"
+                        );
+                        assert_eq!(notes, write(&empty), "the seed still pins the take");
+                        assert!(notes.iter().all(|note| note.start >= Ticks::ZERO
+                            && note.end() <= length
+                            && note.velocity > 0.0));
+                        assert!(
+                            notes.iter().any(|note| note.start >= meter.ticks_per_bar()),
+                            "the kit must keep playing after the first bar"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(empty.is_empty(), "generation must leave the harmony empty");
+    }
+
+    #[test]
+    fn a_drum_clip_can_start_after_the_last_chord_and_clip_a_partial_bar() {
+        let recipe = ClipRecipe::new(ClipPreset::Drums, 4);
+        let start = BAR * 12;
+        let length = Ticks::QUARTER * 2 + Ticks(75);
+        let notes = write_phrase(&axis(), start, length, four_four(), &recipe, None);
+        assert!(!notes.is_empty());
+        assert!(
+            notes.iter().any(|note| note.pitch == 38),
+            "the backbeat inside this partial bar still plays"
+        );
+        assert!(
+            notes
+                .iter()
+                .all(|note| note.start >= Ticks::ZERO && note.end() <= length)
+        );
+        for length in [Ticks::ZERO, Ticks(-1)] {
+            assert!(write_phrase(&axis(), start, length, four_four(), &recipe, None).is_empty());
+        }
     }
 
     #[test]

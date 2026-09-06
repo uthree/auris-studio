@@ -212,13 +212,22 @@ impl AurisMcp {
         blocking(move || toolbox::analyze::run(&args)).await
     }
 
-    /// Renders an instrument's notes at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
+    /// Renders a drum track's instrument at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Requires kind drum; melodic tracks are refused. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
     #[tool]
     async fn analyze_drum_kit(
         &self,
         Parameters(args): Parameters<toolbox::analyze_drum_kit::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze_drum_kit::run(&args)).await
+    }
+
+    /// Adds or changes one drum track role's MIDI note assignment, or removes it with remove: true. Roles are kick, snare, closed_hat, open_hat, crash and tom; note is 0-127. Requires an explicit drum track. Saves the assignment for the drum editor and future generation without rewriting existing clips or their saved recipes. Other assignments and instrument state are preserved; removing the final role leaves an explicitly empty map.
+    #[tool]
+    async fn set_drum_assignment(
+        &self,
+        Parameters(args): Parameters<toolbox::set_drum_assignment::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_drum_assignment::run(&args)).await
     }
 
     /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
@@ -320,7 +329,7 @@ impl AurisMcp {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
+    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a drum track (percussion with a drum editor), a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
     #[tool]
     async fn add_track(
         &self,
@@ -589,6 +598,10 @@ mod tests {
             (
                 toolbox::analyze_drum_kit::NAME,
                 toolbox::analyze_drum_kit::DESCRIPTION,
+            ),
+            (
+                toolbox::set_drum_assignment::NAME,
+                toolbox::set_drum_assignment::DESCRIPTION,
             ),
             (mixer::NAME, mixer::DESCRIPTION),
             (set_level::NAME, set_level::DESCRIPTION),

@@ -206,11 +206,11 @@ impl Session {
         // "Holds notes" against "holds audio", with a bus answering neither: asking
         // `is_instrument` here counted an audio track and a bus as the same kind, and a singer
         // track as neither of the kinds its own clips are.
-        let kind_of = |id: TrackId| -> Option<bool> {
+        let kind_of = |id: TrackId| -> Option<(bool, bool)> {
             let track = self.project.track(id)?;
             match (track.kind.holds_notes(), track.kind.as_audio().is_some()) {
-                (true, _) => Some(true),
-                (_, true) => Some(false),
+                (true, _) => Some((true, track.kind.is_drum())),
+                (_, true) => Some((false, false)),
                 _ => None,
             }
         };

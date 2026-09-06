@@ -250,6 +250,19 @@ impl AurisApp {
         }
     }
 
+    /// Appends a drum track with the built-in kit ready to play.
+    pub(crate) fn add_drum_track(&mut self) {
+        let count = self.project().tracks.len() + 1;
+        let name = messages::new_drum_track_name(self.language(), count);
+        match self.session.add_default_drum_track(name) {
+            Ok(id) => {
+                self.select_track(id);
+                self.reveal_track(id);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::CmdAddDrumTrack, &error)),
+        }
+    }
+
     /// Appends a singer track, previewing through the built-in vocal instrument.
     pub(crate) fn add_singer_track(&mut self) {
         let count = self.project().tracks.len() + 1;
@@ -537,8 +550,7 @@ impl AurisApp {
 
     /// Replaces the document with an empty project.
     pub(crate) fn new_project(&mut self) {
-        self.cancel_drum_analysis();
-        self.drum_analysis = None;
+        self.reset_drum_analysis();
         self.agent_reset_conversation();
         self.session.new_project();
         self.resync_selection();
@@ -734,8 +746,7 @@ impl AurisApp {
     /// The end of both ways in: the file dialog picks a path and lands here, and a dropped
     /// project arrives here already knowing one.
     pub(crate) fn open_project_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        self.cancel_drum_analysis();
-        self.drum_analysis = None;
+        self.reset_drum_analysis();
         // A reload offer belongs to the document that was open when the agent changed it. Take
         // it down before the asynchronous open starts so it cannot be clicked during the switch.
         self.agent_chat.pending_reload = None;
@@ -1873,8 +1884,7 @@ impl AurisApp {
     /// built from its dials and never wrote down. Everything after the parse is the same for
     /// both, and a second copy of it would be a second answer to "what happens after Write".
     pub(crate) fn compose_spec(&mut self, spec: &SongSpec) {
-        self.cancel_drum_analysis();
-        self.drum_analysis = None;
+        self.reset_drum_analysis();
         let language = self.language();
         let piece = compose(spec);
         let seed = piece.seed;
@@ -2619,6 +2629,9 @@ impl AurisApp {
     /// Without this, selecting a bass part while the roll is parked two octaves up shows an
     /// empty grid and looks like the clip is missing.
     pub(crate) fn center_roll_on_selection(&mut self) {
+        if self.editing_a_drum_clip() {
+            return;
+        }
         let Some(range) = self
             .selected_midi_clip()
             .and_then(|clip| clip.pitch_range())

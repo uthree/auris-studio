@@ -959,7 +959,7 @@ impl Project {
         let new_id = ClipId(self.allocate_id());
         for track in &mut self.tracks {
             match &mut track.kind {
-                TrackKind::Instrument(_) | TrackKind::Singer(_) => {
+                TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => {
                     let clips = track.kind.note_clips_mut().expect("the arm holds notes");
                     if let Some(source) = clips.iter().find(|clip| clip.id == id) {
                         let mut copy = source.clone();
@@ -1320,6 +1320,9 @@ impl Project {
         // as an audio track: the clip would have been taken off its own track and then found
         // nowhere to land.
         if self.tracks[origin].kind.is_bus() || self.tracks[destination].kind.is_bus() {
+            return false;
+        }
+        if self.tracks[origin].kind.is_drum() != self.tracks[destination].kind.is_drum() {
             return false;
         }
 

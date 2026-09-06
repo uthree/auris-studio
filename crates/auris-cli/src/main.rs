@@ -1065,6 +1065,12 @@ fn info(path: &Path) -> Result<(), String> {
                     inner.instrument_id,
                     inner.clips.len()
                 ),
+                TrackKind::Drum(inner) => format!(
+                    "{} {:<24} {} {clips}",
+                    pad(field(Key::TrackKindDrum), 12),
+                    inner.instrument_id,
+                    inner.clips.len()
+                ),
                 TrackKind::Singer(inner) => format!(
                     "{} {:<24} {} {clips}",
                     pad(field(Key::CliKindSinger), 12),

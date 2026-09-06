@@ -215,7 +215,7 @@ impl AurisApp {
                         .bg(theme.accent),
                 )
             })
-            .tooltip(self.tip(panel.label(), panel.command()))
+            .tooltip(self.tip(self.shown_panel_label(panel), panel.command()))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {
@@ -231,11 +231,20 @@ impl AurisApp {
             )
     }
 
+    /// The active editor's name without changing the saved dock-panel identity.
+    fn shown_panel_label(&self, panel: Panel) -> Key {
+        if panel == Panel::PianoRoll && self.editing_a_drum_clip() {
+            Key::DrumEditor
+        } else {
+            panel.label()
+        }
+    }
+
     /// The menu a right-click on a panel's switch opens.
     fn panel_menu(&self, panel: Panel, anchor: Point<Pixels>) -> ContextMenu {
         let here = self.panels.dock(panel);
         let menu = Dock::ALL.into_iter().fold(
-            ContextMenu::new(anchor, self.t(panel.label())),
+            ContextMenu::new(anchor, self.t(self.shown_panel_label(panel))),
             |menu, dock| {
                 menu.toggle(
                     self.t(dock.label()),

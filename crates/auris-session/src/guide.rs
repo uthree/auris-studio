@@ -993,7 +993,9 @@ pub mod composition {
     //!
     //! # Getting the result into a document
     //!
-    //! **A drum kit is one instrument track.** Kick, snare, hat and crash remain separate
+    //! **A drum kit is one drum track.** [`TrackKind::Drum`](auris_core::TrackKind::Drum) is
+    //! distinct from a melodic instrument track, with its own editor and generation presets.
+    //! Kick, snare, hat and crash remain separate
     //! writers, with their own random streams, but parts sharing a sound are collected into one
     //! track and one clip per section. A composite recipe keeps each voice's instructions;
     //! voice-scoped performance transforms keep its timing separate from the written notes.
@@ -1001,14 +1003,49 @@ pub mod composition {
     //! The kit's stereo output has one fader, pan and effect path. Its internal balance belongs
     //! to the instrument; strike velocity is not a substitute for an audio fader.
     //!
-    //! **Drum analysis listens to the instrument.** A separate instance renders individual
+    //! Both kinds share [`InstrumentTrack`](auris_core::InstrumentTrack) for plugin state and
+    //! note clips. `is_instrument` and `as_instrument` deliberately include drums; presentation
+    //! and recipe compatibility use `is_drum`. Built-in, SoundFont and hosted source changes
+    //! preserve the track kind. Drum clips move and paste only between drum tracks, and drum
+    //! recipes can only be generated on that kind. Melodic clips still move between instrument
+    //! and singer tracks. MIDI channel 10 imports as drums and drum exports use that channel.
+    //!
+    //! Version 21 stores the distinct kind. Older documents promote percussion from known
+    //! built-in drum IDs, explicit SoundFont bank 128 selections, authored drum assignments,
+    //! recipe presets or tagged drum voices. Track names and note pitches are not evidence.
+    //! Migration preserves every saved note, transform, plugin state and mixer setting.
+    //!
+    //! **Drum analysis listens to a drum track's instrument.** A separate instance renders individual
     //! notes at several velocities. The classifier receives samples and measurement settings,
     //! never note names, General MIDI numbers or author labels. Spectral energy, noise content
     //! and the attack and decay produce role-fit scores, not probabilities. A kit may have no
     //! suitable sound for a role. Measurements, role fitness and a composition's chosen note
     //! mapping are separate results: choosing to use a tom as a kick does not change what was
-    //! measured. Accepting a map is an explicit edit; opening a project never scans its sounds
-    //! or rewrites its saved notes. The accepted mapping travels with the instrument state.
+    //! measured. The desktop queues new or changed drum sources for background analysis,
+    //! including tracks in an opened project. It keeps results per track, avoids repeating an
+    //! unchanged source, and rejects stale results. Accepting a map remains an explicit edit:
+    //! automatic analysis never changes an assignment or rewrites stored notes. The accepted
+    //! mapping travels with the instrument state.
+    //! [`set_drum_assignment`](crate::Session::set_drum_assignment) adds, replaces or removes a
+    //! musical role's MIDI address without acoustic analysis. It preserves the other assignments
+    //! and plugin state, records one undo step, and affects editor labels and future generation.
+    //! Existing clip recipes keep their saved maps, including on regeneration. Empty assignments
+    //! are stored explicitly; neither SoundFont conventions nor built-in defaults fill them in.
+    //! [`drum_analysis_source_key`](crate::Session::drum_analysis_source_key) supports scheduling
+    //! with a digest of source state, availability and render context. It excludes the score,
+    //! mixer and musical assignments and performs no plugin snapshot or filesystem scan.
+    //! Native CLAP and VST3 editor notifications advance a source revision in the session's
+    //! ordinary poll; the worker request still captures and fingerprints the complete source
+    //! before a measurement starts. Measurement uses the tempo at the project's beginning;
+    //! playback and seeking through later tempo changes do not invalidate its conditions.
+    //!
+    //! **Drum assignments can also be authored directly.** Each of the six roles can name a
+    //! MIDI address from 0 to 127 or remain unassigned. Adding, changing or clearing an
+    //! assignment is an undoable session command. It updates the track's map for future
+    //! generation and the drum editor's role labels, without changing existing notes or their
+    //! recipes. Those recipes keep their own saved assignments when regenerated. A manual
+    //! assignment is a musical choice, so it neither depends on a completed acoustic scan nor
+    //! replaces that scan's evidence.
     //!
     //! Signal measurements belong in `auris-dsp`; session commands own probing, source state
     //! and applying a mapping. The composer only reads musical instructions and mappings, and
@@ -1530,18 +1567,17 @@ pub mod harmony {
     //!
     //! A [`MidiClip`](auris_core::MidiClip) may carry a
     //! [`ClipRecipe`](auris_core::ClipRecipe): a preset, a seed and a few dials saying how the
-    //! notes in it were written from the harmony underneath. It can then be written again — after
+    //! notes in it were written. Melodic presets read the harmony underneath; drum presets read
+    //! the clip's meter, length and groove and can generate on an empty timeline without adding
+    //! chords to the document. It can then be written again — after
     //! the chords move, or with a different feel, or simply as another take —
     //! and [`freeze_clip`](crate::Session::freeze_clip) drops the recipe when one of the takes
-    //! turns out to be the keeper. This is Logic's Drummer, in a shape that costs one optional
-    //! field.
+    //! turns out to be the keeper.
     //!
-    //! It is a field on a clip and not a third kind of track, which was the alternative and is
-    //! how Logic does it. A generated clip *is* a clip: the engine plays it, the exporter writes
-    //! it, the piano roll edits it and undo reverses it, with no code anywhere that knows the
-    //! difference. A third [`TrackKind`](auris_core::TrackKind) would have broken fourteen
-    //! exhaustive matches across six crates and had most of them answer exactly what an
-    //! instrument track answers.
+    //! Generation is a property of a clip on a melodic or drum track. Both retain the same
+    //! stored note representation and playback path; their track kind selects the editor and
+    //! the applicable presets. Freezing keeps the notes and the track kind while removing the
+    //! recipe. A generated drum clip therefore remains a drum clip after it is frozen.
     //!
     //! # The score does not change; the performer does
     //!

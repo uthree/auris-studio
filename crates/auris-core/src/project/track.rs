@@ -56,7 +56,7 @@ impl Color {
     }
 }
 
-/// An instrument track: notes rendered by a software instrument.
+/// Shared source data for melodic and drum tracks, rendered by a software instrument.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InstrumentTrack {
     /// Registry id of the instrument.
@@ -247,8 +247,10 @@ pub fn default_frame_hop() -> f64 {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TrackKind {
-    /// Notes played by a software instrument.
+    /// Pitched notes played by a software instrument.
     Instrument(InstrumentTrack),
+    /// Percussion hits played by a software instrument, with a dedicated drum editor.
+    Drum(InstrumentTrack),
     /// Notes carrying lyrics, sung by a voice synthesiser.
     Singer(SingerTrack),
     /// Recorded or imported audio.
@@ -267,6 +269,7 @@ impl TrackKind {
     pub fn label(&self) -> &'static str {
         match self {
             TrackKind::Instrument(_) => "Instrument",
+            TrackKind::Drum(_) => "Drum",
             TrackKind::Singer(_) => "Singer",
             TrackKind::Audio(_) => "Audio",
             TrackKind::Bus => "Bus",
@@ -276,21 +279,30 @@ impl TrackKind {
     /// `true` when this track's instrument can be chosen — swapped from the registry or a
     /// plugin file.
     ///
-    /// A singer track also *has* an instrument, but only as a preview: what the track is for is
+    /// Both melodic and drum tracks answer yes; use [`Self::is_drum`] to distinguish their
+    /// editors and generation presets. A singer track also *has* an instrument, but only as a
+    /// preview: what the track is for is
     /// chosen by its kind, not by a picker. Code that is about notes rather than about the
     /// instrument wants [`Self::holds_notes`] instead.
     pub fn is_instrument(&self) -> bool {
-        matches!(self, TrackKind::Instrument(_))
+        matches!(self, TrackKind::Instrument(_) | TrackKind::Drum(_))
     }
 
-    /// `true` when this track holds note clips — an instrument track or a singer track.
+    /// `true` when this track holds percussion rather than a pitched instrument part.
+    pub fn is_drum(&self) -> bool {
+        matches!(self, TrackKind::Drum(_))
+    }
+
+    /// `true` when this track holds note clips — melodic, drum or singer material.
     ///
-    /// This is the question that decides whether a note clip may sit on a track, and it is asked
-    /// directly rather than through a pattern match at each call site so that a clip can move
-    /// between the two kinds that answer yes: a melody sketched on an instrument track keeps its
-    /// notes when it is dragged onto a singer track to be given words.
+    /// Shared editing and playback use this accessor. Clip transfers also check [`Self::is_drum`]
+    /// so percussion remains on drum tracks; a melody can move between a melodic instrument and
+    /// a singer track to be given words.
     pub fn holds_notes(&self) -> bool {
-        matches!(self, TrackKind::Instrument(_) | TrackKind::Singer(_))
+        matches!(
+            self,
+            TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_)
+        )
     }
 
     /// `true` when this track is a singer track.
@@ -303,18 +315,18 @@ impl TrackKind {
         matches!(self, TrackKind::Bus)
     }
 
-    /// The instrument track data, when this is one.
+    /// Shared instrument source data for either a melodic or a drum track.
     pub fn as_instrument(&self) -> Option<&InstrumentTrack> {
         match self {
-            TrackKind::Instrument(track) => Some(track),
+            TrackKind::Instrument(track) | TrackKind::Drum(track) => Some(track),
             _ => None,
         }
     }
 
-    /// The instrument track data mutably, when this is one.
+    /// Mutable instrument source data for either a melodic or a drum track.
     pub fn as_instrument_mut(&mut self) -> Option<&mut InstrumentTrack> {
         match self {
-            TrackKind::Instrument(track) => Some(track),
+            TrackKind::Instrument(track) | TrackKind::Drum(track) => Some(track),
             _ => None,
         }
     }
@@ -337,12 +349,12 @@ impl TrackKind {
 
     /// The note clips this track holds, when it holds notes at all.
     ///
-    /// One accessor for both kinds that do, because almost everything done to a note clip —
+    /// One accessor for all kinds that do, because almost everything done to a note clip —
     /// finding it, moving it, splitting it, playing it — is the same done on either, and a match
     /// at each of those sites would be a place for the singer arm to be forgotten.
     pub fn note_clips(&self) -> Option<&Vec<MidiClip>> {
         match self {
-            TrackKind::Instrument(track) => Some(&track.clips),
+            TrackKind::Instrument(track) | TrackKind::Drum(track) => Some(&track.clips),
             TrackKind::Singer(track) => Some(&track.clips),
             _ => None,
         }
@@ -351,7 +363,7 @@ impl TrackKind {
     /// The note clips mutably, when this track holds notes at all.
     pub fn note_clips_mut(&mut self) -> Option<&mut Vec<MidiClip>> {
         match self {
-            TrackKind::Instrument(track) => Some(&mut track.clips),
+            TrackKind::Instrument(track) | TrackKind::Drum(track) => Some(&mut track.clips),
             TrackKind::Singer(track) => Some(&mut track.clips),
             _ => None,
         }
@@ -411,7 +423,7 @@ impl Track {
             // The *sounding* end of each clip, repeats included. A track whose last clip is
             // looped goes on playing past the clip's own end, and an export measured from that
             // end would cut the repeats off the file.
-            TrackKind::Instrument(_) | TrackKind::Singer(_) => self
+            TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => self
                 .kind
                 .note_clips()
                 .into_iter()
@@ -476,6 +488,25 @@ impl Project {
         self.push_track(
             name,
             TrackKind::Instrument(InstrumentTrack {
+                instrument_id: instrument_id.into(),
+                instrument_state: PluginState::empty(),
+                clips: Vec::new(),
+                file: None,
+            }),
+        )
+    }
+
+    /// Appends a drum track playing `instrument_id`.
+    ///
+    /// Its kind remains drum when its instrument or preset is replaced.
+    pub fn add_drum_track(
+        &mut self,
+        name: impl Into<String>,
+        instrument_id: impl Into<String>,
+    ) -> TrackId {
+        self.push_track(
+            name,
+            TrackKind::Drum(InstrumentTrack {
                 instrument_id: instrument_id.into(),
                 instrument_state: PluginState::empty(),
                 clips: Vec::new(),
@@ -566,7 +597,7 @@ impl Project {
             send_ids.push((old, send.id));
         }
         match &mut copy.kind {
-            TrackKind::Instrument(_) | TrackKind::Singer(_) => {
+            TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => {
                 // Reserved one by one rather than inside the loop below: the clip list borrows
                 // `copy`, not `self`, so the allocator is free — but the accessor is matched here
                 // so a future kind that holds clips cannot fall through to "no ids to reissue".
@@ -674,6 +705,52 @@ mod tests {
     use super::*;
     use crate::project::Note;
     use crate::project::fixtures::{bussed_project, demo_project};
+
+    #[test]
+    fn drum_track_lifecycle_keeps_the_source_and_score() {
+        let mut project = Project::new("Kit", 48_000.0);
+        let track = project.add_drum_track("Drums", "kit");
+        let clip = project
+            .add_midi_clip(track, "Hits", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        project
+            .midi_clip_mut(clip)
+            .unwrap()
+            .notes
+            .push(Note::new(38, Ticks::QUARTER, Ticks(90)));
+        let notes = project.midi_clip(clip).unwrap().1.notes.clone();
+        assert!(project.set_hosted_instrument(
+            track,
+            "clap:custom",
+            AssetPath::external("/plugins/kit.clap")
+        ));
+        assert!(project.track(track).unwrap().kind.is_drum());
+        assert!(
+            project
+                .track(track)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .is_hosted()
+        );
+        assert_eq!(project.midi_clip(clip).unwrap().1.notes, notes);
+        let duplicate = project.duplicate_track(track).unwrap();
+        assert!(project.track(duplicate).unwrap().kind.is_drum());
+        let copied = &project.track(duplicate).unwrap().kind.note_clips().unwrap()[0];
+        assert_ne!(copied.id, clip);
+        assert_eq!(copied.notes, notes);
+        assert_eq!(
+            project
+                .track(track)
+                .unwrap()
+                .end_tick(&project.tempo_map, project.sample_rate),
+            Ticks::from_beats(4.0)
+        );
+        let melodic = project.add_instrument_track("Keys", "keys");
+        assert!(!project.move_clip_to_track(clip, melodic));
+        assert_eq!(project.track_of_clip(clip), Some(track));
+    }
 
     #[test]
     fn a_singer_track_written_before_voices_existed_still_opens() {

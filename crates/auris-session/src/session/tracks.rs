@@ -62,6 +62,54 @@ impl Session {
         self.add_instrument_track(name, &instrument)
     }
 
+    /// Appends a drum track using a registered instrument.
+    pub fn add_drum_track(
+        &mut self,
+        name: impl Into<String>,
+        instrument_id: &str,
+    ) -> Result<TrackId, SessionError> {
+        if !self.registry.has_instrument(instrument_id) {
+            return Err(SessionError::UnknownPlugin(instrument_id.to_string()));
+        }
+        self.record(Edit::AddDrumTrack);
+        let id = self.project.add_drum_track(name, instrument_id);
+        if instrument_id == auris_synth::DrumKit::ID {
+            use auris_core::project::{DrumMap, DrumRole};
+            let map = DrumMap {
+                voices: [
+                    (DrumRole::Kick, 36),
+                    (DrumRole::Snare, 38),
+                    (DrumRole::ClosedHat, 42),
+                    (DrumRole::OpenHat, 46),
+                    (DrumRole::Crash, 49),
+                    (DrumRole::Tom, 47),
+                ]
+                .into_iter()
+                .collect(),
+            };
+            map.store(
+                &mut self
+                    .project
+                    .track_mut(id)
+                    .unwrap()
+                    .kind
+                    .as_instrument_mut()
+                    .unwrap()
+                    .instrument_state,
+            );
+        }
+        self.invalidate_graph();
+        Ok(id)
+    }
+
+    /// Appends a drum track using the built-in kit.
+    pub fn add_default_drum_track(
+        &mut self,
+        name: impl Into<String>,
+    ) -> Result<TrackId, SessionError> {
+        self.add_drum_track(name, auris_synth::DrumKit::ID)
+    }
+
     /// Appends an audio track.
     pub fn add_audio_track(&mut self, name: impl Into<String>) -> TrackId {
         self.record(Edit::AddAudioTrack);
@@ -418,6 +466,7 @@ impl Session {
             if inner.instrument_id != SAMPLER_ID {
                 inner.instrument_id = SAMPLER_ID.to_string();
                 inner.instrument_state = PluginState::empty();
+                inner.file = None;
                 swapped = true;
             }
             store_preset(&mut inner.instrument_state, preset);
@@ -874,6 +923,51 @@ mod tests {
             .and_then(|t| t.kind.as_instrument())
             .expect("an instrument track");
         assert_eq!(inner.instrument_id, SAMPLER_ID);
+        assert_eq!(session.track_preset(track), Some(preset));
+    }
+
+    #[test]
+    fn drum_kind_and_notes_survive_soundfont_and_builtin_source_changes_and_undo() {
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Hits", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(clip, auris_core::Note::new(38, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let notes = session.midi_clip(clip).unwrap().notes.clone();
+        let font = named_font(&mut session, "Kit library");
+        assert!(session.project.set_hosted_instrument(
+            track,
+            "clap:kit",
+            auris_core::AssetPath::external("/plugins/kit.clap")
+        ));
+        let preset = PresetRef {
+            font,
+            bank: 128,
+            patch: 0,
+        };
+        session.set_track_preset(track, preset).unwrap();
+        assert!(session.project.track(track).unwrap().kind.is_drum());
+        assert!(
+            !session
+                .project
+                .track(track)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .is_hosted()
+        );
+        assert_eq!(session.track_preset(track), Some(preset));
+        session
+            .set_track_instrument(track, auris_synth::NoiseDrum::ID)
+            .unwrap();
+        assert!(session.project.track(track).unwrap().kind.is_drum());
+        assert_eq!(session.midi_clip(clip).unwrap().notes, notes);
+        session.undo();
+        assert!(session.project.track(track).unwrap().kind.is_drum());
         assert_eq!(session.track_preset(track), Some(preset));
     }
 

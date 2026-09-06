@@ -125,7 +125,11 @@ impl Session {
                 DRUM_CHANNEL => drums.clone(),
                 _ => fallback.clone(),
             };
-            let track_id = project.add_instrument_track(&track.name, instrument);
+            let track_id = if track.channel == DRUM_CHANNEL {
+                project.add_drum_track(&track.name, instrument)
+            } else {
+                project.add_instrument_track(&track.name, instrument)
+            };
             // One clip per track, spanning the material rather than the song: a part that does not
             // start until bar forty gets a clip at bar forty, not forty bars of empty clip with
             // its notes at the far end.

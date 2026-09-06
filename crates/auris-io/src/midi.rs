@@ -380,13 +380,20 @@ pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
 fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize)> {
     let mut tracks = vec![conductor_track(project)?];
     let mut count = 0;
-    for (index, track) in project.tracks.iter().enumerate() {
+    let mut melodic_index = 0_u8;
+    for track in &project.tracks {
         let Some(instrument) = track.kind.as_instrument() else {
             continue;
         };
-        // Channel 16 is not a limit anybody hits here, but wrapping keeps a seventeenth track
-        // playing rather than dropping it, and format 1 puts each track in its own chunk anyway.
-        let channel = u4::new((index % 16) as u8);
+        // Reserve channel 10 for drums so a MIDI round trip preserves percussion identity.
+        // Melodic tracks wrap around the remaining fifteen channels.
+        let channel = u4::new(if track.kind.is_drum() {
+            9
+        } else {
+            let channel = melodic_index + u8::from(melodic_index >= 9);
+            melodic_index = (melodic_index + 1) % 15;
+            channel
+        });
         let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
         for clip in &instrument.clips {
             if clip.muted {
@@ -1020,6 +1027,74 @@ mod tests {
     fn round_trip(project: &Project) -> MidiImport {
         let bytes = write_midi_bytes(project).expect("writable");
         read_midi_bytes(&bytes).expect("readable")
+    }
+
+    #[test]
+    fn drum_tracks_export_on_channel_ten_and_melodic_tracks_skip_it() {
+        let mut project = Project::new("Channels", 48_000.0);
+        for index in 0..17 {
+            let track = if index == 2 {
+                project.add_drum_track("Kit", "kit")
+            } else {
+                project.add_instrument_track(format!("Melodic {index}"), "synth")
+            };
+            let clip = project
+                .add_midi_clip(track, "Note", Ticks::ZERO, Ticks::QUARTER)
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                38,
+                Ticks::ZERO,
+                Ticks::QUARTER,
+            ));
+        }
+        let imported = round_trip(&project);
+        assert_eq!(imported.tracks.len(), 17);
+        for track in imported.tracks {
+            assert_eq!(track.channel == 9, track.name == "Kit");
+        }
+    }
+
+    #[test]
+    fn interleaved_drum_tracks_do_not_consume_melodic_midi_channels() {
+        let mut project = Project::new("Channels", 48_000.0);
+        project.add_audio_track("Audio");
+        project.add_bus_track("Bus");
+        for index in 0..18 {
+            let track = if matches!(index, 1 | 7 | 13) {
+                project.add_drum_track(format!("Kit {index}"), "kit")
+            } else {
+                project.add_instrument_track(format!("Melodic {index}"), "synth")
+            };
+            let clip = project
+                .add_midi_clip(track, "Note", Ticks::ZERO, Ticks::QUARTER)
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                38,
+                Ticks::ZERO,
+                Ticks::QUARTER,
+            ));
+        }
+        let imported = round_trip(&project);
+        assert_eq!(imported.tracks.len(), 18);
+        let drums: Vec<_> = imported
+            .tracks
+            .iter()
+            .filter(|track| track.name.starts_with("Kit "))
+            .collect();
+        assert_eq!(drums.len(), 3);
+        assert!(drums.iter().all(|track| track.channel == 9));
+        let melodic: Vec<_> = imported
+            .tracks
+            .iter()
+            .filter(|track| track.name.starts_with("Melodic "))
+            .collect();
+        assert_eq!(melodic.len(), 15);
+        let channels: std::collections::BTreeSet<_> =
+            melodic.iter().map(|track| track.channel).collect();
+        assert_eq!(
+            channels,
+            (0_u8..16).filter(|channel| *channel != 9).collect()
+        );
     }
 
     #[test]

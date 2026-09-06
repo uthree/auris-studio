@@ -27,8 +27,8 @@ pub enum MenuCommand {
     UseDrumMapForGeneration(TrackId),
     /// Apply a measured map to future generation and tagged generated drum clips.
     ApplyDrumMap(TrackId),
-    /// Cancel the supervised drum probe.
-    CancelDrumAnalysis,
+    /// Cancel this track's queued or active drum probe.
+    CancelDrumAnalysis(TrackId),
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -162,6 +162,8 @@ pub enum MenuCommand {
     },
     /// Append an instrument track.
     NewInstrumentTrack,
+    /// Append a drum track.
+    NewDrumTrack,
     /// Append a singer track.
     NewSingerTrack,
     /// Append an audio track.
@@ -730,7 +732,7 @@ impl AurisApp {
             MenuCommand::AnalyzeDrums(track) => self.begin_drum_analysis(track, cx),
             MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),
             MenuCommand::UseDrumMapForGeneration(track) => self.apply_measured_drums(track, false),
-            MenuCommand::CancelDrumAnalysis => self.cancel_drum_analysis(),
+            MenuCommand::CancelDrumAnalysis(track) => self.cancel_drum_analysis(track),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);
@@ -810,6 +812,7 @@ impl AurisApp {
             }
             MenuCommand::WriteLyrics { clip } => self.open_write_lyrics_prompt(clip),
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
+            MenuCommand::NewDrumTrack => self.add_drum_track(),
             MenuCommand::NewSingerTrack => self.add_singer_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
             MenuCommand::NewBusTrack => self.add_bus_track(),
@@ -1170,6 +1173,13 @@ impl AurisApp {
             }
             MenuCommand::DeleteNotes => self.delete_selection(),
             MenuCommand::TransposeNotes(semitones) => {
+                if self.editing_a_drum_clip() {
+                    if semitones.abs() == 1 {
+                        self.move_drum_selection(-semitones);
+                    }
+                    cx.notify();
+                    return;
+                }
                 let Some(clip) = self.selected_clip else {
                     return;
                 };

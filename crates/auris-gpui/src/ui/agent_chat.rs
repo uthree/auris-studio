@@ -1068,6 +1068,7 @@ impl AurisApp {
         }
         match self.session.reload_external_changes() {
             Ok(missing) => {
+                self.reset_drum_analysis();
                 self.agent_chat.pending_reload = None;
                 self.external_change = None;
                 self.resync_selection();

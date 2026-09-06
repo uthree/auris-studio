@@ -99,6 +99,18 @@ strings! {
     Volume { en: "Vol", ja: "音量" }
     Pan { en: "Pan", ja: "パン" }
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
+    TrackKindDrum { en: "Drums", ja: "ドラム" }
+    DrumEditor { en: "Drum Editor", ja: "ドラムエディター" }
+    DrumEditorHint { en: "Click to add a hit · Drag to move", ja: "クリックで打点を追加 · ドラッグで移動" }
+    DrumEditorAllNotes { en: "All MIDI notes", ja: "すべてのMIDIノート" }
+    DrumEditorMappedNotes { en: "Kit voices", ja: "キットの音色" }
+    DrummerHeading { en: "Drummer", ja: "ドラマー" }
+    DrummerComplexity { en: "Complexity", ja: "複雑さ" }
+    DrummerSimple { en: "Simple", ja: "シンプル" }
+    DrummerComplex { en: "Complex", ja: "複雑" }
+    DrummerSoft { en: "Soft", ja: "弱く" }
+    DrummerLoud { en: "Loud", ja: "強く" }
+    DrummerKitPieces { en: "Kit pieces", ja: "キット構成" }
     TrackKindSinger { en: "Singer", ja: "シンガー" }
     TrackKindAudio { en: "Audio", ja: "オーディオ" }
     TrackKindBus { en: "Bus", ja: "バス" }
@@ -431,6 +443,7 @@ strings! {
     CmdRedo { en: "Redo", ja: "やり直す" }
     CmdDeleteSelection { en: "Delete Selection", ja: "選択範囲を削除" }
     CmdAddInstrumentTrack { en: "Add Instrument Track", ja: "ソフト音源トラックを追加" }
+    CmdAddDrumTrack { en: "Add Drum Track", ja: "ドラムトラックを追加" }
     CmdAddAudioTrack { en: "Add Audio Track", ja: "オーディオトラックを追加" }
     CmdAddSingerTrack { en: "Add Singer Track", ja: "シンガートラックを追加" }
     CmdAddBusTrack { en: "Add Bus", ja: "バスを追加" }
@@ -527,6 +540,7 @@ strings! {
     MenuRenameClip { en: "Rename Clip…", ja: "クリップ名を変更…" }
     MenuAddEffect { en: "Add Effect…", ja: "エフェクトを追加…" }
     MenuNewInstrumentTrack { en: "New Instrument Track", ja: "新規ソフト音源トラック" }
+    MenuNewDrumTrack { en: "New Drum Track", ja: "新規ドラムトラック" }
     MenuNewSingerTrack { en: "New Singer Track", ja: "新規シンガートラック" }
     MenuNewAudioTrack { en: "New Audio Track", ja: "新規オーディオトラック" }
     MenuNewBusTrack { en: "New Bus", ja: "新規バス" }
@@ -551,6 +565,7 @@ strings! {
     MenuQuantizeBoth { en: "Quantise Both", ja: "両方をクオンタイズ" }
     MenuCycleOverClip { en: "Cycle over Clip", ja: "クリップをサイクル範囲に" }
     MenuEditInPianoRoll { en: "Edit in Piano Roll", ja: "ピアノロールで編集" }
+    MenuEditInDrumEditor { en: "Edit in Drum Editor", ja: "ドラムエディターで編集" }
     MenuNewClipHere { en: "New Clip Here", ja: "ここに新規クリップ" }
     MenuCycleStartHere { en: "Cycle Start Here", ja: "ここをサイクル開始に" }
     MenuCycleEndHere { en: "Cycle End Here", ja: "ここをサイクル終了に" }
@@ -564,6 +579,9 @@ strings! {
     MenuOctaveDown { en: "Octave Down", ja: "1 オクターブ下げる" }
     MenuSemitoneUp { en: "Semitone Up", ja: "半音上げる" }
     MenuSemitoneDown { en: "Semitone Down", ja: "半音下げる" }
+    MenuDrumVoiceUp { en: "Previous kit voice", ja: "上の音色へ移動" }
+    MenuDrumVoiceDown { en: "Next kit voice", ja: "下の音色へ移動" }
+    MenuAddDrumHitHere { en: "Add hit here", ja: "ここに打点を追加" }
     MenuAddNoteHere { en: "Add Note Here", ja: "ここにノートを追加" }
     MenuSelectAllNotes { en: "Select All Notes", ja: "すべてのノートを選択" }
     MenuEnabled { en: "Enabled", ja: "有効" }
@@ -952,6 +970,7 @@ strings! {
     CmdCrossfade { en: "crossfade the clips", ja: "クリップをクロスフェード" }
     EditSetClipTempo { en: "the clip's tempo", ja: "クリップのテンポ" }
     EditAddInstrumentTrack { en: "adding an instrument track", ja: "ソフト音源トラックの追加" }
+    EditAddDrumTrack { en: "adding a drum track", ja: "ドラムトラックの追加" }
     EditAddSingerTrack { en: "adding a singer track", ja: "シンガートラックの追加" }
     EditAddAudioTrack { en: "adding an audio track", ja: "オーディオトラックの追加" }
     EditAddBusTrack { en: "adding a bus", ja: "バスの追加" }
@@ -1022,19 +1041,31 @@ strings! {
     CountIn { en: "Count-In", ja: "カウントイン" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
-    MenuAnalyzeDrums { en: "Analyze Drum Sounds", ja: "ドラムの音を解析" }
-    MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "測定したドラム割り当てを使う" }
+    MenuAnalyzeDrums { en: "Rescan Drum Sounds", ja: "ドラム音を再分析" }
+    MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "分析結果のドラム割り当てを使う" }
     MenuUseDrumMapForGeneration { en: "Use Mapping for New Clips Only", ja: "新しく生成するクリップだけに使う" }
-    MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム解析を中断" }
-    DrumAnalysisRunning { en: "Measuring drum sounds…", ja: "ドラムの音を測定中…" }
-    DrumAnalysisReady { en: "Drum measurements ready", ja: "ドラムの測定が完了しました" }
-    DrumAnalysisObsolete { en: "The instrument changed during measurement. Analyze its sounds again.", ja: "測定中に音源が変更されました。もう一度解析してください。" }
+    MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム音の分析をキャンセル" }
+    MenuRetryDrumAnalysis { en: "Retry Drum Sound Analysis", ja: "ドラム音の分析を再試行" }
+    DrumAnalysisQueued { en: "Drum sound analysis queued", ja: "ドラム音の分析待ち" }
+    DrumAnalysisRunning { en: "Analyzing drum sounds…", ja: "ドラム音を分析中…" }
+    DrumAnalysisReady { en: "Drum sound analysis ready", ja: "ドラム音の分析が完了しました" }
+    DrumAnalysisFailed { en: "Drum sound analysis failed", ja: "ドラム音の分析に失敗しました" }
+    DrumAnalysisCancelled { en: "Drum sound analysis cancelled", ja: "ドラム音の分析をキャンセルしました" }
+    DrumAnalysisObsolete { en: "The instrument changed. These measurements are out of date.", ja: "音源が変更されたため、この分析結果は使用できません。" }
     DrumFit { en: "fit", ja: "適合度" }
     DrumNoMatch { en: "no matching sound", ja: "該当音なし" }
     DrumClosedHat { en: "Closed hat", ja: "クローズドハット" }
     DrumOpenHat { en: "Open hat", ja: "オープンハット" }
     DrumTom { en: "Tom", ja: "タム" }
     EditApplyDrumMap { en: "Apply Drum Mapping", ja: "ドラム割り当てを適用" }
+    DrumAssignments { en: "Drum assignments", ja: "ドラムの割り当て" }
+    DrumAssignmentsHint { en: "Choose the sounds for new generated clips. Existing clips keep their notes.", ja: "新しく生成するクリップで使う音を指定します。既存のクリップは変更されません。" }
+    DrumAddAssignment { en: "Assign…", ja: "割り当て…" }
+    DrumApplyAssignment { en: "Assign", ja: "割り当て" }
+    DrumClearAssignment { en: "Clear", ja: "解除" }
+    DrumMidiNote { en: "MIDI note (0–127)", ja: "MIDIノート番号（0〜127）" }
+    HintMidiNote { en: "Enter a whole MIDI note number from 0 to 127.", ja: "MIDIノート番号を0〜127の整数で入力してください。" }
+    EditSetDrumAssignment { en: "Change Drum Assignment", ja: "ドラムの割り当てを変更" }
     MenuTrackColor { en: "Colour", ja: "カラー" }
     MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }

@@ -80,7 +80,7 @@ impl AurisApp {
                 ),
             false => menu,
         };
-        let menu = if entry.kind.as_instrument().is_some() {
+        let menu = if entry.kind.is_drum() {
             menu.item(
                 self.t(Key::MenuAnalyzeDrums),
                 MenuCommand::AnalyzeDrums(track),
@@ -159,6 +159,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewDrumTrack), MenuCommand::NewDrumTrack)
             .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
@@ -251,6 +252,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewDrumTrack), MenuCommand::NewDrumTrack)
             .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
@@ -263,6 +265,7 @@ impl AurisApp {
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
             )
+            .item(self.t(Key::MenuNewDrumTrack), MenuCommand::NewDrumTrack)
             .item(self.t(Key::MenuNewSingerTrack), MenuCommand::NewSingerTrack)
             .item(self.t(Key::MenuNewAudioTrack), MenuCommand::NewAudioTrack)
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
@@ -725,6 +728,27 @@ mod tests {
                 MenuEntry::Separator => None,
             })
             .collect()
+    }
+
+    #[gpui::test]
+    fn drum_analysis_is_offered_only_on_drum_tracks(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let drum = this.session.add_default_drum_track("Drums").unwrap();
+            let instrument = this.session.add_default_instrument_track("Keys").unwrap();
+            let singer = this.session.add_singer_track("Singer");
+            let audio = this.session.add_audio_track("Audio");
+            let bus = this.session.add_bus_track("Bus");
+            let at = point(px(120.), px(80.));
+            for track in [drum, instrument, singer, audio, bus] {
+                let menu = this.track_menu(at, track);
+                let offered = menu.entries.iter().any(|entry| {
+                    matches!(entry, MenuEntry::Item(item)
+                        if item.enabled && item.command == MenuCommand::AnalyzeDrums(track))
+                });
+                assert_eq!(offered, track == drum);
+            }
+        });
     }
 
     #[gpui::test]

@@ -75,6 +75,16 @@ impl AurisApp {
             .clip_extent(clip)
             .is_some_and(|(start, end)| splittable(playhead, start, end));
         let is_midi = self.session.midi_clip(clip).is_some();
+        let is_drum = self
+            .project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .is_some_and(|track| track.kind.is_drum());
+        let has_melody = !is_drum
+            && self
+                .session
+                .midi_clip(clip)
+                .is_some_and(|midi| !midi.notes.is_empty());
 
         let menu = ContextMenu::new(anchor, name)
             .item(self.t(Key::MenuCut), MenuCommand::CutClips(clip))
@@ -166,24 +176,24 @@ impl AurisApp {
             )
             .item_if(
                 is_midi,
-                self.t(Key::MenuEditInPianoRoll),
+                self.t(if is_drum {
+                    Key::MenuEditInDrumEditor
+                } else {
+                    Key::MenuEditInPianoRoll
+                }),
                 MenuCommand::EditClip(clip),
             )
             // Only where there is a melody to read. A clip with no notes in it has no harmony,
             // and the command would refuse — which is a row that exists to say no.
             .item_if(
-                self.session
-                    .midi_clip(clip)
-                    .is_some_and(|midi| !midi.notes.is_empty()),
+                has_melody,
                 self.t(Key::MenuAccompany),
                 MenuCommand::AccompanyClip(clip),
             )
             // The other direction: this clip's line becomes the tune the composer restates.
             // Gated the same way, because a clip with no notes has no line to take.
             .item_if(
-                self.session
-                    .midi_clip(clip)
-                    .is_some_and(|midi| !midi.notes.is_empty()),
+                has_melody,
                 self.t(Key::MenuComposeFromMotif),
                 MenuCommand::TakeClipAsMotif(clip),
             );
@@ -311,6 +321,7 @@ impl AurisApp {
         // The lyric rows, only where there are words to edit: on an instrument track they would
         // be three rows about a feature the track does not have.
         let singing = self.editing_a_singer_clip();
+        let drumming = self.editing_a_drum_clip();
         let manual_phonemes = self.clip_accepts_phonemes(clip);
         // Which ornaments the note under the pointer wears, for the toggle rows below.
         let worn = under_pointer
@@ -447,23 +458,31 @@ impl AurisApp {
         )
         .separator()
         .item_if(
-            has_selection,
+            has_selection && !drumming,
             self.t(Key::MenuOctaveUp),
             MenuCommand::TransposeNotes(12),
         )
         .item_if(
-            has_selection,
+            has_selection && !drumming,
             self.t(Key::MenuOctaveDown),
             MenuCommand::TransposeNotes(-12),
         )
         .item_if(
             has_selection,
-            self.t(Key::MenuSemitoneUp),
+            self.t(if drumming {
+                Key::MenuDrumVoiceUp
+            } else {
+                Key::MenuSemitoneUp
+            }),
             MenuCommand::TransposeNotes(1),
         )
         .item_if(
             has_selection,
-            self.t(Key::MenuSemitoneDown),
+            self.t(if drumming {
+                Key::MenuDrumVoiceDown
+            } else {
+                Key::MenuSemitoneDown
+            }),
             MenuCommand::TransposeNotes(-1),
         )
         .separator()
@@ -476,12 +495,12 @@ impl AurisApp {
             MenuCommand::QuantizeNotes(Quantize::Starts),
         )
         .item_if(
-            has_selection,
+            has_selection && !drumming,
             self.t(Key::MenuQuantizeLengths),
             MenuCommand::QuantizeNotes(Quantize::Lengths),
         )
         .item_if(
-            has_selection,
+            has_selection && !drumming,
             self.t(Key::MenuQuantizeBoth),
             MenuCommand::QuantizeNotes(Quantize::Both),
         )
@@ -498,7 +517,11 @@ impl AurisApp {
         .separator()
         .item_if(
             under_pointer.is_none(),
-            self.t(Key::MenuAddNoteHere),
+            self.t(if drumming {
+                Key::MenuAddDrumHitHere
+            } else {
+                Key::MenuAddNoteHere
+            }),
             MenuCommand::NewNote { pitch, start },
         )
         .item(self.t(Key::MenuSelectAllNotes), MenuCommand::SelectAllNotes)

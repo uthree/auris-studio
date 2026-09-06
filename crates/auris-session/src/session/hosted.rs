@@ -120,9 +120,17 @@ struct HostedSlot {
     /// asked at the moment of drawing because asking is `&mut` — the plugin may compute a value —
     /// and drawing is not.
     values: Vec<Option<f32>>,
+    /// Native editor/state changes observed without serializing the plugin.
+    source_revision: u64,
 }
 
 impl HostedPlugins {
+    pub(super) fn drum_source_revision(&self, track: TrackId) -> Option<u64> {
+        let slot = self.instruments.get(&track)?;
+        slot.plugin()?;
+        Some(slot.source_revision)
+    }
+
     /// Snapshots the actual instrument for an independent measurement worker.
     pub(super) fn drum_probe_state(
         &mut self,
@@ -509,6 +517,9 @@ impl HostedSlot {
             // problem: without this the title bar says saved, autosave writes nothing, and the
             // afternoon's work is inside a plugin that is about to be dropped.
             dirty |= requests.dirty;
+            if requests.dirty || requests.rescan_values || requests.restart {
+                self.source_revision = self.source_revision.wrapping_add(1);
+            }
             // `rescan_values` is deliberately not acted on. The values are read afresh every time
             // a panel is drawn — see `Session::effect_descriptors` — so being told they changed
             // asks for something that has already happened. A `restart` has no answer here yet,
@@ -701,6 +712,7 @@ fn fit<'a, K: Ord + Copy>(
         editor: false,
         sidechain: false,
         values: Vec::new(),
+        source_revision: 0,
     };
     let slot = slots.entry(key).or_insert_with(fresh);
     if slot.clap_id != clap_id || slot.file != file {
@@ -1162,6 +1174,7 @@ mod tests {
             editor: false,
             sidechain: false,
             values: Vec::new(),
+            source_revision: 0,
         }
     }
 
@@ -1472,6 +1485,32 @@ mod tests {
             .libraries
             .insert(file.clone(), instrument_library());
         (session, file)
+    }
+
+    #[test]
+    fn a_native_instrument_edit_changes_only_its_drum_analysis_key_after_poll() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let other = session.add_default_drum_track("Other kit").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        session.poll();
+        let before = session.drum_analysis_source_key(track).unwrap();
+        let unrelated = session.drum_analysis_source_key(other).unwrap();
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .pretend_the_state_changed();
+        assert_eq!(session.drum_analysis_source_key(track), Some(before));
+        session.poll();
+        let changed = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(changed, before);
+        assert_eq!(session.drum_analysis_source_key(other), Some(unrelated));
+        session.poll();
+        assert_eq!(session.drum_analysis_source_key(track), Some(changed));
     }
 
     #[test]

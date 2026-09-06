@@ -18,7 +18,7 @@ use crate::app::AurisApp;
 use super::{ContextMenu, MenuCommand};
 
 impl AurisApp {
-    /// Every preset, aimed at one place on one track.
+    /// The presets appropriate to this track, aimed at one place on its timeline.
     pub(crate) fn preset_picker_menu(
         &self,
         anchor: Point<Pixels>,
@@ -26,7 +26,10 @@ impl AurisApp {
         start: Ticks,
     ) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuGenerateClip));
-        for preset in ClipPreset::ALL {
+        let Some(kind) = self.project().track(track).map(|track| &track.kind) else {
+            return menu;
+        };
+        for preset in presets_for_track(kind) {
             menu = menu.item(
                 self.t(preset_key(preset)),
                 MenuCommand::GenerateClip {
@@ -46,7 +49,15 @@ impl AurisApp {
     pub(crate) fn clip_preset_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
         let current = self.session.clip_recipe(clip).map(|recipe| recipe.preset);
         let mut menu = ContextMenu::new(anchor, self.t(Key::PartPreset));
-        for preset in ClipPreset::ALL {
+        let Some(kind) = self
+            .project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .map(|track| &track.kind)
+        else {
+            return menu;
+        };
+        for preset in presets_for_track(kind) {
             menu = menu.toggle(
                 self.t(preset_key(preset)),
                 MenuCommand::SetClipPreset { clip, preset },
@@ -334,6 +345,13 @@ impl AurisApp {
     }
 }
 
+/// Drum writers belong to drum tracks; pitched writers belong to other MIDI tracks.
+fn presets_for_track(kind: &TrackKind) -> impl Iterator<Item = ClipPreset> + '_ {
+    ClipPreset::ALL
+        .into_iter()
+        .filter(|preset| kind.holds_notes() && preset.is_drums() == kind.is_drum())
+}
+
 /// The name a preset goes by on screen.
 pub(crate) fn preset_key(preset: ClipPreset) -> Key {
     match preset {
@@ -485,6 +503,27 @@ mod tests {
     }
 
     #[test]
+    fn preset_choices_respect_the_track_kind_even_with_the_same_instrument() {
+        let mut project = Project::new("Types", 48_000.0);
+        let melodic = project.add_instrument_track("Melodic", "auris.synth.drumkit");
+        let drum = project.add_drum_track("Drums", "auris.synth.drumkit");
+        let melodic: Vec<_> = presets_for_track(&project.track(melodic).unwrap().kind).collect();
+        let drum: Vec<_> = presets_for_track(&project.track(drum).unwrap().kind).collect();
+        assert_eq!(melodic.len(), 6);
+        assert!(melodic.iter().all(|preset| !preset.is_drums()));
+        assert_eq!(
+            drum,
+            vec![
+                ClipPreset::Drums,
+                ClipPreset::Kick,
+                ClipPreset::Snare,
+                ClipPreset::Hat
+            ]
+        );
+        assert!(presets_for_track(&TrackKind::Bus).next().is_none());
+    }
+
+    #[test]
     fn a_voice_menu_offers_only_assigned_rhythmic_writers() {
         let piece = compose(&SongSpec::default());
         let kit = piece
@@ -630,5 +669,42 @@ mod tests {
             generation_range(Some(cycle), Ticks::from_beats(20.0), &signatures),
             (cycle.0, cycle.1 - cycle.0)
         );
+    }
+
+    #[gpui::test]
+    fn the_drum_preset_menu_generates_notes_in_a_new_project(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let track = app.update(cx, |this, _| {
+            this.session.add_default_drum_track("Kit").unwrap()
+        });
+        for preset in ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| preset.is_drums())
+        {
+            let command = MenuCommand::GenerateClip {
+                track,
+                start: Ticks::ZERO,
+                preset,
+            };
+            app.update(cx, |this, _| {
+                assert!(this.project().harmony.is_empty());
+                let menu = this.preset_picker_menu(point(px(200.0), px(200.0)), track, Ticks::ZERO);
+                this.open_menu(menu);
+            });
+            crate::harness::paint(&app, cx);
+            crate::harness::choose(&app, cx, &command);
+            app.read_with(cx, |this, _| {
+                let clip = this
+                    .selected_midi_clip()
+                    .expect("generation selects its new clip");
+                assert!(
+                    !clip.notes.is_empty(),
+                    "{preset:?} must produce audible hits"
+                );
+                assert_eq!(clip.length, TimeSignature::default().ticks_per_bar() * 4);
+                assert_eq!(clip.recipe.as_ref().unwrap().preset, preset);
+                assert!(this.project().harmony.is_empty());
+            });
+        }
     }
 }

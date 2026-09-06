@@ -106,6 +106,13 @@ pub enum PromptTarget {
     /// track next door — and creeping up to it a pixel at a time is absurd. Clamped by the
     /// descriptor rather than refused: a range is what the control could have reached anyway.
     Param(ParamTarget),
+    /// A musical role's MIDI trigger note, used by future drum generation.
+    DrumAssignment {
+        /// The drum track whose instrument supplies the sound.
+        track: TrackId,
+        /// The musical role being assigned.
+        role: DrumRole,
+    },
     /// What tempo an audio clip's material was recorded at.
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
@@ -150,6 +157,8 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             // Not a clear, but the session's own refusal names the problem better than a
             // generic "cannot be empty" would.
             | PromptTarget::ComposeLyrics
+            // Let the numeric field report its own valid range for an empty answer.
+            | PromptTarget::DrumAssignment { .. }
             // No motif is an answer here — it hands the tune back to the seed.
             | PromptTarget::SongMotif
             // An unknown source tempo is a valid state and clearing the field is the way back.
@@ -186,6 +195,8 @@ pub enum Notation {
     Tempo,
     /// A level in decibels.
     Gain,
+    /// A whole MIDI note address from 0 to 127.
+    MidiNote,
     /// A place in the song, as bar, beat and hundredth.
     Position,
 }
@@ -210,6 +221,7 @@ impl PromptTarget {
             | PromptTarget::TempoFrom(_)
             | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
             PromptTarget::ClipGain(_) => Notation::Gain,
+            PromptTarget::DrumAssignment { .. } => Notation::MidiNote,
             PromptTarget::Position => Notation::Position,
             PromptTarget::Track(_)
             | PromptTarget::Clip(_)
@@ -266,6 +278,7 @@ impl Notation {
             Notation::Seed => Key::HintSeed,
             Notation::Tempo => Key::HintTempo,
             Notation::Gain => Key::HintClipGain,
+            Notation::MidiNote => Key::HintMidiNote,
             Notation::Position => Key::HintPosition,
         }
     }
@@ -286,6 +299,7 @@ impl Notation {
             Notation::Seed
             | Notation::Tempo
             | Notation::Gain
+            | Notation::MidiNote
             | Notation::Position
             | Notation::Motif => &[],
         }
@@ -1008,6 +1022,15 @@ impl AurisApp {
                     }
                 }
             }
+            PromptTarget::DrumAssignment { track, role } => {
+                let Some(note) = crate::ui::drum_assignments::parse_assignment_note(&text) else {
+                    self.reject_prompt(self.t(Key::HintMidiNote));
+                    return;
+                };
+                self.session
+                    .set_drum_assignment(track, role, Some(note))
+                    .map(|_| ())
+            }
             PromptTarget::ClipGain(clip) => match text.parse::<f32>() {
                 Ok(gain_db) if gain_db.is_finite() => self.session.set_clip_gain(clip, gain_db),
                 _ => {
@@ -1066,7 +1089,12 @@ impl AurisApp {
             }
         };
         if let Err(error) = outcome {
-            self.reject_prompt(self.failure(Key::Rename, &error));
+            let action = if matches!(target, PromptTarget::DrumAssignment { .. }) {
+                Key::EditSetDrumAssignment
+            } else {
+                Key::Rename
+            };
+            self.reject_prompt(self.failure(action, &error));
         } else {
             self.close_accepted_prompt();
         }
@@ -1322,6 +1350,9 @@ impl AurisApp {
                     // Rename over it would be answering a different question.
                     match target {
                         PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
+                        PromptTarget::DrumAssignment { .. } => {
+                            self.t(Key::DrumApplyAssignment).into()
+                        }
                         _ => self.t(Key::Rename).into(),
                     },
                     cx,
@@ -1926,6 +1957,10 @@ mod tests {
             PromptTarget::SignatureFrom(AT),
             PromptTarget::ClipGain(ClipId(1)),
             PromptTarget::Param(ParamTarget::MasterGain),
+            PromptTarget::DrumAssignment {
+                track: TrackId(1),
+                role: DrumRole::Kick,
+            },
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
             PromptTarget::SongTitle,
@@ -1955,6 +1990,7 @@ mod tests {
                 | PromptTarget::SignatureFrom(_)
                 | PromptTarget::ClipGain(_)
                 | PromptTarget::Param(_)
+                | PromptTarget::DrumAssignment { .. }
                 | PromptTarget::ClipSourceTempo(_)
                 | PromptTarget::Position
                 | PromptTarget::SongTitle
