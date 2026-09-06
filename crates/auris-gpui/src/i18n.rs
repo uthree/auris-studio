@@ -106,6 +106,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::SetSignaturePoint => Key::EditSetSignaturePoint,
         Edit::RemoveSignaturePoint => Key::EditRemoveSignaturePoint,
         Edit::AddInstrumentTrack => Key::EditAddInstrumentTrack,
+        Edit::AddDrumTrack => Key::EditAddDrumTrack,
         Edit::AddSingerTrack => Key::EditAddSingerTrack,
         Edit::AddAudioTrack => Key::EditAddAudioTrack,
         Edit::AddBusTrack => Key::EditAddBusTrack,
@@ -203,6 +204,7 @@ pub fn edit_key(edit: Edit) -> Key {
 pub fn track_kind_key(kind: &TrackKind) -> Key {
     match kind {
         TrackKind::Instrument(_) => Key::TrackKindInstrument,
+        TrackKind::Drum(_) => Key::TrackKindDrum,
         TrackKind::Singer(_) => Key::TrackKindSinger,
         TrackKind::Audio(_) => Key::TrackKindAudio,
         TrackKind::Bus => Key::TrackKindBus,

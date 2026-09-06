@@ -1,6 +1,28 @@
-# Drum sound measurement
+# Drum tracks
 
-Select an instrument track and choose **Analyze Drum Sounds** in its inspector or context menu.
+Drums have their own track kind, separate from melodic software instruments. Create a drum
+track to start with the built-in kit, or select a SoundFont or hosted instrument for that track.
+Changing its sound preserves its drum identity. Composed percussion and imported MIDI channel
+10 parts use drum tracks. Older projects migrate explicit percussion metadata while preserving
+their stored notes and performance.
+
+## Editing and generation
+
+Opening a drum clip shows the drum editor. Its rows use the track's authored assignments and
+the MIDI addresses present in the clip. Drum clips move and paste between drum tracks; melodic
+clips remain on melodic or singer tracks.
+
+Generated drum clips have a **Drummer** inspector. Move the performance pad to the right for
+greater complexity and upward for greater intensity; a drag is one undoable edit and keeps the
+take's seed. Choose a groove, adjust fills, swing and dynamics, or select another take. A kit
+with independent writers also exposes each rhythmic voice's complexity, intensity and take.
+Editing one writer preserves the other voices and their saved assignments. Authored fixed
+rhythms retain their rhythm while intensity remains adjustable. Freezing keeps the current
+notes and the drum track while removing the generation recipe.
+
+## Drum sound measurement
+
+Select a drum track and choose **Analyze Drum Sounds** in its inspector or context menu.
 The worker triggers every MIDI key at three velocities, twice each, and measures the resulting
 stereo audio. Built-in instruments, an explicitly selected SoundFont preset, and stateful hosted
 CLAP or VST3 instruments use the same analysis. The inspector shows proposed roles, numeric

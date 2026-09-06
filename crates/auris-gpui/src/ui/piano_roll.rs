@@ -980,7 +980,7 @@ impl AurisApp {
     /// Latched buttons rather than a menu, because a mode has to be visible from across the room:
     /// the whole hazard of a tool is reaching for it, being interrupted, and coming back to a
     /// pointer that no longer does what the hand expects.
-    fn tool_strip(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
+    pub(crate) fn tool_strip(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
         let theme = self.theme.clone();
         let current = self.tool;
         div()
@@ -1204,7 +1204,7 @@ impl AurisApp {
     /// Pressing a note that is not in the selection makes it the selection, which is what the
     /// pointer tool does and what Logic does: the gesture then acts on what was aimed at rather
     /// than on a chord left selected somewhere off-screen.
-    fn begin_velocity_drag(
+    pub(crate) fn begin_velocity_drag(
         &mut self,
         clip: ClipId,
         index: usize,
@@ -1660,7 +1660,7 @@ impl AurisApp {
     }
 }
 
-fn paint_clip_extent(
+pub(super) fn paint_clip_extent(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     view: &TimelineView,

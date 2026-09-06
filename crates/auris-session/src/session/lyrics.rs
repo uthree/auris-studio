@@ -174,7 +174,12 @@ impl Session {
             substituted: font.is_none() && !parts.is_empty(),
         };
         for (index, preset) in parts.iter().enumerate() {
-            let Ok(band) = self.add_default_instrument_track(part_name(*preset)) else {
+            let added = if preset.is_drums() {
+                self.add_default_drum_track(part_name(*preset))
+            } else {
+                self.add_default_instrument_track(part_name(*preset))
+            };
+            let Ok(band) = added else {
                 continue;
             };
             if let Some(font) = font {

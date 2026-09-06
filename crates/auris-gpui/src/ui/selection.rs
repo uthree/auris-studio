@@ -120,6 +120,9 @@ impl AurisApp {
 
     /// Notes the band covers, in the piano roll.
     fn notes_under(&self, band: Bounds<Pixels>) -> BTreeSet<usize> {
+        if self.editing_a_drum_clip() {
+            return self.drum_notes_under(band);
+        }
         let Some(clip) = self.selected_midi_clip() else {
             return BTreeSet::new();
         };

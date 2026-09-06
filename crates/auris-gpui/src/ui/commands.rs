@@ -250,6 +250,19 @@ impl AurisApp {
         }
     }
 
+    /// Appends a drum track with the built-in kit ready to play.
+    pub(crate) fn add_drum_track(&mut self) {
+        let count = self.project().tracks.len() + 1;
+        let name = messages::new_drum_track_name(self.language(), count);
+        match self.session.add_default_drum_track(name) {
+            Ok(id) => {
+                self.select_track(id);
+                self.reveal_track(id);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::CmdAddDrumTrack, &error)),
+        }
+    }
+
     /// Appends a singer track, previewing through the built-in vocal instrument.
     pub(crate) fn add_singer_track(&mut self) {
         let count = self.project().tracks.len() + 1;
@@ -2619,6 +2632,9 @@ impl AurisApp {
     /// Without this, selecting a bass part while the roll is parked two octaves up shows an
     /// empty grid and looks like the clip is missing.
     pub(crate) fn center_roll_on_selection(&mut self) {
+        if self.editing_a_drum_clip() {
+            return;
+        }
         let Some(range) = self
             .selected_midi_clip()
             .and_then(|clip| clip.pitch_range())

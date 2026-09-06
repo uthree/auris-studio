@@ -148,6 +148,12 @@ messages! {
         ja: "トラック {number}"
     }
 
+    /// Name given to a drum track the user just created.
+    fn new_drum_track_name(number: usize) {
+        en: "Drums {number}",
+        ja: "ドラム {number}"
+    }
+
     /// Name given to an audio track the user just created.
     fn new_audio_track_name(number: usize) {
         en: "Audio {number}",

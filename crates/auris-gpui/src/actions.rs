@@ -71,6 +71,8 @@ actions!(
         TogglePunch,
         /// Add an instrument track.
         AddInstrumentTrack,
+        /// Add a drum track.
+        AddDrumTrack,
         /// Add a singer track.
         AddSingerTrack,
         /// Choose the voice model a singer track is sung by.
@@ -464,6 +466,7 @@ bindable! {
         "edit.grid",            GroupEdit,      CmdCycleGrid,          "secondary-shift-g" => CycleGrid;
 
         "track.add_instrument", GroupTrack,     CmdAddInstrumentTrack, "secondary-t" => AddInstrumentTrack;
+        "track.add_drum",       GroupTrack,     CmdAddDrumTrack,       "" => AddDrumTrack;
         "track.add_singer",     GroupTrack,     CmdAddSingerTrack,     "secondary-alt-v" => AddSingerTrack;
         // No keystrokes: choosing a voice happens once per track, and a render that takes tens
         // of seconds is a command to reach for on purpose, the way balancing is.

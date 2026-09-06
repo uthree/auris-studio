@@ -162,6 +162,8 @@ pub enum MenuCommand {
     },
     /// Append an instrument track.
     NewInstrumentTrack,
+    /// Append a drum track.
+    NewDrumTrack,
     /// Append a singer track.
     NewSingerTrack,
     /// Append an audio track.
@@ -810,6 +812,7 @@ impl AurisApp {
             }
             MenuCommand::WriteLyrics { clip } => self.open_write_lyrics_prompt(clip),
             MenuCommand::NewInstrumentTrack => self.add_instrument_track(),
+            MenuCommand::NewDrumTrack => self.add_drum_track(),
             MenuCommand::NewSingerTrack => self.add_singer_track(),
             MenuCommand::NewAudioTrack => self.add_audio_track(),
             MenuCommand::NewBusTrack => self.add_bus_track(),
@@ -1170,6 +1173,13 @@ impl AurisApp {
             }
             MenuCommand::DeleteNotes => self.delete_selection(),
             MenuCommand::TransposeNotes(semitones) => {
+                if self.editing_a_drum_clip() {
+                    if semitones.abs() == 1 {
+                        self.move_drum_selection(-semitones);
+                    }
+                    cx.notify();
+                    return;
+                }
                 let Some(clip) = self.selected_clip else {
                     return;
                 };

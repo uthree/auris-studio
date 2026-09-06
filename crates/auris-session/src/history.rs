@@ -49,6 +49,8 @@ pub enum Edit {
     RemoveSignaturePoint,
     /// An instrument track was added.
     AddInstrumentTrack,
+    /// A drum track was added.
+    AddDrumTrack,
     /// A singer track was added.
     AddSingerTrack,
     /// An audio track was added.

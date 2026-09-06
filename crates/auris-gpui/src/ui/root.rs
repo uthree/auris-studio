@@ -203,6 +203,7 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_open_recent))
             .on_action(cx.listener(Self::on_show_about))
             .on_action(cx.listener(Self::on_add_instrument_track))
+            .on_action(cx.listener(Self::on_add_drum_track))
             .on_action(cx.listener(Self::on_add_singer_track))
             .on_action(cx.listener(Self::on_add_audio_track))
             .on_action(cx.listener(Self::on_add_bus_track))
@@ -441,6 +442,7 @@ impl AurisApp {
     ) -> AnyElement {
         match panel {
             Panel::Library => self.render_library(window, cx).into_any_element(),
+            Panel::PianoRoll if self.editing_a_drum_clip() => self.render_drum_editor(window, cx),
             Panel::PianoRoll => self.render_piano_roll(window, cx),
             Panel::Mixer => self.render_mixer(window, cx).into_any_element(),
             Panel::Inspector => self.render_inspector(window, cx).into_any_element(),
@@ -907,6 +909,17 @@ impl AurisApp {
                 };
                 let delta_ticks = self.snap_unless_held(tick - clip_start, event.modifiers)
                     - self.snap(origin_tick);
+                if self.editing_a_drum_clip() {
+                    self.drag_drum_notes(
+                        clip,
+                        origin_pitch,
+                        origins,
+                        delta_ticks,
+                        event.position.y - origin.y,
+                    );
+                    cx.notify();
+                    return;
+                }
                 let delta_pitch = pitch as i32 - origin_pitch as i32;
                 let _ = self
                     .session
@@ -1077,6 +1090,24 @@ impl AurisApp {
             } => {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_dial(clip, dial, start_fraction, delta);
+            }
+            Drag::DrummerPad { clip, bounds } => {
+                self.drag_drummer_pad(clip, bounds, event.position);
+            }
+            Drag::DrumVoiceDial {
+                clip,
+                voice,
+                dial,
+                start_fraction,
+                start_x,
+            } => {
+                self.drag_drum_voice_dial(
+                    clip,
+                    &voice,
+                    dial,
+                    start_fraction,
+                    f32::from(event.position.x - start_x),
+                );
             }
             Drag::PerformDial {
                 clip,
@@ -1822,6 +1853,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         self.add_instrument_track();
+        cx.notify();
+    }
+
+    fn on_add_drum_track(
+        &mut self,
+        _: &actions::AddDrumTrack,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.add_drum_track();
         cx.notify();
     }
 

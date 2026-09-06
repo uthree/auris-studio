@@ -14,7 +14,8 @@ use crate::app::AurisApp;
 use crate::ui::context_menu::MenuCommand;
 use crate::ui::widgets::{ButtonStyle, button};
 
-fn role_key(role: DrumRole) -> Key {
+/// The shared label for a measured sound or an independent kit writer.
+pub(crate) fn role_key(role: DrumRole) -> Key {
     match role {
         DrumRole::Kick => Key::RoleKick,
         DrumRole::Snare => Key::RoleSnare,
@@ -133,6 +134,13 @@ impl AurisApp {
         track: TrackId,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        if !self
+            .project()
+            .track(track)
+            .is_some_and(|track| track.kind.is_drum())
+        {
+            return Vec::new();
+        }
         let theme = self.theme.clone();
         let mut rows = Vec::new();
         let (label, action) = if self.drum_analysis_cancel.is_some() {
@@ -249,6 +257,32 @@ mod tests {
 
     use crate::harness::{click, open, paint};
 
+    #[gpui::test]
+    fn analysis_controls_follow_the_track_kind_not_the_loaded_instrument(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (melodic, drum) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            let melodic = this
+                .session
+                .add_instrument_track("Melodic", "auris.synth.drumkit")
+                .unwrap();
+            let drum = this
+                .session
+                .add_drum_track("Drums", "auris.synth.chiptune")
+                .unwrap();
+            this.select_track(melodic);
+            (melodic, drum)
+        });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("drum-measure").is_none());
+        app.update(cx, |this, cx| {
+            assert!(this.drum_analysis_rows(melodic, cx).is_empty());
+            this.select_track(drum);
+        });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("drum-measure").is_some());
+    }
+
     fn measure_one(this: &mut AurisApp, track: TrackId, note: u8) -> DrumKitAnalysis {
         // A known built-in instrument keeps this fixture bounded; the window uses a process.
         this.session
@@ -272,9 +306,10 @@ mod tests {
         let (app, cx) = open(cx);
         for measured_note in [0, 35] {
             let (track, clip, original, map) = app.update(cx, |this, _| {
+                this.panels = crate::dock::PanelLayout::default();
                 let track = this
                     .session
-                    .add_instrument_track("Kit", "auris.synth.drumkit")
+                    .add_drum_track("Kit", "auris.synth.drumkit")
                     .unwrap();
                 this.session
                     .stamp_named_progression("axis", Ticks::ZERO, 4)
@@ -348,7 +383,7 @@ mod tests {
         app.update(cx, |this, _| {
             let track = this
                 .session
-                .add_instrument_track("Kit", "auris.synth.drumkit")
+                .add_drum_track("Kit", "auris.synth.drumkit")
                 .unwrap();
             let report = measure_one(this, track, 0);
             let cancel = Arc::new(AtomicBool::new(false));
@@ -381,7 +416,7 @@ mod tests {
         app.update(cx, |this, _| {
             let track = this
                 .session
-                .add_instrument_track("Old Kit", "auris.synth.drumkit")
+                .add_drum_track("Old Kit", "auris.synth.drumkit")
                 .unwrap();
             let report = measure_one(this, track, 0);
             let old = Arc::new(AtomicBool::new(false));

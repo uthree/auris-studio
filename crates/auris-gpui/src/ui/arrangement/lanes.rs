@@ -412,7 +412,7 @@ impl AurisApp {
             .map(|(track, top)| {
                 let color = self.theme.track_color(track.color.0);
                 let clips = match &track.kind {
-                    TrackKind::Instrument(_) | TrackKind::Singer(_) => track
+                    TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => track
                         .kind
                         .note_clips()
                         .expect("the arm holds notes")

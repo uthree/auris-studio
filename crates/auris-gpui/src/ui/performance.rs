@@ -252,12 +252,20 @@ impl AurisApp {
         let stack = stack.to_vec();
         let theme = self.theme.clone();
         let straight = self.t(Key::PartStraight);
+        let is_drum = self
+            .project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .is_some_and(|track| track.kind.is_drum());
 
         let mut rows: Vec<AnyElement> =
             vec![self.group_heading(Key::PerformHeading).into_any_element()];
 
         for dial in PERFORM_DIALS {
             let dial = *dial;
+            if is_drum && dial == PerformDial::Gate {
+                continue;
+            }
             let fraction = dial_fraction(&stack, dial);
             rows.push(
                 value_slider(
@@ -277,6 +285,7 @@ impl AurisApp {
                         });
                     }),
                 )
+                .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
                 .into_any_element(),
             );
         }

@@ -235,13 +235,24 @@ impl Session {
         options: &DrumScanOptions,
     ) -> Result<DrumProbeRequest, SessionError> {
         options.validate()?;
+        let entry = self
+            .project
+            .track(track)
+            .ok_or(SessionError::UnknownTrack(track.0))?;
+        if !entry.kind.is_drum() {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: entry.kind.label(),
+                expected: "a drum track",
+            });
+        }
         let inner = self
             .project
             .track(track)
             .ok_or(SessionError::UnknownTrack(track.0))?
             .kind
             .as_instrument()
-            .ok_or_else(|| failure("select an instrument track"))?
+            .ok_or_else(|| failure("select a drum track"))?
             .clone();
         let file = match &inner.file {
             Some(path) => Some(
@@ -384,7 +395,7 @@ impl Session {
             return Ok(false);
         }
         self.record(Edit::ApplyDrumMap);
-        self.project.track_mut(report.track).unwrap().kind = TrackKind::Instrument(next);
+        self.project.track_mut(report.track).unwrap().kind = TrackKind::Drum(next);
         self.invalidate_graph();
         Ok(true)
     }
@@ -927,6 +938,20 @@ mod tests {
     use super::*;
     use crate::session::fixtures::session;
 
+    #[test]
+    fn drum_analysis_requires_the_explicit_track_kind() {
+        let mut session = session();
+        let track = session
+            .add_instrument_track("Drums", "auris.synth.drumkit")
+            .unwrap();
+        session.forget_history();
+        assert!(matches!(
+            session.drum_probe_request(track, &DrumScanOptions::default()),
+            Err(SessionError::WrongTrackKind { .. })
+        ));
+        assert!(!session.can_undo());
+    }
+
     fn quick_options() -> DrumScanOptions {
         DrumScanOptions {
             notes: vec![36, 60],
@@ -941,7 +966,7 @@ mod tests {
     fn scan_renders_actual_synth_and_does_not_edit_the_document() {
         let mut session = session();
         let track = session
-            .add_instrument_track("misleading hat label", "auris.synth.noisedrum")
+            .add_drum_track("misleading hat label", "auris.synth.noisedrum")
             .unwrap();
         let original = session.project().clone();
         let result = session.analyze_drum_kit(track, &quick_options()).unwrap();
@@ -967,7 +992,7 @@ mod tests {
     fn apply_is_explicit_undoable_and_rejects_changed_source() {
         let mut session = session();
         let track = session
-            .add_instrument_track("Kit", "auris.synth.noisedrum")
+            .add_drum_track("Kit", "auris.synth.noisedrum")
             .unwrap();
         let report = session.analyze_drum_kit(track, &quick_options()).unwrap();
         let before = session.project().clone();
@@ -1055,7 +1080,7 @@ mod tests {
     fn saved_assignment_does_not_invalidate_its_own_measurement() {
         let mut session = session();
         let track = session
-            .add_instrument_track("Kit", "auris.synth.noisedrum")
+            .add_drum_track("Kit", "auris.synth.noisedrum")
             .unwrap();
         let report = session.analyze_drum_kit(track, &quick_options()).unwrap();
         assert!(session.apply_drum_map(&report, false).unwrap());
@@ -1077,7 +1102,7 @@ mod tests {
     fn complete_builtin_scan_is_bounded_and_leaves_absent_keys_unclassified() {
         let mut session = session();
         let track = session
-            .add_instrument_track("Kit", "auris.synth.drumkit")
+            .add_drum_track("Kit", "auris.synth.drumkit")
             .unwrap();
         let report = session
             .analyze_drum_kit(track, &DrumScanOptions::default())
@@ -1121,7 +1146,7 @@ mod tests {
     fn serialized_evidence_roundtrips_and_tampering_is_rejected() {
         let mut session = session();
         let track = session
-            .add_instrument_track("Kit", "auris.synth.drumkit")
+            .add_drum_track("Kit", "auris.synth.drumkit")
             .unwrap();
         let mut options = quick_options();
         options.notes = vec![36, 0];
@@ -1158,7 +1183,7 @@ mod tests {
         use auris_core::{ClipPreset, ClipRecipe, Note};
         let mut session = session();
         let track = session
-            .add_instrument_track("Kit", "auris.synth.drumkit")
+            .add_drum_track("Kit", "auris.synth.drumkit")
             .unwrap();
         let options = DrumScanOptions {
             notes: vec![35],

@@ -33,7 +33,7 @@ fn subprocess_measurement_is_read_only_until_applied_and_survives_reload() {
     let fixture = Fixture::new();
     let mut session = Session::new(SessionOptions::headless()).unwrap();
     let track = session
-        .add_instrument_track("Unknown source", "auris.synth.drumkit")
+        .add_drum_track("Unknown source", "auris.synth.drumkit")
         .unwrap();
     let clip = session
         .generate_clip(

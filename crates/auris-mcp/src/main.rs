@@ -212,7 +212,7 @@ impl AurisMcp {
         blocking(move || toolbox::analyze::run(&args)).await
     }
 
-    /// Renders an instrument's notes at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
+    /// Renders a drum track's instrument at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Requires kind drum; melodic tracks are refused. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
     #[tool]
     async fn analyze_drum_kit(
         &self,
@@ -320,7 +320,7 @@ impl AurisMcp {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
+    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a drum track (percussion with a drum editor), a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
     #[tool]
     async fn add_track(
         &self,

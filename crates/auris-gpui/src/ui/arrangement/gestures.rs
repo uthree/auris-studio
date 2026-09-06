@@ -482,7 +482,7 @@ impl AurisApp {
     fn clip_at(&self, track: TrackId, tick: Ticks) -> Option<(ClipId, Ticks, Ticks)> {
         let track = self.project().track(track)?;
         match &track.kind {
-            TrackKind::Instrument(_) | TrackKind::Singer(_) => track
+            TrackKind::Instrument(_) | TrackKind::Drum(_) | TrackKind::Singer(_) => track
                 .kind
                 .note_clips()
                 .expect("the arm holds notes")

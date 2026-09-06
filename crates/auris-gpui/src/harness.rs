@@ -407,6 +407,23 @@ mod tests {
         assert_eq!(after, before + 1, "Track → Add Instrument Track added one");
     }
 
+    #[gpui::test]
+    fn adding_a_drum_track_selects_a_distinct_kind_and_undo_removes_it(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let before = app.read_with(cx, |this, _| this.project().tracks.len());
+        cx.dispatch_action(actions::AddDrumTrack);
+        app.read_with(cx, |this, _| {
+            let track = this.project().track(this.selected_track.unwrap()).unwrap();
+            assert!(track.kind.is_drum());
+            assert!(this.selected_clip.is_none());
+            assert_eq!(this.project().tracks.len(), before + 1);
+        });
+        cx.dispatch_action(actions::Undo);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.project().tracks.len(), before)
+        });
+    }
+
     /// The song sheet takes words per section — in the lyrics boxes standing beside the form,
     /// no popup anywhere — and a piece written from it arrives singing them. Return breaks a
     /// line rather than committing, because in these boxes a line is a phrase.

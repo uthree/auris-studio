@@ -82,9 +82,20 @@ impl Session {
         parts: &[ClipPreset],
         seed: u64,
     ) -> Result<AccompanyReport, SessionError> {
-        let Some((_, midi)) = self.project.midi_clip(clip) else {
+        let Some((track, midi)) = self.project.midi_clip(clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
+        if self
+            .project
+            .track(track)
+            .is_some_and(|track| track.kind.is_drum())
+        {
+            return Err(SessionError::WrongTrackKind {
+                id: track.0,
+                actual: "Drum",
+                expected: "a melodic instrument or singer track",
+            });
+        }
         if midi.notes.is_empty() {
             return Err(SessionError::NothingToAccompany(clip.0));
         }
@@ -147,7 +158,12 @@ impl Session {
         };
 
         for (index, preset) in parts.iter().enumerate() {
-            let Ok(track) = self.add_default_instrument_track(part_name(*preset)) else {
+            let added = if preset.is_drums() {
+                self.add_default_drum_track(part_name(*preset))
+            } else {
+                self.add_default_instrument_track(part_name(*preset))
+            };
+            let Ok(track) = added else {
                 // No instrument in the registry at all, which no build has — and if one did, the
                 // chords are still written and worth keeping.
                 continue;
@@ -196,6 +212,25 @@ fn part_name(preset: ClipPreset) -> String {
 mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, session};
+
+    #[test]
+    fn accompanying_a_drum_clip_does_not_interpret_addresses_as_harmony() {
+        let mut session = session();
+        let drum = session.add_default_drum_track("Kit").unwrap();
+        let clip = session
+            .add_midi_clip(drum, "Hits", Ticks::ZERO, BAR)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(38, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.forget_history();
+        assert!(matches!(
+            session.accompany(clip, &DEFAULT_PARTS, 1),
+            Err(SessionError::WrongTrackKind { .. })
+        ));
+        assert!(!session.can_undo());
+        assert_eq!(session.project().tracks.len(), 1);
+    }
 
     /// A session holding one four-bar melody in C major, and the clip it is in.
     fn with_a_melody() -> (Session, TrackId, ClipId) {

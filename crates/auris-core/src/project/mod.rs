@@ -424,7 +424,10 @@ impl Project {
     /// 20 since a shared drum kit clip retains independent voice recipes and
     /// [`ForDrumVoice`](NoteTransform::ForDrumVoice) performance. An older build would discard
     /// the voice settings on regeneration and cannot read the scoped transform variant.
-    pub const FORMAT_VERSION: u32 = 20;
+    ///
+    /// 21 since percussion has its own [`TrackKind::Drum`] variant. Older builds cannot read
+    /// the new kind; loading an older project promotes tracks with explicit drum metadata.
+    pub const FORMAT_VERSION: u32 = 21;
 
     /// An empty project.
     ///

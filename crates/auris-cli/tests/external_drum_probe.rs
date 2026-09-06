@@ -57,9 +57,7 @@ fn an_external_vst3_snapshot_produces_real_acoustic_evidence() {
 fn external_probe(variable: &str, vst3: bool) {
     let path = PathBuf::from(std::env::var_os(variable).expect("the plugin path is required"));
     let mut session = Session::new(SessionOptions::headless()).unwrap();
-    let track = session
-        .add_default_instrument_track("External probe")
-        .unwrap();
+    let track = session.add_default_drum_track("External probe").unwrap();
     if vst3 {
         let info = session
             .vst3_plugins_in(&path)

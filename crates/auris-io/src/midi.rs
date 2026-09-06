@@ -384,9 +384,14 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
         let Some(instrument) = track.kind.as_instrument() else {
             continue;
         };
-        // Channel 16 is not a limit anybody hits here, but wrapping keeps a seventeenth track
-        // playing rather than dropping it, and format 1 puts each track in its own chunk anyway.
-        let channel = u4::new((index % 16) as u8);
+        // Reserve channel 10 for drums so a MIDI round trip preserves percussion identity.
+        // Melodic tracks wrap around the remaining fifteen channels.
+        let melodic = (index % 15) as u8;
+        let channel = u4::new(if track.kind.is_drum() {
+            9
+        } else {
+            melodic + u8::from(melodic >= 9)
+        });
         let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
         for clip in &instrument.clips {
             if clip.muted {
@@ -1020,6 +1025,31 @@ mod tests {
     fn round_trip(project: &Project) -> MidiImport {
         let bytes = write_midi_bytes(project).expect("writable");
         read_midi_bytes(&bytes).expect("readable")
+    }
+
+    #[test]
+    fn drum_tracks_export_on_channel_ten_and_melodic_tracks_skip_it() {
+        let mut project = Project::new("Channels", 48_000.0);
+        for index in 0..17 {
+            let track = if index == 2 {
+                project.add_drum_track("Kit", "kit")
+            } else {
+                project.add_instrument_track(format!("Melodic {index}"), "synth")
+            };
+            let clip = project
+                .add_midi_clip(track, "Note", Ticks::ZERO, Ticks::QUARTER)
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().notes.push(Note::new(
+                38,
+                Ticks::ZERO,
+                Ticks::QUARTER,
+            ));
+        }
+        let imported = round_trip(&project);
+        assert_eq!(imported.tracks.len(), 17);
+        for track in imported.tracks {
+            assert_eq!(track.channel == 9, track.name == "Kit");
+        }
     }
 
     #[test]

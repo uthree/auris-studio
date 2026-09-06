@@ -9,14 +9,14 @@ pub mod analyze_drum_kit {
     /// The tool's wire name.
     pub const NAME: &str = "analyze_drum_kit";
     /// The model-facing description, shared by both tool frontends.
-    pub const DESCRIPTION: &str = "Renders an instrument's notes at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.";
+    pub const DESCRIPTION: &str = "Renders a drum track's instrument at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Requires kind drum; melodic tracks are refused. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.";
 
     /// A project instrument to measure.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
         /// Absolute path to the project.
         pub project: String,
-        /// Instrument track name or an `id:<number>` selector from describe.
+        /// Drum track name or an `id:<number>` selector from describe.
         pub track: String,
         /// First MIDI key to probe, 0-127; defaults to 0. Not a classification hint.
         pub first_note: Option<u8>,
@@ -129,7 +129,7 @@ pub mod analyze_drum_kit {
         fn compact_report_keeps_evidence_ranges_and_explicit_silence() {
             let mut session = Session::new(SessionOptions::headless()).unwrap();
             let track = session
-                .add_instrument_track("Unknown", "auris.synth.drumkit")
+                .add_drum_track("Unknown", "auris.synth.drumkit")
                 .unwrap();
             let report = session
                 .analyze_drum_kit(

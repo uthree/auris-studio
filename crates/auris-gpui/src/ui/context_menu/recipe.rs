@@ -18,7 +18,7 @@ use crate::app::AurisApp;
 use super::{ContextMenu, MenuCommand};
 
 impl AurisApp {
-    /// Every preset, aimed at one place on one track.
+    /// The presets appropriate to this track, aimed at one place on its timeline.
     pub(crate) fn preset_picker_menu(
         &self,
         anchor: Point<Pixels>,
@@ -26,7 +26,10 @@ impl AurisApp {
         start: Ticks,
     ) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::MenuGenerateClip));
-        for preset in ClipPreset::ALL {
+        let Some(kind) = self.project().track(track).map(|track| &track.kind) else {
+            return menu;
+        };
+        for preset in presets_for_track(kind) {
             menu = menu.item(
                 self.t(preset_key(preset)),
                 MenuCommand::GenerateClip {
@@ -46,7 +49,15 @@ impl AurisApp {
     pub(crate) fn clip_preset_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
         let current = self.session.clip_recipe(clip).map(|recipe| recipe.preset);
         let mut menu = ContextMenu::new(anchor, self.t(Key::PartPreset));
-        for preset in ClipPreset::ALL {
+        let Some(kind) = self
+            .project()
+            .midi_clip(clip)
+            .and_then(|(track, _)| self.project().track(track))
+            .map(|track| &track.kind)
+        else {
+            return menu;
+        };
+        for preset in presets_for_track(kind) {
             menu = menu.toggle(
                 self.t(preset_key(preset)),
                 MenuCommand::SetClipPreset { clip, preset },
@@ -334,6 +345,13 @@ impl AurisApp {
     }
 }
 
+/// Drum writers belong to drum tracks; pitched writers belong to other MIDI tracks.
+fn presets_for_track(kind: &TrackKind) -> impl Iterator<Item = ClipPreset> + '_ {
+    ClipPreset::ALL
+        .into_iter()
+        .filter(|preset| kind.holds_notes() && preset.is_drums() == kind.is_drum())
+}
+
 /// The name a preset goes by on screen.
 pub(crate) fn preset_key(preset: ClipPreset) -> Key {
     match preset {
@@ -481,6 +499,27 @@ mod tests {
                 MenuEntry::Separator => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn preset_choices_respect_the_track_kind_even_with_the_same_instrument() {
+        let mut project = Project::new("Types", 48_000.0);
+        let melodic = project.add_instrument_track("Melodic", "auris.synth.drumkit");
+        let drum = project.add_drum_track("Drums", "auris.synth.drumkit");
+        let melodic: Vec<_> = presets_for_track(&project.track(melodic).unwrap().kind).collect();
+        let drum: Vec<_> = presets_for_track(&project.track(drum).unwrap().kind).collect();
+        assert_eq!(melodic.len(), 6);
+        assert!(melodic.iter().all(|preset| !preset.is_drums()));
+        assert_eq!(
+            drum,
+            vec![
+                ClipPreset::Drums,
+                ClipPreset::Kick,
+                ClipPreset::Snare,
+                ClipPreset::Hat
+            ]
+        );
+        assert!(presets_for_track(&TrackKind::Bus).next().is_none());
     }
 
     #[test]
