@@ -1,7 +1,7 @@
 # Automatic composition
 
-A whole piece from a text specification, and clips that rewrite themselves when the chords
-under them change. The rest of the application is in [Features](features.md).
+A whole piece from a text specification, and clips you can regenerate against the current
+chords with **Write It Again**. The rest of the application is in [Features](features.md).
 
 ## The song specification
 
@@ -405,8 +405,7 @@ A melody is one voice, and one voice cannot settle every question it raises. The
 expect are a **relative-key swap** — a tune in A minor read as C major, which shares every note —
 and a **bar of passing notes** read as the chord they pass through. Both are nudged rather than
 solved, and neither is a dead end: what it guessed is in the harmony lane where you can see it and
-retype it, and every part it wrote regenerates around the correction. It is a first draft to argue
-with.
+retype it, then choose **Write It Again** on the generated clips to follow the corrected harmony.
 
 A clip with no notes in it is refused rather than accompanied — there is no melody there to read,
 and a bass line written from nothing would be an accompaniment to nothing.
