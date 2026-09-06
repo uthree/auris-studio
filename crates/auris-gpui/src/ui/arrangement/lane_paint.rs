@@ -187,6 +187,12 @@ pub(super) fn paint_lane(
         let content_width = view.duration_to_width(clip.length);
         for (index, (offset, span)) in loop_passes(clip.length, clip.loop_end).enumerate() {
             let pass_x = bounds.origin.x + view.tick_to_x(clip.start + offset);
+            if pass_x > bounds.origin.x + bounds.size.width {
+                break;
+            }
+            if pass_x + view.duration_to_width(span) < bounds.origin.x {
+                continue;
+            }
             let visible = Bounds {
                 origin: point(pass_x, clip_bounds.origin.y + TITLE_HEIGHT),
                 size: size(
@@ -205,15 +211,14 @@ pub(super) fn paint_lane(
             } else {
                 theme.text_faint
             };
-            if index > 0 {
-                paint::vline(window, clip_bounds, pass_x, px(1.0), theme.text_faint);
-            }
             paint::clipped(window, visible, |window| match &clip.content {
                 ClipContent::Notes(notes) => {
                     paint::clip_notes(window, content_bounds, notes, clip.length, ink);
                 }
                 ClipContent::Waveform {
                     source,
+                    spectrum,
+                    spectrum_complete,
                     offset_frames,
                     length_frames,
                     fade_in_frames,
@@ -222,7 +227,32 @@ pub(super) fn paint_lane(
                     fade_out_curve,
                     ..
                 } => {
-                    if let Some(peaks) = peaks.get(source) {
+                    if lane.spectrogram {
+                        if let Some(spectrum) = spectrum {
+                            crate::ui::spectrogram::paint_spectrogram(
+                                window,
+                                cx,
+                                content_bounds,
+                                spectrum,
+                                *offset_frames,
+                                *length_frames,
+                                clip.muted,
+                                theme,
+                            );
+                        } else if !spectrum_complete && peaks.contains_key(source) {
+                            paint::label(
+                                window,
+                                cx,
+                                point(
+                                    content_bounds.origin.x + px(5.0),
+                                    content_bounds.origin.y + px(3.0),
+                                ),
+                                Key::SpectrogramLoading.get(language),
+                                px(9.0),
+                                theme.text_muted,
+                            );
+                        }
+                    } else if let Some(peaks) = peaks.get(source) {
                         // Peaks are stored channel-major, so take the first channel's run only —
                         // passing the whole vector would draw the right channel's data as if it
                         // were the tail of the left.
@@ -273,6 +303,14 @@ pub(super) fn paint_lane(
                     }
                 }
             });
+            if index > 0 {
+                paint::vline(window, clip_bounds, pass_x, px(1.0), theme.text_faint);
+            }
+        }
+
+        // Opaque frequency images must not cover the selection outline at the body edges.
+        if selected && lane.spectrogram {
+            paint::rounded_outline(window, clip_bounds, radius, px(1.5), theme.selection);
         }
 
         if f32::from(clip_bounds.size.width) > 28.0 {

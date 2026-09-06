@@ -1398,6 +1398,10 @@ pub struct AurisApp {
     /// to have open is a view of it, and the rule is that presentation stays in the frontend. A
     /// track with no entry has its lane closed, which is also what a freshly opened project gets.
     pub(crate) automation_lanes: BTreeMap<TrackId, ParamTarget>,
+    /// Audio tracks displaying source frequency content instead of waveform peaks.
+    pub(crate) spectrogram_tracks: std::collections::HashSet<TrackId>,
+    /// Source analysis and rendered images, prepared by one background worker at a time.
+    pub(crate) spectrograms: crate::ui::spectrogram::SpectrogramCache,
     /// How far the arrangement's lanes are scrolled down, in pixels.
     ///
     /// The headers and the clip canvas both read it, so the two columns cannot slide apart —
@@ -1537,6 +1541,7 @@ impl AurisApp {
                         // pointer handler that wished for it had no executor in hand.
                         this.poll_sung_preview(cx);
                         this.poll_singer_portrait(cx);
+                        this.poll_spectrograms(cx);
                         cx.notify();
                     })
                     .is_err()
@@ -1628,6 +1633,8 @@ impl AurisApp {
             library_search_focused: false,
             agent_chat: crate::ui::agent_chat::AgentChat::default(),
             automation_lanes: BTreeMap::new(),
+            spectrogram_tracks: Default::default(),
+            spectrograms: Default::default(),
             lane_scroll: px(0.0),
             settings,
             language,

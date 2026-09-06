@@ -69,10 +69,15 @@ impl AurisApp {
         // Where a take would come from, which is also the only way to arm a track on anything
         // other than the channels the session picked for it.
         let menu = match records {
-            true => menu.item(
-                self.t(Key::MenuRecordInput),
-                MenuCommand::ShowInputPicker { track, at: anchor },
-            ),
+            true => menu
+                .item(
+                    self.t(Key::MenuRecordInput),
+                    MenuCommand::ShowInputPicker { track, at: anchor },
+                )
+                .item(
+                    self.t(Key::MenuAudioDisplay),
+                    MenuCommand::ShowAudioDisplayPicker { track, at: anchor },
+                ),
             false => menu,
         };
         let menu = menu
@@ -151,6 +156,36 @@ impl AurisApp {
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
+    /// The two ways an audio track's clips can be drawn, with the current one checked.
+    pub(crate) fn audio_display_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
+        let menu = ContextMenu::new(anchor, self.t(Key::MenuAudioDisplay));
+        if self
+            .project()
+            .track(track)
+            .and_then(|entry| entry.kind.as_audio())
+            .is_none()
+        {
+            return menu;
+        }
+        let spectrogram = self.spectrogram_tracks.contains(&track);
+        menu.toggle(
+            self.t(Key::MenuWaveform),
+            MenuCommand::SetTrackSpectrogram {
+                track,
+                enabled: false,
+            },
+            !spectrogram,
+        )
+        .toggle(
+            self.t(Key::MenuSpectrogram),
+            MenuCommand::SetTrackSpectrogram {
+                track,
+                enabled: true,
+            },
+            spectrogram,
+        )
+    }
+
     /// The menu for an empty spot in a track's lane.
     pub(crate) fn lane_menu(
         &self,
@@ -187,6 +222,11 @@ impl AurisApp {
                 !self.session.clipboard().is_empty(),
                 self.t(Key::MenuPasteHere),
                 MenuCommand::PasteClips { track, at: start },
+            )
+            .item_if(
+                entry.kind.as_audio().is_some(),
+                self.t(Key::MenuAudioDisplay),
+                MenuCommand::ShowAudioDisplayPicker { track, at: anchor },
             )
             .separator()
             .item(
@@ -656,8 +696,110 @@ pub(crate) fn recent_label(path: &std::path::Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::recent_label;
     use std::path::Path;
+
+    use gpui::{TestAppContext, point, px};
+
+    use super::*;
+    use crate::harness::open;
+    use crate::ui::context_menu::MenuEntry;
+
+    fn display_choices(menu: &ContextMenu) -> Vec<(bool, bool)> {
+        menu.entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuEntry::Item(item) => match item.command {
+                    MenuCommand::SetTrackSpectrogram { enabled, .. } => {
+                        Some((enabled, item.checked))
+                    }
+                    _ => None,
+                },
+                MenuEntry::Separator => None,
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn audio_display_choices_are_offered_only_for_audio_tracks(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let audio = this.session.add_audio_track("Audio");
+            let instrument = this
+                .session
+                .add_default_instrument_track("Instrument")
+                .expect("the registry nominates an instrument");
+            let singer = this.session.add_singer_track("Singer");
+            let bus = this.session.add_bus_track("Bus");
+            let at = point(px(120.), px(80.));
+            for track in [audio, instrument, singer, bus] {
+                let command = MenuCommand::ShowAudioDisplayPicker { track, at };
+                for menu in [
+                    this.track_menu(at, track),
+                    this.lane_menu(at, track, Ticks::ZERO),
+                ] {
+                    let offered = menu.entries.iter().any(|entry| {
+                        matches!(entry, MenuEntry::Item(item)
+                            if item.enabled && item.command == command)
+                    });
+                    assert_eq!(offered, track == audio);
+                }
+                assert_eq!(
+                    this.audio_display_menu(at, track).is_empty(),
+                    track != audio
+                );
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn changing_audio_display_updates_its_checkmark_without_editing_the_document(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            let track = this.session.add_audio_track("Audio");
+            let other = this.session.add_audio_track("Other");
+            let at = point(px(120.), px(80.));
+            let revision = this.session.revision();
+            let dirty = this.session.is_dirty();
+
+            this.run_menu_command(MenuCommand::ShowAudioDisplayPicker { track, at }, cx);
+            assert_eq!(
+                display_choices(this.menu.as_ref().expect("the choices are open")),
+                vec![(false, true), (true, false)],
+                "new audio tracks show waveforms"
+            );
+
+            this.run_menu_command(
+                MenuCommand::SetTrackSpectrogram {
+                    track,
+                    enabled: true,
+                },
+                cx,
+            );
+            assert!(this.spectrogram_tracks.contains(&track));
+            assert!(!this.spectrogram_tracks.contains(&other));
+            assert_eq!(
+                display_choices(&this.audio_display_menu(at, track)),
+                vec![(false, false), (true, true)]
+            );
+
+            this.run_menu_command(
+                MenuCommand::SetTrackSpectrogram {
+                    track,
+                    enabled: false,
+                },
+                cx,
+            );
+            assert!(!this.spectrogram_tracks.contains(&track));
+            assert_eq!(
+                display_choices(&this.audio_display_menu(at, track)),
+                vec![(false, true), (true, false)]
+            );
+            assert_eq!(this.session.revision(), revision);
+            assert_eq!(this.session.is_dirty(), dirty);
+        });
+    }
 
     #[test]
     fn a_recent_project_is_named_by_itself_and_where_it_lives() {
