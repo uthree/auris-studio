@@ -31,6 +31,7 @@ FRONTEND
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
+  vendor/midir          MIDI library fork — see README-AURIS.md
   training/             Python: what trains the voice models auris-singer plays
 ```
 
@@ -46,10 +47,8 @@ composition format, and where the two platforms differ.
 cargo doc -p auris-session --no-deps --open
 ```
 
-It lives there because `auris-session` is the only crate depending on every other, and so the only
-place a link to each of them resolves — which is also why it does not live here. A second copy of
-it in this file would be wrong by the next crate anybody adds; the one line of this tree that had
-already gone stale while it sat in the README is how that goes.
+`auris-session` depends on every backend crate, so the guide can link directly to their API
+documentation. Keep architectural explanations there and build instructions here.
 
 ## The voice models
 

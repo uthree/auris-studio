@@ -1,6 +1,6 @@
 //! How Auris Studio fits together.
 //!
-//! The workspace has no root crate — `cargo doc` on it produces a list of eighteen crates and no
+//! The workspace has no root crate — `cargo doc` on it produces a list of crates and no
 //! account of how they relate. This module is that account. It lives here because `auris-session`
 //! is the only crate that depends on every other backend crate, which is what lets the links below
 //! actually resolve; a page anywhere else could name its neighbours but not point at them.

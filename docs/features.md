@@ -637,7 +637,7 @@ single chord being rewritten. What the lane shows is both: `IVmaj7 · Fmaj7`.
 The lane can also be **filled in from a melody you played**. Right-click a clip holding a tune and
 choose *Accompany This Melody*: its key and one chord per bar are written here, and a bass, a comp
 and a kit are added as tracks beside it. The melody itself is not touched, everything it guessed is
-here to be corrected, and the parts regenerate around a correction — see
+here to be corrected. Choose **Write It Again** on the generated clips to follow a correction — see
 [composition.md](composition.md) for what it reads and what it cannot know.
 
 ## The structure lane
@@ -1359,7 +1359,8 @@ claude mcp add auris -- ./target/release/auris-mcp
 A project open in the desktop application follows edits made through this door (or by
 anything else that writes the file): the window watches the file's modification time and
 accepts changes while the window holds nothing unsaved, or offers an undoable acceptance when
-it does. Both autosave and manual in-place saves refuse to overwrite a newer disk version.
+it does. Manual in-place saves refuse to overwrite a newer disk version. Autosave writes a
+private recovery snapshot without overwriting the project file.
 Accepting the changes retains the previous window document on the undo stack; Save As can
 also preserve it separately. Cooperating writers serialize the check and save with a project
 file lock.
