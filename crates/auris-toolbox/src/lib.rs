@@ -40,11 +40,13 @@ use auris_session::{Session, SessionError, SessionOptions};
 mod audition;
 #[path = "capabilities.rs"]
 mod availability;
+mod drums;
 mod editing;
 mod mix_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
+pub use drums::analyze_drum_kit;
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
@@ -332,6 +334,7 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    analyze_drum_kit::NAME,
     effects::NAME,
     automation::NAME,
     checkpoints::NAME,
@@ -364,6 +367,7 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         return false;
     }
     match tool {
+        analyze_drum_kit::NAME => args.get("apply").and_then(|value| value.as_bool()) == Some(true),
         effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
         automation::NAME => {
             args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")

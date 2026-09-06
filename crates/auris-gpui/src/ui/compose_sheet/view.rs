@@ -677,6 +677,12 @@ impl AurisApp {
         let mut rows: Vec<AnyElement> = Vec::new();
 
         for (index, part) in dials.parts.iter().enumerate() {
+            let source_owner = part_source_owner(dials, index).unwrap_or(index);
+            let shared_source = format!(
+                "{} · {}",
+                self.t(Key::PresetDrums),
+                dials.parts[source_owner].name
+            );
             // What the part will be *heard* as: the General MIDI sound where it names one, and
             // otherwise the plugin. Showing the plugin under a part that asked for a violin would
             // name the fallback and never the sound.
@@ -696,6 +702,9 @@ impl AurisApp {
             let mut dial_row = div().flex().gap_2();
             for dial in PART_DIALS {
                 let dial = *dial;
+                if part.role.is_drum() && matches!(dial, PartDial::Gain | PartDial::Pan) {
+                    continue;
+                }
                 let target = DialTarget::Part(index, dial);
                 let fraction = dial.fraction(part);
                 dial_row = dial_row.child(div().flex_1().min_w_0().child(value_slider(
@@ -771,17 +780,29 @@ impl AurisApp {
                                     this.song_role_menu(at, index)
                                 }),
                             )))
-                            .child(div().flex_1().min_w_0().child(button(
-                                ("song-part-instrument", index),
-                                instrument,
-                                ButtonStyle::Normal,
-                                false,
-                                theme.accent,
-                                &theme,
-                                Self::opens_menu(cx, move |this, at| {
-                                    this.song_instrument_menu(at, index)
-                                }),
-                            )))
+                            .when(source_owner == index, |row| {
+                                row.child(div().flex_1().min_w_0().child(button(
+                                    ("song-part-instrument", index),
+                                    instrument,
+                                    ButtonStyle::Normal,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    Self::opens_menu(cx, move |this, at| {
+                                        this.song_instrument_menu(at, index)
+                                    }),
+                                )))
+                            })
+                            .when(source_owner != index, |row| {
+                                row.child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .child(shared_source),
+                                )
+                            })
                             // A drum part has no octave — its pitches are drum numbers rather
                             // than notes — and it badly needs the *one* number the octave would
                             // have taken the room for, because General MIDI is the only agreement

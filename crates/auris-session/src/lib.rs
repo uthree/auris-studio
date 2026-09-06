@@ -42,7 +42,9 @@
 
 #![warn(missing_docs)]
 
+mod drum_worker;
 pub mod error;
+pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};
 pub mod guide;
 pub mod history;
 pub mod library;
@@ -57,6 +59,8 @@ pub mod voice_setup;
 
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
+/// PCM-derived drum measurements, exposed without a frontend DSP dependency.
+pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Workspace-owned engine error variants exposed for frontend localisation.
 pub use auris_engine::EngineError;
 /// Workspace-owned file error variants exposed for frontend localisation.
@@ -81,6 +85,10 @@ pub use session::{
     TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS,
     decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
     read_soundfont, shadows_musical_typing, take_fingerprint,
+};
+pub use session::{
+    DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
+    DrumVoiceAnalysis, probe_drum_request,
 };
 pub use session::{MusicalClipAnalysis, SpectrogramJob};
 pub use settings::{
@@ -183,11 +191,11 @@ pub mod prelude {
     };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        ConsonantWidths, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip, MixerStrip, Note,
-        NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint,
-        SectionSpan, SendId, SingerTrack, SoundFontId, SoundFontRef, SourceId, Subdivision, Track,
-        TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes,
-        sounding_length,
+        ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip,
+        MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop,
+        SectionMap, SectionPoint, SectionSpan, SendId, SingerTrack, SoundFontId, SoundFontRef,
+        SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
+        default_loop_end, loop_passes, sounding_length,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;

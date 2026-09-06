@@ -34,6 +34,8 @@
 
 mod clip;
 mod curve;
+/// Stored drum sound assignments, separate from acoustic measurements.
+pub mod drum;
 mod ornament;
 mod recipe;
 mod routing;
@@ -51,8 +53,9 @@ pub use clip::{
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
+pub use drum::{DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
-pub use recipe::{ClipPreset, ClipRecipe, Subdivision};
+pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerTake, SingerTrack,
@@ -417,7 +420,11 @@ impl Project {
     /// the whole document, and the version turns that into a sentence at the door. The recipe
     /// losing its `humanize` dial in the same change moved nothing — an unknown field is
     /// skipped on the way in and a missing one defaults on the way out.
-    pub const FORMAT_VERSION: u32 = 19;
+    ///
+    /// 20 since a shared drum kit clip retains independent voice recipes and
+    /// [`ForDrumVoice`](NoteTransform::ForDrumVoice) performance. An older build would discard
+    /// the voice settings on regeneration and cannot read the scoped transform variant.
+    pub const FORMAT_VERSION: u32 = 20;
 
     /// An empty project.
     ///

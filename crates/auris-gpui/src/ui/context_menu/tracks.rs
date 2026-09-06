@@ -80,6 +80,14 @@ impl AurisApp {
                 ),
             false => menu,
         };
+        let menu = if entry.kind.as_instrument().is_some() {
+            menu.item(
+                self.t(Key::MenuAnalyzeDrums),
+                MenuCommand::AnalyzeDrums(track),
+            )
+        } else {
+            menu
+        };
         let menu = menu
             .separator()
             .item(

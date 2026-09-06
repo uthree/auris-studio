@@ -185,7 +185,7 @@ pub mod edit_recipe {
     /// The tool's wire name.
     pub const NAME: &str = "edit_recipe";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Changes a generated clip's recipe and regenerates that clip only. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.";
+    pub const DESCRIPTION: &str = "Changes a generated clip's recipe and regenerates that clip only. With drum_voice, edits only the named writer within a drum kit. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.";
     /// The controls to change on one generated clip.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -196,6 +196,8 @@ pub mod edit_recipe {
         pub track: String,
         /// 1-based clip number.
         pub clip: usize,
+        /// Composite drum voice name from inspect_composition; edits only that voice.
+        pub drum_voice: Option<String>,
         /// Density, 0-1.
         pub density: Option<f32>,
         /// Playing intensity, 0-1.
@@ -229,10 +231,20 @@ pub mod edit_recipe {
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
         let (clip, _) = clip_by_number(session.project(), track, args.clip)?;
-        let mut recipe = session
+        let whole_recipe = session
             .clip_recipe(clip)
             .cloned()
             .ok_or("this clip has no recipe")?;
+        let original = match &args.drum_voice {
+            Some(name) => whole_recipe
+                .drum_voices
+                .iter()
+                .find(|voice| &voice.name == name)
+                .and_then(|voice| voice.recipe.as_deref())
+                .ok_or("this drum voice has no editable recipe")?,
+            None => &whole_recipe,
+        };
+        let mut recipe = original.clone();
         if session.clip_hand_edited(clip) && !args.replace_hand_edits {
             return Err("this clip has hand-edited notes; use replace_hand_edits: true to replace them, or edit_clip with freeze to keep them".into());
         }
@@ -295,12 +307,14 @@ pub mod edit_recipe {
                 )
             };
         }
-        if session.clip_recipe(clip) == Some(&recipe) {
+        if original == &recipe {
             return Ok("Recipe unchanged; no notes were rewritten.".into());
         }
-        let notes = session
-            .set_clip_recipe(clip, recipe)
-            .map_err(|error| error.to_string())?;
+        let notes = match &args.drum_voice {
+            Some(name) => session.set_drum_voice_recipe(clip, name, recipe),
+            None => session.set_clip_recipe(clip, recipe),
+        }
+        .map_err(|error| error.to_string())?;
         session
             .save_with_checkpoint()
             .map_err(|error| error.to_string())?;
@@ -543,6 +557,85 @@ mod tests {
 
     fn args<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn drum_voice_edit_round_trips_without_rewriting_other_voices() {
+        let fixture = Fixture::new("one-drum-writer");
+        let mut session = opened(&fixture.path).unwrap();
+        let mut spec = preset("chiptune").unwrap().spec();
+        spec.parts.retain(|part| part.role.is_drum());
+        session
+            .compose(&auris_session::prelude::compose(&spec))
+            .unwrap();
+        let track = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.as_instrument().is_some())
+            .unwrap();
+        let clip = track
+            .kind
+            .note_clips()
+            .unwrap()
+            .iter()
+            .find(|clip| {
+                clip.recipe.as_ref().is_some_and(|recipe| {
+                    recipe
+                        .drum_voices
+                        .iter()
+                        .any(|voice| voice.role == DrumRole::Snare && voice.recipe.is_some())
+                })
+            })
+            .unwrap();
+        let voice = clip
+            .recipe
+            .as_ref()
+            .unwrap()
+            .drum_voices
+            .iter()
+            .find(|voice| voice.role == DrumRole::Snare)
+            .unwrap()
+            .name
+            .clone();
+        let others: Vec<_> = clip
+            .notes
+            .iter()
+            .filter(|note| note.drum_voice != voice)
+            .cloned()
+            .collect();
+        let transforms = clip.transforms.clone();
+        let id = clip.id;
+        let number = clip_number(session.project(), track.id, id).unwrap();
+        let selector = format!("id:{}", track.id.0);
+        session.save_in_place().unwrap();
+        edit_recipe::run(&args(json!({"project":fixture.path, "track":selector,
+            "clip":number, "drum_voice":voice, "density":0.0})))
+        .unwrap();
+        let reopened = opened(&fixture.path).unwrap();
+        let after = reopened.midi_clip(id).unwrap();
+        assert_eq!(
+            after
+                .notes
+                .iter()
+                .filter(|note| note.drum_voice != voice)
+                .cloned()
+                .collect::<Vec<_>>(),
+            others
+        );
+        assert_eq!(after.transforms, transforms);
+        let writer = after
+            .recipe
+            .as_ref()
+            .unwrap()
+            .drum_voices
+            .iter()
+            .find(|part| part.name == voice)
+            .unwrap()
+            .recipe
+            .as_ref()
+            .unwrap();
+        assert_eq!(writer.density, 0.0);
     }
 
     #[test]

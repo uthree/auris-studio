@@ -6,7 +6,7 @@ use auris_core::plugin::PluginState;
 use auris_core::project::Color;
 use auris_core::structure::{SectionMap, SectionPoint};
 use auris_core::time::{TempoMap, TempoPoint, Ticks, TimeSignature};
-use auris_core::{ClipRecipe, Note, NoteTransform};
+use auris_core::{ClipPreset, ClipRecipe, DrumVoiceRecipe, Note, NoteTransform};
 
 use crate::frame::{Frame, plan};
 use crate::parts::{PartDraft, ScoreSettings, write_parts};
@@ -16,9 +16,6 @@ use crate::phrase::SEED_RANGE;
 use crate::phrase::clip_seed;
 use crate::phrase::recipe_for;
 use crate::spec::{Ending, PartSpec, Role, SongSpec};
-
-/// The bus a whole kit sits under, so one fader moves the drums.
-const DRUM_BUS: &str = "Drums";
 
 /// The room the pitched parts share, fed by sends.
 const ROOM_BUS: &str = "Room";
@@ -64,6 +61,8 @@ pub struct ClipDraft {
 /// One track: an instrument and the clips it plays.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TrackDraft {
+    /// The independent musical parts sharing this kit, or empty for a pitched instrument.
+    pub drum_parts: Vec<DrumPartDraft>,
     /// The track's name.
     pub name: String,
     /// The plugin that plays it, when no [`Self::sound`] names a SoundFont one.
@@ -76,12 +75,7 @@ pub struct TrackDraft {
     pub sound: Option<crate::gm::Sound>,
     /// The colour the track is drawn in, chosen by the part's role.
     pub color: Color,
-    /// Parameters the part's role needs [`Self::instrument`] set to, if any.
-    ///
-    /// Empty for almost every part, and that is the intended state: a role picks an instrument and
-    /// then leaves it sounding how it sounds. What this is for is the case where the role and the
-    /// instrument together mean something the instrument's own defaults do not — today that is the
-    /// crash cymbal on the built-in noise drum, and `voicing_for` is where the exception is argued.
+    /// The initial state of the instrument shared by this track's clips.
     ///
     /// It has nothing to say about a part that landed on a SoundFont. A sound out of a font is a
     /// recording of the thing itself, and there is no parameter on a sampler that would make it
@@ -119,6 +113,17 @@ pub struct TrackDraft {
     pub effects: Vec<EffectDraft>,
     /// The clips, in time order.
     pub clips: Vec<ClipDraft>,
+}
+
+/// A musical part assigned to one sound of a shared drum kit.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DrumPartDraft {
+    /// The stable source part name, also carried by its notes and recipe.
+    pub name: String,
+    /// Its musical assignment; this is not an acoustic classification.
+    pub role: auris_core::project::DrumRole,
+    /// The destination note chosen for this part.
+    pub note: u8,
 }
 
 /// A copy of a track, on its way to a bus.
@@ -406,11 +411,19 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         let (output, sends) = role
             .map(|role| routing_for(role, &buses))
             .unwrap_or_default();
-        let state = role.map_or_else(PluginState::empty, |role| {
-            voicing_for(role, &draft.instrument)
-        });
+        let state = PluginState::empty();
         let effects = role.map_or_else(Vec::new, |role| inserts_for(role, draft.sound));
         tracks.push(TrackDraft {
+            drum_parts: part_of(&draft.name)
+                .and_then(|part| {
+                    Some(DrumPartDraft {
+                        name: part.name.clone(),
+                        role: part.role.drum_role()?,
+                        note: part.drum_note()?,
+                    })
+                })
+                .into_iter()
+                .collect(),
             name: draft.name,
             instrument: draft.instrument,
             sound: draft.sound,
@@ -434,6 +447,8 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         });
     }
 
+    let tracks = shared_drum_kits(tracks, frame.seed);
+
     Composition {
         title: spec.title.clone(),
         tempo_map: tempo_of(frame, spec.tempo),
@@ -447,6 +462,113 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
         buses,
         master_gain: fade_of(spec, frame),
     }
+}
+
+/// Combines compatible drum writers after the score is complete, preserving their random streams.
+fn shared_drum_kits(tracks: Vec<TrackDraft>, seed: u64) -> Vec<TrackDraft> {
+    let mut result: Vec<TrackDraft> = Vec::new();
+    for mut track in tracks {
+        let Some(part) = track.drum_parts.first().cloned() else {
+            result.push(track);
+            continue;
+        };
+        for clip in &mut track.clips {
+            for note in &mut clip.notes {
+                note.drum_voice = part.name.clone();
+            }
+            let voice = DrumVoiceRecipe {
+                name: part.name.clone(),
+                role: part.role,
+                note: clip
+                    .recipe
+                    .as_ref()
+                    .and_then(|recipe| recipe.drum_note)
+                    .or_else(|| clip.notes.first().map(|note| note.pitch))
+                    .unwrap_or(part.note),
+                fixed_notes: if clip.recipe.is_none() {
+                    clip.notes.clone()
+                } else {
+                    Vec::new()
+                },
+                recipe: clip.recipe.take().map(Box::new),
+            };
+            let mut composite = ClipRecipe::new(
+                ClipPreset::Drums,
+                voice
+                    .recipe
+                    .as_ref()
+                    .map_or_else(|| clip_seed(seed, &part.name, &clip.name, 1), |r| r.seed),
+            );
+            if let Some(writer) = &voice.recipe {
+                composite = *writer.clone();
+                composite.preset = ClipPreset::Drums;
+                composite.drum_note = None;
+            }
+            composite.drum_voices.push(voice);
+            clip.recipe = Some(composite);
+            if !clip.performance.is_empty() {
+                clip.performance = vec![NoteTransform::ForDrumVoice {
+                    voice: part.name.clone(),
+                    transforms: std::mem::take(&mut clip.performance),
+                }];
+            }
+            if let Some((section, _)) = clip.name.rsplit_once(" · ") {
+                clip.name = format!("{section} · Drums");
+            }
+        }
+        let compatible = result.iter_mut().find(|other| {
+            !other.drum_parts.is_empty()
+                && other.instrument == track.instrument
+                && other.sound == track.sound
+        });
+        if let Some(kit) = compatible {
+            // Preserve the old level budget as the sum of the independent parts' energy. The
+            // session measures the complete kit and sets its single fader against this target.
+            kit.target_lufs = 10.0
+                * (10.0_f32.powf(kit.target_lufs / 10.0) + 10.0_f32.powf(track.target_lufs / 10.0))
+                    .log10();
+            kit.drum_parts.extend(track.drum_parts);
+            for mut clip in track.clips {
+                if let Some(joined) = kit
+                    .clips
+                    .iter_mut()
+                    .find(|existing| existing.start == clip.start && existing.length == clip.length)
+                {
+                    joined.notes.append(&mut clip.notes);
+                    joined.performance.append(&mut clip.performance);
+                    if let (Some(recipe), Some(incoming)) = (&mut joined.recipe, clip.recipe) {
+                        recipe.drum_voices.extend(incoming.drum_voices);
+                    }
+                    joined
+                        .notes
+                        .sort_by_key(|note| (note.start.raw(), note.pitch));
+                } else {
+                    kit.clips.push(clip);
+                }
+            }
+            kit.clips.sort_by_key(|clip| clip.start.raw());
+        } else {
+            let ordinal = result
+                .iter()
+                .filter(|track| !track.drum_parts.is_empty())
+                .count()
+                + 1;
+            track.name = if ordinal == 1 {
+                "Drums".into()
+            } else {
+                format!("Drums {ordinal}")
+            };
+            track.color = Role::Snare.color();
+            track.state = PluginState::empty();
+            track.gain_db = 0.0;
+            track.pan = 0.0;
+            track.output = None;
+            track.sends.clear();
+            track.effects.clear();
+            result.push(track);
+        }
+    }
+    result
 }
 
 /// How many bars a fade-out rides down across, at most.
@@ -495,16 +617,6 @@ fn fade_of(spec: &SongSpec, frame: &Frame) -> Vec<AutomationPoint> {
 /// confusing.
 fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
     let mut buses = Vec::new();
-    if roles.iter().any(|role| drum_bus_takes(*role)) {
-        buses.push(BusDraft {
-            name: DRUM_BUS.to_string(),
-            // The kit's own hue, so the fader that moves the drums is the colour of the drums.
-            color: Role::Snare.color(),
-            // The parts carry their own balance; the bus is here to move all of it at once.
-            gain_db: 0.0,
-            effects: Vec::new(),
-        });
-    }
     if roles.iter().any(|role| room_send_db(*role).is_some()) {
         let mut state = PluginState::empty();
         // Fully wet. A send bus carries the *reflections* — the dry signal is already on its way
@@ -528,68 +640,9 @@ fn buses_for(roles: &[Role]) -> Vec<BusDraft> {
     buses
 }
 
-/// The parameters a role needs set on the instrument it also named.
-///
-/// Keyed by plugin id, exactly as the room bus names `auris.fx.reverb` before setting its mix:
-/// this crate knows what a crash cymbal *is* and has never heard of the oscillator that ships. A
-/// part on anybody else's plugin gets nothing, because `decay = 1.8` means one thing on the noise
-/// drum and could mean anything at all elsewhere.
-///
-/// # Why only the cymbal
-///
-/// `auris.synth.noisedrum` is one algorithm — noise through a band-pass swept down from where the
-/// note puts it — and the whole built-in kit is that algorithm at its shipped defaults, told apart
-/// only by which General MIDI note each part strikes. Measured, one hit each at 48 kHz:
-///
-/// | Part | note | spectral centroid | 40 dB down at |
-/// |---|---|---|---|
-/// | Kick | 36 | 190 Hz | 115 ms |
-/// | Snare | 38 | 215 Hz | 460 ms |
-/// | Hi-hat | 42 | 246 Hz | 285 ms |
-///
-/// Three low thuds within 56 Hz of each other, which is not a kit, and the hi-hat is the plainest
-/// case: nothing about 246 Hz is a hi-hat. That is worth saying here because it is *not* what this
-/// function fixes. Those three have sounded like that since the composer could write them, they
-/// are what the one preset on the built-in voices sounds like today, and changing them is a
-/// decision about how that preset should sound rather than a defect in a part being added.
-///
-/// The cymbal is different only because it is new. A part that has never had a sound has no sound
-/// to preserve, and shipping it at the defaults would be shipping a fourth thud — 342 Hz, 595 ms,
-/// which is a low tom — under the name of a crash.
-///
-/// # What the numbers are
-///
-/// `tone` is stated at MIDI 60 and transposed by the note struck, so a crash written at 49 sounds
-/// it 11 semitones down: the parameter's ceiling of 8 kHz arrives as 4.2 kHz, which is where a
-/// crash lives. It is at the ceiling rather than near it because the ceiling is the constraint —
-/// a hi-hat would want 7 kHz and cannot have it, since 42 is a further seven semitones down.
-///
-/// No sweep: the downward pitch move is what reads as a drum head losing tension, and a cymbal has
-/// no head. A decay of 1.8 s is most of the range the parameter allows and about what a crash
-/// rings for.
-///
-/// The level is not a taste and is the reason the other three are the numbers they are. Opening
-/// the band-pass at 4.2 kHz and stopping it sweeping lets through far more of the noise than the
-/// shipped voicing does, and the hit arrived 13.5 dB over the built-in snare measured as RMS
-/// across its first 300 ms — which is the measure that matters here, because a cymbal's peak is a
-/// fraction of what a listener hears of it. The five General MIDI kits the presets use put their
-/// crash within 1.4 dB of their own snare by that measure, and `-19.5` is what puts the built-in
-/// one in the same place. What separates a cymbal from a backbeat afterwards is
-/// [`Role::default_gain_db`], on both sides alike.
-fn voicing_for(role: Role, instrument: &str) -> PluginState {
-    let mut state = PluginState::empty();
-    if role == Role::Crash && instrument == "auris.synth.noisedrum" {
-        state.params.insert("tone".to_string(), 8_000.0);
-        state.params.insert("sweep".to_string(), 0.0);
-        state.params.insert("decay".to_string(), 1.8);
-        state.params.insert("level".to_string(), -19.5);
-    }
-    state
-}
-
 /// The insert effects a part earns from the sound it landed on.
 ///
-/// Keyed by role *and* General MIDI patch, on the same reasoning as [`voicing_for`]: an insert
+/// Keyed by role *and* General MIDI patch: an insert
 /// is right where the pairing is idiomatic, not where either half is alone. Today there is one
 /// pairing. A **chords part on an electric piano or an undistorted electric guitar** gets a
 /// chorus, because that pairing barely exists without one: the Rhodes-and-chorus comp is the
@@ -629,11 +682,6 @@ fn inserts_for(role: Role, sound: Option<crate::gm::Sound>) -> Vec<EffectDraft> 
     Vec::new()
 }
 
-/// `true` when a role belongs under the drum fader.
-fn drum_bus_takes(role: Role) -> bool {
-    matches!(role, Role::Kick | Role::Snare | Role::Hat | Role::Crash)
-}
-
 /// How much of a role goes to the room, in decibels, or `None` for a part that stays dry.
 ///
 /// **More room is further away.** That is the whole of the ordering: the pad is the furthest back
@@ -652,17 +700,11 @@ fn room_send_db(role: Role) -> Option<f32> {
         Role::Arp => -12.0,
         // Nearest of the pitched parts.
         Role::Melody => -15.0,
-        // A snare in a room is the oldest trick there is; a hat wants a suggestion of one.
-        Role::Snare => -12.0,
-        Role::Hat => -20.0,
-        // A crash is mostly its own decay, and a dry one stops dead where the room lets it spill
-        // into the bar it opened. More than the snare gets, because it is further back in the kit
-        // and because the tail is the point of the sound rather than a side effect of it.
-        Role::Crash => -10.0,
         // The riser sits with the crash: it is the same cymbal run the other way, announcing the
         // bar the crash then opens, and the pair should sound like they share a room.
         Role::Riser => -10.0,
-        Role::Bass | Role::Kick => return None,
+        // A shared kit has one output. Per-piece room balance belongs to the instrument.
+        Role::Bass | Role::Kick | Role::Snare | Role::Hat | Role::Crash => return None,
     })
 }
 
@@ -673,13 +715,12 @@ fn room_send_db(role: Role) -> Option<f32> {
 /// wrong about it.
 fn routing_for(role: Role, buses: &[BusDraft]) -> (Option<usize>, Vec<SendDraft>) {
     let index_of = |name: &str| buses.iter().position(|bus| bus.name == name);
-    let output = drum_bus_takes(role).then(|| index_of(DRUM_BUS)).flatten();
     let sends = room_send_db(role)
         .zip(index_of(ROOM_BUS))
         .map(|(level_db, bus)| SendDraft { bus, level_db })
         .into_iter()
         .collect();
-    (output, sends)
+    (None, sends)
 }
 
 /// The frame's tempo, as the map a document holds.
@@ -897,7 +938,7 @@ mod tests {
     fn a_piece_arrives_with_a_kit_under_one_fader_and_a_room_to_share() {
         let piece = compose_text(BASE);
         let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
-        assert_eq!(names, vec!["Drums", "Room"]);
+        assert_eq!(names, vec!["Room"]);
 
         let track = |name: &str| {
             piece
@@ -906,18 +947,16 @@ mod tests {
                 .find(|track| track.name == name)
                 .unwrap_or_else(|| panic!("no {name} track"))
         };
-        // The kit goes under its own fader; the pitched parts go straight to the master.
-        for drum in ["kick", "snare", "hat"] {
-            assert_eq!(track(drum).output, Some(0), "{drum}");
-        }
+        assert_eq!(track("Drums").output, None);
+        assert_eq!(track("Drums").drum_parts.len(), 3);
         assert_eq!(track("lead").output, None);
 
         // Everything but the low end sends to the room, and more room is further away.
         let send = |name: &str| track(name).sends.first().map(|send| send.level_db);
         assert!(send("lead") < send("chords"), "the tune sits in front");
         assert_eq!(send("bass"), None, "low frequencies in a reverb are mud");
-        assert_eq!(send("kick"), None);
-        assert_eq!(track("snare").sends[0].bus, 1, "the room, not the drum bus");
+        assert_eq!(send("Drums"), None);
+        assert_eq!(track("lead").sends[0].bus, 0);
     }
 
     #[test]
@@ -930,7 +969,8 @@ mod tests {
         assert!(db(Role::Arp) < db(Role::Chords));
         assert!(db(Role::Chords) <= db(Role::Stab));
         assert!(db(Role::Stab) < db(Role::Pad));
-        assert!(db(Role::Hat) < db(Role::Snare), "a hat wants a suggestion");
+        assert_eq!(room_send_db(Role::Hat), None);
+        assert_eq!(room_send_db(Role::Snare), None);
         assert_eq!(room_send_db(Role::Bass), None);
         assert_eq!(room_send_db(Role::Kick), None);
     }
@@ -1054,68 +1094,137 @@ mod tests {
     }
 
     #[test]
-    fn a_kit_that_plays_still_gets_its_bus() {
-        // The other half, so the fix above cannot pass by making no buses at all.
+    fn a_kit_that_plays_has_one_track_and_no_redundant_bus() {
         let piece = compose_text(BASE);
         let names: Vec<&str> = piece.buses.iter().map(|bus| bus.name.as_str()).collect();
-        assert!(names.contains(&DRUM_BUS), "{names:?}");
-        let drums = names.iter().position(|name| *name == DRUM_BUS);
+        assert!(!names.contains(&"Drums"), "{names:?}");
         assert!(
             piece
                 .tracks
                 .iter()
-                .any(|track| track.output == drums && track.name == "kick"),
-            "the kick goes to the drum bus"
+                .any(|track| track.output.is_none() && track.drum_parts.len() == 3),
+            "the kit itself has the only drum fader"
         );
     }
 
     #[test]
-    fn a_cymbal_on_the_built_in_drum_is_voiced_as_one() {
-        // The shipped noise drum is a tom: a band-pass swept down from where the note puts it,
-        // decaying in a quarter of a second. At the defaults a part striking 49 comes out a
-        // fourth thud rather than a cymbal, so the voicing is what makes the crash a crash.
-        let voiced = voicing_for(Role::Crash, "auris.synth.noisedrum");
-        assert_eq!(
-            voiced.params.get("sweep"),
-            Some(&0.0),
-            "a cymbal has no head"
-        );
-        assert!(
-            voiced.params["decay"] > 1.0,
-            "a crash that stops in {} s is a tick",
-            voiced.params["decay"]
-        );
-        // The whole reason a level is set at all: opening the filter this far lets through far
-        // more of the noise, and the hit arrived over the rest of the kit until it was corrected.
-        assert!(voiced.params["level"] < -6.0);
-    }
-
-    #[test]
-    fn nothing_but_the_cymbal_is_told_how_to_sound() {
-        // A role picks an instrument and then leaves it sounding how it sounds. Reaching into a
-        // plugin's parameters is the exception, and it stays one — the kick, the snare and the
-        // hat on this same instrument are what the built-in kit has always sounded like, and
-        // revoicing them is a decision about a preset rather than part of adding a cymbal.
-        for role in Role::ALL {
-            let voiced = voicing_for(role, "auris.synth.noisedrum");
-            assert_eq!(
-                voiced.params.is_empty(),
-                role != Role::Crash,
-                "{} was voiced when it should not have been, or the other way round",
-                role.name()
-            );
+    fn a_shared_kit_preserves_the_score_and_performance_of_each_writer() {
+        let mut spec = SongSpec::parse(BASE).unwrap();
+        spec.humanize = 1.0;
+        spec.parts.push(PartSpec::of_role("accent", Role::Crash));
+        let frame = plan(&spec);
+        let settings = ScoreSettings::from(&spec);
+        let source = write_parts(&settings, &spec.parts, &frame);
+        let piece = compose(&spec);
+        let kit = piece
+            .tracks
+            .iter()
+            .find(|track| !track.drum_parts.is_empty())
+            .unwrap();
+        assert_eq!(kit.drum_parts.len(), 4);
+        for draft in source {
+            let part = spec
+                .parts
+                .iter()
+                .find(|part| part.name == draft.name)
+                .unwrap();
+            if !part.role.is_drum() {
+                continue;
+            }
+            for original in clips_of(&settings, spec.humanize, Some(part), &draft, &frame) {
+                let merged = kit
+                    .clips
+                    .iter()
+                    .find(|clip| clip.start == original.start)
+                    .unwrap();
+                let notes: Vec<_> = merged
+                    .notes
+                    .iter()
+                    .filter(|note| note.drum_voice == part.name)
+                    .cloned()
+                    .collect();
+                assert_eq!(notes.len(), original.notes.len());
+                for (before, mut after) in original.notes.iter().cloned().zip(notes) {
+                    let heard = auris_core::performed(after.clone(), &merged.performance, 0, 120.0);
+                    let mut expected =
+                        auris_core::performed(before.clone(), &original.performance, 0, 120.0);
+                    expected.drum_voice = part.name.clone();
+                    assert_eq!(heard, expected);
+                    after.drum_voice.clear();
+                    assert_eq!(after, before);
+                }
+                let recipe = merged.recipe.as_ref().unwrap();
+                let voice = recipe
+                    .drum_voices
+                    .iter()
+                    .find(|voice| voice.name == part.name)
+                    .unwrap();
+                assert_eq!(voice.recipe.as_deref(), original.recipe.as_ref());
+                if original.recipe.is_none() {
+                    let rewritten = crate::write_phrase(
+                        &piece.harmony,
+                        merged.start,
+                        merged.length,
+                        spec.meter,
+                        recipe,
+                        None,
+                    );
+                    let fixed: Vec<_> = rewritten
+                        .into_iter()
+                        .filter(|note| note.drum_voice == part.name)
+                        .collect();
+                    assert_eq!(fixed, voice.fixed_notes);
+                }
+            }
         }
-        // And a cymbal somebody put on another plugin gets nothing either. `decay` means one
-        // thing on the noise drum and could mean anything at all elsewhere.
-        assert!(
-            voicing_for(Role::Crash, "auris.synth.chiptune")
-                .params
-                .is_empty()
-        );
     }
 
     #[test]
-    fn a_composed_cymbal_carries_its_voicing_onto_its_track() {
+    fn different_kit_programs_or_plugins_keep_separate_instruments() {
+        let mut spec = SongSpec::parse(BASE).unwrap();
+        spec.parts.retain(|part| part.role.is_drum());
+        spec.parts[0].program = Some(crate::gm::Program(0));
+        spec.parts[1].program = Some(crate::gm::Program(25));
+        spec.parts[2].instrument = "external.kit".into();
+        let piece = compose(&spec);
+        assert_eq!(piece.tracks.len(), 3);
+        assert!(piece.tracks.iter().all(|track| track.drum_parts.len() == 1));
+        assert!(piece.buses.is_empty());
+    }
+
+    #[test]
+    fn a_kit_recipe_retains_each_authored_rhythm_and_custom_destination() {
+        let mut spec = SongSpec::parse(BASE).unwrap();
+        spec.parts.retain(|part| part.role.is_drum());
+        for (part, note) in spec.parts.iter_mut().zip([72, 61, 85]) {
+            part.note = Some(note);
+            part.rhythm = crate::rhythm::Pattern::parse("x...x...x...x...");
+        }
+        let piece = compose(&spec);
+        let clip = &piece.tracks[0].clips[0];
+        let recipe = clip.recipe.as_ref().unwrap();
+        let notes = crate::write_phrase(
+            &piece.harmony,
+            clip.start,
+            clip.length,
+            spec.meter,
+            recipe,
+            None,
+        );
+        for voice in &recipe.drum_voices {
+            assert_eq!(voice.recipe.as_ref().unwrap().drum_note, Some(voice.note));
+            assert!(voice.recipe.as_ref().unwrap().rhythm.is_some());
+            let written: Vec<_> = notes
+                .iter()
+                .filter(|note| note.drum_voice == voice.name)
+                .collect();
+            assert!(!written.is_empty());
+            assert!(written.iter().all(|note| note.pitch == voice.note));
+        }
+    }
+
+    #[test]
+    fn a_composed_cymbal_uses_the_shared_kit_voice() {
         let piece = compose_text(
             r#"
             form = "chorus"
@@ -1127,9 +1236,10 @@ mod tests {
         let crash = piece
             .tracks
             .iter()
-            .find(|track| track.name == "crash")
+            .find(|track| track.name == "Drums")
             .expect("the cymbal plays");
-        assert!(!crash.state.params.is_empty(), "the voicing was dropped");
+        assert_eq!(crash.instrument, "auris.synth.drumkit");
+        assert!(crash.state.params.is_empty());
         // Every other part is left alone, which is what makes this a exception rather than a pass
         // over the roster.
         let piece = compose_text(BASE);
@@ -1155,9 +1265,8 @@ mod tests {
         };
         assert_eq!(pan("lead"), Some(0.0));
         assert_eq!(pan("bass"), Some(0.0));
-        assert_eq!(pan("kick"), Some(0.0));
+        assert_eq!(pan("Drums"), Some(0.0));
         assert_ne!(pan("chords"), Some(0.0));
-        assert_ne!(pan("hat"), Some(0.0));
         // Nothing hard over: a part at the edge of the image disappears in mono.
         for track in &piece.tracks {
             assert!(track.pan.abs() <= 0.5, "{} is too far over", track.name);
@@ -1279,9 +1388,21 @@ mod tests {
         // A cheap order-sensitive digest: a note that moves, changes pitch or changes length
         // changes it, and two pieces that differ anywhere differ here.
         let mut digest: u64 = 1469598103934665603;
-        for track in &piece.tracks {
-            for clip in &track.clips {
-                for note in &clip.notes {
+        for part in &spec.parts {
+            for clip in piece
+                .tracks
+                .iter()
+                .filter(|track| {
+                    track.name == part.name
+                        || track.drum_parts.iter().any(|voice| voice.name == part.name)
+                })
+                .flat_map(|track| &track.clips)
+            {
+                for note in clip
+                    .notes
+                    .iter()
+                    .filter(|note| !part.role.is_drum() || note.drum_voice == part.name)
+                {
                     for value in [
                         note.pitch as i64,
                         note.start.raw(),
@@ -1342,7 +1463,7 @@ mod tests {
         );
         // The kit is the other reading of the same field, and the bank is what says so.
         assert_eq!(
-            sound_of("kick"),
+            sound_of("Drums"),
             Some(crate::gm::Sound {
                 bank: crate::gm::DRUM_BANK,
                 patch: 25
@@ -1360,6 +1481,10 @@ mod tests {
         // colour nobody reads.
         let piece = compose(&SongSpec::default());
         for track in &piece.tracks {
+            if !track.drum_parts.is_empty() {
+                assert_eq!(track.color, Role::Snare.color());
+                continue;
+            }
             let role = SongSpec::default()
                 .parts
                 .iter()
@@ -1375,9 +1500,9 @@ mod tests {
         }
         // And the fader that moves the drums is the colour of the drums.
         let drums = piece
-            .buses
+            .tracks
             .iter()
-            .find(|bus| bus.name == DRUM_BUS)
+            .find(|track| !track.drum_parts.is_empty())
             .expect("the default roster has a kit");
         assert_eq!(drums.color, Role::Snare.color());
     }
@@ -1754,9 +1879,24 @@ mod tests {
             let track = piece
                 .tracks
                 .iter()
-                .find(|track| track.name == name)
+                .find(|track| {
+                    track.name == name || track.drum_parts.iter().any(|part| part.name == name)
+                })
                 .unwrap_or_else(|| panic!("no `{name}` track"));
-            track.clips[0].performance.clone()
+            if track.drum_parts.is_empty() {
+                track.clips[0].performance.clone()
+            } else {
+                track.clips[0]
+                    .performance
+                    .iter()
+                    .find_map(|transform| match transform {
+                        NoteTransform::ForDrumVoice { voice, transforms } if voice == name => {
+                            Some(transforms.clone())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_default()
+            }
         };
         assert!(matches!(
             stack_of("lead").as_slice(),

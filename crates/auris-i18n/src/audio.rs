@@ -119,6 +119,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
+    ("Drum Kit", "ドラムキット"),
     ("Vocal", "ボーカル"),
     ("Chorus", "コーラス"),
     ("Compressor", "コンプレッサー"),
@@ -133,6 +134,10 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "A complete synthesized percussion kit with shared hat choking",
+        "キックやスネア、シンバルを合成し、ハイハット同士の音止めにも対応するドラムキット",
+    ),
     (
         "Band-limited pulse, saw, triangle and LFSR noise with unison and bit crushing",
         "帯域制限したパルス・ノコギリ・三角波と LFSR ノイズ。ユニゾンとビットクラッシュ付き",

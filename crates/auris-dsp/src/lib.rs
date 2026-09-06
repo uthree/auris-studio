@@ -57,6 +57,7 @@ pub mod compressor;
 pub mod delay;
 pub mod delay_line;
 pub mod distortion;
+pub mod drum_analysis;
 pub mod envelope;
 pub mod eq;
 pub mod gain;

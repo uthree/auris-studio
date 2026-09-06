@@ -2,9 +2,8 @@
 //!
 //! A [`ClipRecipe`] is what a clip carries when it came from the harmony underneath it rather
 //! than from somebody playing, and it is the whole of what a regeneration reads. Its own file
-//! because nothing here knows what a clip *is* — no ticks, no notes, nothing about the timeline
-//! — which is what lets the composer and a picker in the interface both choose from this
-//! vocabulary without either of them opening the document model.
+//! because the composer and a picker in the interface share this vocabulary. A drum kit also
+//! retains fixed accents here, alongside the independent recipes for its rhythmic voices.
 //!
 //! The `default_*` functions are here, private, and stay here. Each is named by a
 //! `#[serde(default = "…")]` above it, that string resolves in the module the derive is in, and
@@ -12,12 +11,13 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::clip::Note;
+
 /// What an automatically written clip is trying to be.
 ///
 /// The vocabulary a person chooses from, and — since the drums arrived one at a time — the same
-/// vocabulary the composer writes in. `Drums` is a whole kit in one clip, which is what somebody
-/// filling a bar by hand wants; `Kick`, `Snare` and `Hat` are the three parts a written song keeps
-/// on tracks of their own, so that a kit can be mixed at all.
+/// vocabulary the composer writes in. `Drums` is a whole kit in one clip; `Kick`, `Snare` and
+/// `Hat` also name the individual writers inside a composed kit's recipe.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClipPreset {
@@ -190,6 +190,21 @@ impl Subdivision {
 /// format — the way to keep a take is to freeze it, not to remember its number.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClipRecipe {
+    /// The accepted assignment used for this take; an empty map deliberately writes no drums.
+    ///
+    /// Absent on older recipes. Stored here so subsequent instrument scans never alter a saved
+    /// clip's assignments unless an explicit command applies the new map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drum_map: Option<super::drum::DrumMap>,
+    /// The independent writers and fixed accents of a kit sharing this clip.
+    ///
+    /// Empty for older recipes and for the simple preset picker. A composite recipe regenerates
+    /// each voice separately, preserving its rhythm, seed and destination note.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drum_voices: Vec<DrumVoiceRecipe>,
+    /// The destination note of a single drum writer, independent of its musical role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drum_note: Option<u8>,
     /// Authored scale-degree motif, retained when this clip is regenerated.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub motif: Vec<i32>,
@@ -273,6 +288,22 @@ pub struct ClipRecipe {
     pub text_digest: u64,
 }
 
+/// One independent writer or fixed accent inside a drum kit's composite recipe.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DrumVoiceRecipe {
+    /// The stable part name, also carried by its notes and scoped performance transforms.
+    pub name: String,
+    /// The musical role this writer supplies, independent of the sound's measured identity.
+    pub role: super::drum::DrumRole,
+    /// The note that triggers the selected sound; never a classification hint.
+    pub note: u8,
+    /// The writer's own settings, or none for form-dependent accents such as a crash.
+    pub recipe: Option<Box<ClipRecipe>>,
+    /// Authored accents retained verbatim when the kit is regenerated.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fixed_notes: Vec<Note>,
+}
+
 /// Whether a digest is the "nobody measured" zero, for keeping it out of saved files.
 fn digest_is_unknown(digest: &u64) -> bool {
     *digest == 0
@@ -303,6 +334,13 @@ fn default_groove() -> String {
 }
 
 impl ClipRecipe {
+    /// Rebases a composite kit's fixed accents when the front of its clip is trimmed away.
+    pub fn trim_drum_accents(&mut self, by: crate::time::Ticks) {
+        for voice in &mut self.drum_voices {
+            voice.fixed_notes = super::clip::notes_trimmed_from_front(&voice.fixed_notes, by);
+        }
+    }
+
     /// A recipe for `preset`, with the dials where a first attempt should start.
     ///
     /// Only the stab starts anywhere unusual, and it has to: every other preset is a *part* whose
@@ -311,6 +349,9 @@ impl ClipRecipe {
     /// choosing it and hearing a pad, with the sound it was named for three dials away.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
         let mut recipe = Self {
+            drum_map: None,
+            drum_voices: Vec::new(),
+            drum_note: None,
             motif: Vec::new(),
             rhythm: None,
             preset,
@@ -341,9 +382,53 @@ impl ClipRecipe {
 
     /// The same recipe with a different seed, which is what "another take" means.
     pub fn with_seed(&self, seed: u64) -> Self {
-        Self {
-            seed,
-            ..self.clone()
+        let mut next = self.clone();
+        next.seed = seed;
+        let delta = seed.wrapping_sub(self.seed);
+        for voice in &mut next.drum_voices {
+            if let Some(recipe) = &mut voice.recipe {
+                **recipe = recipe.with_seed(recipe.seed.wrapping_add(delta));
+            }
         }
+        next
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::DrumRole;
+
+    #[test]
+    fn another_kit_take_moves_each_independent_seed_by_the_same_distance() {
+        let mut kit = ClipRecipe::new(ClipPreset::Drums, 100);
+        for (name, preset, role, seed, note) in [
+            ("low", ClipPreset::Kick, DrumRole::Kick, 3, 72),
+            ("backbeat", ClipPreset::Snare, DrumRole::Snare, 800, 61),
+        ] {
+            kit.drum_voices.push(DrumVoiceRecipe {
+                name: name.into(),
+                role,
+                note,
+                recipe: Some(Box::new(ClipRecipe::new(preset, seed))),
+                fixed_notes: Vec::new(),
+            });
+        }
+        let next = kit.with_seed(102);
+        assert_eq!(next.drum_voices[0].recipe.as_ref().unwrap().seed, 5);
+        assert_eq!(next.drum_voices[1].recipe.as_ref().unwrap().seed, 802);
+        assert_eq!(next.with_seed(100), kit);
+        let saved = serde_json::to_string(&next).unwrap();
+        assert_eq!(serde_json::from_str::<ClipRecipe>(&saved).unwrap(), next);
+    }
+
+    #[test]
+    fn old_single_voice_recipes_load_without_kit_metadata() {
+        let mut saved = serde_json::to_value(ClipRecipe::new(ClipPreset::Kick, 5)).unwrap();
+        saved.as_object_mut().unwrap().remove("drum_voices");
+        saved.as_object_mut().unwrap().remove("drum_note");
+        let recipe: ClipRecipe = serde_json::from_value(saved).unwrap();
+        assert!(recipe.drum_voices.is_empty());
+        assert_eq!(recipe.drum_note, None);
     }
 }

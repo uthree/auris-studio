@@ -30,6 +30,9 @@ use auris_session::{Session, SessionOptions};
 const LANGUAGE: Language = Language::English;
 
 fn main() -> ExitCode {
+    if let Some(code) = auris_session::handle_drum_probe_worker() {
+        std::process::exit(code);
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     // Nothing here reads the configuration, but this is still the frontend that may run first on
@@ -52,6 +55,7 @@ fn main() -> ExitCode {
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
+        "analyze-drums" => analyze_drums(&args),
         "sing" => sing(&args),
         "frames" => frames(&args),
         "sing-frames" => sing_frames(&args),
@@ -211,6 +215,85 @@ fn headless() -> Result<Session, String> {
             .with_shipped_dictionary(true),
     )
     .map_err(|error| error.to_string())
+}
+
+/// Measures one instrument using a private worker process; applying its map is explicit.
+fn analyze_drums(args: &[String]) -> Result<(), String> {
+    let usage = "auris analyze-drums <project.auris> --track <name|id:number> [--first-note 0] [--last-note 127] [--apply] [--remap-clips]";
+    let path = args.get(1).ok_or(usage)?;
+    let mut track = None;
+    let mut first = 0u8;
+    let mut last = 127u8;
+    let mut apply = false;
+    let mut remap = false;
+    let mut at = 2;
+    while at < args.len() {
+        match args[at].as_str() {
+            "--apply" => apply = true,
+            "--remap-clips" => remap = true,
+            "--track" | "--first-note" | "--last-note" => {
+                let option = &args[at];
+                at += 1;
+                let value = args.get(at).ok_or(usage)?;
+                match option.as_str() {
+                    "--track" => track = Some(value.as_str()),
+                    "--first-note" => first = value.parse().map_err(|_| usage)?,
+                    _ => last = value.parse().map_err(|_| usage)?,
+                }
+            }
+            _ => return Err(usage.into()),
+        }
+        at += 1;
+    }
+    if first > last || last > 127 || (remap && !apply) {
+        return Err(usage.into());
+    }
+    let name = track.ok_or(usage)?;
+    let mut session = headless()?;
+    session
+        .open(Path::new(path))
+        .map_err(|error| error.to_string())?;
+    let candidates: Vec<_> = session
+        .project()
+        .tracks
+        .iter()
+        .filter(|entry| {
+            match name
+                .strip_prefix("id:")
+                .and_then(|id| id.parse::<u64>().ok())
+            {
+                Some(id) => entry.id.0 == id,
+                None => entry.name == name,
+            }
+        })
+        .map(|entry| entry.id)
+        .collect();
+    let [track] = candidates.as_slice() else {
+        return Err("select one instrument track by its exact name or id:<number>".into());
+    };
+    let options = auris_session::DrumScanOptions {
+        notes: (first..=last).collect(),
+        ..Default::default()
+    };
+    let request = session
+        .drum_probe_request(*track, &options)
+        .map_err(|error| error.to_string())?;
+    let report = auris_session::run_drum_probe_isolated(
+        &request,
+        &std::sync::atomic::AtomicBool::new(false),
+        std::time::Duration::from_secs(600),
+    )
+    .map_err(|error| error.to_string())?;
+    if apply {
+        session
+            .apply_drum_map(&report, remap)
+            .map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+    printed(writeln!(std::io::stdout().lock(), "{json}"))
 }
 
 /// Lists the chord progressions the composer knows by name.

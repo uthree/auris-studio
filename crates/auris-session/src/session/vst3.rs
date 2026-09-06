@@ -36,6 +36,30 @@ struct Request<'a> {
 }
 
 impl Vst3Plugins {
+    /// Snapshots the actual instrument for an independent measurement worker.
+    pub(super) fn drum_probe_state(
+        &self,
+        track: TrackId,
+        saved: &PluginState,
+    ) -> Result<PluginState, SessionError> {
+        let plugin = &self
+            .instruments
+            .get(&track)
+            .ok_or_else(|| SessionError::DrumAnalysis("the VST3 instrument is unavailable".into()))?
+            .plugin;
+        let mut state = saved.clone();
+        state.set_hosted_bytes(&plugin.save_state()?);
+        for descriptor in plugin.parameters() {
+            let value = plugin.value(descriptor.id).ok_or_else(|| {
+                SessionError::DrumAnalysis(
+                    "the VST3 instrument could not snapshot a parameter".into(),
+                )
+            })?;
+            state.params.insert(descriptor.key.to_string(), value);
+        }
+        Ok(state)
+    }
+
     pub(super) fn clear(&mut self) {
         self.retiring.extend(
             std::mem::take(&mut self.slots)

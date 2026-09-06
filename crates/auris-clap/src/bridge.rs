@@ -77,6 +77,7 @@ pub(crate) struct Bridge {
     /// playhead is not usable for it: a cycle sends the playhead backwards, and a plugin is
     /// entitled to treat that as impossible.
     steady_time: u64,
+    processing_failed: bool,
 }
 
 impl Bridge {
@@ -125,12 +126,17 @@ impl Bridge {
             max_frames: frames,
             latency,
             steady_time: 0,
+            processing_failed: false,
         }
     }
 
     /// Gives the processor back so the plugin can be deactivated.
     pub(crate) fn into_stopped(self) -> StoppedPluginAudioProcessor<AurisHost> {
         self.processor.into_stopped()
+    }
+
+    pub(crate) fn processing_failed(&self) -> bool {
+        self.processing_failed
     }
 
     /// Grows the event buffers to hold what a block is now known to carry.
@@ -237,10 +243,12 @@ impl Bridge {
             sidechain_input,
             language,
             steady_time,
+            processing_failed,
             ..
         } = self;
 
         let Ok(processor) = processor.ensure_processing_started() else {
+            *processing_failed = true;
             // The plugin refused to start.
             if overwrite {
                 silence(buffer, 0, total_frames);
@@ -320,8 +328,13 @@ impl Bridge {
                 Some(&transport),
             );
             *steady_time = steady_time.wrapping_add(frames as u64);
+            *processing_failed |= rendered.is_err();
 
-            match main_output.and_then(|index| output.get(index)) {
+            let main_port = main_output.and_then(|index| output.get(index));
+            if overwrite && main_port.is_none_or(Vec::is_empty) {
+                *processing_failed = true;
+            }
+            match main_port {
                 Some(port) if rendered.is_ok() => {
                     deliver_port(port, buffer, offset, frames, overwrite)
                 }

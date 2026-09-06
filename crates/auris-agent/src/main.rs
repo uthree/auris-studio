@@ -441,6 +441,7 @@ session_tool!(Render, render);
 session_tool!(Preview, preview);
 session_tool!(Describe, describe);
 session_tool!(Analyze, analyze);
+session_tool!(AnalyzeDrumKit, analyze_drum_kit);
 session_tool!(Mixer, mixer);
 session_tool!(SetLevel, set_level);
 session_tool!(SetSend, set_send);
@@ -633,6 +634,7 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(Preview)
         .tool(Describe)
         .tool(Analyze)
+        .tool(AnalyzeDrumKit)
         .tool(Mixer)
         .tool(SetLevel)
         .tool(SetSend)
@@ -1365,6 +1367,9 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
 }
 
 fn main() -> ExitCode {
+    if let Some(code) = auris_session::handle_drum_probe_worker() {
+        std::process::exit(code);
+    }
     // Stderr by default already, and stderr it must stay: stdout carries the model's answer.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 

@@ -78,7 +78,7 @@ pub use self::role::Role;
 /// One part of the arrangement.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PartSpec {
-    /// The name it takes in the document and on its track.
+    /// The independent writer's name; drum parts retain it inside their shared kit track.
     pub name: String,
     /// What it plays.
     pub role: Role,
@@ -183,9 +183,9 @@ impl PartSpec {
 /// # What is not here, and cannot be
 ///
 /// The name, the role, the instrument, the program, the level and the pan. Those are not how a
-/// part *plays*, they are what its **track** is, and a part is one track for the whole song: one
-/// row in the arrangement, one instrument, one fader. A chorus on strings where the verse was on a
-/// piano is two parts and not one, and [`SectionSpec::parts`] is what brings each of them in.
+/// part *plays*, they identify the instrument used throughout the song. Compatible drum parts
+/// share that instrument's track. A chorus on strings where the verse was on a piano uses two
+/// parts, and [`SectionSpec::parts`] brings each of them in.
 ///
 /// The line between the two is worth stating because it is not arbitrary and it is not a
 /// limitation to be lifted later: a track that changed instrument half way through would have to

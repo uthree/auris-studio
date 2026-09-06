@@ -1,6 +1,6 @@
 //! Built-in software instruments for Auris Studio.
 //!
-//! Four instruments ship in this crate, all of them assembled from the same few primitives:
+//! The instruments in this crate are assembled from the same few primitives:
 //!
 //! * [`Oscillator`] — band-limited sine, pulse, saw and triangle plus an NES-style noise
 //!   register.
@@ -13,7 +13,8 @@
 //! modulation), [`NoiseDrum`] (a one-shot percussion voice) and [`Vocal`] (the formant-filtered
 //! preview voice a singer track plays through, with [`Biquad`](auris_dsp::Biquad) sections from
 //! `auris-dsp` for its formants). The split is the point: adding an instrument means writing a
-//! `process`, not another voice manager. [`SynthPack`] registers all four with a
+//! `process`, not another voice manager. [`DrumKit`] combines distinct percussion voices in one
+//! instrument with shared hat choking. [`SynthPack`] registers every instrument with a
 //! [`PluginRegistry`](auris_core::PluginRegistry).
 //!
 //! # Realtime behaviour
@@ -42,6 +43,7 @@
 #![warn(missing_docs)]
 
 pub mod chiptune;
+pub mod drumkit;
 pub mod fm2;
 pub mod lfo;
 pub mod noisedrum;
@@ -56,6 +58,7 @@ pub mod voice;
 mod test_support;
 
 pub use chiptune::Chiptune;
+pub use drumkit::DrumKit;
 pub use fm2::Fm2;
 pub use noisedrum::NoiseDrum;
 pub use oscillator::{Oscillator, Waveform};

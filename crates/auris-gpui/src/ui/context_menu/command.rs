@@ -21,6 +21,14 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Measure this instrument using rendered audio, without changing its notes.
+    AnalyzeDrums(TrackId),
+    /// Store the measured assignment for future generation, preserving every existing clip.
+    UseDrumMapForGeneration(TrackId),
+    /// Apply a measured map to future generation and tagged generated drum clips.
+    ApplyDrumMap(TrackId),
+    /// Cancel the supervised drum probe.
+    CancelDrumAnalysis,
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -581,6 +589,27 @@ pub enum MenuCommand {
     RegenerateClip(ClipId),
     /// Write another take of a generated clip.
     RerollClip(ClipId),
+    /// Open the independent drum writers of one shared kit clip.
+    DrumVoicesMenu {
+        /// The kit clip.
+        clip: ClipId,
+        /// Where to open the next menu.
+        anchor: Point<Pixels>,
+    },
+    /// Rewrite one drum writer, retaining the other voices' notes.
+    RegenerateDrumVoice {
+        /// The shared clip.
+        clip: ClipId,
+        /// The stable writer name.
+        voice: String,
+    },
+    /// Draw another take of one drum writer.
+    RerollDrumVoice {
+        /// The shared clip.
+        clip: ClipId,
+        /// The stable writer name.
+        voice: String,
+    },
     /// Keep a generated clip's notes and forget how they got there.
     FreezeClip(ClipId),
     /// Make a generated clip a different kind of part.
@@ -698,6 +727,10 @@ impl AurisApp {
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
         match command {
+            MenuCommand::AnalyzeDrums(track) => self.begin_drum_analysis(track, cx),
+            MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),
+            MenuCommand::UseDrumMapForGeneration(track) => self.apply_measured_drums(track, false),
+            MenuCommand::CancelDrumAnalysis => self.cancel_drum_analysis(),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);
@@ -887,16 +920,8 @@ impl AurisApp {
                 }
             }
             MenuCommand::SongPartInstrument { part, id } => {
-                if let Some(part) = self
-                    .song_sheet
-                    .as_mut()
-                    .and_then(|dials| dials.parts.get_mut(part))
-                {
-                    part.instrument = id;
-                    // Choosing a plugin is choosing *that* sound, and a program left behind
-                    // would go on winning — the row would say one thing and the piece play
-                    // another.
-                    part.program = None;
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_part_instrument(dials, part, &id);
                 }
             }
             MenuCommand::SongPartFamily {
@@ -908,12 +933,8 @@ impl AurisApp {
                 self.open_menu(menu);
             }
             MenuCommand::SongPartProgram { part, program } => {
-                if let Some(part) = self
-                    .song_sheet
-                    .as_mut()
-                    .and_then(|dials| dials.parts.get_mut(part))
-                {
-                    part.program = Some(gm::Program(program));
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_part_program(dials, part, gm::Program(program));
                 }
             }
             MenuCommand::SongPreset(name) => {
@@ -1314,6 +1335,16 @@ impl AurisApp {
                     self.reroll_clip(chosen_clip);
                 }
                 self.session.end_transaction();
+            }
+            MenuCommand::DrumVoicesMenu { clip, anchor } => {
+                let menu = self.drum_voices_menu(anchor, clip);
+                self.open_menu(menu);
+            }
+            MenuCommand::RegenerateDrumVoice { clip, voice } => {
+                self.rewrite_drum_voice(clip, &voice, false);
+            }
+            MenuCommand::RerollDrumVoice { clip, voice } => {
+                self.rewrite_drum_voice(clip, &voice, true);
             }
             MenuCommand::FreezeClip(clip) => {
                 let chosen = self.clips_for_command(clip);

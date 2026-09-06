@@ -42,6 +42,9 @@ use dock::PanelLayout;
 use menu::{MenuState, menus};
 
 fn main() {
+    if let Some(code) = auris_session::handle_drum_probe_worker() {
+        std::process::exit(code);
+    }
     // Warnings matter here — a missing audio file or a plugin the registry does not know is
     // logged rather than shown — so surface them by default instead of requiring RUST_LOG. And
     // they are *kept*, because the terminal they used to go to is not somewhere an application

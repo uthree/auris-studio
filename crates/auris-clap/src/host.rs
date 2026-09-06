@@ -34,9 +34,12 @@ pub struct HostFlags {
     pub callback: AtomicBool,
     /// A parameter's *value* changed behind the host's back — reread them.
     pub rescan_values: AtomicBool,
-    /// A parameter's *description* changed. Restarting is the only honest response, since the
-    /// parameter list the session published may no longer be the plugin's.
+    /// Parameter presentation changed: names, modules or display-only flags. This is allowed
+    /// while active and does not invalidate parameter ids, ranges or the rendering contract.
     pub rescan_info: AtomicBool,
+    /// The whole parameter list changed, invalidating ids, ranges and cookies. Its rendering
+    /// half must be returned before the main-thread owner refreshes the list.
+    pub rescan_all: AtomicBool,
     /// The plugin's own state changed, so the project is dirty.
     pub dirty: AtomicBool,
     /// The plugin's window has gone: the user closed it, or the plugin lost its connection to it.
@@ -179,9 +182,11 @@ impl HostParamsImplMainThread for AurisMainThread<'_> {
                 .rescan_values
                 .store(true, Ordering::Release);
         }
-        // Anything beyond the values invalidates the descriptor list the session handed the UI.
-        if flags.intersects(ParamRescanFlags::INFO | ParamRescanFlags::ALL) {
+        if flags.intersects(ParamRescanFlags::INFO) {
             self.shared.flags.rescan_info.store(true, Ordering::Release);
+        }
+        if flags.intersects(ParamRescanFlags::ALL) {
+            self.shared.flags.rescan_all.store(true, Ordering::Release);
         }
     }
 
@@ -225,4 +230,25 @@ pub fn host_info() -> HostInfo {
         env!("CARGO_PKG_VERSION"),
     )
     .expect("host info contains no NUL bytes")
+}
+
+#[cfg(test)]
+mod parameter_rescan_tests {
+    use super::*;
+
+    #[test]
+    fn presentation_rescan_is_distinct_from_contract_invalidation() {
+        let shared = AurisShared::default();
+        let mut main = AurisMainThread::new(&shared);
+        main.rescan(ParamRescanFlags::INFO);
+        assert!(HostFlags::take(&shared.flags.rescan_info));
+        assert!(!HostFlags::take(&shared.flags.rescan_all));
+        assert!(!HostFlags::take(&shared.flags.restart));
+        main.rescan(ParamRescanFlags::ALL);
+        assert!(HostFlags::take(&shared.flags.rescan_all));
+        assert!(!HostFlags::take(&shared.flags.rescan_info));
+        main.rescan(ParamRescanFlags::INFO | ParamRescanFlags::ALL);
+        assert!(HostFlags::take(&shared.flags.rescan_info));
+        assert!(HostFlags::take(&shared.flags.rescan_all));
+    }
 }

@@ -30,9 +30,8 @@ use crate::window::{ContainerWindow, HostWindow};
 /// The plugin's parameters, in the order the plugin lists them.
 ///
 /// Both halves of a hosted plugin need this and neither may change it, so it is shared by
-/// [`Arc`] and never mutated. If the plugin ever asks for a rescan of anything but values, the
-/// session must throw the whole plugin away and build it again — which is what
-/// [`PendingRequests::restart`] is for.
+/// [`Arc`] and never mutated. Replacing the list requires an inactive instance; an active
+/// rescan first needs the rendering half back, which is what [`PendingRequests::restart`] asks.
 pub(crate) struct ParamList {
     /// The plugin's own id for each parameter, indexed by [`ParamId`].
     pub(crate) clap_ids: Vec<ClapId>,
@@ -45,6 +44,15 @@ pub(crate) struct ParamList {
 pub struct PendingRequests {
     /// The plugin must be deactivated and rebuilt — its parameter list or layout changed.
     pub restart: bool,
+    /// The plugin explicitly called the host's restart callback.
+    pub restart_requested: bool,
+    /// The complete parameter list changed (CLAP `ALL`), invalidating ids, ranges and cookies.
+    /// Also sets [`restart`](Self::restart).
+    pub parameter_rescan: bool,
+    /// Parameter presentation changed (CLAP `INFO`), which is allowed during processing and
+    /// leaves ids, ranges and cookies valid. Also sets [`restart`](Self::restart) for owners
+    /// that rebuild the shared descriptor list to refresh their displayed controls.
+    pub parameter_info_changed: bool,
     /// Parameter values changed inside the plugin; read them again.
     pub rescan_values: bool,
     /// The plugin's state changed, so the project is unsaved.
@@ -125,6 +133,18 @@ impl ClapPlugin {
         &self.params.descriptors
     }
 
+    /// Rereads parameter ids and descriptors after restoring an inactive plugin's state.
+    ///
+    /// A preset may change the parameter list as well as values. Returns `false` while the
+    /// rendering half is active: changing its parameter indices underneath it is not safe.
+    pub fn refresh_parameters(&mut self) -> bool {
+        if self.active {
+            return false;
+        }
+        self.params = Arc::new(read_params(&mut self.instance));
+        true
+    }
+
     /// Reads one parameter's current value from the plugin itself.
     ///
     /// The plugin is the authority here, not the host: a plugin's own interface, a preset it
@@ -147,16 +167,21 @@ impl ClapPlugin {
     /// nobody told it, and nobody may until the host has taken its window apart in the right
     /// order.
     pub fn take_requests(&self) -> PendingRequests {
-        let mut requests = self
-            .instance
-            .access_shared_handler(|shared| PendingRequests {
-                restart: HostFlags::take(&shared.flags.restart)
-                    | HostFlags::take(&shared.flags.rescan_info),
+        let mut requests = self.instance.access_shared_handler(|shared| {
+            let restart_requested = HostFlags::take(&shared.flags.restart);
+            let parameter_rescan = HostFlags::take(&shared.flags.rescan_all);
+            let parameter_info_changed = HostFlags::take(&shared.flags.rescan_info);
+            PendingRequests {
+                restart: restart_requested || parameter_rescan || parameter_info_changed,
+                restart_requested,
+                parameter_rescan,
+                parameter_info_changed,
                 rescan_values: HostFlags::take(&shared.flags.rescan_values),
                 dirty: HostFlags::take(&shared.flags.dirty),
                 callback: HostFlags::take(&shared.flags.callback),
                 gui_closed: HostFlags::take(&shared.flags.gui_closed),
-            });
+            }
+        });
         requests.gui_closed |= self
             .container
             .as_ref()
@@ -844,6 +869,41 @@ fn describe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_reasons_preserve_the_live_hosts_aggregate_and_are_consumed_once() {
+        use std::sync::atomic::Ordering;
+
+        let library = crate::testkit::instrument_library();
+        let plugin = library.instantiate(crate::testkit::TONE_ID).unwrap();
+        plugin.instance.access_shared_handler(|shared| {
+            shared.flags.rescan_info.store(true, Ordering::Release);
+        });
+        let presentation = plugin.take_requests();
+        assert!(presentation.restart);
+        assert!(presentation.parameter_info_changed);
+        assert!(!presentation.parameter_rescan);
+        assert!(!presentation.restart_requested);
+        assert_eq!(plugin.take_requests(), PendingRequests::default());
+
+        plugin.instance.access_shared_handler(|shared| {
+            shared.flags.rescan_all.store(true, Ordering::Release);
+        });
+        let contract = plugin.take_requests();
+        assert!(contract.restart);
+        assert!(contract.parameter_rescan);
+        assert!(!contract.parameter_info_changed);
+        assert!(!contract.restart_requested);
+
+        plugin.instance.access_shared_handler(|shared| {
+            shared.flags.restart.store(true, Ordering::Release);
+        });
+        let processing = plugin.take_requests();
+        assert!(processing.restart);
+        assert!(processing.restart_requested);
+        assert!(!processing.parameter_rescan);
+        assert!(!processing.parameter_info_changed);
+    }
 
     #[test]
     fn a_parameter_is_keyed_by_the_plugins_own_id_not_its_position() {

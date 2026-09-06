@@ -1,6 +1,6 @@
 //! The sound library the application is packaged with.
 //!
-//! The built-in instruments are two oscillators, a noise drum and a preview voice. They are
+//! The built-in instruments are two oscillators, a noise drum, a drum kit and a preview voice. They are
 //! enough to hear a piece back and nowhere near enough to *write* one, so a build of Auris
 //! Studio ships with a General MIDI SoundFont beside it and every frontend finds it here.
 //!
@@ -436,8 +436,8 @@ mod tests {
             .collect();
         assert_eq!(
             without_a_font.len(),
-            4,
-            "three pitched voices and a drum: {without_a_font:?}"
+            5,
+            "three pitched voices and two percussion instruments: {without_a_font:?}"
         );
         // The header itself, which is the half of this that nothing else checks. Its own lines
         // rather than the whole file, or the phrase written here would answer for it; joined as
@@ -449,7 +449,7 @@ mod tests {
             .collect::<Vec<&str>>()
             .join(" ");
         assert!(
-            header.contains("two oscillators, a noise drum and a preview voice"),
+            header.contains("two oscillators, a noise drum, a drum kit and a preview voice"),
             "the header counts them in prose, and the prose is what a reader gets"
         );
     }

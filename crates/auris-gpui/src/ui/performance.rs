@@ -66,6 +66,7 @@ impl PerformDial {
 /// *joining* the stack.
 fn rank(transform: &NoteTransform) -> usize {
     match transform {
+        NoteTransform::ForDrumVoice { .. } => 1,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for
         // the same reason the humanise is — a leaned note is off the grid the swing reads.

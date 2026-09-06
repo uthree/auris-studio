@@ -39,6 +39,7 @@ mod checkpoints;
 mod clipboard;
 mod clips;
 mod compose;
+mod drum_analysis;
 mod files;
 mod generated;
 mod harmony;
@@ -68,6 +69,10 @@ pub use analysis::{MixAnalysis, SectionLoudness, TrackLoudness};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use drum_analysis::{
+    DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
+    DrumVoiceAnalysis, probe_drum_request,
+};
 pub use files::{LoadedFont, decode_audio, read_soundfont};
 pub use hosted::PluginWindow;
 pub use levels::{

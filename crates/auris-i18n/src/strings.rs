@@ -1003,6 +1003,19 @@ strings! {
     CountIn { en: "Count-In", ja: "カウントイン" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
+    MenuAnalyzeDrums { en: "Analyze Drum Sounds", ja: "ドラムの音を解析" }
+    MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "測定したドラム割り当てを使う" }
+    MenuUseDrumMapForGeneration { en: "Use Mapping for New Clips Only", ja: "新しく生成するクリップだけに使う" }
+    MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム解析を中断" }
+    DrumAnalysisRunning { en: "Measuring drum sounds…", ja: "ドラムの音を測定中…" }
+    DrumAnalysisReady { en: "Drum measurements ready", ja: "ドラムの測定が完了しました" }
+    DrumAnalysisObsolete { en: "The instrument changed during measurement. Analyze its sounds again.", ja: "測定中に音源が変更されました。もう一度解析してください。" }
+    DrumFit { en: "fit", ja: "適合度" }
+    DrumNoMatch { en: "no matching sound", ja: "該当音なし" }
+    DrumClosedHat { en: "Closed hat", ja: "クローズドハット" }
+    DrumOpenHat { en: "Open hat", ja: "オープンハット" }
+    DrumTom { en: "Tom", ja: "タム" }
+    EditApplyDrumMap { en: "Apply Drum Mapping", ja: "ドラム割り当てを適用" }
     MenuTrackColor { en: "Colour", ja: "カラー" }
     MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }
@@ -1167,6 +1180,9 @@ COMMANDS
     dictionary [--manifest]       Show the shipped Japanese dictionary and whether it is installed
     info <project.auris>          Print a project's tracks, clips and duration
     render <project.auris> [opts] Render a project to a WAV file
+    analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
+                                  Measure drum sounds and optionally apply the computed mapping
+        --first-note <n> --last-note <n>  Limit the measured MIDI key range (default: 0-127)
     sing <project.auris> [opts]   Render a singer track through its voice model
     frames <project.auris> [opts] Write the frames a singer track's voice is fed
     sing-frames <frames.json> [opts]
@@ -1242,6 +1258,9 @@ auris — コマンドラインから使う Auris Studio
                                   フレームファイルを声のモデルで歌わせて WAV にする
     new <project.auris> [opts]    ソフト音源トラック 1 本のプロジェクトを作成
     collect <project.auris>       プロジェクトが使うファイルをフォルダ内に集める
+    analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
+                                  実際の出音を解析し、ドラムの割り当てを提案する
+        --first-note <n> --last-note <n>  測定するMIDIノートの範囲を指定（既定: 0〜127）
     help                          このメッセージを表示
 
 compose のオプション

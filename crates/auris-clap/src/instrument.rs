@@ -26,6 +26,12 @@ use crate::host::AurisHost;
 pub struct ClapInstrument(Bridge);
 
 impl ClapInstrument {
+    /// Whether any processing call has failed since this instance was activated.
+    /// Offline measurement must distinguish failed processing from a silent sound.
+    pub fn processing_failed(&self) -> bool {
+        self.0.processing_failed()
+    }
+
     /// Wraps a freshly activated audio processor. Called by
     /// [`ClapPlugin::activate_instrument`](crate::ClapPlugin::activate_instrument).
     pub(crate) fn new(bridge: Bridge) -> Self {
