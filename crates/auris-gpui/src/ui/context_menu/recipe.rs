@@ -446,8 +446,8 @@ fn next_seed(project: &Project) -> u64 {
 ///
 /// The cycle region when there is one, for the same reason a progression uses it: setting the
 /// cycle over the part of the song being worked on and then acting on it is how the rest of the
-/// application already behaves. Four bars from the pointer otherwise, which is enough of a phrase
-/// to judge and short enough to throw away.
+/// application already behaves. Four bars from the start of the pointer's bar otherwise, which
+/// is enough of a phrase to judge and short enough to throw away.
 pub(super) fn generation_range(
     loop_region: Option<(Ticks, Ticks)>,
     tick: Ticks,
@@ -460,8 +460,9 @@ pub(super) fn generation_range(
             // "four bars" means is the four the ruler counts.
             let tick = tick.max_zero();
             let first = signatures.bar_of(tick);
-            let length = signatures.bar_start(first + 4) - signatures.bar_start(first);
-            (tick, length)
+            let start = signatures.bar_start(first);
+            let length = signatures.bar_start(first + 4) - start;
+            (start, length)
         }
     }
 }
@@ -581,7 +582,7 @@ mod tests {
     fn a_generated_clip_goes_where_the_cycle_is_when_there_is_one() {
         let bar = TimeSignature::new(4, 4).ticks_per_bar();
 
-        // No cycle: four bars from where the pointer was — enough of a phrase to judge, and
+        // No cycle: four bars from the pointer's bar — enough of a phrase to judge, and
         // short enough to throw away.
         assert_eq!(
             generation_range(None, bar * 2, &meters()),
@@ -598,6 +599,36 @@ mod tests {
         assert_eq!(
             generation_range(Some((bar * 4, bar * 4)), Ticks::ZERO, &meters()),
             (Ticks::ZERO, bar * 4)
+        );
+    }
+
+    #[test]
+    fn generation_snaps_to_the_start_of_the_bar_through_meter_changes() {
+        let mut signatures = meters();
+        signatures.set_point(Ticks::from_beats(16.0), TimeSignature::new(3, 4));
+
+        // Check both sides of each boundary, including bars in the new meter.
+        for (beat, start, end) in [
+            (-1.0, 0.0, 16.0),
+            (0.0, 0.0, 16.0),
+            (8.001, 8.0, 22.0),
+            (11.999, 8.0, 22.0),
+            (12.0, 12.0, 25.0),
+            (16.001, 16.0, 28.0),
+            (18.999, 16.0, 28.0),
+            (19.0, 19.0, 31.0),
+        ] {
+            assert_eq!(
+                generation_range(None, Ticks::from_beats(beat), &signatures),
+                (Ticks::from_beats(start), Ticks::from_beats(end - start)),
+                "pointer at beat {beat}"
+            );
+        }
+
+        let cycle = (Ticks::from_beats(9.0), Ticks::from_beats(14.0));
+        assert_eq!(
+            generation_range(Some(cycle), Ticks::from_beats(20.0), &signatures),
+            (cycle.0, cycle.1 - cycle.0)
         );
     }
 }
