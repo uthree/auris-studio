@@ -18,6 +18,11 @@ use gpui::{Font, FontFallbacks, Hsla, Pixels, hsla, px, rgb};
 /// boxes without the fallbacks. They are listed for every platform at once because a family that
 /// is not installed is simply skipped, which makes an unused entry free.
 pub fn ui_font() -> Font {
+    ui_font_for(None)
+}
+
+/// The chosen interface family, with the same multilingual fallbacks as the system default.
+pub fn ui_font_for(family: Option<&str>) -> Font {
     let base = if cfg!(target_os = "macos") {
         "Helvetica"
     } else if cfg!(target_os = "windows") {
@@ -38,7 +43,7 @@ pub fn ui_font() -> Font {
             "Noto Sans CJK JP".into(),
             "DejaVu Sans".into(),
         ])),
-        ..gpui::font(base)
+        ..gpui::font(family.unwrap_or(base).to_owned())
     }
 }
 
@@ -54,11 +59,11 @@ pub fn ui_font() -> Font {
 /// Whether a scheme is light or dark is not a flag: it follows from [`Scheme::base`], and every
 /// step away from the background is taken *towards the foreground* rather than upwards.
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub struct Scheme {
+pub struct Scheme<'a> {
     /// Stable identifier written to the preferences file. Never change a released one.
-    pub id: &'static str,
+    pub id: &'a str,
     /// Name shown to the user. Not translated, like the drum grooves: these are proper nouns.
-    pub name: &'static str,
+    pub name: &'a str,
     /// Hue of the greys, from 0 to 1.
     pub hue: f32,
     /// How much of that hue the greys carry.
@@ -69,8 +74,8 @@ pub struct Scheme {
     pub accent: Hsla,
 }
 
-/// Every colour scheme, in the order the settings window offers them.
-pub const SCHEMES: &[Scheme] = &[
+/// Built-in colour schemes, in the order the settings window offers them.
+pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
@@ -200,7 +205,7 @@ pub const SCHEMES: &[Scheme] = &[
 pub const DEFAULT_SCHEME: &str = "midnight";
 
 /// The scheme with this id.
-pub fn scheme(id: &str) -> Option<&'static Scheme> {
+pub fn scheme(id: &str) -> Option<&'static Scheme<'static>> {
     SCHEMES.iter().find(|scheme| scheme.id == id)
 }
 
@@ -209,11 +214,11 @@ pub fn scheme(id: &str) -> Option<&'static Scheme> {
 /// Forgiving on purpose, like the keymap: the preferences file is user-editable text that outlives
 /// the build that wrote it, and a scheme that has been renamed should cost the colour it was, not
 /// the ability to start.
-pub fn scheme_or_default(id: &str) -> &'static Scheme {
+pub fn scheme_or_default(id: &str) -> &'static Scheme<'static> {
     scheme(id).unwrap_or_else(|| scheme(DEFAULT_SCHEME).expect("the default scheme exists"))
 }
 
-impl Scheme {
+impl Scheme<'_> {
     /// `1.0` where the interface reads light-on-dark, `-1.0` where it reads dark-on-light.
     fn direction(&self) -> f32 {
         if self.base < 0.5 { 1.0 } else { -1.0 }
@@ -245,7 +250,7 @@ impl Scheme {
 /// Walked outwards a hundredth at a time rather than solved: the relationship between a step
 /// along the ramp and a contrast ratio depends on the scheme's hue and chroma, so there is no
 /// closed form worth writing. Eight schemes times a few hundred steps, once at start-up.
-fn readable_shade(scheme: &Scheme, step: f32, ratio: f32) -> Hsla {
+fn readable_shade(scheme: &Scheme<'_>, step: f32, ratio: f32) -> Hsla {
     // Measured against the *nearest* surface in the stack rather than the background, because
     // text is drawn on all of them and the one closest to it is the one that decides. A colour
     // that clears the threshold on the window's background can still fail on a raised panel.
@@ -259,6 +264,31 @@ fn readable_shade(scheme: &Scheme, step: f32, ratio: f32) -> Hsla {
         step += 0.01;
     }
     scheme.shade(1.0)
+}
+
+/// Keeps accent-coloured text readable even when the chosen fill matches the background.
+fn readable_accent(scheme: &Scheme<'_>) -> Hsla {
+    let surfaces = [
+        scheme.shade(-0.020),
+        scheme.shade(0.0),
+        scheme.shade(0.034),
+        scheme.shade(0.074),
+        scheme.shade(SURFACE_HOVER_STEP),
+    ];
+    let mut candidate = Hsla {
+        a: 1.0,
+        ..scheme.accent
+    };
+    for _ in 0..=100 {
+        if surfaces
+            .iter()
+            .all(|background| contrast_ratio(candidate, *background) >= 4.5)
+        {
+            return candidate;
+        }
+        candidate.l = (candidate.l + 0.01 * scheme.direction()).clamp(0.0, 1.0);
+    }
+    candidate
 }
 
 /// The highest surface in the stack, and so the one text has the least contrast against.
@@ -316,7 +346,9 @@ fn readable_on(color: Hsla, neutral: Hsla) -> Hsla {
 #[derive(Clone, Debug)]
 pub struct Theme {
     /// Id of the scheme this was built from, so a picker can tick the one in force.
-    pub scheme: &'static str,
+    pub scheme: String,
+    /// Interface font, including the fallbacks used for Japanese and other scripts.
+    pub font: Font,
     /// Window background, behind every panel.
     pub background: Hsla,
     /// Standard panel surface.
@@ -341,6 +373,8 @@ pub struct Theme {
     pub text_on_accent: Hsla,
     /// Interactive accent.
     pub accent: Hsla,
+    /// Accent-coloured text with at least 4.5:1 contrast on standard surfaces.
+    pub accent_text: Hsla,
     /// Accent used for large filled areas.
     pub accent_soft: Hsla,
     /// Something went wrong, or is about to.
@@ -410,10 +444,11 @@ impl Theme {
     /// The lightness steps below are the whole layout of the interface, written down once. Reading
     /// them in order — sunken, background, surface, raised, hover — is reading the stack of
     /// surfaces from furthest to nearest, and every scheme gets the same stack.
-    pub fn from_scheme(scheme: &Scheme) -> Self {
+    pub fn from_scheme(scheme: &Scheme<'_>) -> Self {
         let accent = scheme.accent;
         Self {
-            scheme: scheme.id,
+            scheme: scheme.id.to_owned(),
+            font: ui_font(),
             surface_sunken: scheme.shade(-0.020),
             background: scheme.shade(0.0),
             surface: scheme.shade(0.034),
@@ -438,6 +473,7 @@ impl Theme {
             grid_bar: scheme.shade(0.194),
             key_row_black: scheme.shade(-0.012),
             accent,
+            accent_text: readable_accent(scheme),
             // A wash of the accent for the areas large enough that the accent itself would shout:
             // half the colour, and pulled most of the way back to the background.
             accent_soft: Hsla {
@@ -846,6 +882,39 @@ mod tests {
                     "{}: velocity {velocity} has only {ratio:.2}:1 label contrast",
                     entry.name
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn custom_accents_keep_their_fill_and_readable_text_on_every_surface() {
+        for base in SCHEMES {
+            for accent in [
+                base.accent,
+                base.shade(0.0),
+                rgb(0x000000).into(),
+                rgb(0xffffff).into(),
+                rgb(0xff0000).into(),
+                rgb(0x00ff00).into(),
+                rgb(0x0000ff).into(),
+            ] {
+                let theme = Theme::from_scheme(&Scheme { accent, ..*base });
+                assert_eq!(theme.accent, accent, "the chosen fill is retained");
+                for (name, background) in [
+                    ("background", theme.background),
+                    ("surface", theme.surface),
+                    ("raised", theme.surface_raised),
+                    ("sunken", theme.surface_sunken),
+                    ("hover", theme.surface_hover),
+                ] {
+                    let ratio = contrast_ratio(theme.accent_text, background);
+                    assert!(
+                        ratio >= 4.5,
+                        "{}: accent {accent:?} text on {name} has only {ratio:.2}:1 contrast",
+                        base.name,
+                    );
+                }
+                assert!(contrast_ratio(theme.text_on_accent, theme.accent) >= 4.5);
             }
         }
     }

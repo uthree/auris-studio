@@ -33,6 +33,9 @@ rfd = "0.17"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 
+[build-dependencies]
+embed-resource = "3.0"
+
 # The same gpui, with its test platform switched on: a window with no display, no GPU and no font
 # system behind it, driven from `cargo test`. Only the test build gets it — a dev-dependency is
 # not linked into the binary — and `test-support` is also what turns `debug_selector` from a

@@ -976,7 +976,7 @@ impl Render for VoiceSetupWindow {
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
-            .font(crate::theme::ui_font())
+            .font(theme.font.clone())
             .text_sm()
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if this.on_key(event, cx) {

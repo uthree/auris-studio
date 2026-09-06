@@ -393,7 +393,7 @@ impl AurisApp {
                         row.child(
                             div()
                                 .text_xs()
-                                .text_color(theme.accent)
+                                .text_color(theme.accent_text)
                                 .child(self.t(Key::SendPreFaderMark)),
                         )
                     }),

@@ -1193,6 +1193,8 @@ pub struct AurisApp {
     pub(crate) session: Session,
 
     pub(crate) theme: Theme,
+    /// Persistent appearance choices, including palettes created in the settings window.
+    pub(crate) appearance: Appearance,
     pub(crate) timeline: TimelineView,
     /// Fractional time-signature wheel notches carried between precise-scroll events.
     pub(crate) signature_scroll_remainder: f32,
@@ -1487,7 +1489,8 @@ impl AurisApp {
         let input = InputSettings::load();
         let keymap = input.keys.clone();
         keymap.apply(cx);
-        let theme = Appearance::load().theme();
+        let appearance = Appearance::load();
+        let theme = appearance.theme();
         cx.set_global(theme.clone());
 
         let mut session =
@@ -1577,6 +1580,7 @@ impl AurisApp {
         Self {
             session,
             theme,
+            appearance,
             timeline: TimelineView::default(),
             signature_scroll_remainder: 0.0,
             pitch: PitchView::default(),
@@ -2399,10 +2403,12 @@ impl AurisApp {
         cx.set_menus(crate::menu::menus(self.language, &self.panels, state));
         self.native_menu_snapshot = Some((self.language, self.panels.clone(), state));
         if let Some(handle) = self.settings_window {
-            let theme = self.theme.clone();
-            let _ = handle.update(cx, move |settings, _, cx| {
-                settings.sync_appearance(theme, preference);
-                cx.notify();
+            let appearance = self.appearance.clone();
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, move |settings, _, cx| {
+                    settings.sync_appearance(appearance, preference);
+                    cx.notify();
+                });
             });
         }
         if let Some(handle) = self.voice_setup_window {
@@ -2423,24 +2429,37 @@ impl AurisApp {
     /// Everything visual reads the current theme on the next frame, so there is nothing to
     /// invalidate. Tooltips read the matching gpui global because they live outside this view;
     /// the floating plugin editor re-reads this field every frame, and the settings window
-    /// updates its own copy where it makes the change.
+    /// receives the matching appearance after the current event finishes.
     pub(crate) fn apply_scheme(&mut self, id: &str, cx: &mut App) {
-        self.theme = Theme::named(id);
-        cx.set_global(self.theme.clone());
-        let appearance = Appearance {
-            scheme: self.theme.scheme.to_string(),
-        };
-        // Best-effort, like the input settings: a preferences file that cannot be written must
-        // not undo a change the user can already see.
-        if let Err(error) = appearance.save() {
+        let mut appearance = self.appearance.clone();
+        appearance.scheme = id.to_owned();
+        if let Err(error) = self.apply_appearance(appearance, cx) {
             log::warn!("could not save the colour scheme: {error}");
         }
+        let name = self.appearance.selected_scheme().name.to_owned();
+        self.set_status(messages::scheme_changed(self.language(), &name));
+    }
+
+    /// Applies and saves palette and font choices, retaining live changes if saving fails.
+    pub(crate) fn apply_appearance(
+        &mut self,
+        appearance: Appearance,
+        cx: &mut App,
+    ) -> std::io::Result<()> {
+        self.appearance = appearance.normalised();
+        self.theme = self.appearance.theme();
+        cx.set_global(self.theme.clone());
+        let saved = self.appearance.save();
         if let Some(handle) = self.settings_window {
-            let theme = self.theme.clone();
+            let appearance = self.appearance.clone();
             let language = self.settings.language;
-            let _ = handle.update(cx, move |settings, _, cx| {
-                settings.sync_appearance(theme, language);
-                cx.notify();
+            // Settings may have initiated this change while its window is still being updated.
+            // Defer the snapshot so the originating window receives it as well as other windows.
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, move |settings, _, cx| {
+                    settings.sync_appearance(appearance, language);
+                    cx.notify();
+                });
             });
         }
         if let Some(handle) = self.voice_setup_window {
@@ -2452,8 +2471,7 @@ impl AurisApp {
                 cx.notify();
             });
         }
-        let name = crate::theme::scheme_or_default(id).name;
-        self.set_status(messages::scheme_changed(self.language(), name));
+        saved
     }
 
     /// Installs an edited keymap and remembers it.
@@ -2597,7 +2615,7 @@ impl AurisApp {
         // Gather everything the window needs *before* opening it: the constructor runs inside
         // this update, and reading `self` back through the entity handle would panic.
         let app = cx.entity().downgrade();
-        let theme = self.theme.clone();
+        let appearance = self.appearance.clone();
         let devices = crate::settings_window::AudioDevices {
             output: self.session.output_devices(),
             input: self.session.input_devices(),
@@ -2626,7 +2644,7 @@ impl AurisApp {
                 cx.new(|cx| {
                     SettingsWindow::new(
                         app,
-                        theme,
+                        appearance,
                         devices,
                         audio,
                         live,

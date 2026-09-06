@@ -1460,7 +1460,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let (colour, text): (gpui::Hsla, String) = match entry {
-            ChatEntry::You(text) => (theme.accent, text.clone()),
+            ChatEntry::You(text) => (theme.accent_text, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
             ChatEntry::Tool { name, ok, line, .. } => {
                 let mark = match (*ok, line.is_empty()) {

@@ -19,6 +19,8 @@
     <string>io.github.uthree.auris-studio</string>
     <key>CFBundleExecutable</key>
     <string>auris-studio</string>
+    <key>CFBundleIconFile</key>
+    <string>auris-studio.icns</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleInfoDictionaryVersion</key>

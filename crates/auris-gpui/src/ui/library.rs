@@ -214,7 +214,7 @@ impl LibraryRole {
         match self {
             Self::Instrument => Icon::Keyboard,
             Self::Effect => Icon::Knob,
-            Self::Voice => Icon::Notes,
+            Self::Voice => Icon::Microphone,
             Self::File => Icon::Library,
         }
     }
@@ -671,7 +671,7 @@ impl AurisApp {
         let mut rows = vec![self.section_row(
             Branch::Voices,
             Key::BrowserVoices,
-            Icon::Notes,
+            Icon::Microphone,
             voices.len(),
             cx,
         )];
@@ -751,11 +751,11 @@ impl AurisApp {
                     .gap_1p5()
                     .w_full()
                     .min_w_0()
-                    .child(crate::ui::icons::icon(
-                        if selected { Icon::Check } else { Icon::Notes },
+                    .child(div().flex_shrink_0().child(icon(
+                        Icon::Microphone,
                         px(14.0),
                         if enabled { accent } else { theme.text_muted },
-                    ))
+                    )))
                     .child(
                         div()
                             .flex_1()
@@ -764,7 +764,14 @@ impl AurisApp {
                             .text_size(px(13.0))
                             .text_color(theme.text)
                             .child(name.to_string()),
-                    ),
+                    )
+                    .when(selected, |this| {
+                        this.child(
+                            div()
+                                .flex_shrink_0()
+                                .child(icon(Icon::Check, px(14.0), accent)),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -1670,7 +1677,7 @@ impl AurisApp {
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(
-                if selected { Icon::Check } else { role.icon() },
+                role.icon(),
                 px(14.0),
                 if enabled { accent } else { theme.text_muted },
             )))
@@ -1697,6 +1704,13 @@ impl AurisApp {
                         )
                     }),
             )
+            .when(selected, |this| {
+                this.child(
+                    div()
+                        .flex_shrink_0()
+                        .child(icon(Icon::Check, px(14.0), accent)),
+                )
+            })
             .when(enabled, |this| {
                 this.on_mouse_down(gpui::MouseButton::Left, on_click)
             })
@@ -1769,7 +1783,7 @@ impl AurisApp {
             })
             .tooltip(tooltip)
             .child(div().flex_shrink_0().child(icon(
-                if selected { Icon::Check } else { Icon::Wave },
+                Icon::Wave,
                 px(14.0),
                 if enabled { accent } else { theme.text_muted },
             )))
@@ -1804,6 +1818,13 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(preset.patch.to_string()),
             )
+            .when(selected, |this| {
+                this.child(
+                    div()
+                        .flex_shrink_0()
+                        .child(icon(Icon::Check, px(14.0), accent)),
+                )
+            })
             .when(enabled, |this| {
                 this.on_mouse_down(gpui::MouseButton::Left, on_click)
             })

@@ -83,6 +83,7 @@ jobs:
           # upwards, so it is given a link to the same directory rather than a second copy. Two
           # copies would be four hundred megabytes to save a symlink.
           mkdir -p "$app/Contents/Resources"
+          cp crates/auris-gpui/assets/auris-studio.icns "$app/Contents/Resources/auris-studio.icns"
           cp -R SoundFonts "$app/Contents/Resources/SoundFonts"
           ln -s "Auris Studio.app/Contents/Resources/SoundFonts" "$stage/SoundFonts"
           # The Japanese dictionary travels the same way, for the same two readers.

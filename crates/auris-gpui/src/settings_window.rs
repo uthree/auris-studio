@@ -1,4 +1,4 @@
-//! The settings window: audio device selection and key bindings.
+//! The settings window: appearance, editing, audio devices and key bindings.
 //!
 //! A separate gpui window rather than a panel, because settings are not part of editing a
 //! project and should not compete with it for space. It holds a weak handle to the main view
@@ -14,14 +14,20 @@ use gpui::{
 
 use crate::actions::{BINDABLE, Bindable};
 use crate::app::AurisApp;
+use crate::appearance::Appearance;
 use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
-use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
+use crate::theme::{Metrics, SCHEMES, Theme};
 use crate::titlebar;
 use crate::ui::icons::Icon;
 use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
+
+mod appearance_editor;
+#[cfg(test)]
+mod appearance_tests;
+mod dropdown;
 
 /// Which page the settings window is showing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -57,8 +63,11 @@ enum DeviceSlot {
 pub struct SettingsWindow {
     app: WeakEntity<AurisApp>,
     theme: Theme,
+    appearance: Appearance,
+    appearance_editor: Option<appearance_editor::AppearanceEditor>,
+    font_families: Vec<String>,
     tab: SettingsTab,
-    /// What the host can see, read once when the window opens.
+    /// What the host can see, refreshed on request or when the audio host changes.
     devices: AudioDevices,
     hosts: Vec<String>,
     audio: AudioPreferences,
@@ -75,9 +84,9 @@ pub struct SettingsWindow {
     japanese_dictionary: Option<std::path::PathBuf>,
     /// Where singer voices run their inference.
     singer_acceleration: Acceleration,
-    /// What a click creates and what deletes.
     /// How a bounce is written.
     export: ExportPreferences,
+    /// What a click creates and what deletes.
     pointer: PointerGestures,
     /// What the audio backend is actually doing.
     ///
@@ -94,6 +103,8 @@ pub struct SettingsWindow {
     search: TextField,
     status: String,
     focus: FocusHandle,
+    dropdown_menu: Option<dropdown::DropdownMenu>,
+    dropdown_focus: std::collections::BTreeMap<&'static str, FocusHandle>,
 }
 
 /// A row of the key list, armed and waiting for a key press.
@@ -113,8 +124,13 @@ impl Focusable for SettingsWindow {
 
 impl SettingsWindow {
     /// Refreshes appearance values changed from another application surface.
-    pub(crate) fn sync_appearance(&mut self, theme: Theme, language_preference: Option<Language>) {
-        self.theme = theme;
+    pub(crate) fn sync_appearance(
+        &mut self,
+        appearance: Appearance,
+        language_preference: Option<Language>,
+    ) {
+        self.theme = appearance.theme();
+        self.appearance = appearance;
         self.language_preference = language_preference;
         self.language = Language::resolve(language_preference);
     }
@@ -126,7 +142,7 @@ impl SettingsWindow {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         app: WeakEntity<AurisApp>,
-        theme: Theme,
+        appearance: Appearance,
         devices: AudioDevices,
         audio: AudioPreferences,
         live: AudioStatus,
@@ -140,9 +156,15 @@ impl SettingsWindow {
         export: ExportPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut font_families = cx.text_system().all_font_names();
+        font_families.sort_by_key(|name| name.to_lowercase());
+        font_families.dedup();
         Self {
             app,
-            theme,
+            theme: appearance.theme(),
+            appearance,
+            appearance_editor: None,
+            font_families,
             tab: SettingsTab::General,
             devices,
             hosts: Session::audio_hosts(),
@@ -161,6 +183,8 @@ impl SettingsWindow {
             search: TextField::new(String::new()),
             status: String::new(),
             focus: cx.focus_handle(),
+            dropdown_menu: None,
+            dropdown_focus: std::collections::BTreeMap::new(),
         }
     }
 
@@ -178,13 +202,13 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    /// A row of gesture buttons for one of the two actions.
+    /// A gesture dropdown for one of the two actions.
     ///
     /// `offered` is what the row lists, which is not the same for both: the bare click may create
     /// and may not delete, and a button that swapped the two into an arrangement
     /// [`PointerGestures::set_delete`] refuses would look like the panel ignoring a click.
     fn gesture_row(
-        &self,
+        &mut self,
         id: &'static str,
         label: Key,
         current: PointerGesture,
@@ -193,6 +217,22 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
+        let choices = PointerGesture::ALL
+            .into_iter()
+            .filter(|gesture| offered(*gesture))
+            .map(|gesture| (gesture, self.t(gesture.label()).to_owned(), String::new()))
+            .collect();
+        let control = self.dropdown(
+            id,
+            choices,
+            &current,
+            move |this, gesture, cx| {
+                let mut pointer = this.pointer;
+                assign(&mut pointer, gesture);
+                this.apply_pointer(pointer, cx);
+            },
+            cx,
+        );
         div()
             .flex()
             .items_center()
@@ -205,27 +245,7 @@ impl SettingsWindow {
                     .text_color(theme.text_muted)
                     .child(self.t(label)),
             )
-            .children(
-                PointerGesture::ALL
-                    .into_iter()
-                    .filter(|gesture| offered(*gesture))
-                    .enumerate()
-                    .map(|(index, gesture)| {
-                        button(
-                            (id, index),
-                            self.t(gesture.label()),
-                            ButtonStyle::Normal,
-                            current == gesture,
-                            theme.accent,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                let mut pointer = this.pointer;
-                                assign(&mut pointer, gesture);
-                                this.apply_pointer(pointer, cx);
-                            }),
-                        )
-                    }),
-            )
+            .child(div().flex_1().min_w_0().child(control))
             .into_any_element()
     }
 
@@ -238,18 +258,6 @@ impl SettingsWindow {
             app.apply_language(preference, cx);
         });
         self.status = messages::language_changed(self.language, self.language.endonym());
-        cx.notify();
-    }
-
-    /// Repaints both windows in another colour scheme.
-    ///
-    /// This window holds its own copy of the palette rather than reading the application's, so it
-    /// has to be told as well — otherwise the change would be visible everywhere except in the
-    /// window where it was made.
-    fn apply_scheme(&mut self, id: &'static str, cx: &mut Context<Self>) {
-        self.theme = Theme::named(id);
-        let _ = self.app.update(cx, |app, cx| app.apply_scheme(id, cx));
-        self.status = messages::scheme_changed(self.language, scheme_or_default(id).name);
         cx.notify();
     }
 
@@ -318,6 +326,7 @@ impl SettingsWindow {
                 cx.listener(|this, _, _, cx| {
                     this.tab = SettingsTab::General;
                     this.capturing = None;
+                    this.dropdown_menu = None;
                     cx.notify();
                 }),
             ))
@@ -331,6 +340,7 @@ impl SettingsWindow {
                 cx.listener(|this, _, _, cx| {
                     this.tab = SettingsTab::Audio;
                     this.capturing = None;
+                    this.dropdown_menu = None;
                     cx.notify();
                 }),
             ))
@@ -343,12 +353,13 @@ impl SettingsWindow {
                 &theme,
                 cx.listener(|this, _, _, cx| {
                     this.tab = SettingsTab::Keys;
+                    this.dropdown_menu = None;
                     cx.notify();
                 }),
             ))
     }
 
-    /// The General page: for now, the interface language.
+    /// Appearance, language, editing behaviour and singer preferences.
     fn render_general(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let current = self.language_preference;
@@ -359,60 +370,44 @@ impl SettingsWindow {
             vec![(None, self.t(Key::LanguageFollowSystem))];
         choices.extend(Language::ALL.map(|language| (Some(language), language.endonym())));
 
+        let appearance_control = self.render_appearance(cx);
+        let language_choices = choices
+            .into_iter()
+            .map(|(value, label)| (value, label.to_owned(), String::new()))
+            .collect();
+        let language_control = self.dropdown(
+            "language",
+            language_choices,
+            &current,
+            |this, value, cx| this.apply_language(value, cx),
+            cx,
+        );
+        let acceleration = self.singer_acceleration;
+        let acceleration_choices = vec![
+            (
+                Acceleration::Auto,
+                self.t(Key::SingerComputeAuto).to_owned(),
+                String::new(),
+            ),
+            (Acceleration::Gpu, "GPU".to_owned(), String::new()),
+            (Acceleration::Cpu, "CPU".to_owned(), String::new()),
+        ];
+        let acceleration_control = self.dropdown(
+            "singer-compute",
+            acceleration_choices,
+            &acceleration,
+            |this, value, cx| this.apply_singer_acceleration(value, cx),
+            cx,
+        );
         div()
             .flex()
             .flex_col()
             .gap_2()
-            .child(section_title(self.t(Key::AppearanceHeading), &theme))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(SCHEMES.iter().enumerate().map(|(index, scheme)| {
-                        button(
-                            ("scheme", index),
-                            scheme.name,
-                            ButtonStyle::Normal,
-                            theme.scheme == scheme.id,
-                            theme.accent,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| this.apply_scheme(scheme.id, cx)),
-                        )
-                    })),
-            )
+            .child(appearance_control)
             .child(divider(&theme))
             .child(section_title(self.t(Key::LanguageHeading), &theme))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_1()
-                    .children(
-                        choices
-                            .into_iter()
-                            .enumerate()
-                            .map(|(index, (choice, label))| {
-                                button(
-                                    ("language", index),
-                                    label,
-                                    ButtonStyle::Normal,
-                                    current == choice,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(move |this, _, _, cx| {
-                                        this.apply_language(choice, cx)
-                                    }),
-                                )
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::LanguageNote)),
-            )
+            .child(language_control)
+            .child(note(self.t(Key::LanguageNote), &theme))
             .child(divider(&theme))
             .child(section_title(self.t(Key::PointerHeading), &theme))
             .child(self.gesture_row(
@@ -542,31 +537,7 @@ impl SettingsWindow {
             .child(note(self.t(Key::JapaneseDictionaryNote), &theme))
             .child(divider(&theme))
             .child(section_title(self.t(Key::SingerComputeHeading), &theme))
-            .child(
-                div().flex().gap_1().children(
-                    [
-                        (Acceleration::Auto, self.t(Key::SingerComputeAuto)),
-                        // Initialisms, not words: the same three letters in every language.
-                        (Acceleration::Gpu, "GPU"),
-                        (Acceleration::Cpu, "CPU"),
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, (choice, label))| {
-                        button(
-                            ("singer-compute", index),
-                            label,
-                            ButtonStyle::Normal,
-                            self.singer_acceleration == choice,
-                            theme.accent,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                this.apply_singer_acceleration(choice, cx)
-                            }),
-                        )
-                    }),
-                ),
-            )
+            .child(acceleration_control)
             .child(note(self.t(Key::SingerComputeNote), &theme))
             .into_any_element()
     }
@@ -648,130 +619,159 @@ impl SettingsWindow {
         let audio = self.audio.clone();
         let live = self.live.clone();
         let export = self.export;
-
         let mut rows: Vec<AnyElement> = Vec::new();
 
-        rows.push(section_title(self.t(Key::AudioHost), &theme));
-        let mut hosts: Vec<Option<String>> = vec![None];
-        hosts.extend(self.hosts.iter().cloned().map(Some));
-        if !hosts.contains(&audio.host) {
-            hosts.push(audio.host.clone());
-        }
         rows.push(
             div()
                 .flex()
-                .flex_wrap()
-                .gap_1()
-                .children(hosts.into_iter().enumerate().map(|(index, host)| {
-                    button(
-                        ("audio-host", index),
-                        host.clone()
-                            .unwrap_or_else(|| self.t(Key::SystemDefaultDevice).to_owned()),
-                        ButtonStyle::Normal,
-                        audio.host == host,
-                        theme.accent,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            if this.audio.host != host {
-                                this.apply_audio(
-                                    AudioPreferences {
-                                        host: host.clone(),
-                                        device: None,
-                                        input_device: None,
-                                        sample_rate: None,
-                                        ..this.audio.clone()
-                                    },
-                                    cx,
-                                );
-                            }
-                        }),
-                    )
-                }))
+                .items_center()
+                .justify_between()
+                .child(section_title(self.t(Key::AudioHost), &theme))
+                .child(button(
+                    "refresh-audio-devices",
+                    self.t(Key::RefreshAudioDevices),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.hosts = Session::audio_hosts();
+                        if let Ok(devices) = this.app.read_with(cx, |app, _| AudioDevices {
+                            output: app.session.output_devices(),
+                            input: app.session.input_devices(),
+                        }) {
+                            this.devices = devices;
+                        }
+                        cx.notify();
+                    }),
+                ))
                 .into_any_element(),
         );
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::OutputDevice), &theme));
-        rows.push(self.device_row(
-            "device-default",
-            self.t(if audio.uses_asio() {
-                Key::FirstAsioDevice
-            } else {
-                Key::SystemDefaultDevice
-            }),
-            self.t(if audio.uses_asio() {
-                Key::FirstAsioDeviceDetail
-            } else {
-                Key::SystemDefaultDeviceDetail
-            }),
+        let mut hosts = vec![(
             None,
-            DeviceSlot::Output,
-            cx,
-        ));
-        for (index, device) in self.devices.output.clone().into_iter().enumerate() {
-            let detail = describe(&device, self.language);
-            rows.push(self.device_row(
-                ("device", index),
-                &device.name.clone(),
-                &detail,
-                Some(device.name),
-                DeviceSlot::Output,
-                cx,
+            self.t(Key::SystemDefaultDevice).to_owned(),
+            String::new(),
+        )];
+        hosts.extend(
+            self.hosts
+                .iter()
+                .map(|host| (Some(host.clone()), host.clone(), String::new())),
+        );
+        if let Some(host) = &audio.host
+            && !self.hosts.contains(host)
+        {
+            hosts.push((
+                Some(host.clone()),
+                host.clone(),
+                self.t(Key::SettingUnavailable).to_owned(),
             ));
         }
+        rows.push(self.dropdown(
+            "audio-host",
+            hosts,
+            &audio.host,
+            |this, host, cx| {
+                if this.audio.host != host {
+                    this.apply_audio(
+                        AudioPreferences {
+                            host,
+                            device: None,
+                            input_device: None,
+                            sample_rate: None,
+                            ..this.audio.clone()
+                        },
+                        cx,
+                    );
+                }
+            },
+            cx,
+        ));
+        rows.push(divider(&theme).into_any_element());
+        rows.push(section_title(self.t(Key::OutputDevice), &theme));
+        rows.push(self.device_dropdown(DeviceSlot::Output, cx));
 
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::InputDevice), &theme));
         if audio.uses_asio() {
             rows.push(note(self.t(Key::AsioInputNote), &theme));
         } else {
+            rows.push(self.device_dropdown(DeviceSlot::Input, cx));
             rows.push(note(self.t(Key::InputDeviceNote), &theme));
-            rows.push(self.device_row(
-                "input-default",
-                self.t(Key::SystemDefaultDevice),
-                self.t(Key::SystemDefaultDeviceDetail),
-                None,
-                DeviceSlot::Input,
-                cx,
-            ));
-            for (index, device) in self.devices.input.clone().into_iter().enumerate() {
-                let detail = describe(&device, self.language);
-                rows.push(self.device_row(
-                    ("input", index),
-                    &device.name.clone(),
-                    &detail,
-                    Some(device.name),
-                    DeviceSlot::Input,
-                    cx,
-                ));
-            }
         }
 
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::SampleRate), &theme));
-        rows.push(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                .child(self.rate_button("rate-auto", self.t(Key::DeviceDefaultRate), None, cx))
-                .children(
-                    self.rate_choices()
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, rate)| {
-                            self.rate_button(
-                                ("rate", index),
-                                messages::rate_single(self.language, rate as f64 / 1000.0),
-                                Some(rate),
-                                cx,
-                            )
-                        }),
-                )
-                .into_any_element(),
-        );
+        let rates = self.rate_choices();
+        let mut rate_choices = vec![(
+            None,
+            self.t(Key::DeviceDefaultRate).to_owned(),
+            String::new(),
+        )];
+        rate_choices.extend(rates.iter().map(|rate| {
+            (
+                Some(*rate),
+                messages::rate_single(self.language, f64::from(*rate) / 1000.0),
+                String::new(),
+            )
+        }));
+        if let Some(rate) = audio.sample_rate
+            && !rates.contains(&rate)
+        {
+            rate_choices.push((
+                Some(rate),
+                messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                self.t(Key::SettingUnavailable).to_owned(),
+            ));
+        }
+        rows.push(self.dropdown(
+            "sample-rate",
+            rate_choices,
+            &audio.sample_rate,
+            |this, sample_rate, cx| {
+                this.apply_audio(
+                    AudioPreferences {
+                        sample_rate,
+                        ..this.audio.clone()
+                    },
+                    cx,
+                );
+            },
+            cx,
+        ));
 
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::BufferSize), &theme));
+        let mut block_sizes = AudioPreferences::BLOCK_CHOICES.to_vec();
+        if !block_sizes.contains(&audio.block_frames) {
+            block_sizes.push(audio.block_frames);
+        }
+        let rate = live.as_ref().map_or(48_000.0, |status| status.sample_rate);
+        let blocks = block_sizes
+            .into_iter()
+            .map(|frames| {
+                let latency = frames as f64 / rate.max(1.0) * 1000.0;
+                (
+                    frames,
+                    messages::buffer_choice(self.language, frames, latency),
+                    String::new(),
+                )
+            })
+            .collect();
+        rows.push(self.dropdown(
+            "block",
+            blocks,
+            &audio.block_frames,
+            |this, block_frames, cx| {
+                this.apply_audio(
+                    AudioPreferences {
+                        block_frames,
+                        ..this.audio.clone()
+                    },
+                    cx,
+                );
+            },
+            cx,
+        ));
         rows.push(note(self.t(Key::RequestedBufferNote), &theme));
         let actual = live
             .as_ref()
@@ -786,132 +786,99 @@ impl SettingsWindow {
             })
             .unwrap_or_else(|| self.t(Key::ActualBufferUnknown).to_owned());
         rows.push(note(&actual, &theme));
-        rows.push(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                .children(AudioPreferences::BLOCK_CHOICES.into_iter().enumerate().map(
-                    |(index, frames)| {
-                        let selected = audio.block_frames == frames;
-                        let rate = live.as_ref().map_or(48_000.0, |status| status.sample_rate);
-                        let latency = frames as f64 / rate.max(1.0) * 1000.0;
-                        let label = messages::buffer_choice(self.language, frames, latency);
-                        button(
-                            ("block", index),
-                            label,
-                            ButtonStyle::Normal,
-                            selected,
-                            theme.accent,
-                            &theme,
-                            cx.listener(move |this, _, _, cx| {
-                                let audio = AudioPreferences {
-                                    block_frames: frames,
-                                    ..this.audio.clone()
-                                };
-                                this.apply_audio(audio, cx);
-                            }),
-                        )
-                    },
-                ))
-                .into_any_element(),
-        );
 
-        // How a bounce is written. Here rather than in a dialog in front of the save sheet,
-        // because it is a fact about the person and their delivery rather than about the song:
-        // an export that asks three questions every time is one people stop using for a quick
-        // listen. On the Audio page rather than a page of its own — these are the same three
-        // numbers as the ones above them, aimed at a file instead of at a device.
+        // Export preferences describe the file, independently of the output device's settings.
         rows.push(divider(&theme).into_any_element());
         rows.push(section_title(self.t(Key::ExportFormat), &theme));
-        rows.push(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                .children(
-                    [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, depth)| {
-                            button(
-                                ("depth", index),
-                                depth.label(),
-                                ButtonStyle::Normal,
-                                export.bit_depth == depth,
-                                theme.accent,
-                                &theme,
-                                cx.listener(move |this, _, _, cx| {
-                                    let export = ExportPreferences {
-                                        bit_depth: depth,
-                                        ..this.export
-                                    };
-                                    this.apply_export(export, cx);
-                                }),
-                            )
-                        }),
-                )
-                .into_any_element(),
-        );
-
-        rows.push(section_title(self.t(Key::ExportRate), &theme));
-        rows.push(
-            div()
-                .flex()
-                .flex_wrap()
-                .gap_1()
-                // The project's own rate first, and the default: an export at any other rate
-                // resamples the whole mix, which is a thing to ask for rather than to inherit
-                // from whatever the output device happens to be running at.
-                .child(self.export_rate_button(
-                    "export-rate-project",
-                    self.t(Key::ProjectRate),
-                    None,
-                    cx,
-                ))
-                .children(AudioPreferences::RATE_CHOICES.into_iter().enumerate().map(
-                    |(index, rate)| {
-                        self.export_rate_button(
-                            ("export-rate", index),
-                            messages::rate_single(self.language, rate as f64 / 1000.0),
-                            Some(rate),
-                            cx,
-                        )
+        let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+            .into_iter()
+            .map(|depth| (depth, depth.label().to_owned(), String::new()))
+            .collect();
+        rows.push(self.dropdown(
+            "depth",
+            depths,
+            &export.bit_depth,
+            |this, bit_depth, cx| {
+                this.apply_export(
+                    ExportPreferences {
+                        bit_depth,
+                        ..this.export
                     },
-                ))
-                .into_any_element(),
-        );
-
+                    cx,
+                );
+            },
+            cx,
+        ));
+        rows.push(section_title(self.t(Key::ExportRate), &theme));
+        let mut export_rates = vec![(None, self.t(Key::ProjectRate).to_owned(), String::new())];
+        export_rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(|rate| {
+            (
+                Some(rate),
+                messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                String::new(),
+            )
+        }));
+        if let Some(rate) = export.sample_rate
+            && !AudioPreferences::RATE_CHOICES.contains(&rate)
+        {
+            export_rates.push((
+                Some(rate),
+                messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                String::new(),
+            ));
+        }
+        rows.push(self.dropdown(
+            "export-rate",
+            export_rates,
+            &export.sample_rate,
+            |this, sample_rate, cx| {
+                this.apply_export(
+                    ExportPreferences {
+                        sample_rate,
+                        ..this.export
+                    },
+                    cx,
+                );
+            },
+            cx,
+        ));
         rows.push(section_title(self.t(Key::ExportDither), &theme));
-        // Off and unusable at a float depth rather than hidden: a control that disappears when
-        // a neighbour moves reads as a bug in the window. There is nothing to dither *to* when
-        // the file stores what the render produced.
         let dithers = export.dither_applies();
         let on = export.dither && dithers;
-        rows.push(
-            div()
-                .flex()
-                .gap_1()
-                .child(button(
-                    "export-dither",
-                    self.t(if on { Key::ValueOn } else { Key::ValueOff }),
-                    ButtonStyle::Normal,
-                    on,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _, _, cx| {
-                        if !this.export.dither_applies() {
-                            return;
-                        }
-                        let export = ExportPreferences {
-                            dither: !this.export.dither,
-                            ..this.export
-                        };
-                        this.apply_export(export, cx);
-                    }),
-                ))
-                .into_any_element(),
-        );
+        if dithers {
+            rows.push(
+                div()
+                    .flex()
+                    .gap_1()
+                    .child(button(
+                        "export-dither",
+                        self.t(if on { Key::ValueOn } else { Key::ValueOff }),
+                        ButtonStyle::Normal,
+                        on,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.apply_export(
+                                ExportPreferences {
+                                    dither: !this.export.dither,
+                                    ..this.export
+                                },
+                                cx,
+                            );
+                        }),
+                    ))
+                    .into_any_element(),
+            );
+        } else {
+            rows.push(
+                div()
+                    .id("export-dither-disabled")
+                    .text_xs()
+                    .text_color(theme.text_faint)
+                    .child(self.t(Key::ValueOff))
+                    .into_any_element(),
+            );
+        }
         rows.push(note(self.t(Key::ExportDitherNote), &theme));
 
         if let Some(status) = live {
@@ -946,7 +913,6 @@ impl SettingsWindow {
                     .into_any_element(),
             );
         }
-
         div()
             .flex()
             .flex_col()
@@ -955,154 +921,86 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    /// Sample rates worth offering: what the chosen device advertises, or a sensible list.
+    /// Sample rates advertised by the chosen device, or a sensible list when unknown.
     fn rate_choices(&self) -> Vec<u32> {
-        let chosen = self.audio.device.as_deref().and_then(|name| {
-            self.devices
-                .output
-                .iter()
-                .find(|device| device.name == name)
-                .filter(|device| !device.sample_rates.is_empty())
-        });
+        let chosen = self
+            .devices
+            .output
+            .iter()
+            .find(|device| match self.audio.device.as_deref() {
+                Some(name) => device.name == name,
+                None => device.is_default,
+            })
+            .filter(|device| !device.sample_rates.is_empty());
         match chosen {
             Some(device) => device.sample_rates.clone(),
             None => AudioPreferences::RATE_CHOICES.to_vec(),
         }
     }
 
-    /// One device in one of the two lists. `device` of `None` is the system-default row.
-    ///
-    /// Whether it reads as chosen is worked out here rather than handed in, because it is exactly
-    /// the same question the click answers: the row that writes `Some("Scarlett")` into the input
-    /// slot is the row that is lit when the input slot holds it, and two callers deciding that
-    /// separately is two chances to disagree.
-    fn device_row(
-        &self,
-        id: impl Into<gpui::ElementId>,
-        name: &str,
-        detail: &str,
-        device: Option<String>,
-        slot: DeviceSlot,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme.clone();
-        let selected = match slot {
-            DeviceSlot::Output => self.audio.device == device,
-            DeviceSlot::Input => self.audio.input_device == device,
+    /// Device names retain their channel/rate details, including a saved missing device.
+    fn device_dropdown(&mut self, slot: DeviceSlot, cx: &mut Context<Self>) -> AnyElement {
+        let (id, current, devices) = match slot {
+            DeviceSlot::Output => (
+                "output-device",
+                self.audio.device.clone(),
+                &self.devices.output,
+            ),
+            DeviceSlot::Input => (
+                "input-device",
+                self.audio.input_device.clone(),
+                &self.devices.input,
+            ),
         };
-        div()
-            .id(id.into())
-            .flex()
-            .items_center()
-            .gap_2()
-            .p_2()
-            .rounded(Metrics::RADIUS_SM)
-            .bg(if selected {
-                theme.accent_soft
+        let asio = slot == DeviceSlot::Output && self.audio.uses_asio();
+        let mut choices = vec![(
+            None,
+            self.t(if asio {
+                Key::FirstAsioDevice
             } else {
-                theme.surface_sunken
+                Key::SystemDefaultDevice
             })
-            .border_1()
-            .border_color(if selected {
-                theme.accent
+            .to_owned(),
+            self.t(if asio {
+                Key::FirstAsioDeviceDetail
             } else {
-                theme.border_subtle
+                Key::SystemDefaultDeviceDetail
             })
-            .cursor_pointer()
-            .hover(|this| this.border_color(theme.border))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text)
-                            .truncate()
-                            .child(name.to_string()),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .truncate()
-                            .child(detail.to_string()),
-                    ),
+            .to_owned(),
+        )];
+        choices.extend(devices.iter().map(|device| {
+            (
+                Some(device.name.clone()),
+                device.name.clone(),
+                describe(device, self.language),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
+        }));
+        if let Some(name) = &current
+            && !devices.iter().any(|device| device.name == *name)
+        {
+            choices.push((
+                Some(name.clone()),
+                name.clone(),
+                self.t(Key::SettingUnavailable).to_owned(),
+            ));
+        }
+        self.dropdown(
+            id,
+            choices,
+            &current,
+            move |this, device, cx| {
                 let audio = match slot {
-                    DeviceSlot::Output => output_device_preferences(&this.audio, device.clone()),
-                    // The rate is left alone: it belongs to the output, and a take asks for the
-                    // project's rate rather than for whatever is set here.
+                    DeviceSlot::Output => output_device_preferences(&this.audio, device),
                     DeviceSlot::Input => AudioPreferences {
-                        input_device: device.clone(),
+                        input_device: device,
                         ..this.audio.clone()
                     },
                 };
                 this.apply_audio(audio, cx);
-            }))
-            .into_any_element()
-    }
-
-    fn rate_button(
-        &self,
-        id: impl Into<gpui::ElementId>,
-        label: impl Into<gpui::SharedString>,
-        rate: Option<u32>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme.clone();
-        button(
-            id.into(),
-            label.into(),
-            ButtonStyle::Normal,
-            self.audio.sample_rate == rate,
-            theme.accent,
-            &theme,
-            cx.listener(move |this, _, _, cx| {
-                let audio = AudioPreferences {
-                    sample_rate: rate,
-                    ..this.audio.clone()
-                };
-                this.apply_audio(audio, cx);
-            }),
+            },
+            cx,
         )
-        .into_any_element()
     }
-
-    /// One choice of rate to render an export at.
-    ///
-    /// Deliberately not [`Self::rate_button`]: that one drives the *device*, and a render is not
-    /// a device. The lists even differ — an export can be asked for a rate no output here can
-    /// play, which is the ordinary case for delivering 44.1 kHz from a 48 kHz rig.
-    fn export_rate_button(
-        &self,
-        id: impl Into<gpui::ElementId>,
-        label: impl Into<gpui::SharedString>,
-        rate: Option<u32>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme.clone();
-        button(
-            id.into(),
-            label.into(),
-            ButtonStyle::Normal,
-            self.export.sample_rate == rate,
-            theme.accent,
-            &theme,
-            cx.listener(move |this, _, _, cx| {
-                let export = ExportPreferences {
-                    sample_rate: rate,
-                    ..this.export
-                };
-                this.apply_export(export, cx);
-            }),
-        )
-        .into_any_element()
-    }
-
     /// The commands the search box is showing.
     ///
     /// Matched on the group and the name together, in this language and in English, by the same
@@ -1458,11 +1356,29 @@ impl SettingsWindow {
     fn on_key(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
+        if self.dropdown_menu.is_some() && self.dropdown_key(event, cx) {
+            return true;
+        }
+        if self.tab == SettingsTab::General
+            && self.sync_editor_focus(window)
+            && self.appearance_editor_key(event, cx)
+        {
+            return true;
+        }
         if self.capturing.is_some() {
             self.capture_key(event, cx);
+            return true;
+        }
+        if event.keystroke.key == "tab" {
+            if event.keystroke.modifiers.shift {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
+            cx.notify();
             return true;
         }
         if self.tab != SettingsTab::Keys {
@@ -1534,6 +1450,7 @@ impl SettingsWindow {
             }
         };
         if claimed {
+            self.text_changed();
             cx.notify();
         }
         claimed
@@ -1556,13 +1473,31 @@ fn output_device_preferences(
 }
 
 impl HasTextField for SettingsWindow {
+    fn text_changed(&mut self) {
+        if let Some(field) = self.field()
+            && field.content().contains(['\r', '\n'])
+        {
+            let text = field.content().replace(['\r', '\n'], " ");
+            field.replace(0..field.content().len(), &text);
+        }
+    }
+
     fn field(&mut self) -> Option<&mut TextField> {
+        if self.tab == SettingsTab::General {
+            return self.appearance_editor.as_mut().map(|editor| editor.field());
+        }
         // Only while the list is on screen and no row is waiting for a key press — the same two
         // conditions under which the box is drawn as an editable one.
         (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&mut self.search)
     }
 
     fn readable_field(&self) -> Option<&TextField> {
+        if self.tab == SettingsTab::General {
+            return self
+                .appearance_editor
+                .as_ref()
+                .map(|editor| editor.readable_field());
+        }
         (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&self.search)
     }
 }
@@ -1571,13 +1506,13 @@ crate::entity_input_handler!(SettingsWindow);
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let editor_focused = self.sync_editor_focus(window);
         if window.window_title() != self.t(Key::Settings) {
             window.set_window_title(self.t(Key::Settings));
         }
-        // This window has one focusable thing in it, and both the key capture and the search box
-        // need it: a text field only registers itself as the window's input handler while its own
-        // handle is focused, and a key press only reaches `on_key` through the focused element.
-        if !self.focus.is_focused(window) {
+        // Preserve focus on child controls across renders while keeping the window's shortcuts
+        // and text input available when the window first opens.
+        if !editor_focused && !self.focus.contains_focused(window, cx) {
             window.focus(&self.focus);
         }
 
@@ -1607,17 +1542,19 @@ impl Render for SettingsWindow {
             SettingsTab::Keys => self.render_keys(cx),
         };
         let status = self.status.clone();
+        let dropdown = self.render_dropdown(window, cx);
 
         div()
             .id("settings-root")
             .key_context("AurisSettings")
             .track_focus(&self.focus)
+            .relative()
             .flex()
             .flex_col()
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
-            .font(crate::theme::ui_font())
+            .font(theme.font.clone())
             .text_sm()
             // Swallowed only when it was wanted: a key that fills in a binding or edits the
             // search box must not also fire whatever is bound to it, and every other key should
@@ -1639,9 +1576,13 @@ impl Render for SettingsWindow {
             )
             .child(
                 div()
+                    .id("settings-status")
                     .flex()
                     .items_center()
-                    .h(Metrics::STATUS_HEIGHT)
+                    .min_h(Metrics::STATUS_HEIGHT)
+                    .max_h(px(84.0))
+                    .flex_shrink_0()
+                    .overflow_y_scroll()
                     .px_3()
                     .bg(theme.surface_raised)
                     .border_t_1()
@@ -1650,6 +1591,7 @@ impl Render for SettingsWindow {
                     .text_color(theme.text_muted)
                     .child(status),
             )
+            .children(dropdown)
     }
 }
 
@@ -1734,7 +1676,13 @@ mod tests {
         let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
         handle
             .update(cx, |this, _, cx| {
-                this.sync_appearance(Theme::named("daylight"), Some(Language::Japanese));
+                this.sync_appearance(
+                    Appearance {
+                        scheme: "daylight".into(),
+                        ..Appearance::default()
+                    },
+                    Some(Language::Japanese),
+                );
                 cx.notify();
             })
             .unwrap();
