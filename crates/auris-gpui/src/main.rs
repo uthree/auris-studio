@@ -26,6 +26,7 @@ mod logbook;
 mod menu;
 mod settings_window;
 mod theme;
+mod titlebar;
 mod voice_setup_window;
 
 mod ui;
@@ -33,10 +34,7 @@ mod ui;
 use std::path::PathBuf;
 
 use auris_session::{Settings, WindowPlacement};
-use gpui::{
-    App, AppContext, Application, Bounds, Pixels, TitlebarOptions, WindowBounds, WindowOptions, px,
-    size,
-};
+use gpui::{App, AppContext, Application, Bounds, Pixels, WindowBounds, WindowOptions, px, size};
 
 use app::AurisApp;
 use dock::PanelLayout;
@@ -72,10 +70,8 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(opening_window_bounds(remembered, cx)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("Auris Studio".into()),
-                        ..Default::default()
-                    }),
+                    window_min_size: Some(size(px(640.0), px(480.0))),
+                    titlebar: Some(titlebar::options("Auris Studio")),
                     focus: true,
                     ..Default::default()
                 },

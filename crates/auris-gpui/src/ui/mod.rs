@@ -37,6 +37,7 @@ pub mod status_bar;
 pub mod text_area;
 pub mod text_field;
 pub mod timeline;
+pub mod title_bar;
 pub mod tooltip;
 pub mod transport_bar;
 pub mod typing_panel;

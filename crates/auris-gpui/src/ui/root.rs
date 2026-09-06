@@ -112,6 +112,7 @@ impl Render for AurisApp {
         }
 
         let theme = self.theme.clone();
+        let title_bar = self.render_title_bar(window, cx);
         let menu_bar = self.render_menu_bar(window, cx);
         let menu_bar_dismissal = self.menu_bar.is_some().then(|| {
             div().absolute().inset_0().occlude().on_mouse_down(
@@ -145,7 +146,7 @@ impl Render for AurisApp {
             .then(|| self.dock_divider(Dock::Bottom, cx));
         let right_divider = right.is_some().then(|| self.dock_divider(Dock::Right, cx));
         let arrangement_pane = self.pane(Pane::Arrangement, window, cx);
-        let status = self.render_status_bar(cx);
+        let status = self.render_status_bar(window.viewport_size().width, cx);
         let export_overlay = self.render_export_overlay(cx);
         let song_sheet = self.render_song_sheet(window, cx);
         let prompt = self.render_prompt(cx);
@@ -275,6 +276,7 @@ impl Render for AurisApp {
             .on_key_down(cx.listener(Self::on_key_down))
             .on_key_up(cx.listener(Self::on_key_up))
             .children(menu_bar_dismissal)
+            .child(title_bar)
             .children(menu_bar)
             .child(transport)
             .child(

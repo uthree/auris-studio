@@ -13,12 +13,12 @@ use auris_session::{
 };
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
-    TitlebarOptions, WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div,
-    prelude::*, px, size,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, size,
 };
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
+use crate::titlebar;
 use crate::ui::prompt::{editable_text, field_text};
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button};
@@ -172,6 +172,12 @@ impl Focusable for VoiceSetupWindow {
 }
 
 impl VoiceSetupWindow {
+    /// Refreshes appearance values changed from another application surface.
+    pub(crate) fn sync_appearance(&mut self, theme: Theme, language: Language) {
+        self.theme = theme;
+        self.language = language;
+    }
+
     pub(crate) fn new(
         app: WeakEntity<AurisApp>,
         theme: Theme,
@@ -305,11 +311,10 @@ impl VoiceSetupWindow {
         let theme = self.theme.clone();
         div()
             .flex()
+            .items_center()
+            .flex_shrink_0()
             .gap_1()
-            .p_2()
-            .bg(theme.surface_raised)
-            .border_b_1()
-            .border_color(theme.border)
+            .pr_2()
             .child(button(
                 "voice-tab-voicevox",
                 self.t(Key::VoiceSetupVoicevox),
@@ -939,6 +944,25 @@ impl Render for VoiceSetupWindow {
             window.focus(&self.focus);
         }
         let theme = self.theme.clone();
+        let titlebar = titlebar::titlebar(window, &theme)
+            .child(
+                titlebar::drag_region("voice-setup-title")
+                    .flex_1()
+                    .min_w(px(40.0))
+                    .px_3()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(self.t(Key::VoiceSetupTitle)),
+                    ),
+            )
+            .child(self.render_tabs(cx))
+            .child(titlebar::controls(window, &theme, |_, window, _| {
+                window.remove_window();
+            }));
         let body = match self.tab {
             VoiceSetupTab::Voicevox => self.render_voicevox(cx),
             VoiceSetupTab::DiffSinger => self.render_diffsinger(cx),
@@ -959,7 +983,7 @@ impl Render for VoiceSetupWindow {
                     cx.stop_propagation();
                 }
             }))
-            .child(self.render_tabs(cx))
+            .child(titlebar)
             .child(
                 div()
                     .id("voice-setup-scroll")
@@ -1017,10 +1041,8 @@ impl AurisApp {
         let opened: Result<WindowHandle<VoiceSetupWindow>, _> = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(self.t(Key::VoiceSetupTitle).into()),
-                    ..Default::default()
-                }),
+                titlebar: Some(titlebar::options(self.t(Key::VoiceSetupTitle))),
+                window_min_size: Some(size(px(480.0), px(360.0))),
                 focus: true,
                 ..Default::default()
             },
@@ -1280,6 +1302,12 @@ mod tests {
         let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
         cx.simulate_resize(size(px(480.0), px(320.0)));
         cx.run_until_parked();
+        let title = cx.debug_bounds("voice-setup-title").unwrap();
+        for id in ["voice-tab-voicevox", "voice-tab-diffsinger"] {
+            let tab = cx.debug_bounds(id).unwrap();
+            assert!(tab.top() >= title.top() && tab.bottom() <= title.bottom());
+            assert!(tab.left() >= title.right() && tab.right() <= px(480.0));
+        }
         crate::harness::click("voicevox-advanced", cx);
         cx.run_until_parked();
         for action in ["voicevox-check", "voicevox-save"] {

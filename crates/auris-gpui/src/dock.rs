@@ -3,7 +3,7 @@
 //! Zed's arrangement, because it is the one that survives contact with a window somebody else
 //! laid out: three docks — a column down each side and a strip along the bottom — and every panel
 //! belongs to one of them. A dock shows **one** panel at a time, so moving the mixer next to the
-//! library does not halve the height of both; the status bar carries an icon for each panel in
+//! library does not halve the height of both; the window chrome carries an icon for each panel in
 //! each dock, and pressing one is how a dock is asked to show something else.
 //!
 //! The arrangement is not a panel. It is the middle of the window, and the docks are around it.
@@ -118,7 +118,7 @@ impl Panel {
 
     /// The bindable command that shows and hides it, as an id in [`crate::actions::BINDABLE`].
     ///
-    /// So the status bar's switch can say which key also works. The switch is a mark and nothing
+    /// So the window chrome's switch can say which key also works. The switch is a mark and nothing
     /// else — the panel it opens is a thing learned by clicking — and the key is exactly
     /// what somebody who has just learned it would rather not have to click for again.
     pub fn command(self) -> &'static str {
@@ -132,7 +132,7 @@ impl Panel {
         }
     }
 
-    /// The mark that stands for it in the status bar.
+    /// The mark that stands for it in the window chrome.
     ///
     /// A picture of what is inside rather than of which edge it is on: a panel that can be moved
     /// cannot be named by its position, and the icon has to keep meaning the same thing after it
@@ -363,7 +363,7 @@ impl PanelLayout {
 
     /// Every panel that lives in `dock`, open or not, in [`Panel::ALL`] order.
     ///
-    /// What the status bar draws an icon for: a panel with no icon anywhere is a panel with no way
+    /// What the window chrome draws an icon for: a panel with no icon anywhere is a panel with no way
     /// back, and a dock that is shut has to keep saying what is in it.
     pub fn panels_in(&self, dock: Dock) -> impl Iterator<Item = Panel> + use<'_> {
         Panel::ALL
@@ -480,7 +480,7 @@ impl PanelLayout {
     /// The horizontal rule's other half, and broken the same way: the drag keeps
     /// [`Self::MIN_ARRANGEMENT`] for the lanes and a shortening window kept nothing.
     ///
-    /// `chrome` is what the transport and the status bar have already taken.
+    /// `chrome` is what the title bar, menu, transport and status bar have already taken.
     pub fn bottom_height(asked: Pixels, viewport: Pixels, chrome: Pixels) -> Pixels {
         asked.min((viewport - chrome - Self::MIN_ARRANGEMENT).max(px(0.0)))
     }
@@ -628,7 +628,7 @@ impl From<StoredLayout> for PanelLayout {
         }
         // A dock shows one panel at a time, which nothing in the file is obliged to respect. The
         // first one named wins, and the rest are shut: two open panels in one dock would draw over
-        // each other, and only one of them could be hidden again from the status bar.
+        // each other, and only one of them could be hidden again from the window chrome.
         for dock in Dock::ALL {
             let crowd: Vec<Panel> = layout
                 .panels_in(dock)
@@ -727,7 +727,7 @@ mod tests {
 
     #[test]
     fn every_panel_has_a_switch_in_exactly_one_dock() {
-        // The status bar draws one switch per panel per dock, and a switch is the only way back to
+        // The window chrome draws one switch per panel per dock, and a switch is the only way back to
         // a panel that has been put away. A panel counted twice would have two switches disagreeing
         // about whether it is showing; a panel counted nowhere could never be asked for again.
         let mut layout = PanelLayout::default();
@@ -994,7 +994,7 @@ mod tests {
     #[test]
     fn a_file_that_opens_two_panels_in_one_dock_gets_the_first() {
         // Nothing stops a hand-edited file saying it, and two panels drawn over each other leaves
-        // only one of them reachable from the status bar.
+        // only one of them reachable from the window chrome.
         let stored: StoredLayout = serde_json::from_str(
             r#"{"panels":{
                 "piano_roll":{"dock":"bottom","open":true},

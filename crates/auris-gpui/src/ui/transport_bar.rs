@@ -263,22 +263,149 @@ pub fn parse_position(text: &str, signatures: &SignatureMap) -> Option<Ticks> {
 }
 
 impl AurisApp {
-    /// Renders the transport bar.
-    pub(crate) fn render_transport(
-        &mut self,
-        _window: &mut Window,
+    /// Playback controls embedded in the window title bar.
+    pub(crate) fn render_transport_buttons(
+        &self,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         let playing = self.is_playing();
         let looping = self.project().loop_enabled;
         let punching = self.project().punch_enabled;
-        let clicking = self.session.metronome();
-        // A count being played lights the click whether or not the click is on, because that is
-        // what is coming out of the speakers.
-        let counting_in = self.session.count_in_beats_left();
-        let clicking = clicking || counting_in > 0;
         let recording = self.session.is_recording();
+        let clicking = self.session.metronome() || self.session.count_in_beats_left() > 0;
+        div()
+            .flex()
+            .gap_1()
+            .child(
+                icon_button(
+                    "rtz",
+                    Icon::ToStart,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.seek(Ticks::ZERO);
+                        cx.notify();
+                    }),
+                )
+                .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
+            )
+            .child(
+                icon_button(
+                    "stop",
+                    Icon::Stop,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.session.stop();
+                        this.seek(Ticks::ZERO);
+                        cx.notify();
+                    }),
+                )
+                // The one button up here that is not a bindable command, so the
+                // card carries a name and no chip. That it has no key is a thing
+                // to fix in the table rather than to hide by leaving it nameless.
+                .tooltip(self.tip(Key::CmdStop, "")),
+            )
+            .child(
+                icon_button(
+                    "play",
+                    if playing { Icon::Pause } else { Icon::Play },
+                    playing,
+                    theme.playing,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_play();
+                        cx.notify();
+                    }),
+                )
+                .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
+            )
+            // Beside Play, where a hardware transport puts it, and lit while a
+            // take is running so that a microphone nobody remembers arming is
+            // never live without something on screen saying so.
+            .child(
+                icon_button(
+                    "record",
+                    Icon::Record,
+                    recording,
+                    theme.record,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.toggle_recording(window, cx);
+                        cx.notify();
+                    }),
+                )
+                .tooltip(self.tip(Key::CmdRecord, "transport.record")),
+            )
+            // Beside Record rather than beside the cycle, though it looks like the
+            // cycle: this one decides what a take *keeps*, and everything to its
+            // left decides what the transport does.
+            .child(
+                icon_button(
+                    "punch",
+                    Icon::Punch,
+                    punching,
+                    theme.record,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_punch();
+                        cx.notify();
+                    }),
+                )
+                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")),
+            )
+            .child(
+                icon_button(
+                    "loop",
+                    Icon::Loop,
+                    looping,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_loop();
+                        cx.notify();
+                    }),
+                )
+                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")),
+            )
+            // Beside the cycle button because the two are the same kind of
+            // switch: neither writes anything, both change how a pass sounds
+            // while somebody is listening to it.
+            .child(
+                icon_button(
+                    "metronome",
+                    Icon::Metronome,
+                    clicking,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.toggle_metronome();
+                        cx.notify();
+                    }),
+                )
+                // The count-in hangs off this button because a count-in is the
+                // click doing one particular job, and because the alternative
+                // was a second lamp on the bar for a setting nobody changes
+                // twice in a session.
+                .on_mouse_down(
+                    gpui::MouseButton::Right,
+                    Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
+                )
+                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")),
+            )
+    }
+
+    /// Renders the transport readouts, timeline controls and meters.
+    pub(crate) fn render_transport(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let counting_in = self.session.count_in_beats_left();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
         let seconds = self.project().tempo_map.ticks_to_seconds(playhead);
@@ -389,139 +516,13 @@ impl AurisApp {
                     ),
             )
             .child(
-                // Logic stacks the transport over its readouts rather than running them along
-                // one line, which keeps the buttons and the numbers on the window's centre line
-                // instead of pushing one of them off it.
+                // The readouts sit below the title bar's playback controls on the same centre line.
                 div()
                     .flex()
                     .flex_col()
                     .items_center()
                     .gap(px(4.0))
                     .flex_shrink_0()
-                    .child(
-                        div()
-                            .flex()
-                            .gap_1()
-                            .child(
-                                icon_button(
-                                    "rtz",
-                                    Icon::ToStart,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.seek(Ticks::ZERO);
-                                        cx.notify();
-                                    }),
-                                )
-                                .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
-                            )
-                            .child(
-                                icon_button(
-                                    "stop",
-                                    Icon::Stop,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.session.stop();
-                                        this.seek(Ticks::ZERO);
-                                        cx.notify();
-                                    }),
-                                )
-                                // The one button up here that is not a bindable command, so the
-                                // card carries a name and no chip. That it has no key is a thing
-                                // to fix in the table rather than to hide by leaving it nameless.
-                                .tooltip(self.tip(Key::CmdStop, "")),
-                            )
-                            .child(
-                                icon_button(
-                                    "play",
-                                    if playing { Icon::Pause } else { Icon::Play },
-                                    playing,
-                                    theme.playing,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.toggle_play();
-                                        cx.notify();
-                                    }),
-                                )
-                                .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
-                            )
-                            // Beside Play, where a hardware transport puts it, and lit while a
-                            // take is running so that a microphone nobody remembers arming is
-                            // never live without something on screen saying so.
-                            .child(
-                                icon_button(
-                                    "record",
-                                    Icon::Record,
-                                    recording,
-                                    theme.record,
-                                    &theme,
-                                    cx.listener(|this, _, window, cx| {
-                                        this.toggle_recording(window, cx);
-                                        cx.notify();
-                                    }),
-                                )
-                                .tooltip(self.tip(Key::CmdRecord, "transport.record")),
-                            )
-                            // Beside Record rather than beside the cycle, though it looks like the
-                            // cycle: this one decides what a take *keeps*, and everything to its
-                            // left decides what the transport does.
-                            .child(
-                                icon_button(
-                                    "punch",
-                                    Icon::Punch,
-                                    punching,
-                                    theme.record,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.toggle_punch();
-                                        cx.notify();
-                                    }),
-                                )
-                                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")),
-                            )
-                            .child(
-                                icon_button(
-                                    "loop",
-                                    Icon::Loop,
-                                    looping,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.toggle_loop();
-                                        cx.notify();
-                                    }),
-                                )
-                                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")),
-                            )
-                            // Beside the cycle button because the two are the same kind of
-                            // switch: neither writes anything, both change how a pass sounds
-                            // while somebody is listening to it.
-                            .child(
-                                icon_button(
-                                    "metronome",
-                                    Icon::Metronome,
-                                    clicking,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.toggle_metronome();
-                                        cx.notify();
-                                    }),
-                                )
-                                // The count-in hangs off this button because a count-in is the
-                                // click doing one particular job, and because the alternative
-                                // was a second lamp on the bar for a setting nobody changes
-                                // twice in a session.
-                                .on_mouse_down(
-                                    gpui::MouseButton::Right,
-                                    Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
-                                )
-                                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")),
-                            ),
-                    )
                     // Musical position, wall-clock position and tempo: the readouts every DAW
                     // shows, side by side under the buttons they describe.
                     .child(
@@ -572,10 +573,6 @@ impl AurisApp {
                     .items_center()
                     .justify_end()
                     .gap_3()
-                    // The panels are switched from the status bar, where every one of them has an
-                    // icon whether it is showing or not. Four buttons up here said the same thing
-                    // for three of the four, and a transport bar is for the transport.
-                    //
                     // How long the take has been running, and only while one is. Left of the
                     // input for the same reason the input is left of the master: it is the
                     // earliest thing in the chain the bar reports on.
@@ -658,7 +655,13 @@ impl AurisApp {
             .border_color(theme.border_subtle)
             .cursor_pointer()
             .hover(|this| this.border_color(theme.border))
-            .child(div().text_xs().text_color(theme.text_faint).child(caption))
+            .child(
+                div()
+                    .truncate()
+                    .text_xs()
+                    .text_color(theme.text_faint)
+                    .child(caption),
+            )
             .child(div().text_sm().text_color(theme.text).child(value))
     }
 
@@ -717,7 +720,7 @@ impl AurisApp {
             "signature",
             self.t(Key::Signature),
             signature.to_string(),
-            px(64.0),
+            px(84.0),
         )
         // Either button, because either is a way somebody might ask a control for its list, and
         // there is nothing else here for the right one to mean.

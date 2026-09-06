@@ -21,8 +21,8 @@ use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::{Session, SessionOptions, WindowPlacement};
 use gpui::{
-    App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, TitlebarOptions,
-    Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
+    App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, Window,
+    WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 
 use crate::actions;
@@ -2381,6 +2381,15 @@ impl AurisApp {
                 cx.notify();
             });
         }
+        if let Some(handle) = self.voice_setup_window {
+            let theme = self.theme.clone();
+            let language = self.language;
+            let _ = handle.update(cx, move |setup, window, cx| {
+                setup.sync_appearance(theme, language);
+                window.set_window_title(Key::VoiceSetupTitle.get(language));
+                cx.notify();
+            });
+        }
         let name = self.language.endonym();
         self.set_status(messages::language_changed(self.language, name));
     }
@@ -2407,6 +2416,15 @@ impl AurisApp {
             let language = self.settings.language;
             let _ = handle.update(cx, move |settings, _, cx| {
                 settings.sync_appearance(theme, language);
+                cx.notify();
+            });
+        }
+        if let Some(handle) = self.voice_setup_window {
+            let theme = self.theme.clone();
+            let language = self.language;
+            let _ = handle.update(cx, move |setup, window, cx| {
+                setup.sync_appearance(theme, language);
+                window.set_window_title(Key::VoiceSetupTitle.get(language));
                 cx.notify();
             });
         }
@@ -2575,10 +2593,8 @@ impl AurisApp {
         let opened = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some(self.t(Key::Settings).into()),
-                    ..Default::default()
-                }),
+                titlebar: Some(crate::titlebar::options(self.t(Key::Settings))),
+                window_min_size: Some(size(px(480.0), px(360.0))),
                 focus: true,
                 ..Default::default()
             },
@@ -2651,7 +2667,7 @@ impl AurisApp {
             true => crate::ui::menu_bar::HEIGHT,
             false => gpui::px(0.0),
         };
-        Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT + menu
+        crate::titlebar::HEIGHT + Metrics::TRANSPORT_HEIGHT + Metrics::STATUS_HEIGHT + menu
     }
 
     /// Applies a dock resize drag.
@@ -2719,7 +2735,8 @@ impl AurisApp {
             || {
                 point(
                     self.left_dock_offset() + self.panels.header_width,
-                    Metrics::TRANSPORT_HEIGHT + self.panels.lanes.header_height(),
+                    Self::chrome_height() - Metrics::STATUS_HEIGHT
+                        + self.panels.lanes.header_height(),
                 )
             },
             |bounds| bounds.origin,
@@ -2732,7 +2749,7 @@ impl AurisApp {
             || {
                 point(
                     self.left_dock_offset() + self.panels.header_width,
-                    Metrics::TRANSPORT_HEIGHT,
+                    Self::chrome_height() - Metrics::STATUS_HEIGHT,
                 )
             },
             |bounds| bounds.origin,

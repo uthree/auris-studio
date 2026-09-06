@@ -393,7 +393,9 @@ mod tests {
         // menu bar was once missing from it: on Windows a bottom dock dragged to its limit
         // overflowed the window by exactly these 26 pixels. `cfg!` keeps both arms compiled,
         // so the Windows answer is pinned from a Mac and the Mac's from Windows.
-        let fixed = crate::theme::Metrics::TRANSPORT_HEIGHT + crate::theme::Metrics::STATUS_HEIGHT;
+        let fixed = crate::titlebar::HEIGHT
+            + crate::theme::Metrics::TRANSPORT_HEIGHT
+            + crate::theme::Metrics::STATUS_HEIGHT;
         match AurisApp::wants_menu_bar() {
             true => assert_eq!(AurisApp::chrome_height(), fixed + HEIGHT),
             false => assert_eq!(AurisApp::chrome_height(), fixed),

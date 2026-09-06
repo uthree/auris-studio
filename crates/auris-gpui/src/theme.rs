@@ -626,11 +626,10 @@ impl Theme {
 pub struct Metrics;
 
 impl Metrics {
-    /// Height of the top transport bar.
+    /// Height of the transport readout bar below the title bar.
     ///
-    /// Tall enough for the transport buttons and the readouts stacked under them, which is how
-    /// Logic arranges the same controls.
-    pub const TRANSPORT_HEIGHT: Pixels = px(84.0);
+    /// The playback buttons live in the title bar; this row holds their readouts and meters.
+    pub const TRANSPORT_HEIGHT: Pixels = px(54.0);
     /// Height of the timeline ruler above the arrangement.
     pub const RULER_HEIGHT: Pixels = px(28.0);
     /// Height of the harmony lane, between the structure lane and the clip lanes.
