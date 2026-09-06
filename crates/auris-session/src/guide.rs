@@ -207,6 +207,17 @@ pub mod architecture {
     //! line has nothing else to be doing. The gpui frontend runs the first half on a worker and
     //! keeps painting.
     //!
+    //! The desktop's first launch uses the same split for its sound library.
+    //! [`library::font_downloads`](crate::library::font_downloads) plans only missing fonts;
+    //! [`library::download_font`](crate::library::download_font) fetches and verifies them on a
+    //! worker, which also reads the samples. The window then calls
+    //! [`Session::install_shipped_soundfont`](crate::Session::install_shipped_soundfont) to make
+    //! them available without recording an import. Downloads go in the configuration directory's
+    //! `SoundFonts` folder, shared by checkouts, unless `AURIS_SOUNDFONTS` names another directory.
+    //! A packaged font is used as it stands. Download failures are visible in the window and
+    //! leave the built-in instruments available; `AURIS_FETCH_SOUNDFONTS=0` disables automatic
+    //! fetching. Constructing a session itself never starts a download.
+    //!
     //! What the split buys costs one thing back: the document can move while a file is being read.
     //! The placing half is where that is caught — audio decoded against a sample rate the project
     //! no longer has is decoded again rather than laid down to play at the wrong pitch.

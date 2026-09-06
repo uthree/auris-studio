@@ -56,6 +56,14 @@ impl AurisApp {
                     .when(self.status_failed, |this| this.text_color(theme.danger))
                     .child(self.status.clone()),
             )
+            .children(self.soundfont_download.as_ref().map(|download| {
+                div()
+                    .id("soundfont-download")
+                    .max_w(px(340.0))
+                    .truncate()
+                    .text_color(theme.accent)
+                    .child(download.message(self.language()))
+            }))
             // The standing offer when another writer changed the file under unsaved work:
             // the one button in the window that takes the disk's version deliberately.
             .when(self.external_change.is_some(), |this| {

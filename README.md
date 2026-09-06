@@ -75,14 +75,11 @@ configuration files and every public API may change in any release, with no migr
 ## Building
 
 ```bash
-tools/fetch-soundfonts.sh
 cargo run --release
 ```
 
-The first line is once per checkout and downloads the shipped SoundFont, which is not in the
-repository — see [The SoundFont that comes with it](docs/features.md#the-soundfont-that-comes-with-it).
-Skip it and everything still builds and runs; there are simply four instruments instead of a
-hundred and thirty.
+On first launch, the desktop downloads the standard SoundFont if it is missing and adds it to
+the library automatically — see [The SoundFont that comes with it](docs/features.md#the-soundfont-that-comes-with-it).
 
 Windows also needs Visual Studio C++ Build Tools and LLVM. Before building, run
 `.\tools\setup-windows.ps1 -InstallLlvm` in a Visual Studio developer PowerShell terminal.

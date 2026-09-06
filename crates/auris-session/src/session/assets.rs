@@ -84,6 +84,7 @@ impl Session {
                 Ok(font) => {
                     self.relocate_font(id, &stored, &found);
                     remember_directory(&mut search, &found);
+                    self.cache_font(&found, Arc::clone(&font), false);
                     self.fonts.insert(id, font);
                 }
                 Err(error) => {
@@ -138,6 +139,7 @@ impl Session {
                 Ok(font) => {
                     log::info!("found {} again at {}", stored, found.display());
                     self.relocate_font(id, &stored, &found);
+                    self.cache_font(&found, Arc::clone(&font), false);
                     self.fonts.insert(id, font);
                 }
                 Err(error) => log::warn!("could not read {}: {error}", found.display()),
@@ -178,8 +180,12 @@ impl Session {
             .map(Path::to_path_buf)
             .ok_or(SessionError::NoPath)?;
         let name = copy_into(from, &folder.join(AUDIO_DIR))?;
+        let collected = Path::new(AUDIO_DIR).join(name);
         if let Some(font) = self.project.soundfonts.get_mut(&id) {
-            font.path = AssetPath::inside(Path::new(AUDIO_DIR).join(name));
+            font.path = AssetPath::inside(&collected);
+        }
+        if let Some(samples) = self.fonts.get(id) {
+            self.cache_font(&folder.join(collected), samples, false);
         }
         Ok(())
     }
@@ -250,6 +256,7 @@ impl Session {
         self.render_bank = AudioSourceBank::new();
         self.waveforms.clear();
         self.fonts.clear();
+        self.font_cache.retain(|_, font| font.shipped);
     }
 
     /// Drops decoded sources that neither the current document nor undo/redo can restore.

@@ -27,6 +27,8 @@ midir.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
 

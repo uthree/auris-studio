@@ -723,6 +723,17 @@ the free software world quotes, remastered by S. Christian Collins; choosing bet
 choosing between an original and a curated version of itself. Every release archive carries it,
 and it is in the library panel from the moment the window opens, with no import step.
 
+When a source build starts without it, the desktop downloads the font in the background,
+shows progress, and adds its sounds to the open project's library when ready. This works with
+both `cargo run` and `cargo run --release`, including on Windows without a Bash setup step.
+The download is cached in `~/.config/auris-studio/SoundFonts` (under `%USERPROFILE%` on Windows),
+or the configuration directory selected by `AURIS_CONFIG_DIR`, so other checkouts reuse it.
+Setting `AURIS_SOUNDFONTS` selects the download directory as well as the exclusive search root.
+An installed font is reused without a network request. Set `AURIS_FETCH_SOUNDFONTS=0` to disable
+automatic fetching. A failed download is reported in the window; the built-in instruments remain
+usable, and the next launch retries. A successful download verifies the byte count and SHA-256
+and installs the licence notice before making the font visible.
+
 The bytes are **not in this repository**. The file is two hundred megabytes, which is more than
 GitHub accepts in one piece and far more than every clone of a source tree should have to carry.
 What is version-controlled is the manifest — the URL, the size, the SHA-256 and the licence, in
@@ -732,17 +743,18 @@ What is version-controlled is the manifest — the URL, the size, the SHA-256 an
 tools/fetch-soundfonts.sh
 ```
 
-Run it once after cloning. It puts the font in `SoundFonts/` at the top of the checkout, where a
-`cargo run` build finds it; the release workflow runs the same script before assembling each
-archive. `auris soundfonts` says whether it is installed and where. The script asks
+This is the manual preparation path for command line use and release packaging. It puts the font
+in `SoundFonts/` at the top of the checkout, where a `cargo run` build finds it; the release
+workflow runs the same script before assembling each archive. On Windows, run the script in
+Git Bash. `auris soundfonts` says whether it is installed and where. The script asks
 `auris soundfonts --manifest` what to fetch rather than carrying its own copy of the list, so a
 digest cannot be changed in one place and left stale in the other.
 
 Where the application looks, in order: `$AURIS_SOUNDFONTS`, a `SoundFonts` directory beside the
 executable, a macOS bundle's `Contents/Resources/SoundFonts`, up to five directories above the
 executable — which is what reaches the checkout from `target/debug` — and finally
-`~/.config/auris-studio/SoundFonts`. A build with none of them installed starts perfectly well and
-has the built-in instruments, which is exactly what a CI runner does.
+`~/.config/auris-studio/SoundFonts`. The built-in instruments remain available while a desktop
+download is running or when automatic fetching is disabled. Builds and tests do not fetch fonts.
 
 The shipped font is put into the document rather than left beside it, because a document is what
 holds a reference. It is not an edit: no undo step, no dirty flag, and a new project that has only
