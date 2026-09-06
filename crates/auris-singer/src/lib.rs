@@ -5,8 +5,9 @@
 //! pitch, one energy per hop; this one hands those frames to a trained voice and gets a
 //! waveform back. [`SingingBackend`] is that boundary. [`VoiceModel`] selects the native Auris
 //! backend for a self-contained `.onnx` exported by this repository's trainer, or the DiffSinger
-//! backend for a voicebank's `dsconfig.yaml`, or the VOICEVOX backend for a `.voicevox.json`
-//! connection; the session above it does not know which inference pipeline is running.
+//! backend for a voicebank's `dsconfig.yaml`, the LeapSinger backend for a `.leapsinger.json`
+//! model entry, or the VOICEVOX backend for a `.voicevox.json` connection; the session above it
+//! does not know which inference pipeline is running.
 //!
 //! The two halves being one repository is what lets them be *checked* against each other:
 //! `training/tests/test_host_contract.py` reads the constants below out of this crate's source
@@ -23,17 +24,20 @@
 //!   down. [`VoiceModel::sing`] cuts the timeline in silence into chunks of at most
 //!   [`MAX_CHUNK_FRAMES`] frames and stitches the answers into one waveform, so memory is
 //!   bounded by the chunk, not the song.
-//! * **The randomness is an input.** The model's stochastic draws — the prior sample, the
-//!   excitation noise — are graph inputs by its own design, and this crate fills them from
-//!   [`auris_core::rng`] streams named by a seed: the same document, seed and voice are fed
+//! * **Native voices take randomness as an input.** The native model's stochastic draws — the
+//!   prior sample, the excitation noise — are graph inputs by its own design, and this crate
+//!   fills them from [`auris_core::rng`] streams named by a seed: the same document, seed and voice are fed
 //!   the same numbers on any machine, and on the CPU render the same take to the sample. A
 //!   GPU ([`Acceleration`]) rounds in its own way — which is one more reason a take is a
-//!   *thing a file keeps*, frozen, rather than a thing another machine re-derives.
+//!   *thing a file keeps*, frozen, rather than a thing another machine re-derives. LeapSinger's
+//!   upstream acoustic and vocoder graphs draw their noise internally and do not accept a seed;
+//!   their repeated renders can differ, while the saved audio take preserves the performance.
 
 #![warn(missing_docs)]
 
 mod backend;
 mod diffsinger;
+mod leapsinger;
 mod metadata;
 mod model;
 mod portrait;

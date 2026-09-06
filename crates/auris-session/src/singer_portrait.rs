@@ -71,7 +71,7 @@ pub fn load_singer_portrait(
 ) -> Result<Option<VoicePortrait>, SingerPortraitError> {
     match source.backend {
         BackendKind::Auris => Ok(read_voice_portrait(&source.path)?),
-        BackendKind::DiffSinger => Ok(None),
+        BackendKind::DiffSinger | BackendKind::LeapSinger => Ok(None),
         BackendKind::Voicevox => {
             let connection =
                 read_voicevox_connection(&source.path, source.speaker.as_deref(), source.track)?;

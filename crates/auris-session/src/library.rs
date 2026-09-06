@@ -211,10 +211,11 @@ pub fn voices_with_settings(settings: &crate::Settings) -> Vec<(String, PathBuf)
 
 /// Every voice model found under `roots`, as `(name, path)`, sorted by name.
 ///
-/// No manifest, unlike the fonts: voices are the user's own exports, so this is enumeration
+/// No fixed catalog, unlike the fonts: voices are the user's own exports, so this is enumeration
 /// rather than verification — every `.onnx` in a root and every child folder containing a
-/// DiffSinger `dsconfig.yaml`, and every `*.voicevox.json` connection, first root to name a
-/// voice winning the way the font search wins.
+/// DiffSinger `dsconfig.yaml`, every `*.voicevox.json` connection, and every
+/// `*.leapsinger.json` voicebank manifest in a root or its child folders, first root to name
+/// a voice winning the way the font search wins.
 /// Nothing is opened here; whether a file really is a voice is found out by the one deliberate
 /// click that loads it.
 pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
@@ -224,23 +225,42 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
         let Ok(entries) = std::fs::read_dir(root) else {
             continue;
         };
+        let mut paths = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
+            if path.is_dir()
+                && let Ok(children) = std::fs::read_dir(&path)
+            {
+                paths.extend(
+                    children
+                        .flatten()
+                        .map(|child| child.path())
+                        .filter(|child| {
+                            child.is_file()
+                                && voice_source_kind(child) == Some(VoiceSourceKind::LeapSinger)
+                        }),
+                );
+            }
+            paths.push(path);
+        }
+        for path in paths {
             let (voice, name_source) = if path
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
             {
                 (path.clone(), path.file_stem())
-            } else if path
+            } else if let Some((name, suffix)) = path
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
+                .and_then(|name| {
+                    [".voicevox.json", ".leapsinger.json"]
+                        .into_iter()
+                        .find(|suffix| name.to_ascii_lowercase().ends_with(*suffix))
+                        .map(|suffix| (name, suffix))
+                })
             {
-                let stem = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .map(|name| &name[..name.len() - ".voicevox.json".len()]);
-                (path.clone(), stem.map(std::ffi::OsStr::new))
+                let stem = &name[..name.len() - suffix.len()];
+                (path.clone(), Some(std::ffi::OsStr::new(stem)))
             } else if path.is_dir() && path.join("dsconfig.yaml").is_file() {
                 (path.join("dsconfig.yaml"), path.file_name())
             } else {
@@ -270,6 +290,8 @@ pub enum VoiceSourceKind {
     DiffSinger,
     /// A connection to a running VOICEVOX Engine.
     Voicevox,
+    /// A LeapSinger voicebank manifest.
+    LeapSinger,
 }
 
 /// Identifies a voice shelf entry without loading its potentially large model.
@@ -279,6 +301,8 @@ pub fn voice_source_kind(path: &Path) -> Option<VoiceSourceKind> {
         Some(VoiceSourceKind::DiffSinger)
     } else if name.to_ascii_lowercase().ends_with(".voicevox.json") {
         Some(VoiceSourceKind::Voicevox)
+    } else if name.to_ascii_lowercase().ends_with(".leapsinger.json") {
+        Some(VoiceSourceKind::LeapSinger)
     } else if path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
@@ -595,6 +619,53 @@ mod tests {
             Some(VoiceSourceKind::Voicevox)
         );
         assert_eq!(voice_source_kind(&ritsu.1), Some(VoiceSourceKind::Auris));
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn leapsinger_manifests_are_discovered_without_loading_models() {
+        let root =
+            std::env::temp_dir().join(format!("auris-leapsinger-voices-{}", std::process::id()));
+        let first = root.join("a");
+        let second = root.join("b");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let sora = first.join("Sora.leapsinger.json");
+        let japanese = first.join("歌声.LEAPSINGER.JSON");
+        // Discovery reads names only, so unavailable models cannot break the library shelf.
+        std::fs::write(&sora, br#"{"acoustic":"not-installed.onnx"}"#).unwrap();
+        std::fs::write(&japanese, b"not yet configured").unwrap();
+        std::fs::write(second.join("sora.ONNX"), b"duplicate name").unwrap();
+        std::fs::write(second.join("歌声.leapsinger.json"), b"duplicate name").unwrap();
+        std::fs::write(first.join("other.json"), b"{}").unwrap();
+        std::fs::write(first.join("backup.leapsinger.json.bak"), b"{}").unwrap();
+        let bank = first.join("Bank");
+        std::fs::create_dir_all(bank.join("nested")).unwrap();
+        let mio = bank.join("Mio.LEAPSINGER.JSON");
+        std::fs::write(&mio, b"not yet configured").unwrap();
+        std::fs::write(bank.join("acoustic.onnx"), b"auxiliary model").unwrap();
+        std::fs::write(bank.join("vocoder.onnx"), b"auxiliary model").unwrap();
+        std::fs::write(bank.join("other.json"), b"{}").unwrap();
+        std::fs::write(bank.join("nested/TooDeep.leapsinger.json"), b"{}").unwrap();
+
+        let voices = installed_voices_in(&[first, second]);
+        assert_eq!(
+            voices,
+            vec![
+                ("Mio".into(), mio.clone()),
+                ("Sora".into(), sora.clone()),
+                ("歌声".into(), japanese.clone())
+            ],
+        );
+        for path in [mio, sora, japanese] {
+            assert_eq!(voice_source_kind(&path), Some(VoiceSourceKind::LeapSinger));
+        }
+        assert_eq!(voice_source_kind(Path::new("other.json")), None);
+        assert_eq!(
+            voice_source_kind(Path::new("backup.leapsinger.json.bak")),
+            None
+        );
 
         std::fs::remove_dir_all(&root).unwrap();
     }

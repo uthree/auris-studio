@@ -1039,8 +1039,8 @@ pub mod singing {
     //!
     //! A [`SingerTrack`](auris_core::SingerTrack) is the frontend for a singing-voice
     //! synthesiser that renders offline. The notes carry lyrics, the lyrics become phonemes,
-    //! the frames become a waveform through a trained voice model — exported by the trainer in
-    //! the repository's `training/` directory, which is Python and out of this workspace — and
+    //! the frames become a waveform through a singing backend — including voices exported by
+    //! the trainer in the repository's Python `training/` project — and
     //! what playback uses is the [`SingerTake`](auris_core::SingerTake) that render produced.
     //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) still writes
     //! the raw frames, which is how a model is developed against real documents, and
@@ -1061,7 +1061,11 @@ pub mod singing {
     //! A voice enters through one path. For the native backend that is a self-contained ONNX
     //! file carrying its phoneme table, audio parameters and voice card. For DiffSinger it is
     //! the voicebank's `dsconfig.yaml`, which names its acoustic model, phoneme table and bundled
-    //! vocoder. For VOICEVOX it is a `.voicevox.json` connection naming a running Engine and
+    //! vocoder. For LeapSinger it is a `.leapsinger.json` entry naming exported acoustic and
+    //! NHVSing vocoder graphs, their frame grid and a matching phoneme dictionary. Its full and
+    //! DiffSinger export variants both consume manual phonemes and timing pins; inference stays
+    //! in ONNX Runtime and needs no Python process. For VOICEVOX it is a `.voicevox.json`
+    //! connection naming a running Engine and
     //! its singing/query style pair. [`SingingBackend`](crate::SingingBackend) is the boundary
     //! between those packages and the session: metadata, frame curves, and where necessary the
     //! lyric-bearing score go in; mono audio comes out. The session therefore
@@ -1127,8 +1131,11 @@ pub mod singing {
     //!
     //! # A take is kept, never silently rewritten
     //!
-    //! The contract from "the score does not change; the performer does": every random choice
-    //! in a render is pinned by a seed the document stores, regeneration is always a command
+    //! The contract from "the score does not change; the performer does": Auris' own random
+    //! choices are pinned by a seed the document stores. The native voice also accepts its
+    //! stochastic inputs from that seed; LeapSinger's upstream acoustic and vocoder graphs draw
+    //! noise internally, so repeating a seed does not reproduce their waveform. The saved audio
+    //! take preserves the performance across backends. Regeneration is always a command
     //! aimed at the track, and an edit after a render leaves the take *playing* — a voice
     //! someone chose must not fall back to the formant preview over one edited word. What an
     //! edit does change is the answer to

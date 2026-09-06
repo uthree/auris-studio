@@ -15,6 +15,8 @@ pub enum BackendKind {
     DiffSinger,
     /// A running VOICEVOX Engine reached through its HTTP API.
     Voicevox,
+    /// A LeapSinger acoustic ONNX model paired with an NHVSing vocoder.
+    LeapSinger,
 }
 
 impl BackendKind {
@@ -31,6 +33,12 @@ impl BackendKind {
             .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
         {
             Self::Voicevox
+        } else if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.to_ascii_lowercase().ends_with(".leapsinger.json"))
+        {
+            Self::LeapSinger
         } else {
             Self::Auris
         }
@@ -88,7 +96,8 @@ pub struct VoiceModel {
 }
 
 impl VoiceModel {
-    /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, or `.voicevox.json` connection.
+    /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, `.voicevox.json` connection,
+    /// or `.leapsinger.json` voicebank manifest.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
         let backend: Box<dyn SingingBackend> = match BackendKind::from_path(path) {
             BackendKind::DiffSinger => Box::new(crate::diffsinger::DiffSingerBackend::load(
@@ -99,6 +108,10 @@ impl VoiceModel {
                 Box::new(crate::voicevox::VoicevoxBackend::load(path, acceleration)?)
             }
             BackendKind::Auris => Box::new(crate::model::AurisBackend::load(path, acceleration)?),
+            BackendKind::LeapSinger => Box::new(crate::leapsinger::LeapSingerBackend::load(
+                path,
+                acceleration,
+            )?),
         };
         Ok(Self { backend })
     }
@@ -185,6 +198,7 @@ mod tests {
             ("voice.onnx", BackendKind::Auris, true),
             ("bank/DSCONFIG.YAML", BackendKind::DiffSinger, true),
             ("voice.VOICEVOX.JSON", BackendKind::Voicevox, false),
+            ("voice.LEAPSINGER.JSON", BackendKind::LeapSinger, true),
         ] {
             let backend = BackendKind::from_path(Path::new(entry));
             assert_eq!(backend, kind);

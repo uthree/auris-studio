@@ -678,7 +678,8 @@ impl AurisApp {
     /// A voice is chosen the way a sound is: one row, one click, onto the selected singer
     /// track. Track → Choose Voice… keeps the file dialog for the one-off file somewhere
     /// unusual; what this section holds is the shelf — Auris `.onnx` files, DiffSinger voicebanks,
-    /// and VOICEVOX connections in a `Voices` folder or in a folder registered below.
+    /// VOICEVOX connections, and LeapSinger manifests in a `Voices` folder or in a folder
+    /// registered below.
     fn voice_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
         let voices = self.voice_list();
         let mut rows = vec![self.section_row(
@@ -732,6 +733,7 @@ impl AurisApp {
             Some(auris_session::VoiceSourceKind::Auris) => Key::VoiceBackendAuris,
             Some(auris_session::VoiceSourceKind::DiffSinger) => Key::VoiceBackendDiffSinger,
             Some(auris_session::VoiceSourceKind::Voicevox) => Key::VoiceBackendVoicevox,
+            Some(auris_session::VoiceSourceKind::LeapSinger) => Key::VoiceBackendLeapSinger,
             None => Key::VoiceBackendAuris,
         };
         div()

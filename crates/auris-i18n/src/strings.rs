@@ -1191,18 +1191,19 @@ RENDER OPTIONS
 
 SING OPTIONS
         --track <name>            Which singer track (default: the project's only one)
-        --voice <model.onnx>      Choose the voice model first, and remember it
+        --voice <voice-file>      Choose the voice first, and remember it
+                                  Auris .onnx, dsconfig.yaml, .voicevox.json, .leapsinger.json
         --speaker <name>          Which of the voice's speakers sings, and remember it
-        --seed <n>                Pin the take's random choices (default: the current take's)
+        --seed <n>                Render seed, where supported (default: the current take's)
 
 FRAMES OPTIONS
         --track <name>            Which singer track (default: the project's only one)
     -o, --output <file.json>      Where to write (default: alongside the project)
 
 SING-FRAMES OPTIONS
-        --voice <model.onnx>      The voice to sing with (required)
+        --voice <voice-file>      The voice to sing with (required)
         --speaker <name>          Which of the voice's speakers sings (default: its first)
-        --seed <n>                Pin the take's random choices (default: 0)
+        --seed <n>                Render seed, where supported (default: 0)
         --acceleration <auto|gpu|cpu>
                                   Where the model runs its inference (default: auto)
     -o, --output <file.wav>       Where to write (default: alongside the frames)
@@ -1259,18 +1260,19 @@ render のオプション
 
 sing のオプション
         --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）
-        --voice <model.onnx>      先に声のモデルを選んで記憶させる
+        --voice <voice-file>      先にボイスを選んで記憶させる
+                                  Auris .onnx、dsconfig.yaml、.voicevox.json、.leapsinger.json
         --speaker <name>          声のどの話者が歌うかを選んで記憶させる
-        --seed <n>                テイクの乱数を固定（既定: 現在のテイクのシード）
+        --seed <n>                合成用シード（対応ボイスのみ。既定: 現在のテイクのシード）
 
 frames のオプション
         --track <name>            対象のシンガートラック（既定: プロジェクト唯一の 1 本）
     -o, --output <file.json>      出力先（既定: プロジェクトと同じ場所）
 
 sing-frames のオプション
-        --voice <model.onnx>      歌わせる声のモデル（必須）
+        --voice <voice-file>      歌わせるボイス（必須）
         --speaker <name>          声のどの話者が歌うか（既定: 最初の話者）
-        --seed <n>                テイクの乱数を固定（既定: 0）
+        --seed <n>                合成用シード（対応ボイスのみ。既定: 0）
         --acceleration <auto|gpu|cpu>
                                   モデルの推論を走らせる場所（既定: auto）
     -o, --output <file.wav>       出力先（既定: フレームファイルと同じ場所）
@@ -1332,8 +1334,8 @@ new のオプション
     }
     BrowserVoices { en: "Voices", ja: "シンガーボイス" }
     BrowserNoVoices {
-        en: "Add an Auris, DiffSinger, or VOICEVOX voice below",
-        ja: "下からAuris、DiffSinger、またはVOICEVOXのボイスを追加してください"
+        en: "Add an Auris, DiffSinger, VOICEVOX, or LeapSinger voice below",
+        ja: "下からAuris、DiffSinger、VOICEVOX、LeapSingerのボイスを追加してください"
     }
     BrowserAddVoiceFolder { en: "Add Voice Folder…", ja: "ボイスフォルダを追加…" }
     BrowserSetupVoicevox { en: "Set Up VOICEVOX…", ja: "VOICEVOXを設定…" }
@@ -1370,6 +1372,7 @@ new のオプション
     VoiceBackendAuris { en: "Auris ONNX", ja: "Auris形式" }
     VoiceBackendDiffSinger { en: "DiffSinger", ja: "DiffSinger形式" }
     VoiceBackendVoicevox { en: "VOICEVOX", ja: "VOICEVOX接続" }
+    VoiceBackendLeapSinger { en: "LeapSinger", ja: "LeapSinger形式" }
     DialogVoiceFolder { en: "Choose a folder of voice models", ja: "ボイスモデルのフォルダを選択" }
     CliDictionary { en: "SHIPPED JAPANESE DICTIONARY", ja: "同梱日本語辞書" }
     CliDictionaryMissing {
@@ -1381,8 +1384,8 @@ new のオプション
     CliExpectedProjectPath { en: "expected a project path", ja: "プロジェクトのパスを指定してください" }
     CliExpectedFramesPath { en: "expected a frames file", ja: "フレームファイルのパスを指定してください" }
     CliNeedsVoice {
-        en: "sing-frames needs --voice <model.onnx>",
-        ja: "sing-frames には --voice <model.onnx> が必要です"
+        en: "sing-frames needs --voice <voice-file>",
+        ja: "sing-frames には --voice <voice-file> が必要です"
     }
     CliNoCycle {
         en: "the project has no cycle region to render",
