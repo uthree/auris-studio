@@ -84,8 +84,10 @@ repository — see [The SoundFont that comes with it](docs/features.md#the-sound
 Skip it and everything still builds and runs; there are simply four instruments instead of a
 hundred and thirty.
 
-Platform notes — Windows needs nothing beyond the Rust toolchain, and macOS does not need a full
-Xcode install — are in [Development](docs/development.md#building-on-each-platform).
+Windows also needs Visual Studio C++ Build Tools and LLVM. Before building, run
+`.\tools\setup-windows.ps1 -InstallLlvm` in a Visual Studio developer PowerShell terminal.
+Platform instructions, including building macOS without a full Xcode install, are in
+[Development](docs/development.md#building-on-each-platform).
 
 ## Known limitations
 
