@@ -653,7 +653,7 @@ impl Session {
         }
         let folder = self
             .project_folder()
-            .ok_or(SessionError::RecordingNeedsFolder)?
+            .expect("every session has a working folder")
             .to_path_buf();
 
         self.open_input()?;
@@ -1532,12 +1532,11 @@ mod tests {
     }
 
     #[test]
-    fn recording_needs_somewhere_to_write() {
-        // The one command that refuses on an unsaved project. Every other asset can sit outside
-        // the folder until a save picks it up; a take has to be written the moment it starts.
+    fn an_unsaved_project_has_working_storage_for_recording() {
         let mut session = session();
         let audio = session.add_audio_track("Vocals");
-        assert!(matches!(
+        assert!(session.project_folder().is_some());
+        assert!(!matches!(
             session.start_recording(Some(audio)),
             Err(SessionError::RecordingNeedsFolder)
         ));

@@ -1052,21 +1052,15 @@ machine is not keeping up with the block size, which **Settings → Audio** can 
 
 ## Autosave
 
-Once a project has a folder, it is written back over itself about every thirty seconds — but only
-when something has actually changed, and never part way through a drag. Nothing is announced: the
-unsaved mark in the title bar going out is the whole of the feedback, because a message every half
-minute is a status line that never holds anything else. A save that *fails* is reported every time.
+Auris keeps a recovery snapshot in the session's private working folder about every thirty seconds
+while there are unsaved changes. This also works before the first save, and waits for a drag to
+finish. Successful snapshots are silent; failed writes are reported on the status line.
 
-It never invents a place to save. A document that has never been saved has no folder, and choosing
-one on your behalf would put your song somewhere you did not put it — so that first save is still
-a question, asked once.
+The project file and the title bar's unsaved mark stay unchanged. **Save** or **Save As** writes
+your changes to the permanent project and clears the older snapshot. Closing without saving keeps
+the last manually saved version.
 
-**What this costs is worth knowing:** it writes the real file, not a recovery copy beside it, so
-**closing without saving stops being a way to undo an afternoon**. Undo still is, for as long as
-the window is open. The alternative — a recovery file adopted through a dialog on the next launch
-— keeps both at the price of two files that can disagree and a prompt people click through without
-reading. One file that is always current is easier to reason about, so that is what this is, and
-**Settings → General → Autosave** turns it off for anyone who wants the old bargain back.
+Autosave is on by default. **Settings → General → Autosave** turns it off.
 
 ## The project folder
 

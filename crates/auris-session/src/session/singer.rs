@@ -890,9 +890,9 @@ impl Session {
 
     /// Everything a background render needs, gathered and checked before any work is spent.
     ///
-    /// Refusals come in the order a person can act on them: no voice chosen, nothing to sing,
-    /// nowhere to keep the result — and only then is the model file itself opened. The plan owns
-    /// its frames, so the thread that renders it borrows nothing from the session.
+    /// Refusals come in the order a person can act on them: no voice chosen, then nothing to sing,
+    /// and only then is the model file itself opened. The plan owns its frames, so the thread that
+    /// renders it borrows nothing from the session.
     pub fn sing_plan(
         &mut self,
         track: TrackId,
@@ -910,7 +910,7 @@ impl Session {
         }
         let folder = self
             .project_folder()
-            .ok_or(SessionError::SingingNeedsFolder)?;
+            .expect("every session has a working folder");
         let resolved = voice
             .path
             .resolve(Some(folder))
@@ -1138,7 +1138,7 @@ impl Session {
         self.require_singer(plan.track)?;
         let folder = self
             .project_folder()
-            .ok_or(SessionError::SingingNeedsFolder)?
+            .expect("every session has a working folder")
             .to_path_buf();
         let name = self
             .project
@@ -2215,7 +2215,7 @@ mod tests {
     }
 
     #[test]
-    fn singing_refuses_in_the_order_a_person_can_act_on() {
+    fn an_unsaved_project_reaches_the_voice_instead_of_refusing_for_want_of_a_folder() {
         let (mut session, track, clip) = sung(0);
         assert!(matches!(
             session.sing(track, None),
@@ -2229,10 +2229,53 @@ mod tests {
         session
             .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
             .unwrap();
-        assert!(matches!(
+        assert!(session.project_folder().is_some());
+        assert!(!matches!(
             session.sing(track, None),
             Err(SessionError::SingingNeedsFolder)
         ));
+    }
+
+    #[test]
+    fn an_unsaved_singer_take_lives_in_working_storage_then_follows_save_as() {
+        let scratch = Scratch::new("unsaved-singer-take");
+        let (mut session, track, _) = sung(1);
+        let working = session.project_folder().unwrap().to_path_buf();
+        let frames = session.singer_frames(track).unwrap();
+        let plan = SingPlan {
+            track,
+            frames,
+            score: SingerScore::default(),
+            voice: PathBuf::from("unused.onnx"),
+            speaker: 0,
+            seed: 7,
+            fingerprint: 42,
+            sample_rate: 48_000,
+        };
+
+        session.land_singer_take(&plan, &[0.0; 480]).unwrap();
+        let source = session
+            .require_singer(track)
+            .unwrap()
+            .take
+            .as_ref()
+            .unwrap()
+            .source;
+        let cached = session.project().audio_sources[&source]
+            .path
+            .resolve(session.project_folder())
+            .unwrap();
+        assert!(cached.starts_with(&working));
+        assert!(cached.is_file());
+        assert!(session.path().is_none());
+
+        let report = session.save_as(&scratch.join("Song.auris")).unwrap();
+        let saved = session.project().audio_sources[&source]
+            .path
+            .resolve(session.project_folder())
+            .unwrap();
+        assert!(saved.starts_with(report.document.parent().unwrap()));
+        assert!(saved.is_file());
     }
 
     #[test]

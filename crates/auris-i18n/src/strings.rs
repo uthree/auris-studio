@@ -378,8 +378,8 @@ strings! {
     }
     Autosave { en: "Autosave", ja: "自動保存" }
     AutosaveNote {
-        en: "Saves a project that already has a folder, about every 30 seconds, once it has changed. Closing without saving stops being a way to undo an afternoon.",
-        ja: "保存先が決まっているプロジェクトを、変更があれば30秒ごとに上書き保存します。「保存せずに閉じて元に戻す」はできなくなります。"
+        en: "Keeps a recovery copy in private working storage about every 30 seconds. The project file is changed only when you save it.",
+        ja: "約30秒ごとに、復旧用のコピーを作業用キャッシュへ保存します。プロジェクト本体は、手動で保存したときだけ更新されます。"
     }
     SnapNoteLengths { en: "Snap Note Lengths", ja: "ノートの長さをスナップ" }
     SnapNoteLengthsNote {
