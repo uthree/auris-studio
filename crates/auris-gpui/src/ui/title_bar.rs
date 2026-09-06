@@ -67,6 +67,7 @@ impl AurisApp {
                     )
                     .child(
                         div()
+                            .relative()
                             .flex()
                             .flex_1()
                             .min_w_0()
@@ -74,8 +75,12 @@ impl AurisApp {
                             .items_center()
                             .child(
                                 div()
+                                    // Let panel switches use the balancing inset while the
+                                    // two flex columns keep playback centred in the window.
+                                    .absolute()
+                                    .left_0()
+                                    .right(-titlebar::traffic_light_inset(window))
                                     .flex()
-                                    .w_full()
                                     .h_full()
                                     .items_center()
                                     .pr(controls_width + px(8.0))
@@ -122,6 +127,14 @@ mod tests {
             assert_eq!(transport.center().x, px(width / 2.0));
             if let Some(minimize) = cx.debug_bounds("window-minimize") {
                 assert!(transport.right() <= minimize.left());
+            }
+            if super::panels_in_titlebar(px(width)) {
+                // The agent is the last switch in the default right dock.
+                let rightmost = cx.debug_bounds("panel-switch-5").unwrap().right();
+                let controls_left = cx
+                    .debug_bounds("window-minimize")
+                    .map_or(px(width), |bounds| bounds.left());
+                assert_eq!(rightmost, controls_left - px(8.0));
             }
             let looping = app.read_with(cx, |this, _| this.project().loop_enabled);
             click("loop", cx);
