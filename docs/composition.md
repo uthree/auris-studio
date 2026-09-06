@@ -247,7 +247,23 @@ than a part. The clip keeps the recipe that produced it, so **Another Take** is
 the next seed, **Write It Again** follows the chords when they move, and **Keep This One** drops
 the recipe when a take turns out to be the keeper. A track's own menu has **Keep Every Take Here**,
 which does that to all of them at once and says how many it acted on. The dials are in the
-inspector:
+inspector.
+
+Select a generated melodic clip to open **Session Player** in the inspector. The six role
+buttons choose lead, chords, pad, arpeggio, stab or bass, highlighting the current choice.
+The same XY pad used by Drummer controls **Complexity** horizontally (the recipe's density)
+and **Intensity** vertically: right makes the part busier, up plays it harder. The readouts
+show both values. Each drag rewrites the selected clip as one undo step and keeps its seed
+and Performance settings.
+
+**Phrasing** groups subdivision, five octave buttons from −2 to +2, and the applicable
+expression sliders. **Takes** groups the editable take number (the seed), **Write It Again**,
+**Another Take**, and **Keep This One**. After editing the chords, use **Write It Again** to
+follow them with the current take. **Keep This One** preserves the notes and removes the
+generation controls. These controls edit the selected clip, so different sections on the
+same instrument track can have different settings.
+
+The controls mean:
 
 | | |
 |---|---|

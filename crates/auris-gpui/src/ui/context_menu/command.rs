@@ -642,13 +642,6 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
-    /// Move a generated clip's register.
-    SetClipOctave {
-        /// Clip to rewrite.
-        clip: ClipId,
-        /// Octaves from where the preset sits.
-        octave: i32,
-    },
 
     /// Move a panel to one of the window's edges.
     DockPanel {
@@ -1326,15 +1319,7 @@ impl AurisApp {
                 let chosen = self.clips_for_command(clip);
                 self.session.begin_transaction(Edit::GenerateClip);
                 for chosen_clip in chosen {
-                    match self.session.regenerate_clip(chosen_clip) {
-                        Ok(_) => {
-                            self.forget_rewritten_notes(chosen_clip);
-                            self.report_clip_preset(chosen_clip);
-                        }
-                        Err(error) => {
-                            self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error))
-                        }
-                    }
+                    self.regenerate_clip(chosen_clip);
                 }
                 self.session.end_transaction();
             }
@@ -1372,7 +1357,6 @@ impl AurisApp {
             MenuCommand::SetPerformSwingGrid { clip, subdivision } => {
                 self.set_perform_swing_grid(clip, subdivision)
             }
-            MenuCommand::SetClipOctave { clip, octave } => self.set_clip_octave(clip, octave),
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),
             MenuCommand::SetParamValue(target) => self.prompt_for_param(target),

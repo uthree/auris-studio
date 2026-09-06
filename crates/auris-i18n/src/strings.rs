@@ -633,6 +633,10 @@ strings! {
     // The dials on a generated clip's recipe. `Groove` is deliberately not translated into
     // Japanese as 「溝」: the word a drummer uses in either language is the loan word.
     PartHeading { en: "Part", ja: "パート" }
+    PartPlayerHeading { en: "Session Player", ja: "自動演奏" }
+    PartPhrasing { en: "Phrasing", ja: "フレーズの表情" }
+    PartTakes { en: "Takes", ja: "テイク" }
+    PartTakeNumber { en: "Take number", ja: "テイク番号" }
     PartPreset { en: "Preset", ja: "プリセット" }
     PartDensity { en: "Density", ja: "密度" }
     // How long a note sounds for, as a share of the gap to the next one. Not 「ゲート」 alone,

@@ -133,6 +133,15 @@ fn whole_percent(fraction: f32) -> f32 {
 /// rule the composer itself keeps, stated where the interface can break it, and it costs a
 /// changing row count in exchange for never lying about what is reachable.
 pub fn dials_for(recipe: &ClipRecipe) -> &'static [Dial] {
+    // An authored arpeggio strikes exactly the supplied rhythm. Its generated rate and
+    // syncopation cannot change those onsets, so neither belongs on the pad or in a slider.
+    if recipe.preset == ClipPreset::Arp && recipe.rhythm.is_some() {
+        return if recipe.subdivision.is_triplet() {
+            &[Dial::Gate, Dial::Intensity, Dial::Dynamics]
+        } else {
+            &[Dial::Gate, Dial::Intensity, Dial::Dynamics, Dial::Swing]
+        };
+    }
     // A kit reads neither the gate nor the syncopation: a one-shot drum ignores its note-off,
     // and where it plays is which groove it plays. It ignores the subdivision too, which is why
     // its swing is the one that is never inert. The fill is its alone — nothing else has a last
@@ -249,7 +258,7 @@ fn drum_control_applies(recipe: &ClipRecipe, dial: Dial) -> bool {
 }
 
 /// The recipe under the pad: right adds complexity and up plays harder.
-fn with_drummer_position(
+fn with_part_position(
     recipe: &ClipRecipe,
     bounds: Bounds<Pixels>,
     at: Point<Pixels>,
@@ -339,29 +348,37 @@ impl AurisApp {
             .midi_clip(clip)
             .and_then(|(track, _)| self.project().track(track))
             .is_some_and(|track| track.kind.is_drum());
-        let has_pad = drummer && drum_control_applies(&recipe, Dial::Density);
+        let has_pad = dials_for(&recipe).contains(&Dial::Density)
+            && (!drummer || drum_control_applies(&recipe, Dial::Density));
 
         let mut rows: Vec<AnyElement> = vec![
             self.group_heading(if drummer {
                 Key::DrummerHeading
             } else {
-                Key::PartHeading
+                Key::PartPlayerHeading
             })
             .into_any_element(),
         ];
-        if has_pad {
-            rows.push(self.drummer_pad(clip, &recipe, cx));
+        if !drummer {
+            rows.push(self.melodic_preset_buttons(clip, recipe.preset, cx));
         }
-        rows.push(
-            self.picker_row(
-                "part-preset",
-                Key::PartPreset,
-                self.t(crate::ui::context_menu::preset_key(recipe.preset))
-                    .to_string(),
-                Self::opens_menu(cx, move |this, at| this.clip_preset_menu(at, clip)),
-            )
-            .into_any_element(),
-        );
+        if has_pad {
+            rows.push(self.part_pad(clip, &recipe, cx));
+        }
+        if drummer {
+            rows.push(
+                self.picker_row(
+                    "part-preset",
+                    Key::PartPreset,
+                    self.t(crate::ui::context_menu::preset_key(recipe.preset))
+                        .to_string(),
+                    Self::opens_menu(cx, move |this, at| this.clip_preset_menu(at, clip)),
+                )
+                .into_any_element(),
+            );
+        } else {
+            rows.push(self.group_heading(Key::PartPhrasing).into_any_element());
+        }
 
         if takes_a_subdivision(recipe.preset) {
             rows.push(
@@ -377,22 +394,13 @@ impl AurisApp {
         }
 
         if takes_an_octave(recipe.preset) {
-            rows.push(
-                self.picker_row(
-                    "part-octave",
-                    Key::PartOctave,
-                    octave_text(recipe.octave),
-                    Self::opens_menu(cx, move |this, at| this.clip_octave_menu(at, clip)),
-                )
-                .into_any_element(),
-            );
+            rows.push(self.part_octave_buttons(clip, recipe.octave, cx));
         }
 
         for dial in dials_for(&recipe) {
             let dial = *dial;
-            if drummer
-                && (!drum_control_applies(&recipe, dial)
-                    || (has_pad && matches!(dial, Dial::Density | Dial::Intensity)))
+            if (drummer && !drum_control_applies(&recipe, dial))
+                || (has_pad && matches!(dial, Dial::Density | Dial::Intensity))
             {
                 continue;
             }
@@ -444,6 +452,8 @@ impl AurisApp {
 
         if drummer {
             rows.extend(self.drummer_voice_rows(clip, &recipe, cx));
+        } else {
+            rows.push(self.group_heading(Key::PartTakes).into_any_element());
         }
 
         // The seed is shown, and typeable, because "another take" is the *next* seed and not a
@@ -452,10 +462,18 @@ impl AurisApp {
         rows.push(
             self.picker_row(
                 "part-seed",
-                Key::PartSeed,
+                if drummer {
+                    Key::PartSeed
+                } else {
+                    Key::PartTakeNumber
+                },
                 recipe.seed.to_string(),
                 cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    let title = this.t(Key::SetSeedTitle);
+                    let title = this.t(if drummer {
+                        Key::SetSeedTitle
+                    } else {
+                        Key::PartTakeNumber
+                    });
                     let current = this
                         .session
                         .clip_recipe(clip)
@@ -479,6 +497,23 @@ impl AurisApp {
                     .text_color(theme.warning)
                     .child(self.t(Key::PartEditedByHand))
                     .into_any_element(),
+            );
+        }
+        if !drummer {
+            rows.push(
+                button(
+                    "part-regenerate",
+                    self.t(Key::MenuRegenerateClip),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.regenerate_clip(clip);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
             );
         }
         rows.push(
@@ -515,8 +550,89 @@ impl AurisApp {
         rows
     }
 
+    /// The melodic writers are visible choices, with the current role highlighted.
+    fn melodic_preset_buttons(
+        &self,
+        clip: ClipId,
+        current: ClipPreset,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let choices: Vec<_> = ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| !preset.is_drums())
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .pb_2()
+            .children(choices.chunks(2).map(|pair| {
+                div().flex().gap_1().children(pair.iter().map(|&preset| {
+                    button(
+                        ("part-role", preset as usize),
+                        self.t(crate::ui::context_menu::preset_key(preset)),
+                        ButtonStyle::Normal,
+                        current == preset,
+                        self.theme.accent,
+                        &self.theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.set_clip_preset(clip, preset);
+                            cx.notify();
+                        }),
+                    )
+                    .flex_1()
+                    .min_w_0()
+                    .debug_selector(move || format!("part-role-{}", preset.name()))
+                }))
+            }))
+            .into_any_element()
+    }
+
+    /// One click selects a register without opening a menu over the performance controls.
+    fn part_octave_buttons(
+        &self,
+        clip: ClipId,
+        current: i32,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .py_1()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(self.theme.text_muted)
+                    .child(self.t(Key::PartOctave)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap_1()
+                    .children(octave_choices().map(|octave| {
+                        button(
+                            ("part-register", (octave + OCTAVE_REACH) as usize),
+                            octave_text(octave),
+                            ButtonStyle::Normal,
+                            current == octave,
+                            self.theme.accent,
+                            &self.theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.set_clip_octave(clip, octave);
+                                cx.notify();
+                            }),
+                        )
+                        .flex_1()
+                        .min_w_0()
+                        .debug_selector(move || format!("part-register-{octave}"))
+                    })),
+            )
+            .into_any_element()
+    }
+
     /// Two musical decisions in one gesture, committed together by the normal drag transaction.
-    fn drummer_pad(
+    fn part_pad(
         &self,
         clip: ClipId,
         recipe: &ClipRecipe,
@@ -528,6 +644,11 @@ impl AurisApp {
         let pressed = recorded.clone();
         let density = Dial::Density.fraction(recipe);
         let intensity = Dial::Intensity.fraction(recipe);
+        let id = if recipe.preset.is_drums() {
+            "drummer-pad"
+        } else {
+            "part-pad"
+        };
         div()
             .flex()
             .flex_col()
@@ -557,8 +678,8 @@ impl AurisApp {
             )
             .child(
                 div()
-                    .id("drummer-pad")
-                    .debug_selector(|| "drummer-pad".to_string())
+                    .id(id)
+                    .debug_selector(move || id.to_string())
                     .h(px(124.0))
                     .w_full()
                     .flex_shrink_0()
@@ -606,8 +727,8 @@ impl AurisApp {
                         gpui::MouseButton::Left,
                         cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                             if let Some(bounds) = pressed.get() {
-                                this.begin_drag(Drag::DrummerPad { clip, bounds });
-                                this.drag_drummer_pad(clip, bounds, event.position);
+                                this.begin_drag(Drag::PartPad { clip, bounds });
+                                this.drag_part_pad(clip, bounds, event.position);
                                 cx.notify();
                             }
                         }),
@@ -716,7 +837,7 @@ impl AurisApp {
     }
 
     /// Moves both pad coordinates through one recipe command, preserving the take's seed.
-    pub(crate) fn drag_drummer_pad(
+    pub(crate) fn drag_part_pad(
         &mut self,
         clip: ClipId,
         bounds: Bounds<Pixels>,
@@ -725,7 +846,7 @@ impl AurisApp {
         let Some(current) = self.session.clip_recipe(clip) else {
             return;
         };
-        let recipe = with_drummer_position(current, bounds, at);
+        let recipe = with_part_position(current, bounds, at);
         if &recipe != current && self.session.set_clip_recipe(clip, recipe).is_ok() {
             self.forget_rewritten_notes(clip);
         }
@@ -847,15 +968,30 @@ mod tests {
             origin: point(px(10.0), px(20.0)),
             size: size(px(200.0), px(100.0)),
         };
-        let quiet = with_drummer_position(&original, bounds, point(px(-10.0), px(200.0)));
+        let quiet = with_part_position(&original, bounds, point(px(-10.0), px(200.0)));
         assert_eq!((quiet.density, quiet.intensity), (0.0, 0.0));
-        let busy = with_drummer_position(&original, bounds, point(px(300.0), px(0.0)));
+        let busy = with_part_position(&original, bounds, point(px(300.0), px(0.0)));
         assert_eq!((busy.density, busy.intensity), (1.0, 1.0));
-        let mut middle = with_drummer_position(&original, bounds, point(px(61.0), px(45.0)));
+        let mut middle = with_part_position(&original, bounds, point(px(61.0), px(45.0)));
         assert_eq!((middle.density, middle.intensity), (0.26, 0.75));
         middle.density = original.density;
         middle.intensity = original.intensity;
         assert_eq!(middle, original);
+    }
+
+    #[test]
+    fn an_authored_arpeggio_keeps_expression_controls_without_an_inert_pad() {
+        let mut written = recipe(ClipPreset::Arp);
+        written.rhythm = Some("x...x...x...x...".into());
+        for subdivision in Subdivision::ALL {
+            written.subdivision = subdivision;
+            let dials = dials_for(&written);
+            assert!(!dials.contains(&Dial::Density));
+            assert!(!dials.contains(&Dial::Syncopation));
+            assert!(dials.contains(&Dial::Intensity));
+            assert!(dials.contains(&Dial::Gate));
+            assert_eq!(dials.contains(&Dial::Swing), !subdivision.is_triplet());
+        }
     }
 
     #[test]
@@ -882,6 +1018,169 @@ mod tests {
         kit.drum_map = Some(DrumMap::default());
         assert!(!drum_control_applies(&kit, Dial::Density));
         assert!(!drum_control_applies(&kit, Dial::Intensity));
+    }
+
+    #[gpui::test]
+    fn melodic_pad_rewrites_each_role_as_one_undoable_gesture(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let track = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            this.session.add_default_instrument_track("Player").unwrap()
+        });
+        for preset in ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| !preset.is_drums())
+        {
+            let (clip, original) = app.update(cx, |this, _| {
+                let clip = this
+                    .session
+                    .generate_clip(track, Ticks::ZERO, Ticks::QUARTER * 16, recipe(preset))
+                    .unwrap();
+                this.select_track(track);
+                this.select_clip(Some(clip));
+                (clip, this.session.midi_clip(clip).unwrap().clone())
+            });
+            assert!(
+                !original.notes.is_empty(),
+                "{} needs audible harmony",
+                preset.name()
+            );
+            paint(&app, cx);
+            let bounds = cx
+                .debug_bounds("part-pad")
+                .expect("melodic recipe has a pad");
+            assert!(cx.debug_bounds("drummer-pad").is_none());
+            assert!(cx.debug_bounds("part-dial-0").is_none());
+            assert!(cx.debug_bounds("part-dial-1").is_none());
+            drag(
+                cx,
+                bounds.center(),
+                point(bounds.right() - px(12.0), bounds.top() + px(12.0)),
+            );
+            app.update(cx, |this, _| {
+                let changed = this.session.midi_clip(clip).unwrap();
+                let settings = changed.recipe.as_ref().unwrap();
+                assert!(
+                    settings.density > 0.9 && settings.intensity > 0.9,
+                    "{}",
+                    preset.name()
+                );
+                assert_eq!(settings.seed, original.recipe.as_ref().unwrap().seed);
+                assert_eq!(changed.transforms, original.transforms);
+                assert_ne!(changed.notes, original.notes, "{}", preset.name());
+                assert!(this.session.undo().is_some());
+                assert_eq!(this.session.midi_clip(clip), Some(&original));
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn melodic_role_register_and_take_buttons_edit_the_selected_clip(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (clip, other, untouched) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            let track = this.session.add_default_instrument_track("Player").unwrap();
+            let clip = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Pad),
+                )
+                .unwrap();
+            let other = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::QUARTER * 16,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Lead),
+                )
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (clip, other, this.session.midi_clip(other).unwrap().clone())
+        });
+        paint(&app, cx);
+        click("part-role-stab", cx);
+        let original = app.update(cx, |this, _| {
+            let midi = this.session.midi_clip(clip).unwrap();
+            let settings = midi.recipe.as_ref().unwrap();
+            assert_eq!(settings.preset, ClipPreset::Stab);
+            assert_eq!(settings.gate, recipe(ClipPreset::Stab).gate);
+            assert_eq!(settings.seed, 1);
+            midi.clone()
+        });
+        paint(&app, cx);
+        click("part-register-1", cx);
+        app.update(cx, |this, _| {
+            let midi = this.session.midi_clip(clip).unwrap();
+            assert_eq!(midi.recipe.as_ref().unwrap().octave, 1);
+            assert_eq!(midi.notes.len(), original.notes.len());
+            for (raised, before) in midi.notes.iter().zip(&original.notes) {
+                assert_eq!(raised.pitch, before.pitch + 12);
+                assert_eq!((raised.start, raised.length), (before.start, before.length));
+            }
+            assert!(this.session.undo().is_some());
+            assert_eq!(this.session.midi_clip(clip), Some(&original));
+        });
+        paint(&app, cx);
+        click("part-reroll", cx);
+        let notes = app.update(cx, |this, _| {
+            assert_eq!(this.session.clip_recipe(clip).unwrap().seed, 2);
+            this.session.midi_clip(clip).unwrap().notes.clone()
+        });
+        paint(&app, cx);
+        click("part-freeze", cx);
+        app.update(cx, |this, cx| {
+            assert!(this.session.clip_recipe(clip).is_none());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, notes);
+            assert!(this.part_rows(cx).is_empty());
+            assert_eq!(this.session.midi_clip(other), Some(&untouched));
+        });
+    }
+
+    #[gpui::test]
+    fn melodic_regenerate_button_follows_new_harmony_without_changing_the_take(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        let clip = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            let track = this.session.add_default_instrument_track("Player").unwrap();
+            let clip = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Lead),
+                )
+                .unwrap();
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            clip
+        });
+        paint(&app, cx);
+        click("part-regenerate", cx);
+        app.update(cx, |this, _| {
+            let midi = this.session.midi_clip(clip).unwrap();
+            assert!(!midi.notes.is_empty());
+            assert_eq!(midi.recipe.as_ref().unwrap().seed, 1);
+            assert!(this.session.undo().is_some());
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+        });
     }
 
     #[gpui::test]
