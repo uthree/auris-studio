@@ -157,6 +157,10 @@ strings! {
     }
     BrowserSearch { en: "Search the library", ja: "ライブラリを検索" }
     BrowserNothingFound { en: "Nothing here answers to that", ja: "該当するものはありません" }
+    BrowserSearchLimited {
+        en: "More matches are available. Refine your search to narrow the list.",
+        ja: "ほかにも候補があります。検索語を追加して絞り込んでください。"
+    }
     BrowserAddPluginFolder { en: "Add a folder…", ja: "フォルダを追加…" }
     BrowserNoSoundFonts {
         en: "None imported yet",
@@ -164,8 +168,8 @@ strings! {
     }
     BrowserPlugins { en: "Installed plugins", ja: "インストール済みプラグイン" }
     BrowserNoPlugins {
-        en: "No CLAP plugins found on this computer",
-        ja: "このコンピューターにCLAPプラグインが見つかりません"
+        en: "No CLAP or VST3 plugins found on this computer",
+        ja: "このコンピューターにCLAP・VST3プラグインが見つかりません"
     }
     // Says what opening a file *does*, not what it shows. Loading a plugin runs its code, and
     // that is worth one line above the list rather than nowhere at all.

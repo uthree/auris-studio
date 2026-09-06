@@ -1,6 +1,6 @@
 //! The left-hand library: every instrument, sound and effect the session can reach, as a tree.
 //!
-//! Three sections, each of which opens into groups rather than into a list. Instruments and
+//! Sections open into groups rather than into a list. Instruments and
 //! effects group by [`PluginCategory`]; a SoundFont groups by the MIDI banks the file itself
 //! declares. The reason is the same in both cases and it is a matter of scale: eleven built-in
 //! plugins read fine as a list, but a General MIDI font carries a hundred and twenty-eight
@@ -12,19 +12,10 @@
 //! default is not the same everywhere: the plugins want to be visible, the hundred and
 //! twenty-eight sounds want to be asked for.
 //!
-//! # Why the rows are coloured
-//!
-//! Opening a branch is not the whole of the scale problem. A bank of a General MIDI font is a
-//! hundred and twenty-eight rows of small grey text at one indent, and grouping alone does not
-//! make that a thing an eye can find a place in — every row looks exactly like the row above it,
-//! so finding the strings means reading names one at a time from the top.
-//!
-//! So every leaf row carries a mark in its group's colour, and the marks line up into a column
-//! that says where one group ends and the next begins without a word being read. [`group_hue`] is
-//! where the colours come from and [`Theme::group_color`](crate::theme::Theme::group_color) turns
-//! one into a colour this scheme can show. The mark is beside the name and never *is* the name:
-//! the hues that make the best labels make the worst body text, and a row whose meaning depends on
-//! its colour is a row somebody colour-blind cannot read at all.
+//! Colour identifies what a choice does: cyan for instruments and sampled sounds, amber for
+//! effects, violet for singing voices. File containers stay neutral until their contents are
+//! known. Headings and item icons share these colours in both the tree and search results;
+//! names, indentation and check marks carry the same information without relying on colour.
 
 use std::collections::HashMap;
 
@@ -36,7 +27,7 @@ use auris_session::prelude::*;
 use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Window, div, prelude::*, px};
 
 use crate::app::AurisApp;
-use crate::theme::Metrics;
+use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::inspector::{audio_name, panel_header};
 use crate::ui::scrollbars::ScrollPanel;
@@ -44,6 +35,9 @@ use crate::ui::widgets::divider;
 
 /// How far one level of the tree is indented.
 const INDENT: Pixels = px(11.0);
+
+/// The branch's disclosure triangle and its following gap, also reserved by tree leaves.
+const DISCLOSURE_SPACE: Pixels = px(17.0);
 
 /// A branch of the library — anything that can be open or shut.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -194,70 +188,46 @@ pub(crate) fn by_bank(presets: Vec<SoundFontPreset>) -> Vec<(i32, Vec<SoundFontP
 
 /// How far in a row at this depth sits.
 fn indent(depth: usize) -> Pixels {
-    INDENT * depth as f32
+    px(6.0) + INDENT * depth as f32
 }
 
-/// Where the first group's colour sits on the wheel.
-///
-/// Off pure red, which the interface already spends on clipping and on failure, and off the
-/// accent, which every scheme puts somewhere in the blues.
-const FIRST_HUE: f32 = 0.08;
+/// The action a library item offers, independent of category order or MIDI program number.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum LibraryRole {
+    Instrument,
+    Effect,
+    Voice,
+    File,
+}
 
-/// Where group `index` of `count` sits on the colour wheel.
-///
-/// An even walk rather than a hand-picked list. Picking by hand reads better for the first six and
-/// then turns into a search for a seventh colour that is not one of the six — which is the point
-/// at which somebody picks two that are nearly the same. Spreading them evenly is the arrangement
-/// that makes the smallest gap as large as it can be, and it is the only one that stays true when
-/// a category is added.
-fn group_hue(index: usize, count: usize) -> f32 {
-    if count == 0 {
-        return FIRST_HUE;
+impl LibraryRole {
+    fn color(self, theme: &Theme) -> gpui::Hsla {
+        match self {
+            Self::Instrument => theme.group_color(0.53),
+            Self::Effect => theme.group_color(0.09),
+            Self::Voice => theme.group_color(0.76),
+            Self::File => theme.text_muted,
+        }
     }
-    FIRST_HUE + index as f32 / count as f32
+
+    fn icon(self) -> Icon {
+        match self {
+            Self::Instrument => Icon::Keyboard,
+            Self::Effect => Icon::Knob,
+            Self::Voice => Icon::Notes,
+            Self::File => Icon::Library,
+        }
+    }
 }
 
-/// The colour that stands for a category of plugin.
-///
-/// Instruments and effects walk one wheel between them rather than one each, so no reverb shares a
-/// hue with a synth. They are in different sections, but the sections are one scrolling column.
-fn category_hue(category: PluginCategory) -> f32 {
-    group_hue(browser_order(category), PluginCategory::ALL.len())
-}
-
-/// How many of a font's sounds share one colour band.
-///
-/// General MIDI's own division: the hundred and twenty-eight programs come in sixteen families of
-/// eight — Piano, Organ, Guitar, Bass — which is the grouping every chord chart and every hardware
-/// panel a musician has seen already uses. A font that is not General MIDI gets bands of eight
-/// standing for nothing in particular, and they still do the half of this that matters: a column
-/// of a hundred and twenty-eight names is unreadable, and the same column in bands is not.
-const BAND: i32 = 8;
-
-/// The colour that stands for one sound of a font.
-///
-/// The percussion bank is one band rather than sixteen. Its patches are kits — 0, 8, 16, 24 — so
-/// dividing them by eight would give each of the handful a colour of its own and claim they are as
-/// far apart as a piano is from a trumpet. It gets a seventeenth band instead of one of the
-/// families' so that a font with both banks open never draws a kit in a melodic family's colour.
-fn preset_hue(bank: i32, patch: i32) -> f32 {
-    let families = gm::FAMILIES.len();
-    let band = if bank == PERCUSSION_BANK {
-        families
-    } else {
-        // Wrapped, so a font declaring patches past the General MIDI range stays inside the
-        // melodic wheel instead of landing on the percussion colour.
-        (patch.max(0) / BAND) as usize % families
-    };
-    group_hue(band, families + 1)
-}
-
-/// The mark that carries a row's group colour.
-///
-/// A bar rather than a dot, and at the head of the row rather than beside the name: the bars line
-/// up into a column, and a column is what an eye runs down. Dots at varying indents would not.
+/// The mark in a category's icon slot, sharing the role colour of its section.
 fn swatch(color: gpui::Hsla) -> impl IntoElement {
-    div().w(px(3.0)).h(px(10.0)).rounded(px(1.5)).bg(color)
+    div()
+        .w(px(3.0))
+        .h(px(14.0))
+        .flex_shrink_0()
+        .rounded(px(1.5))
+        .bg(color)
 }
 
 /// How many results a search shows.
@@ -265,6 +235,19 @@ fn swatch(color: gpui::Hsla) -> impl IntoElement {
 /// A browser is a list to run an eye down, and a query that answers with two hundred rows has
 /// answered nothing. Anybody who cannot see what they wanted in forty types another letter.
 pub(crate) const SEARCH_LIMIT: usize = 40;
+
+/// Both names a built-in plugin can be found by: the displayed name and its original name.
+///
+/// The registry speaks English while the browser translates known names. Indexing both keeps
+/// a name copied from a manual useful and also lets somebody search for the name on screen.
+fn plugin_search_name(name: &str, language: auris_i18n::Language) -> String {
+    let displayed = auris_i18n::audio::plugin_name(name, language);
+    if displayed == name {
+        name.to_string()
+    } else {
+        format!("{displayed} {name}")
+    }
+}
 
 /// The entries `query` finds, best first.
 ///
@@ -308,12 +291,6 @@ enum Found {
     Voice(String, std::path::PathBuf),
 }
 
-/// The gap a row with no mark leaves where one would have been, so its name still lines up with
-/// the names of the rows that have one.
-fn no_swatch() -> impl IntoElement {
-    div().w(px(3.0))
-}
-
 /// How a branch row is drawn.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct RowStyle {
@@ -346,10 +323,7 @@ impl AurisApp {
             .child(
                 self.scrolling(
                     ScrollPanel::Library,
-                    // No gap between the rows and half the padding round them. A browser is a list
-                    // to run an eye down, and every pixel of air between two names is a name that
-                    // did not fit on the screen — this used to show eleven rows where it now shows
-                    // twenty-odd.
+                    // Rows own their spacing so branch headings and two-line items can differ.
                     div()
                         .id("library-body")
                         .overflow_y_scroll()
@@ -415,7 +389,7 @@ impl AurisApp {
                 false => theme.border_subtle,
             })
             .cursor_text()
-            .child(icon(Icon::Library, px(11.0), theme.text_faint))
+            .child(icon(Icon::Library, px(13.0), theme.text_muted))
             .child(
                 div()
                     .relative()
@@ -443,7 +417,7 @@ impl AurisApp {
                         this.child(
                             crate::ui::prompt::field_text(
                                 self.t(Key::BrowserSearch),
-                                theme.text_faint,
+                                theme.text_muted,
                             )
                             .absolute()
                             .inset_0(),
@@ -456,7 +430,12 @@ impl AurisApp {
                 this.child(
                     div()
                         .id("library-search-clear")
-                        .ml_1p5()
+                        .debug_selector(|| "library-search-clear".to_string())
+                        .size(px(18.0))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
                         .cursor_pointer()
                         .child(icon(Icon::Cross, px(10.0), theme.text_muted))
                         .on_mouse_down(
@@ -519,7 +498,7 @@ impl AurisApp {
         let mut entries: Vec<(String, Found)> = Vec::new();
         for descriptor in self.registry().instruments() {
             entries.push((
-                descriptor.name.to_string(),
+                plugin_search_name(&descriptor.name, self.language()),
                 Found::Instrument(
                     LibraryPlugin {
                         id: descriptor.id.to_string(),
@@ -532,7 +511,7 @@ impl AurisApp {
         }
         for descriptor in self.registry().effects() {
             entries.push((
-                descriptor.name.to_string(),
+                plugin_search_name(&descriptor.name, self.language()),
                 Found::Effect(
                     LibraryPlugin {
                         id: descriptor.id.to_string(),
@@ -571,18 +550,20 @@ impl AurisApp {
             entries.push((name.clone(), Found::Voice(name, path)));
         }
 
-        let found = best_matches(entries, query, SEARCH_LIMIT);
+        let mut found = best_matches(entries, query, SEARCH_LIMIT + 1);
+        let limited = found.len() > SEARCH_LIMIT;
+        found.truncate(SEARCH_LIMIT);
         if found.is_empty() {
             return vec![self.note_row(0, self.t(Key::BrowserNothingFound))];
         }
-        found
+        let mut rows: Vec<AnyElement> = found
             .into_iter()
             .map(|entry| match entry {
                 Found::Instrument(plugin, category) => {
                     let id = plugin.id.clone();
                     self.plugin_row(
                         &plugin,
-                        Icon::Keyboard,
+                        LibraryRole::Instrument,
                         category,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             this.set_track_instrument(&id);
@@ -595,7 +576,7 @@ impl AurisApp {
                     let id = plugin.id.clone();
                     self.plugin_row(
                         &plugin,
-                        Icon::Knob,
+                        LibraryRole::Effect,
                         category,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             this.add_effect_to_selection(&id);
@@ -632,7 +613,7 @@ impl AurisApp {
                             name,
                             description: file.display().to_string(),
                         },
-                        Icon::Knob,
+                        LibraryRole::File,
                         PluginCategory::Utility,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             this.leave_library_search();
@@ -651,19 +632,24 @@ impl AurisApp {
                             name,
                             description: file.display().to_string(),
                         },
-                        Icon::Knob,
+                        LibraryRole::File,
                         PluginCategory::Utility,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                             this.leave_library_search();
                             this.library.set_open(Branch::Plugins, true);
                             this.library.set_open(branch, true);
+                            this.library_reveal = Some(branch);
                             cx.notify();
                         }),
                     )
                 }
                 Found::Voice(name, path) => self.voice_row(&name, path, cx),
             })
-            .collect()
+            .collect();
+        if limited {
+            rows.push(self.note_row(0, self.t(Key::BrowserSearchLimited)));
+        }
+        rows
     }
 
     /// The singer voices this machine can offer, scanned once and kept.
@@ -716,9 +702,10 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let accent = theme.group_color(group_hue(1, 3));
+        let accent = LibraryRole::Voice.color(&theme);
         let shown = path.display().to_string();
         let target = self.singer_target();
+        let enabled = target.is_some();
         let selected = target
             .and_then(|track| self.session.singer_voice_info(track).ok().flatten())
             .is_some_and(|info| info.path == path);
@@ -739,14 +726,21 @@ impl AurisApp {
             .debug_selector(|| format!("lib-voice-{shown}"))
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .min_w_0()
-            .pl(indent(2))
-            .px_1p5()
-            .py_0p5()
+            .pl(if self.library_search.content().trim().is_empty() {
+                indent(1) + DISCLOSURE_SPACE
+            } else {
+                indent(0)
+            })
+            .pr_1p5()
+            .py_1()
             .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .when(selected, |this| this.bg(theme.accent_soft))
-            .hover(|this| this.bg(theme.surface_hover))
+            .when(selected, |this| this.bg(theme.surface_raised))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.surface_hover))
+            })
             .tooltip(tooltip)
             .child(
                 div()
@@ -757,15 +751,15 @@ impl AurisApp {
                     .min_w_0()
                     .child(crate::ui::icons::icon(
                         if selected { Icon::Check } else { Icon::Notes },
-                        px(11.0),
-                        accent,
+                        px(14.0),
+                        if enabled { accent } else { theme.text_muted },
                     ))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_xs()
+                            .text_size(px(13.0))
                             .text_color(theme.text)
                             .child(name.to_string()),
                     ),
@@ -776,14 +770,16 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(self.t(backend)),
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    this.set_track_voice(&path);
-                    this.leave_library_search();
-                    cx.notify();
-                }),
-            )
+            .when(enabled, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        this.set_track_voice(&path);
+                        this.leave_library_search();
+                        cx.notify();
+                    }),
+                )
+            })
             .into_any_element()
     }
 
@@ -997,7 +993,7 @@ impl AurisApp {
                         true => listed.len().to_string(),
                         false => String::new(),
                     },
-                    self.row_style(theme.text, Some(category_hue(PluginCategory::Other))),
+                    self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.library.set_open(branch, !open);
                         cx.notify();
@@ -1029,8 +1025,8 @@ impl AurisApp {
                     // The same icons the built-ins get, so a row reads as a sound or as a
                     // treatment before its name has been read.
                     match kind {
-                        PluginKind::Instrument => Icon::Keyboard,
-                        PluginKind::Effect => Icon::Knob,
+                        PluginKind::Instrument => LibraryRole::Instrument,
+                        PluginKind::Effect => LibraryRole::Effect,
                     },
                     info.category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
@@ -1051,6 +1047,10 @@ impl AurisApp {
         for (vst_index, file) in vst3_files.iter().enumerate() {
             let index = offset + vst_index;
             let branch = Branch::PluginFile(index);
+            if self.library_reveal == Some(branch) {
+                self.library_scroll.scroll_to_item(row_offset + rows.len());
+                self.library_reveal = None;
+            }
             let open = self.library.is_open(branch);
             let name = file
                 .file_stem()
@@ -1075,7 +1075,7 @@ impl AurisApp {
                     } else {
                         String::new()
                     },
-                    self.row_style(theme.text, Some(category_hue(PluginCategory::Other))),
+                    self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.library.set_open(branch, !open);
                         cx.notify();
@@ -1101,8 +1101,8 @@ impl AurisApp {
                         description: info.vendor.clone(),
                     },
                     match kind {
-                        PluginKind::Instrument => Icon::Keyboard,
-                        PluginKind::Effect => Icon::Knob,
+                        PluginKind::Instrument => LibraryRole::Instrument,
+                        PluginKind::Effect => LibraryRole::Effect,
                     },
                     info.category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
@@ -1222,7 +1222,7 @@ impl AurisApp {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
                     &plugin,
-                    Icon::Keyboard,
+                    LibraryRole::Instrument,
                     category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.set_track_instrument(&id);
@@ -1282,7 +1282,7 @@ impl AurisApp {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
                     &plugin,
-                    Icon::Knob,
+                    LibraryRole::Effect,
                     category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                         this.add_effect_to_selection(&id);
@@ -1415,7 +1415,7 @@ impl AurisApp {
         }
     }
 
-    /// One of the three top-level sections.
+    /// One of the top-level sections.
     fn section_row(
         &self,
         branch: Branch,
@@ -1434,9 +1434,16 @@ impl AurisApp {
             Some(kind),
             self.t(label).to_string(),
             count.to_string(),
-            // No mark: a section is the heading over the colours rather than one of them, and a
-            // fourth colour above three groups would read as a fourth group.
-            self.row_style(theme.text_muted, None),
+            // The heading also serves as a labelled key to the item colours.
+            self.row_style(
+                theme.text,
+                Some(match branch {
+                    Branch::Instruments | Branch::SoundFonts => LibraryRole::Instrument,
+                    Branch::Effects => LibraryRole::Effect,
+                    Branch::Voices => LibraryRole::Voice,
+                    _ => LibraryRole::File,
+                }),
+            ),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                 this.library.set_open(branch, !open);
                 cx.notify();
@@ -1463,7 +1470,14 @@ impl AurisApp {
             None,
             self.category_label(category),
             count.to_string(),
-            self.row_style(theme.text, Some(category_hue(category))),
+            self.row_style(
+                theme.text,
+                Some(if matches!(branch, Branch::InstrumentCategory(_)) {
+                    LibraryRole::Instrument
+                } else {
+                    LibraryRole::Effect
+                }),
+            ),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                 this.library.set_open(branch, !open);
                 cx.notify();
@@ -1476,10 +1490,10 @@ impl AurisApp {
     ///
     /// Two fields rather than two arguments, because [`Self::branch_row`] already carries as many
     /// as anybody can read.
-    fn row_style(&self, label: gpui::Hsla, accent: Option<f32>) -> RowStyle {
+    fn row_style(&self, label: gpui::Hsla, accent: Option<LibraryRole>) -> RowStyle {
         RowStyle {
             label,
-            accent: accent.map(|hue| self.theme.group_color(hue)),
+            accent: accent.map(|role| role.color(&self.theme)),
         }
     }
 
@@ -1503,15 +1517,25 @@ impl AurisApp {
     {
         let theme = self.theme.clone();
         let label_color = style.label;
+        let tooltip = crate::ui::tooltip::keyed_tip(format!("{label} · {detail}"), "", &theme);
         div()
             .id(id.into())
+            .debug_selector({
+                let label = label.clone();
+                move || format!("lib-branch-{label}")
+            })
             .flex()
+            .flex_shrink_0()
+            .min_w_0()
             .items_center()
             .gap_1p5()
             .pl(indent(depth))
-            .px_1p5()
+            .pr_1p5()
             .py_1()
+            .min_h(px(30.0))
             .rounded(Metrics::RADIUS_SM)
+            .when(depth == 0, |this| this.bg(theme.surface_raised).mt_1())
+            .tooltip(tooltip)
             // A branch with nothing to open — a font whose file has gone — must not offer the
             // pointer and the hover fill of a row that would answer a click. It looked exactly
             // like a font that works, and clicking it did nothing for ever.
@@ -1519,11 +1543,7 @@ impl AurisApp {
                 this.cursor_pointer()
                     .hover(|this| this.bg(theme.surface_hover))
             })
-            .map(|this| match style.accent {
-                Some(color) => this.child(swatch(color)),
-                None => this.child(no_swatch()),
-            })
-            .child(crate::ui::icons::icon(
+            .child(div().flex_shrink_0().child(crate::ui::icons::icon(
                 // A shut branch points at what opening it would reveal, an open one down at what
                 // it has revealed. The two rotations are the whole of the affordance.
                 if open {
@@ -1531,7 +1551,7 @@ impl AurisApp {
                 } else {
                     Icon::ChevronRight
                 },
-                px(8.0),
+                px(11.0),
                 // A branch with nothing to open — a font whose file has gone — keeps its
                 // triangle so the row still reads as a branch, faintly, so it does not invite.
                 if enabled {
@@ -1539,32 +1559,56 @@ impl AurisApp {
                 } else {
                     theme.text_faint
                 },
-            ))
-            .when_some(kind, |this, kind| {
-                this.child(crate::ui::icons::icon(kind, px(11.0), theme.text_muted))
-            })
+            )))
+            .child(
+                // Reserve the same icon slot on every branch so names follow the tree depth.
+                div()
+                    .size(px(14.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .map(|slot| match kind {
+                        Some(kind) => slot.child(icon(
+                            kind,
+                            px(14.0),
+                            style.accent.unwrap_or(theme.text_muted),
+                        )),
+                        None => {
+                            slot.when_some(style.accent, |slot, color| slot.child(swatch(color)))
+                        }
+                    }),
+            )
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
+                    .text_size(if depth == 0 { px(14.0) } else { px(13.0) })
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(label_color)
                     .truncate()
                     .child(label),
             )
-            .child(div().text_xs().text_color(theme.text_muted).child(detail))
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(detail),
+            )
+            .when(enabled, |this| {
+                this.on_mouse_down(gpui::MouseButton::Left, on_click)
+            })
     }
 
     /// One plugin, ready to load onto the selected track.
     ///
-    /// Name and summary on one line rather than two. The summary is worth having and is not worth
-    /// doubling the height of every row in the panel for — set beside the name and allowed to run
-    /// off the end, it costs nothing and still answers "which reverb is that one".
+    /// The summary sits below the name so both can use the panel's width. The tooltip carries
+    /// their full text when either line is truncated.
     fn plugin_row<F>(
         &self,
         plugin: &LibraryPlugin,
-        kind: Icon,
+        role: LibraryRole,
         category: PluginCategory,
         on_click: F,
     ) -> AnyElement
@@ -1572,40 +1616,88 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
-        let accent = theme.group_color(category_hue(category));
-        // The category is the heading above rather than a label on the row: it was on every row
-        // when the list was flat, and repeating it under its own name is noise. Its *colour* is
-        // on every row, which is the part that costs nothing to repeat and answers "where does
-        // this group end" without the heading having to be back on screen.
+        let accent = role.color(&theme);
+        let searching = !self.library_search.content().trim().is_empty();
+        let enabled = role != LibraryRole::Instrument || self.selected_track_takes_an_instrument();
+        let selected = role == LibraryRole::Instrument
+            && self
+                .selected_track
+                .and_then(|id| self.project().track(id))
+                .and_then(|track| track.kind.as_instrument())
+                .is_some_and(|track| track.instrument_id == plugin.id);
+        let name = audio_name(self, &plugin.name);
+        let description = self.plugin_description(&plugin.description);
+        let description = if searching && role != LibraryRole::File {
+            format!("{} · {description}", self.category_label(category))
+        } else {
+            description
+        };
+        let target_hint = if enabled {
+            ""
+        } else {
+            self.t(Key::LibraryNeedsInstrumentTrack)
+        };
+        let tooltip = crate::ui::tooltip::keyed_tip(
+            format!("{name} · {description} {target_hint}"),
+            "",
+            &theme,
+        );
         div()
             .id(gpui::SharedString::from(format!("lib-{}", plugin.id)))
+            .debug_selector({
+                let id = plugin.id.clone();
+                move || format!("lib-{id}")
+            })
             .flex()
+            .flex_shrink_0()
+            .min_w_0()
             .items_center()
             .gap_1p5()
-            .pl(indent(2))
-            .px_1p5()
-            .py_0p5()
+            .pl(if searching {
+                indent(0)
+            } else {
+                indent(2) + DISCLOSURE_SPACE
+            })
+            .pr_1p5()
+            .py_1()
             .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
-            .child(swatch(accent))
-            .child(crate::ui::icons::icon(kind, px(11.0), accent))
+            .when(selected, |this| this.bg(theme.surface_raised))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.surface_hover))
+            })
+            .tooltip(tooltip)
+            .child(div().flex_shrink_0().child(icon(
+                if selected { Icon::Check } else { role.icon() },
+                px(14.0),
+                if enabled { accent } else { theme.text_muted },
+            )))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .child(audio_name(self, &plugin.name)),
-            )
-            .child(
-                div()
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
-                    .text_color(theme.text_faint)
-                    .truncate()
-                    .child(self.plugin_description(&plugin.description)),
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(theme.text)
+                            .truncate()
+                            .child(name),
+                    )
+                    .when(!description.is_empty(), |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child(description),
+                        )
+                    }),
             )
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
+            .when(enabled, |this| {
+                this.on_mouse_down(gpui::MouseButton::Left, on_click)
+            })
             .into_any_element()
     }
 
@@ -1615,44 +1707,107 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
-        let accent = theme.group_color(preset_hue(preset.bank, preset.patch));
+        let accent = LibraryRole::Instrument.color(&theme);
+        let searching = !self.library_search.content().trim().is_empty();
+        let enabled = self.selected_track_takes_an_instrument();
+        let selected = self
+            .selected_track
+            .and_then(|id| self.session.track_preset(id))
+            == Some(choice);
+        let source = self
+            .session
+            .soundfonts()
+            .find(|font| font.id == choice.font)
+            .map(|font| font.name.as_str())
+            .unwrap_or_default();
+        let detail = format!(
+            "{source} · {} · {}",
+            self.bank_label(choice.bank),
+            choice.patch
+        );
+        let target_hint = if enabled {
+            ""
+        } else {
+            self.t(Key::LibraryNeedsInstrumentTrack)
+        };
+        let tooltip = crate::ui::tooltip::keyed_tip(
+            format!("{} · {detail} {target_hint}", preset.name),
+            "",
+            &theme,
+        );
         div()
             .id(gpui::SharedString::from(format!(
                 "lib-preset-{}-{}-{}",
                 choice.font.0, choice.bank, choice.patch
             )))
+            .debug_selector(move || {
+                format!(
+                    "lib-preset-{}-{}-{}",
+                    choice.font.0, choice.bank, choice.patch
+                )
+            })
             .flex()
+            .flex_shrink_0()
+            .min_w_0()
             .items_center()
             .gap_1p5()
-            .pl(indent(3))
-            .px_1p5()
-            .py_0p5()
+            .pl(if searching {
+                indent(0)
+            } else {
+                indent(3) + DISCLOSURE_SPACE
+            })
+            .pr_1p5()
+            .py_1()
+            .min_h(px(28.0))
             .rounded(Metrics::RADIUS_SM)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.surface_hover))
-            .child(swatch(accent))
-            .child(crate::ui::icons::icon(Icon::Wave, px(11.0), accent))
+            .when(selected, |this| this.bg(theme.surface_raised))
+            .when(enabled, |this| {
+                this.cursor_pointer()
+                    .hover(|this| this.bg(theme.surface_hover))
+            })
+            .tooltip(tooltip)
+            .child(div().flex_shrink_0().child(icon(
+                if selected { Icon::Check } else { Icon::Wave },
+                px(14.0),
+                if enabled { accent } else { theme.text_muted },
+            )))
             .child(
                 div()
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .text_xs()
-                    .text_color(theme.text)
-                    .truncate()
-                    .child(preset.name.clone()),
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .text_color(theme.text)
+                            .truncate()
+                            .child(preset.name.clone()),
+                    )
+                    .when(searching, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child(detail),
+                        )
+                    }),
             )
             .child(
                 // The patch number alone: the bank is the row this one is sitting under.
                 div()
+                    .flex_shrink_0()
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(preset.patch.to_string()),
             )
-            .on_mouse_down(gpui::MouseButton::Left, on_click)
+            .when(enabled, |this| {
+                this.on_mouse_down(gpui::MouseButton::Left, on_click)
+            })
             .into_any_element()
     }
 
-    /// A line of explanation where a branch would otherwise open onto nothing.
     /// Whether the selected track is one an instrument can be loaded onto.
     ///
     /// An audio track has no instrument, so clicking a sound with one selected does nothing at
@@ -1663,12 +1818,14 @@ impl AurisApp {
             .is_some_and(|track| track.kind.as_instrument().is_some())
     }
 
+    /// A short instruction or empty-state explanation beneath a branch.
     fn note_row(&self, depth: usize, text: &str) -> AnyElement {
         div()
+            .flex_shrink_0()
             .text_xs()
             .text_color(self.theme.text_muted)
             .pl(indent(depth))
-            .px_1p5()
+            .pr_1p5()
             .py_1()
             .child(text.to_string())
             .into_any_element()
@@ -1853,64 +2010,6 @@ mod tests {
         assert!(!tree.is_open(Branch::Instruments));
     }
 
-    /// How far apart two hues are, going whichever way round the wheel is shorter.
-    fn apart(a: f32, b: f32) -> f32 {
-        let gap = (a.rem_euclid(1.0) - b.rem_euclid(1.0)).abs();
-        gap.min(1.0 - gap)
-    }
-
-    #[test]
-    fn no_two_categories_wear_the_same_colour() {
-        // The mark is the whole of what tells one group from another at a glance, so two
-        // categories a hair apart on the wheel are two groups that read as one.
-        let hues: Vec<f32> = PluginCategory::ALL.into_iter().map(category_hue).collect();
-        let least = 1.0 / PluginCategory::ALL.len() as f32;
-        for (index, hue) in hues.iter().enumerate() {
-            for other in &hues[index + 1..] {
-                assert!(
-                    apart(*hue, *other) >= least - 1e-4,
-                    "{hue} and {other} are {} apart, wanted {least}",
-                    apart(*hue, *other)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn a_font_s_sounds_change_colour_exactly_where_general_midi_changes_family() {
-        // Eight to a band because that is General MIDI's own division, so the colour breaks fall
-        // where the names do: program 7 is the last harpsichord and program 8 the first tuned
-        // percussion.
-        assert_eq!(preset_hue(0, 0), preset_hue(0, 7));
-        assert_ne!(preset_hue(0, 7), preset_hue(0, 8));
-        assert_eq!(preset_hue(0, 8), preset_hue(0, 15));
-        // Sixteen families, and the sixteenth is not the first again.
-        assert_ne!(preset_hue(0, 0), preset_hue(0, 120));
-    }
-
-    #[test]
-    fn the_kits_never_wear_a_melodic_family_s_colour() {
-        // Both banks can be open at once, and a kit drawn in the strings' colour would be saying
-        // something untrue about a row three lines below a violin.
-        let kits = preset_hue(PERCUSSION_BANK, 0);
-        assert_eq!(
-            kits,
-            preset_hue(PERCUSSION_BANK, 48),
-            "one bank, one band: the kits are not sixteen families"
-        );
-        for patch in 0..128 {
-            assert!(
-                apart(kits, preset_hue(0, patch)) > 1e-4,
-                "kit colour collides with melodic patch {patch}"
-            );
-        }
-        // A font that declares patches past General MIDI's range wraps back into the melodic
-        // wheel rather than landing on the kits.
-        for patch in [128, 200, 1_000] {
-            assert!(apart(kits, preset_hue(0, patch)) > 1e-4, "patch {patch}");
-        }
-    }
-
     #[test]
     fn every_branch_has_a_key_of_its_own() {
         // Two branches sharing a key would share hover state — one row lighting up because the
@@ -1949,6 +2048,36 @@ mod tests {
     }
 
     #[test]
+    fn displayed_japanese_plugin_names_and_original_names_find_the_same_plugin() {
+        let registry = auris_session::plugin_catalogue();
+        let entries: Vec<(String, String)> = registry
+            .instruments()
+            .chain(registry.effects())
+            .map(|descriptor| {
+                (
+                    plugin_search_name(&descriptor.name, auris_i18n::Language::Japanese),
+                    descriptor.name.to_string(),
+                )
+            })
+            .collect();
+        for query in ["リバーブ", "Reverb", "revb"] {
+            assert_eq!(
+                best_matches(entries.clone(), query, SEARCH_LIMIT).first(),
+                Some(&"Reverb".to_string()),
+                "{query:?} should find the name shown in the browser"
+            );
+        }
+        assert_eq!(
+            plugin_search_name("Reverb", auris_i18n::Language::English),
+            "Reverb"
+        );
+        assert_eq!(
+            plugin_search_name("Untranslated Plugin", auris_i18n::Language::Japanese),
+            "Untranslated Plugin"
+        );
+    }
+
+    #[test]
     fn the_result_list_stops_where_it_stops_being_useful() {
         // Forty rows is already more than anybody reads; two hundred is an answer that has
         // answered nothing. Anybody who cannot see it types another letter.
@@ -1971,3 +2100,7 @@ mod tests {
         assert_eq!(best_matches(entries, "", 10), vec![1, 2, 3]);
     }
 }
+
+#[cfg(test)]
+#[path = "library_tests.rs"]
+mod interaction_tests;
