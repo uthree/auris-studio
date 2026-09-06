@@ -1067,6 +1067,7 @@ dependencies = [
  "auris-synth",
  "auris-vocal",
  "auris-vst3",
+ "base64 0.22.1",
  "log",
  "midir",
  "serde",
@@ -1109,9 +1110,11 @@ name = "auris-toolbox"
 version = "0.5.0"
 dependencies = [
  "auris-session",
+ "base64 0.22.1",
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -28,7 +28,7 @@ pub mod effects {
     /// The wire name.
     pub const NAME: &str = "effects";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Lists available effects and a strip's chain, or adds, removes, reorders, bypasses or sidechains an effect. Use track master for the master bus. Slots and positions are 1-based; re-read after changing order. Sidechains connect a source track to an effect that accepts one; source null disconnects. Use set_effect for static parameters and automation for curves. Changes are checkpointed and saved.";
+    pub const DESCRIPTION: &str = "Reads or edits a strip's effect chain. operation is an object: {\"action\":\"list\"} reads; {\"action\":\"add\",\"effect\":\"auris.fx.compressor\"} inserts. Use track master for the master bus. Slots/positions are 1-based; re-read after reordering. Sidechain source null disconnects. Use set_effect for static parameters and automation for curves. Changes are checkpointed and saved.";
     /// An effect operation, with the required arguments for that operation.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -75,7 +75,7 @@ pub mod effects {
         pub project: String,
         /// Track name, id:N or master.
         pub track: String,
-        /// Operation and its arguments.
+        /// Object with action, e.g. {"action":"list"} or {"action":"add","effect":"auris.fx.compressor"}.
         pub operation: Action,
     }
     /// Performs one operation, then returns the actual chain and catalog.
@@ -157,7 +157,7 @@ pub mod automation {
     /// The wire name.
     pub const NAME: &str = "automation";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Reads parameter keys, units, ranges, static values and automation, or writes/clears one lane. Targets include mixer gain/pan, sends, instruments and effects. Read first without param to discover keys. Points use absolute quarter-note beats from zero and parameter units. Set upserts points; replace true replaces the entire lane. Curve is linear or hold. Changes are validated before saving with a checkpoint.";
+    pub const DESCRIPTION: &str = "Reads or edits parameter automation. target and operation are objects: target {\"kind\":\"mixer\"}, operation {\"action\":\"read\"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {\"action\":\"set\",\"param\":\"gain\",\"points\":[{\"beat\":0,\"value\":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Changes are validated, checkpointed and saved.";
     /// Which group of parameters to inspect.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -230,9 +230,9 @@ pub mod automation {
         pub project: String,
         /// Track name, id:N or master.
         pub track: String,
-        /// Parameter group.
+        /// Object with kind, e.g. {"kind":"mixer"} or {"kind":"effect","slot":1}.
         pub target: Target,
-        /// Operation and arguments.
+        /// Object with action: {"action":"read"} discovers keys; set requires param and points.
         pub operation: Action,
     }
     /// Resolves parameter keys, validates and applies a lane operation, and returns readback.
@@ -343,6 +343,7 @@ pub mod automation {
         }
         let result: Vec<_> = parameters.drain(..).map(|(target, d)| serde_json::json!({
             "key":d.key,"name":d.name,"unit":format!("{:?}",d.unit),"min":d.min,"max":d.max,
+            "steps":d.steps,"choices":d.choices,
             "value":session.param_value(target, &d),"automatable":session.automatable(target).is_some(),
             "lane":session.automation().lane(target).map(|lane| serde_json::json!({
                 "curve":match lane.curve { AutomationCurve::Linear => "linear", AutomationCurve::Hold => "hold" },

@@ -49,6 +49,15 @@ impl Memory {
         self.bound();
     }
 
+    pub(crate) fn push_interrupted(&mut self, user: &str, error: &str) {
+        self.push(
+            user,
+            &format!(
+                "Turn interrupted: {error}. Saved tool edits may already exist. Inspect the project before continuing."
+            ),
+        );
+    }
+
     fn bound(&mut self) {
         for turn in &mut self.turns {
             turn.user = shorten(&turn.user, TEXT_BUDGET / 2);
@@ -109,5 +118,25 @@ mod tests {
         assert_eq!(read.messages().len(), memory.turns.len() * 2);
         assert_eq!(read.turns.last().unwrap().user, "request 39");
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn interrupted_turns_keep_the_request_and_uncertain_save_state() {
+        let mut memory = Memory::default();
+        memory.push("Use the existing Song.auris project", "Opened Song.auris");
+        memory.push_interrupted("Add a bass track", "model request timed out");
+        memory.push(
+            "Continue after inspecting the tracks",
+            "The bass track exists",
+        );
+        assert_eq!(memory.turns.len(), 3);
+        assert_eq!(memory.turns[1].user, "Add a bass track");
+        assert!(
+            memory.turns[1]
+                .answer
+                .contains("Saved tool edits may already exist")
+        );
+        assert!(memory.turns[1].answer.contains("Inspect the project"));
+        assert_eq!(memory.messages().len(), 6);
     }
 }

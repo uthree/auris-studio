@@ -37,13 +37,109 @@ struct AurisMcp {
     previews: std::sync::Arc<std::sync::Mutex<previews::Previews>>,
 }
 
+/// Both transports publish the shared, self-contained schemas.
+fn tool_schema(name: &str) -> std::sync::Arc<rmcp::model::JsonObject> {
+    static CATALOG: std::sync::OnceLock<Vec<toolbox::ToolDefinition>> = std::sync::OnceLock::new();
+    CATALOG
+        .get_or_init(toolbox::tool_catalog)
+        .iter()
+        .find(|tool| tool.name == name)
+        .expect("registered toolbox tool")
+        .parameters
+        .as_object()
+        .expect("object argument schema")
+        .clone()
+        .into()
+}
+
 // Every method is one tool: the method name is the tool's wire name, the doc comment its
 // description (held equal to the toolbox constant by test), and argument type and work both
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
+    /// Renders a short project excerpt and sends its actual WAV to the configured audio critic. Use start_bar and bars (default first four bars), or section and optional instance. Keep focus to a short question about the sound. compare_to accepts an earlier audio_path from this project's listen/preview. Review a supported edit by listening to the same range again; leave the mix unchanged when no correction is supported. Returns audio delivery status, fallible observations and separate measurements. Configure AURIS_AUDIO_MODEL and AURIS_AUDIO_URL for a music-capable server. Does not edit the project.
+    #[tool(input_schema = tool_schema("listen"))]
+    async fn listen(
+        &self,
+        Parameters(args): Parameters<toolbox::listen::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::listen::run(&args)).await
+    }
+
+    /// Creates an empty project with one default instrument track and no clips. Optional tempo and meter set its clock. Output must be a new absolute .auris path; choosing Song.auris writes Song/Song.auris. Returns the actual project path to use in later calls. Use add_clip and edit_notes for manual notes, import_audio for recordings, or add_track for more parts.
+    #[tool(input_schema = tool_schema("create_project"))]
+    async fn create_project(
+        &self,
+        Parameters(args): Parameters<toolbox::create_project::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::create_project::run(&args)).await
+    }
+
+    /// Imports an audio file into an existing project as a new audio track, starting at start_bar (1-based, default 1). Source must be an absolute path. The session copies the audio into the project Audio folder when possible; the result reports whether it was copied or remains external. Saves with a checkpoint and returns the actual track ID, clip ID and duration.
+    #[tool(input_schema = tool_schema("import_audio"))]
+    async fn import_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::import_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::import_audio::run(&args)).await
+    }
+
+    /// Imports a .mid or .midi file into a new project, preserving its note timing, tempo and meter. Supply absolute source and new .auris output paths. The MIDI becomes a separate document, with built-in instruments that can be changed using set_instrument. Returns the actual saved project path, track count and note count. Existing projects are never replaced.
+    #[tool(input_schema = tool_schema("import_midi"))]
+    async fn import_midi(
+        &self,
+        Parameters(args): Parameters<toolbox::import_midi::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::import_midi::run(&args)).await
+    }
+
+    /// Exports instrument-track notes, tempo, meter, pitch bends and MIDI controllers to a new .mid or .midi file. Supply absolute project and output paths. Existing files are never overwritten and the project is unchanged. MIDI does not preserve audio, singer tracks, instruments or the mix; use render for an audio export.
+    #[tool(input_schema = tool_schema("export_midi"))]
+    async fn export_midi(
+        &self,
+        Parameters(args): Parameters<toolbox::export_midi::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::export_midi::run(&args)).await
+    }
+
+    /// Reads or changes a track's output and sends. Start with operation list to discover available buses and send IDs. Output requires destination (a bus name, id:N, or master). Add_send requires a bus destination and optionally level_db (-60 to 0) and pre_fader. Remove_send and send_mode select an existing send by destination or send_id; send_mode also requires pre_fader. A bus can be created with add_track kind bus. Returns the actual routing; changes are checkpointed and saved.
+    #[tool(input_schema = tool_schema("routing"))]
+    async fn routing(
+        &self,
+        Parameters(args): Parameters<toolbox::routing::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::routing::run(&args)).await
+    }
+
+    /// Sets a track's mute and/or solo state and saves with a checkpoint. Supply mute, solo, or both; omitted switches stay unchanged. Solo is additive: other soloed tracks remain soloed. Returns the actual switches and all currently soloed tracks. Use mixer to inspect the whole mix.
+    #[tool(input_schema = tool_schema("set_track_state"))]
+    async fn set_track_state(
+        &self,
+        Parameters(args): Parameters<toolbox::set_track_state::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_track_state::run(&args)).await
+    }
+
+    /// Sets one instrument parameter's static value and saves with a checkpoint. Discover exact parameter keys, units and ranges using automation with target {kind:instrument} and operation {action:read}. Values use those units; invalid ranges and fractional discrete choices are refused. Existing automation is preserved and reported because it overrides the static value during playback.
+    #[tool(input_schema = tool_schema("set_instrument_param"))]
+    async fn set_instrument_param(
+        &self,
+        Parameters(args): Parameters<toolbox::set_instrument_param::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_instrument_param::run(&args)).await
+    }
+
+    /// Returns the exact argument schema and examples for one tool. Use before an unfamiliar edit or after an argument error; copy the field names and nesting, replacing example paths and selectors with the current project's values. Does not change files.
+    #[tool(input_schema = tool_schema("tool_help"))]
+    async fn tool_help(
+        &self,
+        Parameters(args): Parameters<toolbox::tool_help::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        finished(toolbox::tool_help::run(&args))
+    }
+
     /// Reports General MIDI availability, installed voice paths from the desktop's library settings, and optional project playback readiness and selected voice metadata. Voice discovery does not load or validate models. Guide vocals are temporary synthesis; stale takes need sing again. Audio preview creates a playable file; it does not imply that the connected language model can hear audio.
-    #[tool]
+    #[tool(input_schema = tool_schema("capabilities"))]
     async fn capabilities(
         &self,
         Parameters(args): Parameters<toolbox::capabilities::Args>,
@@ -51,8 +147,8 @@ impl AurisMcp {
         blocking(move || toolbox::capabilities::run(&args)).await
     }
 
-    /// Reads parameter keys, units, ranges, static values and automation, or writes/clears one lane. Targets include mixer gain/pan, sends, instruments and effects. Read first without param to discover keys. Points use absolute quarter-note beats from zero and parameter units. Set upserts points; replace true replaces the entire lane. Curve is linear or hold. Changes are validated before saving with a checkpoint.
-    #[tool]
+    /// Reads or edits parameter automation. target and operation are objects: target {"kind":"mixer"}, operation {"action":"read"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {"action":"set","param":"gain","points":[{"beat":0,"value":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Changes are validated, checkpointed and saved.
+    #[tool(input_schema = tool_schema("automation"))]
     async fn automation(
         &self,
         Parameters(args): Parameters<toolbox::automation::Args>,
@@ -60,8 +156,8 @@ impl AurisMcp {
         blocking(move || toolbox::automation::run(&args)).await
     }
 
-    /// Lists available effects and a strip's chain, or adds, removes, reorders, bypasses or sidechains an effect. Use track master for the master bus. Slots and positions are 1-based; re-read after changing order. Sidechains connect a source track to an effect that accepts one; source null disconnects. Use set_effect for static parameters and automation for curves. Changes are checkpointed and saved.
-    #[tool]
+    /// Reads or edits a strip's effect chain. operation is an object: {"action":"list"} reads; {"action":"add","effect":"auris.fx.compressor"} inserts. Use track master for the master bus. Slots/positions are 1-based; re-read after reordering. Sidechain source null disconnects. Use set_effect for static parameters and automation for curves. Changes are checkpointed and saved.
+    #[tool(input_schema = tool_schema("effects"))]
     async fn effects(
         &self,
         Parameters(args): Parameters<toolbox::effects::Args>,
@@ -69,8 +165,8 @@ impl AurisMcp {
         blocking(move || toolbox::effects::run(&args)).await
     }
 
-    /// Renders a short WAV audition of one section or bar range (at most 120 seconds, without effect tails). Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.
-    #[tool]
+    /// Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.
+    #[tool(input_schema = tool_schema("preview"))]
     async fn preview(
         &self,
         Parameters(args): Parameters<toolbox::preview::Args>,
@@ -98,7 +194,7 @@ impl AurisMcp {
         }
     }
     /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.
-    #[tool]
+    #[tool(input_schema = tool_schema("analyze_music"))]
     async fn analyze_music(
         &self,
         Parameters(args): Parameters<toolbox::analyze_music::Args>,
@@ -107,7 +203,7 @@ impl AurisMcp {
     }
 
     /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
-    #[tool]
+    #[tool(input_schema = tool_schema("inspect_composition"))]
     async fn inspect_composition(
         &self,
         Parameters(args): Parameters<toolbox::inspect_composition::Args>,
@@ -116,7 +212,7 @@ impl AurisMcp {
     }
 
     /// Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call write_again on the parts that should follow the new harmony.
-    #[tool]
+    #[tool(input_schema = tool_schema("edit_harmony"))]
     async fn edit_harmony(
         &self,
         Parameters(args): Parameters<toolbox::edit_harmony::Args>,
@@ -125,7 +221,7 @@ impl AurisMcp {
     }
 
     /// Changes a generated clip's recipe and regenerates that clip only. With drum_voice, edits only the named writer within a drum kit. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.
-    #[tool]
+    #[tool(input_schema = tool_schema("edit_recipe"))]
     async fn edit_recipe(
         &self,
         Parameters(args): Parameters<toolbox::edit_recipe::Args>,
@@ -133,8 +229,8 @@ impl AurisMcp {
         blocking(move || toolbox::edit_recipe::run(&args)).await
     }
 
-    /// Moves, duplicates, copies to another note track, splits, resizes, removes, mutes or freezes one note clip. Copy can transpose stored notes; transposing freezes the copied recipe. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.
-    #[tool]
+    /// Moves, duplicates, copies, splits, resizes, removes, mutes or freezes one note clip. Pass action as an object: resize uses {kind:resize,end_bar:9} to end before bar 9 (eight bars from bar 1); move uses {kind:move,bar:5}. Copy can transpose stored notes and freezes a transposed recipe. Track and 1-based clip numbers come from describe. Positions use absolute song bars and meter beats. Resize can regenerate; freeze first to preserve written notes. Changes are checkpointed and saved.
+    #[tool(input_schema = tool_schema("edit_clip"))]
     async fn edit_clip(
         &self,
         Parameters(args): Parameters<toolbox::edit_clip::Args>,
@@ -143,7 +239,7 @@ impl AurisMcp {
     }
 
     /// Lists, creates or restores document checkpoints in the project folder. Editing tools automatically keep the previous document. Create a named checkpoint for an A/B comparison; restore brings its notes, harmony and mix back and saves, keeping the current version in another automatic checkpoint. Assets are referenced, not copied.
-    #[tool]
+    #[tool(input_schema = tool_schema("checkpoints"))]
     async fn checkpoints(
         &self,
         Parameters(args): Parameters<toolbox::checkpoints::Args>,
@@ -152,7 +248,7 @@ impl AurisMcp {
     }
 
     /// Searches the Auris Studio documentation embedded in this build. Use it for questions about features, workflows, composition, development, evaluation, and singing-voice training. Returns the most relevant passages with their document paths and section headings.
-    #[tool]
+    #[tool(input_schema = tool_schema("search_documentation"))]
     async fn search_documentation(
         &self,
         Parameters(args): Parameters<toolbox::search_documentation::Args>,
@@ -161,13 +257,13 @@ impl AurisMcp {
     }
 
     /// The `.asong` format, taught by example: a two-line song, then a specification using most of the vocabulary with a comment on every field. Read this before writing a spec.
-    #[tool]
+    #[tool(input_schema = tool_schema("spec_reference"))]
     async fn spec_reference(&self) -> Result<CallToolResult, ErrorData> {
         finished(Ok(toolbox::spec_reference::run()))
     }
 
     /// Validates a specification without composing anything. A rejected spec answers with every complaint at once, line numbers where they exist; a valid one answers with the full document, every default filled in — the cheap way to see what a draft actually means.
-    #[tool]
+    #[tool(input_schema = tool_schema("check_spec"))]
     async fn check_spec(
         &self,
         Parameters(args): Parameters<toolbox::check_spec::Args>,
@@ -177,7 +273,7 @@ impl AurisMcp {
     }
 
     /// Composes a song from a specification and saves it as a project. The answer reports what was written — tracks, notes, seed, where the mix was measured to — and the seed is what to pin in the spec to ask for this exact take again.
-    #[tool]
+    #[tool(input_schema = tool_schema("compose"))]
     async fn compose(
         &self,
         Parameters(args): Parameters<toolbox::compose::Args>,
@@ -186,7 +282,7 @@ impl AurisMcp {
     }
 
     /// Renders a project to a WAV file — or, with `stems`, to one file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.
-    #[tool]
+    #[tool(input_schema = tool_schema("render"))]
     async fn render(
         &self,
         Parameters(args): Parameters<toolbox::render::Args>,
@@ -195,7 +291,7 @@ impl AurisMcp {
     }
 
     /// Describes a project on disk: tempo, meter, duration, and every track with its instrument, clip count, effects and routing.
-    #[tool]
+    #[tool(input_schema = tool_schema("describe"))]
     async fn describe(
         &self,
         Parameters(args): Parameters<toolbox::describe::Args>,
@@ -204,7 +300,7 @@ impl AurisMcp {
     }
 
     /// Listens to a project and reports what it measured, changing nothing: length, integrated loudness and peaks for the whole mix, the same per named section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. This is the ears of the improve loop: render, analyze, edit the spec or rewrite one clip, and ask again.
-    #[tool]
+    #[tool(input_schema = tool_schema("analyze"))]
     async fn analyze(
         &self,
         Parameters(args): Parameters<toolbox::analyze::Args>,
@@ -213,7 +309,7 @@ impl AurisMcp {
     }
 
     /// Renders an instrument's notes at several velocities and reports spectral and envelope measurements, role-fit scores and proposed drum mappings. Classification uses audio only, never note names or GM numbers; fit scores are not probabilities and missing roles are allowed. With apply, saves the computed map; remap_clips also retargets generated drum notes and their recipes. Existing notes are unchanged by analysis alone.
-    #[tool]
+    #[tool(input_schema = tool_schema("analyze_drum_kit"))]
     async fn analyze_drum_kit(
         &self,
         Parameters(args): Parameters<toolbox::analyze_drum_kit::Args>,
@@ -222,7 +318,7 @@ impl AurisMcp {
     }
 
     /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
-    #[tool]
+    #[tool(input_schema = tool_schema("mixer"))]
     async fn mixer(
         &self,
         Parameters(args): Parameters<toolbox::mixer::Args>,
@@ -231,7 +327,7 @@ impl AurisMcp {
     }
 
     /// Sets a track's fader and/or pan; `track` may be "master". Gain runs -60 to +12 dB, pan -1 (left) to +1 (right). The change is saved — `analyze` again to hear what it did to the numbers. A fader that `mixer` marks `[automated]` is ruled by its lane, not this value; `section_gain` with clear: true removes the lane.
-    #[tool]
+    #[tool(input_schema = tool_schema("set_level"))]
     async fn set_level(
         &self,
         Parameters(args): Parameters<toolbox::set_level::Args>,
@@ -240,7 +336,7 @@ impl AurisMcp {
     }
 
     /// Sets how much of a track one of its sends carries, addressed by the bus it feeds — the routing `mixer` and `describe` show. Send levels run -60 to 0 dB; there is no headroom above unity on a send. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("set_send"))]
     async fn set_send(
         &self,
         Parameters(args): Parameters<toolbox::set_send::Args>,
@@ -248,8 +344,8 @@ impl AurisMcp {
         blocking(move || toolbox::set_send::run(&args)).await
     }
 
-    /// Sets one parameter of one effect, addressed the way `mixer` lists them: `track` (or "master"), the effect by its id — or by `slot`, its 1-based position, when a chain holds the same effect twice — and the parameter by key or name, in the parameter's own units. Values outside the range `mixer` shows are refused. The change is saved. The master limiter's `input_db` is the dial to back off when `analyze` says the loud sections are pinned against the ceiling.
-    #[tool]
+    /// Sets one static effect parameter. Read mixer, then provide track (or master), slot (1-based chain position), param (key/name) and value in its listed units. Example: slot 1, param threshold_db, value -18. Optional effect checks that the slot contains the expected effect id. Out-of-range values are refused. Changes are saved. Lower the master limiter's input_db when loud sections hit its ceiling.
+    #[tool(input_schema = tool_schema("set_effect"))]
     async fn set_effect(
         &self,
         Parameters(args): Parameters<toolbox::set_effect::Args>,
@@ -258,7 +354,7 @@ impl AurisMcp {
     }
 
     /// Holds a track's gain at a level across one named section — dynamics without rewriting a note. `track` may be "master"; the section is addressed by the label `analyze` shows, every occurrence unless `instance` picks one. Writes gain automation with short ramps at the edges: the fader keeps ruling outside the stretch, and holds on different sections compose. `clear: true` removes the track's whole gain lane instead, giving the fader back everywhere. The change is saved. The master fader sits after the master chain, so a boost there is not limited and can clip — widen contrast by holding the louder sections down instead. Use gain_delta_db instead of gain_db to offset the existing envelope; mixer reads it back.
-    #[tool]
+    #[tool(input_schema = tool_schema("section_gain"))]
     async fn section_gain(
         &self,
         Parameters(args): Parameters<toolbox::section_gain::Args>,
@@ -267,7 +363,7 @@ impl AurisMcp {
     }
 
     /// Writes another take of a generated clip: the same ask, the next seed, different notes. The change is saved into the project — render again to hear it. Aim it with `track` and the clip number `describe` shows; without a number, every generated clip on the track gets a new take. Every answer names its seed, and passing `seed` takes that exact take again — how a rewrite that measured worse is rolled back. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
-    #[tool]
+    #[tool(input_schema = tool_schema("another_take"))]
     async fn another_take(
         &self,
         Parameters(args): Parameters<toolbox::another_take::Args>,
@@ -276,7 +372,7 @@ impl AurisMcp {
     }
 
     /// Writes a generated clip again with its own seed, following the key and chords as they stand now — the tool to reach for after changing the harmony under an existing piece. The change is saved into the project. Addressed exactly like `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
-    #[tool]
+    #[tool(input_schema = tool_schema("write_again"))]
     async fn write_again(
         &self,
         Parameters(args): Parameters<toolbox::write_again::Args>,
@@ -285,7 +381,7 @@ impl AurisMcp {
     }
 
     /// Keeps a chord progression under a name on this machine. It then shows up in `list_progressions` and the desktop picker; a specification still writes the chords out in full — only the built-in catalogue is quotable as `@name`, so a document stays portable.
-    #[tool]
+    #[tool(input_schema = tool_schema("teach_progression"))]
     async fn teach_progression(
         &self,
         Parameters(args): Parameters<toolbox::teach_progression::Args>,
@@ -294,7 +390,7 @@ impl AurisMcp {
     }
 
     /// Forgets a progression kept with `teach_progression`, by name.
-    #[tool]
+    #[tool(input_schema = tool_schema("forget_progression"))]
     async fn forget_progression(
         &self,
         Parameters(args): Parameters<toolbox::forget_progression::Args>,
@@ -303,25 +399,25 @@ impl AurisMcp {
     }
 
     /// Lists the chord progressions a specification can quote by name, with the chords each one plays.
-    #[tool]
+    #[tool(input_schema = tool_schema("list_progressions"))]
     async fn list_progressions(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_progressions::run())).await
     }
 
     /// Lists the whole songs a specification can start from, with each one's key, tempo and groove.
-    #[tool]
+    #[tool(input_schema = tool_schema("list_presets"))]
     async fn list_presets(&self) -> Result<CallToolResult, ErrorData> {
         finished(Ok(toolbox::list_presets::run()))
     }
 
     /// Lists the built-in instruments a track can play, by the id `add_track` and `set_instrument` take. Reports whether the General MIDI library is loaded; when available, select a GM name or program number using sound.
-    #[tool]
+    #[tool(input_schema = tool_schema("list_instruments"))]
     async fn list_instruments(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
-    #[tool]
+    /// Adds a named track and saves. Required kind selects instrument, singer, audio or bus; a bus name alone does not create a bus. For kind instrument, choose instrument from list_instruments or sound by General MIDI name/program (drums:true for a kit); neither uses the default instrument. New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
+    #[tool(input_schema = tool_schema("add_track"))]
     async fn add_track(
         &self,
         Parameters(args): Parameters<toolbox::add_track::Args>,
@@ -330,7 +426,7 @@ impl AurisMcp {
     }
 
     /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `another_take` rerolls it and `write_again` follows a harmony change; the answer numbers it the way `describe` does.
-    #[tool]
+    #[tool(input_schema = tool_schema("add_part"))]
     async fn add_part(
         &self,
         Parameters(args): Parameters<toolbox::add_part::Args>,
@@ -339,7 +435,7 @@ impl AurisMcp {
     }
 
     /// Re-voices an instrument track: `instrument` names a built-in from `list_instruments`, or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a kit). The previous instrument's dial positions and the automation that drove them go with it. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("set_instrument"))]
     async fn set_instrument(
         &self,
         Parameters(args): Parameters<toolbox::set_instrument::Args>,
@@ -348,7 +444,7 @@ impl AurisMcp {
     }
 
     /// Renames a track. Every other tool addresses tracks by name, or `id:<number>`. The ID survives a rename; a new name must be unique. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("rename_track"))]
     async fn rename_track(
         &self,
         Parameters(args): Parameters<toolbox::rename_track::Args>,
@@ -357,7 +453,7 @@ impl AurisMcp {
     }
 
     /// Removes a track and everything on it — its clips, its effect chain, its sends and its automation. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("remove_track"))]
     async fn remove_track(
         &self,
         Parameters(args): Parameters<toolbox::remove_track::Args>,
@@ -365,8 +461,8 @@ impl AurisMcp {
         blocking(move || toolbox::remove_track::run(&args)).await
     }
 
-    /// Opens an empty clip on an instrument or singer track, for `edit_notes` to write into — the way a melody is placed note by note. Aim it with `start_bar` and `bars`; the answer numbers the clip the way `describe` does.
-    #[tool]
+    /// Opens an empty named clip on an instrument or singer track for edit_notes. Required name is the intended clip name; preserve the user's exact name. Aim it with start_bar and bars; the answer numbers the clip the way describe does.
+    #[tool(input_schema = tool_schema("add_clip"))]
     async fn add_clip(
         &self,
         Parameters(args): Parameters<toolbox::add_clip::Args>,
@@ -375,7 +471,7 @@ impl AurisMcp {
     }
 
     /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats, velocity and, where a note carries one, its lyric. The numbers are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number `describe` shows.
-    #[tool]
+    #[tool(input_schema = tool_schema("notes"))]
     async fn notes(
         &self,
         Parameters(args): Parameters<toolbox::notes::Args>,
@@ -384,7 +480,7 @@ impl AurisMcp {
     }
 
     /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `another_take` or `write_again` rewrites the clip whole.
-    #[tool]
+    #[tool(input_schema = tool_schema("edit_notes"))]
     async fn edit_notes(
         &self,
         Parameters(args): Parameters<toolbox::edit_notes::Args>,
@@ -393,7 +489,7 @@ impl AurisMcp {
     }
 
     /// Reads a melody clip and writes a key, a chord progression and backing tracks under it — the melody-first way around: place the tune with `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks the band (bass, chords and drums when left out); the harmony it writes is a first draft to argue with — `write_again` re-derives any part after a correction. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("accompany"))]
     async fn accompany(
         &self,
         Parameters(args): Parameters<toolbox::accompany::Args>,
@@ -402,7 +498,7 @@ impl AurisMcp {
     }
 
     /// Lays a phrase across a singer clip's notes, one syllable to each, and derives the phonemes it will be sung as — kana through the built-in table, other text through the Japanese dictionary where one is installed. `from` starts partway in, at a number the way `notes` counts them, so a verse is filled one line at a time; notes past the end of the phrase keep their words. The change is saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("write_lyrics"))]
     async fn write_lyrics(
         &self,
         Parameters(args): Parameters<toolbox::write_lyrics::Args>,
@@ -411,7 +507,7 @@ impl AurisMcp {
     }
 
     /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to an Auris `.onnx` voice, DiffSinger `dsconfig.yaml`, VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, which the track keeps. Native Auris voices use `seed` to reproduce a take. LeapSinger generates noise internally, so repeated renders can differ even with the same seed. The rendered audio and the change are saved.
-    #[tool]
+    #[tool(input_schema = tool_schema("sing"))]
     async fn sing(
         &self,
         Parameters(args): Parameters<toolbox::sing::Args>,
@@ -420,7 +516,7 @@ impl AurisMcp {
     }
 
     /// Writes a song from Japanese lyrics and saves it as a new project: a melody searched under the words the Orpheus way, sung notes carrying each syllable, chords in the harmony lane, and a backing band unless `melody_only`. Where a Japanese dictionary is configured the melody follows the lyric's pitch accent; kana lyrics work without one, free of the accent. Phrases break at line breaks and punctuation. The same lyrics and `seed` write the same song; `sing` then gives the vocal its voice.
-    #[tool]
+    #[tool(input_schema = tool_schema("compose_lyrics"))]
     async fn compose_lyrics(
         &self,
         Parameters(args): Parameters<toolbox::compose_lyrics::Args>,
@@ -431,6 +527,18 @@ impl AurisMcp {
 
 #[tool_handler]
 impl ServerHandler for AurisMcp {
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        let router = Self::tool_router();
+        let known = router.has_route(&name);
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        recover_argument_error(router.call(call).await, &name, known)
+    }
+
     async fn list_resources(
         &self,
         _: Option<rmcp::model::PaginatedRequestParams>,
@@ -471,6 +579,23 @@ impl ServerHandler for AurisMcp {
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.instructions = Some(toolbox::INSTRUCTIONS.into());
         info
+    }
+}
+
+/// Invalid arguments are recoverable model mistakes; unknown tools and server errors retain
+/// their protocol error codes.
+fn recover_argument_error(
+    result: Result<rmcp::model::CallToolResponse, ErrorData>,
+    name: &str,
+    known: bool,
+) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+    match result {
+        Err(error) if known && error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {
+            Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                "Invalid arguments for {name}: {}. Call tool_help with name '{name}' for exact fields and examples, then correct the arguments.", error.message
+            ))]).into())
+        }
+        other => other,
     }
 }
 
@@ -523,6 +648,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn bad_arguments_are_tool_feedback_but_protocol_errors_keep_their_codes() {
+        let result = recover_argument_error(
+            Err(ErrorData::invalid_params("missing end_bar", None)),
+            "edit_clip",
+            true,
+        )
+        .unwrap();
+        let rmcp::model::CallToolResponse::Complete(result) = result else {
+            panic!("expected tool result")
+        };
+        assert_eq!(result.is_error, Some(true));
+        assert!(format!("{:?}", result.content).contains("tool_help"));
+        let unknown = recover_argument_error(
+            Err(ErrorData::invalid_params("unknown tool", None)),
+            "invented",
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(unknown.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        let internal = recover_argument_error(
+            Err(ErrorData::internal_error("worker failed", None)),
+            "edit_clip",
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(internal.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
     fn the_server_introduces_itself_and_carries_the_shared_instructions() {
         let info = AurisMcp::default().get_info();
         // The name is this crate's, not the SDK's — the `from_build_env` trap in `get_info`.
@@ -540,91 +694,28 @@ mod tests {
     /// description the toolbox declares for that name — the same text `auris-agent` sends.
     #[test]
     fn every_wire_description_is_the_toolbox_text_word_for_word() {
-        use toolbox::{
-            accompany, add_clip, add_part, add_track, analyze, another_take, check_spec, compose,
-            compose_lyrics, describe, edit_notes, forget_progression, list_instruments,
-            list_presets, list_progressions, mixer, notes, remove_track, rename_track, render,
-            search_documentation, section_gain, set_effect, set_instrument, set_level, set_send,
-            sing, spec_reference, teach_progression, write_again, write_lyrics,
-        };
-        let expected: std::collections::BTreeMap<&str, &str> = [
-            (
-                toolbox::capabilities::NAME,
-                toolbox::capabilities::DESCRIPTION,
-            ),
-            (toolbox::automation::NAME, toolbox::automation::DESCRIPTION),
-            (toolbox::effects::NAME, toolbox::effects::DESCRIPTION),
-            (
-                toolbox::analyze_music::NAME,
-                toolbox::analyze_music::DESCRIPTION,
-            ),
-            (
-                toolbox::inspect_composition::NAME,
-                toolbox::inspect_composition::DESCRIPTION,
-            ),
-            (
-                toolbox::edit_harmony::NAME,
-                toolbox::edit_harmony::DESCRIPTION,
-            ),
-            (
-                toolbox::edit_recipe::NAME,
-                toolbox::edit_recipe::DESCRIPTION,
-            ),
-            (toolbox::edit_clip::NAME, toolbox::edit_clip::DESCRIPTION),
-            (
-                toolbox::checkpoints::NAME,
-                toolbox::checkpoints::DESCRIPTION,
-            ),
-            (
-                search_documentation::NAME,
-                search_documentation::DESCRIPTION,
-            ),
-            (spec_reference::NAME, spec_reference::DESCRIPTION),
-            (check_spec::NAME, check_spec::DESCRIPTION),
-            (compose::NAME, compose::DESCRIPTION),
-            (render::NAME, render::DESCRIPTION),
-            (toolbox::preview::NAME, toolbox::preview::DESCRIPTION),
-            (describe::NAME, describe::DESCRIPTION),
-            (analyze::NAME, analyze::DESCRIPTION),
-            (
-                toolbox::analyze_drum_kit::NAME,
-                toolbox::analyze_drum_kit::DESCRIPTION,
-            ),
-            (mixer::NAME, mixer::DESCRIPTION),
-            (set_level::NAME, set_level::DESCRIPTION),
-            (set_send::NAME, set_send::DESCRIPTION),
-            (set_effect::NAME, set_effect::DESCRIPTION),
-            (section_gain::NAME, section_gain::DESCRIPTION),
-            (another_take::NAME, another_take::DESCRIPTION),
-            (write_again::NAME, write_again::DESCRIPTION),
-            (teach_progression::NAME, teach_progression::DESCRIPTION),
-            (forget_progression::NAME, forget_progression::DESCRIPTION),
-            (list_progressions::NAME, list_progressions::DESCRIPTION),
-            (list_presets::NAME, list_presets::DESCRIPTION),
-            (list_instruments::NAME, list_instruments::DESCRIPTION),
-            (add_track::NAME, add_track::DESCRIPTION),
-            (add_part::NAME, add_part::DESCRIPTION),
-            (set_instrument::NAME, set_instrument::DESCRIPTION),
-            (rename_track::NAME, rename_track::DESCRIPTION),
-            (remove_track::NAME, remove_track::DESCRIPTION),
-            (add_clip::NAME, add_clip::DESCRIPTION),
-            (notes::NAME, notes::DESCRIPTION),
-            (edit_notes::NAME, edit_notes::DESCRIPTION),
-            (accompany::NAME, accompany::DESCRIPTION),
-            (write_lyrics::NAME, write_lyrics::DESCRIPTION),
-            (sing::NAME, sing::DESCRIPTION),
-            (compose_lyrics::NAME, compose_lyrics::DESCRIPTION),
-        ]
-        .into_iter()
-        .collect();
-
+        let catalog = toolbox::tool_catalog();
+        let expected: std::collections::BTreeMap<_, _> = catalog
+            .iter()
+            .map(|tool| (tool.name, tool.description))
+            .collect();
         let served = AurisMcp::tool_router().list_all();
         assert_eq!(
             served.len(),
             expected.len(),
-            "thirty-one tools at this door"
+            "every shared tool is registered at this door"
         );
         for tool in served {
+            let shared = catalog
+                .iter()
+                .find(|entry| entry.name == tool.name.as_ref())
+                .unwrap();
+            assert_eq!(
+                tool.input_schema.as_ref(),
+                shared.parameters.as_object().unwrap(),
+                "{} schema differs from the shared catalog",
+                tool.name
+            );
             let description = tool.description.as_deref().unwrap_or_default();
             let toolbox_text = expected
                 .get(tool.name.as_ref())

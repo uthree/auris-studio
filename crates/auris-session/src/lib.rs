@@ -42,6 +42,7 @@
 
 #![warn(missing_docs)]
 
+pub mod audio_review;
 mod drum_worker;
 pub mod error;
 pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};

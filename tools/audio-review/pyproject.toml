@@ -1,0 +1,29 @@
+[project]
+name = "auris-audio-review"
+version = "0.1.0"
+description = "Local Qwen2-Audio review endpoint for Auris Studio"
+requires-python = ">=3.10,<3.13"
+dependencies = ["numpy>=1.26", "scipy>=1.11", "soundfile>=0.12"]
+
+[project.optional-dependencies]
+inference = ["torch>=2.4", "transformers==5.15.1", "accelerate>=1.0"]
+quantization = ["bitsandbytes>=0.50.2"]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]

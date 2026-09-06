@@ -270,6 +270,10 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            // Other window tests persist their layout; this gesture needs the inspector.
+            this.panels = Default::default();
+        });
         for measured_note in [0, 35] {
             let (track, clip, original, map) = app.update(cx, |this, _| {
                 let track = this

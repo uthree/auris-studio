@@ -18,3 +18,7 @@ auris-session.workspace = true
 schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
+
+[dev-dependencies]
+base64.workspace = true
