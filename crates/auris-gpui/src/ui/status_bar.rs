@@ -21,9 +21,7 @@ use crate::ui::icons::icon;
 use crate::ui::widgets::{ButtonStyle, button};
 
 /// Side of one switch, including the padding around its icon.
-const SWITCH_SIZE: Pixels = px(18.0);
-/// Side of the mark drawn inside it.
-const SWITCH_ICON: Pixels = px(12.0);
+const SWITCH_SIZE: Pixels = px(20.0);
 
 impl AurisApp {
     /// Renders the status bar.
@@ -161,11 +159,16 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let open = self.panels.is_open(panel);
-        // A soft accent marks the open panel without competing with playback and recording.
-        // The mark itself carries the state, and goes faint when the panel is away.
+        let icon_size = if size > SWITCH_SIZE {
+            px(16.0)
+        } else {
+            px(14.0)
+        };
+        // Hidden panels remain readable because their switches are still available. An
+        // underline also identifies the open panel when the pointer changes its background.
         let (background, mark) = match open {
             true => (Theme::translucent(theme.accent, 0.22), theme.text),
-            false => (gpui::transparent_black(), theme.text_faint),
+            false => (gpui::transparent_black(), theme.text_muted),
         };
         // The log is the one panel that is closed by default, so it is the one panel that has to
         // be able to say *look at me*. Nothing else on screen reports a warning, and a warning
@@ -179,11 +182,16 @@ impl AurisApp {
             true => theme.warning,
             false => mark,
         };
-        let hover = theme.surface_hover;
+        let hover = if open {
+            Theme::translucent(theme.accent, 0.32)
+        } else {
+            theme.surface_hover
+        };
 
         div()
             .id(("panel-switch", panel as usize))
             .debug_selector(move || format!("panel-switch-{}", panel as usize))
+            .relative()
             .flex()
             .items_center()
             .justify_center()
@@ -194,7 +202,19 @@ impl AurisApp {
             .cursor_pointer()
             .hover(|this| this.bg(hover))
             .active(|this| this.opacity(0.75))
-            .child(icon(panel.icon(), SWITCH_ICON, mark))
+            .child(icon(panel.icon(), icon_size, mark))
+            .when(open, |switch| {
+                switch.child(
+                    div()
+                        .absolute()
+                        .bottom(px(1.0))
+                        .left((size - px(8.0)) / 2.0)
+                        .w(px(8.0))
+                        .h(px(2.0))
+                        .rounded(Metrics::RADIUS_XS)
+                        .bg(theme.accent),
+                )
+            })
             .tooltip(self.tip(panel.label(), panel.command()))
             .on_mouse_down(
                 MouseButton::Left,

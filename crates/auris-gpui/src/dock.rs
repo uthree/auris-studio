@@ -142,7 +142,7 @@ impl Panel {
             Panel::Library => Icon::Library,
             Panel::PianoRoll => Icon::Notes,
             Panel::Mixer => Icon::Faders,
-            Panel::Inspector => Icon::Sliders,
+            Panel::Inspector => Icon::Inspector,
             Panel::Log => Icon::Log,
             Panel::Agent => Icon::Agent,
         }

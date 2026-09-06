@@ -25,7 +25,7 @@ pub enum Icon {
     Record,
     /// Toggle the cycle region.
     Loop,
-    /// Toggle the punch region: the cycle's outline with a record disc inside it.
+    /// Toggle the punch region: a record disc between range brackets.
     Punch,
     /// Toggle the click: the wedge and its pendulum.
     Metronome,
@@ -41,18 +41,22 @@ pub enum Icon {
     Cross,
     /// A menu item that is currently on.
     Check,
-    /// The sound library: a list of things to choose from.
+    /// The sound library: a folder with a raised tab.
     Library,
     /// The piano roll: notes lying at different places along a grid.
     Notes,
     /// The mixer: a bank of vertical faders.
     Faders,
-    /// The inspector: horizontal sliders, the controls it is made of.
+    /// Settings: a pair of horizontal sliders.
     Sliders,
-    /// The log: lines of text, ragged the way written lines are.
+    /// The inspector: an information badge for the selected item's properties.
+    Inspector,
+    /// The log: a folded page with lines of text.
     Log,
-    /// An instrument: a keyboard, seen from the front.
+    /// An instrument: an enclosed piano keyboard.
     Keyboard,
+    /// A singing voice: a microphone in its stand.
+    Microphone,
     /// An effect: a knob with its pointer.
     Knob,
     /// A sound — a font's preset, or the shelf a set of them sits on.
@@ -129,6 +133,25 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
         }
     };
 
+    // Enclosures stay thin enough to leave room for the keys and notes inside them.
+    let frame = |window: &mut Window, x0: f32, y0: f32, x1: f32, y1: f32| {
+        let r = 0.04;
+        let mut builder = PathBuilder::stroke(px((side * 0.075).max(1.0)));
+        builder.move_to(at(x0 + r, y0));
+        builder.line_to(at(x1 - r, y0));
+        builder.curve_to(at(x1, y0 + r), at(x1, y0));
+        builder.line_to(at(x1, y1 - r));
+        builder.curve_to(at(x1 - r, y1), at(x1, y1));
+        builder.line_to(at(x0 + r, y1));
+        builder.curve_to(at(x0, y1 - r), at(x0, y1));
+        builder.line_to(at(x0, y0 + r));
+        builder.curve_to(at(x0 + r, y0), at(x0, y0));
+        builder.close();
+        if let Ok(path) = builder.build() {
+            window.paint_path(path, color);
+        }
+    };
+
     match icon {
         Icon::Play => triangle(
             window,
@@ -161,45 +184,49 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             );
         }
         Icon::Loop => {
-            // Logic's cycle button: the outline of a cycle region, nothing more. Arrowheads
-            // were tried and rejected — at this size a pair of them reads as "swap", and one
-            // riding the edge reads as a flag stuck to a box. The bare rounded rectangle is
-            // unambiguous because it is a picture of the thing it toggles.
-            let (x0, x1, y0, y1, r) = (0.14, 0.86, 0.28, 0.72, 0.16);
-            let mut builder = PathBuilder::stroke(px((side * 0.10).max(1.25)));
-            builder.move_to(at(x0 + r, y0));
-            builder.line_to(at(x1 - r, y0));
-            builder.curve_to(at(x1, y0 + r), at(x1, y0));
-            builder.line_to(at(x1, y1 - r));
-            builder.curve_to(at(x1 - r, y1), at(x1, y1));
-            builder.line_to(at(x0 + r, y1));
-            builder.curve_to(at(x0, y1 - r), at(x0, y1));
-            builder.line_to(at(x0, y0 + r));
-            builder.curve_to(at(x0 + r, y0), at(x0, y0));
+            // Two returning arrows keep the repeat meaning visible without colour or a tooltip.
+            let mut builder = PathBuilder::stroke(px((side * 0.09).max(1.25)));
+            builder.move_to(at(0.18, 0.54));
+            builder.line_to(at(0.18, 0.42));
+            builder.curve_to(at(0.32, 0.28), at(0.18, 0.28));
+            builder.line_to(at(0.72, 0.28));
+            builder.move_to(at(0.82, 0.46));
+            builder.line_to(at(0.82, 0.58));
+            builder.curve_to(at(0.68, 0.72), at(0.82, 0.72));
+            builder.line_to(at(0.28, 0.72));
             if let Ok(path) = builder.build() {
                 window.paint_path(path, color);
             }
+            triangle(
+                window,
+                at(0.64, 0.12),
+                at(0.84, 0.28),
+                at(0.64, 0.44),
+                color,
+            );
+            triangle(
+                window,
+                at(0.36, 0.56),
+                at(0.16, 0.72),
+                at(0.36, 0.88),
+                color,
+            );
         }
         Icon::Punch => {
-            // The cycle's own outline with a record disc inside it, because that is exactly what
-            // the thing is: a region, and what happens in it. Drawn wider and shallower than the
-            // cycle box so the disc has somewhere to sit without touching the walls — a dot that
-            // fills the box reads as a full stop in brackets.
-            let (x0, x1, y0, y1, r) = (0.08, 0.92, 0.30, 0.70, 0.13);
+            // Separate in/out brackets distinguish the recorded range from the repeat arrows.
             let mut builder = PathBuilder::stroke(px((side * 0.09).max(1.1)));
-            builder.move_to(at(x0 + r, y0));
-            builder.line_to(at(x1 - r, y0));
-            builder.curve_to(at(x1, y0 + r), at(x1, y0));
-            builder.line_to(at(x1, y1 - r));
-            builder.curve_to(at(x1 - r, y1), at(x1, y1));
-            builder.line_to(at(x0 + r, y1));
-            builder.curve_to(at(x0, y1 - r), at(x0, y1));
-            builder.line_to(at(x0, y0 + r));
-            builder.curve_to(at(x0 + r, y0), at(x0, y0));
+            builder.move_to(at(0.30, 0.22));
+            builder.line_to(at(0.14, 0.22));
+            builder.line_to(at(0.14, 0.78));
+            builder.line_to(at(0.30, 0.78));
+            builder.move_to(at(0.70, 0.22));
+            builder.line_to(at(0.86, 0.22));
+            builder.line_to(at(0.86, 0.78));
+            builder.line_to(at(0.70, 0.78));
             if let Ok(path) = builder.build() {
                 window.paint_path(path, color);
             }
-            knob(window, 0.50, 0.50, 0.26, 0.26);
+            knob(window, 0.50, 0.50, 0.34, 0.34);
         }
         Icon::Metronome => {
             // The wedge and the rod. Every metronome anybody has seen is this shape, and at
@@ -267,22 +294,30 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 color,
             );
         }
-        // The four panel marks. They are drawn at twelve pixels in the status bar, where a picture
-        // of a thing is out of the question and a silhouette is all there is: what tells these
-        // apart is which way their strokes run, so no two of them run the same way.
+        // Panel identity comes from the outline, with only a few interior details at 14–16 px.
         Icon::Library => {
-            // A list with a rail down its left. The rail is the only vertical stroke in the set,
-            // which is what tells the library from the piano roll at that size.
-            bar(window, 0.22, 0.22, 0.31, 0.78);
-            bar(window, 0.40, 0.24, 0.78, 0.34);
-            bar(window, 0.40, 0.45, 0.78, 0.55);
-            bar(window, 0.40, 0.66, 0.78, 0.76);
+            let mut builder = PathBuilder::stroke(px((side * 0.085).max(1.0)));
+            builder.move_to(at(0.18, 0.14));
+            builder.line_to(at(0.38, 0.14));
+            builder.line_to(at(0.50, 0.26));
+            builder.line_to(at(0.82, 0.26));
+            builder.curve_to(at(0.90, 0.34), at(0.90, 0.26));
+            builder.line_to(at(0.90, 0.78));
+            builder.curve_to(at(0.82, 0.86), at(0.90, 0.86));
+            builder.line_to(at(0.18, 0.86));
+            builder.curve_to(at(0.10, 0.78), at(0.10, 0.86));
+            builder.line_to(at(0.10, 0.22));
+            builder.curve_to(at(0.18, 0.14), at(0.10, 0.14));
+            builder.close();
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
         }
         Icon::Notes => {
-            // Three notes at different places along a grid: the roll from far enough away.
-            bar(window, 0.18, 0.24, 0.50, 0.35);
-            bar(window, 0.38, 0.45, 0.82, 0.56);
-            bar(window, 0.26, 0.66, 0.62, 0.77);
+            frame(window, 0.10, 0.17, 0.90, 0.83);
+            bar(window, 0.23, 0.30, 0.48, 0.40);
+            bar(window, 0.45, 0.46, 0.78, 0.56);
+            bar(window, 0.30, 0.62, 0.57, 0.72);
         }
         Icon::Faders => {
             // Two channel faders. Their knobs are at different heights on purpose: level with
@@ -293,50 +328,89 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             knob(window, 0.66, 0.38, 0.30, 0.15);
         }
         Icon::Sliders => {
-            // The same controls lying down, which is how the inspector arranges them.
+            // Generic settings keep their slider motif; the inspector has its own badge.
             bar(window, 0.16, 0.30, 0.84, 0.38);
             bar(window, 0.16, 0.62, 0.84, 0.70);
             knob(window, 0.62, 0.34, 0.15, 0.30);
             knob(window, 0.36, 0.66, 0.15, 0.30);
         }
+        Icon::Inspector => {
+            ring(window, 0.50, 0.50, 0.36, 0.085);
+            knob(window, 0.50, 0.33, 0.10, 0.10);
+            bar(window, 0.45, 0.47, 0.55, 0.72);
+        }
         Icon::Log => {
-            // Four lines of writing. Ragged right, because a block of equal bars reads as a
-            // table or a fader bank — the uneven ends are the whole of what says "text".
-            bar(window, 0.16, 0.22, 0.84, 0.30);
-            bar(window, 0.16, 0.40, 0.68, 0.48);
-            bar(window, 0.16, 0.58, 0.80, 0.66);
-            bar(window, 0.16, 0.76, 0.52, 0.84);
+            let mut builder = PathBuilder::stroke(px((side * 0.08).max(1.0)));
+            builder.move_to(at(0.22, 0.10));
+            builder.line_to(at(0.62, 0.10));
+            builder.line_to(at(0.82, 0.30));
+            builder.line_to(at(0.82, 0.90));
+            builder.line_to(at(0.22, 0.90));
+            builder.close();
+            builder.move_to(at(0.62, 0.10));
+            builder.line_to(at(0.62, 0.30));
+            builder.line_to(at(0.82, 0.30));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
+            bar(window, 0.35, 0.47, 0.68, 0.55);
+            bar(window, 0.35, 0.67, 0.60, 0.75);
         }
         Icon::Agent => {
-            // A speech bubble: its body as two stacked bars — the same vocabulary as the log's
-            // lines of text, which is what a conversation is made of — and a tail anchoring it
-            // to a speaker below.
-            bar(window, 0.14, 0.20, 0.86, 0.30);
-            bar(window, 0.14, 0.40, 0.86, 0.50);
-            bar(window, 0.14, 0.60, 0.48, 0.70);
-            bar(window, 0.22, 0.70, 0.34, 0.84);
+            // An empty, closed bubble leaves the tail legible without competing with log lines.
+            let mut builder = PathBuilder::stroke(px((side * 0.085).max(1.0)));
+            builder.move_to(at(0.20, 0.14));
+            builder.line_to(at(0.80, 0.14));
+            builder.curve_to(at(0.90, 0.24), at(0.90, 0.14));
+            builder.line_to(at(0.90, 0.64));
+            builder.curve_to(at(0.80, 0.74), at(0.90, 0.74));
+            builder.line_to(at(0.44, 0.74));
+            builder.line_to(at(0.24, 0.90));
+            builder.line_to(at(0.24, 0.74));
+            builder.line_to(at(0.20, 0.74));
+            builder.curve_to(at(0.10, 0.64), at(0.10, 0.74));
+            builder.line_to(at(0.10, 0.24));
+            builder.curve_to(at(0.20, 0.14), at(0.10, 0.14));
+            builder.close();
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
         }
-        // The three kinds of thing the library holds. They sit on the leaf rows, where the tree
-        // has run out of headings to say what something is — an instrument, an effect and a sound
-        // are three different clicks, and until these arrived the rows looked identical.
+        // Library items retain their own type marks alongside a separate selection check.
         Icon::Keyboard => {
-            // A keyboard seen from the front: the case across the top, two keys hanging off it.
-            // Gaps are the only thing that can say "keys" in a single-colour silhouette, so the
-            // keys are separate bars rather than one block with lines drawn on it.
-            //
-            // Two keys and not three. Three left gaps of a tenth of the box, which at the size a
-            // library row draws this is under a pixel — so they vanished or greyed into the keys,
-            // and the glyph read as a lower-case m. One gap can be half as wide again as three
-            // could, and the only thing this has to survive at is small.
-            bar(window, 0.16, 0.24, 0.84, 0.38);
-            bar(window, 0.20, 0.38, 0.42, 0.76);
-            bar(window, 0.58, 0.38, 0.80, 0.76);
+            // Three outlined white keys and two short black keys share one enclosing case.
+            frame(window, 0.08, 0.20, 0.92, 0.80);
+            let stroke = px((side * 0.065).max(1.0));
+            stroke_line(window, at(0.36, 0.22), at(0.36, 0.78), stroke, color);
+            stroke_line(window, at(0.64, 0.22), at(0.64, 0.78), stroke, color);
+            bar(window, 0.30, 0.22, 0.42, 0.52);
+            bar(window, 0.58, 0.22, 0.70, 0.52);
+        }
+        Icon::Microphone => {
+            knob(window, 0.50, 0.34, 0.26, 0.46);
+            let mut builder = PathBuilder::stroke(px((side * 0.08).max(1.0)));
+            builder.move_to(at(0.25, 0.38));
+            builder.line_to(at(0.25, 0.50));
+            builder.curve_to(at(0.50, 0.75), at(0.25, 0.75));
+            builder.curve_to(at(0.75, 0.50), at(0.75, 0.75));
+            builder.line_to(at(0.75, 0.38));
+            builder.move_to(at(0.50, 0.75));
+            builder.line_to(at(0.50, 0.90));
+            if let Ok(path) = builder.build() {
+                window.paint_path(path, color);
+            }
+            bar(window, 0.34, 0.86, 0.66, 0.94);
         }
         Icon::Knob => {
-            ring(window, 0.50, 0.52, 0.30, 0.10);
-            // The pointer runs from the middle out through the ring, which is what makes the
-            // circle a control rather than a full stop.
-            bar(window, 0.455, 0.14, 0.545, 0.52);
+            ring(window, 0.50, 0.52, 0.35, 0.085);
+            // A diagonal pointer ends inside the rim so the knob cannot read as a power switch.
+            stroke_line(
+                window,
+                at(0.50, 0.52),
+                at(0.64, 0.38),
+                px((side * 0.085).max(1.0)),
+                color,
+            );
         }
         Icon::Record => {
             // A filled disc, drawn as a square rounded until it has no corners left. Smaller than
