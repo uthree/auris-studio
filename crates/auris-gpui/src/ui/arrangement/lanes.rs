@@ -450,6 +450,10 @@ impl AurisApp {
                                     .then(|| clip.stretch_in(&self.project().tempo_map)),
                                 content: ClipContent::Waveform {
                                     source: clip.source,
+                                    spectrum: self.spectrograms.get(clip.source, &self.session),
+                                    spectrum_complete: self
+                                        .spectrograms
+                                        .is_complete(clip.source, &self.session),
                                     offset_frames: clip.offset_frames,
                                     length_frames: clip.length_frames,
                                     gain_db: clip.gain_db,
@@ -469,6 +473,7 @@ impl AurisApp {
                 LanePaint {
                     top,
                     height: track.height,
+                    spectrogram: self.spectrogram_tracks.contains(&track.id),
                     color,
                     clips,
                     selected: self.selected_clip_ids(),
@@ -497,6 +502,7 @@ pub(super) struct LanePaint {
     top: Pixels,
     height: f32,
     pub(super) color: gpui::Hsla,
+    pub(super) spectrogram: bool,
     pub(super) clips: Vec<ClipPaint>,
     /// Every selected clip, so a rubber band can light up more than one at a time.
     pub(super) selected: std::collections::BTreeSet<ClipId>,
@@ -553,6 +559,8 @@ pub(super) enum ClipContent {
     Notes(Vec<Note>),
     Waveform {
         source: SourceId,
+        spectrum: Option<std::sync::Arc<crate::ui::spectrogram::SpectrogramImage>>,
+        spectrum_complete: bool,
         offset_frames: u64,
         length_frames: u64,
         gain_db: f32,

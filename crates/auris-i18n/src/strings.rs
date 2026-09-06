@@ -993,6 +993,10 @@ strings! {
     MenuSidechain { en: "Sidechain", ja: "サイドチェイン" }
     MenuSidechainNone { en: "None", ja: "なし" }
     MenuRecordInput { en: "Record Input", ja: "録音入力" }
+    MenuAudioDisplay { en: "Audio Display", ja: "表示形式" }
+    MenuWaveform { en: "Waveform", ja: "波形" }
+    MenuSpectrogram { en: "Spectrogram", ja: "スペクトログラム" }
+    SpectrogramLoading { en: "Analysing spectrum…", ja: "スペクトルを解析中…" }
     MenuInputOff { en: "Not Armed", ja: "録音待機しない" }
     MenuCountInOff { en: "No Count-In", ja: "カウントインしない" }
     CountInOff { en: "Count-in off", ja: "カウントイン オフ" }

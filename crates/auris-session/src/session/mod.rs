@@ -54,6 +54,7 @@ mod punch;
 mod readiness;
 mod record;
 mod singer;
+mod spectrogram;
 mod tracks;
 mod transport;
 mod typing;
@@ -82,6 +83,7 @@ pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,
 };
+pub use spectrogram::SpectrogramJob;
 
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,

@@ -222,6 +222,15 @@ pub mod architecture {
     //! The placing half is where that is caught — audio decoded against a sample rate the project
     //! no longer has is decoded again rather than laid down to play at the wrong pitch.
     //!
+    //! Audio-track spectrograms follow the same split. [`Session::spectrogram_job`](crate::Session::spectrogram_job)
+    //! shares the decoded source; [`SpectrogramJob::run`](crate::SpectrogramJob::run) analyses it
+    //! on a worker with overlapping Hann windows and logarithmic frequency bands. Every channel
+    //! is transformed separately before taking the maximum, so opposite-phase stereo stays
+    //! visible. Time columns are bounded and pool every overlapping window, including in long
+    //! sources. The frontend owns the display mode and image cache, and validates the job against
+    //! the session's current source buffer before publishing it. Analysis stays in source
+    //! coordinates: clip offsets, repeats and stretching are presentation mappings of that data.
+    //!
     //! # The third thread, and why recording needed one
     //!
     //! Two threads is the whole story for playback and one short of it for recording. cpal has no

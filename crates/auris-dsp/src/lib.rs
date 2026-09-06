@@ -65,6 +65,7 @@ pub mod loudness;
 pub mod pack;
 pub mod reverb;
 pub mod smooth;
+pub mod spectrogram;
 pub mod spectrum;
 pub mod stretch;
 
@@ -86,6 +87,7 @@ pub use loudness::{integrated_lufs, k_weighting, loudness_quantile};
 pub use pack::DspPack;
 pub use reverb::Reverb;
 pub use smooth::{SmoothedValue, one_pole_coefficient};
+pub use spectrogram::Spectrogram;
 pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins, fft};
 
 #[cfg(test)]

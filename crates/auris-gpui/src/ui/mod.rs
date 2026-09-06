@@ -33,6 +33,7 @@ pub mod scrollbars;
 pub mod selection;
 pub mod singer;
 pub(crate) mod singer_portrait;
+pub(crate) mod spectrogram;
 pub mod status_bar;
 pub mod text_area;
 pub mod text_field;

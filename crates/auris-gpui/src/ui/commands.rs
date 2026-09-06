@@ -684,6 +684,8 @@ impl AurisApp {
     /// no command for going back — the scroll is not part of the document, so nothing restored
     /// it either.
     pub(crate) fn reset_view(&mut self) {
+        self.spectrogram_tracks.clear();
+        self.spectrograms.clear();
         self.cancel_auto_sing();
         self.invalidate_sung_previews();
         self.sung_failures.clear();

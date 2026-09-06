@@ -23,6 +23,19 @@ Only the list moves. Everything the document holds names a track by id — autom
 routing output, a send — so a bus can end up above the tracks feeding it without changing a note of
 what is heard.
 
+Right-click an audio track header or an empty part of its lane and choose **Audio Display →
+Spectrogram** to see frequency content over time. Low frequencies are at the bottom, high
+frequencies at the top, on a logarithmic scale from 20 Hz to the lower of 20 kHz and Nyquist.
+Dark purple through orange to pale yellow shows increasing source level, from −90 to 0 dBFS.
+The display combines the strongest frequency levels from each channel, so stereo phase
+cancellation does not hide audio.
+
+Analysis runs in the background when the source becomes visible, and its image is reused while
+scrolling, trimming, stretching or looping clips. The image describes the source recording;
+clip gain, fades and track effects are applied during playback. Long recordings use a coarser
+time overview that preserves peaks. Choose **Waveform** to return to the default display.
+Display choices apply to the current window and reset when opening a project.
+
 ## Dragging files in
 
 Drop an audio file on the window and it arrives on a **new audio track**. Drop an `.sf2` and it

@@ -71,7 +71,6 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
-pub use session::MusicalClipAnalysis;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS,
@@ -83,6 +82,7 @@ pub use session::{
     decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db, quantized,
     read_soundfont, shadows_musical_typing, take_fingerprint,
 };
+pub use session::{MusicalClipAnalysis, SpectrogramJob};
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir, migrate_legacy_config,
@@ -146,6 +146,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    pub use crate::SpectrogramJob;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
     /// General MIDI: the programs a part can ask for, and the kits a drum part can.
     ///
@@ -188,6 +189,8 @@ pub mod prelude {
         TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes,
         sounding_length,
     };
+    /// Offline source analysis, prepared through [`Session::spectrogram_job`].
+    pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
     /// settings make.
     ///
