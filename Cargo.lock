@@ -991,6 +991,7 @@ version = "0.5.0"
 dependencies = [
  "auris-i18n",
  "auris-session",
+ "embed-resource",
  "env_logger",
  "gpui",
  "gpui-component",
