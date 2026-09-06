@@ -571,8 +571,8 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
-    /// Moving a generated drum clip's complexity and intensity together.
-    DrummerPad {
+    /// Moving a generated clip's complexity and intensity together.
+    PartPad {
         /// Clip being rewritten.
         clip: ClipId,
         /// The pad's musical area at the start of the gesture.
@@ -728,7 +728,7 @@ impl Drag {
             // One undo step for the whole sweep, and the same label the right-click menu's
             // "Write It Again" uses — moving a dial is writing the part again with one thing
             // changed, and a stack full of "Adjusted parameter" would say nothing about which.
-            Drag::PartDial { .. } | Drag::DrummerPad { .. } | Drag::DrumVoiceDial { .. } => {
+            Drag::PartDial { .. } | Drag::PartPad { .. } | Drag::DrumVoiceDial { .. } => {
                 Some(Edit::GenerateClip)
             }
             // One step for the sweep, named for the clip whose performance it shapes.

@@ -18,6 +18,17 @@ use crate::app::AurisApp;
 use super::{ContextMenu, MenuCommand};
 
 impl AurisApp {
+    /// Rewrites one clip from its current recipe and the harmony underneath it.
+    pub(crate) fn regenerate_clip(&mut self, clip: ClipId) {
+        match self.session.regenerate_clip(clip) {
+            Ok(_) => {
+                self.forget_rewritten_notes(clip);
+                self.report_clip_preset(clip);
+            }
+            Err(error) => self.set_failed_status(self.failure(Key::MenuRegenerateClip, &error)),
+        }
+    }
+
     /// The presets appropriate to this track, aimed at one place on its timeline.
     pub(crate) fn preset_picker_menu(
         &self,
@@ -79,22 +90,6 @@ impl AurisApp {
                 self.t(subdivision_key(subdivision)),
                 MenuCommand::SetClipSubdivision { clip, subdivision },
                 current == Some(subdivision),
-            );
-        }
-        menu
-    }
-
-    /// Every register a generated clip can be moved to.
-    pub(crate) fn clip_octave_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
-        let current = self.session.clip_recipe(clip).map(|recipe| recipe.octave);
-        let mut menu = ContextMenu::new(anchor, self.t(Key::PartOctave));
-        // Highest first, because that is the way a register reads on a keyboard and on every
-        // stave: going down the menu should go down in pitch.
-        for octave in crate::ui::part::octave_choices().rev() {
-            menu = menu.toggle(
-                crate::ui::part::octave_text(octave),
-                MenuCommand::SetClipOctave { clip, octave },
-                current == Some(octave),
             );
         }
         menu

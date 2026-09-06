@@ -953,7 +953,6 @@ mod window_tests {
                 ("effect picker", this.effect_picker_menu(at, Some(track))),
                 ("clip preset", this.clip_preset_menu(at, clip)),
                 ("clip subdivision", this.clip_subdivision_menu(at, clip)),
-                ("clip octave", this.clip_octave_menu(at, clip)),
                 ("clip groove", this.clip_groove_menu(at, clip)),
             ] {
                 assert!(

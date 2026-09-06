@@ -1091,8 +1091,8 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_dial(clip, dial, start_fraction, delta);
             }
-            Drag::DrummerPad { clip, bounds } => {
-                self.drag_drummer_pad(clip, bounds, event.position);
+            Drag::PartPad { clip, bounds } => {
+                self.drag_part_pad(clip, bounds, event.position);
             }
             Drag::DrumVoiceDial {
                 clip,
