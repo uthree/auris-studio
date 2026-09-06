@@ -322,6 +322,15 @@ impl Session {
             path: folder.clone(),
             source,
         })?;
+        let _lock = project_write_lock(&document)?;
+        if document.is_file() {
+            let previous_path = self.path.replace(document.clone());
+            let preserved = load_project(&document)
+                .map_err(SessionError::from)
+                .and_then(|project| self.preserve_document(&project));
+            self.path = previous_path;
+            preserved?;
+        }
 
         // Resolve before the document moves: an `Inside` reference read against the new folder
         // would point at a file that has not been copied there yet.
@@ -349,6 +358,11 @@ impl Session {
         // document is. Leaving it pointing at the old folder is what would be inconsistent.
         self.path = Some(document.clone());
         self.dirty = true;
+        if !document.is_file() {
+            // A failed first write may be retried once its destination becomes writable.
+            self.disk_stamp = None;
+            self.disk_fingerprint = None;
+        }
         // A copy that fails has to have its reference pointed back *outside*, not left alone. The
         // document belongs to the new folder from the line above, so an `Inside` reference is now
         // read against a folder the copy never reached: the track opens silent, and nothing can
@@ -391,7 +405,53 @@ impl Session {
     /// Saves to the path the project was last saved to or opened from.
     pub fn save_in_place(&mut self) -> Result<(), SessionError> {
         let path = self.path.clone().ok_or(SessionError::NoPath)?;
+        let _lock = project_write_lock(&path)?;
+        if (path.exists() || self.disk_fingerprint.is_some())
+            && load_project(&path)? != self.saved_project
+        {
+            return Err(SessionError::ExternalChanges(path));
+        }
         self.save(&path)
+    }
+
+    /// Accepts the open document's disk version as one undoable edit.
+    ///
+    /// Local unsaved changes remain on the undo stack. Callers should offer this explicitly
+    /// when the window is dirty; an active gesture is always refused. Missing assets are
+    /// reported exactly as by [`Self::open`].
+    pub fn reload_external_changes(&mut self) -> Result<Vec<PathBuf>, SessionError> {
+        if self.transaction.is_some() {
+            return Err(SessionError::EditInProgress);
+        }
+        let path = self.path.clone().ok_or(SessionError::NoPath)?;
+        let project = load_project(&path)?;
+        if project == self.project {
+            self.mark_saved();
+            self.dirty = false;
+            return Ok(Vec::new());
+        }
+        self.record(crate::Edit::ExternalChanges);
+        let saved = project.clone();
+        let missing = self.replace_external_project(project);
+        self.mark_saved();
+        self.saved_project = saved;
+        self.dirty = self.project != self.saved_project;
+        Ok(missing)
+    }
+
+    /// Rebuilds file-backed state while keeping assets referenced by older undo entries alive.
+    pub(super) fn replace_external_project(&mut self, project: Project) -> Vec<PathBuf> {
+        self.hosted.clear();
+        self.vst3.clear();
+        self.adopt_project(project);
+        let missing = self.reload_assets();
+        self.install_shipped_fonts();
+        self.rebuild_graph();
+        if self.realign_automation() {
+            self.rebuild_graph();
+        }
+        self.publish_loop();
+        missing
     }
 
     /// Copies every loaded asset the project refers to into its folder, however large.
@@ -711,11 +771,78 @@ impl Session {
     }
 }
 
+/// Serialises cooperating writers across processes, including the optimistic disk check.
+fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionError> {
+    let folder = path.parent().ok_or(SessionError::NoPath)?;
+    let lock_path = folder.join(".auris-write.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| IoError::from_fs(&lock_path, error))?;
+    file.lock()
+        .map_err(|error| IoError::from_fs(&lock_path, error))?;
+    Ok(file)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_io::AUDIO_DIR;
+
+    #[test]
+    fn external_edits_cannot_be_overwritten_and_acceptance_preserves_both_versions() {
+        let scratch = Scratch::new("external-edit");
+        let path = scratch.join("Song.auris");
+        let mut window = session();
+        window.save(&path).unwrap();
+        let mut agent = session();
+        agent.open(&path).unwrap();
+        window.add_default_instrument_track("Local").unwrap();
+        let local = window.project().clone();
+        agent.add_default_instrument_track("Agent").unwrap();
+        agent.save_in_place().unwrap();
+        let disk = agent.project().clone();
+        assert!(matches!(
+            window.save_in_place(),
+            Err(SessionError::ExternalChanges(_))
+        ));
+        assert_eq!(load_project(&path).unwrap(), disk);
+        window.reload_external_changes().unwrap();
+        assert_eq!(window.project(), &disk);
+        assert_eq!(window.undo(), Some(crate::Edit::ExternalChanges));
+        assert_eq!(window.project(), &local);
+        assert!(window.is_dirty());
+        assert_eq!(window.redo(), Some(crate::Edit::ExternalChanges));
+        assert_eq!(window.project(), &disk);
+        assert!(!window.is_dirty());
+        window.undo();
+        window.undo();
+        assert!(
+            !window
+                .project()
+                .tracks
+                .iter()
+                .any(|track| track.name == "Local")
+        );
+    }
+
+    #[test]
+    fn failed_reload_keeps_the_document_and_undo_history() {
+        let scratch = Scratch::new("failed-external-edit");
+        let path = scratch.join("Song.auris");
+        let mut window = session();
+        window.save(&path).unwrap();
+        window.add_default_instrument_track("Local").unwrap();
+        let before = window.project().clone();
+        std::fs::write(&path, "not a project").unwrap();
+        assert!(window.reload_external_changes().is_err());
+        assert_eq!(window.project(), &before);
+        assert!(window.can_undo());
+    }
 
     #[test]
     fn audio_read_somewhere_else_lands_exactly_as_importing_it_would() {
@@ -840,6 +967,11 @@ mod tests {
         assert!(session.save_as_replacing(&chosen).is_err());
         assert_eq!(session.path(), Some(document.as_path()));
         assert!(session.is_dirty(), "autosave must retry the failed write");
+        std::fs::remove_dir(&document).unwrap();
+        session
+            .save_in_place()
+            .expect("retry at the new destination");
+        assert!(!session.is_dirty());
     }
 
     #[test]

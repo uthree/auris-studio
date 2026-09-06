@@ -23,6 +23,7 @@
 #![warn(missing_docs)]
 
 use auris_toolbox as toolbox;
+mod previews;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -30,20 +31,127 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
-/// The server. Stateless on purpose — the state lives in project files, and
-/// [`auris_toolbox`]'s account of the design says why.
-#[derive(Clone, Copy, Debug, Default)]
-struct AurisMcp;
+/// Project state lives on disk; only the connection's bounded audio resources live here.
+#[derive(Clone, Debug, Default)]
+struct AurisMcp {
+    previews: std::sync::Arc<std::sync::Mutex<previews::Previews>>,
+}
 
 // Every method is one tool: the method name is the tool's wire name, the doc comment its
 // description (held equal to the toolbox constant by test), and argument type and work both
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
-    /// Searches the Auris Studio documentation embedded in this build. Use it for questions
-    /// about features, workflows, composition, development, evaluation, and singing-voice
-    /// training. Returns the most relevant passages with their document paths and section
-    /// headings.
+    /// Reports General MIDI availability, installed voice paths from the desktop's library settings, and optional project playback readiness and selected voice metadata. Voice discovery does not load or validate models. Guide vocals are temporary synthesis; stale takes need sing again. Audio preview creates a playable file; it does not imply that the connected language model can hear audio.
+    #[tool]
+    async fn capabilities(
+        &self,
+        Parameters(args): Parameters<toolbox::capabilities::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::capabilities::run(&args)).await
+    }
+
+    /// Reads parameter keys, units, ranges, static values and automation, or writes/clears one lane. Targets include mixer gain/pan, sends, instruments and effects. Read first without param to discover keys. Points use absolute quarter-note beats from zero and parameter units. Set upserts points; replace true replaces the entire lane. Curve is linear or hold. Changes are validated before saving with a checkpoint.
+    #[tool]
+    async fn automation(
+        &self,
+        Parameters(args): Parameters<toolbox::automation::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::automation::run(&args)).await
+    }
+
+    /// Lists available effects and a strip's chain, or adds, removes, reorders, bypasses or sidechains an effect. Use track master for the master bus. Slots and positions are 1-based; re-read after changing order. Sidechains connect a source track to an effect that accepts one; source null disconnects. Use set_effect for static parameters and automation for curves. Changes are checkpointed and saved.
+    #[tool]
+    async fn effects(
+        &self,
+        Parameters(args): Parameters<toolbox::effects::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::effects::run(&args)).await
+    }
+
+    /// Renders a short WAV audition of one section or bar range (at most 120 seconds, without effect tails). Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.
+    #[tool]
+    async fn preview(
+        &self,
+        Parameters(args): Parameters<toolbox::preview::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let rendered = tokio::task::spawn_blocking(move || {
+            let preview = toolbox::preview::create(&args)?;
+            let bytes = std::fs::read(&preview.path).map_err(|e| e.to_string())?;
+            Ok::<_, String>((preview.text, bytes))
+        })
+        .await
+        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        match rendered {
+            Ok((text, bytes)) => {
+                let resource = self
+                    .previews
+                    .lock()
+                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+                    .insert(bytes)?;
+                Ok(CallToolResult::success(vec![
+                    ContentBlock::text(text),
+                    ContentBlock::resource_link(resource),
+                ]))
+            }
+            Err(error) => finished(Err(error)),
+        }
+    }
+    /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.
+    #[tool]
+    async fn analyze_music(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_music::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_music::run(&args)).await
+    }
+
+    /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
+    #[tool]
+    async fn inspect_composition(
+        &self,
+        Parameters(args): Parameters<toolbox::inspect_composition::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::inspect_composition::run(&args)).await
+    }
+
+    /// Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call write_again on the parts that should follow the new harmony.
+    #[tool]
+    async fn edit_harmony(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_harmony::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_harmony::run(&args)).await
+    }
+
+    /// Changes a generated clip's recipe and regenerates that clip only. Unspecified controls and the seed are kept. Read inspect_composition first. Hand-edited notes require replace_hand_edits; a checkpoint preserves the previous document. Use edit_clip with freeze to keep a take without its recipe.
+    #[tool]
+    async fn edit_recipe(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_recipe::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_recipe::run(&args)).await
+    }
+
+    /// Moves, duplicates, copies to another note track, splits, resizes, removes, mutes or freezes one note clip. Copy can transpose stored notes; transposing freezes the copied recipe. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.
+    #[tool]
+    async fn edit_clip(
+        &self,
+        Parameters(args): Parameters<toolbox::edit_clip::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::edit_clip::run(&args)).await
+    }
+
+    /// Lists, creates or restores document checkpoints in the project folder. Editing tools automatically keep the previous document. Create a named checkpoint for an A/B comparison; restore brings its notes, harmony and mix back and saves, keeping the current version in another automatic checkpoint. Assets are referenced, not copied.
+    #[tool]
+    async fn checkpoints(
+        &self,
+        Parameters(args): Parameters<toolbox::checkpoints::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::checkpoints::run(&args)).await
+    }
+
+    /// Searches the Auris Studio documentation embedded in this build. Use it for questions about features, workflows, composition, development, evaluation, and singing-voice training. Returns the most relevant passages with their document paths and section headings.
     #[tool]
     async fn search_documentation(
         &self,
@@ -52,17 +160,13 @@ impl AurisMcp {
         finished(toolbox::search_documentation::run(&args))
     }
 
-    /// The `.asong` format, taught by example: a two-line song, then a specification using
-    /// most of the vocabulary with a comment on every field. Read this before writing a spec.
+    /// The `.asong` format, taught by example: a two-line song, then a specification using most of the vocabulary with a comment on every field. Read this before writing a spec.
     #[tool]
     async fn spec_reference(&self) -> Result<CallToolResult, ErrorData> {
         finished(Ok(toolbox::spec_reference::run()))
     }
 
-    /// Validates a specification without composing anything. A rejected spec answers with
-    /// every complaint at once, line numbers where they exist; a valid one answers with the
-    /// full document, every default filled in — the cheap way to see what a draft actually
-    /// means.
+    /// Validates a specification without composing anything. A rejected spec answers with every complaint at once, line numbers where they exist; a valid one answers with the full document, every default filled in — the cheap way to see what a draft actually means.
     #[tool]
     async fn check_spec(
         &self,
@@ -72,9 +176,7 @@ impl AurisMcp {
         finished(toolbox::check_spec::run(&args))
     }
 
-    /// Composes a song from a specification and saves it as a project. The answer reports
-    /// what was written — tracks, notes, seed, where the mix was measured to — and the seed
-    /// is what to pin in the spec to ask for this exact take again.
+    /// Composes a song from a specification and saves it as a project. The answer reports what was written — tracks, notes, seed, where the mix was measured to — and the seed is what to pin in the spec to ask for this exact take again.
     #[tool]
     async fn compose(
         &self,
@@ -83,8 +185,7 @@ impl AurisMcp {
         blocking(move || toolbox::compose::run(&args)).await
     }
 
-    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and
-    /// reports each file's length, channels and peak level.
+    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.
     #[tool]
     async fn render(
         &self,
@@ -93,8 +194,7 @@ impl AurisMcp {
         blocking(move || toolbox::render::run(&args)).await
     }
 
-    /// Describes a project on disk: tempo, meter, duration, and every track with its
-    /// instrument, clip count, effects and routing.
+    /// Describes a project on disk: tempo, meter, duration, and every track with its instrument, clip count, effects and routing.
     #[tool]
     async fn describe(
         &self,
@@ -103,11 +203,7 @@ impl AurisMcp {
         blocking(move || toolbox::describe::run(&args)).await
     }
 
-    /// Listens to a project and reports what it measured, changing nothing: length,
-    /// integrated loudness and peaks for the whole mix, the same per named section — the
-    /// piece's dynamic arc as numbers — and, with `per_track`, each track alone. This is the
-    /// ears of the improve loop: render, analyze, edit the spec or rewrite one clip, and ask
-    /// again.
+    /// Listens to a project and reports what it measured, changing nothing: length, integrated loudness and peaks for the whole mix, the same per named section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. This is the ears of the improve loop: render, analyze, edit the spec or rewrite one clip, and ask again.
     #[tool]
     async fn analyze(
         &self,
@@ -116,10 +212,7 @@ impl AurisMcp {
         blocking(move || toolbox::analyze::run(&args)).await
     }
 
-    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and
-    /// each effect's parameters with key, value and range — the vocabulary `set_level`,
-    /// `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane,
-    /// not its stored value.
+    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
     #[tool]
     async fn mixer(
         &self,
@@ -128,10 +221,7 @@ impl AurisMcp {
         blocking(move || toolbox::mixer::run(&args)).await
     }
 
-    /// Sets a track's fader and/or pan; `track` may be "master". Gain runs -60 to +12 dB, pan
-    /// -1 (left) to +1 (right). The change is saved — `analyze` again to hear what it did to
-    /// the numbers. A fader that `mixer` marks `[automated]` is ruled by its lane, not this
-    /// value; `section_gain` with clear: true removes the lane.
+    /// Sets a track's fader and/or pan; `track` may be "master". Gain runs -60 to +12 dB, pan -1 (left) to +1 (right). The change is saved — `analyze` again to hear what it did to the numbers. A fader that `mixer` marks `[automated]` is ruled by its lane, not this value; `section_gain` with clear: true removes the lane.
     #[tool]
     async fn set_level(
         &self,
@@ -140,9 +230,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_level::run(&args)).await
     }
 
-    /// Sets how much of a track one of its sends carries, addressed by the bus it feeds — the
-    /// routing `mixer` and `describe` show. Send levels run -60 to 0 dB; there is no headroom
-    /// above unity on a send. The change is saved.
+    /// Sets how much of a track one of its sends carries, addressed by the bus it feeds — the routing `mixer` and `describe` show. Send levels run -60 to 0 dB; there is no headroom above unity on a send. The change is saved.
     #[tool]
     async fn set_send(
         &self,
@@ -151,12 +239,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_send::run(&args)).await
     }
 
-    /// Sets one parameter of one effect, addressed the way `mixer` lists them: `track` (or
-    /// "master"), the effect by its id — or by `slot`, its 1-based position, when a chain
-    /// holds the same effect twice — and the parameter by key or name, in the parameter's own
-    /// units. Values outside the range `mixer` shows are refused. The change is saved. The
-    /// master limiter's `input_db` is the dial to back off when `analyze` says the loud
-    /// sections are pinned against the ceiling.
+    /// Sets one parameter of one effect, addressed the way `mixer` lists them: `track` (or "master"), the effect by its id — or by `slot`, its 1-based position, when a chain holds the same effect twice — and the parameter by key or name, in the parameter's own units. Values outside the range `mixer` shows are refused. The change is saved. The master limiter's `input_db` is the dial to back off when `analyze` says the loud sections are pinned against the ceiling.
     #[tool]
     async fn set_effect(
         &self,
@@ -165,14 +248,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_effect::run(&args)).await
     }
 
-    /// Holds a track's gain at a level across one named section — dynamics without rewriting
-    /// a note. `track` may be "master"; the section is addressed by the label `analyze`
-    /// shows, every occurrence unless `instance` picks one. Writes gain automation with short
-    /// ramps at the edges: the fader keeps ruling outside the stretch, and holds on different
-    /// sections compose. `clear: true` removes the track's whole gain lane instead, giving
-    /// the fader back everywhere. The change is saved. The master fader sits after the master
-    /// chain, so a boost there is not limited and can clip — widen contrast by holding the
-    /// louder sections down instead.
+    /// Holds a track's gain at a level across one named section — dynamics without rewriting a note. `track` may be "master"; the section is addressed by the label `analyze` shows, every occurrence unless `instance` picks one. Writes gain automation with short ramps at the edges: the fader keeps ruling outside the stretch, and holds on different sections compose. `clear: true` removes the track's whole gain lane instead, giving the fader back everywhere. The change is saved. The master fader sits after the master chain, so a boost there is not limited and can clip — widen contrast by holding the louder sections down instead. Use gain_delta_db instead of gain_db to offset the existing envelope; mixer reads it back.
     #[tool]
     async fn section_gain(
         &self,
@@ -181,11 +257,7 @@ impl AurisMcp {
         blocking(move || toolbox::section_gain::run(&args)).await
     }
 
-    /// Writes another take of a generated clip: the same ask, the next seed, different notes.
-    /// The change is saved into the project — render again to hear it. Aim it with `track`
-    /// and the clip number `describe` shows; without a number, every generated clip on the
-    /// track gets a new take. Every answer names its seed, and passing `seed` takes that
-    /// exact take again — how a rewrite that measured worse is rolled back.
+    /// Writes another take of a generated clip: the same ask, the next seed, different notes. The change is saved into the project — render again to hear it. Aim it with `track` and the clip number `describe` shows; without a number, every generated clip on the track gets a new take. Every answer names its seed, and passing `seed` takes that exact take again — how a rewrite that measured worse is rolled back. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
     #[tool]
     async fn another_take(
         &self,
@@ -194,9 +266,7 @@ impl AurisMcp {
         blocking(move || toolbox::another_take::run(&args)).await
     }
 
-    /// Writes a generated clip again with its own seed, following the key and chords as they
-    /// stand now — the tool to reach for after changing the harmony under an existing piece.
-    /// The change is saved into the project. Addressed exactly like `another_take`.
+    /// Writes a generated clip again with its own seed, following the key and chords as they stand now — the tool to reach for after changing the harmony under an existing piece. The change is saved into the project. Addressed exactly like `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
     #[tool]
     async fn write_again(
         &self,
@@ -205,10 +275,7 @@ impl AurisMcp {
         blocking(move || toolbox::write_again::run(&args)).await
     }
 
-    /// Keeps a chord progression under a name on this machine. It then shows up in
-    /// `list_progressions` and the desktop picker; a specification still writes the chords
-    /// out in full — only the built-in catalogue is quotable as `@name`, so a document stays
-    /// portable.
+    /// Keeps a chord progression under a name on this machine. It then shows up in `list_progressions` and the desktop picker; a specification still writes the chords out in full — only the built-in catalogue is quotable as `@name`, so a document stays portable.
     #[tool]
     async fn teach_progression(
         &self,
@@ -226,33 +293,25 @@ impl AurisMcp {
         blocking(move || toolbox::forget_progression::run(&args)).await
     }
 
-    /// Lists the chord progressions a specification can quote by name, with the chords each
-    /// one plays.
+    /// Lists the chord progressions a specification can quote by name, with the chords each one plays.
     #[tool]
     async fn list_progressions(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_progressions::run())).await
     }
 
-    /// Lists the whole songs a specification can start from, with each one's key, tempo
-    /// and groove.
+    /// Lists the whole songs a specification can start from, with each one's key, tempo and groove.
     #[tool]
     async fn list_presets(&self) -> Result<CallToolResult, ErrorData> {
         finished(Ok(toolbox::list_presets::run()))
     }
 
-    /// Lists the built-in instruments a track can play, by the id `add_track` and
-    /// `set_instrument` take. Any General MIDI sound is also available — name it in those
-    /// tools' `sound` field instead, as a GM name or program number.
+    /// Lists the built-in instruments a track can play, by the id `add_track` and `set_instrument` take. Reports whether the General MIDI library is loaded; when available, select a GM name or program number using sound.
     #[tool]
     async fn list_instruments(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a track to an existing project and saves. An instrument track by default — voiced
-    /// by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or
-    /// program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that
-    /// carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track
-    /// has no clips: `add_part` writes one.
+    /// Adds a track to an existing project and saves. An instrument track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a singer track (notes that carry lyrics, sung by a voice model), an audio track or a bus. A new instrument track has no clips: `add_part` writes one.
     #[tool]
     async fn add_track(
         &self,
@@ -261,11 +320,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_track::run(&args)).await
     }
 
-    /// Writes a generated part onto an existing instrument track, from the key and chords
-    /// already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or
-    /// hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its
-    /// recipe, so `another_take` rerolls it and `write_again` follows a harmony change; the
-    /// answer numbers it the way `describe` does.
+    /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `another_take` rerolls it and `write_again` follows a harmony change; the answer numbers it the way `describe` does.
     #[tool]
     async fn add_part(
         &self,
@@ -274,10 +329,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_part::run(&args)).await
     }
 
-    /// Re-voices an instrument track: `instrument` names a built-in from `list_instruments`,
-    /// or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a
-    /// kit). The previous instrument's dial positions and the automation that drove them go
-    /// with it. The change is saved.
+    /// Re-voices an instrument track: `instrument` names a built-in from `list_instruments`, or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a kit). The previous instrument's dial positions and the automation that drove them go with it. The change is saved.
     #[tool]
     async fn set_instrument(
         &self,
@@ -286,8 +338,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_instrument::run(&args)).await
     }
 
-    /// Renames a track. Every other tool addresses tracks by name, so the new name is the
-    /// address from here on. The change is saved.
+    /// Renames a track. Every other tool addresses tracks by name, or `id:<number>`. The ID survives a rename; a new name must be unique. The change is saved.
     #[tool]
     async fn rename_track(
         &self,
@@ -296,8 +347,7 @@ impl AurisMcp {
         blocking(move || toolbox::rename_track::run(&args)).await
     }
 
-    /// Removes a track and everything on it — its clips, its effect chain, its sends and its
-    /// automation. The change is saved.
+    /// Removes a track and everything on it — its clips, its effect chain, its sends and its automation. The change is saved.
     #[tool]
     async fn remove_track(
         &self,
@@ -306,9 +356,7 @@ impl AurisMcp {
         blocking(move || toolbox::remove_track::run(&args)).await
     }
 
-    /// Opens an empty clip on an instrument or singer track, for `edit_notes` to write into —
-    /// the way a melody is placed note by note. Aim it with `start_bar` and `bars`; the answer
-    /// numbers the clip the way `describe` does.
+    /// Opens an empty clip on an instrument or singer track, for `edit_notes` to write into — the way a melody is placed note by note. Aim it with `start_bar` and `bars`; the answer numbers the clip the way `describe` does.
     #[tool]
     async fn add_clip(
         &self,
@@ -317,10 +365,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_clip::run(&args)).await
     }
 
-    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats,
-    /// velocity and, where a note carries one, its lyric. The numbers are the address
-    /// `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number
-    /// `describe` shows.
+    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats, velocity and, where a note carries one, its lyric. The numbers are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number `describe` shows.
     #[tool]
     async fn notes(
         &self,
@@ -329,11 +374,7 @@ impl AurisMcp {
         blocking(move || toolbox::notes::run(&args)).await
     }
 
-    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes`
-    /// lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and
-    /// beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals
-    /// happen first. The change is saved. On a generated clip the edit sticks until
-    /// `another_take` or `write_again` rewrites the clip whole.
+    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `another_take` or `write_again` rewrites the clip whole.
     #[tool]
     async fn edit_notes(
         &self,
@@ -342,11 +383,7 @@ impl AurisMcp {
         blocking(move || toolbox::edit_notes::run(&args)).await
     }
 
-    /// Reads a melody clip and writes a key, a chord progression and backing tracks under it —
-    /// the melody-first way around: place the tune with `edit_notes`, then derive the band.
-    /// The melody itself is not touched. `parts` picks the band (bass, chords and drums when
-    /// left out); the harmony it writes is a first draft to argue with — `write_again`
-    /// re-derives any part after a correction. The change is saved.
+    /// Reads a melody clip and writes a key, a chord progression and backing tracks under it — the melody-first way around: place the tune with `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks the band (bass, chords and drums when left out); the harmony it writes is a first draft to argue with — `write_again` re-derives any part after a correction. The change is saved.
     #[tool]
     async fn accompany(
         &self,
@@ -355,11 +392,7 @@ impl AurisMcp {
         blocking(move || toolbox::accompany::run(&args)).await
     }
 
-    /// Lays a phrase across a singer clip's notes, one syllable to each, and derives the
-    /// phonemes it will be sung as — kana through the built-in table, other text through the
-    /// Japanese dictionary where one is installed. `from` starts partway in, at a number the
-    /// way `notes` counts them, so a verse is filled one line at a time; notes past the end of
-    /// the phrase keep their words. The change is saved.
+    /// Lays a phrase across a singer clip's notes, one syllable to each, and derives the phonemes it will be sung as — kana through the built-in table, other text through the Japanese dictionary where one is installed. `from` starts partway in, at a number the way `notes` counts them, so a verse is filled one line at a time; notes past the end of the phrase keep their words. The change is saved.
     #[tool]
     async fn write_lyrics(
         &self,
@@ -368,12 +401,7 @@ impl AurisMcp {
         blocking(move || toolbox::write_lyrics::run(&args)).await
     }
 
-    /// Renders a singer track through its voice model and keeps the audio as the track's
-    /// take, which is what playback and `render` then play. Aims at the project's only singer
-    /// track when `track` is left out. `voice` chooses a model the first time — an absolute
-    /// path to an exported `.onnx` voice, which the track keeps. A take is deterministic: the
-    /// same notes, lyrics, voice and `seed` render the same audio, and another seed is
-    /// another take. The change is saved.
+    /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to an exported `.onnx` voice, which the track keeps. A take is deterministic: the same notes, lyrics, voice and `seed` render the same audio, and another seed is another take. The change is saved.
     #[tool]
     async fn sing(
         &self,
@@ -382,12 +410,7 @@ impl AurisMcp {
         blocking(move || toolbox::sing::run(&args)).await
     }
 
-    /// Writes a song from Japanese lyrics and saves it as a new project: a melody searched
-    /// under the words the Orpheus way, sung notes carrying each syllable, chords in the
-    /// harmony lane, and a backing band unless `melody_only`. Where a Japanese dictionary is
-    /// configured the melody follows the lyric's pitch accent; kana lyrics work without one,
-    /// free of the accent. Phrases break at line breaks and punctuation. The same lyrics and
-    /// `seed` write the same song; `sing` then gives the vocal its voice.
+    /// Writes a song from Japanese lyrics and saves it as a new project: a melody searched under the words the Orpheus way, sung notes carrying each syllable, chords in the harmony lane, and a backing band unless `melody_only`. Where a Japanese dictionary is configured the melody follows the lyric's pitch accent; kana lyrics work without one, free of the accent. Phrases break at line breaks and punctuation. The same lyrics and `seed` write the same song; `sing` then gives the vocal its voice.
     #[tool]
     async fn compose_lyrics(
         &self,
@@ -399,12 +422,43 @@ impl AurisMcp {
 
 #[tool_handler]
 impl ServerHandler for AurisMcp {
+    async fn list_resources(
+        &self,
+        _: Option<rmcp::model::PaginatedRequestParams>,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ListResourcesResult, ErrorData> {
+        let resources = self
+            .previews
+            .lock()
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .list();
+        Ok(rmcp::model::ListResourcesResult {
+            resources,
+            ..Default::default()
+        })
+    }
+    async fn read_resource(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
+        let bytes = self
+            .previews
+            .lock()
+            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
+            .bytes(&request.uri)?;
+        let content = previews::Previews::content(request.uri, &bytes);
+        Ok(rmcp::model::ReadResourceResult::new(vec![content]).into())
+    }
     fn get_info(&self) -> ServerInfo {
         // Field by field because the type is `non_exhaustive`, which rules the literal out.
         // Named explicitly rather than via `Implementation::from_build_env`, whose `env!` was
         // expanded when *rmcp* was compiled — a server introducing itself as "rmcp 3.1.4".
         let mut info = ServerInfo::default();
-        info.capabilities = ServerCapabilities::builder().enable_tools().build();
+        info.capabilities = ServerCapabilities::builder()
+            .enable_tools()
+            .enable_resources()
+            .build();
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.instructions = Some(toolbox::INSTRUCTIONS.into());
         info
@@ -446,7 +500,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     auris_session::migrate_legacy_config();
 
     tokio::runtime::Runtime::new()?.block_on(async {
-        let service = AurisMcp.serve(rmcp::transport::stdio()).await?;
+        let service = AurisMcp::default().serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
         Ok(())
     })
@@ -458,7 +512,7 @@ mod tests {
 
     #[test]
     fn the_server_introduces_itself_and_carries_the_shared_instructions() {
-        let info = AurisMcp.get_info();
+        let info = AurisMcp::default().get_info();
         // The name is this crate's, not the SDK's — the `from_build_env` trap in `get_info`.
         assert_eq!(info.server_info.name, "auris-mcp");
         assert_eq!(
@@ -483,6 +537,33 @@ mod tests {
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (
+                toolbox::capabilities::NAME,
+                toolbox::capabilities::DESCRIPTION,
+            ),
+            (toolbox::automation::NAME, toolbox::automation::DESCRIPTION),
+            (toolbox::effects::NAME, toolbox::effects::DESCRIPTION),
+            (
+                toolbox::analyze_music::NAME,
+                toolbox::analyze_music::DESCRIPTION,
+            ),
+            (
+                toolbox::inspect_composition::NAME,
+                toolbox::inspect_composition::DESCRIPTION,
+            ),
+            (
+                toolbox::edit_harmony::NAME,
+                toolbox::edit_harmony::DESCRIPTION,
+            ),
+            (
+                toolbox::edit_recipe::NAME,
+                toolbox::edit_recipe::DESCRIPTION,
+            ),
+            (toolbox::edit_clip::NAME, toolbox::edit_clip::DESCRIPTION),
+            (
+                toolbox::checkpoints::NAME,
+                toolbox::checkpoints::DESCRIPTION,
+            ),
+            (
                 search_documentation::NAME,
                 search_documentation::DESCRIPTION,
             ),
@@ -490,6 +571,7 @@ mod tests {
             (check_spec::NAME, check_spec::DESCRIPTION),
             (compose::NAME, compose::DESCRIPTION),
             (render::NAME, render::DESCRIPTION),
+            (toolbox::preview::NAME, toolbox::preview::DESCRIPTION),
             (describe::NAME, describe::DESCRIPTION),
             (analyze::NAME, analyze::DESCRIPTION),
             (mixer::NAME, mixer::DESCRIPTION),

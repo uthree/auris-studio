@@ -202,6 +202,13 @@ pub fn voice_roots() -> Vec<PathBuf> {
     )
 }
 
+/// Scans the standard voice locations and the additional folders registered in settings.
+pub fn voices_with_settings(settings: &crate::Settings) -> Vec<(String, PathBuf)> {
+    let mut roots = voice_roots();
+    roots.extend(settings.voice_paths.iter().cloned());
+    installed_voices_in(&roots)
+}
+
 /// Every voice model found under `roots`, as `(name, path)`, sorted by name.
 ///
 /// No manifest, unlike the fonts: voices are the user's own exports, so this is enumeration

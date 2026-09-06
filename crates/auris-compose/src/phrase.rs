@@ -135,6 +135,8 @@ pub fn recipe_for(
 ) -> Option<ClipRecipe> {
     let preset = preset_of(part.role)?;
     Some(ClipRecipe {
+        motif: settings.motif.clone(),
+        rhythm: part.rhythm.as_ref().map(crate::rhythm::Pattern::to_text),
         preset,
         seed: clip_seed(song_seed, &part.name, &section.name, section.instance),
         // The *base* density, before `parts::writer::density` scales it by the role and by the
@@ -280,14 +282,17 @@ pub fn write_phrase(
         // One clip is one playing of one section, so there is no repeat to depart from.
         variation: 0.0,
         groove: recipe.groove.clone(),
-        // And no song around it to have given one a tune.
-        motif: Vec::new(),
+        motif: recipe.motif.clone(),
     };
 
     let roster: Vec<PartSpec> = roles_of(recipe.preset)
         .iter()
         .map(|role| {
             let mut part = PartSpec::of_role(role.name(), *role);
+            part.rhythm = recipe
+                .rhythm
+                .as_deref()
+                .and_then(crate::rhythm::Pattern::parse);
             // A register somebody asked for, on top of the one the role implies. The one the
             // part chooses for itself is drawn from the seed, which is right for a take and no
             // use at all when the answer wanted is "the same thing, an octave up".
@@ -371,6 +376,31 @@ mod tests {
             &ClipRecipe::new(preset, seed),
             None,
         )
+    }
+
+    #[test]
+    fn local_takes_keep_the_authored_motif_and_rhythm() {
+        let mut recipe = ClipRecipe::new(ClipPreset::Lead, 41);
+        recipe.motif = vec![1, 3, 5, 3];
+        recipe.rhythm = Some("x...x...x...x...".into());
+        let write = |recipe: &ClipRecipe| {
+            write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), recipe, None)
+        };
+        let authored = write(&recipe);
+        assert!(!authored.is_empty());
+        assert_eq!(authored, write(&recipe));
+        recipe.motif.clear();
+        assert_ne!(
+            authored,
+            write(&recipe),
+            "regeneration must read the stored motif"
+        );
+        recipe.motif = vec![1, 3, 5, 3];
+        recipe.rhythm = Some("x...............".into());
+        assert!(
+            write(&recipe).len() < authored.len(),
+            "authored rhythm must control note onsets"
+        );
     }
 
     #[test]

@@ -183,7 +183,7 @@ impl AurisApp {
     }
 
     /// Re-points the selection at objects that still exist, after the document was replaced.
-    fn resync_selection(&mut self) {
+    pub(crate) fn resync_selection(&mut self) {
         self.selected_track = self
             .selected_track
             .filter(|id| self.project().track(*id).is_some())
@@ -537,6 +537,7 @@ impl AurisApp {
 
     /// Replaces the document with an empty project.
     pub(crate) fn new_project(&mut self) {
+        self.agent_reset_conversation();
         self.session.new_project();
         self.resync_selection();
         self.reset_view();
@@ -747,6 +748,7 @@ impl AurisApp {
             let _ = this.update(cx, |this, cx| {
                 match this.session.open(&path) {
                     Ok(missing) => {
+                        this.agent_reset_conversation();
                         this.remember_recent(&path);
                         this.resync_selection();
                         // A different document, so the view of the old one means nothing.
@@ -849,6 +851,7 @@ impl AurisApp {
             let _ = this.update(cx, |this, cx| {
                 match this.session.import_midi(&path) {
                     Ok(report) => {
+                        this.agent_reset_conversation();
                         this.resync_selection();
                         this.reset_view();
                         let first = this.project().tracks.first().map(|track| track.id);

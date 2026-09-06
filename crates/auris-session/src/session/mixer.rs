@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use auris_core::automation::{Automation, AutomationCurve};
+use auris_core::automation::{Automation, AutomationCurve, AutomationPoint};
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit};
 use auris_core::plugin::PluginState;
 use auris_core::time::Ticks;
@@ -32,6 +32,55 @@ use crate::session::PluginWindow;
 use super::Session;
 
 impl Session {
+    /// Writes a validated automation batch in one undo step, optionally replacing its lane.
+    ///
+    /// Invalid targets, out-of-range values, negative ticks and duplicate positions leave the
+    /// document untouched. Discrete parameters retain hold interpolation.
+    pub fn write_automation_points(
+        &mut self,
+        target: ParamTarget,
+        points: &[AutomationPoint],
+        replace: bool,
+        curve: Option<AutomationCurve>,
+    ) -> Result<bool, SessionError> {
+        let invalid = |message: &str| SessionError::InvalidAutomation(message.into());
+        let descriptor = self
+            .automatable(target)
+            .ok_or_else(|| invalid("target cannot be automated"))?;
+        if points.is_empty() {
+            return Err(invalid("at least one point is required"));
+        }
+        let mut ticks = std::collections::BTreeSet::new();
+        for point in points {
+            if point.tick.raw() < 0
+                || !point.value.is_finite()
+                || !(descriptor.min..=descriptor.max).contains(&point.value)
+            {
+                return Err(invalid(
+                    "points require nonnegative ticks and finite values within the parameter range",
+                ));
+            }
+            if !ticks.insert(point.tick) {
+                return Err(invalid("duplicate point position"));
+            }
+        }
+        if curve == Some(AutomationCurve::Linear) && curve_for(&descriptor) == AutomationCurve::Hold
+        {
+            return Err(invalid("discrete parameters require hold interpolation"));
+        }
+        let curve = curve.or_else(|| self.automation().lane(target).map(|lane| lane.curve));
+        self.begin_transaction(Edit::WriteAutomation(target));
+        if replace {
+            self.clear_automation(target);
+        }
+        for point in points {
+            self.set_automation_point(target, point.tick, point.value);
+        }
+        if let Some(curve) = curve {
+            self.set_automation_curve(target, curve);
+        }
+        Ok(self.end_transaction())
+    }
     /// Adds an effect to a track's chain, or to the master bus when `track` is `None`.
     pub fn add_effect(
         &mut self,
@@ -579,6 +628,72 @@ impl Session {
         self.end_transaction()
     }
 
+    /// Offsets a gain envelope in a range, preserving its shape and all values outside it.
+    ///
+    /// Short linear ramps inside the range blend the offset in and out. Returns false for
+    /// an invalid target, range, nonfinite delta, or values outside the gain limits. Validation
+    /// finishes before any edit; a successful operation is one undo step.
+    pub fn offset_gain_range(
+        &mut self,
+        target: ParamTarget,
+        from: Ticks,
+        to: Ticks,
+        delta: f32,
+    ) -> bool {
+        if !matches!(target, ParamTarget::TrackGain(_) | ParamTarget::MasterGain)
+            || !delta.is_finite()
+            || from < Ticks::ZERO
+            || to - from < Ticks(4)
+        {
+            return false;
+        }
+        let Some(descriptor) = self.automatable(target) else {
+            return false;
+        };
+        let ramp = Ticks((Ticks::QUARTER.0 / 8).min((to - from).0 / 4).max(1));
+        let first = from + ramp;
+        let last = to - ramp;
+        let mut ticks = vec![from, first, last, to];
+        if let Some(lane) = self.project.automation.lane(target) {
+            ticks.extend(
+                lane.points()
+                    .iter()
+                    .map(|point| point.tick)
+                    .filter(|tick| *tick > from && *tick < to),
+            );
+        } else if from > Ticks::ZERO {
+            ticks.push(Ticks::ZERO);
+        }
+        ticks.sort();
+        ticks.dedup();
+        let mut points = Vec::new();
+        for tick in ticks {
+            let original = self
+                .automated_value(target, tick)
+                .unwrap_or_else(|| self.param_value(target, &descriptor));
+            let weight = if tick <= from || tick >= to {
+                0.0
+            } else if tick < first {
+                (tick - from).0 as f32 / ramp.0 as f32
+            } else if tick > last {
+                (to - tick).0 as f32 / ramp.0 as f32
+            } else {
+                1.0
+            };
+            let value = original + delta * weight;
+            if !value.is_finite() || value < descriptor.min || value > descriptor.max {
+                return false;
+            }
+            points.push((tick, value));
+        }
+        self.begin_transaction(Edit::WriteAutomation(target));
+        for (tick, value) in points {
+            self.set_automation_point(target, tick, value);
+        }
+        self.end_transaction();
+        true
+    }
+
     /// Moves a point along its lane, taking a new value with it.
     ///
     /// Returns where it landed, which is not always where it was asked to go: dropped onto
@@ -708,7 +823,7 @@ impl Session {
     /// ever created, because a fader's descriptor is synthesised rather than looked up — so the
     /// existence check has to be made here, or a lane could be written into thin air and then
     /// dropped again by the graph builder without anyone being told.
-    fn automatable(&mut self, target: ParamTarget) -> Option<ParamDescriptor> {
+    pub fn automatable(&mut self, target: ParamTarget) -> Option<ParamDescriptor> {
         let present = match target {
             ParamTarget::MasterGain | ParamTarget::MasterPan => true,
             ParamTarget::TrackGain(id) | ParamTarget::TrackPan(id) => {
@@ -791,6 +906,80 @@ mod tests {
 
     /// The compressor's registry id, which is the one built-in that listens to a key.
     const COMPRESSOR: &str = "auris.fx.compressor";
+
+    #[test]
+    fn automation_batches_validate_before_mutation_and_undo_as_one_edit() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Envelope").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        let points = [
+            AutomationPoint::new(Ticks::ZERO, -12.0),
+            AutomationPoint::new(Ticks::QUARTER * 4, 0.0),
+        ];
+        assert!(
+            session
+                .write_automation_points(target, &points, true, Some(AutomationCurve::Linear))
+                .unwrap()
+        );
+        assert_eq!(
+            session.automated_value(target, Ticks::QUARTER * 2),
+            Some(-6.0)
+        );
+        let saved = session.automation().clone();
+        for bad in [
+            vec![points[0], AutomationPoint::new(Ticks::QUARTER, f32::NAN)],
+            vec![points[0], AutomationPoint::new(Ticks(-1), 0.0)],
+            vec![points[0], points[0]],
+            Vec::new(),
+        ] {
+            assert!(
+                session
+                    .write_automation_points(target, &bad, true, None)
+                    .is_err()
+            );
+            assert_eq!(session.automation(), &saved);
+        }
+        session.undo();
+        assert!(!session.is_automated(target));
+        session.undo();
+        assert!(session.project().track(track).is_none());
+    }
+
+    #[test]
+    fn gain_offsets_keep_an_existing_curve_and_restore_both_edges() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Envelope").unwrap();
+        let target = ParamTarget::TrackGain(track);
+        for (beat, value) in [(0, -12.0), (4, -10.0), (8, -6.0), (12, -8.0), (16, -12.0)] {
+            session.set_automation_point(target, Ticks::QUARTER * beat, value);
+        }
+        let before = session.project().clone();
+        assert!(session.offset_gain_range(target, Ticks::QUARTER * 4, Ticks::QUARTER * 12, -3.0));
+        for beat in [0, 2, 4, 12, 14, 16] {
+            assert_eq!(
+                session.automated_value(target, Ticks::QUARTER * beat),
+                before.automation.value_at(target, Ticks::QUARTER * beat)
+            );
+        }
+        for beat in [5, 6, 8, 10, 11] {
+            assert!(
+                (session
+                    .automated_value(target, Ticks::QUARTER * beat)
+                    .unwrap()
+                    - before
+                        .automation
+                        .value_at(target, Ticks::QUARTER * beat)
+                        .unwrap()
+                    + 3.0)
+                    .abs()
+                    < 0.001
+            );
+        }
+        session.undo();
+        assert_eq!(session.project(), &before);
+        assert!(!session.offset_gain_range(target, Ticks::QUARTER * 4, Ticks::QUARTER * 12, 40.0));
+        assert_eq!(session.project(), &before);
+    }
 
     #[test]
     fn a_hold_covers_its_stretch_and_nothing_else() {

@@ -33,7 +33,9 @@
 mod accompany;
 mod analysis;
 mod assets;
+mod audition;
 mod autosave;
+mod checkpoints;
 mod clipboard;
 mod clips;
 mod compose;
@@ -45,9 +47,11 @@ mod levels;
 mod lyrics;
 mod mixer;
 mod monitor;
+mod musical_analysis;
 mod notes;
 mod perform;
 mod punch;
+mod readiness;
 mod record;
 mod singer;
 mod tracks;
@@ -71,7 +75,9 @@ pub use levels::{
 };
 pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
 pub use monitor::MonitorStatus;
+pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
+pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,
@@ -957,7 +963,11 @@ impl Session {
         }
         let edit = self.history.undo_edit()?;
         let project = self.history.undo(&self.project)?;
-        self.replace_project(project);
+        if edit == Edit::ExternalChanges {
+            self.replace_external_project(project);
+        } else {
+            self.replace_project(project);
+        }
         self.dirty = self.project != self.saved_project;
         Some(edit)
     }
@@ -971,7 +981,11 @@ impl Session {
         }
         let edit = self.history.redo_edit()?;
         let project = self.history.redo(&self.project)?;
-        self.replace_project(project);
+        if edit == Edit::ExternalChanges {
+            self.replace_external_project(project);
+        } else {
+            self.replace_project(project);
+        }
         self.dirty = self.project != self.saved_project;
         Some(edit)
     }

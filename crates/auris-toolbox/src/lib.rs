@@ -37,12 +37,32 @@ use std::path::{Path, PathBuf};
 use auris_session::prelude::*;
 use auris_session::{Session, SessionError, SessionOptions};
 
+mod audition;
+#[path = "capabilities.rs"]
+mod availability;
+mod editing;
+mod mix_editing;
+pub use audition::{RenderRange, preview};
+pub use availability::capabilities;
+use availability::playback_warnings;
+pub use editing::{
+    analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
+};
+pub use mix_editing::{automation, effects};
+
 /// What a model is told before it has called anything.
 ///
 /// The one piece of text a model keeps in context for the whole conversation, so it carries
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
-pub const INSTRUCTIONS: &str = "Auris Studio is a digital audio workstation; these tools drive \
+pub const INSTRUCTIONS: &str = "Check capabilities before choosing sounds or voices. Use effects to insert real effect slots and connect sidechains, and automation to discover parameter keys and draw curves; a bus name alone creates no processing. edit_recipe retains and can change the authored motif and rhythm. edit_clip with copy shares a phrase across tracks and can transpose it. Every track argument accepts a name or an id:<number> selector from describe; use IDs for duplicate names. Regeneration refuses hand edits unless replace_hand_edits is true. Use mixer to read section gain envelopes, section_gain with gain_delta_db for relative changes, and preview for a short playable audition. Auris Studio is a digital audio workstation; these tools drive \
+    its document. Before editing an existing piece, use `inspect_composition` to read its \
+    current harmony and recipes separately from its original specification. `edit_harmony` \
+    changes chords, key, tempo and section labels without rewriting notes; `edit_recipe` \
+    changes one generated clip's musical controls. `edit_clip` moves, copies, splits, resizes \
+    or freezes a clip. Use `checkpoints` to name alternatives and restore an earlier document; \
+    editing tools automatically preserve the previous document. Re-read clip numbers after \
+    arrangement edits. Do not recompose the whole project for a local change. These tools drive \
     its headless session. A song is written as a `.asong` specification — TOML in which every \
     field has a default, so two lines are already a valid song. The flow: `spec_reference` once \
     to learn the format, `check_spec` to validate a draft (errors name lines and fields, and a \
@@ -96,6 +116,10 @@ pub mod search_documentation {
     }
 
     const DOCUMENTS: &[(&str, &str)] = &[
+        (
+            "docs/agent-workflows.md",
+            include_str!("../../../docs/agent-workflows.md"),
+        ),
         ("README.md", include_str!("../../../README.md")),
         ("CHANGELOG.md", include_str!("../../../CHANGELOG.md")),
         (
@@ -308,6 +332,12 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    effects::NAME,
+    automation::NAME,
+    checkpoints::NAME,
+    edit_clip::NAME,
+    edit_harmony::NAME,
+    edit_recipe::NAME,
     compose::NAME,
     compose_lyrics::NAME,
     another_take::NAME,
@@ -328,12 +358,30 @@ pub const WRITES_PROJECTS: &[&str] = &[
     sing::NAME,
 ];
 
+/// Whether a particular invocation can rewrite a project, excluding read operations.
+pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
+    if !WRITES_PROJECTS.contains(&tool) {
+        return false;
+    }
+    match tool {
+        effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
+        automation::NAME => {
+            args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")
+        }
+        checkpoints::NAME => args.get("action").and_then(|v| v.as_str()) == Some("restore"),
+        _ => true,
+    }
+}
+
 /// The address of one project change: which clip, and which take of it.
 ///
 /// Shared by `another_take` and `write_again`, which aim the same way and differ only in the
 /// seed they keep.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RegenerateArgs {
+    /// Explicitly allow replacement of manual notes on every targeted generated clip.
+    #[serde(default)]
+    pub replace_hand_edits: bool,
     /// The project to change — an absolute path to a `.auris` file.
     pub project: String,
     /// The track whose clip to write again, by name as `describe` lists it.
@@ -491,13 +539,16 @@ pub mod render {
     pub const NAME: &str = "render";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Renders a project to a WAV file — or, with `stems`, to one \
-        file per track — and reports each file's length, channels and peak level.";
+        file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.";
 
     /// Arguments to `render`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
         /// The project to render — an absolute path to a `.auris` file.
         pub project: String,
+        /// Optional contiguous range for export.
+        #[serde(flatten)]
+        pub range: RenderRange,
         /// Where to write the WAV file. Beside the project, `.wav` for `.auris`, when left out.
         pub output: Option<String>,
         /// Bits per sample: 16, 24 or 32 (float). 24 when left out.
@@ -519,11 +570,10 @@ pub mod render {
             },
             ..WavExportSettings::default()
         };
-        let options = OfflineOptions::whole_project();
-
         let mut session = headless()?;
         let missing = session.open(source).map_err(|error| error.to_string())?;
-        let mut text = String::new();
+        let options = args.range.options(&session)?;
+        let mut text = playback_warnings(&session);
         for path in &missing {
             text.push_str(&format!(
                 "Note: the audio file {} is missing; its track rendered silent.\n",
@@ -647,7 +697,10 @@ pub mod describe {
                 // A bus holds no clips at all, so a count would be a nought that means nothing.
                 TrackKind::Bus => "bus".to_string(),
             };
-            text.push_str(&format!("    {:<20} {detail}\n", track.name));
+            text.push_str(&format!(
+                "    {:<20} {detail} (id:{})\n",
+                track.name, track.id.0
+            ));
             if !track.mixer.effects.is_empty() {
                 let chain: Vec<&str> = track
                     .mixer
@@ -789,7 +842,7 @@ pub mod mixer {
     pub const DESCRIPTION: &str = "Reads the mixer as it stands: every track's fader, pan, \
         mute and solo, its sends, and each effect's parameters with key, value and range — the \
         vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` \
-        is driven by its lane, not its stored value.";
+        is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.";
 
     /// Arguments to `mixer`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -890,6 +943,36 @@ pub mod mixer {
                 "{:<16} {:+.1} dB, pan {:+.2}{flags}\n",
                 row.name, row.gain_db, row.pan
             ));
+            if let Some(id) = row.track {
+                text.push_str(&format!("  selector id:{}\n", id.0));
+            }
+            if let Some(lane) = session.project().automation.lane(gain_target) {
+                text.push_str(&format!("  gain envelope {:?} (dB):\n", lane.curve));
+                for point in lane.points() {
+                    let bar = session.project().signatures.bar_of(point.tick);
+                    let beat = 1.0
+                        + (point.tick - session.project().signatures.bar_start(bar)).raw() as f64
+                            / Ticks::QUARTER.raw() as f64;
+                    text.push_str(&format!(
+                        "    bar {bar} beat {beat:.3}: {:+.3} dB\n",
+                        point.value
+                    ));
+                }
+                for span in session
+                    .project()
+                    .sections
+                    .spans_in(Ticks::ZERO, session.project().end_tick())
+                {
+                    let midpoint = span.start + Ticks((span.end - span.start).raw() / 2);
+                    let value = session
+                        .automated_value(gain_target, midpoint)
+                        .unwrap_or(row.gain_db);
+                    text.push_str(&format!(
+                        "    {} ({}) midpoint: {value:+.3} dB\n",
+                        span.label, span.instance
+                    ));
+                }
+            }
             for (send, target, level, pre) in &row.sends {
                 let tap = if *pre { " (pre-fader)" } else { "" };
                 let automated = row.track.is_some_and(|track| {
@@ -954,10 +1037,13 @@ pub mod set_level {
 
     /// Arguments to `set_level`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(extend("anyOf" = [{"required": ["gain_db"], "properties": {"gain_db": {"type":"number"}}}, {"required": ["pan"], "properties": {"pan": {"type":"number"}}}]))]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track whose strip to move, by name — or "master" for the master bus.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// Where to put the fader, in decibels (-60 to +12). Left out, the fader stays.
         pub gain_db: Option<f32>,
@@ -1010,7 +1096,9 @@ pub mod set_level {
             }
             session.set_param(pan_target, pan);
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let (gain, pan) = match strip {
             Some(id) => {
@@ -1049,6 +1137,7 @@ pub mod set_send {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track the send is taken from, by name.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// The bus the send feeds, by name — `mixer` lists each track's sends.
         pub to: String,
@@ -1104,7 +1193,9 @@ pub mod set_send {
         session
             .set_send_level(track_id, send_id, args.level_db)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!(
             "{} => {} at {:+.1} dB. Saved.",
             args.track, args.to, args.level_db
@@ -1139,6 +1230,7 @@ pub mod set_effect {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The strip the effect sits on: a track by name, or "master".
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// The effect's id as `mixer` lists it — the full `auris.fx.limiter` or just
         /// `limiter`. Leave out when addressing by `slot`.
@@ -1278,7 +1370,9 @@ pub mod set_effect {
         let before = session.param_value(target, &descriptor);
         let automated = session.is_automated(target);
         session.set_param(target, args.value);
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let mut text = format!(
             "{effect_id} {}: {} -> {}. Saved.",
@@ -1310,7 +1404,7 @@ pub mod section_gain {
         and holds on different sections compose. `clear: true` removes the track's whole gain \
         lane instead, giving the fader back everywhere. The change is saved. The master fader \
         sits after the master chain, so a boost there is not limited and can clip — widen \
-        contrast by holding the louder sections down instead.";
+        contrast by holding the louder sections down instead. Use gain_delta_db instead of gain_db to offset the existing envelope; mixer reads it back.";
 
     /// Arguments to `section_gain`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1318,6 +1412,7 @@ pub mod section_gain {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track whose gain to hold, by name — or "master".
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// The section to hold, by label as `analyze` shows it.
         pub section: Option<String>,
@@ -1325,6 +1420,8 @@ pub mod section_gain {
         pub instance: Option<usize>,
         /// The level to hold through the section, in decibels (-60 to +12).
         pub gain_db: Option<f32>,
+        /// Relative dB change to the existing envelope; preserves its shape. Use instead of gain_db.
+        pub gain_delta_db: Option<f32>,
         /// Remove the track's gain lane instead, giving the fader back everywhere.
         #[serde(default)]
         pub clear: bool,
@@ -1332,6 +1429,11 @@ pub mod section_gain {
 
     /// Holds the span — or takes the whole lane back.
     pub fn run(args: &Args) -> Result<String, String> {
+        if (args.gain_db.is_some() && args.gain_delta_db.is_some())
+            || (args.clear && (args.gain_db.is_some() || args.gain_delta_db.is_some()))
+        {
+            return Err("choose gain_db, gain_delta_db or clear, not a combination".into());
+        }
         let mut session = opened(&args.project)?;
         let strip = strip_by_name(session.project(), &args.track)?;
         let target = match strip {
@@ -1343,7 +1445,9 @@ pub mod section_gain {
             if !session.clear_automation(target) {
                 return Err(format!("nothing is automated on '{}'", args.track));
             }
-            session.save_in_place().map_err(|error| error.to_string())?;
+            session
+                .save_with_checkpoint()
+                .map_err(|error| error.to_string())?;
             return Ok(format!(
                 "The gain lane on '{}' is gone; the fader rules everywhere again. Saved.",
                 args.track
@@ -1352,8 +1456,10 @@ pub mod section_gain {
         let Some(label) = &args.section else {
             return Err("pass `section` and `gain_db`, or clear: true".into());
         };
-        let Some(gain) = args.gain_db else {
-            return Err("pass `gain_db` — the level to hold through the section".into());
+        let Some(gain) = args.gain_db.or(args.gain_delta_db) else {
+            return Err(
+                "pass gain_db for an absolute level, or gain_delta_db for a relative change".into(),
+            );
         };
         if !(-60.0..=12.0).contains(&gain) {
             return Err(format!(
@@ -1401,17 +1507,30 @@ pub mod section_gain {
 
         let mut text = String::new();
         for (start, end, label, instance, first_bar, last_bar) in &spans {
-            session.hold_automation(target, *start, *end, gain);
+            if args.gain_delta_db.is_some() {
+                if !session.offset_gain_range(target, *start, *end, gain) {
+                    return Err("relative gain would exceed the gain limits or the range is invalid; no changes were saved".into());
+                }
+            } else {
+                session.hold_automation(target, *start, *end, gain);
+            }
             let which = match instance {
                 1 => label.clone(),
                 instance => format!("{label} ({instance})"),
             };
+            let operation = if args.gain_delta_db.is_some() {
+                "offset by"
+            } else {
+                "held at"
+            };
             text.push_str(&format!(
-                "{which} bars {first_bar}-{last_bar}: '{}' held at {gain:+.1} dB.\n",
+                "{which} bars {first_bar}-{last_bar}: '{}' {operation} {gain:+.1} dB.\n",
                 args.track
             ));
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         text.push_str(
             "The fader keeps ruling outside the stretch. Saved — `analyze` will show the arc.",
         );
@@ -1437,7 +1556,8 @@ pub mod another_take {
         next seed, different notes. The change is saved into the project — render again to hear \
         it. Aim it with `track` and the clip number `describe` shows; without a number, every \
         generated clip on the track gets a new take. Every answer names its seed, and passing \
-        `seed` takes that exact take again — how a rewrite that measured worse is rolled back.";
+        `seed` takes that exact take again — how a rewrite that measured worse is rolled back. \
+        Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.";
 
     /// The shared rewrite address.
     pub use crate::RegenerateArgs as Args;
@@ -1456,7 +1576,7 @@ pub mod write_again {
     pub const DESCRIPTION: &str = "Writes a generated clip again with its own seed, following \
         the key and chords as they stand now — the tool to reach for after changing the harmony \
         under an existing piece. The change is saved into the project. Addressed exactly like \
-        `another_take`.";
+        `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.";
 
     /// The shared rewrite address.
     pub use crate::RegenerateArgs as Args;
@@ -1615,14 +1735,15 @@ pub mod list_instruments {
     pub const NAME: &str = "list_instruments";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
-        `add_track` and `set_instrument` take. Any General MIDI sound is also available — name \
-        it in those tools' `sound` field instead, as a GM name or program number.";
+        `add_track` and `set_instrument` take. Reports whether the General MIDI library is \
+        loaded; when available, select a GM name or program number using sound.";
 
     /// Every registered instrument, one line each.
     pub fn run() -> String {
         let mut text = String::from("Instruments `add_track` and `set_instrument` accept:\n");
         match headless() {
             Ok(session) => {
+                text.push_str(&format!("General MIDI library loaded: {}. The sampler requires a loaded font and preset.\n", session.general_midi_available()));
                 for descriptor in session.registry().instruments() {
                     text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
                 }
@@ -1678,6 +1799,7 @@ pub mod add_track {
         }
         let mut session = opened(&args.project)?;
         let kind = args.kind.as_deref().unwrap_or("instrument");
+        validate_track_name(session.project(), &args.name, None)?;
         let voiced = match kind {
             "instrument" => {
                 let id = match &args.instrument {
@@ -1715,7 +1837,9 @@ pub mod add_track {
                 ));
             }
         };
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if kind == "instrument" {
             text.push_str(" The track holds no clips yet; `add_part` writes one.");
@@ -1790,6 +1914,7 @@ pub mod add_part {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to write on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// What the part plays: lead, chords, pad, arp, bass, stab, drums, kick, snare or hat.
         pub part: String,
@@ -1838,7 +1963,9 @@ pub mod add_part {
         let clip = session
             .generate_clip(track, start, length, ClipRecipe::new(preset, seed))
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let notes = session
             .project()
@@ -1887,6 +2014,7 @@ pub mod set_instrument {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to re-voice, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`.
         pub instrument: Option<String>,
@@ -1916,7 +2044,9 @@ pub mod set_instrument {
                 .map_err(|error| format!("{error} — `list_instruments` names the real ones"))?;
         }
         let voiced = add_track::voice(&mut session, track, &args.sound, args.drums, &None)?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!("{} — now {voiced}. Saved.", args.track))
     }
 }
@@ -1929,7 +2059,7 @@ pub mod rename_track {
     pub const NAME: &str = "rename_track";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Renames a track. Every other tool addresses tracks by name, \
-        so the new name is the address from here on. The change is saved.";
+        or `id:<number>`. The ID survives a rename; a new name must be unique. The change is saved.";
 
     /// Arguments to `rename_track`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1937,6 +2067,7 @@ pub mod rename_track {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to rename, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// The new name.
         pub name: String,
@@ -1949,10 +2080,13 @@ pub mod rename_track {
         }
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
+        validate_track_name(session.project(), args.name.trim(), Some(track))?;
         session
             .rename_track(track, args.name.trim())
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!(
             "'{}' is now '{}'. Saved.",
             args.track,
@@ -1977,6 +2111,7 @@ pub mod remove_track {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to remove, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
     }
 
@@ -1987,7 +2122,9 @@ pub mod remove_track {
         session
             .remove_track(track)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         Ok(format!(
             "Removed '{}' — {} tracks remain. Saved.",
             args.track,
@@ -2013,6 +2150,7 @@ pub mod add_clip {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to put the clip on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// What to call the clip. "melody" when left out.
         pub name: Option<String>,
@@ -2035,7 +2173,9 @@ pub mod add_clip {
         let clip = session
             .add_midi_clip(track, name, start, length)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let number = clip_number(session.project(), track, clip).unwrap_or(0);
         Ok(format!(
             "Opened clip [{number}] '{name}' on {} — bars {start_bar}-{}, empty. Saved. \
@@ -2064,6 +2204,7 @@ pub mod notes {
         /// The project to read — an absolute path to a `.auris` file.
         pub project: String,
         /// The track the clip is on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
@@ -2144,10 +2285,13 @@ pub mod edit_notes {
 
     /// Arguments to `edit_notes`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(extend("anyOf" = [{"required": ["add"], "properties": {"add": {"type":"array", "minItems":1}}}, {"required": ["remove"], "properties": {"remove": {"type":"array", "minItems":1}}}]))]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track the clip is on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
@@ -2242,7 +2386,9 @@ pub mod edit_notes {
                 .add_note(id, note)
                 .map_err(|error| error.to_string())?;
         }
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let now = session
             .project()
@@ -2284,6 +2430,7 @@ pub mod accompany {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track the melody is on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// Which clip the melody is, by the 1-based number `describe` shows.
         pub clip: usize,
@@ -2318,7 +2465,9 @@ pub mod accompany {
         let report = session
             .accompany(id, &parts, args.seed.unwrap_or(0))
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
 
         let band: Vec<String> = report
             .parts
@@ -2373,6 +2522,7 @@ pub mod write_lyrics {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The singer track the clip is on, by name as `describe` lists it.
+        /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
@@ -2414,7 +2564,9 @@ pub mod write_lyrics {
         let filled = session
             .write_lyrics(id, &indices, &args.text)
             .map_err(|error| error.to_string())?;
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let mut text = format!(
             "Laid '{}' across {filled} notes starting at [{from}]. Saved.",
             args.text.trim()
@@ -2612,7 +2764,9 @@ pub mod sing {
             .map_err(|error| error.to_string())?;
         // A take names its audio by a pointer in the document; a pointer that only lived in
         // memory would leave the rendered file orphaned on disk.
-        session.save_in_place().map_err(|error| error.to_string())?;
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
         let seed = session
             .project()
             .track(target)
@@ -2681,7 +2835,37 @@ fn opened(path: &str) -> Result<Session, String> {
 }
 
 /// The track called `name`, or a refusal that lists the real ones.
+fn validate_track_name(
+    project: &Project,
+    name: &str,
+    except: Option<TrackId>,
+) -> Result<(), String> {
+    let name = name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case("master") || name.starts_with("id:") {
+        return Err("choose a nonempty track name other than master or an id: selector".into());
+    }
+    if project
+        .tracks
+        .iter()
+        .any(|track| Some(track.id) != except && track.name.trim().eq_ignore_ascii_case(name))
+    {
+        return Err(format!(
+            "a track named '{name}' already exists; choose another name"
+        ));
+    }
+    Ok(())
+}
+
 fn track_by_name<'p>(project: &'p Project, name: &str) -> Result<&'p Track, String> {
+    let name = name.trim();
+    if let Some(id) = name
+        .strip_prefix("id:")
+        .and_then(|id| id.parse::<u64>().ok())
+    {
+        return project
+            .track(TrackId(id))
+            .ok_or_else(|| format!("no track with id {id}; call describe again"));
+    }
     let matches: Vec<(usize, &Track)> = project
         .tracks
         .iter()
@@ -2704,10 +2888,10 @@ fn track_by_name<'p>(project: &'p Project, name: &str) -> Result<&'p Track, Stri
         ambiguous => {
             let names: Vec<String> = ambiguous
                 .iter()
-                .map(|(index, track)| format!("[{}] '{}'", index + 1, track.name))
+                .map(|(_, track)| format!("id:{} '{}'", track.id.0, track.name))
                 .collect();
             Err(format!(
-                "track name '{name}' is ambiguous — it matches {}; rename one before using a by-name tool",
+                "track name '{name}' is ambiguous — it matches {}; pass its id:<number> selector, including to rename_track or remove_track",
                 names.join(", ")
             ))
         }
@@ -2974,14 +3158,18 @@ fn resolve_spec(args: &SpecArgs) -> Result<SongSpec, String> {
 
 /// One rendered file, reported: where it is and what a listener will find in it.
 fn wrote_line(path: &Path, summary: &ExportSummary, settings: &WavExportSettings) -> String {
-    format!(
+    let mut text = format!(
         "Wrote {} — {}, {} ch, {}-bit, peak {:.1} dBFS.\n",
         path.display(),
         Seconds(summary.seconds).format_clock(),
         summary.channels,
         settings.bit_depth.bits(),
         summary.peak_db,
-    )
+    );
+    if summary.peak_db > 0.0 {
+        text.push_str("Warning: the rendered signal exceeds 0 dBFS. Integer WAV output clips; reduce gain before using this export.\n");
+    }
+    text
 }
 
 /// One loudness, spelt for a reader — a part that made no sound says so.
@@ -3107,6 +3295,19 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
         );
     }
 
+    if !args.replace_hand_edits {
+        let edited: Vec<_> = chosen
+            .iter()
+            .filter(|(_, id, _)| session.clip_hand_edited(*id))
+            .map(|(index, _, name)| format!("[{index}] '{name}'"))
+            .collect();
+        if !edited.is_empty() {
+            return Err(format!(
+                "Hand-edited clips: {}. No clips were changed. Set replace_hand_edits: true to replace them, or freeze them first.",
+                edited.join(", ")
+            ));
+        }
+    }
     let mut text = String::new();
     for (index, id, name) in &chosen {
         // Asked before the rewrite, because writing the clip again is exactly what resets
@@ -3136,7 +3337,9 @@ fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
             ));
         }
     }
-    session.save_in_place().map_err(|error| error.to_string())?;
+    session
+        .save_with_checkpoint()
+        .map_err(|error| error.to_string())?;
     text.push_str("Saved. Render again to hear it.");
     Ok(text)
 }
@@ -3295,7 +3498,7 @@ mod tests {
             session.add_effect(Some(probe), "auris.fx.limiter").unwrap();
             let bus = session.add_bus_track("Wash");
             session.add_send(probe, bus).unwrap();
-            session.save_in_place().unwrap();
+            session.save_with_checkpoint().unwrap();
         }
         let read = || {
             mixer::run(&mixer::Args {
@@ -3371,6 +3574,7 @@ mod tests {
         // One section held; the board says a lane took the fader; clear gives it back.
         let hold = |section: Option<&str>, gain_db, clear| {
             section_gain::run(&section_gain::Args {
+                gain_delta_db: None,
                 project: path.clone(),
                 track: "Probe".to_string(),
                 section: section.map(String::from),
@@ -3395,6 +3599,7 @@ mod tests {
         // A boost on the master carries the warning the first model to use this tool needed:
         // that fader sits after the limiter, so nothing catches what it adds.
         let risky = section_gain::run(&section_gain::Args {
+            gain_delta_db: None,
             project: path.clone(),
             track: "master".to_string(),
             section: Some("verse".to_string()),
@@ -3405,6 +3610,7 @@ mod tests {
         .unwrap();
         assert!(risky.contains("not limited"), "{risky}");
         let safe = section_gain::run(&section_gain::Args {
+            gain_delta_db: None,
             project: path.clone(),
             track: "master".to_string(),
             section: Some("verse".to_string()),
@@ -3637,8 +3843,9 @@ mod tests {
 
         let error = track_by_name(&project, "DRUMS").unwrap_err();
         assert!(error.contains("ambiguous"), "{error}");
-        assert!(error.contains("[1] 'Drums'"), "{error}");
-        assert!(error.contains("[2] 'drums'"), "{error}");
+        assert!(error.contains("id:1 'Drums'"), "{error}");
+        assert!(error.contains("id:2 'drums'"), "{error}");
+        assert_eq!(track_by_name(&project, "id:2").unwrap().name, "drums");
         assert!(
             strip_by_name(&project, "Drums")
                 .unwrap_err()
@@ -3862,6 +4069,7 @@ mod tests {
         let before = std::fs::read_to_string(&document).unwrap();
         let take_of_lead = |clip: Option<usize>, seed: Option<u64>| {
             another_take::run(&RegenerateArgs {
+                replace_hand_edits: false,
                 project: document.display().to_string(),
                 track: "lead".to_string(),
                 clip,
@@ -3898,6 +4106,7 @@ mod tests {
         );
 
         let missing = another_take::run(&RegenerateArgs {
+            replace_hand_edits: false,
             project: document.display().to_string(),
             track: "nobody".to_string(),
             clip: None,
@@ -3920,6 +4129,7 @@ mod tests {
 
         let asset_folder = document.parent().unwrap().join("Audio");
         let protected_mix = render::run(&render::Args {
+            range: Default::default(),
             project: document.display().to_string(),
             output: Some(asset_folder.join("source.wav").display().to_string()),
             bit_depth: Some(16),
@@ -3928,6 +4138,7 @@ mod tests {
         .unwrap_err();
         assert!(protected_mix.contains("asset folder"), "{protected_mix}");
         let protected_stems = render::run(&render::Args {
+            range: Default::default(),
             project: document.display().to_string(),
             output: None,
             bit_depth: Some(16),
@@ -3941,6 +4152,7 @@ mod tests {
 
         let wav = root.join("loop.wav");
         let rendered = render::run(&render::Args {
+            range: Default::default(),
             project: document.display().to_string(),
             output: Some(wav.display().to_string()),
             bit_depth: Some(16),

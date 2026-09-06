@@ -432,6 +432,8 @@ pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
 /// rather than dismissing a box and leaving them to give it again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PendingAction {
+    /// Send the agent message after the new document has been saved.
+    AgentSend,
     /// Empty the document.
     NewProject,
     /// Read another document over this one, asking which.
@@ -1171,6 +1173,7 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         match next {
+            PendingAction::AgentSend => self.agent_send(),
             PendingAction::NewProject => self.new_project(),
             PendingAction::OpenProject => self.pick_and_open_project(cx),
             PendingAction::OpenDropped(path) => self.open_project_at(path, cx),

@@ -121,6 +121,21 @@ pub mod architecture {
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
     //!
+    //! [`Session::offset_gain_range`](crate::Session::offset_gain_range) shifts an existing
+    //! envelope, preserving its shape and the values outside the requested range.
+    //! [`Session::render_range_options`](crate::Session::render_range_options) converts a
+    //! timeline selection through the tempo map. The toolbox presents these commands as
+    //! section-relative gain and audition tools. The MCP frontend keeps only transport state:
+    //! a bounded set of immutable WAV resources for `resources/read`. It never interprets a
+    //! resource URI as a filesystem path; reconnecting or eviction expires the old URI.
+    //!
+    //! Availability is also session knowledge: [`Session::playback_readiness`](crate::Session::playback_readiness)
+    //! distinguishes loaded instruments from empty samplers and guide/stale vocals. Shared
+    //! voice discovery reads the same settings as the desktop library. Effect-chain tools call
+    //! the session's routing commands; [`Session::write_automation_points`](crate::Session::write_automation_points)
+    //! validates a whole parameter batch before making one undo step. Authored motif and rhythm
+    //! travel with each clip recipe, so local regeneration keeps those musical choices.
+    //!
     //! # A selection is an argument, never a field
     //!
     //! Several commands mean something different depending on what is selected, and none of them
@@ -1216,6 +1231,22 @@ pub mod singing {
 }
 
 pub mod documents {
+    //! External editors share a saved document, not the window's undo stack. Saving in place
+    //! checks the last disk snapshot and refuses to overwrite another editor's changes.
+    //! [`Session::reload_external_changes`](crate::Session::reload_external_changes) accepts
+    //! the disk version as one undoable edit, retaining the window's previous edits. The agent
+    //! panel collects writes until the end of a turn before accepting them. When local edits
+    //! overlap a turn, accepting the disk version keeps the local version on the undo stack;
+    //! another prompt cannot save over the unresolved disk version.
+    //!
+    //! Headless editing tools call [`Session::save_with_checkpoint`](crate::Session::save_with_checkpoint)
+    //! because their undo stack ends with the process. The preceding document is stored under
+    //! `.auris-history/` in the same project folder, so relative asset references keep their
+    //! meaning. Named checkpoints support comparisons across calls; restoring one is an
+    //! undoable document replacement. Snapshots contain no audio and do not collect assets.
+    //! In-place writers hold `.auris-write.lock` while comparing the disk document with their
+    //! saved base and replacing it, preventing two cooperating writers from losing an edit.
+    //!
     //! What a project is on disk, and how it refers to files it does not contain.
     //!
     //! # A folder, not a file

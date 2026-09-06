@@ -1032,6 +1032,7 @@ version = "0.5.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
+ "base64 0.22.1",
  "env_logger",
  "log",
  "rmcp",
@@ -1108,6 +1109,7 @@ dependencies = [
  "auris-session",
  "schemars 1.2.2",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

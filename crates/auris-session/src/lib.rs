@@ -71,6 +71,7 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
+pub use session::MusicalClipAnalysis;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeReport,
     CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS,
@@ -145,11 +146,13 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
+    pub use crate::session::{PlaybackReadiness, PlaybackState};
     /// General MIDI: the programs a part can ask for, and the kits a drum part can.
     ///
     /// A whole module rather than the type alone, because a picker needs the name table beside
     /// it — a frontend cannot list what it has no list of.
     pub use auris_compose::gm;
+    pub use auris_compose::rhythm::Pattern;
     /// Reads a motif field — `"0 2 4 2"` — the way a specification does, so a prompt that
     /// takes one refuses exactly what the file would refuse.
     pub use auris_compose::spec::parse_motif;
@@ -179,10 +182,11 @@ pub mod prelude {
     };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        ConsonantWidths, EffectSlotId, FadeCurve, Fall, MidiClip, MixerStrip, Note, NoteTransform,
-        Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint, SectionSpan,
-        SendId, SingerTrack, SoundFontId, SoundFontRef, SourceId, Subdivision, Track, TrackId,
-        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
+        ConsonantWidths, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip, MixerStrip, Note,
+        NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop, SectionMap, SectionPoint,
+        SectionSpan, SendId, SingerTrack, SoundFontId, SoundFontRef, SourceId, Subdivision, Track,
+        TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes,
+        sounding_length,
     };
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
     /// settings make.
