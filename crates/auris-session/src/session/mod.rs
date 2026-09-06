@@ -147,12 +147,11 @@ pub struct SessionOptions {
     /// composer wrote and nothing else: the tests that are *about* those numbers, and anything
     /// that cannot afford a render per part.
     pub balance_composed: bool,
-    /// Write the document back over itself as it changes, once it has somewhere to be written.
+    /// Keep a recovery snapshot in private working storage as the document changes.
     ///
     /// On by default, and off for a headless session: a batch tool holds a document for a few
-    /// hundred milliseconds and saves it once at the end on purpose, and a background write in
-    /// the middle of that would be a file appearing that nobody asked for. See
-    /// [`should_autosave`] for what the feature costs when it is on.
+    /// hundred milliseconds and saves it once at the end on purpose, and a background snapshot
+    /// in the middle would be work it does not use. See [`should_autosave`] for the policy.
     pub autosave: bool,
     /// Load the Japanese dictionary the application ships with, when one is installed.
     ///
@@ -313,13 +312,18 @@ pub struct Session {
     last_record: Option<(Edit, Instant)>,
 
     path: Option<PathBuf>,
+    /// Private working storage for unsaved assets and the autosave recovery snapshot.
+    ///
+    /// This stays separate from `path`: generated audio has somewhere to live from the first
+    /// edit, while Save and the title bar still know no permanent destination was chosen.
+    work_dir: tempfile::TempDir,
     dirty: bool,
     /// The exact document state most recently read from or written to disk.
     saved_project: Project,
     /// The saved state with subsequently available built-in fonts, for undo's dirty comparison.
     /// The exact disk snapshot stays separate so these additions cannot look like another writer.
     saved_edit_project: Project,
-    /// Whether the document is written back over itself as it changes. See [`should_autosave`].
+    /// Whether a recovery snapshot is kept as the document changes. See [`should_autosave`].
     autosave: bool,
     /// When the document was last written, by any means. The autosave clock runs from here.
     last_save: Instant,
@@ -515,6 +519,10 @@ impl Session {
     /// Never fails for want of audio hardware: the engine falls back to running silently, so a
     /// machine with no output device still edits and exports.
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
+        let work_dir = tempfile::Builder::new()
+            .prefix("auris-studio-")
+            .tempdir()
+            .map_err(|error| auris_io::IoError::from_fs(&std::env::temp_dir(), error))?;
         let fonts = SoundFontBank::shared();
         let registry = default_registry(Arc::clone(&fonts));
         let project = Project::new("Untitled", options.sample_rate);
@@ -572,6 +580,7 @@ impl Session {
             meter_is_stale: false,
             last_record: None,
             path: None,
+            work_dir,
             dirty: false,
             autosave: options.autosave,
             last_save: Instant::now(),

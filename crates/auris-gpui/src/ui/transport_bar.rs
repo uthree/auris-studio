@@ -990,9 +990,8 @@ impl AurisApp {
     /// ended while the song played on would leave the playhead somewhere other than where the
     /// clip that just appeared is.
     ///
-    /// A project with nowhere to write gets the save dialog rather than a refusal. "Recording
-    /// needs a project folder" is true and is a dead end; the answer to it is a question, and a
-    /// button that asks it is a button that works the first time it is pressed.
+    /// An unsaved project records into its private working folder; Save As collects the take into
+    /// the permanent project later.
     pub(crate) fn toggle_recording(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
         if self.session.is_recording() {
             self.finish_recording();

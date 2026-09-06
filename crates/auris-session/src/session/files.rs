@@ -199,12 +199,17 @@ impl Session {
         Ok(auris_io::write_midi_file(path, &self.project)?)
     }
 
-    /// The folder holding the current document, which relative asset paths resolve against.
+    /// The folder relative asset paths resolve against.
     ///
-    /// `None` for a project that has never been saved — and one of those has collected nothing,
-    /// so every asset it names is still external and resolves without help.
+    /// Before the user chooses a permanent project path this is the session's private working
+    /// folder. Generated vocals, recordings and imported assets can therefore be used immediately;
+    /// [`Self::save_as`] later collects them into the chosen project folder. Use [`Self::path`]
+    /// when the distinction between a saved and an unsaved document matters.
     pub fn project_folder(&self) -> Option<&Path> {
-        self.path.as_deref().and_then(auris_io::project_folder)
+        self.path
+            .as_deref()
+            .and_then(auris_io::project_folder)
+            .or_else(|| Some(self.work_dir.path()))
     }
 
     /// The build that saved the open document, when it was not this one.
@@ -477,7 +482,7 @@ impl Session {
         // Each copy below finds the folder for itself. This is here so that a project which has
         // never been saved is told so, rather than being handed a cheerful `Ok(0)` for having
         // collected nothing into nowhere.
-        if self.project_folder().is_none() {
+        if self.path.is_none() {
             return Err(SessionError::NoPath);
         }
 
@@ -576,7 +581,10 @@ impl Session {
         self.record_source_size(source, path);
         // A failure to copy is not a failure to import: the audio decoded, and referring to it
         // where it lies is exactly what an unsaved project does anyway.
-        let has_folder = self.project_folder().is_some();
+        // The private working folder is for files this session creates. Imported audio remains
+        // external until the user has chosen a permanent project folder, so Save As can apply the
+        // normal collection policy and plain `save` keeps its deliberately low-level contract.
+        let has_folder = self.path.is_some();
         if has_folder && let Err(error) = self.collect_source(source, path) {
             log::warn!("could not collect {}: {error}", path.display());
         }

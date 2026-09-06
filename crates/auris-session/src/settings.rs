@@ -202,12 +202,10 @@ pub struct Settings {
     /// installation, kept where every frontend can read it — and because a second frontend with a
     /// window of its own should find it already answered.
     pub language: Option<Language>,
-    /// Write the document back over itself as it changes, once it has been saved somewhere.
+    /// Keep a recovery snapshot in private working storage as the document changes.
     ///
-    /// On unless turned off. What it costs when it is on — "close without saving" stops being a
-    /// way to undo an afternoon — is set out beside
-    /// [`should_autosave`](crate::session::should_autosave), and is the reason this is a setting
-    /// rather than simply how the application behaves.
+    /// On unless turned off. The snapshot never replaces the user-chosen project file; see
+    /// [`should_autosave`](crate::session::should_autosave).
     pub autosave: bool,
     /// Snap a note's duration to the editing grid while its right edge is dragged.
     ///

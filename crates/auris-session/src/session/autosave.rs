@@ -1,23 +1,12 @@
-//! Writing the document back over itself while somebody is working on it.
+//! Keeping a recovery snapshot while somebody is working on a document.
 //!
 //! # What this does and does not protect
 //!
-//! It writes the *real* file, not a recovery copy beside it. That is a trade with a name: the
-//! document on disk is never more than [`AUTOSAVE_INTERVAL`] behind what is on screen, and in
-//! exchange **"close without saving" stops being a way to undo an afternoon**. Undo still is, for
-//! as long as the window is open.
-//!
-//! A recovery file instead would have kept both, at the price of a discovery flow — a dialog on
-//! the next launch asking whether to adopt the copy, which is a thing people click through
-//! without reading and then wonder where their work went. One file that is always current is
-//! easier to reason about than two that disagree, so that is what this is, and the setting to
-//! turn it off is one click away for anybody who wants the old bargain back.
+//! It writes a recovery copy in the session's private working folder. The file the user opened or
+//! explicitly saved is never touched by autosave, so closing without saving keeps its ordinary
+//! meaning and another process editing that file cannot be overwritten by a background tick.
 //!
 //! # What it will not do
-//!
-//! **It never invents a path.** A document that has never been saved has no folder, and choosing
-//! one on somebody's behalf means their song is somewhere they did not put it. Saving that one is
-//! still a question, and it is the frontend that asks it.
 //!
 //! **It never fires mid-gesture.** A drag is one undo step and, until it ends, a document caught
 //! halfway through a change nobody has finished making.
@@ -51,7 +40,10 @@ pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(30);
 pub struct AutosaveState {
     /// Whether the user has left the feature on.
     pub enabled: bool,
-    /// Whether the document has somewhere to be written.
+    /// Whether the document has a permanent user-chosen path.
+    ///
+    /// This is reported for a frontend explaining the state, but is not an autosave condition:
+    /// every session has private working storage.
     pub has_path: bool,
     /// Whether it has changed since it was last written.
     pub dirty: bool,
@@ -64,21 +56,16 @@ pub struct AutosaveState {
     pub since_last_save: Duration,
 }
 
-/// Whether the document should be written back over itself now.
+/// Whether a recovery snapshot should be written now.
 pub fn should_autosave(state: AutosaveState) -> bool {
     state.enabled
-        && state.has_path
         && state.dirty
         && !state.gesture_open
-        // Another writer's version is on disk. Automatically writing over it would silently
-        // destroy work this window never saw. In-place saves refuse too; accepting the disk
-        // changes or saving to another project resolves the disagreement.
-        && !state.overwritten
         && state.since_last_save >= AUTOSAVE_INTERVAL
 }
 
 impl Session {
-    /// Whether the document is being written back over itself as it changes.
+    /// Whether the document is being snapshotted as it changes.
     pub fn autosave_enabled(&self) -> bool {
         self.autosave
     }
@@ -103,7 +90,7 @@ impl Session {
         }
     }
 
-    /// Writes the document back over itself if the policy says it is time.
+    /// Writes a recovery snapshot if the policy says it is time.
     ///
     /// `None` means nothing was attempted, which is the answer almost every time it is asked.
     /// Call it from whatever the frontend already runs each frame — it is a handful of
@@ -119,7 +106,40 @@ impl Session {
         // Stamped whether or not the write succeeds: a disk that is refusing should be retried at
         // the same interval as everything else, not on every frame.
         self.last_save = Instant::now();
-        Some(self.save_in_place())
+        Some(self.save_autosave())
+    }
+
+    /// The private recovery document autosave writes.
+    pub fn autosave_path(&self) -> std::path::PathBuf {
+        self.work_dir.path().join("Autosave.auris")
+    }
+
+    /// Writes the current project to the private cache without changing saved/dirty state.
+    ///
+    /// An inside asset from a saved project belongs beside the real document, not beside this
+    /// snapshot. Its recovery reference is made absolute in the clone so opening the snapshot
+    /// still finds the audio without copying every take on each autosave.
+    fn save_autosave(&mut self) -> Result<(), SessionError> {
+        self.collect_hosted_state();
+        let mut recovery = self.project.clone();
+        if let Some(folder) = self.path.as_deref().and_then(auris_io::project_folder) {
+            for source in recovery.audio_sources.values_mut() {
+                if source.path.is_inside()
+                    && let Some(resolved) = source.path.resolve(Some(folder))
+                {
+                    source.path = auris_core::AssetPath::external(resolved);
+                }
+            }
+            for font in recovery.soundfonts.values_mut() {
+                if font.path.is_inside()
+                    && let Some(resolved) = font.path.resolve(Some(folder))
+                {
+                    font.path = auris_core::AssetPath::external(resolved);
+                }
+            }
+        }
+        auris_io::save_project(&self.autosave_path(), &mut recovery)?;
+        Ok(())
     }
 
     /// Restarts the autosave clock. Called by every path that writes the document — and by
@@ -130,6 +150,9 @@ impl Session {
     /// another writer — see [`Session::externally_modified`].
     pub(super) fn mark_saved(&mut self) {
         self.last_save = Instant::now();
+        // The real document and memory agree again (or a fresh document was deliberately
+        // started), so an older recovery snapshot must not be mistaken for newer work.
+        let _ = std::fs::remove_file(self.autosave_path());
         self.saved_project = self.project.clone();
         self.saved_edit_project = self.project.clone();
         self.disk_stamp = self
@@ -180,10 +203,8 @@ mod tests {
     }
 
     #[test]
-    fn another_writers_version_is_never_silently_overwritten() {
-        // The MCP door, a sync service — whoever wrote it, autosave must not destroy it.
-        // Saving over it is a decision, and ⌘S is where decisions are made.
-        assert!(!should_autosave(AutosaveState {
+    fn another_writers_version_does_not_block_the_separate_snapshot() {
+        assert!(should_autosave(AutosaveState {
             overwritten: true,
             ..ready()
         }));
@@ -195,13 +216,33 @@ mod tests {
     }
 
     #[test]
-    fn a_document_with_nowhere_to_go_is_never_written() {
-        // The one that matters most: choosing a folder on somebody's behalf puts their song
-        // somewhere they did not put it, and no interval makes that a good idea.
-        assert!(!should_autosave(AutosaveState {
+    fn an_unsaved_document_is_snapshotted_without_choosing_its_permanent_path() {
+        assert!(should_autosave(AutosaveState {
             has_path: false,
             ..ready()
         }));
+    }
+
+    #[test]
+    fn autosave_uses_the_cache_and_keeps_the_document_dirty() {
+        let root = std::env::temp_dir().join(format!(
+            "auris-session-autosave-destination-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut session =
+            crate::Session::new(crate::SessionOptions::headless()).expect("a headless session");
+        let saved = session.save_as(&root.join("Song.auris")).unwrap().document;
+        session.add_default_instrument_track("Changed").unwrap();
+
+        let original = std::fs::read(&saved).unwrap();
+        session.save_autosave().unwrap();
+
+        assert_eq!(std::fs::read(&saved).unwrap(), original);
+        assert!(session.autosave_path().is_file());
+        assert_ne!(session.autosave_path(), saved);
+        assert!(session.is_dirty());
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

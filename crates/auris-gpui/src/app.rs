@@ -1526,17 +1526,15 @@ impl AurisApp {
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
                         // Separate from `poll` on purpose: that is housekeeping and this writes
-                        // to somebody's disk. A success says nothing — the title bar's unsaved
-                        // mark going out is the whole of the feedback, and a status line
-                        // announcing a save every half minute is one that never holds anything
-                        // else. A failure is worth the interruption every time.
+                        // to disk. A success says nothing: it is a private recovery snapshot, and
+                        // announcing one every half minute would drown out useful status. A
+                        // failure is worth the interruption.
                         if let Some(Err(error)) = this.session.autosave() {
                             let line = this.failure(Key::CmdSave, &error);
                             this.set_failed_status(line);
                         }
-                        // Beside the autosave on purpose: the two are halves of one story —
-                        // this notices another writer at the file, and the autosave policy
-                        // refuses to write over that writer while it stands unresolved.
+                        // Beside autosave on purpose: this notices another writer at the real
+                        // file. The recovery snapshot is separate and never overwrites it.
                         this.watch_disk(cx);
                         // Also here rather than in a command, because a monitor breaking up
                         // happens *between* commands: without this the only evidence is a noise
