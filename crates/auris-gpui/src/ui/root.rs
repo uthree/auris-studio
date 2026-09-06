@@ -168,7 +168,7 @@ impl Render for AurisApp {
             .size_full()
             .bg(theme.background)
             .text_color(theme.text)
-            .font(crate::theme::ui_font())
+            .font(theme.font.clone())
             .text_sm()
             .on_action(cx.listener(Self::on_toggle_play))
             .on_action(cx.listener(Self::on_return_to_zero))

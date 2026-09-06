@@ -270,6 +270,11 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            // Other window tests save dock visibility in the shared test config directory.
+            // This gesture needs the inspector open in its usual position and size.
+            this.panels = crate::dock::PanelLayout::default();
+        });
         for measured_note in [0, 35] {
             let (track, clip, original, map) = app.update(cx, |this, _| {
                 let track = this

@@ -671,7 +671,7 @@ fn readout(label: &str, value: &str, theme: &Theme) -> impl IntoElement + use<> 
         .child(
             div()
                 .text_xs()
-                .text_color(theme.accent)
+                .text_color(theme.accent_text)
                 .child(value.to_string()),
         )
 }

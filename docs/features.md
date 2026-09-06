@@ -1153,6 +1153,17 @@ what is currently on screen.
 
 ## Settings, where dotfiles can reach them
 
+Settings uses dropdowns for mutually exclusive choices, including language, pointer gestures,
+audio devices and export formats. Open a selector with Enter or Space, move through its options
+with the arrow keys, and press Enter to apply or Escape to cancel. Refresh devices on the Audio
+page after connecting an interface.
+
+The General page also offers an interface font picker and a colour theme editor. Choose an
+installed font or return to the system default; the change applies to all application windows,
+with fallback fonts retained for Japanese and other scripts. Create a theme from an existing
+palette, give it a name, and enter its accent colour as `#RRGGBB`. The preview leaves the applied
+theme alone until **Save and apply**. Saved custom themes can be selected and edited here.
+
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
 rather than `~/Library/Application Support` and `%APPDATA%`:
 
@@ -1161,7 +1172,7 @@ rather than `~/Library/Application Support` and `%APPDATA%`:
   settings.json       audio device, sample rate, buffer size, interface language
   progressions.json   the chord progressions you have kept
   keymap.json         key bindings you have changed from the defaults
-  appearance.json     the chosen colour scheme
+  appearance.json     selected and custom colour themes, interface font
   layout.json         where each panel is docked, and how large each dock is
 ```
 

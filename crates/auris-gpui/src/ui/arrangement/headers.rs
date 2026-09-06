@@ -361,7 +361,7 @@ impl AurisApp {
                                                 .truncate()
                                                 .tooltip(label_tip)
                                                 .text_color(if singing {
-                                                    theme.accent
+                                                    theme.accent_text
                                                 } else if behind {
                                                     theme.record
                                                 } else {

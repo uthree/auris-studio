@@ -47,7 +47,7 @@ impl Render for Tooltip {
             .border_1()
             .border_color(theme.border)
             .shadow_lg()
-            .font(crate::theme::ui_font())
+            .font(theme.font.clone())
             .text_xs()
             .text_color(theme.text)
             .child(self.label.clone())

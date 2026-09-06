@@ -68,7 +68,7 @@ impl AurisApp {
                     .id("soundfont-download")
                     .max_w(px(340.0))
                     .truncate()
-                    .text_color(theme.accent)
+                    .text_color(theme.accent_text)
                     .child(download.message(self.language()))
             }))
             // The standing offer when another writer changed the file under unsaved work:
@@ -128,7 +128,7 @@ impl AurisApp {
                 .px_1()
                 .rounded_sm()
                 .bg(theme.surface_sunken)
-                .text_color(theme.accent)
+                .text_color(theme.accent_text)
                 .child(format!(
                     "{} · {} · {velocity}{wheel}",
                     self.t(Key::CmdMusicalTyping),

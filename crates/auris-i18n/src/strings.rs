@@ -746,7 +746,26 @@ strings! {
     MoodFunky { en: "Funky", ja: "ファンキー" }
 
     // ------------------------------------------------------------------ appearance
-    AppearanceHeading { en: "Colour scheme", ja: "カラースキーム" }
+    AppearanceHeading { en: "Colour theme", ja: "カラーテーマ" }
+    SettingUnavailable { en: "Unavailable", ja: "利用できません" }
+    RefreshAudioDevices { en: "Refresh devices", ja: "デバイスを再読み込み" }
+    CreateTheme { en: "Create theme…", ja: "テーマを作成…" }
+    EditTheme { en: "Edit theme…", ja: "テーマを編集…" }
+    ThemeName { en: "Theme name", ja: "テーマ名" }
+    ThemeBase { en: "Base theme", ja: "元にするテーマ" }
+    ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
+    ThemePreview { en: "Preview", ja: "プレビュー" }
+    ThemePreviewText { en: "Track · Piano · Settings", ja: "トラック・ピアノ・設定" }
+    ThemeSave { en: "Save and apply", ja: "保存して適用" }
+    ThemeNameRequired { en: "Enter a theme name (up to 80 characters).", ja: "テーマ名を80文字以内で入力してください。" }
+    ThemeNameExists { en: "A theme with this name already exists.", ja: "同じ名前のテーマがすでにあります。" }
+    ThemeAccentInvalid { en: "Enter a colour as six hexadecimal digits, for example #60A5FA.", ja: "色は #60A5FA のように6桁の16進数で入力してください。" }
+    ThemeInvalid { en: "This palette cannot be used. Choose another base theme.", ja: "この配色は使用できません。元にするテーマを変更してください。" }
+    UiFont { en: "Interface font", ja: "UIフォント" }
+    UiFontDefault { en: "System default", ja: "システム標準" }
+    UiFontNote { en: "Applies immediately to every window. Missing characters use a fallback font.", ja: "すべてのウィンドウにすぐ反映されます。表示できない文字には代替フォントを使用します。" }
+    AppearanceSaved { en: "Appearance saved", ja: "外観設定を保存しました" }
+    AppearanceSaveFailed { en: "Applied for this session, but could not save appearance settings", ja: "外観は変更されましたが、設定を保存できませんでした" }
 
     // ------------------------------------------------------------------ command palette
     PaletteNothingMatches { en: "No command matches", ja: "該当するコマンドがありません" }

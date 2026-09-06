@@ -22,7 +22,7 @@ use gpui::{
 
 use crate::actions::{BINDABLE, Bindable, menu_keystroke};
 use crate::app::AurisApp;
-use crate::theme::{Metrics, SCHEMES, Scheme, Theme};
+use crate::theme::{Metrics, SCHEMES, Theme};
 use crate::ui::text_field::{KeyEffect, TextField};
 
 /// What running one row of the palette does.
@@ -32,12 +32,12 @@ use crate::ui::text_field::{KeyEffect, TextField};
 /// a colour scheme, a grid division, a meter, a language. An action per value would mean four
 /// entries in a rebindable table for four things nobody binds a key to, and a settings window is
 /// a long way to go to set the grid to a sixteenth.
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PaletteCommand {
     /// One of the bindable actions, dispatched exactly as its keystroke would be.
     Action(&'static Bindable),
     /// Repaint the window in a colour scheme.
-    Scheme(&'static Scheme),
+    Scheme(String),
     /// Set the editing grid to a division.
     Grid(Ticks),
     /// Set the meter of the stretch the playhead is in.
@@ -173,7 +173,7 @@ pub fn entries(
         english: english_haystack(language, Key::Signature, &signature.to_string()),
     }));
     rows.extend(SCHEMES.iter().map(|scheme| PaletteEntry {
-        command: PaletteCommand::Scheme(scheme),
+        command: PaletteCommand::Scheme(scheme.id.to_owned()),
         group: Key::AppearanceHeading.get(language),
         label: scheme.name.into(),
         keystroke: None,
@@ -309,14 +309,31 @@ impl AurisApp {
 
     /// Every command the palette offers, with the keystrokes actually bound to them.
     pub(crate) fn palette_entries(&self) -> Vec<PaletteEntry> {
-        entries(self.language(), |command| {
+        let mut rows = entries(self.language(), |command| {
             // Empty for a command the user has unbound, which the palette shows as a row with no
             // keystroke beside it — the command is still there to be run, it just has no key.
             self.keymap
                 .keystroke(command)
                 .unwrap_or_default()
                 .to_string()
-        })
+        });
+        rows.extend(
+            self.appearance
+                .custom_schemes
+                .iter()
+                .map(|scheme| PaletteEntry {
+                    command: PaletteCommand::Scheme(scheme.id.clone()),
+                    group: Key::AppearanceHeading.get(self.language()),
+                    label: scheme.name.clone().into(),
+                    keystroke: None,
+                    english: english_haystack(
+                        self.language(),
+                        Key::AppearanceHeading,
+                        &scheme.name,
+                    ),
+                }),
+        );
+        rows
     }
 
     /// Runs one command and closes the palette.
@@ -333,7 +350,7 @@ impl AurisApp {
         self.close_palette();
         match command {
             PaletteCommand::Action(action) => window.dispatch_action(action.action(), cx),
-            PaletteCommand::Scheme(scheme) => self.apply_scheme(scheme.id, cx),
+            PaletteCommand::Scheme(id) => self.apply_scheme(&id, cx),
             PaletteCommand::Grid(ticks) => self.session.set_grid(ticks),
             // The stretch the playhead is in, which is what the transport's own field shows and
             // what its list turns. Writing a change somewhere else needs a bar to aim at, and the
@@ -428,7 +445,7 @@ impl AurisApp {
         let entries = self.palette_entries();
         matches(&entries, palette.field.content())
             .get(palette.selected)
-            .map(|index| entries[*index].command)
+            .map(|index| entries[*index].command.clone())
     }
 
     /// Draws the palette over everything else.
@@ -448,7 +465,7 @@ impl AurisApp {
             .enumerate()
             .map(|(offset, index)| {
                 let entry = &entries[*index];
-                let command = entry.command;
+                let command = entry.command.clone();
                 let lit = window.start + offset == selected;
                 div()
                     .id(("palette-row", *index))
@@ -488,7 +505,7 @@ impl AurisApp {
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                            this.run_palette_command(command, window, cx);
+                            this.run_palette_command(command.clone(), window, cx);
                             cx.stop_propagation();
                             cx.notify();
                         }),
@@ -645,7 +662,7 @@ mod tests {
         let all = entries(Language::English, |command| {
             command.default.unwrap_or_default().to_string()
         });
-        let commands: Vec<PaletteCommand> = all.iter().map(|entry| entry.command).collect();
+        let commands: Vec<PaletteCommand> = all.iter().map(|entry| entry.command.clone()).collect();
 
         for (_, ticks) in crate::ui::transport_bar::GRID_CHOICES {
             assert!(
@@ -660,7 +677,7 @@ mod tests {
             assert!(commands.contains(&PaletteCommand::Language(language)));
         }
         for scheme in SCHEMES {
-            assert!(commands.contains(&PaletteCommand::Scheme(scheme)));
+            assert!(commands.contains(&PaletteCommand::Scheme(scheme.id.to_owned())));
         }
     }
 
@@ -671,7 +688,7 @@ mod tests {
         let all = entries(Language::English, |command| {
             command.default.unwrap_or_default().to_string()
         });
-        let first = |query: &str| all[matches(&all, query)[0]].command;
+        let first = |query: &str| all[matches(&all, query)[0]].command.clone();
 
         assert_eq!(
             first("6/8"),
@@ -703,7 +720,8 @@ mod tests {
         let english = entries(Language::English, |command| {
             command.default.unwrap_or_default().to_string()
         });
-        let first = |rows: &[PaletteEntry], query: &str| rows[matches(rows, query)[0]].command;
+        let first =
+            |rows: &[PaletteEntry], query: &str| rows[matches(rows, query)[0]].command.clone();
 
         for query in ["save", "undo", "mixer", "1/16", "6/8"] {
             assert_eq!(
@@ -742,7 +760,7 @@ mod tests {
             });
             let found: Vec<PaletteCommand> = matches(&rows, "language")
                 .iter()
-                .map(|index| rows[*index].command)
+                .map(|index| rows[*index].command.clone())
                 .collect();
             for choice in Language::ALL {
                 assert!(

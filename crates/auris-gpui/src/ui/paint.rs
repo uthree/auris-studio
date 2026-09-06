@@ -413,7 +413,7 @@ pub fn ruler(
                     point(x + px(8.0) + width, bounds.origin.y + px(6.0)),
                     span.signature.to_string(),
                     px(10.0),
-                    theme.accent,
+                    theme.accent_text,
                 );
             }
         }
@@ -443,7 +443,7 @@ pub fn ruler(
                 point(x + px(4.0), marker_top + px(1.0)),
                 format_bpm(change.bpm),
                 px(8.0),
-                theme.accent,
+                theme.accent_text,
             );
         }
     }
