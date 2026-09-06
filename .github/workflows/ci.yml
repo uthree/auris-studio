@@ -85,12 +85,7 @@ jobs:
 
       - name: Prepare LLVM for ASIO
         shell: pwsh
-        run: |
-          if (-not (Test-Path 'C:\Program Files\LLVM\bin\libclang.dll')) {
-            choco install llvm --yes --no-progress
-            if ($LASTEXITCODE -ne 0) { throw 'LLVM installation failed' }
-          }
-          'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> $env:GITHUB_ENV
+        run: ./tools/setup-windows.ps1 -InstallLlvm
 
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy

@@ -85,10 +85,25 @@ Training itself wants a card; everything else here is content on the CPU.
 ### Windows
 
 Build with the Rust MSVC toolchain, Visual Studio C++ Build Tools, and LLVM/Clang.
-Set `LIBCLANG_PATH` to LLVM's `bin` directory (normally `C:\Program Files\LLVM\bin`).
+From a Visual Studio developer PowerShell terminal, prepare LLVM and then build:
+
+```powershell
+.\tools\setup-windows.ps1 -InstallLlvm
+cargo build --locked
+```
+
+The setup script uses an existing LLVM installation or installs it with Chocolatey or WinGet.
+It sets `LIBCLANG_PATH` for the current PowerShell session; run it again when opening a new
+terminal. For a custom installation, use `-LlvmBin 'D:\LLVM\bin'`. CI and release builds use
+the same script.
+
+An `asio-sys` build failure reporting `Unable to find libclang` means this build dependency
+is missing or `LIBCLANG_PATH` points to the wrong directory. The Visual Studio C++ workload
+alone does not provide the `libclang.dll` required by [bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html),
+and Rust's bundled LLVM does not replace this dependency.
+
 Windows builds include WASAPI and ASIO. CPAL's ASIO dependency downloads the ASIO SDK on
 the first build; set `CPAL_ASIO_DIR` to an extracted SDK directory to use a local copy.
-Run Cargo from a Visual Studio developer terminal. CI and release builds set up LLVM too.
 
 In Settings → Audio, select the audio driver, device, sample rate and requested buffer size.
 WASAPI uses shared mode and requests elevated audio thread priority. ASIO requires an installed
