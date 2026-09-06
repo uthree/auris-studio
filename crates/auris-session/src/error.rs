@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// Offline music recognition failed or its source was edited before application.
+    #[error("music analysis: {0}")]
+    MusicAnalysis(String),
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),

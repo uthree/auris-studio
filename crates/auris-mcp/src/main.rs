@@ -106,6 +106,30 @@ impl AurisMcp {
         blocking(move || toolbox::analyze_music::run(&args)).await
     }
 
+    /// Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint.
+    #[tool]
+    async fn analyze_chords(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_chords::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_chords::run(&args)).await
+    }
+    /// Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments.
+    #[tool]
+    async fn analyze_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_audio::run(&args)).await
+    }
+    /// Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved.
+    #[tool]
+    async fn transcribe_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::transcribe_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::transcribe_audio::run(&args)).await
+    }
     /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
     #[tool]
     async fn inspect_composition(
@@ -549,6 +573,18 @@ mod tests {
         };
         let expected: std::collections::BTreeMap<&str, &str> = [
             (
+                toolbox::analyze_chords::NAME,
+                toolbox::analyze_chords::DESCRIPTION,
+            ),
+            (
+                toolbox::analyze_audio::NAME,
+                toolbox::analyze_audio::DESCRIPTION,
+            ),
+            (
+                toolbox::transcribe_audio::NAME,
+                toolbox::transcribe_audio::DESCRIPTION,
+            ),
+            (
                 toolbox::capabilities::NAME,
                 toolbox::capabilities::DESCRIPTION,
             ),
@@ -622,7 +658,7 @@ mod tests {
         assert_eq!(
             served.len(),
             expected.len(),
-            "thirty-one tools at this door"
+            "every served tool has a shared toolbox description"
         );
         for tool in served {
             let description = tool.description.as_deref().unwrap_or_default();

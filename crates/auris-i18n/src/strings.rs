@@ -1022,6 +1022,35 @@ strings! {
     CountIn { en: "Count-In", ja: "カウントイン" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
+    MenuAnalyzeChords { en: "Analyze Written Chords", ja: "ノーツからコードを解析" }
+    MenuAnalyzeAllChords { en: "Analyze Chords across Tracks", ja: "全トラックのコードを解析" }
+    MenuAnalyzeAudio { en: "Analyze Audio BPM / Chords", ja: "音声のBPM・コードを解析" }
+    MenuTranscribeAudio { en: "Transcribe Isolated Melody", ja: "単音の音声を採譜" }
+    AnalysisTitle { en: "Music Analysis", ja: "音楽分析" }
+    AnalysisStale { en: "The source or document changed. Run analysis again.", ja: "音声または曲が変更されました。もう一度解析してください。" }
+    AnalysisScores { en: "Scores measure agreement, not probability. Review alternatives before applying.", ja: "数値は一致度で、正解の確率ではありません。候補を確認してから反映してください。" }
+    AnalysisBeatUnits { en: "Positions: quarter-note beats from zero", ja: "位置：曲の先頭を0とする四分音符の拍数" }
+    AnalysisSecondUnits { en: "Positions: original source seconds (before stretching)", ja: "位置：元の音声の秒数（伸縮前）" }
+    AnalysisRunning { en: "Analyzing…", ja: "解析中…" }
+    AnalysisReady { en: "Analysis draft ready", ja: "分析結果を確認できます" }
+    AnalysisCancelled { en: "Analysis cancelled", ja: "分析を中止しました" }
+    AnalysisCancel { en: "Cancel Analysis", ja: "分析を中止" }
+    AnalysisView { en: "View Analysis Draft", ja: "分析結果を表示" }
+    AnalysisApplyChords { en: "Apply Recognized Chords", ja: "判定できたコードを反映" }
+    AnalysisCreateNotes { en: "Add Draft as New Note Track", ja: "採譜結果を新しいトラックに追加" }
+    AnalysisSetSourceTempo { en: "Use as Clip Source BPM", ja: "クリップの元BPMに設定" }
+    AnalysisDraft { en: "Transcription", ja: "採譜" }
+    AnalysisUnknown { en: "Uncertain", ja: "判定が曖昧" }
+    AnalysisNoChord { en: "No chord", ja: "コードなし" }
+    AnalysisNoTempo { en: "No reliable periodic beat", ja: "安定した拍を判定できませんでした" }
+    AnalysisMonophonic { en: "Isolated melody only (65–1000 Hz). Notes need review; timing is unquantized.", ja: "単音の旋律向け（65〜1000 Hz）です。音符とタイミングを確認・修正してください。" }
+    AnalysisPreviewLimit { en: "Preview shows the first 256 intervals. CLI reports include every interval.", ja: "先頭256区間を表示しています。CLIの出力には全区間を含みます。" }
+    AnalysisInvalidBeat { en: "Use finite beat positions within 0–1000000.", ja: "拍位置は0〜1000000の有限な数値で指定してください。" }
+    AnalysisSelectTrack { en: "Select one track by its exact name or id:number.", ja: "トラック名またはid:番号で1つのトラックを指定してください。" }
+    AnalysisMidiExists { en: "MIDI output already exists; choose a new path.", ja: "出力先のMIDIファイルが存在します。別の保存先を選んでください。" }
+    CliAnalyzeChordsUsage { en: "Usage: auris analyze-chords <project.auris> [--track <name|id:number>] [--from-beat 0] [--to-beat N] [--window-beats 1] [--apply]", ja: "使い方: auris analyze-chords <project.auris> [--track <name|id:number>] [--from-beat 0] [--to-beat N] [--window-beats 1] [--apply]" }
+    CliAnalyzeAudioUsage { en: "Usage: auris analyze-audio <audio-file>", ja: "使い方: auris analyze-audio <audio-file>" }
+    CliTranscribeAudioUsage { en: "Usage: auris transcribe-audio <audio-file> [--midi <new.mid>] [--project <project.auris> --apply] [--at-beat 0] [--name Transcription]", ja: "使い方: auris transcribe-audio <audio-file> [--midi <new.mid>] [--project <project.auris> --apply] [--at-beat 0] [--name Transcription]" }
     MenuAnalyzeDrums { en: "Analyze Drum Sounds", ja: "ドラムの音を解析" }
     MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "測定したドラム割り当てを使う" }
     MenuUseDrumMapForGeneration { en: "Use Mapping for New Clips Only", ja: "新しく生成するクリップだけに使う" }
@@ -1198,6 +1227,11 @@ COMMANDS
     soundfonts [--manifest]       List the SoundFonts shipped with this build
     dictionary [--manifest]       Show the shipped Japanese dictionary and whether it is installed
     info <project.auris>          Print a project's tracks, clips and duration
+    analyze-chords <project.auris> [--track <name>] [--apply]
+                                  Recognize written-note harmony on the CPU
+    analyze-audio <audio-file>    Estimate BPM and major/minor chords on the CPU
+    transcribe-audio <audio-file> [--midi <new.mid>] [--project <file.auris> --apply]
+                                  Extract an isolated monophonic note draft on the CPU
     render <project.auris> [opts] Render a project to a WAV file
     analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
                                   Measure drum sounds and optionally apply the computed mapping
@@ -1270,6 +1304,11 @@ auris — コマンドラインから使う Auris Studio
     soundfonts [--manifest]       同梱サウンドフォントを一覧表示
     dictionary [--manifest]       同梱日本語辞書とその導入状態を表示
     info <project.auris>          プロジェクトのトラック・クリップ・長さを表示
+    analyze-chords <project.auris> [--track <name>] [--apply]
+                                  ノーツからコードをCPUで推定
+    analyze-audio <audio-file>    音声のBPMとメジャー・マイナーコードをCPUで推定
+    transcribe-audio <audio-file> [--midi <new.mid>] [--project <file.auris> --apply]
+                                  単旋律の音声からノーツの下書きをCPUで作成
     render <project.auris> [opts] プロジェクトを WAV に書き出す
     sing <project.auris> [opts]   シンガートラックを声のモデルで歌わせる
     frames <project.auris> [opts] シンガートラックが声のモデルに渡すフレームを書き出す

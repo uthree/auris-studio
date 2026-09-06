@@ -425,6 +425,9 @@ macro_rules! text_tool {
 }
 
 session_tool!(AnalyzeMusic, analyze_music);
+session_tool!(AnalyzeChords, analyze_chords);
+session_tool!(AnalyzeAudio, analyze_audio);
+session_tool!(TranscribeAudio, transcribe_audio);
 session_tool!(Effects, effects);
 session_tool!(Automation, automation);
 session_tool!(Capabilities, capabilities);
@@ -617,6 +620,9 @@ fn armed(builder: AgentBuilder) -> Agent {
     builder
         .preamble(&preamble())
         .tool(AnalyzeMusic)
+        .tool(AnalyzeChords)
+        .tool(AnalyzeAudio)
+        .tool(TranscribeAudio)
         .tool(InspectComposition)
         .tool(EditHarmony)
         .tool(EditRecipe)
@@ -890,6 +896,28 @@ fn write_destination(tool: &str, args: &str) -> Result<(), String> {
     }
     let parsed: serde_json::Value = serde_json::from_str(args)
         .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
+    if matches!(
+        tool,
+        toolbox::analyze_chords::NAME | toolbox::transcribe_audio::NAME
+    ) {
+        let mut fields = Vec::new();
+        if toolbox::writes_project(tool, &parsed) {
+            fields.push("project");
+        }
+        if tool == toolbox::transcribe_audio::NAME {
+            fields.push("midi_output");
+        }
+        for field in fields {
+            if let Some(path) = parsed.get(field).and_then(|v| v.as_str())
+                && !confined_to_working_directory(Path::new(path))
+            {
+                return Err(format!(
+                    "refused `{field}` outside the agent's working directory: {path}"
+                ));
+            }
+        }
+        return Ok(());
+    }
     if matches!(tool, toolbox::effects::NAME | toolbox::automation::NAME)
         && !toolbox::writes_project(tool, &parsed)
     {
@@ -1996,6 +2024,9 @@ mod tests {
         // The names the loop dispatches on are the toolbox constants, once each.
         let names = [
             AnalyzeMusic::NAME,
+            AnalyzeChords::NAME,
+            AnalyzeAudio::NAME,
+            TranscribeAudio::NAME,
             InspectComposition::NAME,
             EditHarmony::NAME,
             EditRecipe::NAME,
@@ -2049,6 +2080,36 @@ mod tests {
         assert!(fields.contains_key("spec"), "the flattened spec triangle");
         let none = schema::<NoArgs>();
         assert_eq!(none["type"], "object");
+    }
+
+    #[test]
+    fn recognition_writes_stay_in_the_working_directory_and_reads_stay_read_only() {
+        let here = std::env::current_dir().unwrap();
+        let outside = here.parent().unwrap().join("analysis-outside.mid");
+        let args = serde_json::json!({"midi_output": outside, "apply": false});
+        assert!(write_destination(toolbox::transcribe_audio::NAME, &args.to_string()).is_err());
+        assert!(!toolbox::writes_project(
+            toolbox::transcribe_audio::NAME,
+            &args
+        ));
+        let mut args = serde_json::json!({"project": outside, "apply": false});
+        assert!(write_destination(toolbox::analyze_chords::NAME, &args.to_string()).is_ok());
+        assert!(!toolbox::writes_project(
+            toolbox::analyze_chords::NAME,
+            &args
+        ));
+        args["apply"] = true.into();
+        assert!(toolbox::writes_project(
+            toolbox::analyze_chords::NAME,
+            &args
+        ));
+        assert!(write_destination(toolbox::analyze_chords::NAME, &args.to_string()).is_err());
+        args["project"] = here
+            .join("analysis-inside.auris")
+            .display()
+            .to_string()
+            .into();
+        assert!(write_destination(toolbox::analyze_chords::NAME, &args.to_string()).is_ok());
     }
 
     #[test]

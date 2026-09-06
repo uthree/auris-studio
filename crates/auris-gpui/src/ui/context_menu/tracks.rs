@@ -42,6 +42,11 @@ impl AurisApp {
         // whatever is playing it.
         let records = entry.kind.as_audio().is_some();
         let menu = ContextMenu::new(anchor, entry.name.clone())
+            .item_if(
+                entry.kind.holds_notes(),
+                self.t(Key::MenuAnalyzeChords),
+                MenuCommand::AnalyzeChords(Some(track)),
+            )
             .item(
                 self.t(Key::MenuDuplicateTrack),
                 MenuCommand::DuplicateTrack(track),

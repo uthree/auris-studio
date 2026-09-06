@@ -53,6 +53,7 @@ mod notes;
 mod perform;
 mod punch;
 mod readiness;
+mod recognition;
 mod record;
 mod singer;
 mod spectrogram;
@@ -84,6 +85,9 @@ pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
 pub use readiness::{PlaybackReadiness, PlaybackState};
+pub use recognition::{
+    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis, analyze_audio_file,
+};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,

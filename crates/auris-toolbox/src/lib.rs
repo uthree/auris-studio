@@ -43,6 +43,7 @@ mod availability;
 mod drums;
 mod editing;
 mod mix_editing;
+mod recognition;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
@@ -51,6 +52,7 @@ pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
 pub use mix_editing::{automation, effects};
+pub use recognition::{analyze_audio, analyze_chords, transcribe_audio};
 
 /// What a model is told before it has called anything.
 ///
@@ -118,6 +120,10 @@ pub mod search_documentation {
     }
 
     const DOCUMENTS: &[(&str, &str)] = &[
+        (
+            "docs/music-analysis.md",
+            include_str!("../../../docs/music-analysis.md"),
+        ),
         (
             "docs/agent-workflows.md",
             include_str!("../../../docs/agent-workflows.md"),
@@ -334,6 +340,8 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    analyze_chords::NAME,
+    transcribe_audio::NAME,
     analyze_drum_kit::NAME,
     effects::NAME,
     automation::NAME,
@@ -367,7 +375,9 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         return false;
     }
     match tool {
-        analyze_drum_kit::NAME => args.get("apply").and_then(|value| value.as_bool()) == Some(true),
+        analyze_drum_kit::NAME | analyze_chords::NAME | transcribe_audio::NAME => {
+            args.get("apply").and_then(|value| value.as_bool()) == Some(true)
+        }
         effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
         automation::NAME => {
             args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")

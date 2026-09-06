@@ -905,6 +905,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "auris-analysis"
+version = "0.5.0"
+dependencies = [
+ "auris-core",
+ "auris-dsp",
+ "serde",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "auris-clap"
 version = "0.5.0"
 dependencies = [
@@ -1055,6 +1065,7 @@ dependencies = [
 name = "auris-session"
 version = "0.5.0"
 dependencies = [
+ "auris-analysis",
  "auris-clap",
  "auris-compose",
  "auris-core",

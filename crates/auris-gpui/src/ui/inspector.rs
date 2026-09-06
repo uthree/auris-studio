@@ -160,6 +160,7 @@ impl AurisApp {
         // appear for every MIDI clip, because a phrase played by hand takes a swing exactly as
         // a written one does.
         let mut sections: Vec<AnyElement> = self.part_rows(cx);
+        sections.extend(self.music_analysis_rows(cx));
         sections.extend(self.perform_rows(cx));
 
         let Some(track_id) = self.selected_track else {

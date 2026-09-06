@@ -21,6 +21,32 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Recognize written chords on one track, or across all pitched tracks.
+    AnalyzeChords(Option<TrackId>),
+    /// Analyze the trimmed source of an audio clip, optionally extracting a monophonic draft.
+    AnalyzeAudio {
+        /// Source clip to inspect.
+        clip: ClipId,
+        /// Include isolated monophonic note extraction.
+        transcribe: bool,
+    },
+    /// Cancel an offline CPU analysis.
+    CancelMusicAnalysis,
+    /// Display the current draft with its alternatives.
+    ViewMusicAnalysis,
+    /// Explicitly accept supported chord intervals.
+    ApplyMusicChords,
+    /// Accept one alternative in the symbolic chord report.
+    ApplyMusicCandidate {
+        /// Report interval index.
+        segment: usize,
+        /// Alternative within that interval.
+        candidate: usize,
+    },
+    /// Add transcribed notes on a new instrument track.
+    CreateTranscriptionTrack,
+    /// Adopt a candidate as the analyzed clip's source BPM.
+    ApplyMusicTempo(usize),
     /// Measure this instrument using rendered audio, without changing its notes.
     AnalyzeDrums(TrackId),
     /// Store the measured assignment for future generation, preserving every existing clip.
@@ -727,6 +753,23 @@ impl AurisApp {
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
         match command {
+            MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
+            MenuCommand::AnalyzeAudio { clip, transcribe } => {
+                self.begin_audio_analysis(clip, transcribe, cx)
+            }
+            MenuCommand::CancelMusicAnalysis => {
+                self.music_analysis.cancel();
+                self.set_status(self.t(Key::AnalysisCancelled));
+            }
+            MenuCommand::ViewMusicAnalysis => self.view_music_analysis(),
+            MenuCommand::ApplyMusicChords => self.accept_music_analysis(None, false, None),
+            MenuCommand::ApplyMusicCandidate { segment, candidate } => {
+                self.accept_music_analysis(Some((segment, candidate)), false, None)
+            }
+            MenuCommand::CreateTranscriptionTrack => self.accept_music_analysis(None, true, None),
+            MenuCommand::ApplyMusicTempo(candidate) => {
+                self.accept_music_analysis(None, false, Some(candidate))
+            }
             MenuCommand::AnalyzeDrums(track) => self.begin_drum_analysis(track, cx),
             MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),
             MenuCommand::UseDrumMapForGeneration(track) => self.apply_measured_drums(track, false),

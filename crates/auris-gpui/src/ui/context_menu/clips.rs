@@ -77,6 +77,22 @@ impl AurisApp {
         let is_midi = self.session.midi_clip(clip).is_some();
 
         let menu = ContextMenu::new(anchor, name)
+            .item_if(
+                !is_midi,
+                self.t(Key::MenuAnalyzeAudio),
+                MenuCommand::AnalyzeAudio {
+                    clip,
+                    transcribe: false,
+                },
+            )
+            .item_if(
+                !is_midi,
+                self.t(Key::MenuTranscribeAudio),
+                MenuCommand::AnalyzeAudio {
+                    clip,
+                    transcribe: true,
+                },
+            )
             .item(self.t(Key::MenuCut), MenuCommand::CutClips(clip))
             .item(self.t(Key::MenuCopy), MenuCommand::CopyClips(clip))
             .item(self.t(Key::MenuDuplicate), MenuCommand::DuplicateClip(clip))

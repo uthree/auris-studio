@@ -20,6 +20,7 @@ pub mod library;
 pub mod log_panel;
 pub mod menu_bar;
 pub mod mixer;
+pub(crate) mod music_analysis;
 pub mod paint;
 pub mod palette;
 pub mod part;

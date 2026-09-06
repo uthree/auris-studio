@@ -1,0 +1,14 @@
+[package]
+name = "auris-analysis"
+description = "CPU music recognition from notes and PCM audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+auris-core.workspace = true
+auris-dsp.workspace = true
+serde.workspace = true
+thiserror.workspace = true

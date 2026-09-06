@@ -9,6 +9,17 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Offline music recognition
+//!
+//! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events
+//! on the CPU. It depends only on core vocabulary and DSP, and carries no learned model or GPU
+//! runtime. The session collects selected written notes or shares immutable source audio with
+//! a worker job. Analysis returns a draft; applying harmony or placing transcribed notes is an
+//! explicit, undoable session command. Source audio times stay in seconds until placement maps
+//! them through the current tempo map. Cancellation and source/document validation belong to
+//! the job boundary, never to the audio callback. Unknown harmony and silence are distinct,
+//! and candidate scores are matching scores rather than calibrated probabilities.
+//!
 //! # The smallest complete program
 //!
 //! ```

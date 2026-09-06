@@ -1273,6 +1273,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_rendering: bool,
     /// Last acoustic drum measurement, kept separate from accepted musical assignments.
     pub(crate) drum_analysis: Option<auris_session::DrumKitAnalysis>,
+    /// CPU music-analysis jobs and their unapplied draft.
+    pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     /// Cancellation for the currently supervised probe process.
     pub(crate) drum_analysis_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     /// Invalidates results started before a voice or its connection settings changed.
@@ -1475,6 +1477,7 @@ fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>)
 
 impl Drop for AurisApp {
     fn drop(&mut self) {
+        self.music_analysis.cancel();
         if let Some(cancel) = &self.drum_analysis_cancel {
             cancel.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -1606,6 +1609,7 @@ impl AurisApp {
             sung_preview_wish: None,
             sung_preview_rendering: false,
             drum_analysis: None,
+            music_analysis: Default::default(),
             drum_analysis_cancel: None,
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
