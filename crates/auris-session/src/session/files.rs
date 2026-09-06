@@ -30,7 +30,7 @@ use auris_io::{
 use crate::error::SessionError;
 use crate::history::Edit;
 
-use super::{MidiReport, SaveReport, Session};
+use super::{CachedFont, MidiReport, SaveReport, Session};
 
 /// Decodes an audio file to `sample_rate`, without a session and without touching a document.
 ///
@@ -237,6 +237,7 @@ impl Session {
         self.dirty = false;
         self.mark_saved();
         self.saved_project = project.clone();
+        self.saved_edit_project = project.clone();
         // Hosted plugins belong to the document that named them: their slot ids come from it,
         // and this document reusing an id would inherit the old plugin. The loaded *files* are
         // kept — a `.clap` is the same code whichever project is open.
@@ -432,10 +433,13 @@ impl Session {
         }
         self.record(crate::Edit::ExternalChanges);
         let saved = project.clone();
+        self.saved_edit_project = saved.clone();
         let missing = self.replace_external_project(project);
+        let saved_edit = self.saved_edit_project.clone();
         self.mark_saved();
         self.saved_project = saved;
-        self.dirty = self.project != self.saved_project;
+        self.saved_edit_project = saved_edit;
+        self.dirty = self.project != self.saved_edit_project;
         Ok(missing)
     }
 
@@ -625,6 +629,7 @@ impl Session {
                     .add_soundfont(name, AssetPath::external(path), byte_size(path))
             }
         };
+        self.cache_font(path, Arc::clone(&font), false);
         self.fonts.insert(id, font);
         // Fonts the document names but could not find may well be siblings of the one that was
         // just located by hand. Fixing one is then enough to fix the rest.
@@ -635,6 +640,57 @@ impl Session {
         // opened, and which the user has just gone and found — starts sounding again.
         self.invalidate_graph();
         Ok(id)
+    }
+
+    /// Makes an already-read built-in SoundFont available without recording a user edit.
+    ///
+    /// A background download can finish during a gesture or after Undo. Its library reference
+    /// therefore joins every undo/redo snapshot and the gesture's starting state as well as the
+    /// current document. The dirty flag is preserved, and loaded samples are cached for later
+    /// documents. A missing reference with the same filename and size keeps its existing id.
+    pub fn install_shipped_soundfont(&mut self, path: &Path, font: LoadedFont) -> SoundFontId {
+        let id = self.adopt_loaded_shipped_font(path, font.0);
+        self.revision = self.revision.wrapping_add(1);
+        // Rebuild even during a gesture: ending an otherwise unchanged gesture discards its
+        // deferred rebuild, but this font can restore an already-playing track immediately.
+        self.rebuild_graph();
+        id
+    }
+
+    /// Shares library availability with snapshots; the caller decides when to rebuild.
+    fn adopt_loaded_shipped_font(&mut self, path: &Path, font: Arc<SoundFont>) -> SoundFontId {
+        self.cache_font(path, Arc::clone(&font), true);
+        let folder = self.project_folder().map(Path::to_path_buf);
+        let name = font_name(&font, path);
+        let size = byte_size(path);
+
+        // Reserve above every branch, including Redo: the live counter may have gone backwards
+        // with Undo. Probing a clone leaves every document's allocation state untouched.
+        let mut next = self.project.clone().next_effect_slot_id().0;
+        let mut inspect = |project: &mut Project| {
+            next = next.max(project.clone().next_effect_slot_id().0);
+        };
+        self.history.for_each_project_mut(&mut inspect);
+        inspect(&mut self.saved_edit_project);
+        if let Some(transaction) = &mut self.transaction {
+            inspect(&mut transaction.before);
+        }
+        let reserve = SoundFontId(next);
+        let install = |project: &mut Project| {
+            install_library_reference(project, folder.as_deref(), path, &name, size, reserve)
+        };
+        let ids = install(&mut self.project);
+        for id in &ids {
+            self.fonts.insert(*id, Arc::clone(&font));
+        }
+        self.history.for_each_project_mut(|project| {
+            install(project);
+        });
+        install(&mut self.saved_edit_project);
+        if let Some(transaction) = &mut self.transaction {
+            install(&mut transaction.before);
+        }
+        ids[0]
     }
 
     /// Puts the SoundFonts the application ships with into the document, so their sounds are in
@@ -651,8 +707,8 @@ impl Session {
     /// A font already in the document under the same path keeps its id, which is what makes this
     /// safe on a project that was saved with one.
     ///
-    /// Nothing to install is the ordinary answer on a build nobody has run
-    /// `tools/fetch-soundfonts.sh` for, and the application runs on its own instruments.
+    /// Only files already available on disk are read here. A font acquired later arrives through
+    /// [`Self::install_shipped_soundfont`].
     pub(super) fn install_shipped_fonts(&mut self) {
         if !self.shipped_library {
             return;
@@ -673,33 +729,45 @@ impl Session {
 
     /// Reads a font from the shipped library into the document without recording an edit.
     ///
-    /// The samples are cached by path in [`Self::shipped`], so the second call — after a
+    /// The samples are cached by path in `font_cache`, so the second call — after a
     /// **File → New**, which empties the id-keyed bank — costs a map lookup rather than two
     /// hundred megabytes of file.
     fn adopt_font(&mut self, path: &Path) -> Option<SoundFontId> {
         let font = self.shipped_font_data(path)?;
-        let id = match self.project.soundfont_at(self.project_folder(), path) {
-            Some(existing) => existing,
-            None => {
-                let name = font_name(&font, path);
-                self.project
-                    .add_soundfont(name, AssetPath::external(path), byte_size(path))
-            }
-        };
-        self.fonts.insert(id, font);
-        Some(id)
+        Some(self.adopt_loaded_shipped_font(path, font))
     }
 
     /// A shipped font's samples, read from the file the first time and cached after that.
     fn shipped_font_data(&mut self, path: &Path) -> Option<Arc<SoundFont>> {
-        if let Some(font) = self.shipped.get(path) {
-            return Some(Arc::clone(font));
+        if let Some(font) = self.font_cache.get(path) {
+            return Some(Arc::clone(&font.samples));
         }
         let font = load_soundfont(path)
             .inspect_err(|error| log::warn!("{}: {error}", path.display()))
             .ok()?;
-        self.shipped.insert(path.to_path_buf(), Arc::clone(&font));
+        self.cache_font(path, Arc::clone(&font), true);
         Some(font)
+    }
+
+    /// Keeps the file identity alongside an id that a different history branch may reuse.
+    pub(super) fn cache_font(&mut self, path: &Path, samples: Arc<SoundFont>, shipped: bool) {
+        let shipped = shipped || self.font_cache.get(path).is_some_and(|font| font.shipped);
+        self.font_cache
+            .insert(path.to_path_buf(), CachedFont { samples, shipped });
+    }
+
+    /// Restores the current snapshot's font identities before its graph is rebuilt.
+    pub(super) fn restore_cached_fonts(&mut self) {
+        for reference in self.project.soundfonts.values() {
+            let Some(path) = reference.path.resolve(self.project_folder()) else {
+                continue;
+            };
+            if let Some(font) = self.font_cache.get(&path) {
+                self.fonts.insert(reference.id, Arc::clone(&font.samples));
+            } else {
+                self.fonts.remove(reference.id);
+            }
+        }
     }
 
     /// Puts the shipped General MIDI font into a project being built, and returns its new id.
@@ -771,6 +839,45 @@ impl Session {
     }
 }
 
+/// Adds library availability to one snapshot while preserving references the document owns.
+fn install_library_reference(
+    project: &mut Project,
+    folder: Option<&Path>,
+    path: &Path,
+    name: &str,
+    size: u64,
+    reserve: SoundFontId,
+) -> Vec<SoundFontId> {
+    let mut ids = Vec::new();
+    for reference in project.soundfonts.values_mut() {
+        let resolved = reference.path.resolve(folder);
+        if resolved.as_deref() == Some(path) {
+            ids.push(reference.id);
+        } else if reference.path.file_name() == path.file_name()
+            && (reference.byte_size == 0 || reference.byte_size == size)
+            && !resolved.is_some_and(|file| file.is_file())
+        {
+            reference.path = AssetPath::external(path);
+            reference.byte_size = size;
+            ids.push(reference.id);
+        }
+    }
+    if ids.is_empty() {
+        project.soundfonts.insert(
+            reserve,
+            SoundFontRef {
+                id: reserve,
+                name: name.to_string(),
+                path: AssetPath::external(path),
+                byte_size: size,
+            },
+        );
+        project.repair_id_counter();
+        ids.push(reserve);
+    }
+    ids
+}
+
 /// Serialises cooperating writers across processes, including the optimistic disk check.
 fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionError> {
     let folder = path.parent().ok_or(SessionError::NoPath)?;
@@ -792,6 +899,267 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_io::AUDIO_DIR;
+
+    #[test]
+    fn a_downloaded_font_reuses_its_samples_without_becoming_an_edit() {
+        let scratch = Scratch::new("downloaded-font");
+        let path = scratch.soundfont("GM.sf2");
+        let loaded = read_soundfont(&path).unwrap();
+        let samples = Arc::clone(&loaded.0);
+        let mut session = session();
+        let font = session.install_shipped_soundfont(&path, loaded);
+        assert!(!session.is_dirty());
+        assert!(!session.can_undo());
+        assert_eq!(session.soundfont_preset_count(font), 1);
+        assert_eq!(session.soundfont_presets(font)[0].name, "Test Piano");
+        assert!(Arc::ptr_eq(&session.fonts.get(font).unwrap(), &samples));
+
+        // A later document has a fresh id bank, but cannot reread the now-invalid file.
+        std::fs::write(&path, b"not a font").unwrap();
+        session.new_project();
+        let font = session.adopt_font(&path).unwrap();
+        assert!(Arc::ptr_eq(&session.fonts.get(font).unwrap(), &samples));
+        assert!(Arc::ptr_eq(
+            &session.font_cache.get(&path).unwrap().samples,
+            &samples
+        ));
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn a_download_finishing_after_undo_survives_both_branches_and_keeps_the_saved_state_clean() {
+        let scratch = Scratch::new("download-after-undo");
+        let path = scratch.soundfont("GM.sf2");
+        let mut session = session();
+        session.forget_history();
+        let first = session.add_default_instrument_track("First").unwrap();
+        let second = session.add_default_instrument_track("Second").unwrap();
+        session.undo().unwrap();
+        let font = session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert!(font.0 > second.0, "the redo branch already owns that id");
+        assert!(session.is_dirty());
+        assert!(session.can_redo());
+
+        session.undo().unwrap();
+        assert!(!session.is_dirty());
+        assert!(session.project().track(first).is_none());
+        assert!(session.project().soundfonts.contains_key(&font));
+        assert!(session.soundfont_is_loaded(font));
+        session.redo().unwrap();
+        session.redo().unwrap();
+        assert!(session.project().track(second).is_some());
+        assert!(session.project().soundfonts.contains_key(&font));
+        assert!(session.soundfont_is_loaded(font));
+        assert!(session.is_dirty());
+    }
+
+    #[test]
+    fn a_download_during_a_gesture_is_retained_when_the_gesture_is_reverted_or_unchanged() {
+        let scratch = Scratch::new("download-during-gesture");
+        let path = scratch.soundfont("GM.sf2");
+        let mut session = session();
+        let track = session.add_default_instrument_track("Original").unwrap();
+        session.forget_history();
+        session.begin_transaction(Edit::RenameTrack);
+        session.rename_track(track, "Dragging").unwrap();
+        let font = session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert!(session.is_dirty());
+        assert!(session.revert_transaction());
+        assert_eq!(session.project().track(track).unwrap().name, "Original");
+        assert!(session.soundfont_is_loaded(font));
+        assert!(session.project().soundfonts.contains_key(&font));
+        assert!(!session.is_dirty());
+        assert!(!session.can_undo());
+
+        session.begin_transaction(Edit::RenameTrack);
+        session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert!(!session.end_transaction());
+        assert!(!session.is_dirty());
+        assert!(!session.can_undo());
+    }
+
+    #[test]
+    fn library_arrival_does_not_change_the_disk_conflict_baseline() {
+        let scratch = Scratch::new("download-disk-baseline");
+        let path = scratch.soundfont("GM.sf2");
+        let document = scratch.join("Song.auris");
+        let mut session = session();
+        session.save(&document).unwrap();
+        let disk = load_project(&document).unwrap();
+        session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert_eq!(session.saved_project, disk);
+        assert!(!session.is_dirty());
+        session.add_default_instrument_track("Lead").unwrap();
+        session.undo().unwrap();
+        assert!(!session.is_dirty());
+        session.save_in_place().unwrap();
+
+        let mut outside = load_project(&document).unwrap();
+        outside.name = "Someone else's edit".into();
+        save_project(&document, &mut outside).unwrap();
+        session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert!(matches!(
+            session.save_in_place(),
+            Err(SessionError::ExternalChanges(_))
+        ));
+    }
+
+    #[test]
+    fn a_download_recovers_a_missing_saved_font_under_its_original_id() {
+        let scratch = Scratch::new("download-missing-reference");
+        let path = scratch.soundfont("GM.sf2");
+        let old_path = scratch.join("another-machine/GM.sf2");
+        let document = scratch.join("Song.auris");
+        let mut session = session();
+        let original = session.project.add_soundfont(
+            "Saved GM",
+            AssetPath::external(&old_path),
+            byte_size(&path),
+        );
+        session.save(&document).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(session.open(&document).unwrap(), vec![old_path]);
+        assert!(!session.soundfont_is_loaded(original));
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = read_soundfont(&path).unwrap();
+        let samples = Arc::clone(&loaded.0);
+        let installed = session.install_shipped_soundfont(&path, loaded);
+        assert_eq!(installed, original);
+        assert_eq!(session.soundfonts().count(), 1);
+        assert_eq!(
+            session.project().soundfonts[&original].path,
+            AssetPath::external(&path)
+        );
+        assert!(Arc::ptr_eq(&session.fonts.get(original).unwrap(), &samples));
+        assert!(!session.is_dirty());
+        session.add_default_instrument_track("Lead").unwrap();
+        session.undo().unwrap();
+        assert!(!session.is_dirty());
+        assert_eq!(session.soundfonts().count(), 1);
+        session.save_in_place().unwrap();
+    }
+
+    #[test]
+    fn a_download_does_not_replace_a_same_named_font_of_a_different_size() {
+        let scratch = Scratch::new("download-wrong-reference");
+        let path = scratch.soundfont("GM.sf2");
+        let mut session = session();
+        let missing = session.project.add_soundfont(
+            "Another GM",
+            AssetPath::external(scratch.join("elsewhere/GM.sf2")),
+            byte_size(&path) + 1,
+        );
+        session.forget_history();
+        let font = session.install_shipped_soundfont(&path, read_soundfont(&path).unwrap());
+        assert_ne!(font, missing);
+        assert_eq!(session.soundfonts().count(), 2);
+        assert!(!session.soundfont_is_loaded(missing));
+        assert!(session.soundfont_is_loaded(font));
+    }
+
+    #[test]
+    fn historical_font_ids_cannot_overwrite_the_current_fonts_samples() {
+        let scratch = Scratch::new("download-reused-font-id");
+        let shipped = scratch.soundfont("GM.sf2");
+        let other = scratch.soundfont("Other.sf2");
+        let mut session = session();
+        let old_id = session.project.add_soundfont(
+            "Missing GM",
+            AssetPath::external(scratch.join("elsewhere/GM.sf2")),
+            byte_size(&shipped),
+        );
+        session
+            .history
+            .push(Edit::ImportSoundFont, &session.project);
+        // Snapshots can come from different saved versions, whose independent allocators gave
+        // this id to different files. The loaded bank can only hold one meaning at a time.
+        let mut other_version = Project::new("Other version", 48_000.0);
+        let other_id =
+            other_version.add_soundfont("Other", AssetPath::external(&other), byte_size(&other));
+        assert_eq!(old_id, other_id);
+        session.replace_project(other_version);
+        session.import_soundfont(&other).unwrap();
+        let other_samples = session.fonts.get(other_id).unwrap();
+        let loaded = read_soundfont(&shipped).unwrap();
+        let shipped_samples = Arc::clone(&loaded.0);
+        session.install_shipped_soundfont(&shipped, loaded);
+        assert!(Arc::ptr_eq(
+            &session.fonts.get(other_id).unwrap(),
+            &other_samples
+        ));
+
+        // Neither restoration may touch the disk, even though the two paths share an id.
+        std::fs::write(&shipped, b"unreadable now").unwrap();
+        std::fs::write(&other, b"unreadable now").unwrap();
+        session.undo().unwrap();
+        assert!(Arc::ptr_eq(
+            &session.fonts.get(old_id).unwrap(),
+            &shipped_samples
+        ));
+        session.redo().unwrap();
+        assert!(Arc::ptr_eq(
+            &session.fonts.get(other_id).unwrap(),
+            &other_samples
+        ));
+        session.new_project();
+        assert!(session.font_cache.contains_key(&shipped));
+        assert!(!session.font_cache.contains_key(&other));
+    }
+
+    #[test]
+    fn a_collected_font_keeps_its_cached_samples_after_undo() {
+        let scratch = Scratch::new("collected-font-undo");
+        let path = scratch.soundfont("GM.sf2");
+        let mut session = session();
+        let font = session.import_soundfont(&path).unwrap();
+        let samples = session.fonts.get(font).unwrap();
+        session.save_as(&scratch.join("Song.auris")).unwrap();
+        assert_eq!(session.collect_assets().unwrap(), 1);
+        session.save_in_place().unwrap();
+        assert_eq!(
+            session.project().soundfonts[&font].path,
+            AssetPath::inside("Audio/GM.sf2")
+        );
+        let collected = session.project().soundfonts[&font]
+            .path
+            .resolve(session.project_folder())
+            .unwrap();
+        std::fs::write(&collected, b"unreadable now").unwrap();
+        session.add_default_instrument_track("Lead").unwrap();
+        session.undo().unwrap();
+        assert!(Arc::ptr_eq(&session.fonts.get(font).unwrap(), &samples));
+        assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn external_reload_still_marks_relocated_audio_dirty() {
+        let scratch = Scratch::new("external-relocated-audio");
+        let audio = scratch.tone("Tone.wav");
+        let document = scratch.join("Song.auris");
+        let mut session = session();
+        session.import_audio(&audio, Ticks::ZERO).unwrap();
+        session.save(&document).unwrap();
+        let directory = scratch.join(AUDIO_DIR);
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::rename(&audio, directory.join("Tone.wav")).unwrap();
+        let mut outside = load_project(&document).unwrap();
+        outside.name = "Outside edit".into();
+        save_project(&document, &mut outside).unwrap();
+        assert!(session.reload_external_changes().unwrap().is_empty());
+        assert!(session.is_dirty());
+        assert_eq!(
+            session
+                .project()
+                .audio_sources
+                .values()
+                .next()
+                .unwrap()
+                .path,
+            AssetPath::inside("Audio/Tone.wav")
+        );
+        session.save_in_place().unwrap();
+    }
 
     #[test]
     fn external_edits_cannot_be_overwritten_and_acceptance_preserves_both_versions() {

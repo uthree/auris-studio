@@ -131,6 +131,7 @@ impl Session {
     pub(super) fn mark_saved(&mut self) {
         self.last_save = Instant::now();
         self.saved_project = self.project.clone();
+        self.saved_edit_project = self.project.clone();
         self.disk_stamp = self
             .path
             .as_deref()

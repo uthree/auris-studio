@@ -82,6 +82,11 @@ Training itself wants a card; everything else here is content on the CPU.
 
 ## Building on each platform
 
+`cargo run` and `cargo run --release` start the desktop, which downloads a missing standard
+SoundFont in the background and displays progress. The cached copy is shared by checkouts.
+See [the sound library](features.md#the-soundfont-that-comes-with-it) for its location, manual
+installation and disabling automatic downloads.
+
 ### Windows
 
 Build with the Rust MSVC toolchain, Visual Studio C++ Build Tools, and LLVM/Clang.

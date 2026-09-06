@@ -25,6 +25,7 @@ mod keymap;
 mod logbook;
 mod menu;
 mod settings_window;
+mod startup_soundfonts;
 mod theme;
 mod voice_setup_window;
 
@@ -82,6 +83,12 @@ fn main() {
                 |_, cx| cx.new(AurisApp::new),
             )
             .expect("could not open the main window");
+
+        // Start only after a window exists: the first launch may need a large download, and
+        // its progress belongs in a responsive window. The test harness never enters `main`.
+        window
+            .update(cx, |view, _, cx| view.download_missing_soundfonts(cx))
+            .ok();
 
         // Quit is normally handled by the main window's view (`AurisApp::on_quit`) so an
         // unsaved document can stop it. But a Quit can also land where no view is listening —

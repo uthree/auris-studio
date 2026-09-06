@@ -266,6 +266,24 @@ messages! {
         ja: "{name} — 音色 {sounds} 件から選べます"
     }
 
+    /// Progress while the first launch fetches its sound library.
+    fn downloading_soundfont(name: &str, percent: u64) {
+        en: "Downloading {name}: {percent}%",
+        ja: "{name} をダウンロード中: {percent}%"
+    }
+
+    /// The download is complete and the samples are being read on a worker.
+    fn loading_soundfont(name: &str) {
+        en: "Loading {name}…",
+        ja: "{name} を読み込み中…"
+    }
+
+    /// A missing library remains optional when its download or decoding fails.
+    fn soundfont_download_failed(name: &str, reason: &str) {
+        en: "Could not prepare {name}: {reason}",
+        ja: "{name} を準備できませんでした: {reason}"
+    }
+
     /// Confirmation that a MIDI file was read, and what came out of it.
     ///
     /// Both numbers, because a MIDI file gives no other sign of having worked: a file whose tracks

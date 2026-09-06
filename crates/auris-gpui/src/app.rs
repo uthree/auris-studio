@@ -1216,6 +1216,8 @@ pub struct AurisApp {
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
+    /// A first-launch library download, reported separately from command feedback.
+    pub(crate) soundfont_download: Option<crate::startup_soundfonts::SoundFontDownload>,
     pub(crate) export: Option<ExportState>,
     /// Each singer track's take freshness, cached under the document revision it was read at.
     ///
@@ -1570,6 +1572,7 @@ impl AurisApp {
             drag: None,
             panels: PanelLayout::load(),
             status,
+            soundfont_download: None,
             export: None,
             sung_badges: std::collections::HashMap::new(),
             sung_badges_revision: 0,

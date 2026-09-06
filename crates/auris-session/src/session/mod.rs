@@ -264,13 +264,14 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
-    /// The fonts that came with the application, kept by the path they were read from.
+    /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
     /// [`Self::fonts`] is emptied whenever the document is replaced, because it is keyed by ids
     /// that belong to a document. These are not: the same file is the same samples whichever
-    /// project is open, and re-reading two hundred megabytes on every **File → New** is a stall
-    /// nobody would understand.
-    shipped: HashMap<PathBuf, Arc<SoundFont>>,
+    /// project is open. Built-in fonts survive **File → New**; imported fonts stay only while
+    /// this document's history may need them. Paths also distinguish two history branches that
+    /// reused one id for different fonts.
+    font_cache: HashMap<PathBuf, CachedFont>,
     /// Whether this session reads the shipped library at all — see
     /// [`SessionOptions::shipped_fonts`].
     shipped_library: bool,
@@ -308,6 +309,9 @@ pub struct Session {
     dirty: bool,
     /// The exact document state most recently read from or written to disk.
     saved_project: Project,
+    /// The saved state with subsequently available built-in fonts, for undo's dirty comparison.
+    /// The exact disk snapshot stays separate so these additions cannot look like another writer.
+    saved_edit_project: Project,
     /// Whether the document is written back over itself as it changes. See [`should_autosave`].
     autosave: bool,
     /// When the document was last written, by any means. The autosave clock runs from here.
@@ -387,7 +391,7 @@ pub struct Session {
     shipped_dictionary: bool,
     /// The voice models behind singer tracks, by the file each was read from.
     ///
-    /// Keyed by path rather than by track or document id, like [`Self::shipped`] and for the
+    /// Keyed by path rather than by track or document id, like `font_cache` and for the
     /// same reason: the same file is the same voice whichever project is open, and a model is a
     /// couple of hundred megabytes that takes a third of a second to load — worth doing once a
     /// session, not once a song. Behind `Arc<Mutex<_>>` because a frontend renders takes on a
@@ -484,6 +488,12 @@ struct Transaction {
     dirty_before: bool,
 }
 
+/// Samples keyed by file, with the lifetime of their owning library.
+struct CachedFont {
+    samples: Arc<SoundFont>,
+    shipped: bool,
+}
+
 impl Session {
     /// The longest count-in that can be asked for, in bars.
     ///
@@ -533,12 +543,13 @@ impl Session {
         let render_bank_rate = engine.sample_rate();
         let mut session = Self {
             saved_project: project.clone(),
+            saved_edit_project: project.clone(),
             project,
             bank: AudioSourceBank::new(),
             render_bank: AudioSourceBank::new(),
             render_bank_rate,
             fonts,
-            shipped: HashMap::new(),
+            font_cache: HashMap::new(),
             shipped_library: options.shipped_fonts,
             balance_composed: options.balance_composed,
             registry,
@@ -968,7 +979,7 @@ impl Session {
         } else {
             self.replace_project(project);
         }
-        self.dirty = self.project != self.saved_project;
+        self.dirty = self.project != self.saved_edit_project;
         Some(edit)
     }
 
@@ -986,7 +997,7 @@ impl Session {
         } else {
             self.replace_project(project);
         }
-        self.dirty = self.project != self.saved_project;
+        self.dirty = self.project != self.saved_edit_project;
         Some(edit)
     }
 
@@ -1025,6 +1036,7 @@ impl Session {
         self.last_record = None;
         self.dirty = false;
         self.saved_project = self.project.clone();
+        self.saved_edit_project = self.project.clone();
     }
 
     /// Records an undo step for the edit about to be made.
@@ -1162,6 +1174,7 @@ impl Session {
         // is `Session::open`, where a *different* document takes over and could reuse an id for
         // a different plugin, that clears them.
         self.project = project;
+        self.restore_cached_fonts();
         self.armed
             .retain(|arm| self.project.track(arm.track).is_some());
         let monitors_before = self.monitored.len();

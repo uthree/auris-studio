@@ -9,9 +9,10 @@
 //! [`GENERAL_MIDI`] is two hundred megabytes. GitHub refuses a single file over a hundred, and a
 //! repository that carried one would charge every clone for it forever — including the clones
 //! that only ever build the command line tool. So the bytes are fetched rather than committed:
-//! `tools/fetch-soundfonts.sh` downloads them, checks them against [`ShippedFont::sha256`], and
-//! writes them into a [`LIBRARY_FOLDER`] directory. The release workflow runs it before it
-//! assembles each archive, and a developer runs it once.
+//! [`download_font`] verifies and installs missing fonts when the desktop first starts. The
+//! release workflow runs `tools/fetch-soundfonts.sh` before assembling each archive; that script
+//! also prepares the library for command line use. Both read this manifest and keep the bytes
+//! in a [`LIBRARY_FOLDER`] directory.
 //!
 //! What is committed is this manifest — the name, the size, the digest and the licence — which is
 //! the part that has to be reviewable.
@@ -31,6 +32,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::settings::config_dir;
+
+mod download;
+
+pub use download::{
+    FETCH_SOUNDFONTS_VAR, FontDownload, FontDownloadError, download_font, font_downloads,
+};
 
 /// Environment variable naming the directory the shipped SoundFonts are installed in.
 ///
@@ -70,19 +77,18 @@ pub struct ShippedFont {
     /// than committed for one reason only — that it is the *font's* notice, and belongs next to
     /// the font rather than in a source tree that may not have one.
     pub license_url: &'static str,
-    /// Where the fetch script downloads it from.
+    /// Where the desktop and fetch script download it from.
     pub url: &'static str,
     /// Its length in bytes.
     pub bytes: u64,
     /// SHA-256 of the file, in lowercase hexadecimal.
     ///
-    /// Checked by the fetch script, not by the application: a two-hundred-megabyte digest at
-    /// every start-up would cost more than it could ever catch, and a font that arrived corrupt
-    /// fails at the parser a moment later with a message naming the file.
+    /// Checked on download by the desktop and fetch script. Existing fonts are not hashed at
+    /// every start-up; the parser reports an unreadable file when it is loaded.
     pub sha256: &'static str,
 }
 
-/// Every font the fetch script knows how to install.
+/// Every font the desktop and fetch script know how to install.
 pub const SHIPPED: &[ShippedFont] = &[ShippedFont {
     id: GENERAL_MIDI,
     file: "MuseScore_General.sf2",

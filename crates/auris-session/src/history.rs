@@ -334,7 +334,8 @@ impl History {
         }
     }
 
-    fn for_each_project_mut(&mut self, mut apply: impl FnMut(&mut Project)) {
+    /// Applies an unrecorded state change to both branches without discarding history.
+    pub(crate) fn for_each_project_mut(&mut self, mut apply: impl FnMut(&mut Project)) {
         for snapshot in self.past.iter_mut().chain(self.future.iter_mut()) {
             apply(&mut snapshot.project);
         }

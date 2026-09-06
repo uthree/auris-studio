@@ -32,8 +32,8 @@ pub(super) fn undo_depth(session: &mut Session) -> usize {
 
 /// Registers a font in the document without a file behind it.
 ///
-/// Enough to exercise every command that decides what a track *plays*; what it *sounds* like
-/// needs a real SoundFont, which is somebody's 200 MB file rather than a test fixture.
+/// Enough to exercise commands that decide what a track *plays*. Tests that need decoded
+/// samples use [`Scratch::soundfont`] instead.
 pub(super) fn named_font(session: &mut Session, name: &str) -> SoundFontId {
     session.project.add_soundfont(
         name,
@@ -67,6 +67,61 @@ impl Scratch {
     /// Writes a short tone so `import_audio` has a real file to decode.
     pub(super) fn tone(&self, name: &str) -> PathBuf {
         write_tone(&self.join(name), 480)
+    }
+
+    /// Writes a tiny, valid SF2 with one preset and a short silent sample.
+    pub(super) fn soundfont(&self, name: &str) -> PathBuf {
+        fn chunk(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut bytes = kind.to_vec();
+            bytes.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(body);
+            bytes
+        }
+        fn list(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut bytes = kind.to_vec();
+            bytes.extend_from_slice(body);
+            chunk(b"LIST", &bytes)
+        }
+
+        let mut info = chunk(b"ifil", &[2, 0, 1, 0]);
+        info.extend(chunk(b"INAM", b"Test Font\0"));
+
+        // Each table holds one real record and its terminal record. A preset names instrument
+        // zero, which names sample zero; the final bag indices close their single zones.
+        let mut preset = [0; 76];
+        preset[..10].copy_from_slice(b"Test Piano");
+        preset[38..41].copy_from_slice(b"EOP");
+        preset[62] = 1;
+        let mut instrument = [0; 44];
+        instrument[..4].copy_from_slice(b"Tone");
+        instrument[22..25].copy_from_slice(b"EOI");
+        instrument[42] = 1;
+        let mut sample = [0; 92];
+        sample[..4].copy_from_slice(b"Tone");
+        sample[24..28].copy_from_slice(&64u32.to_le_bytes());
+        sample[28..32].copy_from_slice(&1u32.to_le_bytes());
+        sample[32..36].copy_from_slice(&63u32.to_le_bytes());
+        sample[36..40].copy_from_slice(&48_000u32.to_le_bytes());
+        sample[40] = 60;
+        sample[44] = 1;
+        sample[46..49].copy_from_slice(b"EOS");
+
+        let bag = [0, 0, 0, 0, 1, 0, 0, 0];
+        let mut parameters = chunk(b"phdr", &preset);
+        parameters.extend(chunk(b"pbag", &bag));
+        parameters.extend(chunk(b"pgen", &[41, 0, 0, 0, 0, 0, 0, 0]));
+        parameters.extend(chunk(b"inst", &instrument));
+        parameters.extend(chunk(b"ibag", &bag));
+        parameters.extend(chunk(b"igen", &[53, 0, 0, 0, 0, 0, 0, 0]));
+        parameters.extend(chunk(b"shdr", &sample));
+
+        let mut body = b"sfbk".to_vec();
+        body.extend(list(b"INFO", &info));
+        body.extend(list(b"sdta", &chunk(b"smpl", &[0; 256])));
+        body.extend(list(b"pdta", &parameters));
+        let path = self.join(name);
+        std::fs::write(&path, chunk(b"RIFF", &body)).expect("a tiny SoundFont writes");
+        path
     }
 }
 
