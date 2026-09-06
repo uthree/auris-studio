@@ -67,8 +67,10 @@ mixer, the inspector — is a panel, and every panel lives in one of three docks
 left, a column down the right, or the strip along the bottom. They start where a DAW puts them,
 library left, inspector right, the two editors sharing the bottom, and none of that is fixed.
 
-The status bar carries a small icon for every panel, grouped by the dock it belongs to: the left
-dock's at the left-hand end, the bottom dock's and then the right dock's at the other. Clicking one
+The title bar follows the selected colour scheme and carries the project name, an unsaved-change
+mark and playback controls above the position and tempo readouts. Panel icons sit to the right,
+grouped by their dock. In narrow windows they move to the status bar: the left dock's at the
+left-hand end, the bottom dock's and then the right dock's at the other. Clicking one
 shows that panel, clicking the one already showing shuts its dock, and right-clicking offers **Dock
 Left**, **Dock Bottom** and **Dock Right** — so the mixer can be a right-hand column with the roll
 still along the bottom, or both editors on the bottom as tabs. A dock shows one panel at a time,
@@ -704,7 +706,7 @@ terminal, which a release build does not open and which nobody launching from an
 looked at. The result was a track that went silent and said nothing about why.
 
 Newest line first, because the reason anybody opened it is the thing that just happened. The
-log's icon in the status bar turns amber while there is a warning or an error nobody has looked
+log's panel icon turns amber while there is a warning or an error nobody has looked
 at, which is the only part of this that a person who has never opened the panel will see.
 
 A **release build has no console at all** — `windows_subsystem = "windows"`, so double-clicking
@@ -991,7 +993,7 @@ left where it normally shows the take's clock.
 
 One bad bar in a good take does not need the take recorded again. Right-click the ruler → **Punch
 In Here** and **Punch Out Here** to mark the stretch, or **Punch Over Cycle Region** if you have
-already been looping the bars in question. The transport bar's punch button — the cycle's outline
+already been looping the bars in question. The title bar's punch button — the cycle's outline
 with a record dot in it, or `⌘P` / `Ctrl+P` — switches it on, and the region is washed over the
 timeline in red for as long as it is.
 

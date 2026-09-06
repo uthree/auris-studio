@@ -17,6 +17,7 @@ use crate::app::AurisApp;
 use crate::gestures::{PointerGesture, PointerGestures};
 use crate::keymap::Keymap;
 use crate::theme::{Metrics, SCHEMES, Theme, scheme_or_default};
+use crate::titlebar;
 use crate::ui::icons::Icon;
 use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
@@ -303,11 +304,10 @@ impl SettingsWindow {
         let tab = self.tab;
         div()
             .flex()
+            .items_center()
+            .flex_shrink_0()
             .gap_1()
-            .p_2()
-            .bg(theme.surface_raised)
-            .border_b_1()
-            .border_color(theme.border)
+            .pr_2()
             .child(button(
                 "tab-general",
                 self.t(Key::TabGeneral),
@@ -1571,6 +1571,9 @@ crate::entity_input_handler!(SettingsWindow);
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if window.window_title() != self.t(Key::Settings) {
+            window.set_window_title(self.t(Key::Settings));
+        }
         // This window has one focusable thing in it, and both the key capture and the search box
         // need it: a text field only registers itself as the window's input handler while its own
         // handle is focused, and a key press only reaches `on_key` through the focused element.
@@ -1579,7 +1582,25 @@ impl Render for SettingsWindow {
         }
 
         let theme = self.theme.clone();
-        let tabs = self.render_tabs(cx);
+        let titlebar = titlebar::titlebar(window, &theme)
+            .child(
+                titlebar::drag_region("settings-title")
+                    .flex_1()
+                    .min_w(px(40.0))
+                    .px_3()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(self.t(Key::Settings)),
+                    ),
+            )
+            .child(self.render_tabs(cx))
+            .child(titlebar::controls(window, &theme, |_, window, _| {
+                window.remove_window();
+            }));
         let body = match self.tab {
             SettingsTab::General => self.render_general(cx),
             SettingsTab::Audio => self.render_audio(cx),
@@ -1606,7 +1627,7 @@ impl Render for SettingsWindow {
                     cx.stop_propagation();
                 }
             }))
-            .child(tabs)
+            .child(titlebar)
             .child(
                 div()
                     .id("settings-body")
@@ -1704,6 +1725,41 @@ fn describe(device: &AudioDeviceInfo, language: Language) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn titlebar_tabs_remain_clickable_in_a_small_settings_window(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| this.open_settings(cx));
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        handle
+            .update(cx, |this, _, cx| {
+                this.sync_appearance(Theme::named("daylight"), Some(Language::Japanese));
+                cx.notify();
+            })
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.simulate_resize(gpui::size(px(480.0), px(360.0)));
+        cx.run_until_parked();
+        let title = cx.debug_bounds("settings-title").unwrap();
+        for (id, expected) in [
+            ("tab-audio", SettingsTab::Audio),
+            ("tab-keys", SettingsTab::Keys),
+            ("tab-general", SettingsTab::General),
+        ] {
+            let tab = cx.debug_bounds(id).unwrap();
+            assert!(tab.top() >= title.top() && tab.bottom() <= title.bottom());
+            assert!(tab.left() >= title.right() && tab.right() <= px(480.0));
+            crate::harness::click(id, cx);
+            handle
+                .update(cx, |this, _, _| assert_eq!(this.tab, expected))
+                .unwrap();
+        }
+        if !cfg!(target_os = "macos") {
+            crate::harness::click("window-close", cx);
+            assert!(handle.update(cx, |_, _, _| ()).is_err());
+        }
+    }
 
     #[test]
     fn the_footer_names_a_keystroke_the_way_the_platform_prints_it() {

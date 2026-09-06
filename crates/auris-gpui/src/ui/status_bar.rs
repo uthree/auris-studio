@@ -1,6 +1,6 @@
-//! The status bar along the bottom of the window, and the panel switches at either end of it.
+//! The status bar along the bottom of the window, with panel switches in compact windows.
 //!
-//! Zed's arrangement: the row that reports what happened also carries an icon for every panel,
+//! When the title bar is too narrow, this row also carries an icon for every panel,
 //! grouped by the dock it lives in — the left dock's at the left-hand end, the bottom dock's and
 //! then the right dock's at the other. A press shows that panel, a press on the one already
 //! showing shuts its dock, and a right-click offers to move it somewhere else.
@@ -27,8 +27,13 @@ const SWITCH_ICON: Pixels = px(12.0);
 
 impl AurisApp {
     /// Renders the status bar.
-    pub(crate) fn render_status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn render_status_bar(
+        &self,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let compact = !crate::ui::title_bar::panels_in_titlebar(width);
         let audio = self.session.audio_status();
         let engine = if audio.running {
             format!("{:.0} Hz · {} ch", audio.sample_rate, audio.channels)
@@ -46,7 +51,9 @@ impl AurisApp {
             .border_color(theme.border)
             .text_xs()
             .text_color(theme.text_muted)
-            .child(self.dock_switches(Dock::Left, cx))
+            .when(compact, |bar| {
+                bar.child(self.dock_switches(Dock::Left, SWITCH_SIZE, cx))
+            })
             .child(
                 div()
                     .flex_1()
@@ -84,12 +91,13 @@ impl AurisApp {
                 ))
             })
             .children(self.typing_readout(&theme))
-            .child(self.window_title())
             .child(engine)
             // The bottom dock's switches before the right dock's, which is the order they sit in
             // going clockwise from the middle of the window.
-            .child(self.dock_switches(Dock::Bottom, cx))
-            .child(self.dock_switches(Dock::Right, cx))
+            .when(compact, |bar| {
+                bar.child(self.dock_switches(Dock::Bottom, SWITCH_SIZE, cx))
+                    .child(self.dock_switches(Dock::Right, SWITCH_SIZE, cx))
+            })
     }
 
     /// Where the typing keyboard's hands are, while it is switched on.
@@ -130,12 +138,17 @@ impl AurisApp {
     }
 
     /// The switches for every panel that lives in `dock`.
-    fn dock_switches(&self, dock: Dock, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    pub(crate) fn dock_switches(
+        &self,
+        dock: Dock,
+        size: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         div().flex().items_center().gap(px(1.0)).children(
             self.panels
                 .panels_in(dock)
-                .map(|panel| self.panel_switch(panel, &theme, cx)),
+                .map(|panel| self.panel_switch(panel, size, &theme, cx)),
         )
     }
 
@@ -143,13 +156,13 @@ impl AurisApp {
     fn panel_switch(
         &self,
         panel: Panel,
+        size: Pixels,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let open = self.panels.is_open(panel);
-        // Latched against the accent, the way every other toggle in the window is, but softly: the
-        // status bar is the quietest row on screen and a solid accent square down there reads as an
-        // alert. The mark itself carries the state, and goes faint when the panel is away.
+        // A soft accent marks the open panel without competing with playback and recording.
+        // The mark itself carries the state, and goes faint when the panel is away.
         let (background, mark) = match open {
             true => (Theme::translucent(theme.accent, 0.22), theme.text),
             false => (gpui::transparent_black(), theme.text_faint),
@@ -170,10 +183,11 @@ impl AurisApp {
 
         div()
             .id(("panel-switch", panel as usize))
+            .debug_selector(move || format!("panel-switch-{}", panel as usize))
             .flex()
             .items_center()
             .justify_center()
-            .size(SWITCH_SIZE)
+            .size(size)
             .flex_shrink_0()
             .rounded(Metrics::RADIUS_SM)
             .bg(background)
