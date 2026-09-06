@@ -20,6 +20,8 @@ use crate::param::ParamTarget;
 pub enum Edit {
     /// A measured drum assignment was applied, optionally remapping generated drum notes.
     ApplyDrumMap,
+    /// A musical drum role's assigned MIDI key was added, changed or removed.
+    SetDrumAssignment,
     /// Changes made by an external editor were accepted from disk.
     ExternalChanges,
     /// Cycle playback was turned on or off.

@@ -27,6 +27,7 @@ struct Vst3Slot {
     class_id: String,
     plugin: Vst3Plugin,
     needs_state_restore: bool,
+    source_revision: u64,
 }
 
 struct Request<'a> {
@@ -36,6 +37,23 @@ struct Request<'a> {
 }
 
 impl Vst3Plugins {
+    pub(super) fn drum_source_revision(&self, track: TrackId) -> Option<u64> {
+        Some(self.instruments.get(&track)?.source_revision)
+    }
+
+    /// Consumes native editor notifications without reading parameters or saving plugin state.
+    pub(super) fn service(&mut self) -> bool {
+        let mut dirty = false;
+        for slot in self.slots.values_mut().chain(self.instruments.values_mut()) {
+            if slot.plugin.take_source_changed() {
+                slot.source_revision = slot.source_revision.wrapping_add(1);
+                dirty = true;
+            }
+        }
+        self.sweep();
+        dirty
+    }
+
     /// Snapshots the actual instrument for an independent measurement worker.
     pub(super) fn drum_probe_state(
         &self,
@@ -293,6 +311,7 @@ fn fit<'a, K: Ord + Copy>(
                     class_id: request.class_id.clone(),
                     plugin,
                     needs_state_restore: true,
+                    source_revision: 0,
                 });
             }
             Err(error) => {

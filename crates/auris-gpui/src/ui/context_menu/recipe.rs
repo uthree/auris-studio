@@ -639,4 +639,41 @@ mod tests {
             (Ticks::ZERO, bar * 4)
         );
     }
+
+    #[gpui::test]
+    fn the_drum_preset_menu_generates_notes_in_a_new_project(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let track = app.update(cx, |this, _| {
+            this.session.add_default_drum_track("Kit").unwrap()
+        });
+        for preset in ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| preset.is_drums())
+        {
+            let command = MenuCommand::GenerateClip {
+                track,
+                start: Ticks::ZERO,
+                preset,
+            };
+            app.update(cx, |this, _| {
+                assert!(this.project().harmony.is_empty());
+                let menu = this.preset_picker_menu(point(px(200.0), px(200.0)), track, Ticks::ZERO);
+                this.open_menu(menu);
+            });
+            crate::harness::paint(&app, cx);
+            crate::harness::choose(&app, cx, &command);
+            app.read_with(cx, |this, _| {
+                let clip = this
+                    .selected_midi_clip()
+                    .expect("generation selects its new clip");
+                assert!(
+                    !clip.notes.is_empty(),
+                    "{preset:?} must produce audible hits"
+                );
+                assert_eq!(clip.length, TimeSignature::default().ticks_per_bar() * 4);
+                assert_eq!(clip.recipe.as_ref().unwrap().preset, preset);
+                assert!(this.project().harmony.is_empty());
+            });
+        }
+    }
 }

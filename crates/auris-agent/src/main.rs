@@ -442,6 +442,7 @@ session_tool!(Preview, preview);
 session_tool!(Describe, describe);
 session_tool!(Analyze, analyze);
 session_tool!(AnalyzeDrumKit, analyze_drum_kit);
+session_tool!(SetDrumAssignment, set_drum_assignment);
 session_tool!(Mixer, mixer);
 session_tool!(SetLevel, set_level);
 session_tool!(SetSend, set_send);
@@ -635,6 +636,7 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(Describe)
         .tool(Analyze)
         .tool(AnalyzeDrumKit)
+        .tool(SetDrumAssignment)
         .tool(Mixer)
         .tool(SetLevel)
         .tool(SetSend)

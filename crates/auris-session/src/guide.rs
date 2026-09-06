@@ -1021,8 +1021,31 @@ pub mod composition {
     //! and the attack and decay produce role-fit scores, not probabilities. A kit may have no
     //! suitable sound for a role. Measurements, role fitness and a composition's chosen note
     //! mapping are separate results: choosing to use a tom as a kick does not change what was
-    //! measured. Accepting a map is an explicit edit; opening a project never scans its sounds
-    //! or rewrites its saved notes. The accepted mapping travels with the instrument state.
+    //! measured. The desktop queues new or changed drum sources for background analysis,
+    //! including tracks in an opened project. It keeps results per track, avoids repeating an
+    //! unchanged source, and rejects stale results. Accepting a map remains an explicit edit:
+    //! automatic analysis never changes an assignment or rewrites stored notes. The accepted
+    //! mapping travels with the instrument state.
+    //! [`set_drum_assignment`](crate::Session::set_drum_assignment) adds, replaces or removes a
+    //! musical role's MIDI address without acoustic analysis. It preserves the other assignments
+    //! and plugin state, records one undo step, and affects editor labels and future generation.
+    //! Existing clip recipes keep their saved maps, including on regeneration. Empty assignments
+    //! are stored explicitly; neither SoundFont conventions nor built-in defaults fill them in.
+    //! [`drum_analysis_source_key`](crate::Session::drum_analysis_source_key) supports scheduling
+    //! with a digest of source state, availability and render context. It excludes the score,
+    //! mixer and musical assignments and performs no plugin snapshot or filesystem scan.
+    //! Native CLAP and VST3 editor notifications advance a source revision in the session's
+    //! ordinary poll; the worker request still captures and fingerprints the complete source
+    //! before a measurement starts. Measurement uses the tempo at the project's beginning;
+    //! playback and seeking through later tempo changes do not invalidate its conditions.
+    //!
+    //! **Drum assignments can also be authored directly.** Each of the six roles can name a
+    //! MIDI address from 0 to 127 or remain unassigned. Adding, changing or clearing an
+    //! assignment is an undoable session command. It updates the track's map for future
+    //! generation and the drum editor's role labels, without changing existing notes or their
+    //! recipes. Those recipes keep their own saved assignments when regenerated. A manual
+    //! assignment is a musical choice, so it neither depends on a completed acoustic scan nor
+    //! replaces that scan's evidence.
     //!
     //! Signal measurements belong in `auris-dsp`; session commands own probing, source state
     //! and applying a mapping. The composer only reads musical instructions and mappings, and
@@ -1544,7 +1567,9 @@ pub mod harmony {
     //!
     //! A [`MidiClip`](auris_core::MidiClip) may carry a
     //! [`ClipRecipe`](auris_core::ClipRecipe): a preset, a seed and a few dials saying how the
-    //! notes in it were written from the harmony underneath. It can then be written again — after
+    //! notes in it were written. Melodic presets read the harmony underneath; drum presets read
+    //! the clip's meter, length and groove and can generate on an empty timeline without adding
+    //! chords to the document. It can then be written again — after
     //! the chords move, or with a different feel, or simply as another take —
     //! and [`freeze_clip`](crate::Session::freeze_clip) drops the recipe when one of the takes
     //! turns out to be the keeper.

@@ -707,6 +707,7 @@ mod window_tests {
     ) -> (Entity<AurisApp>, &mut VisualTestContext, TrackId, ClipId) {
         let (app, cx) = harness::open(cx);
         let (track, clip) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
             let track = this.session.add_default_drum_track("Kit").unwrap();
             let clip = this
                 .session
@@ -898,6 +899,88 @@ mod window_tests {
             assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].pitch, 42);
             this.session.undo();
             assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].pitch, 38);
+        });
+    }
+
+    #[gpui::test]
+    fn manual_assignment_changes_the_kit_row_without_rewriting_existing_hits(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, track, clip) = fixture(cx);
+        app.update(cx, |this, _| {
+            // Opening a clip alone does not select its track; the arrangement's press does
+            // that before opening the editor. The inspector needs the same track selection.
+            this.select_track(track);
+            this.session
+                .add_note(clip, Note::new(36, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.show_panel(crate::dock::Panel::Inspector);
+        });
+        paint(&app, cx);
+        for _ in 0..20 {
+            let viewport = app.read_with(cx, |this, _| this.inspector_scroll.bounds());
+            let control = cx.debug_bounds("drum-assignment-note-0");
+            if control.is_some_and(|bounds| viewport.contains(&bounds.center())) {
+                break;
+            }
+            let dy = if control.is_some_and(|bounds| bounds.center().y < viewport.top()) {
+                120.0
+            } else {
+                -120.0
+            };
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: viewport.center(),
+                delta: gpui::ScrollDelta::Pixels(point(px(0.0), px(dy))),
+                ..Default::default()
+            });
+            paint(&app, cx);
+        }
+        let control = cx
+            .debug_bounds("drum-assignment-note-0")
+            .expect("the track has an assignment field");
+        let viewport = app.read_with(cx, |this, _| this.inspector_scroll.bounds());
+        assert!(
+            viewport.contains(&control.center()),
+            "the assignment field is reachable inside the inspector"
+        );
+        harness::click("drum-assignment-note-0", cx);
+        paint(&app, cx);
+        cx.simulate_input("73");
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let rows = this.drum_rows();
+            assert_eq!((rows[0].pitch, &rows[0].roles), (73, &vec![DrumRole::Kick]));
+            assert!(
+                rows.iter()
+                    .any(|row| row.pitch == 36 && row.roles.is_empty())
+            );
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes[0].pitch, 36);
+        });
+        let at = hit_point(&app, cx, Ticks::QUARTER, 73);
+        click_at(cx, at, Modifiers::none());
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.session
+                    .midi_clip(clip)
+                    .unwrap()
+                    .notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .collect::<Vec<_>>(),
+                [36, 73]
+            );
+            this.session.undo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 1);
+            assert_eq!(
+                this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick],
+                73
+            );
+            this.session.undo();
+            assert_eq!(
+                this.session.drum_assignments(track).unwrap().voices[&DrumRole::Kick],
+                36
+            );
         });
     }
 

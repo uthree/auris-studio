@@ -27,8 +27,8 @@ pub enum MenuCommand {
     UseDrumMapForGeneration(TrackId),
     /// Apply a measured map to future generation and tagged generated drum clips.
     ApplyDrumMap(TrackId),
-    /// Cancel the supervised drum probe.
-    CancelDrumAnalysis,
+    /// Cancel this track's queued or active drum probe.
+    CancelDrumAnalysis(TrackId),
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -732,7 +732,7 @@ impl AurisApp {
             MenuCommand::AnalyzeDrums(track) => self.begin_drum_analysis(track, cx),
             MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),
             MenuCommand::UseDrumMapForGeneration(track) => self.apply_measured_drums(track, false),
-            MenuCommand::CancelDrumAnalysis => self.cancel_drum_analysis(),
+            MenuCommand::CancelDrumAnalysis(track) => self.cancel_drum_analysis(track),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);

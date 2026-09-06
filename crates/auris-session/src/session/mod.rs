@@ -40,6 +40,7 @@ mod clipboard;
 mod clips;
 mod compose;
 mod drum_analysis;
+mod drum_assignments;
 mod files;
 mod generated;
 mod harmony;
@@ -763,7 +764,9 @@ impl Session {
         if self.hosted.service() {
             self.dirty = true;
         }
-        self.vst3.sweep();
+        if self.vst3.service() {
+            self.dirty = true;
+        }
     }
 
     /// The document.

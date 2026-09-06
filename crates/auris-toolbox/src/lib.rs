@@ -46,7 +46,7 @@ mod mix_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
-pub use drums::analyze_drum_kit;
+pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
@@ -335,6 +335,7 @@ pub struct SpecArgs {
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
     analyze_drum_kit::NAME,
+    set_drum_assignment::NAME,
     effects::NAME,
     automation::NAME,
     checkpoints::NAME,

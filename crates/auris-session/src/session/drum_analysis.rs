@@ -113,7 +113,7 @@ pub struct DrumProbeRequest {
     pub soundfont: Option<DrumProbeFont>,
     /// Render rate, matching the document.
     pub sample_rate: f64,
-    /// Tempo at the captured playhead, used for tempo-synchronized instruments.
+    /// Reference tempo at the project's beginning, fixed for tempo-synchronized instruments.
     pub bpm: f64,
     /// Measurement budget and triggering conditions.
     pub options: DrumScanOptions,
@@ -225,6 +225,69 @@ impl DrumKitAnalysis {
 }
 
 impl Session {
+    /// A lightweight change key for scheduling background analysis of a drum source.
+    ///
+    /// Reads document state, cached hosted change notifications and loaded-source availability.
+    /// It neither snapshots a plugin nor visits the filesystem. Drum assignments, notes, mixer
+    /// controls and the playhead are excluded; the reference tempo at the project's beginning
+    /// is included, so playback through a tempo change cannot continually invalidate analysis.
+    /// Call [`Self::poll`] first to observe native plugin editor changes. This scheduling key is
+    /// distinct from the complete source fingerprint in [`Self::drum_probe_request`], which is
+    /// still required to validate a measurement before applying its proposed assignments.
+    pub fn drum_analysis_source_key(&self, track: TrackId) -> Option<u64> {
+        let entry = self.project.track(track)?;
+        if !entry.kind.is_drum() {
+            return None;
+        }
+        let inner = entry.kind.as_instrument()?;
+        let file = inner
+            .file
+            .as_ref()
+            .map(|path| path.resolve(self.project_folder()));
+        let hosted_revision = if inner.file.is_none() {
+            None
+        } else if inner.instrument_id.starts_with(auris_vst3::ID_PREFIX) {
+            self.vst3.drum_source_revision(track)
+        } else {
+            self.hosted.drum_source_revision(track)
+        };
+        let available = if inner.file.is_some() {
+            hosted_revision.is_some()
+        } else {
+            self.registry.has_instrument(&inner.instrument_id)
+        };
+        let soundfont = if inner.instrument_id == auris_sampler::SAMPLER_ID {
+            auris_sampler::stored_preset(&inner.instrument_state).map(|preset| {
+                (
+                    preset,
+                    self.fonts.contains(preset.font),
+                    self.project
+                        .soundfonts
+                        .get(&preset.font)
+                        .map(|font| (font.path.resolve(self.project_folder()), font.byte_size)),
+                )
+            })
+        } else {
+            None
+        };
+        let source = (
+            &inner.instrument_id,
+            &inner.instrument_state.params,
+            SourceExtra(&inner.instrument_state.extra),
+            file,
+            soundfont,
+            available,
+            hosted_revision,
+            self.project.sample_rate,
+            self.project.tempo_map.bpm_at(auris_core::Ticks::ZERO),
+        );
+        // Stream serialization into the digest rather than copying a potentially large opaque
+        // hosted preset into a temporary JSON buffer every time a frontend checks the source.
+        let mut hash = SourceHasher(0xcbf29ce484222325);
+        serde_json::to_writer(&mut hash, &source).ok()?;
+        Some(hash.0)
+    }
+
     /// Captures the actual selected source without touching notes or the live render graph.
     ///
     /// Hosted plugins must support state save; unavailable or unsnapshotable instruments fail
@@ -308,7 +371,7 @@ impl Session {
             file,
             soundfont,
             sample_rate: self.project.sample_rate,
-            bpm: self.project.tempo_map.bpm_at(self.playhead()),
+            bpm: self.project.tempo_map.bpm_at(auris_core::Ticks::ZERO),
             options: options.clone(),
             source_fingerprint: String::new(),
         };
@@ -398,6 +461,44 @@ impl Session {
         self.project.track_mut(report.track).unwrap().kind = TrackKind::Drum(next);
         self.invalidate_graph();
         Ok(true)
+    }
+}
+
+/// The source's opaque state with musical assignments omitted, without cloning the payload.
+struct SourceExtra<'a>(&'a serde_json::Value);
+
+impl Serialize for SourceExtra<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let Some(object) = self.0.as_object() else {
+            return self.0.serialize(serializer);
+        };
+        let count = object.len() - usize::from(object.contains_key(DrumMap::STATE_KEY));
+        if count == 0 {
+            return serializer.serialize_none();
+        }
+        let mut map = serializer.serialize_map(Some(count))?;
+        for (key, value) in object {
+            if key != DrumMap::STATE_KEY {
+                map.serialize_entry(key, value)?;
+            }
+        }
+        map.end()
+    }
+}
+
+struct SourceHasher(u64);
+
+impl std::io::Write for SourceHasher {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        for byte in bytes {
+            self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(0x100000001b3);
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -937,6 +1038,151 @@ fn failure(message: impl Into<String>) -> SessionError {
 mod tests {
     use super::*;
     use crate::session::fixtures::session;
+
+    #[test]
+    fn scheduling_key_ignores_score_assignments_and_mixer_edits() {
+        use auris_core::{Note, Ticks};
+        let mut session = session();
+        let drum = session.add_default_drum_track("Kit").unwrap();
+        let melodic = session.add_default_instrument_track("Keys").unwrap();
+        assert_eq!(session.drum_analysis_source_key(melodic), None);
+        assert_eq!(session.drum_analysis_source_key(TrackId(u64::MAX)), None);
+        let initial = session.drum_analysis_source_key(drum).unwrap();
+        let clip = session
+            .add_midi_clip(drum, "Hits", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(38, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let track = session.project.track_mut(drum).unwrap();
+        track.name = "Renamed".into();
+        track.mixer.gain_db = -12.0;
+        track.mixer.pan = 0.4;
+        track.mixer.mute = true;
+        let state = &mut track.kind.as_instrument_mut().unwrap().instrument_state;
+        DrumMap::default().store(state);
+        assert_eq!(session.drum_analysis_source_key(drum), Some(initial));
+        let state = &mut session
+            .project
+            .track_mut(drum)
+            .unwrap()
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state;
+        state
+            .extra
+            .as_object_mut()
+            .unwrap()
+            .remove(DrumMap::STATE_KEY);
+        assert_eq!(session.drum_analysis_source_key(drum), Some(initial));
+        session.seek(Ticks::from_beats(2.0));
+        assert_eq!(session.drum_analysis_source_key(drum), Some(initial));
+        session.poll();
+        assert_eq!(session.drum_analysis_source_key(drum), Some(initial));
+    }
+
+    #[test]
+    fn scheduling_key_observes_source_state_rate_and_tempo() {
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let initial = session.drum_analysis_source_key(track).unwrap();
+        session.set_param(
+            crate::param::ParamTarget::Instrument {
+                track,
+                param: auris_core::ParamId(0),
+            },
+            -6.0,
+        );
+        let parameter = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(parameter, initial);
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .instrument_state
+            .set_hosted_bytes(&[1, 2, 3]);
+        let state = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(state, parameter);
+        session.project.sample_rate = 44_100.0;
+        let rate = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(rate, state);
+        session.set_bpm(137.0);
+        let tempo = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(tempo, rate);
+        session
+            .set_track_instrument(track, "auris.synth.noisedrum")
+            .unwrap();
+        assert_ne!(session.drum_analysis_source_key(track), Some(tempo));
+    }
+
+    #[test]
+    fn transport_tempo_changes_do_not_invalidate_reference_tempo_measurements() {
+        use auris_core::Ticks;
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        session.set_bpm(120.0);
+        let initial = session.drum_analysis_source_key(track).unwrap();
+        let first = session.drum_probe_request(track, &quick_options()).unwrap();
+        session.set_tempo_point(Ticks::from_beats(4.0), 160.0);
+        session.set_tempo_point(Ticks::from_beats(8.0), 90.0);
+        for beat in [0.0, 4.0, 6.0, 8.0, 12.0] {
+            session.seek(Ticks::from_beats(beat));
+            session.poll();
+            assert_eq!(session.drum_analysis_source_key(track), Some(initial));
+            let moved = session.drum_probe_request(track, &quick_options()).unwrap();
+            assert_eq!(moved.bpm, 120.0);
+            assert_eq!(moved.source_fingerprint, first.source_fingerprint);
+        }
+        session.set_bpm(133.0);
+        assert_ne!(session.drum_analysis_source_key(track), Some(initial));
+        let changed = session.drum_probe_request(track, &quick_options()).unwrap();
+        assert_eq!(changed.bpm, 133.0);
+        assert_ne!(changed.source_fingerprint, first.source_fingerprint);
+    }
+
+    #[test]
+    fn scheduling_key_observes_soundfont_choice_resolution_and_loading() {
+        use crate::session::fixtures::{Scratch, named_font};
+        use auris_core::{AssetPath, PresetRef};
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let font = named_font(&mut session, "Kit");
+        let preset = PresetRef {
+            font,
+            bank: 128,
+            patch: 0,
+        };
+        session.set_track_preset(track, preset).unwrap();
+        let initial = session.drum_analysis_source_key(track).unwrap();
+        session
+            .set_track_preset(track, PresetRef { patch: 8, ..preset })
+            .unwrap();
+        let selected = session.drum_analysis_source_key(track).unwrap();
+        assert_ne!(selected, initial);
+        session.project.soundfonts.get_mut(&font).unwrap().path =
+            AssetPath::external("/missing/moved-kit.sf2");
+        assert_ne!(session.drum_analysis_source_key(track), Some(selected));
+        let scratch = Scratch::new("drum-source-key");
+        let path = scratch.soundfont("kit.sf2");
+        let loaded = session.import_soundfont(&path).unwrap();
+        session
+            .set_track_preset(
+                track,
+                PresetRef {
+                    font: loaded,
+                    bank: 0,
+                    patch: 0,
+                },
+            )
+            .unwrap();
+        let ready = session.drum_analysis_source_key(track).unwrap();
+        session.fonts.clear();
+        assert_ne!(session.drum_analysis_source_key(track), Some(ready));
+    }
 
     #[test]
     fn drum_analysis_requires_the_explicit_track_kind() {

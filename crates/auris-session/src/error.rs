@@ -10,6 +10,9 @@ pub enum SessionError {
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),
+    /// A manual drum assignment names an invalid MIDI key or incompatible source state.
+    #[error("invalid drum assignment: {0}")]
+    InvalidDrumAssignment(String),
     /// A composite drum clip was given incompatible or unavailable voice instructions.
     #[error("invalid drum recipe: {0}")]
     InvalidDrumRecipe(String),

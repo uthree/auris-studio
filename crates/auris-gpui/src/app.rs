@@ -1293,10 +1293,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_wish: Option<SungPreviewWish>,
     /// Whether a preview render is on the background executor right now.
     pub(crate) sung_preview_rendering: bool,
-    /// Last acoustic drum measurement, kept separate from accepted musical assignments.
-    pub(crate) drum_analysis: Option<auris_session::DrumKitAnalysis>,
-    /// Cancellation for the currently supervised probe process.
-    pub(crate) drum_analysis_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// Per-track acoustic measurements and the serial background probe queue.
+    pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
@@ -1497,9 +1495,7 @@ fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>)
 
 impl Drop for AurisApp {
     fn drop(&mut self) {
-        if let Some(cancel) = &self.drum_analysis_cancel {
-            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
+        self.drum_analysis.reset();
     }
 }
 
@@ -1575,6 +1571,7 @@ impl AurisApp {
                         // Edits to a voiced singer track re-render its take without being
                         // asked; the debounce and the one-at-a-time rule live in the poll.
                         this.poll_auto_sing(cx);
+                        this.poll_drum_analysis(cx);
                         // And a grabbed note's preview is sung here too, because the
                         // pointer handler that wished for it had no executor in hand.
                         this.poll_sung_preview(cx);
@@ -1628,8 +1625,7 @@ impl AurisApp {
             sung_previews: std::collections::HashMap::new(),
             sung_preview_wish: None,
             sung_preview_rendering: false,
-            drum_analysis: None,
-            drum_analysis_cancel: None,
+            drum_analysis: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,

@@ -28,9 +28,13 @@ impl Session {
     /// different feel. Its notes are stored like anybody else's: the engine, the exporter and the
     /// piano roll never learn that a composer was involved.
     ///
-    /// A range with no chords under it produces an empty clip rather than an error. That is the
-    /// honest answer — there was nothing to play — and it leaves something on the timeline to
-    /// aim the next progression at.
+    /// Drum recipes play the range's meter and groove even when the project has no chords.
+    /// Melodic recipes produce an empty clip over a range without harmony; writing a progression
+    /// and regenerating that clip fills it in.
+    ///
+    /// A saved track drum map supplies the new clip's assignments. Without one, an explicitly
+    /// authored recipe keeps its map, single drum address or voice addresses; a generic drum
+    /// preset receives an empty map and waits for the user to assign sounds.
     pub fn generate_clip(
         &mut self,
         track: TrackId,
@@ -61,6 +65,14 @@ impl Session {
             .and_then(|instrument| auris_core::project::DrumMap::load(&instrument.instrument_state))
         {
             auris_compose::apply_drum_map(&mut recipe, &map);
+        } else if recipe.preset.is_drums()
+            && recipe.drum_map.is_none()
+            && recipe.drum_note.is_none()
+            && recipe.drum_voices.is_empty()
+        {
+            // An unassigned track must agree with its empty assignment panel. Explicit score
+            // addresses remain usable, but a generic preset has no authority to invent them.
+            auris_compose::apply_drum_map(&mut recipe, &auris_core::project::DrumMap::default());
         }
         let notes = self.phrase(start, length, &recipe);
         recipe.text_digest = auris_core::notes_digest(&notes);
@@ -349,7 +361,7 @@ impl Session {
         Ok(written)
     }
 
-    /// The notes a recipe writes over a stretch of this document's harmony.
+    /// The notes a recipe writes over a stretch of this document's timeline.
     ///
     /// The section under the clip's start travels along as the composer's hint: two clips
     /// written into stretches with the same label draw the same figures, which is what makes
@@ -466,6 +478,38 @@ mod tests {
             .project
             .add_drum_track("Kit", auris_synth::DrumKit::ID);
         (session, track)
+    }
+
+    #[test]
+    fn explicit_recipe_addresses_survive_when_the_track_has_no_saved_map() {
+        use auris_core::{DrumMap, DrumRole, DrumVoiceRecipe};
+        let (mut session, track) = with_drum_progression();
+        let mut mapped = ClipRecipe::new(ClipPreset::Drums, 7);
+        mapped.drum_map = Some(DrumMap {
+            voices: [(DrumRole::Kick, 73)].into_iter().collect(),
+        });
+        let mut single = ClipRecipe::new(ClipPreset::Kick, 7);
+        single.drum_note = Some(84);
+        let mut voiced = ClipRecipe::new(ClipPreset::Drums, 7);
+        voiced.drum_voices.push(DrumVoiceRecipe {
+            name: "authored kick".into(),
+            role: DrumRole::Kick,
+            note: 18,
+            recipe: Some(Box::new(ClipRecipe::new(ClipPreset::Kick, 7))),
+            fixed_notes: Vec::new(),
+        });
+        for (recipe, pitch) in [(mapped, 73), (single, 84), (voiced, 18)] {
+            let clip = session
+                .generate_clip(track, Ticks::ZERO, BAR, recipe.clone())
+                .unwrap();
+            let written = session.midi_clip(clip).unwrap();
+            assert!(!written.notes.is_empty());
+            assert!(written.notes.iter().all(|note| note.pitch == pitch));
+            let retained = written.recipe.as_ref().unwrap();
+            assert_eq!(retained.drum_map, recipe.drum_map);
+            assert_eq!(retained.drum_note, recipe.drum_note);
+            assert_eq!(retained.drum_voices, recipe.drum_voices);
+        }
     }
 
     #[test]
@@ -958,7 +1002,9 @@ mod tests {
         // presets that carry one.
         for preset in ClipPreset::ALL {
             let (mut session, track) = if preset.is_drums() {
-                with_drum_progression()
+                let (mut session, _) = with_a_progression();
+                let track = session.add_default_drum_track("Kit").unwrap();
+                (session, track)
             } else {
                 with_a_progression()
             };
@@ -1128,6 +1174,126 @@ mod tests {
             session.project().midi_clip(clip).unwrap().1.is_generated(),
             "so that writing a progression and pressing regenerate fills it in"
         );
+    }
+
+    #[test]
+    fn every_drum_preset_generates_and_regenerates_in_a_project_without_chords() {
+        for preset in ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| preset.is_drums())
+        {
+            let mut session = session();
+            let track = session.add_default_drum_track("Drums").unwrap();
+            let start = BAR * 3;
+            let length = BAR * 4;
+            let clip = session
+                .generate_clip(track, start, length, ClipRecipe::new(preset, 19))
+                .unwrap();
+            let written = session.midi_clip(clip).unwrap().notes.clone();
+            assert!(!written.is_empty(), "{preset:?} must play in a new project");
+            assert!(written.iter().all(|note| note.start >= Ticks::ZERO
+                && note.end() <= length
+                && note.velocity > 0.0));
+            assert_eq!(session.regenerate_clip(clip).unwrap(), written.len());
+            assert_eq!(session.midi_clip(clip).unwrap().notes, written);
+            assert!(session.reroll_clip(clip).unwrap() > 0);
+            let retaken = session.midi_clip(clip).unwrap().notes.clone();
+            assert_eq!(session.clip_recipe(clip).unwrap().seed, 20);
+            assert_eq!(session.regenerate_clip(clip).unwrap(), retaken.len());
+            assert_eq!(session.midi_clip(clip).unwrap().notes, retaken);
+            let midi = session.midi_clip(clip).unwrap();
+            assert_eq!((midi.start, midi.length), (start, length));
+            assert!(
+                session.project().harmony.is_empty(),
+                "writing a drum part must not stamp chords"
+            );
+        }
+    }
+
+    #[test]
+    fn independent_kit_writers_and_fixed_accents_work_without_harmony() {
+        use auris_core::project::{DrumMap, DrumRole};
+        use auris_core::{DrumVoiceRecipe, TimeSignature};
+        let mut session = session();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        let meter = TimeSignature::new(7, 8);
+        session.set_signature_at(Ticks::ZERO, meter);
+        let voices = [
+            ("kick", DrumRole::Kick, ClipPreset::Kick, 73),
+            ("snare", DrumRole::Snare, ClipPreset::Snare, 91),
+            ("hat", DrumRole::ClosedHat, ClipPreset::Hat, 18),
+        ];
+        let map = DrumMap {
+            voices: voices
+                .iter()
+                .map(|(_, role, _, note)| (*role, *note))
+                .chain([(DrumRole::Crash, 49)])
+                .collect(),
+        };
+        map.store(
+            &mut session
+                .project
+                .track_mut(track)
+                .unwrap()
+                .kind
+                .as_instrument_mut()
+                .unwrap()
+                .instrument_state,
+        );
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 31);
+        for (name, role, preset, note) in voices {
+            let mut writer = ClipRecipe::new(preset, 32 + u64::from(note));
+            writer.groove = "bossa-nova".into();
+            writer.swing = 61;
+            recipe.drum_voices.push(DrumVoiceRecipe {
+                name: name.into(),
+                role,
+                note,
+                recipe: Some(Box::new(writer)),
+                fixed_notes: Vec::new(),
+            });
+        }
+        recipe.drum_voices.push(DrumVoiceRecipe {
+            name: "accent".into(),
+            role: DrumRole::Crash,
+            note: 49,
+            recipe: None,
+            fixed_notes: vec![Note::new(49, Ticks::ZERO, Ticks(90))],
+        });
+        let length = meter.ticks_per_bar() * 2 + Ticks::QUARTER;
+        let clip = session.generate_clip(track, BAR, length, recipe).unwrap();
+        let written = session.midi_clip(clip).unwrap().notes.clone();
+        for (name, pitch) in [("kick", 73), ("snare", 91), ("hat", 18), ("accent", 49)] {
+            let notes: Vec<_> = written
+                .iter()
+                .filter(|note| note.drum_voice == name)
+                .collect();
+            assert!(!notes.is_empty(), "{name} must play without chords");
+            assert!(
+                notes
+                    .iter()
+                    .all(|note| note.pitch == pitch && note.end() <= length)
+            );
+        }
+        session.regenerate_clip(clip).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().notes, written);
+        let others: Vec<_> = written
+            .iter()
+            .filter(|note| note.drum_voice != "snare")
+            .cloned()
+            .collect();
+        session.reroll_drum_voice(clip, "snare").unwrap();
+        let after = &session.midi_clip(clip).unwrap().notes;
+        assert!(after.iter().any(|note| note.drum_voice == "snare"));
+        assert_eq!(
+            after
+                .iter()
+                .filter(|note| note.drum_voice != "snare")
+                .cloned()
+                .collect::<Vec<_>>(),
+            others
+        );
+        assert!(session.project().harmony.is_empty());
     }
 
     #[test]

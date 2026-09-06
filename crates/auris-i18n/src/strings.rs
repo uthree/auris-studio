@@ -1022,19 +1022,31 @@ strings! {
     CountIn { en: "Count-In", ja: "カウントイン" }
     EditAdjustParameter { en: "the parameter change", ja: "パラメーターの変更" }
     MenuFreezeTrack { en: "Keep Every Take Here", ja: "このトラックをすべて確定" }
-    MenuAnalyzeDrums { en: "Analyze Drum Sounds", ja: "ドラムの音を解析" }
-    MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "測定したドラム割り当てを使う" }
+    MenuAnalyzeDrums { en: "Rescan Drum Sounds", ja: "ドラム音を再分析" }
+    MenuApplyDrumMap { en: "Use Measured Drum Mapping", ja: "分析結果のドラム割り当てを使う" }
     MenuUseDrumMapForGeneration { en: "Use Mapping for New Clips Only", ja: "新しく生成するクリップだけに使う" }
-    MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム解析を中断" }
-    DrumAnalysisRunning { en: "Measuring drum sounds…", ja: "ドラムの音を測定中…" }
-    DrumAnalysisReady { en: "Drum measurements ready", ja: "ドラムの測定が完了しました" }
-    DrumAnalysisObsolete { en: "The instrument changed during measurement. Analyze its sounds again.", ja: "測定中に音源が変更されました。もう一度解析してください。" }
+    MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム音の分析をキャンセル" }
+    MenuRetryDrumAnalysis { en: "Retry Drum Sound Analysis", ja: "ドラム音の分析を再試行" }
+    DrumAnalysisQueued { en: "Drum sound analysis queued", ja: "ドラム音の分析待ち" }
+    DrumAnalysisRunning { en: "Analyzing drum sounds…", ja: "ドラム音を分析中…" }
+    DrumAnalysisReady { en: "Drum sound analysis ready", ja: "ドラム音の分析が完了しました" }
+    DrumAnalysisFailed { en: "Drum sound analysis failed", ja: "ドラム音の分析に失敗しました" }
+    DrumAnalysisCancelled { en: "Drum sound analysis cancelled", ja: "ドラム音の分析をキャンセルしました" }
+    DrumAnalysisObsolete { en: "The instrument changed. These measurements are out of date.", ja: "音源が変更されたため、この分析結果は使用できません。" }
     DrumFit { en: "fit", ja: "適合度" }
     DrumNoMatch { en: "no matching sound", ja: "該当音なし" }
     DrumClosedHat { en: "Closed hat", ja: "クローズドハット" }
     DrumOpenHat { en: "Open hat", ja: "オープンハット" }
     DrumTom { en: "Tom", ja: "タム" }
     EditApplyDrumMap { en: "Apply Drum Mapping", ja: "ドラム割り当てを適用" }
+    DrumAssignments { en: "Drum assignments", ja: "ドラムの割り当て" }
+    DrumAssignmentsHint { en: "Choose the sounds for new generated clips. Existing clips keep their notes.", ja: "新しく生成するクリップで使う音を指定します。既存のクリップは変更されません。" }
+    DrumAddAssignment { en: "Assign…", ja: "割り当て…" }
+    DrumApplyAssignment { en: "Assign", ja: "割り当て" }
+    DrumClearAssignment { en: "Clear", ja: "解除" }
+    DrumMidiNote { en: "MIDI note (0–127)", ja: "MIDIノート番号（0〜127）" }
+    HintMidiNote { en: "Enter a whole MIDI note number from 0 to 127.", ja: "MIDIノート番号を0〜127の整数で入力してください。" }
+    EditSetDrumAssignment { en: "Change Drum Assignment", ja: "ドラムの割り当てを変更" }
     MenuTrackColor { en: "Colour", ja: "カラー" }
     MenuAutomateVolume { en: "Automate Volume", ja: "ボリュームをオートメーション" }
     MenuAutomatePan { en: "Automate Pan", ja: "パンをオートメーション" }

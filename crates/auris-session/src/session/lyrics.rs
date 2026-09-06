@@ -17,7 +17,7 @@
 use auris_compose::vocal::{VocalRange, ornament_vocal, vocal_rhythm, write_vocal};
 use auris_core::theory::contour::Contour;
 use auris_core::time::{Ticks, TimeSignature};
-use auris_core::{ClipId, ClipPreset, ClipRecipe, Note, PresetRef, TrackId};
+use auris_core::{ClipId, ClipPreset, Note, PresetRef, TrackId};
 use auris_vocal::{SungMora, kana_accent_phrase};
 
 use crate::error::SessionError;
@@ -193,7 +193,8 @@ impl Session {
                     },
                 );
             }
-            let recipe = ClipRecipe::new(*preset, seed.wrapping_add(1 + index as u64));
+            let recipe =
+                super::accompany::backing_part_recipe(*preset, seed.wrapping_add(1 + index as u64));
             match self.generate_clip(band, Ticks::ZERO, rhythm.length, recipe) {
                 Ok(_) => report.parts.push(band),
                 Err(error) => log::warn!("no {} was written: {error}", preset.name()),

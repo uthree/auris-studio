@@ -245,6 +245,31 @@ impl Vst3Plugin {
     pub fn save_state(&self) -> Result<Vec<u8>, Vst3Error> {
         Ok(self.lock()?.save_state()?)
     }
+
+    /// Consumes native editor and preset change notifications without snapshotting the plugin.
+    ///
+    /// A busy rendering instance is left alone; its notifications remain queued for the next
+    /// poll. Processor-generated meter changes are excluded because they are not source edits.
+    pub fn take_source_changed(&self) -> bool {
+        let Ok(mut plugin) = self.shared.plugin.try_lock() else {
+            return false;
+        };
+        let edits = plugin.take_parameter_edits();
+        let notifications = plugin.take_host_notifications();
+        let restart = plugin.take_restart_flags();
+        edits
+            .iter()
+            .any(|edit| matches!(edit.kind, vst3_host::ParameterEditKind::ValueChange))
+            || notifications.iter().any(|notification| {
+                matches!(
+                    notification,
+                    vst3_host::HostNotification::DirtyChanged(true)
+                        | vst3_host::HostNotification::ProgramListChanged { .. }
+                )
+            })
+            || restart.param_values_changed()
+            || restart.reload_component()
+    }
     /// Restores an opaque state blob previously produced by this class.
     pub fn load_state(&self, bytes: &[u8]) -> Result<(), Vst3Error> {
         self.lock()?.load_state(bytes)?;

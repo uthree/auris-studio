@@ -96,6 +96,7 @@ pub fn edit_key(edit: Edit) -> Key {
     match edit {
         Edit::ExternalChanges => Key::EditExternalChanges,
         Edit::ApplyDrumMap => Key::EditApplyDrumMap,
+        Edit::SetDrumAssignment => Key::EditSetDrumAssignment,
         Edit::ToggleLoop => Key::EditToggleLoop,
         Edit::SetLoopRegion => Key::EditSetLoopRegion,
         Edit::SetPunchRegion => Key::EditSetPunchRegion,
@@ -218,9 +219,9 @@ pub fn track_kind_key(kind: &TrackKind) -> Key {
 pub fn error_text(error: &SessionError, language: Language) -> String {
     let with = |key: Key, detail: String| messages::detailed(language, key.get(language), &detail);
     match error {
-        SessionError::InvalidDrumRecipe(detail) | SessionError::DrumAnalysis(detail) => {
-            with(Key::ErrorDocument, detail.clone())
-        }
+        SessionError::InvalidDrumRecipe(detail)
+        | SessionError::InvalidDrumAssignment(detail)
+        | SessionError::DrumAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),
         SessionError::InvalidAutomation(detail) => with(Key::ErrorDocument, detail.clone()),
         SessionError::InvalidCheckpointName => Key::ErrorCheckpointName.get(language).to_string(),
         SessionError::ExternalChanges(_) => Key::ExternalChangeConflict.get(language).to_string(),

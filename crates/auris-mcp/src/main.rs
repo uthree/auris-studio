@@ -221,6 +221,15 @@ impl AurisMcp {
         blocking(move || toolbox::analyze_drum_kit::run(&args)).await
     }
 
+    /// Adds or changes one drum track role's MIDI note assignment, or removes it with remove: true. Roles are kick, snare, closed_hat, open_hat, crash and tom; note is 0-127. Requires an explicit drum track. Saves the assignment for the drum editor and future generation without rewriting existing clips or their saved recipes. Other assignments and instrument state are preserved; removing the final role leaves an explicitly empty map.
+    #[tool]
+    async fn set_drum_assignment(
+        &self,
+        Parameters(args): Parameters<toolbox::set_drum_assignment::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::set_drum_assignment::run(&args)).await
+    }
+
     /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
     #[tool]
     async fn mixer(
@@ -589,6 +598,10 @@ mod tests {
             (
                 toolbox::analyze_drum_kit::NAME,
                 toolbox::analyze_drum_kit::DESCRIPTION,
+            ),
+            (
+                toolbox::set_drum_assignment::NAME,
+                toolbox::set_drum_assignment::DESCRIPTION,
             ),
             (mixer::NAME, mixer::DESCRIPTION),
             (set_level::NAME, set_level::DESCRIPTION),

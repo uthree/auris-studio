@@ -12,6 +12,7 @@ pub mod commands;
 pub mod compose_sheet;
 pub mod context_menu;
 pub mod drop;
+pub mod drum_assignments;
 pub mod drum_editor;
 pub mod drums;
 pub mod envelope;

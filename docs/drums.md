@@ -12,6 +12,10 @@ Opening a drum clip shows the drum editor. Its rows use the track's authored ass
 the MIDI addresses present in the clip. Drum clips move and paste between drum tracks; melodic
 clips remain on melodic or singer tracks.
 
+Drum generation works on an empty timeline without a chord progression. The full-kit, kick,
+snare and hi-hat presets use the selected range's meter and groove; generating or regenerating
+them does not add chords to the project.
+
 Generated drum clips have a **Drummer** inspector. Move the performance pad to the right for
 greater complexity and upward for greater intensity; a drag is one undoable edit and keeps the
 take's seed. Choose a groove, adjust fills, swing and dynamics, or select another take. A kit
@@ -20,13 +24,33 @@ Editing one writer preserves the other voices and their saved assignments. Autho
 rhythms retain their rhythm while intensity remains adjustable. Freezing keeps the current
 notes and the drum track while removing the generation recipe.
 
+## Manual sound assignments
+
+In the drum inspector, assign a MIDI note number from **0 to 127** to each role: kick, snare,
+closed hat, open hat, crash and tom. You can add an assignment, change its number or clear it.
+These are musical choices and can be edited before sound analysis completes.
+
+Changes update the drum editor's assigned rows and the map used by newly generated clips.
+They support undo and redo. Existing notes and clip recipes stay unchanged, and existing
+recipes keep their saved assignments during regeneration. A cleared role remains unassigned
+for new clips; the generator does not substitute a conventional MIDI number. Existing hits
+remain visible in the editor even when their role's assignment is cleared.
+
 ## Drum sound measurement
 
-Select a drum track and choose **Analyze Drum Sounds** in its inspector or context menu.
+The desktop automatically analyzes drum sounds in the background when a drum track is created
+or loaded, and analyzes the new sound after its instrument, preset or parameters change. Each
+track keeps its own analysis status and result. The inspector shows whether analysis is queued,
+running, complete, cancelled or failed. You can cancel a pending analysis, retry it after a
+failure, or choose **Rescan Drum Sounds** from the track's context menu. Unchanged sources are
+not repeatedly scanned; cancelled and failed analyses wait for a retry or a source change.
+
 The worker triggers every MIDI key at three velocities, twice each, and measures the resulting
 stereo audio. Built-in instruments, an explicitly selected SoundFont preset, and stateful hosted
 CLAP or VST3 instruments use the same analysis. The inspector shows proposed roles, numeric
-fitness, spectral centroid and energy duration. **Use Mapping for New Clips Only** saves the
+fitness, spectral centroid and energy duration.
+
+Applying a result is a separate, explicit action. **Use Mapping for New Clips Only** saves the
 proposal for future generation, including an empty or partial assignment. **Use Measured Drum
 Mapping** also retargets existing generated drum notes and their recipes as one undoable edit.
 
@@ -34,7 +58,8 @@ Analysis itself does not edit the project. The selected instrument's current sta
 on its owning thread, then restored in an independent worker process. The worker renders the
 instrument directly, before track inserts, sends and mixer gain. The parent can cancel a scan or
 terminate it at its deadline. Results are rejected when the source has changed since measurement.
-Replacing the document cancels its pending scan and clears the previous result.
+Replacing or reloading the document cancels its pending analyses and clears previous results.
+Automatic analysis preserves authored assignments, clip recipes and stored notes.
 
 The command line provides the same operation:
 
@@ -52,6 +77,10 @@ scan did not find, remapping fails without changing the document. MCP and the ag
 measurement ranges; `include_triggers` returns every recorded trigger. `inspect_composition`
 reports individual drum writers; `edit_recipe` accepts `drum_voice` to change one writer's
 musical controls.
+
+MCP and the agent also provide `set_drum_assignment`. Supply a project, drum track, role and
+`note` to add or change an assignment, or `remove: true` to clear it. Each actual change saves
+a checkpoint and preserves existing clips.
 
 ## Evidence and assignment
 
