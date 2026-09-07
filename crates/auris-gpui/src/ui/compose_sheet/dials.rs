@@ -1,8 +1,7 @@
 //! Everything the sheet decides, which is everything about it that can be tested.
 //!
-//! Not one picture in the file. A gpui view cannot be unit-tested, so what the sheet *decides* —
-//! these dials to a [`SongSpec`] — lives here in free functions with tests, and the view next door
-//! does nothing but draw them and hand back what was moved.
+//! Transformations from these dials to a [`SongSpec`] live in free functions with tests.
+//! The view draws them and hands back what was moved.
 //!
 //! The sheet and `.asong` are two faces of one type. [`song_spec`] builds the specification, and
 //! the specification is what writes the piece — so there is no second implementation of what a
@@ -111,6 +110,10 @@ pub const MAIN_CHART: &str = "main";
 /// would slide its row somewhere else in the panel while the pointer was still on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongDials {
+    /// Voice model selected for the sung part.
+    pub singer: Option<String>,
+    /// Speaker name within the selected voice; absent selects its default speaker.
+    pub singer_speaker: Option<String>,
     /// What the piece is called, and what the project is named after.
     pub title: String,
     /// The key everything is measured from.
@@ -179,6 +182,8 @@ impl Default for SongDials {
 /// mean one thing to the composer and another to the file.
 pub fn song_spec(dials: &SongDials) -> SongSpec {
     SongSpec {
+        singer: dials.singer.clone(),
+        singer_speaker: dials.singer_speaker.clone(),
         title: dials.title.clone(),
         key: dials.key,
         tempo: dials.tempo,
@@ -265,6 +270,8 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
     }
 
     SongDials {
+        singer: spec.singer.clone(),
+        singer_speaker: spec.singer_speaker.clone(),
         title: spec.title.clone(),
         key: spec.key,
         tempo: spec.tempo,
@@ -395,6 +402,15 @@ fn tidy_sections(dials: &mut SongDials) {
             kept.push(section.clone());
         }
     }
+    for section in &mut kept {
+        if section
+            .melody_from
+            .as_ref()
+            .is_some_and(|source| !dials.form.contains(source))
+        {
+            section.melody_from = None;
+        }
+    }
     dials.sections = kept;
 }
 
@@ -454,18 +470,6 @@ pub fn invent_section_chart(dials: &mut SongDials, index: usize) -> bool {
 /// How a chart is named on the sheet: the progression it quotes, or its own key.
 pub fn chart_label(name: &str, chart: &Chart) -> String {
     chart.quoted_as.clone().unwrap_or_else(|| name.to_string())
-}
-
-/// How a motif is written — on the sheet's row and in the field that edits it.
-///
-/// The same text `motif = "…"` holds in a `.asong`, so what the row shows is what the file
-/// would say and what the prompt comes up holding is what typing it back in would mean.
-pub fn motif_text(motif: &[i32]) -> String {
-    motif
-        .iter()
-        .map(i32::to_string)
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// The same song, next take.
@@ -538,6 +542,24 @@ pub fn add_part(dials: &mut SongDials, role: Role) {
     dials.parts.push(PartSpec::of_role(name, role));
 }
 
+/// Adds or removes the shared kit as one roster entry in the song sheet.
+pub fn set_song_drums(dials: &mut SongDials, enabled: bool) {
+    if enabled {
+        if dials.parts.iter().any(|part| part.role.is_drum()) {
+            return;
+        }
+        for role in [Role::Kick, Role::Snare, Role::Hat, Role::Crash] {
+            add_part(dials, role);
+        }
+    } else if dials.parts.iter().any(|part| !part.role.is_drum()) {
+        for index in (0..dials.parts.len()).rev() {
+            if dials.parts[index].role.is_drum() {
+                remove_part(dials, index);
+            }
+        }
+    }
+}
+
 /// Renames the part at `index` and every section reference keyed by its name.
 ///
 /// Part names are identities in the song specification: section rosters and section-specific
@@ -588,15 +610,6 @@ pub fn remove_part(dials: &mut SongDials, index: usize) -> bool {
     true
 }
 
-/// How far a section's tempo may be lifted or dropped from the song's, in beats per minute.
-///
-/// Not a continuous dial, for the reason [`TRANSPOSES`] is not one: a section that plays faster is
-/// a *choice*, and the ones anybody reaches for are a nudge, a noticeable lift or a different
-/// speed. The list is offsets and what is stored is the tempo they arrive at — the section pins a
-/// number rather than tracking the song, which is what makes a chorus at 132 stay at 132 when the
-/// verse is slowed down to try something.
-pub const SECTION_TEMPOS: [f64; 8] = [-16.0, -8.0, -4.0, -2.0, 2.0, 4.0, 8.0, 16.0];
-
 /// How a section's tempo is written on its button.
 ///
 /// An em dash for a section that has not pinned one. Printing the song's tempo there instead would
@@ -604,7 +617,7 @@ pub const SECTION_TEMPOS: [f64; 8] = [-16.0, -8.0, -4.0, -2.0, 2.0, 4.0, 8.0, 16
 /// changed — which is the one thing this control is about.
 pub fn section_tempo_label(section: &SectionSpec) -> String {
     match section.tempo {
-        Some(bpm) => format!("{bpm:.0}"),
+        Some(bpm) => bpm.to_string(),
         None => "—".to_string(),
     }
 }

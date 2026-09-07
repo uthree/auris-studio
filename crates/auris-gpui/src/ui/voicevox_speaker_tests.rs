@@ -188,6 +188,65 @@ fn arm_request(app: &mut AurisApp, track: TrackId) -> (VoicevoxConnection, u64, 
 }
 
 #[gpui::test]
+fn the_song_sheet_fetches_and_keeps_the_selected_engine_speaker(cx: &mut TestAppContext) {
+    let scratch = Scratch::new();
+    let mut engine = Engine::singers();
+    let path = scratch.voice("song.voicevox.json", &engine.url);
+    let (app, cx) = crate::harness::open(cx);
+    let before = app.read_with(cx, |this, _| this.project().clone());
+    app.update(cx, |this, cx| {
+        this.open_song_sheet();
+        this.run_menu_command(
+            MenuCommand::SongSinger(Some(path.to_string_lossy().into_owned())),
+            cx,
+        );
+    });
+    paint(&app, cx);
+    click("song-speaker", cx);
+    cx.run_until_parked();
+    engine.finish();
+    let command = app.read_with(cx, |this, _| {
+        this.menu.as_ref().unwrap().entries.iter().find_map(|entry| match entry {
+            MenuEntry::Item(item) if matches!(&item.command, MenuCommand::SongVoicevoxSpeaker { choice, .. } if choice.decode_style_id == 3003) => Some(item.command.clone()),
+            _ => None,
+        }).expect("the Engine's second singing style is offered")
+    });
+    paint(&app, cx);
+    choose(&app, cx, &command);
+    app.update(cx, |this, cx| {
+        let spec = crate::ui::compose_sheet::song_spec(this.song_sheet.as_ref().unwrap());
+        assert_eq!(
+            spec.singer_speaker.as_deref(),
+            Some("ずんだもん / ノーマル")
+        );
+        let restored = SongSpec::parse(&spec.to_toml()).unwrap();
+        assert_eq!(
+            crate::ui::compose_sheet::song_dials(&restored).singer_speaker,
+            spec.singer_speaker
+        );
+        assert_eq!(
+            this.project(),
+            &before,
+            "choosing a voice does not edit the project"
+        );
+        assert_eq!(
+            this.session
+                .voicevox_connection_at(&path, spec.singer_speaker.as_deref())
+                .unwrap()
+                .decode_style_id,
+            3003
+        );
+        this.run_menu_command(MenuCommand::SongSinger(None), cx);
+        assert!(this.song_sheet.as_ref().unwrap().singer_speaker.is_none());
+        this.run_menu_command(command.clone(), cx);
+        assert!(
+            this.song_sheet.as_ref().unwrap().singer_speaker.is_none(),
+            "an old menu cannot apply to another voice"
+        );
+    });
+}
+
+#[gpui::test]
 fn the_track_picker_fetches_real_engine_names_and_persists_the_clicked_style(
     cx: &mut TestAppContext,
 ) {

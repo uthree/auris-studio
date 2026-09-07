@@ -704,6 +704,31 @@ strings! {
     SongTranspose { en: "Transpose", ja: "移調" }
     SongSectionParts { en: "Who Plays", ja: "演奏するパート" }
     SongSectionTempo { en: "Section Tempo", ja: "セクションのテンポ" }
+    SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
+    SongAdvanced { en: "Detailed settings", ja: "詳細設定" }
+    SongBasic { en: "Back to basics", ja: "基本設定に戻る" }
+    SongStartHint { en: "Choose a style, adjust the mood, then create your song. Lyrics are optional.", ja: "スタイルを選び、雰囲気を調整して曲を作りましょう。歌詞は空欄でも作れます。" }
+    SongAdvancedHint { en: "Adjust the form, chords, rhythm and instruments. Returning to basics keeps every setting.", ja: "曲の構成・コード進行・リズム・楽器を調整できます。基本設定に戻っても、設定は保持されます。" }
+    SongVerseLabel { en: "Verse {n}", ja: "{n}番 Aメロ" }
+    SongChorusLabel { en: "Chorus {n}", ja: "{n}番 サビ" }
+    SongIntroLabel { en: "Intro", ja: "イントロ" }
+    SongOutroLabel { en: "Outro", ja: "エンディング" }
+    SongBridgeLabel { en: "Bridge", ja: "ブリッジ" }
+    SongSharedLyricsHint { en: "Uses the melody from {section}. You can enter different lyrics.", ja: "{section}と同じメロディです。別の歌詞を入力できます。" }
+    SongMelodyFrom { en: "Shared melody", ja: "メロディ共有" }
+    SongLyricsMatch { en: "Match the notes in each phrase to the original lyrics", ja: "元の歌詞と、フレーズごとの音数を合わせてください" }
+    SongLyricsEstimate { en: "{notes} notes · Needs {needed} bars / Section: {bars} bars", ja: "{notes}音 ・ 必要 {needed}小節 / 設定 {bars}小節" }
+    SongLyricsFits { en: "The lyrics fit the section exactly.", ja: "歌詞が過不足なく収まります。" }
+    SongLyricsSpare { en: "{bars} bars remain for accompaniment or a pause.", ja: "{bars}小節余ります（伴奏や余韻に使えます）。" }
+    SongLyricsOverflow { en: "{bars} more bars needed; {notes} notes do not fit.", ja: "{bars}小節足りず、{notes}音が収まりません。" }
+    SongLyricsUnreadable { en: "Cannot estimate all lyrics. Use kana or check the Japanese dictionary.", ja: "一部の歌詞を読めないため推定できません。かなで入力するか、日本語辞書の設定を確認してください。" }
+    SongFitLyrics { en: "Fit bars to lyrics", ja: "歌詞に小節数を合わせる" }
+    SongLyricsMatched { en: "Matches {section}: {actual} notes, including every phrase.", ja: "{section}と一致：{actual}音。フレーズごとの音数も合っています。" }
+    SongLyricsNoteMismatch { en: "Does not match {section}: {actual} notes / expected {expected}.", ja: "{section}と不一致：今の歌詞 {actual}音 / 元の歌詞 {expected}音。" }
+    SongLyricsPhraseMismatch { en: "Total matches {section} ({actual} notes), but phrase lengths differ.", ja: "{section}と合計は同じ{actual}音ですが、フレーズごとの音数が違います。" }
+    SongLyricsOriginalEmpty { en: "Enter lyrics for {section} first to compare note counts.", ja: "比較するには、先に{section}の歌詞を入力してください。" }
+    SongLyricsMatchUnreadable { en: "Cannot compare with {section} until both lyrics can be read.", ja: "歌詞の読みを確認できないため、{section}との一致を判定できません。" }
+    SongLyricsCounts { en: "These lyrics: {actual} · Original: {expected}", ja: "今の歌詞: {actual} ・ 元の歌詞: {expected}" }
     SongSectionTempoFollows { en: "Follow the Song", ja: "曲に合わせる" }
     // Writing a progression out, and keeping the one written. The second reaches past the song
     // into the book this installation carries.
@@ -740,7 +765,7 @@ strings! {
     SongPartNameTitle { en: "Name for this part", ja: "このパートの名前" }
     // The three things the sheet can do. "Another take" is the next seed rather than a random
     // one, which is what makes a take somebody liked reachable again.
-    SongWrite { en: "Write", ja: "書き出す" }
+    SongWrite { en: "Create Song", ja: "曲を作る" }
     SongAnotherTake { en: "Another Take", ja: "別テイク" }
     SongSaveSpec { en: "Save as Specification…", ja: "仕様ファイルに保存…" }
     // What the roles are called where a part names one. `Role::name` is the word the document
@@ -1131,6 +1156,13 @@ strings! {
     ErrorLibraryMissing {
         en: "the shipped sound library is not installed, so General MIDI sounds are unavailable",
         ja: "同梱の音色ライブラリが未インストールのため、General MIDI音源は使えません"
+    }
+    SongSpeakerDefault { en: "Default speaker", ja: "標準の話者" }
+    SongInstrumentsHeading { en: "Instruments", ja: "楽器" }
+    SongAddDrums { en: "Add drums", ja: "ドラムを追加" }
+    ErrorGenerationPositionOccupied {
+        en: "there is already a clip at this position; choose an empty area on the track",
+        ja: "この位置にはクリップがあります。同じトラックの空いている場所を選んでください"
     }
     ErrorCannotSplit {
         en: "a clip can only be split inside itself",

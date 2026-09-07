@@ -22,6 +22,65 @@ use crate::history::Edit;
 use super::Session;
 
 impl Session {
+    /// Writes into the free interval containing `at` on `track`.
+    ///
+    /// A named section with an end boundary supplies the interval. The final section uses the
+    /// end of the project's clips if it lies beyond the pointer. Elsewhere the interval starts
+    /// at the pointer's bar and lasts at most four bars, stopping at any section boundary. Existing
+    /// clips on this track bound the interval on either side. An occupied position is refused.
+    /// Loop regions do not affect this command. Clip and section edges are preserved exactly,
+    /// including edges between grid lines.
+    pub fn generate_clip_here(
+        &mut self,
+        track: TrackId,
+        at: Ticks,
+        recipe: ClipRecipe,
+    ) -> Result<ClipId, SessionError> {
+        let index = self.require_track(track)?;
+        let kind = &self.project.tracks[index].kind;
+        let instrument = kind.as_instrument().ok_or(SessionError::WrongTrackKind {
+            id: track.0,
+            actual: kind.label(),
+            expected: "a melodic instrument or drum track",
+        })?;
+        let at = at.max_zero();
+        let bar = self.project.signatures.bar_of(at);
+        let mut start = self.project.signatures.bar_start(bar);
+        let mut end = self.project.signatures.bar_start(bar + 4);
+        let points = self.project.sections.points();
+        let next = points.partition_point(|point| point.tick <= at);
+        let previous = next.checked_sub(1).map(|index| &points[index]);
+        let section_end = points.get(next).map(|point| point.tick).or_else(|| {
+            let end = self.project.end_tick();
+            (end > at).then_some(end)
+        });
+        if let Some(end_tick) = section_end {
+            if let Some(section) = previous.filter(|point| point.label.is_some()) {
+                start = section.tick;
+                end = end_tick;
+            } else if points.get(next).is_some() {
+                end = end.min(end_tick);
+            }
+        }
+        if let Some(boundary) = previous {
+            start = start.max(boundary.tick);
+        }
+        for clip in &instrument.clips {
+            if clip.length <= Ticks::ZERO {
+                continue;
+            }
+            if clip.start <= at && at < clip.end() {
+                return Err(SessionError::GenerationPositionOccupied);
+            }
+            if clip.end() <= at {
+                start = start.max(clip.end());
+            } else if clip.start > at {
+                end = end.min(clip.start);
+            }
+        }
+        self.generate_clip_at(track, start, end - start, recipe)
+    }
+
     /// Writes a clip on `track` from the harmony underneath it.
     ///
     /// The clip keeps its recipe, so it can be written again after the chords change or with a
@@ -42,6 +101,17 @@ impl Session {
         length: Ticks,
         recipe: ClipRecipe,
     ) -> Result<ClipId, SessionError> {
+        self.generate_clip_at(track, self.snap(start), length, recipe)
+    }
+
+    /// Commits a range whose position has already been resolved by the calling command.
+    fn generate_clip_at(
+        &mut self,
+        track: TrackId,
+        start: Ticks,
+        length: Ticks,
+        recipe: ClipRecipe,
+    ) -> Result<ClipId, SessionError> {
         let index = self.require_track(track)?;
         if self.project.tracks[index].kind.as_instrument().is_none()
             || self.project.tracks[index].kind.is_drum() != recipe.preset.is_drums()
@@ -56,7 +126,6 @@ impl Session {
                 },
             });
         }
-        let start = self.snap(start);
         let length = Ticks(length.raw().max(1));
         let mut recipe = recipe;
         if let Some(map) = self.project.tracks[index]
@@ -470,6 +539,216 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, Scratch, session, with_a_progression};
     use auris_core::{ClipPreset, NoteTransform};
+
+    #[test]
+    fn generation_here_fills_the_clicked_section_and_ignores_the_song_cycle() {
+        for enabled in [false, true] {
+            let (mut session, track) = with_a_progression();
+            session.project.loop_region = Some((Ticks::ZERO, BAR * 64));
+            session.project.loop_enabled = enabled;
+            session
+                .project
+                .sections
+                .set_point(Ticks::ZERO, Some("Intro".into()));
+            session
+                .project
+                .sections
+                .set_point(BAR * 4, Some("Verse".into()));
+            session
+                .project
+                .sections
+                .set_point(BAR * 12, Some("Chorus".into()));
+            session.project.sections.set_point(BAR * 20, None);
+            // Another track's clips must not block this track's phrase.
+            let other = session
+                .project
+                .add_instrument_track("Other", "auris.synth.chiptune");
+            session
+                .project
+                .add_midi_clip(other, "Other", Ticks::ZERO, BAR * 64)
+                .unwrap();
+            for (at, start, length) in [(BAR * 7, BAR * 4, BAR * 8), (BAR * 12, BAR * 12, BAR * 8)]
+            {
+                let id = session
+                    .generate_clip_here(track, at, ClipRecipe::new(ClipPreset::Lead, 1))
+                    .unwrap();
+                let clip = session.midi_clip(id).unwrap();
+                assert_eq!((clip.start, clip.length), (start, length));
+            }
+        }
+    }
+
+    #[test]
+    fn generation_here_fills_the_final_section_to_the_existing_song_end() {
+        let (mut session, track) = with_a_progression();
+        session
+            .project
+            .sections
+            .set_point(BAR * 4, Some("Outro".into()));
+        let other = session
+            .project
+            .add_instrument_track("Other", "auris.synth.chiptune");
+        session
+            .project
+            .add_midi_clip(other, "Outro", BAR * 4, BAR * 8)
+            .unwrap();
+        let id = session
+            .generate_clip_here(track, BAR * 9, ClipRecipe::new(ClipPreset::Lead, 1))
+            .unwrap();
+        let clip = session.midi_clip(id).unwrap();
+        assert_eq!((clip.start, clip.end()), (BAR * 4, BAR * 12));
+    }
+
+    #[test]
+    fn generation_here_fills_only_the_gap_containing_the_pointer_without_snapping_edges() {
+        let (mut session, track) = with_a_progression();
+        session
+            .project
+            .sections
+            .set_point(BAR, Some("Verse".into()));
+        session.project.sections.set_point(BAR * 12, None);
+        let from = BAR * 4 + Ticks(17);
+        let to = BAR * 8 - Ticks(19);
+        // Intentionally unsorted, with overlapping neighbours on both sides.
+        for (start, end) in [
+            (to, BAR * 14),
+            (Ticks::ZERO, BAR * 3),
+            (BAR * 2, from),
+            (BAR * 10, BAR * 13),
+        ] {
+            session
+                .project
+                .add_midi_clip(track, "Existing", start, end - start)
+                .unwrap();
+        }
+        let before = session.project().clone();
+        let id = session
+            .generate_clip_here(track, BAR * 6, ClipRecipe::new(ClipPreset::Lead, 1))
+            .unwrap();
+        let clip = session.midi_clip(id).unwrap();
+        assert_eq!((clip.start, clip.end()), (from, to));
+        assert!(
+            session
+                .project
+                .track(track)
+                .unwrap()
+                .kind
+                .note_clips()
+                .unwrap()
+                .iter()
+                .filter(|other| other.id != id)
+                .all(|other| clip.end() <= other.start || clip.start >= other.end())
+        );
+        session.undo().unwrap();
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn generation_here_refuses_an_occupied_position_without_an_edit() {
+        let (mut session, track) = with_a_progression();
+        session
+            .project
+            .add_midi_clip(track, "Existing", BAR, BAR * 2)
+            .unwrap();
+        let before = session.project().clone();
+        let depth = crate::session::fixtures::undo_depth(&mut session);
+        for at in [BAR, BAR * 2, BAR * 3 - Ticks(1)] {
+            assert!(matches!(
+                session.generate_clip_here(track, at, ClipRecipe::new(ClipPreset::Lead, 1)),
+                Err(SessionError::GenerationPositionOccupied)
+            ));
+            assert_eq!(session.project(), &before);
+        }
+        assert_eq!(crate::session::fixtures::undo_depth(&mut session), depth);
+        let id = session
+            .generate_clip_here(track, BAR * 3, ClipRecipe::new(ClipPreset::Lead, 1))
+            .unwrap();
+        assert_eq!(session.midi_clip(id).unwrap().start, BAR * 3);
+    }
+
+    #[test]
+    fn generation_here_uses_four_real_bars_without_a_bounded_section() {
+        use auris_core::TimeSignature;
+        for (beat, start, end) in [
+            (-1.0, 0.0, 16.0),
+            (0.0, 0.0, 16.0),
+            (8.001, 8.0, 22.0),
+            (11.999, 8.0, 22.0),
+            (12.0, 12.0, 25.0),
+            (16.001, 16.0, 28.0),
+            (18.999, 16.0, 28.0),
+            (19.0, 19.0, 31.0),
+        ] {
+            let (mut session, track) = with_a_progression();
+            session
+                .project
+                .signatures
+                .set_point(Ticks::from_beats(16.0), TimeSignature::new(3, 4));
+            session.project.loop_region = Some((Ticks::ZERO, BAR * 64));
+            let id = session
+                .generate_clip_here(
+                    track,
+                    Ticks::from_beats(beat),
+                    ClipRecipe::new(ClipPreset::Lead, 1),
+                )
+                .unwrap();
+            let clip = session.midi_clip(id).unwrap();
+            assert_eq!(
+                (clip.start, clip.end()),
+                (Ticks::from_beats(start), Ticks::from_beats(end)),
+                "pointer at beat {beat}"
+            );
+        }
+    }
+
+    #[test]
+    fn generation_here_limits_unlabelled_and_open_ended_stretches_to_nearby_boundaries() {
+        for (at, start, end) in [
+            (BAR, BAR, BAR * 2 + Ticks(17)),
+            (BAR * 3, BAR * 2 + Ticks(17), BAR * 5 + Ticks(19)),
+            (BAR * 5 + Ticks(20), BAR * 5 + Ticks(19), BAR * 7),
+            (BAR * 8, BAR * 8, BAR * 12),
+        ] {
+            let (mut session, track) = with_a_progression();
+            session
+                .project
+                .sections
+                .set_point(BAR * 2 + Ticks(17), Some("Verse".into()));
+            session
+                .project
+                .sections
+                .set_point(BAR * 5 + Ticks(19), None);
+            session
+                .project
+                .sections
+                .set_point(BAR * 7, Some("Open ended outro".into()));
+            let id = session
+                .generate_clip_here(track, at, ClipRecipe::new(ClipPreset::Lead, 1))
+                .unwrap();
+            let clip = session.midi_clip(id).unwrap();
+            assert_eq!((clip.start, clip.end()), (start, end));
+        }
+    }
+
+    #[test]
+    fn generation_here_clips_the_default_phrase_at_existing_clips() {
+        let (mut session, track) = with_a_progression();
+        let from = BAR * 2 + Ticks(17);
+        let to = BAR * 3 + Ticks(19);
+        session
+            .project
+            .add_midi_clip(track, "Before", BAR, from - BAR)
+            .unwrap();
+        session
+            .project
+            .add_midi_clip(track, "After", to, BAR)
+            .unwrap();
+        let id = session
+            .generate_clip_here(track, from, ClipRecipe::new(ClipPreset::Lead, 1))
+            .unwrap();
+        let clip = session.midi_clip(id).unwrap();
+        assert_eq!((clip.start, clip.end()), (from, to));
+    }
 
     fn with_drum_progression() -> (Session, TrackId) {
         let (mut session, _) = with_a_progression();

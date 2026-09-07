@@ -122,6 +122,11 @@ impl Session {
                 Ok(dictionary) => self.japanese = Some(dictionary),
                 Err(error) => log::warn!("the shipped dictionary did not load: {error}"),
             }
+        } else {
+            log::warn!(
+                "the shipped Japanese dictionary was not found; kanji lyrics need an installed NAIST dictionary or a dictionary selected in Settings. Searched: {:?}",
+                crate::library::dictionary_roots()
+            );
         }
     }
 
@@ -671,6 +676,83 @@ impl Session {
                 None => singer.voice = None,
             }
         }
+        Ok(())
+    }
+
+    /// Loads a composition's voice before the current project is replaced.
+    pub(super) fn prepare_composed_voice(
+        &mut self,
+        file: &Path,
+        speaker: Option<&str>,
+    ) -> Result<(SingerVoice, f64), SessionError> {
+        let absolute =
+            std::path::absolute(file).map_err(|error| auris_io::IoError::from_fs(file, error))?;
+        let file = absolute.as_path();
+        let loaded = self.loaded_voice_at(file)?;
+        let info = &loaded.info;
+        let offered = info.speakers();
+        let id = match speaker {
+            Some(name) => offered
+                .iter()
+                .position(|known| known == name)
+                .ok_or_else(|| SessionError::NoSuchSpeaker {
+                    name: name.into(),
+                    offered: offered.clone(),
+                })? as u32,
+            None => 0,
+        };
+        Ok((
+            SingerVoice {
+                path: AssetPath::external(file),
+                name: voice_name(info, file),
+                consonants: info.consonant_widths(id),
+                levels: info.consonant_levels(id),
+                speaker: speaker.map(str::to_string),
+            },
+            info.hop_seconds(),
+        ))
+    }
+
+    /// Lists a voice file's saved speakers without creating or changing a track.
+    ///
+    /// May load model metadata; call on an explicit user action, never during painting.
+    pub fn voice_speakers_at(&mut self, file: &Path) -> Result<Vec<String>, SessionError> {
+        Ok(self.loaded_voice_at(file)?.info.speakers())
+    }
+
+    /// Snapshots a VOICEVOX file for a picker that has no track yet.
+    pub fn voicevox_connection_at(
+        &self,
+        file: &Path,
+        speaker: Option<&str>,
+    ) -> Result<VoicevoxConnection, SessionError> {
+        read_voicevox_connection(file, speaker, TrackId(0))
+            .map_err(|error| auris_singer::SingError::Metadata(error.to_string()).into())
+    }
+
+    /// Registers a discovered VOICEVOX speaker for a composition without editing the project.
+    ///
+    /// The file and current selection must still match the discovery snapshot. Existing
+    /// connection entries keep their names and indices, including after the sheet is closed.
+    pub fn register_composed_voicevox_speaker(
+        &mut self,
+        file: &Path,
+        speaker: Option<&str>,
+        connection: &VoicevoxConnection,
+        choice: &VoicevoxSpeakerChoice,
+    ) -> Result<(), SessionError> {
+        if &self.voicevox_connection_at(file, speaker)? != connection {
+            return Err(auris_singer::SingError::Metadata(
+                "The VOICEVOX connection or selected speaker changed; fetch the singers again"
+                    .into(),
+            )
+            .into());
+        }
+        self.loaded_voice_at(file)?;
+        append_voicevox_speaker(connection, choice).map_err(|error| {
+            SessionError::from(auris_singer::SingError::Metadata(error.to_string()))
+        })?;
+        self.voices.remove(file);
         Ok(())
     }
 
@@ -1475,6 +1557,34 @@ mod tests {
     use auris_core::time::Ticks;
     use auris_core::{Note, default_frame_hop};
 
+    /// Opt in with the real dictionary also used by auris-vocal's pronunciation test.
+    /// The folder must be on the shipped search path; no settings override is applied here.
+    #[test]
+    fn the_shipped_dictionary_loads_at_startup_and_after_clearing_an_override() {
+        let Some(expected) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let expected = std::path::PathBuf::from(expected);
+        let mut session =
+            Session::new(crate::SessionOptions::headless().with_shipped_dictionary(true)).unwrap();
+        for _ in 0..2 {
+            let loaded = session
+                .japanese_dictionary()
+                .expect("the shipped dictionary loaded");
+            assert_eq!(
+                std::fs::canonicalize(loaded).unwrap(),
+                std::fs::canonicalize(&expected).unwrap()
+            );
+            let measured = session.measure_lyrics("歌", auris_core::time::TimeSignature::new(4, 4));
+            assert_eq!(
+                measured.notes, 2,
+                "kanji is read as う・た without a settings override"
+            );
+            assert_eq!(measured.lines, [Some(2)]);
+            session.set_japanese_dictionary(None).unwrap();
+        }
+    }
+
     /// A session holding one singer track with one four-beat clip of `count` quarter notes.
     fn sung(count: usize) -> (crate::Session, TrackId, ClipId) {
         let mut session = session();
@@ -1507,6 +1617,100 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn a_composed_singer_keeps_its_named_speaker_and_rejects_unknown_names_atomically() {
+        let scratch = Scratch::new("composed-speaker");
+        let path = voicevox_fixture(&scratch);
+        let mut session =
+            Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
+        let mut spec = auris_compose::SongSpec::parse(
+            "form = 'verse'\n[section.verse]\nbars = 2\nlyrics = 'らら'",
+        )
+        .unwrap();
+        spec.singer = Some(path.to_string_lossy().into_owned());
+        spec.singer_speaker = Some("Second".into());
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        let track = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.kind.is_singer())
+            .unwrap()
+            .id;
+        assert_eq!(
+            session
+                .singer_voice(track)
+                .unwrap()
+                .unwrap()
+                .speaker
+                .as_deref(),
+            Some("Second")
+        );
+        assert_eq!(
+            session
+                .singer_voicevox_connection(track)
+                .unwrap()
+                .decode_style_id,
+            3002
+        );
+        let saved = scratch.join("Song.auris");
+        session.save_as(&saved).unwrap();
+        let saved = session.path().unwrap().to_path_buf();
+        session.open(&saved).unwrap();
+        let restored =
+            auris_compose::SongSpec::parse(session.project().song_spec.as_deref().unwrap())
+                .unwrap();
+        assert_eq!(restored.singer_speaker, spec.singer_speaker);
+        let before = session.project().clone();
+        spec.singer_speaker = Some("Unknown".into());
+        assert!(matches!(
+            session.compose(&auris_compose::compose(&spec)),
+            Err(SessionError::NoSuchSpeaker { .. })
+        ));
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn a_song_sheet_can_register_a_speaker_without_creating_a_track() {
+        let scratch = Scratch::new("song-speaker-registration");
+        let path = voicevox_fixture(&scratch);
+        let mut session = session();
+        let before = session.project().clone();
+        assert_eq!(
+            session.voice_speakers_at(&path).unwrap(),
+            ["First", "Second"]
+        );
+        let connection = session.voicevox_connection_at(&path, None).unwrap();
+        let choice = VoicevoxSpeakerChoice {
+            name: "Third".into(),
+            query_style_id: 6000,
+            decode_style_id: 3003,
+        };
+        assert!(
+            session
+                .register_composed_voicevox_speaker(&path, Some("Second"), &connection, &choice)
+                .is_err()
+        );
+        session
+            .register_composed_voicevox_speaker(&path, None, &connection, &choice)
+            .unwrap();
+        assert_eq!(
+            session.voice_speakers_at(&path).unwrap(),
+            ["First", "Second", "Third"]
+        );
+        assert_eq!(session.project(), &before);
+        assert!(
+            session
+                .register_composed_voicevox_speaker(&path, None, &connection, &choice)
+                .is_err(),
+            "a stale file snapshot cannot be applied twice"
+        );
+        let (voice, _) = session
+            .prepare_composed_voice(&path, Some("Third"))
+            .unwrap();
+        assert_eq!(voice.speaker.as_deref(), Some("Third"));
     }
 
     #[test]

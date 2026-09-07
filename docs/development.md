@@ -86,6 +86,30 @@ SoundFont in the background and displays progress. The cached copy is shared by 
 See [the sound library](features.md#the-soundfont-that-comes-with-it) for its location, manual
 installation and disabling automatic downloads.
 
+Release archives include the NAIST Japanese dictionary; a source checkout or new Git worktree
+does not. Cargo builds code only. Fetch the dictionary once before trying kanji lyrics:
+
+```powershell
+# Windows / PowerShell
+.\tools\fetch-dictionary.ps1
+```
+
+```bash
+# macOS / Linux / Git Bash
+tools/fetch-dictionary.sh
+```
+
+Both scripts read the pinned manifest from `auris dictionary --manifest`, verify the archive,
+and install it with its license under `Dictionary/naist-jdic`. Restart the desktop after fetching;
+it loads the dictionary automatically, without a path override in Settings. Use
+`cargo run -p auris-cli -- dictionary` to check discovery. PowerShell also accepts
+`-AurisPath .\target\debug\auris.exe` to use an already built CLI.
+
+For a copy shared by worktrees, pass `-Destination "$HOME/.config/auris-studio/Dictionary"`
+in PowerShell, or `"$HOME/.config/auris-studio/Dictionary"` to the Bash script. If
+`AURIS_CONFIG_DIR` is set, use its `Dictionary` subdirectory instead. An explicit
+`AURIS_DICTIONARY` points to the parent of `naist-jdic` and replaces the automatic search.
+
 ### Windows
 
 Build with the Rust MSVC toolchain, Visual Studio C++ Build Tools, and LLVM/Clang.

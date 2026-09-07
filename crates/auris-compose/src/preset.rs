@@ -116,7 +116,7 @@ mood   = "bright"
 groove = "four-on-the-floor"
 chords = "@axis"
 seed   = 16
-form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form   = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [section.intro]
 bars      = 4
@@ -152,6 +152,14 @@ role = "hat"
 [[part]]
 name = "crash"
 role = "crash"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 0.95
+melody_from = "chorus"
 "#;
 
 /// A four-piece with keys on top, on the progression half of J-pop is built from.
@@ -169,7 +177,7 @@ groove = "eight-beat"
 chords = "@royal-road"
 fill   = 0.7
 seed   = 6
-form   = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form   = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [harmony]
 a-melo = "@junjo"
@@ -233,6 +241,14 @@ program = "Standard Kit"
 name    = "riser"
 role    = "riser"
 program = "Reverse Cymbal"
+
+[section.verse2]
+chords = "a-melo"
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 0.95
+melody_from = "chorus"
 "#;
 
 /// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
@@ -254,7 +270,7 @@ syncopation = 0.6
 swing       = 56
 humanize    = 0.45
 seed        = 2
-form        = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form        = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [harmony]
 sabi = "@marusa5"
@@ -313,6 +329,15 @@ program = "Room Kit"
 name    = "riser"
 role    = "riser"
 program = "Reverse Cymbal"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 0.9
+chords    = "sabi"
+melody_from = "chorus"
 "#;
 
 /// Guitars, an organ pad and a kit that is allowed to be loud.
@@ -331,7 +356,7 @@ chords   = "@axis-minor"
 dynamics = 1.0
 fill     = 0.8
 seed     = 10
-form     = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form     = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [harmony]
 lift = "@axis"
@@ -385,6 +410,15 @@ program = "Power Kit"
 name    = "crash"
 role    = "crash"
 program = "Power Kit"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 1.0
+chords    = "lift"
+melody_from = "chorus"
 "#;
 
 /// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
@@ -401,7 +435,7 @@ fill     = 0.3
 tension  = 0.85
 energy   = 0.45
 seed     = 15
-form     = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form     = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [section.intro]
 bars      = 4
@@ -443,6 +477,14 @@ gain    = -11
 name    = "ride"
 role    = "hat"
 program = "Brush Kit"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 0.8
+melody_from = "chorus"
 "#;
 
 /// Slow, in three, and with the drums replaced by a timpani and a cymbal that only mark the big
@@ -458,7 +500,7 @@ chords     = "@epic"
 humanize   = 0.5
 variation  = 0.35
 seed       = 12
-form       = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form       = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [section.intro]
 bars      = 8
@@ -511,6 +553,14 @@ gain    = -8
 name    = "cymbal"
 role    = "crash"
 program = "Orchestra Kit"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 1.0
+melody_from = "chorus"
 "#;
 
 /// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
@@ -527,7 +577,7 @@ syncopation = 0.25
 humanize    = 0.15
 variation   = 0.2
 seed        = 7
-form        = ["intro", "verse", "chorus", "verse", "chorus", "outro"]
+form        = ["intro","verse","chorus","verse2","chorus2","outro"]
 
 [section.intro]
 bars      = 8
@@ -583,6 +633,14 @@ program = "TR-808 Kit"
 name    = "riser"
 role    = "riser"
 program = "Reverse Cymbal"
+
+[section.verse2]
+intensity = 0.55
+melody_from = "verse"
+
+[section.chorus2]
+intensity = 0.95
+melody_from = "chorus"
 "#;
 
 /// No kit, no lead: three sustained voices and a bell that is nearly a melody.
@@ -604,7 +662,7 @@ dynamics    = 0.5
 fill        = 0.0
 variation   = 0.4
 seed        = 4
-form        = ["intro", "verse", "chorus", "verse", "outro"]
+form        = ["intro","verse","chorus","verse2","outro"]
 
 [section.intro]
 bars      = 8
@@ -648,10 +706,31 @@ density = 0.25
 name    = "cello"
 role    = "bass"
 program = "Cello"
+
+[section.verse2]
+bars      = 8
+intensity = 0.45
+melody_from = "verse"
 "#;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn presets_offer_separate_later_lyrics_with_shared_melodies() {
+        for preset in super::PRESETS {
+            let spec = preset.spec();
+            let later = &spec.sections["verse2"];
+            assert!(spec.form.contains(&later.name), "{}", preset.name);
+            assert_eq!(later.melody_from.as_deref(), Some("verse"));
+            assert_eq!(later.bars, spec.sections["verse"].bars);
+            assert_eq!(later.chords, spec.sections["verse"].chords);
+            assert_eq!(auris_compose_round_trip(&spec), spec);
+        }
+    }
+
+    fn auris_compose_round_trip(spec: &crate::SongSpec) -> crate::SongSpec {
+        crate::SongSpec::parse(&spec.to_toml()).unwrap()
+    }
     use super::*;
     use crate::render::compose;
     use crate::spec::Role;

@@ -268,6 +268,10 @@ where
 #[serde(deny_unknown_fields)]
 struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    singer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    singer_speaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<String>,
@@ -335,6 +339,8 @@ struct SongDoc {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SectionDoc {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    melody_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bars: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -451,7 +457,11 @@ struct PartDoc {
 impl SongDoc {
     /// What the document means, or every reason it means nothing.
     fn into_spec(self) -> Result<SongSpec, Vec<SpecError>> {
-        let mut spec = SongSpec::default();
+        let mut spec = SongSpec {
+            singer: self.singer,
+            singer_speaker: self.singer_speaker,
+            ..SongSpec::default()
+        };
         let mut errors = Vec::new();
 
         if let Some(title) = self.title {
@@ -667,6 +677,14 @@ impl SongDoc {
         // section would play a progression nobody asked for, or fall silent for want of a part.
         let part_names: Vec<&str> = spec.parts.iter().map(|part| part.name.as_str()).collect();
         for (name, section) in &spec.sections {
+            if let Some(source) = &section.melody_from {
+                match spec.sections.get(source) {
+                    Some(original) if source != name && original.melody_from.is_none() => {}
+                    _ => errors.push(SpecError::about(format!(
+                        "section `{name}`: melody_from must name an original section, not `{source}`"
+                    ))),
+                }
+            }
             if !spec.charts.contains_key(&section.chords) {
                 errors.push(SpecError::about(format!(
                     "section `{name}` plays `{}`, which is not a chart; there is {}",
@@ -722,6 +740,7 @@ impl SongDoc {
 impl SectionDoc {
     fn into_spec(self, name: &str, errors: &mut Vec<SpecError>) -> SectionSpec {
         let mut section = SectionSpec::named(name);
+        section.melody_from = self.melody_from;
         if let Some(bars) = self.bars {
             if (1..=512).contains(&bars) {
                 section.bars = bars;
@@ -908,6 +927,8 @@ impl From<&SongSpec> for SongDoc {
     fn from(spec: &SongSpec) -> Self {
         let plain = SongSpec::default();
         Self {
+            singer: spec.singer.clone(),
+            singer_speaker: spec.singer_speaker.clone(),
             title: (spec.title != plain.title).then(|| spec.title.clone()),
             key: (spec.key != plain.key).then(|| spec.key.to_text()),
             // The key already carries the scale, and writing both would be two chances to
@@ -998,6 +1019,7 @@ impl SectionDoc {
             lead_in: (section.lead_in != plain.lead_in).then(|| section.lead_in.name().to_string()),
             parts: (!section.parts.is_empty()).then(|| section.parts.clone()),
             lyrics: (!section.lyrics.is_empty()).then(|| section.lyrics.clone()),
+            melody_from: section.melody_from.clone(),
             part: section
                 .tweaks
                 .iter()
@@ -1119,6 +1141,34 @@ impl PartDoc {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn voice_and_shared_melody_round_trip_and_invalid_links_refuse() {
+        let text = r#"
+            singer = "C:/Voices/singer.onnx"
+            form = "verse verse2"
+            [section.verse2]
+            melody_from = "verse"
+            lyrics = "あした"
+            tempo = 123.45
+        "#;
+        let spec = super::SongSpec::parse(text).unwrap();
+        assert_eq!(super::SongSpec::parse(&spec.to_toml()).unwrap(), spec);
+        for source in ["verse2", "missing"] {
+            assert!(
+                super::SongSpec::parse(&text.replace(
+                    "melody_from = \"verse\"",
+                    &format!("melody_from = \"{source}\"")
+                ))
+                .is_err()
+            );
+        }
+        assert!(
+            super::SongSpec::parse(&format!(
+                "{text}\n[section.verse]\nmelody_from = \"verse2\"\n"
+            ))
+            .is_err()
+        );
+    }
     use super::*;
 
     use crate::rhythm::DrumVoice;

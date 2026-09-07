@@ -150,6 +150,7 @@ jobs:
           sparse-checkout: |
             tools/fetch-soundfonts.sh
             tools/fetch-dictionary.sh
+            tools/fetch-dictionary.ps1
           sparse-checkout-cone-mode: false
 
       - uses: ilammy/msvc-dev-cmd@v1
@@ -169,8 +170,8 @@ jobs:
         run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
 
       - name: Fetch the shipped Japanese dictionary
-        shell: bash
-        run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
+        shell: pwsh
+        run: ./.release-tools/tools/fetch-dictionary.ps1 -Destination (Join-Path $PWD 'Dictionary') -AurisPath ./target/release/auris.exe
 
       - name: Assemble the archive
         shell: bash

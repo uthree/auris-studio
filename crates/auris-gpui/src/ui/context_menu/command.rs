@@ -7,6 +7,7 @@
 
 use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
+use auris_session::{VoicevoxConnection, VoicevoxSpeakerChoice};
 
 use gpui::{Context, Pixels, Point};
 
@@ -15,12 +16,40 @@ use crate::dock::{Dock, Panel};
 use crate::ui::compose_sheet::song_dials;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
-use super::recipe::generation_range;
 use super::timeline::progression_target;
 
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Voice model for the song sheet's vocal part.
+    SongSinger(Option<String>),
+    /// Speaker within the song sheet's selected voice file.
+    SongSpeaker { path: String, speaker: String },
+    /// An Engine singing style discovered for the song sheet.
+    SongVoicevoxSpeaker {
+        connection: std::sync::Arc<VoicevoxConnection>,
+        choice: VoicevoxSpeakerChoice,
+    },
+    /// Refreshes the song sheet's speaker picker.
+    RefreshSongSpeakers(Point<Pixels>),
+    /// Browse for a voice before composing the song.
+    ChooseSongSinger,
+    /// Add or remove the song's shared kit.
+    SongDrums(bool),
+    /// One sound source applied to every drum writer in the song.
+    SongDrumSource {
+        /// Built-in kit instrument, also used as the SoundFont fallback.
+        instrument: String,
+        /// General MIDI kit program, or the instrument on its own.
+        program: Option<u8>,
+    },
+    /// Share an original section's sung note slots with another lyric.
+    SongMelodySource {
+        /// Position in the sheet's section list.
+        section: usize,
+        /// Original section name, or an independently composed melody.
+        source: Option<String>,
+    },
     /// Measure this instrument using rendered audio, without changing its notes.
     AnalyzeDrums(TrackId),
     /// Store the measured assignment for future generation, preserving every existing clip.
@@ -198,13 +227,6 @@ pub enum MenuCommand {
         section: usize,
         /// How far, in semitones.
         steps: i32,
-    },
-    /// Pin one section of the song sheet to a tempo, or let it follow the song's.
-    SongSectionTempo {
-        /// Which section, by position in the sheet's list.
-        section: usize,
-        /// The tempo it plays at, or `None` to follow the song.
-        bpm: Option<f64>,
     },
     /// Turn one part of the roster on or off for one section of the song sheet.
     SongSectionPart {
@@ -873,13 +895,49 @@ impl AurisApp {
                     section.transpose = steps;
                 }
             }
-            MenuCommand::SongSectionTempo { section, bpm } => {
+            MenuCommand::SongSinger(path) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    if dials.singer != path {
+                        dials.singer_speaker = None;
+                    }
+                    dials.singer = path;
+                }
+            }
+            MenuCommand::SongSpeaker { path, speaker } => {
+                if let Some(dials) = self.song_sheet.as_mut()
+                    && dials.singer.as_deref() == Some(&path)
+                {
+                    dials.singer_speaker = Some(speaker);
+                }
+            }
+            MenuCommand::SongVoicevoxSpeaker { connection, choice } => {
+                self.select_song_voicevox_speaker(&connection, &choice);
+            }
+            MenuCommand::RefreshSongSpeakers(at) => self.open_song_speaker_menu(at, cx),
+            MenuCommand::ChooseSongSinger => self.choose_song_singer(cx),
+            MenuCommand::SongDrums(enabled) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_song_drums(dials, enabled);
+                }
+            }
+            MenuCommand::SongDrumSource {
+                instrument,
+                program,
+            } => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    for part in dials.parts.iter_mut().filter(|p| p.role.is_drum()) {
+                        part.instrument = instrument.clone();
+                        part.program = program.map(gm::Program);
+                    }
+                }
+            }
+            MenuCommand::SongMelodySource { section, source } => {
                 if let Some(section) = self
                     .song_sheet
                     .as_mut()
-                    .and_then(|dials| dials.sections.get_mut(section))
+                    .and_then(|d| d.sections.get_mut(section))
                 {
-                    section.tempo = bpm;
+                    section.melody_from = source;
                 }
             }
             MenuCommand::SongSectionPart { section, part } => {
@@ -1260,13 +1318,8 @@ impl AurisApp {
                 start,
                 preset,
             } => {
-                let (start, length) = generation_range(
-                    self.project().loop_region,
-                    start,
-                    &self.project().signatures,
-                );
                 let recipe = ClipRecipe::new(preset, self.next_seed());
-                match self.session.generate_clip(track, start, length, recipe) {
+                match self.session.generate_clip_here(track, start, recipe) {
                     Ok(clip) => {
                         self.select_clip(Some(clip));
                         self.report_clip(preset, clip);

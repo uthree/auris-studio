@@ -875,6 +875,26 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! Presets give later verses their own section names (`verse2`, `chorus2`) and lyrics.
+    //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
+    //! ornaments. The session validates mora counts phrase by phrase before replacing a
+    //! document: line breaks and sentence punctuation delimit the phrases, and both sections
+    //! must have enough bars for every note. New words replace only the lyrics and phonemes.
+    //! An empty later lyric leaves that section instrumental. A shared melody names an original
+    //! section in the form; it cannot refer to itself or another shared melody.
+    //!
+    //! The top-level `singer` field selects a voice model path, and `singer_speaker` optionally
+    //! names its speaker. The session validates both before replacing the document and assigns
+    //! the voice and speaker's timing tables to the generated vocal track in the same undo step.
+    //! The desktop song sheet offers installed voices, a file picker and speaker selection,
+    //! including asynchronous VOICEVOX Engine discovery before any singer track exists. The basic
+    //! view pairs lyrics with style, voice, title, tempo and a brightness/energy XY pad. Detailed
+    //! settings discloses key, meter, groove, seed, the second XY pad and section/part controls;
+    //! toggling the presentation preserves every setting and the active lyrics editor. A separate
+    //! drum area selects one kit source, while melodic parts have their own roster and add control.
+    //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
+    //! specification's range, with an empty field following the song tempo.
+    //!
     //! [`auris_compose`] turns a text document into notes on a timeline. The whole crate is one
     //! function — [`compose`](auris_compose::compose) — and everything it does is a pure function
     //! of the specification and its seed, so the same document always writes the same piece.
@@ -1170,7 +1190,10 @@ pub mod singing {
     //! does not wait for a running render. A cold voice has no cached speaker list yet; an
     //! explicit picker action may load it, while repainting the inspector must not.
     //! Artwork follows a separate path: [`Session::singer_portrait_source`](crate::Session::singer_portrait_source)
-    //! snapshots the selected voice without I/O, and [`load_singer_portrait`](crate::load_singer_portrait)
+    //! snapshots the selected voice without I/O. The song sheet uses
+    //! [`SingerPortraitSource::for_voice`](crate::SingerPortraitSource::for_voice) before a
+    //! track exists, and takes priority over the inspector while open. Both use the same
+    //! bounded display and asynchronous cache. [`load_singer_portrait`](crate::load_singer_portrait)
     //! reads its optional image on a worker. Native portraits come from `voice.portrait` in ONNX
     //! metadata without loading the neural graph. VOICEVOX resolves the decoding style's singer
     //! UUID and requests `/singer_info` in URL format, downloading only the selected style's
@@ -1587,6 +1610,13 @@ pub mod harmony {
     //! stored note representation and playback path; their track kind selects the editor and
     //! the applicable presets. Freezing keeps the notes and the track kind while removing the
     //! recipe. A generated drum clip therefore remains a drum clip after it is frozen.
+    //!
+    //! [`Session::generate_clip_here`](crate::Session::generate_clip_here) places a phrase in
+    //! the free interval containing the pointer on the target track. A bounded, named section
+    //! supplies the extent, with the final section ending at the project's last clip when it
+    //! extends beyond the pointer. Otherwise it uses up to four bars from the pointer's bar,
+    //! bounded by section changes. Neighbouring clips trim either edge, and an occupied position is
+    //! refused. These resolved edges are preserved even between grid lines.
     //!
     //! # The score does not change; the performer does
     //!

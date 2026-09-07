@@ -364,6 +364,9 @@ pub struct SectionSpec {
     /// A property of the section, so every playing of a chorus sings the same chorus, which
     /// is what makes it the same chorus.
     pub lyrics: String,
+    /// Section whose vocal melody and rhythm this section reuses with different words.
+    /// Both lyrics must have the same mora count in each musical phrase.
+    pub melody_from: Option<String>,
 }
 
 impl SectionSpec {
@@ -392,6 +395,7 @@ impl SectionSpec {
             lead_in: LeadIn::default(),
             tweaks: BTreeMap::new(),
             lyrics: String::new(),
+            melody_from: None,
         }
     }
 }
@@ -399,6 +403,10 @@ impl SectionSpec {
 /// A whole song, as asked for.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongSpec {
+    /// Voice model path for the sung part, or the built-in preview voice when absent.
+    pub singer: Option<String>,
+    /// Speaker name within the selected voice; absent selects its default speaker.
+    pub singer_speaker: Option<String>,
     /// What the piece is called.
     pub title: String,
     /// Beats per minute.
@@ -489,6 +497,8 @@ impl Default for SongSpec {
         }
         Self {
             title: "Untitled".to_string(),
+            singer: None,
+            singer_speaker: None,
             tempo: 120.0,
             meter: TimeSignature::default(),
             key: Key::parse("C major").expect("C major is a key"),

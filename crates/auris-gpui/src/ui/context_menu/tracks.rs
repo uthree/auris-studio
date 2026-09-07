@@ -205,6 +205,10 @@ impl AurisApp {
         let Some(entry) = self.project().track(track) else {
             return self.arrangement_menu(anchor);
         };
+        // Generation chooses the gap under the actual pointer. Snapping first can cross a
+        // section boundary or land inside the neighbouring clip.
+        let pointer = start;
+        let start = self.snap(start).max_zero();
         // A new clip goes wherever notes can sit; the composer only writes for instruments,
         // because a generated part arrives with no words to sing.
         let holds_notes = entry.kind.holds_notes();
@@ -220,7 +224,7 @@ impl AurisApp {
                 self.t(Key::MenuGenerateClip),
                 MenuCommand::ShowPresetPicker {
                     track,
-                    start,
+                    start: pointer,
                     anchor,
                 },
             )

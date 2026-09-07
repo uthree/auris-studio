@@ -7,6 +7,12 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// Automatic placement was requested inside an existing clip on the target track.
+    #[error("there is already a clip at this position; choose an empty area on the track")]
+    GenerationPositionOccupied,
+    /// Repeated vocal sections have incompatible lyrics or insufficient space.
+    #[error("song lyrics: {0}")]
+    SongLyrics(String),
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),

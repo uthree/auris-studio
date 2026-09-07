@@ -33,6 +33,7 @@ serde_json.workspace = true
 serde_yaml_ng.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
+unicode-normalization.workspace = true
 
 # The GPU execution providers, one per desktop platform, both riding the OS itself: DirectML
 # is part of Windows and Core ML part of macOS, so neither adds a runtime to ship. The

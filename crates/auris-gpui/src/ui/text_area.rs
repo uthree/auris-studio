@@ -46,7 +46,9 @@ const NEWLINE_STUB: Pixels = px(6.0);
 /// under it off the sheet.
 pub(crate) fn area_height(text: &str, min_rows: usize, max_rows: usize) -> Pixels {
     let rows = (text.split('\n').count()).clamp(min_rows, max_rows);
-    AREA_LINE_HEIGHT * rows as f32 + AREA_PADDING_Y * 2.0
+    // The caller draws a one-pixel border on each side. Reserve it outside the
+    // content height, otherwise two requested rows fit only one complete row.
+    AREA_LINE_HEIGHT * rows as f32 + AREA_PADDING_Y * 2.0 + px(2.0)
 }
 
 thread_local! {
@@ -314,6 +316,34 @@ fn paint_area(
 mod tests {
     use super::*;
 
+    #[gpui::test]
+    fn typing_a_second_line_does_not_scroll_the_rendered_lyrics_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        crate::harness::paint(&app, cx);
+        cx.simulate_input("さくら");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input("さいた");
+        crate::harness::paint(&app, cx);
+        assert_eq!(
+            AREA.with(Cell::get)
+                .expect("the lyrics editor was painted")
+                .2,
+            px(0.0)
+        );
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit.as_ref().unwrap().field.content(),
+                "さくら\nさいた"
+            );
+        });
+    }
+
     #[test]
     fn lines_carry_their_byte_ranges_and_an_empty_tail_is_a_line() {
         assert_eq!(lines("ab\ncd"), vec![0..2, 3..5]);
@@ -341,5 +371,18 @@ mod tests {
         assert_eq!(first_visible_row(11, 12), 0);
         assert_eq!(first_visible_row(12, 12), 1);
         assert_eq!(first_visible_row(39, 12), 28);
+    }
+
+    #[test]
+    fn a_bordered_two_line_editor_keeps_the_first_line_visible_after_return() {
+        let content_height = area_height("first\n", 2, 12) - px(2.0);
+        let visible = ((content_height - AREA_PADDING_Y * 2.0) / AREA_LINE_HEIGHT).floor() as usize;
+        assert_eq!(visible, 2);
+        assert_eq!(first_visible_row(1, visible), 0);
+        for count in 2..=12 {
+            let height = area_height(&"line\n".repeat(count - 1), 2, 12) - px(2.0);
+            let visible = ((height - AREA_PADDING_Y * 2.0) / AREA_LINE_HEIGHT).floor() as usize;
+            assert_eq!(first_visible_row(count - 1, visible), 0);
+        }
     }
 }

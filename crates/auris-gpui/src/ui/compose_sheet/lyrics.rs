@@ -2,7 +2,7 @@
 //!
 //! The words started life in the one-line rename prompt, then in a page of their own over the
 //! sheet, and both were the same mistake at different sizes: the lyrics were somewhere else.
-//! They belong *on the sheet*, beside the form that plays them — so the sheet's third column is
+//! They belong *on the sheet*, beside the song controls — the lyrics column is
 //! the words themselves, one multi-line box per section in the order the form first plays them,
 //! and clicking a box makes it a real editor in place. Return breaks a line, because here a
 //! line is a phrase; Tab walks to the next section, because a verse is usually followed by
@@ -177,7 +177,7 @@ impl AurisApp {
         true
     }
 
-    /// The third column: a heading, then one box of words per section the form plays.
+    /// The lyrics column: a heading, then one box of words per section the form plays.
     pub(crate) fn song_lyrics_rows(
         &mut self,
         dials: &SongDials,
@@ -219,7 +219,7 @@ impl AurisApp {
             .filter(|edit| edit.section == spec.name);
         let heading = format!(
             "{} · {} {}",
-            spec.name,
+            section_label(self, &spec.name),
             spec.bars,
             self.t(Key::SongBarsUnit)
         );
@@ -228,32 +228,94 @@ impl AurisApp {
         // dials otherwise.
         let words_now = edit.map_or(spec.lyrics.as_str(), |edit| edit.field.content());
         let measure = self.session.measure_lyrics(words_now, dials.meter);
+        let source = spec
+            .melody_from
+            .as_ref()
+            .and_then(|name| dials.sections.iter().find(|s| &s.name == name));
+        let expected = source.map(|s| self.session.measure_lyrics(&s.lyrics, dials.meter));
+        let mismatch = !words_now.trim().is_empty()
+            && expected.as_ref().is_some_and(|expected| {
+                expected.phrases.is_empty()
+                    || expected.phrases != measure.phrases
+                    || expected.lines.contains(&None)
+                    || measure.lines.contains(&None)
+            });
+        let over = measure.bars > spec.bars || mismatch;
+        let readable = !measure.lines.contains(&None);
+        let show_counts = !words_now.trim().is_empty();
         let counts: Vec<gpui::SharedString> = measure
             .lines
             .iter()
             .map(|line| match line {
+                _ if !show_counts => "".into(),
                 Some(0) => "".into(),
                 Some(count) => count.to_string().into(),
                 // A line nobody can read — kanji with no dictionary — measures as a shrug.
                 None => "?".into(),
             })
             .collect();
-        let over = measure.bars > spec.bars;
-        let tally = (measure.notes > 0).then(|| {
-            format!(
-                "{} {} · {} / {} {}",
-                measure.notes,
-                self.t(Key::LyricsNotesUnit),
-                measure.bars,
-                spec.bars,
-                self.t(Key::SongBarsUnit)
-            )
+        let tally = (!words_now.trim().is_empty()).then(|| {
+            if !readable {
+                return self.t(Key::SongLyricsUnreadable).to_string();
+            }
+            self.t(Key::SongLyricsEstimate)
+                .replace("{notes}", &measure.notes.to_string())
+                .replace("{needed}", &measure.bars.to_string())
+                .replace("{bars}", &spec.bars.to_string())
         });
+        let capacity = if readable && measure.notes > 0 {
+            let (key, difference) = match measure.bars.cmp(&spec.bars) {
+                std::cmp::Ordering::Less => (Key::SongLyricsSpare, spec.bars - measure.bars),
+                std::cmp::Ordering::Equal => (Key::SongLyricsFits, 0),
+                std::cmp::Ordering::Greater => (Key::SongLyricsOverflow, measure.bars - spec.bars),
+            };
+            Some(
+                self.t(key)
+                    .replace("{bars}", &difference.to_string())
+                    .replace(
+                        "{notes}",
+                        &measure
+                            .notes
+                            .saturating_sub(
+                                measure
+                                    .notes_within_bars(dials.meter, spec.bars)
+                                    .unwrap_or(0),
+                            )
+                            .to_string(),
+                    ),
+            )
+        } else {
+            None
+        };
+        let shared_status = source
+            .filter(|_| !words_now.trim().is_empty())
+            .map(|source| {
+                let expected = expected.as_ref().unwrap();
+                let key = if !readable || expected.lines.contains(&None) {
+                    Key::SongLyricsMatchUnreadable
+                } else if expected.notes == 0 {
+                    Key::SongLyricsOriginalEmpty
+                } else if expected.phrases == measure.phrases {
+                    Key::SongLyricsMatched
+                } else if expected.notes == measure.notes {
+                    Key::SongLyricsPhraseMismatch
+                } else {
+                    Key::SongLyricsNoteMismatch
+                };
+                (
+                    key,
+                    self.t(key)
+                        .replace("{section}", &section_label(self, &source.name))
+                        .replace("{actual}", &measure.notes.to_string())
+                        .replace("{expected}", &expected.notes.to_string()),
+                )
+            });
 
         let words: AnyElement = if let Some(edit) = edit {
             let field = &edit.field;
             div()
                 .h(area_height(field.content(), MIN_ROWS, MAX_ROWS))
+                .flex_shrink_0()
                 .w_full()
                 .rounded(Metrics::RADIUS_SM)
                 .bg(theme.surface_sunken)
@@ -345,42 +407,454 @@ impl AurisApp {
         div()
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .gap_1()
             .child(
+                div().flex().items_center().justify_between().gap_2().child(
+                    div()
+                        .text_xs()
+                        .text_color(match edit.is_some() {
+                            true => theme.text,
+                            false => theme.text_muted,
+                        })
+                        .child(heading),
+                ),
+            )
+            .children(tally.map(|tally| {
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
+                    .debug_selector(move || format!("song-lyrics-estimate-{index}"))
+                    .text_xs()
+                    .text_color(if over || !readable {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(tally)
+            }))
+            .children(capacity.map(|capacity| {
+                div()
+                    .debug_selector(move || format!("song-lyrics-capacity-{index}"))
+                    .text_xs()
+                    .text_color(if measure.bars > spec.bars {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(capacity)
+            }))
+            .when(
+                readable && measure.notes > 0 && measure.bars != spec.bars,
+                |this| {
+                    this.child(crate::ui::widgets::button(
+                        ("song-fit-lyrics", index),
+                        self.t(Key::SongFitLyrics),
+                        crate::ui::widgets::ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            let Some(dials) = this.song_sheet.as_ref() else {
+                                return;
+                            };
+                            let Some(section) = dials.sections.get(index) else {
+                                return;
+                            };
+                            let measure = this.session.measure_lyrics(&section.lyrics, dials.meter);
+                            if measure.notes > 0 && !measure.lines.contains(&None) {
+                                this.song_sheet.as_mut().unwrap().sections[index].bars =
+                                    measure.bars;
+                                cx.notify();
+                            }
+                        }),
+                    ))
+                },
+            )
+            .when(self.song_advanced, |this| {
+                this.child(crate::ui::widgets::button(
+                    ("song-melody-source", index),
+                    format!(
+                        "{} · {}",
+                        self.t(Key::SongMelodyFrom),
+                        spec.melody_from
+                            .as_deref()
+                            .unwrap_or(self.t(Key::SongChordsOwn))
+                    ),
+                    crate::ui::widgets::ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
+                ))
+            })
+            .children(shared_status.map(|(key, status)| {
+                div()
+                    .debug_selector(move || format!("song-lyrics-match-{index}"))
+                    .text_xs()
+                    .text_color(if mismatch {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(match edit.is_some() {
-                                true => theme.text,
-                                false => theme.text_muted,
-                            })
-                            .child(heading),
+                            .debug_selector(move || format!("song-lyrics-status-{index}-{key:?}"))
+                            .child(status),
                     )
-                    // The running total: notes the words would sing, bars they need against
-                    // bars the section has — the colour of a problem once they outrun it.
-                    .children(tally.map(|tally| {
-                        div()
-                            .text_xs()
-                            .text_color(match over {
-                                true => theme.danger,
-                                false => theme.text_faint,
-                            })
-                            .child(tally)
-                    })),
-            )
+                    .when(
+                        mismatch
+                            && readable
+                            && expected
+                                .as_ref()
+                                .is_some_and(|m| m.notes > 0 && !m.lines.contains(&None)),
+                        |this| {
+                            this.child(
+                                div().child(
+                                    self.t(Key::SongLyricsCounts)
+                                        .replace("{actual}", &phrase_counts(self, &measure.phrases))
+                                        .replace(
+                                            "{expected}",
+                                            &phrase_counts(
+                                                self,
+                                                &expected.as_ref().unwrap().phrases,
+                                            ),
+                                        ),
+                                ),
+                            )
+                        },
+                    )
+            }))
             .child(words)
             .into_any_element()
+    }
+}
+
+/// Render phrase sizes without Rust's debug-list notation.
+fn phrase_counts(app: &AurisApp, counts: &[usize]) -> String {
+    if counts.is_empty() {
+        app.t(Key::LyricsNoWords).to_string()
+    } else {
+        counts
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+}
+
+/// Give preset section names human labels while preserving custom names and stored identifiers.
+fn section_label(app: &AurisApp, name: &str) -> String {
+    for (prefix, key) in [
+        ("verse", Key::SongVerseLabel),
+        ("chorus", Key::SongChorusLabel),
+    ] {
+        if let Some(suffix) = name.strip_prefix(prefix) {
+            let suffix = suffix.trim();
+            let number = if suffix.is_empty() {
+                Some(1)
+            } else {
+                suffix.parse::<u32>().ok()
+            };
+            if let Some(number) = number {
+                return app.t(key).replace("{n}", &number.to_string());
+            }
+        }
+    }
+    match name {
+        "intro" => app.t(Key::SongIntroLabel).to_string(),
+        "outro" => app.t(Key::SongOutroLabel).to_string(),
+        "bridge" => app.t(Key::SongBridgeLabel).to_string(),
+        _ => name.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn section_tempo_accepts_decimals_rejects_invalid_input_and_can_follow_the_song(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, paint};
+        use crate::ui::prompt::{Prompt, PromptTarget};
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.open_prompt(Prompt::new("BPM", PromptTarget::SongSectionTempo(0), ""));
+        });
+        paint(&app, cx);
+        cx.simulate_input("123.45");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap().sections[0].tempo,
+                Some(123.45)
+            );
+        });
+        for invalid in ["NaN", "401", "19", "abc"] {
+            app.update(cx, |this, _| {
+                this.open_prompt(Prompt::new("BPM", PromptTarget::SongSectionTempo(0), ""))
+            });
+            paint(&app, cx);
+            cx.simulate_input(invalid);
+            cx.simulate_keystrokes("enter");
+            app.read_with(cx, |this, _| {
+                assert!(this.prompt.is_some());
+                assert_eq!(
+                    this.song_sheet.as_ref().unwrap().sections[0].tempo,
+                    Some(123.45)
+                );
+            });
+            cx.simulate_keystrokes("secondary-a");
+            cx.simulate_keystrokes("backspace");
+            cx.simulate_keystrokes("enter");
+            app.update(cx, |this, _| {
+                assert!(this.prompt.is_none());
+                assert_eq!(this.song_sheet.as_ref().unwrap().sections[0].tempo, None);
+                this.song_sheet.as_mut().unwrap().sections[0].tempo = Some(123.45);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn basic_lyrics_show_mismatch_feedback_without_an_empty_count_warning(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let later = app.update(cx, |this, _| {
+            let spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+            this.song_sheet = Some(super::super::song_dials(&spec));
+            this.song_sheet
+                .as_ref()
+                .unwrap()
+                .sections
+                .iter()
+                .position(|s| s.name == "verse2")
+                .unwrap()
+        });
+        crate::harness::paint(&app, cx);
+        let selector: &'static str =
+            Box::leak(format!("song-lyrics-match-{later}").into_boxed_str());
+        assert!(cx.debug_bounds(selector).is_none());
+        app.update(cx, |this, _| {
+            for section in &mut this.song_sheet.as_mut().unwrap().sections {
+                if section.name == "verse" {
+                    section.lyrics = "さくら".into();
+                }
+                if section.name == "verse2" {
+                    section.lyrics = "はる".into();
+                }
+            }
+        });
+        crate::harness::paint(&app, cx);
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "basic mode keeps actionable lyric feedback"
+        );
+    }
+
+    #[gpui::test]
+    fn the_basic_sheet_evaluates_note_counts_and_phrase_boundaries(cx: &mut gpui::TestAppContext) {
+        for (original, later, status) in [
+            ("さくら\nさいた", "ひかり\nとどく", Key::SongLyricsMatched),
+            ("さくら", "はる", Key::SongLyricsNoteMismatch),
+            (
+                "さくら\nさいた",
+                "はる\nがきたよ",
+                Key::SongLyricsPhraseMismatch,
+            ),
+            ("", "はる", Key::SongLyricsOriginalEmpty),
+            ("漢字", "はる", Key::SongLyricsMatchUnreadable),
+        ] {
+            let (app, cx) = crate::harness::open(cx);
+            let index = app.update(cx, |this, _| {
+                let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+                spec.sections.get_mut("verse").unwrap().lyrics = original.into();
+                spec.sections.get_mut("verse2").unwrap().lyrics = later.into();
+                this.song_sheet = Some(super::super::song_dials(&spec));
+                assert!(!this.song_advanced);
+                this.song_sheet
+                    .as_ref()
+                    .unwrap()
+                    .sections
+                    .iter()
+                    .position(|s| s.name == "verse2")
+                    .unwrap()
+            });
+            crate::harness::paint(&app, cx);
+            let selector: &'static str =
+                Box::leak(format!("song-lyrics-status-{index}-{status:?}").into_boxed_str());
+            assert!(
+                cx.debug_bounds(selector).is_some(),
+                "the matching assessment is visible: {status:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn fitting_bars_from_basic_mode_keeps_lyrics_and_other_sections(cx: &mut gpui::TestAppContext) {
+        for bars in [1, 8] {
+            let (app, cx) = crate::harness::open(cx);
+            crate::harness::resize(&app, cx, gpui::size(px(1500.0), px(1800.0)));
+            let (index, before) = app.update(cx, |this, _| {
+                let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+                let section = spec.sections.get_mut("verse").unwrap();
+                section.lyrics = "さくらさいた\nはるがきた".into();
+                section.bars = bars;
+                let dials = super::super::song_dials(&spec);
+                let index = dials
+                    .sections
+                    .iter()
+                    .position(|s| s.name == "verse")
+                    .unwrap();
+                this.song_sheet = Some(dials.clone());
+                (index, dials)
+            });
+            crate::harness::paint(&app, cx);
+            let estimate: &'static str =
+                Box::leak(format!("song-lyrics-estimate-{index}").into_boxed_str());
+            assert!(
+                cx.debug_bounds(estimate).is_some(),
+                "the estimate is shown even when it fits"
+            );
+            let fit: &'static str = Box::leak(format!("song-fit-lyrics-{index}").into_boxed_str());
+            crate::harness::click(fit, cx);
+            app.read_with(cx, |this, _| {
+                let mut expected = before.clone();
+                expected.sections[index].bars = 3;
+                assert_eq!(this.song_sheet.as_ref().unwrap(), &expected);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn mismatched_later_words_leave_the_sheet_and_document_intact(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+            spec.sections.get_mut("verse").unwrap().lyrics = "さくら".into();
+            spec.sections.get_mut("verse2").unwrap().lyrics = "はる".into();
+            this.song_sheet = Some(super::super::song_dials(&spec));
+            let before = this.project().clone();
+            assert!(!this.write_song_from_sheet());
+            assert!(this.song_sheet.is_some());
+            assert!(this.prompt.is_some());
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn drums_have_a_separate_area_and_can_be_removed_and_added_without_changing_instruments(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{click, open, paint, resize};
+        let (app, cx) = open(cx);
+        resize(&app, cx, gpui::size(gpui::px(1600.0), gpui::px(2000.0)));
+        let band = app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.song_advanced = true;
+            this.song_sheet
+                .as_ref()
+                .unwrap()
+                .parts
+                .iter()
+                .filter(|part| !part.role.is_drum())
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        paint(&app, cx);
+        let drums = cx.debug_bounds("song-sheet-drums").unwrap();
+        let instruments = cx.debug_bounds("song-sheet-parts").unwrap();
+        assert!(
+            drums.bottom() < instruments.top(),
+            "the kit occupies its own area above the instrument grid"
+        );
+        click("song-remove-drums", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.song_sheet.as_ref().unwrap().parts, band)
+        });
+        click("song-add-drums", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let parts = &this.song_sheet.as_ref().unwrap().parts;
+            assert!(parts.iter().any(|part| part.role.is_drum()));
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| !part.role.is_drum())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                band
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn choosing_one_drum_source_unifies_every_writer_and_keeps_the_band(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::ui::context_menu::MenuCommand;
+        use auris_session::prelude::*;
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            let band: Vec<_> = dials
+                .parts
+                .iter()
+                .filter(|p| !p.role.is_drum())
+                .cloned()
+                .collect();
+            let mut other = PartSpec::of_role("other-kit", Role::Kick);
+            other.program = Some(gm::Program(8));
+            dials.parts.push(other);
+            let instrument = PartSpec::of_role("kit", Role::Kick).instrument;
+            this.run_menu_command(
+                MenuCommand::SongDrumSource {
+                    instrument: instrument.clone(),
+                    program: Some(16),
+                },
+                cx,
+            );
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert!(
+                dials
+                    .parts
+                    .iter()
+                    .filter(|p| p.role.is_drum())
+                    .all(|p| p.instrument == instrument && p.program == Some(gm::Program(16)))
+            );
+            assert_eq!(
+                dials
+                    .parts
+                    .iter()
+                    .filter(|p| !p.role.is_drum())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                band
+            );
+            let piece = compose(&super::super::song_spec(dials));
+            assert_eq!(
+                piece
+                    .tracks
+                    .iter()
+                    .filter(|t| !t.drum_parts.is_empty())
+                    .count(),
+                1
+            );
+            this.run_menu_command(
+                MenuCommand::SongSinger(Some("C:/Voices/Test.onnx".into())),
+                cx,
+            );
+            let spec = super::super::song_spec(this.song_sheet.as_ref().unwrap());
+            assert_eq!(
+                super::super::song_dials(&SongSpec::parse(&spec.to_toml()).unwrap()).singer,
+                spec.singer
+            );
+        });
+    }
 
     #[test]
     fn the_column_lists_each_section_once_in_the_order_the_form_plays_them() {

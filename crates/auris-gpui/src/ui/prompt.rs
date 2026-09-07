@@ -133,11 +133,8 @@ pub enum PromptTarget {
     SongSeed,
     /// The name of the part at this position in the song sheet's roster.
     SongPartName(usize),
-    /// The tune's contour on the song sheet, as scale steps: `0 2 4 2`.
-    ///
-    /// The one prompt where emptiness is an answer: no motif means the composer draws its own
-    /// germ from the seed, and clearing the field is how that freedom is given back.
-    SongMotif,
+    /// A section BPM, or empty to follow the song.
+    SongSectionTempo(usize),
     /// The chords the section at this position in the song sheet plays, written out.
     SongSectionChart(usize),
     /// The name to keep the chart of the section at this position under.
@@ -159,8 +156,7 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             | PromptTarget::ComposeLyrics
             // Let the numeric field report its own valid range for an empty answer.
             | PromptTarget::DrumAssignment { .. }
-            // No motif is an answer here — it hands the tune back to the seed.
-            | PromptTarget::SongMotif
+            | PromptTarget::SongSectionTempo(_)
             // An unknown source tempo is a valid state and clearing the field is the way back.
             | PromptTarget::ClipSourceTempo(_)
     )
@@ -181,8 +177,6 @@ pub enum Notation {
     Key,
     /// One chord as a roman numeral, `V7` or `bVII`.
     Chord,
-    /// A motif, as scale steps around its anchor: `0 2 4 2`.
-    Motif,
     /// A whole progression, bar by bar: `| IVmaj7 | III7 | vi7 | I7 |`.
     Progression,
     /// The name of a section of the song.
@@ -210,14 +204,14 @@ impl PromptTarget {
         Some(match self {
             PromptTarget::Key(_) | PromptTarget::SongKey => Notation::Key,
             PromptTarget::Chord(_) => Notation::Chord,
-            PromptTarget::SongMotif => Notation::Motif,
             PromptTarget::SongSectionChart(_) => Notation::Progression,
             PromptTarget::Section(_) => Notation::Section,
             PromptTarget::Signature(_)
             | PromptTarget::SignatureFrom(_)
             | PromptTarget::SongMeter => Notation::Signature,
             PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
-            PromptTarget::Tempo(_)
+            PromptTarget::SongSectionTempo(_)
+            | PromptTarget::Tempo(_)
             | PromptTarget::TempoFrom(_)
             | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
             PromptTarget::ClipGain(_) => Notation::Gain,
@@ -271,7 +265,6 @@ impl Notation {
         match self {
             Notation::Key => Key::HintKey,
             Notation::Chord => Key::HintChord,
-            Notation::Motif => Key::HintMotif,
             Notation::Progression => Key::HintProgression,
             Notation::Section => Key::HintSection,
             Notation::Signature => Key::HintSignature,
@@ -294,14 +287,12 @@ impl Notation {
             Notation::Chord | Notation::Progression => CHORD_VOCABULARY,
             Notation::Section => SECTION_VOCABULARY,
             Notation::Signature => SIGNATURE_VOCABULARY,
-            // 174 is not on any list worth reading, and neither is every signed number a motif
-            // step could be.
+            // Arbitrary numeric values have no completion catalogue.
             Notation::Seed
             | Notation::Tempo
             | Notation::Gain
             | Notation::MidiNote
-            | Notation::Position
-            | Notation::Motif => &[],
+            | Notation::Position => &[],
         }
     }
 
@@ -849,6 +840,27 @@ impl AurisApp {
                     return;
                 }
             },
+            PromptTarget::SongSectionTempo(index) => {
+                let bpm = if text.is_empty() {
+                    None
+                } else {
+                    match text.parse::<f64>() {
+                        Ok(bpm) if (20.0..=400.0).contains(&bpm) => Some(bpm),
+                        _ => {
+                            self.reject_prompt(self.t(Key::SongTempoHint));
+                            return;
+                        }
+                    }
+                };
+                if let Some(section) = self
+                    .song_sheet
+                    .as_mut()
+                    .and_then(|d| d.sections.get_mut(index))
+                {
+                    section.tempo = bpm;
+                }
+                Ok(())
+            }
             PromptTarget::SongSeed => match text.parse::<u64>() {
                 Ok(seed) => {
                     if let Some(dials) = self.song_sheet.as_mut() {
@@ -890,29 +902,6 @@ impl AurisApp {
                     return;
                 }
                 Ok(())
-            }
-            // The tune, given by hand. What is stored is the contour the germ would otherwise
-            // be drawn as, so every section restates it; empty hands the tune back to the seed.
-            PromptTarget::SongMotif => {
-                if text.is_empty() {
-                    if let Some(dials) = self.song_sheet.as_mut() {
-                        dials.motif.clear();
-                    }
-                    Ok(())
-                } else {
-                    match auris_session::prelude::parse_motif(&text) {
-                        Ok(motif) => {
-                            if let Some(dials) = self.song_sheet.as_mut() {
-                                dials.motif = motif;
-                            }
-                            Ok(())
-                        }
-                        Err(_) => {
-                            self.reject_prompt(messages::not_a_motif(self.language(), &text));
-                            return;
-                        }
-                    }
-                }
             }
             // A progression written out by hand. Named after the section it was written for, so
             // there is one prompt rather than two — and a second section can still reach it, from
@@ -1968,7 +1957,6 @@ mod tests {
             PromptTarget::SongMeter,
             PromptTarget::SongSeed,
             PromptTarget::SongPartName(0),
-            PromptTarget::SongMotif,
             PromptTarget::SongSectionChart(0),
             PromptTarget::KeepProgression(0),
         ];
@@ -1998,7 +1986,7 @@ mod tests {
                 | PromptTarget::SongMeter
                 | PromptTarget::SongSeed
                 | PromptTarget::SongPartName(_)
-                | PromptTarget::SongMotif
+                | PromptTarget::SongSectionTempo(_)
                 | PromptTarget::SongSectionChart(_)
                 | PromptTarget::KeepProgression(_) => {}
             }
@@ -2344,18 +2332,12 @@ mod window_tests {
     ) {
         let (app, cx) = open(cx);
         cx.dispatch_action(actions::ComposeSong);
-        for (target, rejected, corrected) in [
-            (
-                PromptTarget::SongMotif,
-                format!("{}wrong", "0 2 4 2 ".repeat(80)),
-                "0 2 4 2",
-            ),
-            (
-                PromptTarget::SongSectionChart(0),
-                format!("{}| H7 |", "| I | V ".repeat(80)),
-                "| I | V |",
-            ),
-        ] {
+        let (target, rejected, corrected) = (
+            PromptTarget::SongSectionChart(0),
+            format!("{}| H7 |", "| I | V ".repeat(80)),
+            "| I | V |",
+        );
+        {
             app.update(cx, |this, _| {
                 this.open_prompt(Prompt::new("Song", target, ""));
             });
@@ -2393,9 +2375,6 @@ mod window_tests {
                     .as_ref()
                     .expect("only the answer sheet closed");
                 match target {
-                    PromptTarget::SongMotif => {
-                        assert_eq!(dials.motif, parse_motif(corrected).unwrap());
-                    }
                     PromptTarget::SongSectionChart(index) => {
                         let (_, chart) = dials
                             .charts
