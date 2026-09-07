@@ -15,7 +15,6 @@ use crate::dock::{Dock, Panel};
 use crate::ui::compose_sheet::song_dials;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
-use super::recipe::generation_range;
 use super::timeline::progression_target;
 
 /// What choosing a menu item does.
@@ -1295,13 +1294,8 @@ impl AurisApp {
                 start,
                 preset,
             } => {
-                let (start, length) = generation_range(
-                    self.project().loop_region,
-                    start,
-                    &self.project().signatures,
-                );
                 let recipe = ClipRecipe::new(preset, self.next_seed());
-                match self.session.generate_clip(track, start, length, recipe) {
+                match self.session.generate_clip_here(track, start, recipe) {
                     Ok(clip) => {
                         self.select_clip(Some(clip));
                         self.report_clip(preset, clip);

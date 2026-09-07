@@ -253,6 +253,13 @@ A single clip can be written from the chords underneath it without a specificati
 song: right-click an empty stretch of a melodic instrument track to generate lead, chords, pad,
 arpeggio, stab or bass. Drum tracks offer the full kit, kick, snare and hi-hat presets. Separate
 drum tracks allow their mixer levels and processing to be controlled independently.
+
+The new clip fills the free interval containing the right-click position, within that section.
+Existing clips on the same track bound either edge. The final section uses the end of the
+project's existing clips when that end is beyond the pointer. Without a bounded section, the
+phrase starts at the pointer's bar and lasts at most four bars, stopping at nearby clips or
+section boundaries. Clicking an occupied position cannot add an overlapping part.
+
 The clip keeps the recipe that produced it, so **Another Take** is
 the next seed, **Write It Again** follows the chords when they move, and **Keep This One** drops
 the recipe when a take turns out to be the keeper. A track's own menu has **Keep Every Take Here**,

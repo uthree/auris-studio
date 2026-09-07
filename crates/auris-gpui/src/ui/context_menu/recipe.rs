@@ -455,35 +455,10 @@ fn next_seed(project: &Project) -> u64 {
         .map_or(1, |highest| highest.wrapping_add(1))
 }
 
-/// Where a generated clip goes, and how long it is.
-///
-/// The cycle region when there is one, for the same reason a progression uses it: setting the
-/// cycle over the part of the song being worked on and then acting on it is how the rest of the
-/// application already behaves. Four bars from the start of the pointer's bar otherwise, which
-/// is enough of a phrase to judge and short enough to throw away.
-pub(super) fn generation_range(
-    loop_region: Option<(Ticks, Ticks)>,
-    tick: Ticks,
-    signatures: &SignatureMap,
-) -> (Ticks, Ticks) {
-    match loop_region {
-        Some((from, to)) if to > from => (from.max_zero(), to - from),
-        _ => {
-            // Four *bars*, not four bar lengths: across a meter change those differ, and what
-            // "four bars" means is the four the ruler counts.
-            let tick = tick.max_zero();
-            let first = signatures.bar_of(tick);
-            let start = signatures.bar_start(first);
-            let length = signatures.bar_start(first + 4) - start;
-            (start, length)
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::context_menu::{MenuEntry, meters};
+    use crate::ui::context_menu::MenuEntry;
     use gpui::{point, px};
 
     /// The commands a menu offers, ignoring its labels and its separators.
@@ -612,58 +587,72 @@ mod tests {
         assert_eq!(next_seed(&project), 42, "the moved seed still counts");
     }
 
-    #[test]
-    fn a_generated_clip_goes_where_the_cycle_is_when_there_is_one() {
-        let bar = TimeSignature::new(4, 4).ticks_per_bar();
-
-        // No cycle: four bars from the pointer's bar — enough of a phrase to judge, and
-        // short enough to throw away.
-        assert_eq!(
-            generation_range(None, bar * 2, &meters()),
-            (bar * 2, bar * 4)
+    #[gpui::test]
+    fn a_right_click_near_a_section_end_generates_only_the_gap_under_the_pointer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{choose, lane_point, open, paint, right_press};
+        let (app, cx) = open(cx);
+        let bar = TimeSignature::default().ticks_per_bar();
+        let track = app.update(cx, |this, _| {
+            let track = this.session.add_default_drum_track("Kit").unwrap();
+            this.session.set_loop_region(Ticks::ZERO, bar * 64);
+            this.session.set_loop_enabled(false);
+            this.session.set_section(Ticks::ZERO, Some("Intro".into()));
+            this.session.set_section(bar, Some("Verse".into()));
+            this.session.set_section(bar * 2, Some("Chorus".into()));
+            this.session.set_section(bar * 3, None);
+            this.session
+                .add_midi_clip(track, "Before", Ticks::ZERO, bar)
+                .unwrap();
+            this.session
+                .add_midi_clip(track, "After", bar * 2, bar)
+                .unwrap();
+            track
+        });
+        paint(&app, cx);
+        let at = lane_point(&app, cx, track, bar * 2 - Ticks(40));
+        right_press(cx, at);
+        paint(&app, cx);
+        let (command, start) = app.read_with(cx, |this, _| {
+            commands(this.menu.as_ref().expect("right-click opens the lane menu"))
+                .into_iter()
+                .find_map(|command| match command {
+                    MenuCommand::ShowPresetPicker { start, .. } => {
+                        assert!(start < bar * 2);
+                        assert_eq!(this.snap(start), bar * 2);
+                        Some((command, start))
+                    }
+                    _ => None,
+                })
+                .expect("the lane offers generation")
+        });
+        choose(&app, cx, &command);
+        paint(&app, cx);
+        choose(
+            &app,
+            cx,
+            &MenuCommand::GenerateClip {
+                track,
+                start,
+                preset: ClipPreset::Drums,
+            },
         );
-
-        // A cycle wins, and the clip is exactly as long as it.
-        assert_eq!(
-            generation_range(Some((bar * 8, bar * 16)), bar, &meters()),
-            (bar * 8, bar * 8)
-        );
-
-        // An empty cycle is not a range, so the pointer decides again.
-        assert_eq!(
-            generation_range(Some((bar * 4, bar * 4)), Ticks::ZERO, &meters()),
-            (Ticks::ZERO, bar * 4)
-        );
-    }
-
-    #[test]
-    fn generation_snaps_to_the_start_of_the_bar_through_meter_changes() {
-        let mut signatures = meters();
-        signatures.set_point(Ticks::from_beats(16.0), TimeSignature::new(3, 4));
-
-        // Check both sides of each boundary, including bars in the new meter.
-        for (beat, start, end) in [
-            (-1.0, 0.0, 16.0),
-            (0.0, 0.0, 16.0),
-            (8.001, 8.0, 22.0),
-            (11.999, 8.0, 22.0),
-            (12.0, 12.0, 25.0),
-            (16.001, 16.0, 28.0),
-            (18.999, 16.0, 28.0),
-            (19.0, 19.0, 31.0),
-        ] {
+        app.read_with(cx, |this, _| {
+            let clip = this.selected_midi_clip().expect("the new clip is selected");
+            assert_eq!((clip.start, clip.end()), (bar, bar * 2));
+            assert!(!clip.notes.is_empty());
             assert_eq!(
-                generation_range(None, Ticks::from_beats(beat), &signatures),
-                (Ticks::from_beats(start), Ticks::from_beats(end - start)),
-                "pointer at beat {beat}"
+                this.project()
+                    .track(track)
+                    .unwrap()
+                    .kind
+                    .note_clips()
+                    .unwrap()
+                    .len(),
+                3
             );
-        }
-
-        let cycle = (Ticks::from_beats(9.0), Ticks::from_beats(14.0));
-        assert_eq!(
-            generation_range(Some(cycle), Ticks::from_beats(20.0), &signatures),
-            (cycle.0, cycle.1 - cycle.0)
-        );
+        });
     }
 
     #[gpui::test]
@@ -672,18 +661,23 @@ mod tests {
         let track = app.update(cx, |this, _| {
             this.session.add_default_drum_track("Kit").unwrap()
         });
-        for preset in ClipPreset::ALL
+        for (index, preset) in ClipPreset::ALL
             .into_iter()
             .filter(|preset| preset.is_drums())
+            .enumerate()
         {
             let command = MenuCommand::GenerateClip {
                 track,
-                start: Ticks::ZERO,
+                start: TimeSignature::default().ticks_per_bar() * (4 * index as i64),
                 preset,
             };
             app.update(cx, |this, _| {
                 assert!(this.project().harmony.is_empty());
-                let menu = this.preset_picker_menu(point(px(200.0), px(200.0)), track, Ticks::ZERO);
+                let menu = this.preset_picker_menu(
+                    point(px(200.0), px(200.0)),
+                    track,
+                    TimeSignature::default().ticks_per_bar() * (4 * index as i64),
+                );
                 this.open_menu(menu);
             });
             crate::harness::paint(&app, cx);

@@ -1603,6 +1603,13 @@ pub mod harmony {
     //! the applicable presets. Freezing keeps the notes and the track kind while removing the
     //! recipe. A generated drum clip therefore remains a drum clip after it is frozen.
     //!
+    //! [`Session::generate_clip_here`](crate::Session::generate_clip_here) places a phrase in
+    //! the free interval containing the pointer on the target track. A bounded, named section
+    //! supplies the extent, with the final section ending at the project's last clip when it
+    //! extends beyond the pointer. Otherwise it uses up to four bars from the pointer's bar,
+    //! bounded by section changes. Neighbouring clips trim either edge, and an occupied position is
+    //! refused. These resolved edges are preserved even between grid lines.
+    //!
     //! # The score does not change; the performer does
     //!
     //! What the recipe promises — and what it deliberately does not — is one contract in three

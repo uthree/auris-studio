@@ -264,6 +264,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::LibraryMissing => Key::ErrorLibraryMissing.get(language).to_string(),
         SessionError::UnknownProgression(name) => messages::unknown_progression(language, name),
         SessionError::CannotSplit(_) => Key::ErrorCannotSplit.get(language).to_string(),
+        SessionError::GenerationPositionOccupied => Key::ErrorGenerationPositionOccupied
+            .get(language)
+            .to_string(),
         SessionError::NotAudio(_) => Key::ErrorNotAudio.get(language).to_string(),
         SessionError::NotFinite(_) => Key::ErrorNotFinite.get(language).to_string(),
         SessionError::NotGenerated(_) => Key::ErrorNotGenerated.get(language).to_string(),
@@ -629,6 +632,7 @@ mod tests {
             SessionError::UnknownTrack(1),
             SessionError::UnknownClip(2),
             SessionError::CannotSplit(3),
+            SessionError::GenerationPositionOccupied,
             SessionError::NoPath,
             SessionError::AudioRestart("device gone".into()),
             SessionError::MissingAudio(vec!["a.wav".into()]),

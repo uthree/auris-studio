@@ -408,7 +408,7 @@ impl AurisApp {
                 Some(descriptor) => {
                     self.param_menu(event.position, target, self.param_label(&descriptor.name))
                 }
-                None => self.lane_menu(event.position, row.track, self.snap(tick).max_zero()),
+                None => self.lane_menu(event.position, row.track, tick.max_zero()),
             }
         } else {
             match self.track_at_y(local.y) {
@@ -428,9 +428,7 @@ impl AurisApp {
                             self.selected_notes.clear();
                             self.clip_menu(event.position, clip_id)
                         }
-                        None => {
-                            self.lane_menu(event.position, track_id, self.snap(tick).max_zero())
-                        }
+                        None => self.lane_menu(event.position, track_id, tick.max_zero()),
                     }
                 }
                 None => self.arrangement_menu(event.position),
