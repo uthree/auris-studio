@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::error::{CoreError, Result};
-use crate::plugin::{Effect, Instrument, PluginCategory, PluginDescriptor, PluginKind};
+use crate::plugin::{Effect, Instrument, PluginDescriptor, PluginKind};
 
 /// Builds a fresh instrument instance.
 pub type InstrumentFactory = Arc<dyn Fn() -> Box<dyn Instrument> + Send + Sync>;
@@ -148,14 +148,6 @@ impl PluginRegistry {
             .or_else(|| self.effects.get(id).map(|entry| &entry.descriptor))
     }
 
-    /// Effects in one category, ordered by id.
-    pub fn effects_in_category(
-        &self,
-        category: PluginCategory,
-    ) -> impl Iterator<Item = &PluginDescriptor> {
-        self.effects().filter(move |d| d.category == category)
-    }
-
     /// `true` when an instrument with this id is registered.
     pub fn has_instrument(&self, id: &str) -> bool {
         self.instruments.contains_key(id)
@@ -217,7 +209,7 @@ mod tests {
     use super::*;
     use crate::buffer::AudioBuffer;
     use crate::param::{ParamDescriptor, ParamId};
-    use crate::plugin::{NoteEvent, Parameterized, PrepareContext, ProcessContext};
+    use crate::plugin::{NoteEvent, Parameterized, PluginCategory, PrepareContext, ProcessContext};
 
     #[derive(Default)]
     struct Silence;

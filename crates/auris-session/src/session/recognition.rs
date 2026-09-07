@@ -620,17 +620,6 @@ impl Session {
         self.place_analyzed_notes(track, start, name, notes)
     }
 
-    /// Places a clip transcription with its trim, stretch and repeats, in one undo step.
-    pub fn place_clip_transcription(
-        &mut self,
-        report: &ClipAudioAnalysis,
-        track: TrackId,
-        name: &str,
-    ) -> Result<ClipId, SessionError> {
-        let notes = self.clip_transcription_notes(report)?;
-        self.place_analyzed_notes(track, report.job.clip.start, name, notes)
-    }
-
     fn clip_transcription_notes(
         &self,
         report: &ClipAudioAnalysis,

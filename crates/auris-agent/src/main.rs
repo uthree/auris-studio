@@ -1461,7 +1461,6 @@ fn main() -> ExitCode {
     // Like the other frontends: this may be the first one to run on a machine, and an
     // installation predating `~/.config/auris-studio` only has its settings carried across by
     // whichever one does.
-    auris_session::migrate_legacy_config();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let prefs = auris_session::Settings::load().agent;

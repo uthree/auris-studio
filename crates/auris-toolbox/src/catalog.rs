@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn effect_slots_are_required_in_model_schema_and_legacy_names_still_parse() {
+    fn effect_slots_are_required_in_schema_and_arguments() {
         let schema = parameter_schema::<set_effect::Args>();
         assert!(
             schema["required"]
@@ -502,16 +502,14 @@ mod tests {
         );
         assert_eq!(schema["properties"]["slot"]["type"], "integer");
         assert_eq!(schema["properties"]["slot"]["minimum"].as_f64(), Some(1.0));
-        let legacy: set_effect::Args = serde_json::from_value(serde_json::json!({
+        assert!(serde_json::from_value::<set_effect::Args>(serde_json::json!({
             "project":"/song.auris", "track":"Bass", "effect":"compressor", "param":"threshold_db", "value":-18
-        })).unwrap();
-        assert_eq!(legacy.slot, None);
-        assert_eq!(legacy.effect.as_deref(), Some("compressor"));
+        })).is_err());
         let primary: set_effect::Args = serde_json::from_value(serde_json::json!({
             "project":"/song.auris", "track":"Bass", "slot":1, "param":"threshold_db", "value":-18
         }))
         .unwrap();
-        assert_eq!(primary.slot, Some(1));
+        assert_eq!(primary.slot, 1);
         assert_eq!(primary.effect, None);
     }
     #[test]

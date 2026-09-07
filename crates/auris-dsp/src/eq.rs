@@ -308,11 +308,6 @@ impl Equalizer {
         BANDS.get(band).map(|spec| spec.kind)
     }
 
-    /// Coefficients currently in use by a band, whether or not it is enabled.
-    pub fn band_coefficients(&self, band: usize) -> Option<BiquadCoefficients> {
-        self.coefficients.get(band).copied()
-    }
-
     /// Combined magnitude response of the enabled bands at `frequency_hz`, in dB.
     ///
     /// The bands run in series, so their individual responses multiply — which is a sum once

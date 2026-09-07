@@ -469,13 +469,6 @@ impl Capture {
             .max()
             .unwrap_or(0)
     }
-
-    /// Stops every slot listening, for a device that is being closed or re-pointed.
-    pub fn silence_monitors(&self) {
-        for ring in &self.monitors {
-            ring.set_enabled(false);
-        }
-    }
 }
 
 impl std::fmt::Debug for Capture {

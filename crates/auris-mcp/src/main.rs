@@ -683,7 +683,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Like the CLI: nothing here reads the configuration, but this may still be the frontend
     // that runs first on a machine, and an installation predating the move to
     // `~/.config/auris-studio` only has its settings carried across by whichever one does.
-    auris_session::migrate_legacy_config();
 
     tokio::runtime::Runtime::new()?.block_on(async {
         let service = AurisMcp::default().serve(rmcp::transport::stdio()).await?;

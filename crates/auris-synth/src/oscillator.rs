@@ -241,15 +241,6 @@ impl Oscillator {
         self.phase
     }
 
-    /// Moves the phase, wrapping into `0..1`.
-    pub fn set_phase(&mut self, phase: f32) {
-        self.phase = if phase.is_finite() {
-            phase - phase.floor()
-        } else {
-            0.0
-        };
-    }
-
     /// Returns the oscillator to its start-of-note state: phase zero, noise register reseeded.
     pub fn reset(&mut self) {
         self.phase = 0.0;

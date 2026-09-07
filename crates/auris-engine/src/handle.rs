@@ -144,11 +144,6 @@ impl EngineHandle {
         &self.meters
     }
 
-    /// A shared reference to the meters, for a UI that keeps its own copy.
-    pub fn meters_arc(&self) -> Arc<MeterBank> {
-        Arc::clone(&self.meters)
-    }
-
     /// Drops every graph the audio thread has handed back, returning how many there were.
     ///
     /// This is the point of the whole exchange: a graph holds plugin instances and sample

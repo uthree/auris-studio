@@ -1292,8 +1292,8 @@ pub mod set_effect {
         /// Optional consistency check for slot: full effect id or short name, e.g. auris.fx.limiter or limiter.
         pub effect: Option<String>,
         /// Required 1-based position from mixer/effects; re-read after changing chain order.
-        #[schemars(required, range(min = 1))]
-        pub slot: Option<usize>,
+        #[schemars(range(min = 1))]
+        pub slot: usize,
         /// The parameter, by the key or the name `mixer` lists.
         pub param: String,
         /// The value, in the parameter's own units — decibels for a gain, milliseconds for a
@@ -1327,60 +1327,25 @@ pub mod set_effect {
                     .collect::<Vec<_>>()
                     .join(", ")
             };
-            match (args.slot, &args.effect) {
-                (Some(number), named) => {
-                    let found = slots.get(number.wrapping_sub(1)).cloned().ok_or_else(|| {
-                        format!("'{}' has {}: no [{number}]", args.track, listed())
-                    })?;
-                    if let Some(name) = named
-                        && !found.1.eq_ignore_ascii_case(name)
-                        && !found
-                            .1
-                            .rsplit('.')
-                            .next()
-                            .is_some_and(|last| last.eq_ignore_ascii_case(name))
-                    {
-                        return Err(format!(
-                            "slot [{number}] on '{}' is {}, not '{name}'",
-                            args.track, found.1
-                        ));
-                    }
-                    found
-                }
-                (None, Some(name)) => {
-                    let matches: Vec<&(EffectSlotId, String)> = slots
-                        .iter()
-                        .filter(|(_, id)| {
-                            id.eq_ignore_ascii_case(name)
-                                || id
-                                    .rsplit('.')
-                                    .next()
-                                    .is_some_and(|last| last.eq_ignore_ascii_case(name))
-                        })
-                        .collect();
-                    match matches.as_slice() {
-                        [one] => (*one).clone(),
-                        [] => {
-                            return Err(format!(
-                                "no effect on '{}' answers to '{name}' — the chain is: {}",
-                                args.track,
-                                listed()
-                            ));
-                        }
-                        _ => {
-                            return Err(format!(
-                                "'{name}' sits on '{}' more than once — address it as slot: N \
-                                 the way `mixer` numbers the chain: {}",
-                                args.track,
-                                listed()
-                            ));
-                        }
-                    }
-                }
-                (None, None) => {
-                    return Err("pass `effect` (its id) or `slot` (its position)".into());
-                }
+            let number = args.slot;
+            let found = slots
+                .get(number.wrapping_sub(1))
+                .cloned()
+                .ok_or_else(|| format!("'{}' has {}: no [{number}]", args.track, listed()))?;
+            if let Some(name) = &args.effect
+                && !found.1.eq_ignore_ascii_case(name)
+                && !found
+                    .1
+                    .rsplit('.')
+                    .next()
+                    .is_some_and(|last| last.eq_ignore_ascii_case(name))
+            {
+                return Err(format!(
+                    "slot [{number}] on '{}' is {}, not '{name}'",
+                    args.track, found.1
+                ));
             }
+            found
         };
 
         // The parameter, by key or by name, with the refusal listing what is really there.
@@ -3655,7 +3620,7 @@ mod tests {
                 project: path.clone(),
                 track: "Probe".to_string(),
                 effect: Some("limiter".to_string()),
-                slot: None,
+                slot: 1,
                 param: param.to_string(),
                 value,
             })

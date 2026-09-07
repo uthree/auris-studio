@@ -53,7 +53,6 @@ fn main() {
 
     // Before anything reads a preference: the configuration moved to `~/.config/auris-studio`,
     // and an installation that predates the move keeps its settings, keymap and colour scheme.
-    auris_session::migrate_legacy_config();
 
     Application::new().run(|cx: &mut App| {
         // Installs the Markdown renderer's theme and language registry. The agent transcript uses

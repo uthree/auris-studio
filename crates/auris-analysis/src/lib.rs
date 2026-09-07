@@ -50,10 +50,6 @@ impl AnalysisControl {
     pub fn progress(&self) -> f32 {
         self.progress.load(Ordering::Relaxed) as f32 / 1000.0
     }
-    /// Publishes progress from an external worker and observes cancellation.
-    pub fn report_progress(&self, fraction: f32) -> Result<(), AnalysisError> {
-        self.check(fraction)
-    }
     pub(crate) fn check(&self, fraction: f32) -> Result<(), AnalysisError> {
         if self.cancelled.load(Ordering::Relaxed) {
             return Err(AnalysisError::Cancelled);
