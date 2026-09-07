@@ -241,7 +241,8 @@ impl AurisApp {
                     || measure.lines.contains(&None)
             });
         let over = measure.bars > spec.bars || mismatch;
-        let show_counts = self.song_advanced || over || measure.lines.contains(&None);
+        let readable = !measure.lines.contains(&None);
+        let show_counts = !words_now.trim().is_empty();
         let counts: Vec<gpui::SharedString> = measure
             .lines
             .iter()
@@ -253,16 +254,62 @@ impl AurisApp {
                 None => "?".into(),
             })
             .collect();
-        let tally = (measure.notes > 0 && (self.song_advanced || over)).then(|| {
-            format!(
-                "{} {} · {} / {} {}",
-                measure.notes,
-                self.t(Key::LyricsNotesUnit),
-                measure.bars,
-                spec.bars,
-                self.t(Key::SongBarsUnit)
-            )
+        let tally = (!words_now.trim().is_empty()).then(|| {
+            if !readable {
+                return self.t(Key::SongLyricsUnreadable).to_string();
+            }
+            self.t(Key::SongLyricsEstimate)
+                .replace("{notes}", &measure.notes.to_string())
+                .replace("{needed}", &measure.bars.to_string())
+                .replace("{bars}", &spec.bars.to_string())
         });
+        let capacity = if readable && measure.notes > 0 {
+            let (key, difference) = match measure.bars.cmp(&spec.bars) {
+                std::cmp::Ordering::Less => (Key::SongLyricsSpare, spec.bars - measure.bars),
+                std::cmp::Ordering::Equal => (Key::SongLyricsFits, 0),
+                std::cmp::Ordering::Greater => (Key::SongLyricsOverflow, measure.bars - spec.bars),
+            };
+            Some(
+                self.t(key)
+                    .replace("{bars}", &difference.to_string())
+                    .replace(
+                        "{notes}",
+                        &measure
+                            .notes
+                            .saturating_sub(
+                                measure
+                                    .notes_within_bars(dials.meter, spec.bars)
+                                    .unwrap_or(0),
+                            )
+                            .to_string(),
+                    ),
+            )
+        } else {
+            None
+        };
+        let shared_status = source
+            .filter(|_| !words_now.trim().is_empty())
+            .map(|source| {
+                let expected = expected.as_ref().unwrap();
+                let key = if !readable || expected.lines.contains(&None) {
+                    Key::SongLyricsMatchUnreadable
+                } else if expected.notes == 0 {
+                    Key::SongLyricsOriginalEmpty
+                } else if expected.phrases == measure.phrases {
+                    Key::SongLyricsMatched
+                } else if expected.notes == measure.notes {
+                    Key::SongLyricsPhraseMismatch
+                } else {
+                    Key::SongLyricsNoteMismatch
+                };
+                (
+                    key,
+                    self.t(key)
+                        .replace("{section}", &section_label(self, &source.name))
+                        .replace("{actual}", &measure.notes.to_string())
+                        .replace("{expected}", &expected.notes.to_string()),
+                )
+            });
 
         let words: AnyElement = if let Some(edit) = edit {
             let field = &edit.field;
@@ -363,31 +410,64 @@ impl AurisApp {
             .flex_shrink_0()
             .gap_1()
             .child(
+                div().flex().items_center().justify_between().gap_2().child(
+                    div()
+                        .text_xs()
+                        .text_color(match edit.is_some() {
+                            true => theme.text,
+                            false => theme.text_muted,
+                        })
+                        .child(heading),
+                ),
+            )
+            .children(tally.map(|tally| {
                 div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(match edit.is_some() {
-                                true => theme.text,
-                                false => theme.text_muted,
-                            })
-                            .child(heading),
-                    )
-                    // The running total: notes the words would sing, bars they need against
-                    // bars the section has — the colour of a problem once they outrun it.
-                    .children(tally.map(|tally| {
-                        div()
-                            .text_xs()
-                            .text_color(match over {
-                                true => theme.danger,
-                                false => theme.text_faint,
-                            })
-                            .child(tally)
-                    })),
+                    .debug_selector(move || format!("song-lyrics-estimate-{index}"))
+                    .text_xs()
+                    .text_color(if over || !readable {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(tally)
+            }))
+            .children(capacity.map(|capacity| {
+                div()
+                    .debug_selector(move || format!("song-lyrics-capacity-{index}"))
+                    .text_xs()
+                    .text_color(if measure.bars > spec.bars {
+                        theme.danger
+                    } else {
+                        theme.text_muted
+                    })
+                    .child(capacity)
+            }))
+            .when(
+                readable && measure.notes > 0 && measure.bars != spec.bars,
+                |this| {
+                    this.child(crate::ui::widgets::button(
+                        ("song-fit-lyrics", index),
+                        self.t(Key::SongFitLyrics),
+                        crate::ui::widgets::ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            let Some(dials) = this.song_sheet.as_ref() else {
+                                return;
+                            };
+                            let Some(section) = dials.sections.get(index) else {
+                                return;
+                            };
+                            let measure = this.session.measure_lyrics(&section.lyrics, dials.meter);
+                            if measure.notes > 0 && !measure.lines.contains(&None) {
+                                this.song_sheet.as_mut().unwrap().sections[index].bars =
+                                    measure.bars;
+                                cx.notify();
+                            }
+                        }),
+                    ))
+                },
             )
             .when(self.song_advanced, |this| {
                 this.child(crate::ui::widgets::button(
@@ -406,44 +486,43 @@ impl AurisApp {
                     Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
                 ))
             })
-            .children(
-                expected
-                    .filter(|expected| {
-                        mismatch || (self.song_advanced && !expected.phrases.is_empty())
+            .children(shared_status.map(|(key, status)| {
+                div()
+                    .debug_selector(move || format!("song-lyrics-match-{index}"))
+                    .text_xs()
+                    .text_color(if mismatch {
+                        theme.danger
+                    } else {
+                        theme.text_muted
                     })
-                    .map(|expected| {
+                    .child(
                         div()
-                            .debug_selector(move || format!("song-lyrics-match-{index}"))
-                            .text_xs()
-                            .text_color(if mismatch {
-                                theme.danger
-                            } else {
-                                theme.text_faint
-                            })
-                            .child(self.t(Key::SongLyricsMatch))
-                            .child(
+                            .debug_selector(move || format!("song-lyrics-status-{index}-{key:?}"))
+                            .child(status),
+                    )
+                    .when(
+                        mismatch
+                            && readable
+                            && expected
+                                .as_ref()
+                                .is_some_and(|m| m.notes > 0 && !m.lines.contains(&None)),
+                        |this| {
+                            this.child(
                                 div().child(
                                     self.t(Key::SongLyricsCounts)
                                         .replace("{actual}", &phrase_counts(self, &measure.phrases))
                                         .replace(
                                             "{expected}",
-                                            &phrase_counts(self, &expected.phrases),
+                                            &phrase_counts(
+                                                self,
+                                                &expected.as_ref().unwrap().phrases,
+                                            ),
                                         ),
                                 ),
                             )
-                    }),
-            )
-            .when(
-                !self.song_advanced && source.is_some() && !mismatch,
-                |this| {
-                    this.child(
-                        div().text_xs().text_color(theme.text_faint).child(
-                            self.t(Key::SongSharedLyricsHint)
-                                .replace("{section}", &section_label(self, &source.unwrap().name)),
-                        ),
+                        },
                     )
-                },
-            )
+            }))
             .child(words)
             .into_any_element()
     }
@@ -573,6 +652,80 @@ mod tests {
             cx.debug_bounds(selector).is_some(),
             "basic mode keeps actionable lyric feedback"
         );
+    }
+
+    #[gpui::test]
+    fn the_basic_sheet_evaluates_note_counts_and_phrase_boundaries(cx: &mut gpui::TestAppContext) {
+        for (original, later, status) in [
+            ("さくら\nさいた", "ひかり\nとどく", Key::SongLyricsMatched),
+            ("さくら", "はる", Key::SongLyricsNoteMismatch),
+            (
+                "さくら\nさいた",
+                "はる\nがきたよ",
+                Key::SongLyricsPhraseMismatch,
+            ),
+            ("", "はる", Key::SongLyricsOriginalEmpty),
+            ("漢字", "はる", Key::SongLyricsMatchUnreadable),
+        ] {
+            let (app, cx) = crate::harness::open(cx);
+            let index = app.update(cx, |this, _| {
+                let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+                spec.sections.get_mut("verse").unwrap().lyrics = original.into();
+                spec.sections.get_mut("verse2").unwrap().lyrics = later.into();
+                this.song_sheet = Some(super::super::song_dials(&spec));
+                assert!(!this.song_advanced);
+                this.song_sheet
+                    .as_ref()
+                    .unwrap()
+                    .sections
+                    .iter()
+                    .position(|s| s.name == "verse2")
+                    .unwrap()
+            });
+            crate::harness::paint(&app, cx);
+            let selector: &'static str =
+                Box::leak(format!("song-lyrics-status-{index}-{status:?}").into_boxed_str());
+            assert!(
+                cx.debug_bounds(selector).is_some(),
+                "the matching assessment is visible: {status:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn fitting_bars_from_basic_mode_keeps_lyrics_and_other_sections(cx: &mut gpui::TestAppContext) {
+        for bars in [1, 8] {
+            let (app, cx) = crate::harness::open(cx);
+            crate::harness::resize(&app, cx, gpui::size(px(1500.0), px(1800.0)));
+            let (index, before) = app.update(cx, |this, _| {
+                let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+                let section = spec.sections.get_mut("verse").unwrap();
+                section.lyrics = "さくらさいた\nはるがきた".into();
+                section.bars = bars;
+                let dials = super::super::song_dials(&spec);
+                let index = dials
+                    .sections
+                    .iter()
+                    .position(|s| s.name == "verse")
+                    .unwrap();
+                this.song_sheet = Some(dials.clone());
+                (index, dials)
+            });
+            crate::harness::paint(&app, cx);
+            let estimate: &'static str =
+                Box::leak(format!("song-lyrics-estimate-{index}").into_boxed_str());
+            assert!(
+                cx.debug_bounds(estimate).is_some(),
+                "the estimate is shown even when it fits"
+            );
+            let fit: &'static str = Box::leak(format!("song-fit-lyrics-{index}").into_boxed_str());
+            crate::harness::click(fit, cx);
+            app.read_with(cx, |this, _| {
+                let mut expected = before.clone();
+                expected.sections[index].bars = 3;
+                assert_eq!(this.song_sheet.as_ref().unwrap(), &expected);
+            });
+        }
     }
 
     #[gpui::test]

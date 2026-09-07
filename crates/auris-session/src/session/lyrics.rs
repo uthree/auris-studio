@@ -411,6 +411,25 @@ pub struct LyricsMeasure {
     pub bars: usize,
 }
 
+impl LyricsMeasure {
+    /// Counts complete notes that fit the section, using the composer's phrase rhythm.
+    /// An unreadable lyric has no reliable capacity estimate and returns no count.
+    pub fn notes_within_bars(&self, meter: TimeSignature, bars: usize) -> Option<usize> {
+        if self.lines.contains(&None) {
+            return None;
+        }
+        let end = meter.ticks_per_bar() * bars as i64;
+        Some(
+            vocal_rhythm(&self.phrases, meter)
+                .phrases
+                .iter()
+                .flatten()
+                .filter(|(onset, duration)| *onset + *duration <= end)
+                .count(),
+        )
+    }
+}
+
 impl Session {
     /// Measures a lyric without writing anything: notes per line, notes in all, bars needed.
     ///
@@ -792,6 +811,45 @@ mod tests {
         let empty = session.measure_lyrics("", meter);
         assert_eq!(empty.bars, 0);
         assert_eq!(empty.notes, 0);
+    }
+
+    #[test]
+    fn lyric_capacity_counts_complete_notes_and_refuses_partial_readings() {
+        let session = session();
+        for meter in [
+            TimeSignature::new(4, 4),
+            TimeSignature::new(3, 4),
+            TimeSignature::new(7, 8),
+        ] {
+            let measured = session.measure_lyrics("こーひー\nさくらさいた", meter);
+            assert_eq!(measured.notes, 10);
+            assert_eq!(measured.notes_within_bars(meter, 0), Some(0));
+            assert_eq!(
+                measured.notes_within_bars(meter, measured.bars),
+                Some(measured.notes)
+            );
+            assert_eq!(
+                measured.notes_within_bars(meter, measured.bars + 2),
+                Some(measured.notes)
+            );
+        }
+        let meter = TimeSignature::new(4, 4);
+        assert_eq!(
+            session
+                .measure_lyrics("", meter)
+                .notes_within_bars(meter, 8),
+            Some(0)
+        );
+        assert_eq!(
+            session
+                .measure_lyrics("さくら\n歌詞", meter)
+                .notes_within_bars(meter, 8),
+            None
+        );
+        let measure = session.measure_lyrics("さくら さいた\nはるが きた", meter);
+        assert_eq!(measure.notes_within_bars(meter, 1), Some(5));
+        assert_eq!(measure.notes_within_bars(meter, 2), Some(6));
+        assert_eq!(measure.notes_within_bars(meter, 3), Some(11));
     }
 
     #[test]

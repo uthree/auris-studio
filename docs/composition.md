@@ -12,8 +12,16 @@ and energy beside the lyrics. Moving right or up raises the labelled value. Lyri
 **Detailed settings** reveals key, meter, groove, seed, the tension/syncopation pad, performance
 dials, section structure, melody sharing and the drum/instrument roster. The toggle stays above
 the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
-The basic lyrics view uses familiar section labels and shows note counts only when they need
-attention; detailed mode also exposes the routine counts.
+The basic lyrics view shows note counts and estimated bars for every nonempty lyric. Estimates
+use the same mora reading and phrase rhythm as composition. Each section reports an exact fit,
+spare bars for accompaniment, or missing bars and notes that cannot fit. **Fit bars to lyrics**
+applies the estimate to that section without changing its words or other sections. Unreadable
+lyrics show an explanation instead of a partial estimate.
+
+Later verses show whether their total and per-phrase note counts match the original. Matching
+totals with different phrase boundaries are reported separately; an empty original asks for its
+lyrics first. These checks remain visible in basic mode.
+
 The **Voice** selector offers installed singers and a file picker. **Speaker** selects a named
 speaker within that voice. VOICEVOX offers saved styles immediately and fetches current singing
 styles from its Engine; saved choices remain available when the Engine is offline. The choices
