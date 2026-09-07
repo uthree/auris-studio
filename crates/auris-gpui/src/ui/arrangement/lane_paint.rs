@@ -409,14 +409,14 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_daylight_clip_changes_both_its_title_and_ink() {
+    fn selecting_a_daylight_clip_uses_the_theme_selection_fill() {
         let theme = Theme::named("daylight");
         let track = theme.track_color(0x4f9dde);
         let (plain, plain_ink) = clip_title_colors(&theme, track, false, false);
         let (selected, selected_ink) = clip_title_colors(&theme, track, true, false);
         assert_ne!(plain, selected);
         assert_eq!(selected, theme.selection);
-        assert!(plain_ink.l < 0.5);
+        assert!(contrast_ratio(plain, plain_ink) >= 4.5);
         assert!(selected_ink.l > 0.5);
     }
 }

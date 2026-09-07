@@ -203,9 +203,9 @@ enum LibraryRole {
 impl LibraryRole {
     fn color(self, theme: &Theme) -> gpui::Hsla {
         match self {
-            Self::Instrument => theme.group_color(0.53),
-            Self::Effect => theme.group_color(0.09),
-            Self::Voice => theme.group_color(0.76),
+            Self::Instrument => theme.group_color(0.0),
+            Self::Effect => theme.group_color(-0.44),
+            Self::Voice => theme.group_color(0.23),
             Self::File => theme.text_muted,
         }
     }
@@ -1883,6 +1883,27 @@ fn branch_key(branch: Branch) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn library_roles_follow_each_theme_and_remain_distinct() {
+        let roles = [
+            LibraryRole::Instrument,
+            LibraryRole::Effect,
+            LibraryRole::Voice,
+        ];
+        for (index, scheme) in crate::theme::SCHEMES.iter().enumerate() {
+            let theme = Theme::from_scheme(scheme);
+            let colors = roles.map(|role| role.color(&theme));
+            for (role_index, color) in colors.iter().enumerate() {
+                assert!(!colors[..role_index].contains(color));
+                assert!(crate::theme::contrast_ratio(*color, theme.surface_hover) >= 3.0);
+                for other in &crate::theme::SCHEMES[..index] {
+                    assert_ne!(*color, roles[role_index].color(&Theme::from_scheme(other)));
+                }
+            }
+            assert_eq!(LibraryRole::File.color(&theme), theme.text_muted);
+        }
+    }
 
     fn plugin(id: &str) -> LibraryPlugin {
         LibraryPlugin {
