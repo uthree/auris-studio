@@ -1391,9 +1391,12 @@ file base64-encoded as an OpenAI `input_audio` content part beside the prompt (w
 flac, ogg, aac, aiff, m4a — typed by extension; repeat the flag for more files), and on the
 JSON wire a say may carry `"audio": ["mix.wav"]`. This is the `openai` provider's territory —
 an audio-capable API, or a local OpenAI-compatible server that implements `input_audio` —
-because Ollama's API has no audio field, and the agent says so up front. For everything else,
-`analyze` remains the model's ears: it reads levels and peaks as numbers, which any model
-understands.
+because the agent's rig Ollama adapter cannot send direct audio attachments. The `listen`
+tool instead sends a rendered excerpt, optionally with a previous excerpt for comparison,
+to a separately configured audio-capable critic. Ollama 0.33.3 implements `input_audio`
+through its `/v1` endpoint, but successful upload does not establish reliable listening.
+`analyze` reads levels and peaks as numbers; it does not provide an auditory judgment.
+See [the listening workflow](agent-workflows.md#listen-revise-listen-again).
 
 The same conversation lives in the desktop application as the **Agent panel** — View → Agent,
 on the right beside the inspector, the way an editor's chat sidebar sits. It spawns

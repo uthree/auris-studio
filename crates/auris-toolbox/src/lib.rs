@@ -40,63 +40,89 @@ use auris_session::{Session, SessionError, SessionOptions};
 mod audition;
 #[path = "capabilities.rs"]
 mod availability;
+mod catalog;
 mod drums;
 mod editing;
+mod listening;
 mod mix_editing;
+mod project_files;
+mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
+pub use catalog::{ToolDefinition, parameter_schema, tool_catalog, tool_help};
 pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
+pub use listening::listen;
 pub use mix_editing::{automation, effects};
+pub use project_files::{create_project, export_midi, import_audio, import_midi};
+pub use track_editing::{routing, set_instrument_param, set_track_state};
 
 /// What a model is told before it has called anything.
 ///
 /// The one piece of text a model keeps in context for the whole conversation, so it carries
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
-pub const INSTRUCTIONS: &str = "Check capabilities before choosing sounds or voices. Use effects to insert real effect slots and connect sidechains, and automation to discover parameter keys and draw curves; a bus name alone creates no processing. edit_recipe retains and can change the authored motif and rhythm. edit_clip with copy shares a phrase across tracks and can transpose it. Every track argument accepts a name or an id:<number> selector from describe; use IDs for duplicate names. Regeneration refuses hand edits unless replace_hand_edits is true. Use mixer to read section gain envelopes, section_gain with gain_delta_db for relative changes, and preview for a short playable audition. Auris Studio is a digital audio workstation; these tools drive \
-    its document. Before editing an existing piece, use `inspect_composition` to read its \
-    current harmony and recipes separately from its original specification. `edit_harmony` \
-    changes chords, key, tempo and section labels without rewriting notes; `edit_recipe` \
-    changes one generated clip's musical controls. `edit_clip` moves, copies, splits, resizes \
-    or freezes a clip. Use `checkpoints` to name alternatives and restore an earlier document; \
-    editing tools automatically preserve the previous document. Re-read clip numbers after \
-    arrangement edits. Do not recompose the whole project for a local change. These tools drive \
-    its headless session. A song is written as a `.asong` specification — TOML in which every \
-    field has a default, so two lines are already a valid song. The flow: `spec_reference` once \
-    to learn the format, `check_spec` to validate a draft (errors name lines and fields, and a \
-    valid spec comes back with every default filled in), `compose` to write the piece and save \
-    it as a project, `render` to hear it as a WAV file. `describe` inspects an existing \
-    project; `list_presets` and `list_progressions` are the vocabulary a spec can quote. To \
-    improve a piece, iterate: `analyze` listens for you — loudness and peaks for the mix, per \
-    section and (on request) per track — then either edit the spec and `compose` again with \
-    force, or aim `another_take` / `write_again` at one clip the way `describe` numbers them. \
-    The mix itself has its own smaller loop: `mixer` reads every fader, send and effect \
-    parameter, `set_level` / `set_send` / `set_effect` move one, and `section_gain` holds one \
-    section's gain at a level — often the better instrument than rewriting notes when `analyze` \
-    says a section is too loud, a part is buried, or the master limiter is pinned. \
-    The arrangement itself can be edited in place: `add_track` puts a new track in an existing \
-    project (`list_instruments` names the built-in instruments, and any General MIDI sound can \
-    be asked for by name), `add_part` writes a generated part onto a track from the harmony \
-    underneath, `set_instrument` re-voices a track, and `rename_track` / `remove_track` do what \
-    they say — so one more part is an edit, not a recomposition. Notes can be placed one by \
-    one: `add_clip` opens an empty clip, `edit_notes` adds and removes notes in it by name and \
-    bar, `notes` reads a clip back numbered — and `accompany` reads a melody clip and writes \
-    the key, the chords and a backing band under it, which is the melody-first way around: \
-    write the tune by hand, derive the accompaniment. \
-    A song can also sing: `add_track` with kind \"singer\" holds notes that carry lyrics, \
-    `write_lyrics` lays a phrase across a clip's notes one syllable each, and `sing` renders \
-    the track through a voice model into a take that playback and `render` play — pass \
-    `voice` the first time to choose the model. `compose_lyrics` is the words-first way \
-    around: give it Japanese lyrics and it writes the melody under them — following the \
-    lyric's pitch accent where a Japanese dictionary is configured — with chords and a band, \
-    saved as a new project ready to `sing`. \
-    Give every path as an absolute path — the working directory is wherever the host process \
-    happened to be launched. Use `search_documentation` for questions about Auris Studio itself \
-    instead of guessing how the application works.";
+pub const INSTRUCTIONS: &str = "You control Auris Studio projects through saved files. Respond in the user's language.
+Use absolute paths and copy the actual saved project path returned by creation tools.
+Make dependent edits one at a time: wait for each result before using its IDs or paths.
+
+Read first: capabilities checks installed sounds and voices. describe lists tracks and clip
+numbers; inspect_composition reads current harmony and recipes. Track selectors can be names
+or id:<number>. Prefer IDs for edits; they survive renames. Re-read clip numbers after arrangement edits.
+
+Use tool_help with a tool's exact name before an unfamiliar operation or after an argument
+error. Copy its field names and nesting. Correct the reported problem; do not repeat the same
+failed call. Never invent tools, paths, parameter keys or successful results.
+
+For manual work, create_project starts empty; import_audio adds an audio track and
+import_midi creates a new project from MIDI. export_midi writes the instrumental score.
+For a new composition: spec_reference teaches the TOML .asong format; list_presets and
+list_progressions provide vocabulary. check_spec validates; compose saves the new project.
+For a local change: edit_harmony changes harmony without rewriting notes; edit_recipe,
+another_take and write_again regenerate selected clips. Regeneration requires explicit
+replace_hand_edits for manually edited generated notes. edit_clip freeze preserves a take.
+Do not replace the whole project to make a local edit.
+
+add_track requires an explicit kind: instrument, drum, singer, audio or bus. A name containing
+bus does not select kind bus. add_clip requires the intended clip name. Preserve exact
+names requested by the user. add_part generates a part from existing
+harmony; edit_notes writes individual notes. notes reads them back. set_instrument selects a
+sound. automation with target kind instrument and operation action read discovers its
+parameters; set_instrument_param sets a static value. Use native parameter units.
+
+mixer reads levels and processing. set_level adjusts fader/pan; set_track_state sets mute/solo.
+routing reads or changes outputs and creates/removes sends; set_send changes an existing
+send level. A bus name alone adds no processing: effects inserts real effect slots and
+connects sidechains. effects and automation take operation objects, such as {\"action\":\"list\"}
+and {\"action\":\"read\"}. set_effect requires the 1-based slot from mixer and changes one static
+parameter; automation writes parameter curves.
+section_gain changes gain across a named section, optionally by gain_delta_db.
+
+Time units: bars and note beats are 1-based; note beats follow the meter (eighth notes in 6/8).
+edit_clip resize uses an exclusive end_bar: a clip starting at bar 1 ends at end_bar 9 for
+eight bars. preview uses start_bar plus bars, both top-level fields. Automation beat is an
+absolute quarter-note position from zero: beat 16 is the start of bar 5 in 4/4.
+
+write_lyrics places words on singer notes; sing renders a real voice take. A guide voice is
+temporary and stale takes need sing again. compose_lyrics creates music from Japanese lyrics.
+listen renders a short excerpt and sends actual audio to a separate audio-capable critic.
+Make a targeted edit only when supported by the review; otherwise keep the mix unchanged.
+After an edit, read back the saved state and listen to the same range. Keep the returned
+audio_path and use compare_to for an A/B critique. The critic is fallible: if it says it
+cannot hear, report that limitation instead of claiming a listening check passed.
+preview creates a short WAV; render exports audio. Audio files do not mean you can hear them:
+claim listening only with actual audio input. analyze measures loudness; analyze_music reads
+note statistics. Neither is a subjective listening judgment.
+
+The requested song length is the sum of all sections, not the length of each section. Add the
+section bars before composing, then verify the total bars and duration in the saved result.
+Verify requested names, track kinds and values with describe, notes, mixer, routing or automation read before
+claiming completion. Report failures and incomplete work honestly. checkpoints names and
+restores alternatives; edits preserve the previous document automatically.
+Use search_documentation for application questions.";
 
 /// Full-text search over the documentation shipped with this build.
 pub mod search_documentation {
@@ -334,6 +360,12 @@ pub struct SpecArgs {
 /// `render` is absent because it writes WAV files beside the project, and the progression
 /// tools because they write the machine's own book; neither touches a document.
 pub const WRITES_PROJECTS: &[&str] = &[
+    create_project::NAME,
+    import_audio::NAME,
+    import_midi::NAME,
+    routing::NAME,
+    set_track_state::NAME,
+    set_instrument_param::NAME,
     analyze_drum_kit::NAME,
     set_drum_assignment::NAME,
     effects::NAME,
@@ -368,6 +400,7 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         return false;
     }
     match tool {
+        routing::NAME => args.get("operation").and_then(|value| value.as_str()) != Some("list"),
         analyze_drum_kit::NAME => args.get("apply").and_then(|value| value.as_bool()) == Some(true),
         effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
         automation::NAME => {
@@ -548,6 +581,7 @@ pub mod render {
 
     /// Arguments to `render`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
         /// The project to render — an absolute path to a `.auris` file.
         pub project: String,
@@ -1225,12 +1259,11 @@ pub mod set_effect {
     /// The tool's name at every door.
     pub const NAME: &str = "set_effect";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Sets one parameter of one effect, addressed the way \
-        `mixer` lists them: `track` (or \"master\"), the effect by its id — or by `slot`, its \
-        1-based position, when a chain holds the same effect twice — and the parameter by key \
-        or name, in the parameter's own units. Values outside the range `mixer` shows are \
-        refused. The change is saved. The master limiter's `input_db` is the dial to back off \
-        when `analyze` says the loud sections are pinned against the ceiling.";
+    pub const DESCRIPTION: &str = "Sets one static effect parameter. Read mixer, then provide \
+        track (or master), slot (1-based chain position), param (key/name) and value in its \
+        listed units. Example: slot 1, param threshold_db, value -18. Optional effect checks \
+        that the slot contains the expected effect id. Out-of-range values are refused. \
+        Changes are saved. Lower the master limiter's input_db when loud sections hit its ceiling.";
 
     /// Arguments to `set_effect`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1240,11 +1273,10 @@ pub mod set_effect {
         /// The strip the effect sits on: a track by name, or "master".
         /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
-        /// The effect's id as `mixer` lists it — the full `auris.fx.limiter` or just
-        /// `limiter`. Leave out when addressing by `slot`.
+        /// Optional consistency check for slot: full effect id or short name, e.g. auris.fx.limiter or limiter.
         pub effect: Option<String>,
-        /// The effect's 1-based position in the chain, as `mixer` numbers it — for when a
-        /// chain holds the same effect twice.
+        /// Required 1-based position from mixer/effects; re-read after changing chain order.
+        #[schemars(required, range(min = 1))]
         pub slot: Option<usize>,
         /// The parameter, by the key or the name `mixer` lists.
         pub param: String,
@@ -1774,14 +1806,39 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Adds a track to an existing project and saves. An instrument \
-        track by default — voiced by `instrument` (an id from `list_instruments`) or by `sound` \
-        (a General MIDI name or program number, `drums: true` for a kit) — or, with `kind`, a \
-        drum track (percussion with a drum editor), a singer track (notes that carry lyrics, sung by a voice model), an audio track or a \
-        bus. A new instrument track has no clips: `add_part` writes one.";
+    pub const DESCRIPTION: &str = "Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; drums:true also creates a drum track when kind is instrument. New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
+
+    /// The explicit type of track to create.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum Kind {
+        /// A track playing an instrument.
+        Instrument,
+        /// A percussion track with a drum editor.
+        Drum,
+        /// A singing track with lyrics and rendered vocals.
+        Singer,
+        /// A track playing imported audio.
+        Audio,
+        /// A mixer bus receiving other tracks' audio.
+        Bus,
+    }
+
+    impl Kind {
+        fn label(self) -> &'static str {
+            match self {
+                Self::Instrument => "instrument",
+                Self::Drum => "drum",
+                Self::Singer => "singer",
+                Self::Audio => "audio",
+                Self::Bus => "bus",
+            }
+        }
+    }
 
     /// Arguments to `add_track`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
@@ -1793,11 +1850,11 @@ pub mod add_track {
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         pub sound: Option<String>,
-        /// Read `sound`'s number as a drum kit rather than a melodic program.
+        /// Select a drum track when kind is instrument and read sound as a drum kit.
         #[serde(default)]
         pub drums: bool,
-        /// "instrument" (the default), "drum", "singer", "audio", or "bus".
-        pub kind: Option<String>,
+        /// The track type. Use bus for a mixer bus; the track name does not determine its type.
+        pub kind: Kind,
     }
 
     /// Adds the track, voices it, and saves.
@@ -1806,18 +1863,19 @@ pub mod add_track {
             return Err("the track needs a name — a blank one no tool can address again".into());
         }
         let mut session = opened(&args.project)?;
-        let kind = args
-            .kind
-            .as_deref()
-            .unwrap_or(if args.drums { "drum" } else { "instrument" });
+        let kind = if args.kind == Kind::Instrument && args.drums {
+            Kind::Drum
+        } else {
+            args.kind
+        };
         validate_track_name(session.project(), &args.name, None)?;
         let voiced = match kind {
-            "instrument" | "drum" => {
+            Kind::Instrument | Kind::Drum => {
                 let id = match &args.instrument {
-                    Some(id) if kind == "drum" => session
+                    Some(id) if kind == Kind::Drum => session
                         .add_drum_track(&args.name, id)
                         .map_err(|error| error.to_string())?,
-                    None if kind == "drum" => session
+                    None if kind == Kind::Drum => session
                         .add_default_drum_track(&args.name)
                         .map_err(|error| error.to_string())?,
                     Some(id) => session
@@ -1833,41 +1891,39 @@ pub mod add_track {
                     &mut session,
                     id,
                     &args.sound,
-                    args.drums || kind == "drum",
+                    args.drums || kind == Kind::Drum,
                     &args.instrument,
                 )?
             }
-            "singer" | "audio" | "bus" => {
+            Kind::Singer | Kind::Audio | Kind::Bus => {
                 if args.instrument.is_some() || args.sound.is_some() {
-                    return Err(format!("a {kind} track plays no instrument — drop it"));
+                    return Err(format!(
+                        "a {} track plays no instrument — drop it",
+                        kind.label()
+                    ));
                 }
                 match kind {
-                    "singer" => {
+                    Kind::Singer => {
                         session.add_singer_track(&args.name);
                     }
-                    "audio" => {
+                    Kind::Audio => {
                         session.add_audio_track(&args.name);
                     }
                     _ => {
                         session.add_bus_track(&args.name);
                     }
                 };
-                kind.to_string()
-            }
-            other => {
-                return Err(format!(
-                    "`kind` is \"instrument\", \"drum\", \"singer\", \"audio\" or \"bus\", not \"{other}\""
-                ));
+                kind.label().to_string()
             }
         };
         session
             .save_with_checkpoint()
             .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
-        if matches!(kind, "instrument" | "drum") {
+        if matches!(kind, Kind::Instrument | Kind::Drum) {
             text.push_str(" The track holds no clips yet; `add_part` writes one.");
         }
-        if kind == "singer" {
+        if kind == Kind::Singer {
             text.push_str(
                 " The track holds no clips yet; `add_clip` opens one, `edit_notes` places the \
                  tune, `write_lyrics` gives it words and `sing` renders the voice.",
@@ -2163,20 +2219,19 @@ pub mod add_clip {
     /// The tool's wire name.
     pub const NAME: &str = "add_clip";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Opens an empty clip on an instrument or singer track, for \
-        `edit_notes` to write into — the way a melody is placed note by note. Aim it with \
-        `start_bar` and `bars`; the answer numbers the clip the way `describe` does.";
+    pub const DESCRIPTION: &str = "Opens an empty named clip on an instrument or singer track for edit_notes. Required name is the intended clip name; preserve the user's exact name. Aim it with start_bar and bars; the answer numbers the clip the way describe does.";
 
     /// Arguments to `add_clip`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
         /// The project to change — an absolute path to a `.auris` file.
         pub project: String,
         /// The track to put the clip on, by name as `describe` lists it.
         /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
-        /// What to call the clip. "melody" when left out.
-        pub name: Option<String>,
+        /// What to call the clip. Use the exact name requested by the user.
+        pub name: String,
         /// The 1-based bar the clip starts at. Bar 1 when left out.
         pub start_bar: Option<u32>,
         /// How many bars it covers.
@@ -2185,6 +2240,9 @@ pub mod add_clip {
 
     /// Opens the clip, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
+        if args.name.trim().is_empty() {
+            return Err("the clip needs a non-empty name".into());
+        }
         let bars = bounded_bars(args.bars, "clip")?;
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
@@ -2192,7 +2250,7 @@ pub mod add_clip {
         let after = bar_after(start_bar, bars)?;
         let start = session.project().signatures.bar_start(start_bar);
         let length = session.project().signatures.bar_start(after) - start;
-        let name = args.name.as_deref().unwrap_or("melody");
+        let name = &args.name;
         let clip = session
             .add_midi_clip(track, name, start, length)
             .map_err(|error| error.to_string())?;
@@ -3698,7 +3756,7 @@ mod tests {
             instrument: None,
             sound: None,
             drums: false,
-            kind: None,
+            kind: add_track::Kind::Instrument,
         })
         .unwrap();
         assert!(added.contains(&default_id), "{added}");
@@ -3712,7 +3770,7 @@ mod tests {
             instrument: None,
             sound: Some("Electric Piano 1".to_string()),
             drums: false,
-            kind: None,
+            kind: add_track::Kind::Instrument,
         });
         match voiced {
             Ok(text) => assert!(text.contains("Electric Piano 1"), "{text}"),
@@ -3724,7 +3782,7 @@ mod tests {
             instrument: None,
             sound: Some("Theremin Choir 9".to_string()),
             drums: false,
-            kind: None,
+            kind: add_track::Kind::Instrument,
         })
         .unwrap_err();
         assert!(nonsense.contains("0-127"), "{nonsense}");
@@ -3899,13 +3957,13 @@ mod tests {
             instrument: None,
             sound: None,
             drums: false,
-            kind: None,
+            kind: add_track::Kind::Instrument,
         })
         .unwrap();
         let opened_clip = add_clip::run(&add_clip::Args {
             project: path.clone(),
             track: "Lead".to_string(),
-            name: None,
+            name: "melody".into(),
             start_bar: None,
             bars: 2,
         })
@@ -4276,7 +4334,7 @@ mod tests {
             instrument: None,
             sound: None,
             drums: false,
-            kind: Some("singer".to_string()),
+            kind: add_track::Kind::Singer,
         })
         .unwrap();
         assert!(added.contains("write_lyrics"), "{added}");
@@ -4285,7 +4343,7 @@ mod tests {
         add_clip::run(&add_clip::Args {
             project: path.clone(),
             track: "Vocal".to_string(),
-            name: None,
+            name: "melody".into(),
             start_bar: Some(1),
             bars: 2,
         })

@@ -115,7 +115,7 @@ options:
   --attach <file>       send an audio file with the prompt (wav, mp3, flac,
                         ogg, aac, aiff, m4a); repeat for more than one.
                         Needs --provider openai and a model that takes audio
-                        input — Ollama's API has no audio field
+                        input; rig's Ollama adapter cannot send attachments
   --json                speak JSON lines on stdin and stdout instead, for
                         another program to drive — the desktop panel's mode
   -h, --help            this text
@@ -334,7 +334,7 @@ impl std::error::Error for ToolFailed {}
 /// The argument schema, exactly as the MCP door serves it: the same `schemars` derive on the
 /// same type in `auris-toolbox`.
 fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
-    serde_json::to_value(schemars::schema_for!(T)).expect("a derived schema serialises")
+    toolbox::parameter_schema::<T>()
 }
 
 /// No arguments, said as a schema — for the reference and listing tools.
@@ -428,6 +428,15 @@ session_tool!(AnalyzeMusic, analyze_music);
 session_tool!(Effects, effects);
 session_tool!(Automation, automation);
 session_tool!(Capabilities, capabilities);
+session_tool!(ToolHelp, tool_help);
+session_tool!(Routing, routing);
+session_tool!(SetTrackState, set_track_state);
+session_tool!(SetInstrumentParam, set_instrument_param);
+session_tool!(CreateProject, create_project);
+session_tool!(ImportAudio, import_audio);
+session_tool!(ImportMidi, import_midi);
+session_tool!(ExportMidi, export_midi);
+session_tool!(Listen, listen);
 session_tool!(InspectComposition, inspect_composition);
 session_tool!(EditHarmony, edit_harmony);
 session_tool!(EditRecipe, edit_recipe);
@@ -624,6 +633,15 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(Effects)
         .tool(Automation)
         .tool(Capabilities)
+        .tool(ToolHelp)
+        .tool(Routing)
+        .tool(SetTrackState)
+        .tool(SetInstrumentParam)
+        .tool(CreateProject)
+        .tool(ImportAudio)
+        .tool(ImportMidi)
+        .tool(ExportMidi)
+        .tool(Listen)
         .tool(EditClip)
         .tool(Checkpoints)
         .tool(SearchDocumentation)
@@ -684,7 +702,13 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
                 params["think"] = thinking.into();
             }
             Ok(armed(
-                client.agent(&options.model).additional_params(params),
+                // Tool arguments benefit from repeatability; do not inherit a local model's
+                // high-temperature chat preset. This changes only this request, not Ollama.
+                client
+                    .agent(&options.model)
+                    .temperature(0.0)
+                    .max_tokens(runtime::OUTPUT_RESERVE as u64)
+                    .additional_params(params),
             ))
         }
         Provider::OpenAi => {
@@ -887,13 +911,20 @@ fn write_destination(tool: &str, args: &str) -> Result<(), String> {
     if !toolbox::WRITES_PROJECTS.contains(&tool)
         && tool != toolbox::preview::NAME
         && tool != toolbox::render::NAME
+        && tool != toolbox::export_midi::NAME
+        && tool != toolbox::listen::NAME
     {
         return Ok(());
     }
     let parsed: serde_json::Value = serde_json::from_str(args)
         .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
-    if matches!(tool, toolbox::effects::NAME | toolbox::automation::NAME)
-        && !toolbox::writes_project(tool, &parsed)
+    if matches!(
+        tool,
+        toolbox::effects::NAME
+            | toolbox::automation::NAME
+            | toolbox::routing::NAME
+            | toolbox::analyze_drum_kit::NAME
+    ) && !toolbox::writes_project(tool, &parsed)
     {
         return Ok(());
     }
@@ -943,12 +974,11 @@ impl AgentHook for Narrator {
         _ctx: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
-        match event.raw_result.error() {
-            None => {
-                let line = first_line(event.presentation).unwrap_or("done");
-                eprintln!("  {line}");
-            }
-            Some(error) => eprintln!("  refused: {}", error.message()),
+        let line = first_line(event.presentation).unwrap_or("done");
+        if event.raw_result.is_success() {
+            eprintln!("  {line}");
+        } else {
+            eprintln!("  refused: {line}");
         }
         ToolResultAction::Keep
     }
@@ -1056,13 +1086,10 @@ fn audio_media_type(path: &std::path::Path) -> Result<rig::message::AudioMediaTy
 /// grown a third again by the encoding before anything could object.
 const ATTACHMENT_CEILING: u64 = 25 * 1024 * 1024;
 
-/// One user turn as the wire carries it: each audio file base64-encoded and typed by its
-/// extension, then the words about them.
-///
-/// Audio before text because that is the order a person hands someone a recording and asks
-/// about it; models are trained on that shape too.
+/// One user turn with instructions followed by base64-encoded, typed audio attachments.
+/// This order also matches the Gemma4 audio model's documented input format.
 fn framed_message(text: &str, audio: &[String]) -> Result<Message, String> {
-    let mut content = Vec::new();
+    let mut content = vec![rig::message::UserContent::text(text)];
     for path in audio {
         let path = std::path::Path::new(path);
         let media_type = audio_media_type(path)?;
@@ -1084,20 +1111,19 @@ fn framed_message(text: &str, audio: &[String]) -> Result<Message, String> {
         let data = base64::engine::general_purpose::STANDARD.encode(bytes);
         content.push(rig::message::UserContent::audio(data, Some(media_type)));
     }
-    content.push(rig::message::UserContent::text(text));
     Ok(Message::User { content })
 }
 
-/// Refuses audio bound for a door with no audio field, before any file is read.
+/// Refuses attachments unsupported by rig's Ollama adapter before reading any file.
 ///
 /// rig's Ollama conversion would refuse too, but only after the whole request is built; this
 /// says it in this program's own words, at the moment the attachment is asked for.
 fn check_audio(provider: Provider, audio: &[String]) -> Result<(), String> {
     match provider {
         Provider::Ollama if !audio.is_empty() => Err(
-            "Ollama's API has no audio input; use --provider openai against a server that \
-             takes audio (an audio-capable API, or a local OpenAI-compatible server that \
-             implements input_audio)"
+            "This agent's rig Ollama adapter cannot send audio attachments. Use listen for \
+             a separate audio critic, or --provider openai against an audio-capable endpoint \
+             implementing input_audio (including a compatible Ollama /v1 endpoint)."
                 .to_string(),
         ),
         _ => Ok(()),
@@ -1110,6 +1136,15 @@ fn check_audio(provider: Provider, audio: &[String]) -> Result<(), String> {
 /// tool is asked, `result` when it answers, and `changed` when the answer means a project
 /// file on disk is no longer what the host last read.
 struct Reporter;
+
+/// A skipped or refused call is a failed result to the host, even without an execution error.
+fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "event": "result", "tool": event.tool_name,
+        "ok": event.raw_result.is_success(),
+        "text": full_text(event.presentation),
+    })
+}
 
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
@@ -1127,20 +1162,11 @@ impl AgentHook for Reporter {
         _ctx: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
-        match event.raw_result.error() {
-            None => {
-                emit(serde_json::json!({
-                    "event": "result", "tool": event.tool_name, "ok": true,
-                    "text": full_text(event.presentation),
-                }));
-                if let Some(project) = changed_project(event.tool_name, event.args) {
-                    emit(serde_json::json!({ "event": "changed", "project": project }));
-                }
-            }
-            Some(error) => emit(serde_json::json!({
-                "event": "result", "tool": event.tool_name, "ok": false,
-                "text": error.message(),
-            })),
+        emit(result_event(event));
+        if event.raw_result.is_success()
+            && let Some(project) = changed_project(event.tool_name, event.args)
+        {
+            emit(serde_json::json!({ "event": "changed", "project": project }));
         }
         ToolResultAction::Keep
     }
@@ -1151,18 +1177,30 @@ impl AgentHook for Reporter {
 async fn converse(
     agent: &Agent,
     prompt: Message,
-    history: Vec<Message>,
+    mut history: Vec<Message>,
     max_turns: usize,
     json: bool,
     context_tokens: Option<u32>,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
     let guard = runtime::Guard::new(agent, context_tokens).await?;
+    let omitted = guard.fit_history(&prompt, &mut history);
+    if omitted > 0 {
+        let message = format!(
+            "Omitted {omitted} older conversation exchanges from this request to fit the model context. Saved conversation history is unchanged."
+        );
+        if json {
+            emit(serde_json::json!({"event":"notice", "message":message}));
+        } else {
+            eprintln!("{message}");
+        }
+    }
     let activity = guard.activity.clone();
     let asked = prompt.clone();
     let request = agent
         .prompt(prompt)
         .history(history.clone())
         .max_turns(max_turns)
+        .max_invalid_tool_call_retries(2)
         .add_hook(guard);
     let request = match json {
         true => request.add_hook(Reporter),
@@ -1208,7 +1246,7 @@ where
 
 /// The conversation: read a line, run the loop, print the answer, remember everything.
 async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
-    let mut history: Vec<Message> = Vec::new();
+    let mut memory = memory::Memory::default();
     let stdin = std::io::stdin();
     loop {
         eprint!("> ");
@@ -1229,17 +1267,25 @@ async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
         if line.is_empty() {
             return Ok(());
         }
-        let (answer, kept, ..) = converse(
+        match converse(
             agent,
             Message::user(line),
-            history,
+            memory.messages(),
             options.max_turns,
             false,
             options.context_limit(),
         )
-        .await?;
-        history = kept;
-        println!("{answer}\n");
+        .await
+        {
+            Ok((answer, ..)) => {
+                memory.push(line, &answer);
+                println!("{answer}\n");
+            }
+            Err(error) => {
+                memory.push_interrupted(line, &error);
+                eprintln!("{error}");
+            }
+        }
     }
 }
 
@@ -1353,7 +1399,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 }));
             }
             Err(message) => {
-                memory.push(&said, &format!("Turn interrupted: {message}. Saved tool edits may already exist. Inspect the project before continuing."));
+                memory.push_interrupted(&said, &message);
                 history = memory.messages();
                 if let Some(path) = &memory_path
                     && let Err(error) = memory.save(path)
@@ -1700,6 +1746,31 @@ mod tests {
     }
 
     #[test]
+    fn skipped_and_refused_tools_are_reported_as_unsuccessful() {
+        use rig::tool::ToolResult;
+
+        let context = ToolContext::new();
+        for result in [
+            ToolResult::skipped("outside the working directory"),
+            ToolResult::failed(ToolExecutionError::refused("not permitted")),
+            ToolResult::failed(ToolExecutionError::invalid_args("missing project")),
+            ToolResult::success(ToolOutput::text("saved")),
+        ] {
+            let event = result_event(ToolResultEvent {
+                tool_name: "set_level",
+                tool_call_id: Some("call_1"),
+                internal_call_id: "internal_1",
+                args: "{}",
+                presentation: result.output(),
+                raw_result: &result,
+                tool_context: &context,
+            });
+            assert_eq!(event["ok"], result.is_success());
+            assert_eq!(event["text"], full_text(result.output()));
+        }
+    }
+
+    #[test]
     fn bad_flags_are_named_back() {
         let unknown = parse("--model m --loud", &no_env).unwrap_err();
         assert!(unknown.contains("--loud"), "{unknown}");
@@ -1813,12 +1884,48 @@ mod tests {
         assert_eq!(requests.len(), 2);
         let body: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
         assert_eq!(body["options"]["num_ctx"], 32768);
+        assert_eq!(body["options"]["temperature"], 0.0);
+        assert_eq!(body["options"]["num_predict"], runtime::OUTPUT_RESERVE);
         assert_eq!(body["think"], false);
         assert!(
             body["options"].get("options").is_none(),
             "Ollama options must not be nested twice"
         );
         assert!(parse("--model mock --context-tokens 4096", &no_env).is_err());
+    }
+
+    #[tokio::test]
+    async fn ollama_output_limit_stops_partial_answers_and_tool_turns() {
+        for message in [
+            serde_json::json!({"role":"assistant","content":"I have finished the first"}),
+            serde_json::json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"list_presets","arguments":{}}}]}),
+        ] {
+            let truncated = serde_json::json!({
+                "model":"mock", "created_at":"2026-09-06T00:00:00Z",
+                "message":message, "done":true, "done_reason":"length",
+                "prompt_eval_count":100, "eval_count":runtime::OUTPUT_RESERVE,
+            });
+            let (url, seen) = mock_server(vec![truncated.to_string()]);
+            let Command::Run(options) =
+                parse(&format!("--model mock --url {url}"), &no_env).unwrap()
+            else {
+                panic!()
+            };
+            let agent = build_agent(&options).unwrap();
+            let error = converse(
+                &agent,
+                Message::user("List the presets"),
+                Vec::new(),
+                2,
+                false,
+                options.context_limit(),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("4096-token output limit"), "{error}");
+            assert!(error.contains("incomplete"), "{error}");
+            assert_eq!(seen.lock().unwrap().len(), 1);
+        }
     }
 
     #[tokio::test]
@@ -1844,7 +1951,86 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.contains("failed twice"), "{error}");
-        assert_eq!(seen.lock().unwrap().len(), 3);
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[1].contains("missing field"));
+        assert!(requests[1].contains("Read tool_help"));
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_names_get_corrective_feedback_and_can_recover() {
+        let bad = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"list_preset","arguments":"{}"}}]}"#;
+        let corrected = r#"{"role":"assistant","tool_calls":[{"id":"good","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
+        let done = r#"{"role":"assistant","content":"The presets are available."}"#;
+        let (url, seen) = mock_server(vec![
+            completion(bad, "tool_calls"),
+            completion(corrected, "tool_calls"),
+            completion(done, "stop"),
+        ]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let agent = build_agent(&options).unwrap();
+        let (answer, ..) = converse(
+            &agent,
+            Message::user("List the presets"),
+            Vec::new(),
+            5,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(answer, "The presets are available.");
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[1].contains("Tool 'list_preset' is unavailable"));
+        assert!(requests[1].contains("No tool in this batch was executed"));
+        assert!(requests[2].contains("Styles `compose` and `check_spec` accept"));
+    }
+
+    #[tokio::test]
+    async fn unknown_tools_and_skipped_writes_cannot_loop_indefinitely() {
+        let outside = std::env::temp_dir().join("auris-agent-outside-workspace.auris");
+        let outside_args = serde_json::json!({"project":outside}).to_string();
+        for (tool, args) in [("nonexistent_tool", "{}"), ("set_level", &outside_args)] {
+            let call = serde_json::json!({
+                "role":"assistant", "tool_calls":[{
+                    "id":"repeated", "type":"function",
+                    "function":{"name":tool,"arguments":args}
+                }]
+            })
+            .to_string();
+            let (url, seen) = mock_server(vec![completion(&call, "tool_calls"); 3]);
+            let Command::Run(options) = parse(
+                &format!("--provider openai --model mock --url {url}"),
+                &no_env,
+            )
+            .unwrap() else {
+                panic!()
+            };
+            let agent = build_agent(&options).unwrap();
+            let error = converse(
+                &agent,
+                Message::user("Try a tool"),
+                Vec::new(),
+                8,
+                true,
+                None,
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("failed twice"), "{error}");
+            let requests = seen.lock().unwrap();
+            assert_eq!(requests.len(), 3);
+            if tool == "set_level" {
+                assert!(requests[1].contains("outside the agent's working directory"));
+            }
+        }
     }
 
     /// The whole loop against a scripted model: the "model" asks for `list_presets`, the tool
@@ -1959,6 +2145,15 @@ mod tests {
 
         assert_eq!(answer, "A fine mix.");
         let requests = seen.lock().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+        let user = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|message| message["role"] == "user")
+            .unwrap();
+        assert_eq!(user["content"][0]["type"], "text");
+        assert_eq!(user["content"][1]["type"], "input_audio");
         assert!(
             requests[0].contains("\"input_audio\""),
             "the audio content part is on the wire: {}",
@@ -1993,58 +2188,34 @@ mod tests {
         assert!(refused.contains("25 MB"), "{refused}");
     }
 
-    #[test]
-    fn every_tool_wears_its_toolbox_name_and_schema() {
-        // The names the loop dispatches on are the toolbox constants, once each.
-        let names = [
-            AnalyzeMusic::NAME,
-            InspectComposition::NAME,
-            EditHarmony::NAME,
-            EditRecipe::NAME,
-            EditClip::NAME,
-            Checkpoints::NAME,
-            SearchDocumentation::NAME,
-            InternetSearch::NAME,
-            Compose::NAME,
-            Render::NAME,
-            Preview::NAME,
-            Describe::NAME,
-            Analyze::NAME,
-            Mixer::NAME,
-            SetLevel::NAME,
-            SetSend::NAME,
-            SetEffect::NAME,
-            Effects::NAME,
-            Automation::NAME,
-            Capabilities::NAME,
-            SectionGain::NAME,
-            AnotherTake::NAME,
-            WriteAgain::NAME,
-            CheckSpec::NAME,
-            SpecReference::NAME,
-            TeachProgression::NAME,
-            ForgetProgression::NAME,
-            ListProgressions::NAME,
-            ListPresets::NAME,
-            ListInstruments::NAME,
-            AddTrack::NAME,
-            AddPart::NAME,
-            SetInstrument::NAME,
-            RenameTrack::NAME,
-            RemoveTrack::NAME,
-            AddClip::NAME,
-            Notes::NAME,
-            EditNotes::NAME,
-            Accompany::NAME,
-            WriteLyrics::NAME,
-            Sing::NAME,
-            ComposeLyrics::NAME,
-        ];
-        let unique: std::collections::BTreeSet<&str> = names.into_iter().collect();
-        assert_eq!(unique.len(), names.len(), "no name worn twice");
+    #[tokio::test]
+    async fn the_armed_agent_matches_every_shared_tool_name_description_and_schema() {
+        let Command::Run(options) = parse("--provider openai --model mock", &no_env).unwrap()
+        else {
+            panic!()
+        };
+        let agent = build_agent(&options).unwrap();
+        let actual = agent.tool_definitions(None).await.unwrap();
+        let catalog = toolbox::tool_catalog();
+        assert_eq!(
+            actual.len(),
+            catalog.len() + 1,
+            "shared tools and internet search"
+        );
+        for expected in catalog {
+            let exposed = actual
+                .iter()
+                .find(|tool| tool.name == expected.name)
+                .unwrap_or_else(|| panic!("{} is missing from the agent", expected.name));
+            assert_eq!(
+                exposed.description, expected.description,
+                "{}",
+                expected.name
+            );
+            assert_eq!(exposed.parameters, expected.parameters, "{}", expected.name);
+        }
+        assert!(actual.iter().any(|tool| tool.name == InternetSearch::NAME));
 
-        // The schema is the toolbox derive, fields and all — the same one the MCP door hands
-        // its clients.
         let compose = schema::<toolbox::compose::Args>();
         let fields = compose["properties"].as_object().unwrap();
         assert!(fields.contains_key("output"));

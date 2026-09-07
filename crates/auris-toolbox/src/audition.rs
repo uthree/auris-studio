@@ -69,9 +69,10 @@ pub mod preview {
     /// The tool's wire name.
     pub const NAME: &str = "preview";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Renders a short WAV audition of one section or bar range (at most 120 seconds, without effect tails). Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.";
+    pub const DESCRIPTION: &str = "Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.";
     /// Preview request.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
         /// Absolute project path.
         pub project: String,

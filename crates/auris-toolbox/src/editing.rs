@@ -331,10 +331,10 @@ pub mod edit_clip {
     /// The tool's wire name.
     pub const NAME: &str = "edit_clip";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Moves, duplicates, copies to another note track, splits, resizes, removes, mutes or freezes one note clip. Copy can transpose stored notes; transposing freezes the copied recipe. Addresses use describe's track name and 1-based clip number. Positions use absolute song bars and quarter-note beats. Resize can regenerate a generated clip; freeze first to preserve its written notes. A checkpoint is saved before the document changes on disk.";
+    pub const DESCRIPTION: &str = "Moves, duplicates, copies, splits, resizes, removes, mutes or freezes one note clip. Pass action as an object: resize uses {kind:resize,end_bar:9} to end before bar 9 (eight bars from bar 1); move uses {kind:move,bar:5}. Copy can transpose stored notes and freezes a transposed recipe. Track and 1-based clip numbers come from describe. Positions use absolute song bars and meter beats. Resize can regenerate; freeze first to preserve written notes. Changes are checkpointed and saved.";
     /// The requested clip operation.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-    #[serde(tag = "kind", rename_all = "snake_case")]
+    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
     pub enum Action {
         /// Copy the phrase to another note track, optionally transposing its stored notes.
         Copy {
@@ -349,7 +349,7 @@ pub mod edit_clip {
         Move {
             /// First bar, 1-based.
             bar: u32,
-            /// Quarter-note beat, 1-based.
+            /// Meter beat, 1-based (eighth notes in 6/8).
             beat: Option<f64>,
         },
         /// Duplicate at a given position, or immediately after the source if omitted.
@@ -361,7 +361,7 @@ pub mod edit_clip {
         Split {
             /// Bar, 1-based.
             bar: u32,
-            /// Quarter-note beat, 1-based.
+            /// Meter beat, 1-based (eighth notes in 6/8).
             beat: Option<f64>,
         },
         /// Change the end position of the clip.
@@ -384,6 +384,7 @@ pub mod edit_clip {
     }
     /// One arrangement change.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
         /// Absolute project path.
         pub project: String,
@@ -823,7 +824,12 @@ mod tests {
     #[test]
     fn ids_resolve_existing_duplicates_and_new_names_remain_unique() {
         let fixture = Fixture::new("track-id");
-        assert!(add_track::run(&args(json!({"project":fixture.path,"name":"LEAD"}))).is_err());
+        assert!(
+            add_track::run(&args(
+                json!({"project":fixture.path,"name":"LEAD","kind":"instrument"})
+            ))
+            .is_err()
+        );
         let mut session = opened(&fixture.path).unwrap();
         let second = session.add_default_instrument_track("Lead").unwrap();
         session.save_in_place().unwrap();

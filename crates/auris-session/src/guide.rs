@@ -136,6 +136,15 @@ pub mod architecture {
     //! validates a whole parameter batch before making one undo step. Authored motif and rhythm
     //! travel with each clip recipe, so local regeneration keeps those musical choices.
     //!
+    //! Audio review is a separate session service, [`audio_review`](crate::audio_review): it
+    //! sends actual WAV excerpts to an audio-capable model through an OpenAI-compatible API.
+    //! The toolbox's `listen` tool renders a short excerpt, optionally attaches an earlier
+    //! preview for comparison, and returns the critic's observations to the controlling model.
+    //! Both MCP and the rig agent can therefore repeat listen, localized edit and listen,
+    //! even when the controlling model accepts only text. The critic has no editing tools.
+    //! An accepted upload is not proof of accurate hearing: observations remain fallible,
+    //! refusals must stay visible, and numeric audio analysis remains separately identified.
+    //!
     //! # A selection is an argument, never a field
     //!
     //! Several commands mean something different depending on what is selected, and none of them
