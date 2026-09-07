@@ -1225,6 +1225,119 @@ mod tests {
     }
 
     #[test]
+    fn releasing_an_overlapping_note_preserves_the_later_chord() {
+        let bank = stocked();
+        let mut actual = playing(bank.clone(), 0, 4096);
+        let mut expected = playing(bank, 0, 4096);
+        let mut out = AudioBuffer::stereo(4096, RATE);
+        let mut reference = AudioBuffer::stereo(4096, RATE);
+        let ctx = ProcessContext::realtime(RATE, 4096, 0, 120.0, true);
+        actual.process(&[note_on(0)], &mut out, &ctx);
+        expected.process(&[], &mut reference, &ctx);
+        let chord = [
+            note_on(0),
+            NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 72,
+                velocity: 1.0,
+            },
+            NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 76,
+                velocity: 1.0,
+            },
+        ];
+        actual.process(&chord, &mut out, &ctx);
+        expected.process(&chord, &mut reference, &ctx);
+        actual.process(
+            &[NoteEvent::NoteOff {
+                frame: 0,
+                pitch: crate::test_support::ROOT_KEY,
+            }],
+            &mut out,
+            &ctx,
+        );
+        expected.process(&[], &mut reference, &ctx);
+        // After the older note's release, the complete later chord must remain.
+        actual.process(&[], &mut out, &ctx);
+        expected.process(&[], &mut reference, &ctx);
+        let difference: Vec<f32> = out
+            .channel(0)
+            .iter()
+            .zip(reference.channel(0))
+            .map(|(a, b)| a - b)
+            .collect();
+        assert!(rms(reference.channel(0)) > 0.01);
+        assert!(
+            rms(&difference) < 1e-6,
+            "the later chord lost a note: RMS error {}",
+            rms(&difference)
+        );
+    }
+
+    #[test]
+    fn overlapping_layered_notes_release_in_order_even_under_the_hold_pedal() {
+        let font = crate::test_support::layered_font(RATE as i32);
+        assert_eq!(font.get_instruments()[0].get_regions().len(), 2);
+        let mut settings = SynthesizerSettings::new(RATE as i32);
+        settings.enable_reverb_and_chorus = false;
+        let key = crate::test_support::ROOT_KEY as i32;
+        for pedal in [false, true] {
+            let mut actual = Synthesizer::new(&font, &settings).unwrap();
+            let mut reference = Synthesizer::new(&font, &settings).unwrap();
+            let mut left = [0.0; 4096];
+            let mut right = [0.0; 4096];
+            let mut expected_left = [0.0; 4096];
+            let mut expected_right = [0.0; 4096];
+            // All note-ons precede rendering, so voice age alone cannot distinguish them.
+            // Different velocities make releasing the wrong note audible in the comparison.
+            actual.note_on(0, key, 127);
+            actual.note_on(0, key, 100);
+            actual.note_on(0, key, 60);
+            reference.note_on(0, key, 100);
+            reference.note_on(0, key, 60);
+            if pedal {
+                actual.process_midi_message(0, CONTROL_CHANGE, 64, 127);
+            }
+            let allocations = crate::test_support::count_allocations(|| {
+                actual.note_off(0, key);
+                if !pedal {
+                    actual.render(&mut left, &mut right);
+                    reference.render(&mut expected_left, &mut expected_right);
+                    for (a, b) in left[2048..].iter().zip(&expected_left[2048..]) {
+                        assert!(
+                            (a - b).abs() < 1e-6,
+                            "first note-off released the wrong layers"
+                        );
+                    }
+                }
+                // A second off must move past the first, including a pedal-held release request.
+                actual.process_midi_message(0, 0x90, key, 0);
+                reference.note_off(0, key);
+                if pedal {
+                    actual.process_midi_message(0, CONTROL_CHANGE, 64, 0);
+                }
+                actual.render(&mut left, &mut right);
+                reference.render(&mut expected_left, &mut expected_right);
+            });
+            assert_eq!(allocations, 0);
+            assert!(rms(&expected_left[2048..]) > 0.001);
+            for (a, b) in left[2048..].iter().zip(&expected_left[2048..]) {
+                assert!(
+                    (a - b).abs() < 1e-6,
+                    "second note-off released the wrong layers (pedal={pedal})"
+                );
+            }
+            actual.note_off(0, key);
+            actual.render(&mut left, &mut right);
+            assert!(
+                rms(&left[2048..]) < 1e-6,
+                "a layer remained after the final note-off"
+            );
+        }
+    }
+
+    #[test]
     fn a_note_turns_into_audio() {
         // The one test here that can fail for a real reason: everything else is arithmetic on
         // state, and this is the path that runs through the file format, the preset lookup and

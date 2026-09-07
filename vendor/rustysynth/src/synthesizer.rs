@@ -30,6 +30,8 @@ pub struct Synthesizer {
     channels: Vec<Channel>,
 
     voices: VoiceCollection,
+    // Added by the Auris fork: one identity per note-on, shared by all its sample layers.
+    next_note_id: u64,
 
     block_left: Vec<f32>,
     block_right: Vec<f32>,
@@ -114,6 +116,7 @@ impl Synthesizer {
             default_preset,
             channels,
             voices,
+            next_note_id: 0,
             block_left,
             block_right,
             inverse_block_size,
@@ -178,13 +181,28 @@ impl Synthesizer {
     ///
     /// * `channel` - The channel of the note.
     /// * `key` - The key of the note.
+    ///
+    /// Overlapping notes at the same key are released in note-on order, one per call.
+    /// All sample layers belonging to that note are released together.
     pub fn note_off(&mut self, channel: i32, key: i32) {
         if !(0 <= channel && channel < self.channels.len() as i32) {
             return;
         }
 
-        for voice in self.voices.get_active_voices().iter_mut() {
-            if voice.channel() == channel && voice.key() == key {
+        // Added by the Auris fork: ending every matching voice also ends later notes in an
+        // overlapping chord. Voice length cannot identify a note: several note-ons can arrive
+        // before a render block, and a single note can start several sample layers.
+        let voices = self.voices.get_active_voices();
+        let oldest = voices
+            .iter()
+            .filter(|voice| voice.channel() == channel && voice.key() == key && voice.is_held())
+            .max_by_key(|voice| self.next_note_id.wrapping_sub(voice.note_id))
+            .map(|voice| voice.note_id);
+        let Some(note_id) = oldest else {
+            return;
+        };
+        for voice in voices.iter_mut() {
+            if voice.channel() == channel && voice.key() == key && voice.note_id == note_id {
                 voice.end();
             }
         }
@@ -207,6 +225,8 @@ impl Synthesizer {
             return;
         }
 
+        let note_id = self.next_note_id;
+        self.next_note_id = self.next_note_id.wrapping_add(1);
         let channel_info = &self.channels[channel as usize];
 
         let preset_id = (channel_info.get_bank_number() << 16) | channel_info.get_patch_number();
@@ -240,7 +260,8 @@ impl Synthesizer {
                         let region_pair = RegionPair::new(preset_region, instrument_region);
 
                         if let Some(value) = self.voices.request_new(instrument_region, channel) {
-                            value.start(&region_pair, channel, key, velocity)
+                            value.start(&region_pair, channel, key, velocity);
+                            value.note_id = note_id;
                         }
                     }
                 }

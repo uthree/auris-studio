@@ -54,6 +54,8 @@ pub(crate) struct Voice {
     channel: i32,
     key: i32,
     velocity: i32,
+    // Added by the Auris fork: identifies the note-on, including its other sample layers.
+    pub(crate) note_id: u64,
 
     note_gain: f32,
 
@@ -107,6 +109,7 @@ impl Voice {
             channel: 0,
             key: 0,
             velocity: 0,
+            note_id: 0,
             note_gain: 0_f32,
             cutoff: 0_f32,
             resonance: 0_f32,
@@ -195,6 +198,11 @@ impl Voice {
         if self.voice_state == VoiceState::Playing {
             self.voice_state = VoiceState::ReleaseRequested;
         }
+    }
+
+    // Added by the Auris fork: a pedal-held release request has already consumed its note-off.
+    pub(crate) fn is_held(&self) -> bool {
+        self.voice_state == VoiceState::Playing
     }
 
     pub(crate) fn kill(&mut self) {
