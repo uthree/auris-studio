@@ -162,6 +162,22 @@ durations and the saved lyrics remain unchanged. A mark without a preceding vowe
 with its note number. HTTP failures include the Engine's explanation, such as the lyric it
 refused, instead of only a status code.
 
+Half-width kana, decomposed voiced marks, and surrounding whitespace are normalized in the
+outgoing lyrics too (` ｶﾞ ` becomes `ガ`). Each pitched note still needs one kana mora;
+entering several morae on a single note, such as `ララ`, is rejected by the Engine.
+
+VOICEVOX Engine 0.25.2 fails its query when an internal note or rest is only one frame long
+and the following note starts with a consonant. Auris reports the score event before sending
+the query: lengthen it to at least two frames (about 21.3 ms), or remove the tiny rest.
+Boundary rests receive padding automatically. Vowels, `ン`, and `ッ` do not need that preceding
+consonant space. Zero-length events, invalid MIDI keys, and rests with lyrics are also reported
+before transmission.
+
+The connection's output sample rate must divide into whole samples per Engine frame. Use
+24000 or 48000 Hz for the standard 93.75 fps Engine; 44100 Hz cannot represent this grid exactly
+and is rejected when loading the connection. This is the voice connection's rate, independent
+of the project's audio output rate.
+
 The library's **Set Up VOICEVOX…** row opens a connection editor for the Engine URL and the query
 and frame-decode style IDs. The same screen can choose and start a local Engine executable, check
 `/version` and `/singers`, and save a `*.voicevox.json` entry into Auris Studio's managed Voices

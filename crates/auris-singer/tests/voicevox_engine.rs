@@ -23,21 +23,39 @@ fn a_running_voicevox_engine_sings_a_score() {
 
     let mut model = VoiceModel::load(&path, Acceleration::Auto).unwrap();
     assert_eq!(model.backend_kind(), BackendKind::Voicevox);
-    for lyrics in [
-        vec!["ラ"],
-        vec!["コ", "ー", "ヒ", "ー"],
-        vec!["シュ", "ー", "テ", "ー"],
+    for events in [
+        vec![(25, "ラ")],
+        vec![(25, "コ"), (25, "ー"), (25, "ヒ"), (25, "ー")],
+        vec![(25, "シュ"), (25, "ー"), (25, "テ"), (25, "ー")],
+        vec![(25, " ｶﾞ "), (25, "ｰ"), (25, "か\u{3099}"), (25, " ー ")],
+        vec![(25, "ッ"), (25, "カ"), (25, "ン"), (25, "ア")],
+        vec![(2, "ア"), (25, "カ")],
+        vec![(25, "ア"), (2, ""), (25, "カ")],
+        vec![(1, "ア"), (25, "ア")],
+        vec![(25, "")],
     ] {
-        let frames = 30 + lyrics.len() * 25;
+        let frames = 30
+            + events
+                .iter()
+                .map(|(length, _)| *length as usize)
+                .sum::<usize>();
         let mut f0_hz = vec![0.0; frames];
         let mut energy = vec![0.0; frames];
-        f0_hz[15..frames - 15].fill(261.625_55);
-        energy[15..frames - 15].fill(0.8);
+        let mut offset = 15;
+        for (length, lyric) in &events {
+            let end = offset + *length as usize;
+            if !lyric.is_empty() {
+                f0_hz[offset..end].fill(261.625_55);
+                energy[offset..end].fill(0.8);
+            }
+            offset = end;
+        }
         let curves = SingerFrames {
             hop_seconds: model.info().hop_seconds(),
             inventory: vec!["<sil>".into(), "a".into()],
-            phonemes: (0..frames)
-                .map(|frame| u32::from((15..frames - 15).contains(&frame)))
+            phonemes: energy
+                .iter()
+                .map(|energy| u32::from(*energy > 0.0))
                 .collect(),
             f0_hz,
             energy,
@@ -50,25 +68,27 @@ fn a_running_voicevox_engine_sings_a_score() {
         let mut score = SingerScore {
             notes: vec![rest.clone()],
         };
-        score.notes.extend(lyrics.iter().map(|lyric| SingerNote {
-            key: Some(60),
-            frame_length: 25,
-            lyric: (*lyric).into(),
-        }));
+        score
+            .notes
+            .extend(events.iter().map(|(length, lyric)| SingerNote {
+                key: (!lyric.is_empty()).then_some(60),
+                frame_length: *length,
+                lyric: (*lyric).into(),
+            }));
         score.notes.push(rest);
+        let original = score.clone();
         for speaker in [0, 1] {
             let samples = model.sing_score(&curves, &score, speaker, 0).unwrap();
             assert_eq!(samples.len(), frames * model.info().hop_length as usize);
             assert!(samples.iter().all(|sample| sample.is_finite()));
-            assert!(
-                samples.iter().any(|sample| sample.abs() > 0.001),
-                "the Engine returned silence"
-            );
+            if events.iter().any(|(_, lyric)| !lyric.is_empty()) {
+                assert!(
+                    samples.iter().any(|sample| sample.abs() > 0.001),
+                    "the Engine returned silence for {events:?}"
+                );
+            }
         }
-        assert_eq!(score.notes[1].lyric, lyrics[0]);
-        if lyrics.contains(&"ー") {
-            assert_eq!(score.notes[2].lyric, "ー");
-        }
+        assert_eq!(score, original);
     }
     std::fs::remove_file(path).unwrap();
 }

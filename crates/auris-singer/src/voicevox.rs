@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use auris_vocal::{SingerFrames, SingerNote, SingerScore};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::backend::{BackendKind, SingingBackend};
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
@@ -61,6 +62,7 @@ fn default_frame_rate() -> f64 {
 fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingError> {
     let mut score = score.clone();
     normalize_long_vowels(&mut score)?;
+    validate_note_boundaries(&score, padding)?;
     let rest = || SingerNote {
         key: None,
         frame_length: padding,
@@ -89,6 +91,7 @@ fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingEr
 fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
     let mut vowel: Option<&str> = None;
     for (index, note) in score.notes.iter_mut().enumerate() {
+        note.lyric = note.lyric.trim().nfkc().collect();
         if note.key.is_none() {
             continue;
         }
@@ -110,6 +113,53 @@ fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
         });
     }
     Ok(())
+}
+
+/// A consonant borrows frames from the preceding event. A single frame makes the
+/// Engine produce a zero-length consonant and fail with HTTP 500 (Engine 0.25.2).
+fn validate_note_boundaries(score: &SingerScore, padding: u32) -> Result<(), SingError> {
+    for (index, note) in score.notes.iter().enumerate() {
+        if note.frame_length == 0
+            || note.key.is_some_and(|key| key > 127)
+            || note.key.is_none() != note.lyric.is_empty()
+        {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX: score event {} needs a positive duration and either a MIDI key (0–127) with a kana lyric, or a rest with no lyric",
+                index + 1
+            )));
+        }
+        let Some(previous) = index.checked_sub(1).map(|index| &score.notes[index]) else {
+            continue;
+        };
+        // The first rest is extended before transmission and already has enough room.
+        if index == 1 && previous.key.is_none() && padding >= 2 {
+            continue;
+        }
+        let starts_with_consonant = note.key.is_some()
+            && auris_vocal::kana_phonemes(&note.lyric).is_some_and(|phonemes| phonemes.len() > 1);
+        if previous.frame_length == 1 && starts_with_consonant {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX: score event {} is only 1 frame before '{}'; lengthen that note or rest to at least 2 frames, or remove the short rest",
+                index, note.lyric
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// The host's frame grid must represent an exact number of output samples.
+fn output_hop(sample_rate: u32, frame_rate: f64) -> Result<u32, SingError> {
+    let hop = f64::from(sample_rate) / frame_rate;
+    if !hop.is_finite()
+        || hop < 1.0
+        || hop > f64::from(u32::MAX)
+        || (hop - hop.round()).abs() > 1.0e-8
+    {
+        return Err(SingError::Metadata(
+            "VOICEVOX sample_rate / frame_rate must be an integer; use 24000 or 48000 Hz with the standard 93.75 fps Engine".into(),
+        ));
+    }
+    Ok(hop.round() as u32)
 }
 
 /// Keep the Engine's explanation: a bare HTTP 400 hides which lyric it refused.
@@ -171,12 +221,7 @@ impl VoicevoxBackend {
                 "VOICEVOX connection has no singing styles".into(),
             ));
         }
-        let hop_length = (f64::from(config.sample_rate) / config.frame_rate).round() as u32;
-        if hop_length == 0 {
-            return Err(SingError::Metadata(
-                "VOICEVOX frame rate is too high for the output sample rate".into(),
-            ));
-        }
+        let hop_length = output_hop(config.sample_rate, config.frame_rate)?;
         let speaker_to_id: BTreeMap<String, u32> = config
             .styles
             .iter()
@@ -517,7 +562,7 @@ mod tests {
                 SingerNote {
                     key: Some(69),
                     frame_length: 1,
-                    lyric: "ラ".into(),
+                    lyric: if opening_rest { "ラ" } else { "ア" }.into(),
                 },
             ],
         };
@@ -529,6 +574,94 @@ mod tests {
 
     fn request_body(request: &str) -> Value {
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    fn test_score(events: &[(u32, &str)]) -> SingerScore {
+        SingerScore {
+            notes: events
+                .iter()
+                .map(|(length, lyric)| SingerNote {
+                    key: (!lyric.is_empty()).then_some(60),
+                    frame_length: *length,
+                    lyric: (*lyric).into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn kana_spelling_is_normalized_only_in_the_outgoing_score() {
+        let original = test_score(&[(25, " ｶﾞ "), (25, "ｰ"), (25, "か\u{3099}"), (25, " ー ")]);
+        let outgoing = padded_score(&original, 94).unwrap();
+        assert_eq!(
+            outgoing.notes[1..5]
+                .iter()
+                .map(|note| note.lyric.as_str())
+                .collect::<Vec<_>>(),
+            ["ガ", "ア", "が", "ア"]
+        );
+        assert_eq!(original.notes[0].lyric, " ｶﾞ ");
+        assert_eq!(original.notes[1].lyric, "ｰ");
+        assert_eq!(original.notes[2].lyric, "か\u{3099}");
+    }
+
+    #[test]
+    fn short_internal_notes_and_rests_report_the_event_before_a_consonant() {
+        for (events, index) in [
+            (vec![(1, "ア"), (25, "カ")], 1),
+            (vec![(25, "ア"), (1, ""), (25, "カ")], 2),
+        ] {
+            let error = padded_score(&test_score(&events), 94)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(&format!("event {index} is only 1 frame")),
+                "{error}"
+            );
+            assert!(error.contains("at least 2 frames"), "{error}");
+        }
+        for events in [
+            vec![(1, ""), (25, "カ")],
+            vec![(2, "ア"), (25, "カ")],
+            vec![(25, "ア"), (2, ""), (25, "カ")],
+            vec![(1, "ア"), (25, "ア")],
+            vec![(1, "ア"), (25, "ン")],
+            vec![(1, "ア"), (25, "ッ")],
+            vec![(1, "カ")],
+            vec![(25, "")],
+        ] {
+            padded_score(&test_score(&events), 94).unwrap();
+        }
+    }
+
+    #[test]
+    fn malformed_events_are_rejected_before_the_query() {
+        let mut score = test_score(&[(0, "ア")]);
+        assert!(padded_score(&score, 94).is_err());
+        score.notes[0].frame_length = 25;
+        score.notes[0].key = Some(128);
+        assert!(padded_score(&score, 94).is_err());
+        score.notes[0].key = None;
+        assert!(padded_score(&score, 94).is_err());
+        score.notes[0].key = Some(60);
+        score.notes[0].lyric.clear();
+        assert!(padded_score(&score, 94).is_err());
+    }
+
+    #[test]
+    fn output_rates_must_fit_the_frame_grid_without_rounding() {
+        assert_eq!(output_hop(24000, 93.75).unwrap(), 256);
+        assert_eq!(output_hop(48000, 93.75).unwrap(), 512);
+        assert_eq!(output_hop(24000, 100.0).unwrap(), 240);
+        for (rate, frames) in [
+            (44100, 93.75),
+            (24000, 48000.0),
+            (24000, 0.0),
+            (0, 93.75),
+            (24000, 1.0e-20),
+        ] {
+            assert!(output_hop(rate, frames).is_err());
+        }
     }
 
     #[test]
