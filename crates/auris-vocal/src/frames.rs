@@ -141,6 +141,25 @@ pub struct SingerScore {
     pub notes: Vec<SingerNote>,
 }
 
+/// Who supplies a singing curve's acoustic articulation.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum CurveSource {
+    /// Auris generates the complete acoustic curve from the document.
+    #[default]
+    Host,
+    /// A backend predicts articulation; Auris supplies only musical edits.
+    Backend,
+}
+
+/// Independent sources for pitch and energy, including models that predict only one.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct CurveSources {
+    /// Source of the pitch contour and voicing.
+    pub pitch: CurveSource,
+    /// Source of the phoneme volume envelope.
+    pub energy: CurveSource,
+}
+
 impl SingerFrames {
     /// How many frames there are.
     pub fn len(&self) -> usize {
@@ -191,7 +210,7 @@ struct TimedNote<'a> {
 
 /// Samples a singer track into the frames its voice model is fed.
 pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
-    render_frames_impl(track, tempo_map, false)
+    render_frames_with_sources(track, tempo_map, CurveSources::default())
 }
 
 /// Samples musical controls for an engine that predicts its own articulation.
@@ -200,13 +219,25 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
 /// Energy is velocity times expression, without phoneme levels or attack/release:
 /// these controls modulate the engine's predictions rather than replacing them.
 pub fn render_expression_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
-    render_frames_impl(track, tempo_map, true)
+    render_frames_with_sources(
+        track,
+        tempo_map,
+        CurveSources {
+            pitch: CurveSource::Backend,
+            energy: CurveSource::Backend,
+        },
+    )
 }
 
-fn render_frames_impl(
+/// Samples acoustic curves or musical edits according to each curve's source.
+///
+/// Backend pitch receives note pitch plus written bends and ornaments, without the
+/// automatic glide. Backend energy receives velocity times expression, without
+/// phoneme levels or attack/release. Host curves retain the full articulation.
+pub fn render_frames_with_sources(
     track: &SingerTrack,
     tempo_map: &TempoMap,
-    expression_only: bool,
+    sources: CurveSources,
 ) -> SingerFrames {
     let hop = match track.frame_hop.is_finite() {
         true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
@@ -272,7 +303,11 @@ fn render_frames_impl(
             notes.get(walker + 1),
             t,
         );
-        let glide = if expression_only { 0.0 } else { glide };
+        let glide = if sources.pitch == CurveSource::Backend {
+            0.0
+        } else {
+            glide
+        };
         f0_hz.push(pitch_to_hz(note.pitch + glide + bend + ornament));
 
         let expression = match note.expression.is_empty() {
@@ -285,7 +320,7 @@ fn render_frames_impl(
         } else {
             level_gain(note.levels, token)
         };
-        let articulation = if expression_only {
+        let articulation = if sources.energy == CurveSource::Backend {
             1.0
         } else {
             envelope(note, t) * gain
@@ -692,6 +727,42 @@ mod tests {
         let frames = render_frames(&singer, &map());
         assert_eq!(frames.hop_seconds, MAX_FRAME_HOP);
         assert_eq!(frames.len(), 6);
+    }
+
+    #[test]
+    fn curve_sources_select_pitch_and_energy_independently() {
+        let singer = track(vec![
+            sung(69, 1.0, 2.0, &["k", "a"]),
+            sung(81, 3.0, 2.0, &["a"]),
+        ]);
+        let host = render_frames(&singer, &map());
+        let edits = render_expression_frames(&singer, &map());
+        for pitch in [CurveSource::Host, CurveSource::Backend] {
+            for energy in [CurveSource::Host, CurveSource::Backend] {
+                let frames =
+                    render_frames_with_sources(&singer, &map(), CurveSources { pitch, energy });
+                assert_eq!(
+                    frames.f0_hz,
+                    if pitch == CurveSource::Host {
+                        &host.f0_hz
+                    } else {
+                        &edits.f0_hz
+                    }
+                    .clone()
+                );
+                assert_eq!(
+                    frames.energy,
+                    if energy == CurveSource::Host {
+                        &host.energy
+                    } else {
+                        &edits.energy
+                    }
+                    .clone()
+                );
+                assert_eq!(frames.phonemes, host.phonemes);
+                assert_eq!(frames.hop_seconds, host.hop_seconds);
+            }
+        }
     }
 
     #[test]

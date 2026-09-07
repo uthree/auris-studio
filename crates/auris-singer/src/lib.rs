@@ -36,6 +36,7 @@
 #![warn(missing_docs)]
 
 mod backend;
+mod curves;
 mod diffsinger;
 mod leapsinger;
 mod metadata;
@@ -45,6 +46,7 @@ mod score;
 mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, VoiceCapabilities, VoiceModel};
+pub use curves::{CurveGenerator, CurvePrediction, CurveSource, CurveSources, PreparedCurves};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE};
 pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
