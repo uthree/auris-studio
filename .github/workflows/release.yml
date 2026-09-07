@@ -3,16 +3,28 @@ name: Release
 # Tagging is what publishes. `v0.1.0` on a commit that has already been through CI builds the
 # three archives and creates the release from the matching section of CHANGELOG.md.
 #
-# `workflow_dispatch` runs the same builds from a branch and stops before publishing, which is the
-# only way to find out that a release build is broken *before* the tag exists — a tag that has
-# already been pushed cannot be un-pushed politely.
+# `workflow_dispatch` builds from a branch or an existing release tag and stops before publishing.
+# Select one platform to recover a failed archive without moving the tag or rebuilding the others.
+# Packaging helpers come from the workflow commit; application sources and archive contents come
+# from the selected ref.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing tag to package (leave empty for a branch dry run)
+        type: string
+        required: false
+      platform:
+        description: Platform to build
+        type: choice
+        default: all
+        options: [all, macos, windows, linux]
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_NAME: ${{ inputs.release_tag || github.ref_name }}
 
 # Deliberately uncached, unlike CI. This runs a handful of times a year and produces the files
 # other people download; a cold build is worth the twenty minutes.
@@ -22,9 +34,24 @@ jobs:
   # The alternative is a second runner image for x86_64, and those are being retired.
   macos:
     name: Build for macOS
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'macos'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      # A dispatched recovery can keep the application at an immutable tag while taking
+      # corrected packaging helpers from the commit that supplied this workflow.
+      - name: Load packaging helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: |
+            tools/fetch-soundfonts.sh
+            tools/fetch-dictionary.sh
+          sparse-checkout-cone-mode: false
 
       - name: Install the toolchain
         run: |
@@ -43,14 +70,16 @@ jobs:
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
             cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
           done
+          native_target="$(rustc -vV | sed -n 's/^host: //p')"
+          echo "AURIS_CLI=$PWD/target/$native_target/release/auris" >> "$GITHUB_ENV"
 
       # After the build, because the scripts ask the command line tool what to fetch — the
       # manifests live in `auris_session::library` and are not duplicated in the scripts.
       - name: Fetch the shipped SoundFonts
-        run: tools/fetch-soundfonts.sh
+        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
 
       - name: Fetch the shipped Japanese dictionary
-        run: tools/fetch-dictionary.sh
+        run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
 
       # `Auris Studio.app` around the desktop binary, with the command line tool, the MCP
       # server and the LLM agent beside it.
@@ -58,8 +87,8 @@ jobs:
       # Gatekeeper will make of that.
       - name: Assemble the archive
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          stage="auris-studio-${GITHUB_REF_NAME}-macos-universal"
+          version="${RELEASE_NAME#v}"
+          stage="auris-studio-${RELEASE_NAME}-macos-universal"
           app="$stage/Auris Studio.app"
           mkdir -p "$app/Contents/MacOS"
 
@@ -104,9 +133,24 @@ jobs:
 
   windows:
     name: Build for Windows
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'windows'
     runs-on: windows-latest
+    env:
+      AURIS_CLI: ./target/release/auris.exe
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Load packaging helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: |
+            tools/fetch-soundfonts.sh
+            tools/fetch-dictionary.sh
+          sparse-checkout-cone-mode: false
 
       - uses: ilammy/msvc-dev-cmd@v1
 
@@ -122,16 +166,16 @@ jobs:
 
       - name: Fetch the shipped SoundFonts
         shell: bash
-        run: tools/fetch-soundfonts.sh
+        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
 
       - name: Fetch the shipped Japanese dictionary
         shell: bash
-        run: tools/fetch-dictionary.sh
+        run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
 
       - name: Assemble the archive
         shell: bash
         run: |
-          stage="auris-studio-${GITHUB_REF_NAME}-windows-x86_64"
+          stage="auris-studio-${RELEASE_NAME}-windows-x86_64"
           mkdir -p "$stage"
           cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe target/release/auris-agent.exe "$stage/"
           # Beside the binaries, which is the first place `auris_session::library` looks.
@@ -154,9 +198,24 @@ jobs:
   # would have.
   linux:
     name: Build the command line tool for Linux
+    if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == 'linux'
     runs-on: ubuntu-latest
+    env:
+      AURIS_CLI: ./target/release/auris
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Load packaging helpers
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .release-tools
+          sparse-checkout: |
+            tools/fetch-soundfonts.sh
+            tools/fetch-dictionary.sh
+          sparse-checkout-cone-mode: false
 
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal
@@ -171,14 +230,14 @@ jobs:
         run: cargo build --release --locked -p auris-cli
 
       - name: Fetch the shipped SoundFonts
-        run: tools/fetch-soundfonts.sh
+        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
 
       - name: Fetch the shipped Japanese dictionary
-        run: tools/fetch-dictionary.sh
+        run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
 
       - name: Assemble the archive
         run: |
-          stage="auris-${GITHUB_REF_NAME}-linux-x86_64"
+          stage="auris-${RELEASE_NAME}-linux-x86_64"
           mkdir -p "$stage"
           cp target/release/auris "$stage/"
           # The command line tool composes too, and a piece written on Linux has to be the piece
@@ -208,7 +267,7 @@ jobs:
     needs: [macos, windows, linux]
     # Only from a tag. A dispatched run builds all three and stops here, which is the point of
     # being able to dispatch it at all.
-    if: startsWith(github.ref, 'refs/tags/')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -223,7 +282,7 @@ jobs:
       # notes nobody wrote are worse than a release that did not go out.
       - name: Collect the notes
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_NAME#v}"
           awk -v want="$version" '
             $0 ~ "^## " want "([ ]|$)" { found = 1; next }
             found && /^## / { exit }
@@ -269,7 +328,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Auris Studio ${GITHUB_REF_NAME}" \
+          gh release create "$RELEASE_NAME" \
+            --title "Auris Studio ${RELEASE_NAME}" \
             --notes-file notes.md \
             artifacts/*

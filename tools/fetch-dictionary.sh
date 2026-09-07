@@ -13,6 +13,8 @@
 # digest are recorded and no way for the two to drift apart.
 #
 #   tools/fetch-dictionary.sh [directory]
+#   AURIS_CLI=/path/to/auris tools/fetch-dictionary.sh [directory]
+# Set AURIS_CLI to an already-built executable to skip building the CLI.
 #
 # A dictionary already present is left alone — the folder has no single file to hash, so
 # presence of the metadata jpreprocess writes is the test, the same one the application uses.
@@ -30,7 +32,15 @@ else
   exit 1
 fi
 
-manifest="$(cargo run --quiet --locked -p auris-cli -- dictionary --manifest)"
+if [ -n "${AURIS_CLI:-}" ]; then
+  if [ ! -f "$AURIS_CLI" ] || [ ! -x "$AURIS_CLI" ]; then
+    echo "fetch-dictionary: AURIS_CLI is not an executable file: $AURIS_CLI" >&2
+    exit 1
+  fi
+  manifest="$("$AURIS_CLI" dictionary --manifest)"
+else
+  manifest="$(cargo run --quiet --locked -p auris-cli -- dictionary --manifest)"
+fi
 if [ -z "$manifest" ]; then
   echo "fetch-dictionary: the manifest is empty" >&2
   exit 1

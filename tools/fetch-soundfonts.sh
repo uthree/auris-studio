@@ -12,6 +12,8 @@
 # and no way for the two to drift apart.
 #
 #   tools/fetch-soundfonts.sh [directory]
+#   AURIS_CLI=/path/to/auris tools/fetch-soundfonts.sh [directory]
+# Set AURIS_CLI to an already-built executable to skip building the CLI.
 #
 # A font already present with the right digest is left alone, so running this twice costs one
 # hash rather than one download.
@@ -30,7 +32,15 @@ else
   exit 1
 fi
 
-manifest="$(cargo run --quiet --locked -p auris-cli -- soundfonts --manifest)"
+if [ -n "${AURIS_CLI:-}" ]; then
+  if [ ! -f "$AURIS_CLI" ] || [ ! -x "$AURIS_CLI" ]; then
+    echo "fetch-soundfonts: AURIS_CLI is not an executable file: $AURIS_CLI" >&2
+    exit 1
+  fi
+  manifest="$("$AURIS_CLI" soundfonts --manifest)"
+else
+  manifest="$(cargo run --quiet --locked -p auris-cli -- soundfonts --manifest)"
+fi
 if [ -z "$manifest" ]; then
   echo "fetch-soundfonts: the manifest is empty" >&2
   exit 1
