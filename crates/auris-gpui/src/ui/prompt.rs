@@ -481,6 +481,13 @@ pub enum Answer {
 /// A question the sheet is asking, and what turns on the answer.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Question {
+    /// Optional restricted model use; consent applies to this invocation only.
+    Muscriptor {
+        /// Audio clip selected when the notice was opened.
+        clip: ClipId,
+        /// Invalidates a notice after cancellation or document replacement.
+        generation: u64,
+    },
     /// Something is about to destroy unsaved work.
     ///
     /// Three answers: save first, throw the changes away, or do neither.
@@ -1144,6 +1151,10 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) {
         match (question, answer) {
+            (Question::Muscriptor { clip, generation }, Answer::Confirm) => {
+                self.choose_mixture_model(clip, generation, cx)
+            }
+            (Question::Muscriptor { .. }, Answer::Deny) => {}
             // Save first, then carry on — but only if the save worked. A disk that is full must
             // not be the thing that throws the afternoon away.
             (Question::Unsaved(next), Answer::Confirm) => self.save_then(next, window, cx),
@@ -1677,6 +1688,11 @@ impl AurisApp {
         question: &Question,
     ) -> (SharedString, SharedString, Option<SharedString>) {
         match question {
+            Question::Muscriptor { .. } => (
+                self.t(Key::MuscriptorWarning).into(),
+                self.t(Key::MuscriptorAgree).into(),
+                None,
+            ),
             Question::Unsaved(_) => (
                 self.t(Key::UnsavedBody).into(),
                 self.t(Key::CmdSave).into(),

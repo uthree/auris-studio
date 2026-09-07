@@ -46,6 +46,7 @@ mod editing;
 mod listening;
 mod mix_editing;
 mod project_files;
+mod recognition;
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
@@ -58,6 +59,9 @@ pub use editing::{
 pub use listening::listen;
 pub use mix_editing::{automation, effects};
 pub use project_files::{create_project, export_midi, import_audio, import_midi};
+pub use recognition::{
+    analyze_audio, analyze_chords, analyze_instruments, transcribe_audio, transcribe_mixture,
+};
 pub use track_editing::{routing, set_instrument_param, set_track_state};
 
 /// What a model is told before it has called anything.
@@ -144,6 +148,10 @@ pub mod search_documentation {
     }
 
     const DOCUMENTS: &[(&str, &str)] = &[
+        (
+            "docs/music-analysis.md",
+            include_str!("../../../docs/music-analysis.md"),
+        ),
         (
             "docs/agent-workflows.md",
             include_str!("../../../docs/agent-workflows.md"),
@@ -366,6 +374,9 @@ pub const WRITES_PROJECTS: &[&str] = &[
     routing::NAME,
     set_track_state::NAME,
     set_instrument_param::NAME,
+    analyze_chords::NAME,
+    transcribe_audio::NAME,
+    transcribe_mixture::NAME,
     analyze_drum_kit::NAME,
     set_drum_assignment::NAME,
     effects::NAME,
@@ -401,7 +412,12 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
     }
     match tool {
         routing::NAME => args.get("operation").and_then(|value| value.as_str()) != Some("list"),
-        analyze_drum_kit::NAME => args.get("apply").and_then(|value| value.as_bool()) == Some(true),
+        analyze_drum_kit::NAME
+        | analyze_chords::NAME
+        | transcribe_audio::NAME
+        | transcribe_mixture::NAME => {
+            args.get("apply").and_then(|value| value.as_bool()) == Some(true)
+        }
         effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),
         automation::NAME => {
             args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")

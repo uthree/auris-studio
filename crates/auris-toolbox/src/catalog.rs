@@ -153,6 +153,17 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<effects::Args>(effects::NAME, effects::DESCRIPTION),
         definition::<automation::Args>(automation::NAME, automation::DESCRIPTION),
         definition::<analyze_music::Args>(analyze_music::NAME, analyze_music::DESCRIPTION),
+        definition::<analyze_chords::Args>(analyze_chords::NAME, analyze_chords::DESCRIPTION),
+        definition::<analyze_audio::Args>(analyze_audio::NAME, analyze_audio::DESCRIPTION),
+        definition::<analyze_instruments::Args>(
+            analyze_instruments::NAME,
+            analyze_instruments::DESCRIPTION,
+        ),
+        definition::<transcribe_audio::Args>(transcribe_audio::NAME, transcribe_audio::DESCRIPTION),
+        definition::<transcribe_mixture::Args>(
+            transcribe_mixture::NAME,
+            transcribe_mixture::DESCRIPTION,
+        ),
         definition::<inspect_composition::Args>(
             inspect_composition::NAME,
             inspect_composition::DESCRIPTION,

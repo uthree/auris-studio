@@ -48,12 +48,14 @@ mod hosted;
 mod levels;
 mod lyrics;
 mod mixer;
+mod mixture;
 mod monitor;
 mod musical_analysis;
 mod notes;
 mod perform;
 mod punch;
 mod readiness;
+mod recognition;
 mod record;
 mod singer;
 mod spectrogram;
@@ -81,10 +83,17 @@ pub use levels::{
     faders_lift_db, master_gain_db,
 };
 pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
+pub use mixture::{
+    MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
+};
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
 pub use readiness::{PlaybackReadiness, PlaybackState};
+pub use recognition::{
+    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
+    ClipInstrumentAnalysis, ClipMixtureAnalysis, analyze_audio_file, analyze_instrument_file,
+};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,

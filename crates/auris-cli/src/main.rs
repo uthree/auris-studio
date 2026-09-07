@@ -28,6 +28,7 @@ use auris_session::{Session, SessionOptions};
 /// from somewhere else. Text that came out of a *document* — a project's name, a track's — is
 /// still whatever the user typed, because that is their data and not this program's voice.
 const LANGUAGE: Language = Language::English;
+mod music_analysis;
 
 fn main() -> ExitCode {
     if let Some(code) = auris_session::handle_drum_probe_worker() {
@@ -56,6 +57,11 @@ fn main() -> ExitCode {
         "info" => with_path(&args, info),
         "render" => render(&args),
         "analyze-drums" => analyze_drums(&args),
+        "analyze-chords"
+        | "analyze-audio"
+        | "transcribe-audio"
+        | "analyze-instruments"
+        | "transcribe-mixture" => music_analysis::run(&args),
         "sing" => sing(&args),
         "frames" => frames(&args),
         "sing-frames" => sing_frames(&args),

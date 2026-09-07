@@ -58,6 +58,14 @@ pub mod settings;
 pub mod singer_portrait;
 pub mod voice_setup;
 
+pub use auris_analysis::audio::{
+    AudioAnalysis, AudioChordSegment, AudioOptions, TempoAnalysis, TempoCandidate, TranscribedNote,
+};
+pub use auris_analysis::chords::{
+    ChordCandidate, ChordOptions, ChordReading, ChordState, SymbolicChordSegment,
+};
+pub use auris_analysis::instruments::{InstrumentAnalysis, InstrumentCandidate, InstrumentWindow};
+pub use auris_analysis::{AnalysisControl, AnalysisError};
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
@@ -88,8 +96,15 @@ pub use session::{
     read_soundfont, shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
+    AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
+    ClipInstrumentAnalysis, ClipMixtureAnalysis, analyze_audio_file, analyze_instrument_file,
+};
+pub use session::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
     DrumVoiceAnalysis, probe_drum_request,
+};
+pub use session::{
+    MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
 pub use session::{MusicalClipAnalysis, SpectrogramJob};
 pub use settings::{

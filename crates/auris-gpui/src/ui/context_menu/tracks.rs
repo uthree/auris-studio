@@ -42,6 +42,11 @@ impl AurisApp {
         // whatever is playing it.
         let records = entry.kind.as_audio().is_some();
         let menu = ContextMenu::new(anchor, entry.name.clone())
+            .item_if(
+                entry.kind.holds_notes() && !entry.kind.is_drum(),
+                self.t(Key::MenuAnalyzeChords),
+                MenuCommand::AnalyzeChords(Some(track)),
+            )
             .item(
                 self.t(Key::MenuDuplicateTrack),
                 MenuCommand::DuplicateTrack(track),
@@ -735,7 +740,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn drum_analysis_is_offered_only_on_drum_tracks(cx: &mut TestAppContext) {
+    fn analysis_choices_follow_the_track_family(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         app.update(cx, |this, _| {
             let drum = this.session.add_default_drum_track("Drums").unwrap();
@@ -751,6 +756,11 @@ mod tests {
                         if item.enabled && item.command == MenuCommand::AnalyzeDrums(track))
                 });
                 assert_eq!(offered, track == drum);
+                let chords = menu.entries.iter().any(|entry| {
+                    matches!(entry, MenuEntry::Item(item)
+                        if item.enabled && item.command == MenuCommand::AnalyzeChords(Some(track)))
+                });
+                assert_eq!(chords, track == instrument || track == singer);
             }
         });
     }

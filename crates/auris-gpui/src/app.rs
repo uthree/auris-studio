@@ -1304,6 +1304,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_rendering: bool,
     /// Per-track acoustic measurements and the serial background probe queue.
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
+    /// CPU music-analysis jobs and their unapplied draft.
+    pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
@@ -1507,6 +1509,7 @@ fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>)
 impl Drop for AurisApp {
     fn drop(&mut self) {
         self.drum_analysis.reset();
+        self.music_analysis.cancel();
     }
 }
 
@@ -1637,6 +1640,7 @@ impl AurisApp {
             sung_preview_wish: None,
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
+            music_analysis: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,

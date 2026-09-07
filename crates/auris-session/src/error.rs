@@ -13,6 +13,9 @@ pub enum SessionError {
     /// Repeated vocal sections have incompatible lyrics or insufficient space.
     #[error("song lyrics: {0}")]
     SongLyrics(String),
+    /// Offline music recognition failed or its source was edited before application.
+    #[error("music analysis: {0}")]
+    MusicAnalysis(String),
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),

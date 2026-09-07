@@ -9,6 +9,27 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Offline music recognition
+//!
+//! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events
+//! on the CPU. It also runs an explicitly prepared YAMNet ONNX model for instrument-presence
+//! tagging, using ONNX Runtime's CPU provider. The optional weights are external runtime data,
+//! and inference never downloads them. The session collects written notes or shares source audio with
+//! a worker job. Analysis returns a draft; applying harmony or placing transcribed notes is an
+//! explicit, undoable session command. Source audio times stay in seconds until placement maps
+//! them through the current tempo map. Cancellation and source/document validation belong to
+//! the job boundary, never to the audio callback. Unknown harmony and silence are distinct,
+//! and candidate scores are matching scores rather than calibrated probabilities.
+//!
+//! Optional multi-instrument transcription runs a user-converted MuScriptor Small ONNX package
+//! in `auris-analysis`, using the CPU provider and a bounded Rust token loop with KV caches.
+//! Its audio graph includes STFT/log-mel preprocessing; Rust joins sustained notes across chunks.
+//! Python is only conversion tooling. The session requires per-run acknowledgement of the model's
+//! noncommercial terms before decoding; models remain local external data, verified against their
+//! export manifest. Cancellation is checked between inference calls. Instrument-labeled drafts
+//! follow source validation and tempo mapping, with all new tracks in one undo transaction.
+//! No model inference or model-file I/O belongs on the audio callback.
+//!
 //! # The smallest complete program
 //!
 //! ```

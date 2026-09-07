@@ -699,6 +699,8 @@ impl AurisApp {
     /// it either.
     pub(crate) fn reset_view(&mut self) {
         self.spectrogram_tracks.clear();
+        self.music_analysis.cancel();
+        self.music_analysis.report = None;
         self.spectrograms.clear();
         self.cancel_auto_sing();
         self.invalidate_sung_previews();

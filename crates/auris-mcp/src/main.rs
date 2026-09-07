@@ -202,6 +202,46 @@ impl AurisMcp {
         blocking(move || toolbox::analyze_music::run(&args)).await
     }
 
+    /// Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint.
+    #[tool(input_schema = tool_schema("analyze_chords"))]
+    async fn analyze_chords(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_chords::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_chords::run(&args)).await
+    }
+    /// Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments.
+    #[tool(input_schema = tool_schema("analyze_audio"))]
+    async fn analyze_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_audio::run(&args)).await
+    }
+    /// Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits.
+    #[tool(input_schema = tool_schema("analyze_instruments"))]
+    async fn analyze_instruments(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_instruments::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_instruments::run(&args)).await
+    }
+    /// Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved.
+    #[tool(input_schema = tool_schema("transcribe_audio"))]
+    async fn transcribe_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::transcribe_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::transcribe_audio::run(&args)).await
+    }
+    /// Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.
+    #[tool(input_schema = tool_schema("transcribe_mixture"))]
+    async fn transcribe_mixture(
+        &self,
+        Parameters(args): Parameters<toolbox::transcribe_mixture::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::transcribe_mixture::run(&args)).await
+    }
     /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
     #[tool(input_schema = tool_schema("inspect_composition"))]
     async fn inspect_composition(

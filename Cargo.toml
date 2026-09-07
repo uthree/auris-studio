@@ -18,6 +18,7 @@ repository = "https://github.com/uthree/auris-studio"
 rust-version = "1.90"
 
 [workspace.dependencies]
+auris-analysis = { path = "crates/auris-analysis", version = "0.6.0" }
 # Backend, in dependency order. Nothing below `auris-session` knows a UI exists.
 auris-clap = { path = "crates/auris-clap", version = "0.6.0" }
 auris-vst3 = { path = "crates/auris-vst3", version = "0.6.0" }

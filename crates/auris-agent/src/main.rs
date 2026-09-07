@@ -425,6 +425,11 @@ macro_rules! text_tool {
 }
 
 session_tool!(AnalyzeMusic, analyze_music);
+session_tool!(AnalyzeChords, analyze_chords);
+session_tool!(AnalyzeAudio, analyze_audio);
+session_tool!(AnalyzeInstruments, analyze_instruments);
+session_tool!(TranscribeMixture, transcribe_mixture);
+session_tool!(TranscribeAudio, transcribe_audio);
 session_tool!(Effects, effects);
 session_tool!(Automation, automation);
 session_tool!(Capabilities, capabilities);
@@ -627,6 +632,11 @@ fn armed(builder: AgentBuilder) -> Agent {
     builder
         .preamble(&preamble())
         .tool(AnalyzeMusic)
+        .tool(AnalyzeChords)
+        .tool(AnalyzeAudio)
+        .tool(AnalyzeInstruments)
+        .tool(TranscribeMixture)
+        .tool(TranscribeAudio)
         .tool(InspectComposition)
         .tool(EditHarmony)
         .tool(EditRecipe)
@@ -918,6 +928,33 @@ fn write_destination(tool: &str, args: &str) -> Result<(), String> {
     }
     let parsed: serde_json::Value = serde_json::from_str(args)
         .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
+    if matches!(
+        tool,
+        toolbox::analyze_chords::NAME
+            | toolbox::transcribe_audio::NAME
+            | toolbox::transcribe_mixture::NAME
+    ) {
+        let mut fields = Vec::new();
+        if toolbox::writes_project(tool, &parsed) {
+            fields.push("project");
+        }
+        if matches!(
+            tool,
+            toolbox::transcribe_audio::NAME | toolbox::transcribe_mixture::NAME
+        ) {
+            fields.push("midi_output");
+        }
+        for field in fields {
+            if let Some(path) = parsed.get(field).and_then(|value| value.as_str())
+                && !confined_to_working_directory(Path::new(path))
+            {
+                return Err(format!(
+                    "refused `{field}` outside the agent's working directory: {path}"
+                ));
+            }
+        }
+        return Ok(());
+    }
     if matches!(
         tool,
         toolbox::effects::NAME
@@ -2222,6 +2259,64 @@ mod tests {
         assert!(fields.contains_key("spec"), "the flattened spec triangle");
         let none = schema::<NoArgs>();
         assert_eq!(none["type"], "object");
+    }
+
+    #[test]
+    fn recognition_writes_stay_in_the_working_directory_and_reads_stay_read_only() {
+        let here = std::env::current_dir().unwrap();
+        let outside = here.parent().unwrap();
+        let project = here.join("analysis-inside.auris");
+        for tool in [
+            toolbox::analyze_audio::NAME,
+            toolbox::analyze_instruments::NAME,
+            toolbox::transcribe_audio::NAME,
+            toolbox::transcribe_mixture::NAME,
+        ] {
+            let args = serde_json::json!({
+                "audio": outside.join("source.wav"),
+                "model": outside.join("decoder.onnx")
+            });
+            assert!(!toolbox::writes_project(tool, &args), "{tool}");
+            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
+        }
+        let read = serde_json::json!({"project": outside.join("Song.auris"), "apply": false});
+        assert!(!toolbox::writes_project(
+            toolbox::analyze_chords::NAME,
+            &read
+        ));
+        assert!(write_destination(toolbox::analyze_chords::NAME, &read.to_string()).is_ok());
+
+        for tool in [
+            toolbox::analyze_chords::NAME,
+            toolbox::transcribe_audio::NAME,
+            toolbox::transcribe_mixture::NAME,
+        ] {
+            let mut args =
+                serde_json::json!({"project": outside.join("Song.auris"), "apply": true});
+            assert!(toolbox::writes_project(tool, &args), "{tool}");
+            let error = write_destination(tool, &args.to_string()).unwrap_err();
+            assert!(error.contains("`project`"), "{tool}: {error}");
+            args["project"] = serde_json::json!(project);
+            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
+        }
+        for tool in [
+            toolbox::transcribe_audio::NAME,
+            toolbox::transcribe_mixture::NAME,
+        ] {
+            for apply in [false, true] {
+                let mut args = serde_json::json!({
+                    "midi_output": outside.join("draft.mid"), "apply": apply
+                });
+                if apply {
+                    args["project"] = serde_json::json!(project);
+                }
+                let error = write_destination(tool, &args.to_string()).unwrap_err();
+                assert!(error.contains("`midi_output`"), "{tool}: {error}");
+                args["midi_output"] = serde_json::json!(here.join("draft.mid"));
+                assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
+                assert_eq!(toolbox::writes_project(tool, &args), apply, "{tool}");
+            }
+        }
     }
 
     #[test]
