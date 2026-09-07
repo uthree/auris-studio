@@ -949,8 +949,8 @@ the project folder's `Audio/`, so a project with no folder has nowhere to put it
 temporary directory would mean leaving an hour of playing somewhere the machine tidies up. Files
 are named after the track and numbered from the first free number: `Vocals 1.wav`, `Vocals 2.wav`.
 
-After that first save you are not asked again, because the project is saved for you as you go —
-see [Autosave](#autosave).
+After that first save, recording uses the project's existing folder. Save explicitly to keep
+subsequent document changes; [Autosave](#autosave) maintains a separate private snapshot.
 
 Takes are **32-bit float**, and there is no bit depth to choose. Every integer depth is a decision
 about how much of a performance to throw away before anyone has heard it, and float cannot clip —

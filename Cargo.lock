@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "auris-agent"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
@@ -906,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "auris-clap"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "clack-extensions",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "auris-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-i18n",
  "auris-session",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "auris-compose"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "serde",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "auris-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -954,7 +954,7 @@ dependencies = [
 
 [[package]]
 name = "auris-dsp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "ndarray",
@@ -965,7 +965,7 @@ dependencies = [
 
 [[package]]
 name = "auris-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "cpal",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "auris-gpu"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "bytemuck",
@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "auris-gpui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-i18n",
  "auris-session",
@@ -1004,7 +1004,7 @@ dependencies = [
 
 [[package]]
 name = "auris-i18n"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1013,7 +1013,7 @@ dependencies = [
 
 [[package]]
 name = "auris-io"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "hound",
@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "auris-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "auris-sampler"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "auris-session"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-clap",
  "auris-compose",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "auris-singer"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "auris-vocal",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "auris-synth"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "auris-dsp",
@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "auris-toolbox"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-session",
  "base64 0.22.1",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "auris-vocal"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "jpreprocess",
@@ -1131,7 +1131,7 @@ dependencies = [
 
 [[package]]
 name = "auris-vst3"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "auris-core",
  "log",

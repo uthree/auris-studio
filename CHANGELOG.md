@@ -7,6 +7,70 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.6.0 — 2026-09-07
+
+### Drums and generated parts
+
+* **Drums have their own track and editor.** Dedicated percussion tracks use named drum rows
+  and editable MIDI assignments. The built-in polyphonic kit supplies kicks, snares, hats,
+  cymbals and toms, with shared hat choking. Composed percussion and MIDI channel 10 imports
+  use drum tracks; drum tracks export on channel 10 without consuming melodic channels.
+* **Measure and assign drum sounds.** Background analysis measures built-in, SoundFont and
+  hosted instruments and proposes musical roles from their rendered audio. Apply a map for
+  future generation, or retarget generated clips with an undoable command. Manual assignments
+  remain available, and analysis alone changes no notes.
+* **Shape generated parts in the inspector.** Drummer and the melodic Session Player offer
+  complexity/intensity pads, phrasing controls and take selection. Each pad gesture is one undo
+  step and preserves the seed. Shared drum kits retain independent settings for individual
+  voices. Newly generated parts start on bar lines.
+
+### The desktop
+
+* **Audio tracks can show spectrograms.** Switch from the waveform to a frequency display
+  calculated in the background. It follows clip trimming, stretching and looping while
+  describing the source recording.
+* **The window follows your appearance settings.** Themed title bars bring playback and panel
+  controls together. Clearer icons and panel indicators, an interface font picker, custom
+  colour themes and keyboard-friendly settings selectors improve navigation. The library has
+  clearer grouping and search results, and macOS panel controls align with the window edge.
+* **Singer controls show who is singing and what is happening.** Named voice and speaker
+  selection, portraits and persistent render feedback make failures and stale takes visible.
+  VOICEVOX speaker discovery runs asynchronously, and leading-consonant handling fixes
+  first-beat synthesis failures.
+* **LeapSinger joins the singing backends.** Exported acoustic models and NHVSing vocoders
+  render locally through ONNX, selected through a `.leapsinger.json` entry. Model preparation
+  is documented in `docs/singing-backends.md`.
+* **Windows supports ASIO.** Choose the audio backend and inspect the buffer size actually
+  reported by the device. Source builds can download a missing standard SoundFont in the
+  background; release archives continue to include the standard sounds and Japanese dictionary.
+
+### Files, Agent and MCP
+
+* **Autosave preserves the last manual save.** Unsaved changes go to a private session
+  snapshot, including before the first save. Save and Save As write the permanent document;
+  closing without saving keeps the last manually saved document.
+* **Model tools can revise an existing project.** Expanded clip, harmony, routing, effect,
+  automation and file operations support local edits, with checkpoints and protection against
+  conflicting disk changes. Shared schemas and `tool_help` expose exact arguments. Invalid
+  calls receive corrective feedback, while repeated failures stop the tool loop.
+* **Preview and compare actual audio.** Short previews are available as local WAV files and
+  MCP resources. The `listen` tool sends excerpts to a separately configured audio-capable
+  critic. The optional Python reviewer is in `tools/audio-review` in the source checkout;
+  release binaries include the tool interface, not that service or its model weights.
+  Reviews remain experimental and depend on the chosen model.
+
+### Compatibility
+
+* Project format advances from **19 to 21**. Older percussion tracks migrate from explicit
+  source or drum metadata while preserving their stored notes and performance. **Every project
+  saved by this release uses format 21 and cannot reopen in v0.5.0**, including projects without
+  drums.
+* Native Auris voice metadata remains version 2; existing v0.5.0-compatible voices need no
+  re-export. LeapSinger rerenders can differ with the same seed; saved audio takes preserve
+  the performance.
+* Model calls now require `add_track.kind` and `add_clip.name`. The `set_effect` schema requires
+  an explicit slot.
+
 ## 0.5.0 — 2026-09-05
 
 ### The voice trainer moved in
