@@ -634,6 +634,28 @@ mod window_tests {
     }
 
     #[gpui::test]
+    fn analysis_menu_opens_results_only_when_requested(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.read_with(cx, |this, _| assert!(!this.analysis_panel));
+        if !crate::app::AurisApp::wants_menu_bar() {
+            cx.dispatch_action(crate::actions::OpenAnalysisResults);
+        } else {
+            let (section, index) = row_of(&app, cx, crate::actions::OpenAnalysisResults.name());
+            paint(&app, cx);
+            let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+            click(title, cx);
+            paint(&app, cx);
+            let row: &'static str =
+                Box::leak(format!("menu-bar-item-{section}-{index}").into_boxed_str());
+            click(row, cx);
+        }
+        app.read_with(cx, |this, _| assert!(this.analysis_panel));
+        paint(&app, cx);
+        click("analysis-close", cx);
+        app.read_with(cx, |this, _| assert!(!this.analysis_panel));
+    }
+
+    #[gpui::test]
     fn a_click_on_a_title_drops_its_menu_open_and_a_second_shuts_it(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         if !crate::app::AurisApp::wants_menu_bar() {

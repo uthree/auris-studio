@@ -31,6 +31,7 @@ pub(crate) fn role_key(role: DrumRole) -> Key {
 impl AurisApp {
     /// Requests another attempt for this sound, without competing with an active worker.
     pub(crate) fn begin_drum_analysis(&mut self, track: TrackId, cx: &mut Context<Self>) {
+        self.analysis_panel = true;
         if let Some(source) = self.session.drum_analysis_source_key(track) {
             self.drum_analysis.retry(track, source, Instant::now());
             self.poll_drum_analysis(cx);
@@ -186,7 +187,7 @@ impl AurisApp {
             return Vec::new();
         }
         let theme = self.theme.clone();
-        let mut rows = self.drum_assignment_rows(track, cx);
+        let mut rows = Vec::new();
         let (status, label, action) = match self.drum_analysis.outcome(track) {
             Some(Outcome::Running) => (
                 Key::DrumAnalysisRunning,
@@ -249,6 +250,38 @@ impl AurisApp {
         let Some(report) = self.drum_analysis.report(track) else {
             return rows;
         };
+        rows.push(
+            button(
+                "drum-apply-future",
+                self.t(Key::MenuUseDrumMapForGeneration),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                    this.run_menu_command(MenuCommand::UseDrumMapForGeneration(track), cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        if !report.proposed_map.voices.is_empty() {
+            rows.push(
+                button(
+                    "drum-apply",
+                    self.t(Key::MenuApplyDrumMap),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                        this.run_menu_command(MenuCommand::ApplyDrumMap(track), cx);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
         for role in DrumRole::ALL {
             let label = self.t(role_key(role));
             let detail = report
@@ -292,38 +325,6 @@ impl AurisApp {
                     .into_any_element(),
             );
         }
-        rows.push(
-            button(
-                "drum-apply-future",
-                self.t(Key::MenuUseDrumMapForGeneration),
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                    this.run_menu_command(MenuCommand::UseDrumMapForGeneration(track), cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-        if !report.proposed_map.voices.is_empty() {
-            rows.push(
-                button(
-                    "drum-apply",
-                    self.t(Key::MenuApplyDrumMap),
-                    ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                        this.run_menu_command(MenuCommand::ApplyDrumMap(track), cx);
-                        cx.notify();
-                    }),
-                )
-                .into_any_element(),
-            );
-        }
         rows
     }
 }
@@ -359,6 +360,9 @@ mod tests {
             assert!(this.drum_analysis_rows(melodic, cx).is_empty());
             this.select_track(drum);
         });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("drum-measure").is_none());
+        cx.dispatch_action(crate::actions::OpenDrumAnalysis);
         paint(&app, cx);
         assert!(cx.debug_bounds("drum-measure").is_some());
     }
@@ -439,10 +443,7 @@ mod tests {
                 (track, clip, original, map)
             });
             paint(&app, cx);
-            app.update(cx, |this, _| {
-                let panel = crate::ui::scrollbars::ScrollPanel::Inspector;
-                this.set_scroll_offset(panel, -this.scroll_view(panel).max_offset);
-            });
+            cx.dispatch_action(crate::actions::OpenDrumAnalysis);
             paint(&app, cx);
             click("drum-apply-future", cx);
             app.update(cx, |this, _| {

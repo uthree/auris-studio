@@ -1,4 +1,4 @@
-//! Worker-based CPU recognition and explicit acceptance in the inspector.
+//! Worker-based CPU recognition and explicit acceptance in a dedicated panel.
 
 use crate::{
     app::AurisApp,
@@ -14,6 +14,27 @@ use auris_session::{
     AnalysisControl, AudioOptions, ChordAnalysisReport, ChordState, ClipAudioAnalysis, SessionError,
 };
 use gpui::{AnyElement, Context, IntoElement, SharedString, div, prelude::*};
+
+/// Selection-based entries in the application analysis menu.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AnalysisCommand {
+    /// Harmony from the selected note track.
+    SelectedChords,
+    /// Harmony across note tracks.
+    AllChords,
+    /// Tempo and harmony from audio.
+    Audio,
+    /// Monophonic audio transcription.
+    Transcribe,
+    /// Instrument recognition.
+    Instruments,
+    /// Multi-instrument transcription.
+    Mixture,
+    /// Drum measurements and mapping.
+    Drums,
+    /// Progress and acceptance controls.
+    Results,
+}
 
 /// A report awaiting the user's choice.
 #[derive(Clone, Debug)]
@@ -31,7 +52,9 @@ pub(crate) enum MusicReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{click, open, paint};
+    use crate::harness::{
+        CLIP_LENGTH, click, drag_to, lane_point, open, paint, press, release, with_a_clip,
+    };
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -78,14 +101,16 @@ mod tests {
     }
 
     #[gpui::test]
-    fn inspector_button_reports_without_editing_then_accepts_with_undo(cx: &mut TestAppContext) {
+    fn analysis_panel_reports_without_editing_then_accepts_with_undo(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         let before = app.update(cx, |this, _| {
             written_triad(this);
+            assert!(!this.analysis_panel);
             this.project().clone()
         });
         paint(&app, cx);
-        click("music-all", cx);
+        assert!(cx.debug_bounds("music-all").is_none());
+        cx.dispatch_action(crate::actions::AnalyzeAllChords);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert!(matches!(
@@ -108,6 +133,107 @@ mod tests {
             );
             this.session.undo();
             assert_eq!(this.project(), &before);
+        });
+        paint(&app, cx);
+        click("analysis-close", cx);
+        app.read_with(cx, |this, _| assert!(!this.analysis_panel));
+    }
+
+    #[gpui::test]
+    fn escape_cancels_a_clip_drag_before_closing_analysis_results(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let (before, selection) = app.update(cx, |this, _| {
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (
+                this.project().clone(),
+                (
+                    this.selected_track,
+                    this.selected_clip,
+                    this.selected_clips.clone(),
+                    this.selected_notes.clone(),
+                ),
+            )
+        });
+        cx.dispatch_action(crate::actions::OpenAnalysisResults);
+        paint(&app, cx);
+        let from = lane_point(&app, cx, track, Ticks(CLIP_LENGTH.0 / 2));
+        let middle = lane_point(&app, cx, track, CLIP_LENGTH);
+        let to = lane_point(&app, cx, track, Ticks(CLIP_LENGTH.0 * 3 / 2));
+        press(cx, from);
+        drag_to(cx, middle);
+        drag_to(cx, to);
+        app.read_with(cx, |this, _| {
+            assert!(this.analysis_panel);
+            assert!(this.dragging(), "the gesture is still held");
+            assert_eq!(this.session.midi_clip(clip).unwrap().start, CLIP_LENGTH);
+        });
+
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(
+                !this.dragging(),
+                "Escape must cancel the active gesture first"
+            );
+            assert_eq!(this.project(), &before);
+            assert_eq!(
+                (
+                    this.selected_track,
+                    this.selected_clip,
+                    this.selected_clips.clone(),
+                    this.selected_notes.clone(),
+                ),
+                selection
+            );
+            assert!(
+                this.analysis_panel,
+                "the modeless panel stays open after cancellation"
+            );
+        });
+        release(cx, to);
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.project(),
+                &before,
+                "release must not commit the abandoned drag"
+            );
+            this.session
+                .rename_track(track, "After cancellation")
+                .unwrap();
+            assert_ne!(this.project(), &before);
+        });
+        cx.dispatch_action(crate::actions::Undo);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.project(),
+                &before,
+                "a later edit has its own undo step"
+            );
+        });
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(!this.analysis_panel));
+    }
+
+    #[gpui::test]
+    fn the_song_sheet_occludes_open_analysis_results(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(crate::actions::OpenAnalysisResults);
+        paint(&app, cx);
+        let close = cx
+            .debug_bounds("analysis-close")
+            .expect("the analysis panel is open")
+            .center();
+        cx.dispatch_action(crate::actions::ComposeSong);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| assert!(this.song_sheet.is_some()));
+
+        cx.simulate_click(close, gpui::Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert!(this.song_sheet.is_some());
+            assert!(
+                this.analysis_panel,
+                "a click on the modal sheet must not reach the analysis close button below it"
+            );
         });
     }
 
@@ -217,6 +343,107 @@ impl MusicAnalysisState {
 }
 
 impl AurisApp {
+    /// Dispatches the analysis menu against the current selection.
+    pub(crate) fn open_analysis_command(
+        &mut self,
+        command: AnalysisCommand,
+        cx: &mut Context<Self>,
+    ) {
+        use AnalysisCommand::*;
+        let track = self.selected_track.and_then(|id| self.project().track(id));
+        let audio = self
+            .selected_clip
+            .filter(|id| self.audio_clip(*id).is_some());
+        let action = match command {
+            SelectedChords => track
+                .filter(|t| !t.kind.is_drum() && t.kind.note_clips().is_some())
+                .map(|t| MenuCommand::AnalyzeChords(Some(t.id))),
+            AllChords => Some(MenuCommand::AnalyzeChords(None)),
+            Audio | Transcribe => audio.map(|clip| MenuCommand::AnalyzeAudio {
+                clip,
+                transcribe: command == Transcribe,
+            }),
+            Instruments => audio.map(MenuCommand::AnalyzeInstruments),
+            Mixture => audio.map(MenuCommand::TranscribeMixture),
+            Drums if track.is_some_and(|t| t.kind.is_drum()) => None,
+            Results => None,
+            _ => {
+                self.set_status(self.t(Key::AnalysisSelectSource));
+                cx.notify();
+                return;
+            }
+        };
+        if !matches!(command, Drums | Results) && action.is_none() {
+            self.set_status(self.t(Key::AnalysisSelectSource));
+            cx.notify();
+            return;
+        }
+        self.analysis_panel = true;
+        if let Some(action) = action {
+            self.run_menu_command(action, cx);
+        }
+        cx.notify();
+    }
+
+    /// A scrollable analysis workspace, opened explicitly from the menu bar.
+    pub(crate) fn render_analysis_panel(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.analysis_panel {
+            return None;
+        }
+        let mut rows = self.music_analysis_rows(cx);
+        if let Some(track) = self.selected_track {
+            rows.extend(self.drum_analysis_rows(track, cx));
+        }
+        Some(
+            div()
+                .id("analysis-panel")
+                .absolute()
+                .top(gpui::px(90.0))
+                .right(gpui::px(24.0))
+                .w(gpui::px(420.0))
+                .max_w_full()
+                .max_h(gpui::relative(0.75))
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(self.theme.surface)
+                .occlude()
+                .border_1()
+                .border_color(self.theme.border)
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(
+                    div()
+                        .flex()
+                        .justify_between()
+                        .child(self.t(Key::AnalysisTitle))
+                        .child(button(
+                            "analysis-close",
+                            self.t(Key::Close),
+                            ButtonStyle::Normal,
+                            false,
+                            self.theme.accent,
+                            &self.theme,
+                            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                this.analysis_panel = false;
+                                cx.notify();
+                            }),
+                        )),
+                )
+                .child(
+                    div()
+                        .id("analysis-results-scroll")
+                        .min_h_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .children(rows),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// Shows the model-use notice before loading a model or source audio.
     pub(crate) fn request_mixture_transcription(&mut self, clip: ClipId) {
         self.music_analysis.cancel();
@@ -378,6 +605,7 @@ impl AurisApp {
         let generation = self.music_analysis.generation;
         let control = AnalysisControl::default();
         self.music_analysis.control = Some(control.clone());
+        self.analysis_panel = true;
         self.set_status(self.t(Key::AnalysisRunning));
         cx.spawn(async move |this, cx| {
             let result = cx

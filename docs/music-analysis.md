@@ -12,14 +12,16 @@ MuScriptor is a separate noncommercial option requiring acknowledgement on every
 
 ## Use the desktop controls
 
-The inspector's **Analyze Chords across Tracks** button analyzes the project. A note track's
-context menu offers **Analyze Written Chords** for that track. Known percussion and muted
+The **Analysis** menu collects chord estimation, audio analysis, transcription, instrument
+recognition and drum measurement. **Analyze Chords across Tracks** analyzes the project;
+**Analyze Written Chords** analyzes the selected note track. Known percussion and muted
 material are excluded. The default resolution is one quarter-note beat.
 
-An audio clip's context menu offers **Analyze Audio BPM / Chords** and **Transcribe Isolated
-Melody**. Import a file normally to use these controls. Analysis reads one pass of the trimmed
+Select an audio clip and choose **Analyze Audio BPM / Chords** or **Transcribe Isolated
+Melody** from **Analysis**. Import a file normally to use these controls. Analysis reads one pass of the trimmed
 source before effects and time stretching. A background worker reports progress and can be
-cancelled from the inspector. The existing synchronous decode/resample steps finish before
+cancelled from the dedicated analysis panel. **Analysis → Analysis Results…** reopens the panel
+and its acceptance controls. The existing synchronous decode/resample steps finish before
 cancellation is observed; the analysis itself checks between frames.
 
 **View Analysis Draft** shows chord alternatives and their scores, BPM alternatives, and note
