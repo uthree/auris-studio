@@ -156,6 +156,12 @@ pitch and energy curves to the returned frame query, and sends that query to
 not contain lyrics and therefore cannot be rendered through this backend; full singer tracks and
 note previews can.
 
+A standalone prolonged-sound mark (`ー`) is expanded to the preceding vowel only in the
+outgoing score: `こ・ー・ひ・ー` is sent as `こ・オ・ひ・イ`. Notes, rests, pitches,
+durations and the saved lyrics remain unchanged. A mark without a preceding vowel is reported
+with its note number. HTTP failures include the Engine's explanation, such as the lyric it
+refused, instead of only a status code.
+
 The library's **Set Up VOICEVOX…** row opens a connection editor for the Engine URL and the query
 and frame-decode style IDs. The same screen can choose and start a local Engine executable, check
 `/version` and `/singers`, and save a `*.voicevox.json` entry into Auris Studio's managed Voices

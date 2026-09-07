@@ -60,6 +60,7 @@ fn default_frame_rate() -> f64 {
 /// VOICEVOX 0.25.2 rounds that consonant down to zero frames and fails its score query.
 fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingError> {
     let mut score = score.clone();
+    normalize_long_vowels(&mut score)?;
     let rest = || SingerNote {
         key: None,
         frame_length: padding,
@@ -81,6 +82,57 @@ fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingEr
         _ => score.notes.push(rest()),
     }
     Ok(score)
+}
+
+/// The Engine accepts vowel kana, but rejects a prolonged-sound mark as a standalone lyric.
+/// Keep the note boundaries and the stored score intact; only the outgoing spelling changes.
+fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
+    let mut vowel: Option<&str> = None;
+    for (index, note) in score.notes.iter_mut().enumerate() {
+        if note.key.is_none() {
+            continue;
+        }
+        if note.lyric.trim() == "ー" {
+            note.lyric = vowel.ok_or_else(|| SingError::Inference(format!(
+                "VOICEVOX: note {} has lyric 'ー' without a preceding vowel; enter ア, イ, ウ, エ or オ",
+                index + 1
+            )))?.to_string();
+        }
+        vowel = auris_vocal::kana_phonemes(note.lyric.trim()).and_then(|phonemes| {
+            match phonemes.last().map(String::as_str) {
+                Some("a") => Some("ア"),
+                Some("i") => Some("イ"),
+                Some("ɯ") => Some("ウ"),
+                Some("e") => Some("エ"),
+                Some("o") => Some("オ"),
+                _ => None,
+            }
+        });
+    }
+    Ok(())
+}
+
+/// Keep the Engine's explanation: a bare HTTP 400 hides which lyric it refused.
+fn request_error(endpoint: &str, error: ureq::Error) -> SingError {
+    let reason = match error {
+        ureq::Error::Status(status, response) => {
+            let mut body = String::new();
+            let _ = response.into_reader().take(8192).read_to_string(&mut body);
+            let detail = serde_json::from_str::<Value>(&body)
+                .ok()
+                .and_then(|body| body.get("detail").cloned())
+                .map(|detail| {
+                    detail
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| detail.to_string())
+                })
+                .unwrap_or_else(|| body.trim().to_string());
+            format!("HTTP {status}: {detail}")
+        }
+        error => error.to_string(),
+    };
+    SingError::Inference(format!("VOICEVOX {endpoint}: {reason}"))
 }
 
 pub(crate) struct VoicevoxBackend {
@@ -164,7 +216,7 @@ impl VoicevoxBackend {
         let url = format!("{}{endpoint}?speaker={style}", self.config.url);
         let response = ureq::post(&url)
             .send_json(body)
-            .map_err(|error| SingError::Inference(format!("VOICEVOX {endpoint}: {error}")))?;
+            .map_err(|error| request_error(endpoint, error))?;
         response
             .into_json()
             .map_err(|error| SingError::Inference(format!("VOICEVOX {endpoint}: {error}")))
@@ -174,7 +226,7 @@ impl VoicevoxBackend {
         let url = format!("{}/frame_synthesis?speaker={style}", self.config.url);
         let response = ureq::post(&url)
             .send_json(query)
-            .map_err(|error| SingError::Inference(format!("VOICEVOX /frame_synthesis: {error}")))?;
+            .map_err(|error| request_error("/frame_synthesis", error))?;
         let mut bytes = Vec::new();
         response
             .into_reader()
@@ -477,6 +529,73 @@ mod tests {
 
     fn request_body(request: &str) -> Value {
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    #[test]
+    fn prolonged_vowels_keep_notes_rests_and_the_original_score() {
+        for (mora, vowel) in [
+            ("ラ", "ア"),
+            ("ひ", "イ"),
+            ("シュ", "ウ"),
+            ("て", "エ"),
+            ("きょ", "オ"),
+        ] {
+            let notes = [mora, "ー", "", "ー"]
+                .into_iter()
+                .enumerate()
+                .map(|(index, lyric)| SingerNote {
+                    key: (!lyric.is_empty()).then_some(60 + index as u8),
+                    frame_length: 20 + index as u32,
+                    lyric: lyric.into(),
+                })
+                .collect();
+            let original = SingerScore { notes };
+            let padded = padded_score(&original, 94).unwrap();
+            assert_eq!(original.notes[1].lyric, "ー");
+            for (source, outgoing) in original.notes.iter().zip(&padded.notes[1..5]) {
+                assert_eq!(outgoing.key, source.key);
+                assert_eq!(outgoing.frame_length, source.frame_length);
+                assert_eq!(
+                    outgoing.lyric,
+                    if source.lyric == "ー" {
+                        vowel
+                    } else {
+                        &source.lyric
+                    }
+                );
+            }
+        }
+        for lyrics in [vec!["ー"], vec!["か", "ン", "ー"], vec!["か", "ッ", "ー"]] {
+            let mut score = SingerScore {
+                notes: lyrics
+                    .into_iter()
+                    .map(|lyric| SingerNote {
+                        key: Some(60),
+                        frame_length: 20,
+                        lyric: lyric.into(),
+                    })
+                    .collect(),
+            };
+            assert!(
+                normalize_long_vowels(&mut score)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("without a preceding vowel")
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_queries_report_the_engines_lyric_detail() {
+        let body = serde_json::to_string(&json!({"detail": "lyricが不正です: ー"})).unwrap();
+        let response = ureq::Response::new(400, "Bad Request", &body).unwrap();
+        let error = request_error(
+            "/sing_frame_audio_query",
+            ureq::Error::Status(400, response),
+        )
+        .to_string();
+        assert!(error.contains("HTTP 400"));
+        assert!(error.contains("lyricが不正です: ー"));
     }
 
     #[test]
