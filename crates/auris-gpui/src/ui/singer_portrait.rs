@@ -135,10 +135,18 @@ impl AurisApp {
                     .h(px(180.0))
                     .flex_shrink_0()
                     .min_w_0()
-                    .py_1()
+                    .overflow_hidden()
                     .child(
+                        // GPUI assigns the image's intrinsic aspect ratio during layout. A
+                        // block can grow from its width even with a requested height, so cap
+                        // the image itself before Contain fits the complete figure inside it.
                         img(Arc::clone(image))
-                            .size_full()
+                            .debug_selector(|| "singer-portrait-image".into())
+                            .w_full()
+                            .h(px(180.0))
+                            .max_h(px(180.0))
+                            .min_w_0()
+                            .min_h_0()
                             .object_fit(ObjectFit::Contain),
                     )
                     .into_any_element(),
@@ -214,6 +222,47 @@ mod tests {
         let generation = app.singer_portraits.generation;
         app.singer_portraits.pending = Some((source.clone(), generation));
         app.singer_portraits.finish(source, generation, result);
+    }
+
+    #[gpui::test]
+    fn portrait_image_stays_inside_its_row_and_above_the_insert_controls(cx: &mut TestAppContext) {
+        let file = VoiceFile::new();
+        let (app, cx, track, _) = with_a_singer_clip(cx);
+        app.update(cx, |this, _| {
+            this.panels = Default::default();
+            this.select_track(track);
+            this.session.set_singer_voice(track, Some(&file.0)).unwrap();
+        });
+        for (width, height) in [(256, 512), (512, 128), (512, 512)] {
+            app.update(cx, |this, _| {
+                let source = this.session.singer_portrait_source(track).unwrap().unwrap();
+                supply(
+                    this,
+                    source,
+                    Ok(Some(Arc::new(RenderImage::new(vec![Frame::new(
+                        RgbaImage::from_pixel(width, height, Rgba([60, 120, 180, 128])),
+                    )])))),
+                );
+            });
+            for window_width in [640.0, 960.0, 1600.0] {
+                resize(&app, cx, size(px(window_width), px(1200.0)));
+                let row = cx.debug_bounds("singer-portrait").unwrap();
+                let image = cx.debug_bounds("singer-portrait-image").unwrap();
+                let insert = cx.debug_bounds("inspector-insert-add").unwrap();
+                assert!(
+                    image.left() >= row.left() && image.right() <= row.right(),
+                    "{width}x{height}: image must fit the row width"
+                );
+                assert!(
+                    image.top() >= row.top() && image.bottom() <= row.bottom(),
+                    "{width}x{height}: image {image:?} must fit row {row:?}"
+                );
+                assert!(
+                    image.bottom() <= insert.top(),
+                    "artwork cannot overlap the insert controls"
+                );
+            }
+        }
     }
 
     #[gpui::test]

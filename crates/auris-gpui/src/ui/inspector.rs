@@ -280,6 +280,7 @@ impl AurisApp {
                         // row that adds the next effect is also where the end of the chain is,
                         // and it is the only way to say "last" with the pointer.
                         div()
+                            .debug_selector(|| "inspector-insert-add".into())
                             .on_mouse_move(cx.listener(
                                 move |this, _: &gpui::MouseMoveEvent, _, cx| {
                                     this.drag_effect_onto(Some(track_id), None, cx);
