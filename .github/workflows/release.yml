@@ -125,8 +125,8 @@ jobs:
         run: tools/fetch-soundfonts.sh
 
       - name: Fetch the shipped Japanese dictionary
-        shell: bash
-        run: tools/fetch-dictionary.sh
+        shell: pwsh
+        run: ./tools/fetch-dictionary.ps1 -AurisPath ./target/release/auris.exe
 
       - name: Assemble the archive
         shell: bash

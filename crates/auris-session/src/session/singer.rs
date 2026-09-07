@@ -122,6 +122,11 @@ impl Session {
                 Ok(dictionary) => self.japanese = Some(dictionary),
                 Err(error) => log::warn!("the shipped dictionary did not load: {error}"),
             }
+        } else {
+            log::warn!(
+                "the shipped Japanese dictionary was not found; kanji lyrics need an installed NAIST dictionary or a dictionary selected in Settings. Searched: {:?}",
+                crate::library::dictionary_roots()
+            );
         }
     }
 
@@ -1551,6 +1556,34 @@ mod tests {
     use crate::session::fixtures::{Scratch, session};
     use auris_core::time::Ticks;
     use auris_core::{Note, default_frame_hop};
+
+    /// Opt in with the real dictionary also used by auris-vocal's pronunciation test.
+    /// The folder must be on the shipped search path; no settings override is applied here.
+    #[test]
+    fn the_shipped_dictionary_loads_at_startup_and_after_clearing_an_override() {
+        let Some(expected) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let expected = std::path::PathBuf::from(expected);
+        let mut session =
+            Session::new(crate::SessionOptions::headless().with_shipped_dictionary(true)).unwrap();
+        for _ in 0..2 {
+            let loaded = session
+                .japanese_dictionary()
+                .expect("the shipped dictionary loaded");
+            assert_eq!(
+                std::fs::canonicalize(loaded).unwrap(),
+                std::fs::canonicalize(&expected).unwrap()
+            );
+            let measured = session.measure_lyrics("歌", auris_core::time::TimeSignature::new(4, 4));
+            assert_eq!(
+                measured.notes, 2,
+                "kanji is read as う・た without a settings override"
+            );
+            assert_eq!(measured.lines, [Some(2)]);
+            session.set_japanese_dictionary(None).unwrap();
+        }
+    }
 
     /// A session holding one singer track with one four-beat clip of `count` quarter notes.
     fn sung(count: usize) -> (crate::Session, TrackId, ClipId) {
