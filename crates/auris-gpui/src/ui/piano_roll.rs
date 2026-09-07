@@ -396,18 +396,77 @@ fn paint_ornament_handles(
     }
 }
 
-/// Draws the sung pitch contour over the notes.
+/// Clips track-wide pitch runs to the union of the edited clip's written note spans.
 ///
-/// Trimmed to the edited clip's span — the frames cover the whole track, and the
-/// neighbouring clips are already ghosts — with y at the centre of the row a note at that
-/// pitch would occupy, which is where the eye lines a curve up against a note.
+/// Interpolating at note boundaries keeps short notes visible and breaks even a rest that falls
+/// between two sampled points. Overlapping notes share one span so the curve is painted once.
+fn note_pitch_contour(
+    contour: &PitchContour,
+    notes: &[Note],
+    clip_start: Ticks,
+    clip_length: Ticks,
+) -> PitchContour {
+    let mut spans: Vec<(Ticks, Ticks)> = notes
+        .iter()
+        .filter_map(|note| {
+            let from = note.start.max(Ticks::ZERO);
+            let to = note.end().min(clip_length);
+            (from < to).then_some((clip_start + from, clip_start + to))
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut merged: Vec<(Ticks, Ticks)> = Vec::new();
+    for (from, to) in spans {
+        if let Some(last) = merged.last_mut()
+            && from <= last.1
+        {
+            last.1 = last.1.max(to);
+        } else {
+            merged.push((from, to));
+        }
+    }
+
+    let mut clipped = Vec::new();
+    for run in contour.iter().filter(|run| run.len() > 1) {
+        for &(from, to) in &merged {
+            let from = from.max(run[0].0);
+            let to = to.min(run[run.len() - 1].0);
+            if from >= to {
+                continue;
+            }
+            let boundary = |tick: Ticks| {
+                let next = run.partition_point(|(at, _)| *at <= tick);
+                let (before, pitch) = run[next - 1];
+                if before == tick {
+                    return (tick, pitch);
+                }
+                let (after, next_pitch) = run[next];
+                let fraction = (tick - before).raw() as f32 / (after - before).raw() as f32;
+                (tick, pitch + (next_pitch - pitch) * fraction)
+            };
+            let first = run.partition_point(|(tick, _)| *tick <= from);
+            let end = run.partition_point(|(tick, _)| *tick < to);
+            let mut segment = Vec::with_capacity(end - first + 2);
+            segment.push(boundary(from));
+            segment.extend_from_slice(&run[first..end]);
+            segment.push(boundary(to));
+            clipped.push(segment);
+        }
+    }
+    clipped
+}
+
+/// Draws the sung pitch contour only over written notes in the edited clip.
+///
+/// The y position is the centre of the row a note at that pitch would occupy.
 #[allow(clippy::too_many_arguments)]
 fn paint_f0_curve(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     contour: &PitchContour,
-    from: Ticks,
-    to: Ticks,
+    notes: &[Note],
+    clip_start: Ticks,
+    clip_length: Ticks,
     view: &TimelineView,
     pitch_view: &PitchView,
     theme: &Theme,
@@ -415,10 +474,9 @@ fn paint_f0_curve(
     let centre = |pitch: f32| {
         (pitch_view.top_pitch as f32 - pitch) * pitch_view.row_height + pitch_view.row_height / 2.0
     };
-    for run in contour {
+    for run in note_pitch_contour(contour, notes, clip_start, clip_length) {
         let drawn: Vec<gpui::Point<Pixels>> = run
             .iter()
-            .filter(|(tick, _)| *tick >= from && *tick < to)
             .map(|(tick, pitch)| {
                 point(
                     bounds.origin.x + view.tick_to_x(*tick),
@@ -751,8 +809,9 @@ impl AurisApp {
                                                     window,
                                                     bounds,
                                                     &geometry.contour,
+                                                    &notes,
                                                     clip_start,
-                                                    clip_start + clip_length,
+                                                    clip_length,
                                                     &view,
                                                     &pitch_view,
                                                     &theme,
@@ -2511,6 +2570,66 @@ mod tests {
         assert_eq!(runs[0][0].0, Ticks::ZERO);
         assert!(runs[0][1].0 > Ticks::ZERO);
         assert!(runs[1][0].0 > runs[0][1].0);
+    }
+
+    #[test]
+    fn the_pitch_curve_stops_at_notes_and_splits_even_sub_frame_rests() {
+        let contour = vec![
+            (0..=6)
+                .map(|index| (Ticks(index * 10), 60.0 + index as f32))
+                .collect(),
+        ];
+        let notes = [
+            Note::new(60, Ticks(10), Ticks(15)),
+            Note::new(62, Ticks(26), Ticks(12)),
+            Note::new(64, Ticks(41), Ticks(1)),
+        ];
+        let drawn = note_pitch_contour(&contour, &notes, Ticks::ZERO, Ticks(60));
+        assert_eq!(
+            drawn,
+            vec![
+                vec![(Ticks(10), 61.0), (Ticks(20), 62.0), (Ticks(25), 62.5)],
+                vec![(Ticks(26), 62.6), (Ticks(30), 63.0), (Ticks(38), 63.8)],
+                vec![(Ticks(41), 64.1), (Ticks(42), 64.2)],
+            ],
+            "no leading/trailing curve or bridge over a rest, even between sampled points"
+        );
+        assert!(note_pitch_contour(&contour, &[], Ticks::ZERO, Ticks(60)).is_empty());
+    }
+
+    #[test]
+    fn the_pitch_curve_uses_absolute_time_and_stays_inside_the_clip() {
+        let contour = vec![vec![(Ticks(90), 60.0), (Ticks(150), 66.0)]];
+        let notes = [
+            Note::new(60, Ticks(-10), Ticks(20)),
+            Note::new(64, Ticks(30), Ticks(30)),
+            Note::new(67, Ticks(50), Ticks(10)),
+        ];
+        assert_eq!(
+            note_pitch_contour(&contour, &notes, Ticks(100), Ticks(40)),
+            vec![
+                vec![(Ticks(100), 61.0), (Ticks(110), 62.0)],
+                vec![(Ticks(130), 64.0), (Ticks(140), 65.0)],
+            ]
+        );
+    }
+
+    #[test]
+    fn overlapping_notes_share_a_pitch_curve_without_joining_unvoiced_spans() {
+        let contour = vec![
+            vec![(Ticks(0), 60.0), (Ticks(10), 61.0), (Ticks(20), 62.0)],
+            vec![(Ticks(40), 64.0), (Ticks(50), 65.0), (Ticks(60), 66.0)],
+        ];
+        let notes = [
+            Note::new(64, Ticks(15), Ticks(50)),
+            Note::new(60, Ticks(0), Ticks(25)),
+            Note::new(62, Ticks(25), Ticks(15)),
+        ];
+        assert_eq!(
+            note_pitch_contour(&contour, &notes, Ticks::ZERO, Ticks(80)),
+            contour,
+            "overlapping and adjacent unsorted notes preserve each voiced run once"
+        );
     }
 
     #[test]
