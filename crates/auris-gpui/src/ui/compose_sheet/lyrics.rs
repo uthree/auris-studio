@@ -2,7 +2,7 @@
 //!
 //! The words started life in the one-line rename prompt, then in a page of their own over the
 //! sheet, and both were the same mistake at different sizes: the lyrics were somewhere else.
-//! They belong *on the sheet*, beside the form that plays them — so the sheet's third column is
+//! They belong *on the sheet*, beside the song controls — the lyrics column is
 //! the words themselves, one multi-line box per section in the order the form first plays them,
 //! and clicking a box makes it a real editor in place. Return breaks a line, because here a
 //! line is a phrase; Tab walks to the next section, because a verse is usually followed by
@@ -177,7 +177,7 @@ impl AurisApp {
         true
     }
 
-    /// The third column: a heading, then one box of words per section the form plays.
+    /// The lyrics column: a heading, then one box of words per section the form plays.
     pub(crate) fn song_lyrics_rows(
         &mut self,
         dials: &SongDials,
@@ -219,7 +219,7 @@ impl AurisApp {
             .filter(|edit| edit.section == spec.name);
         let heading = format!(
             "{} · {} {}",
-            spec.name,
+            section_label(self, &spec.name),
             spec.bars,
             self.t(Key::SongBarsUnit)
         );
@@ -240,18 +240,20 @@ impl AurisApp {
                     || expected.lines.contains(&None)
                     || measure.lines.contains(&None)
             });
+        let over = measure.bars > spec.bars || mismatch;
+        let show_counts = self.song_advanced || over || measure.lines.contains(&None);
         let counts: Vec<gpui::SharedString> = measure
             .lines
             .iter()
             .map(|line| match line {
+                _ if !show_counts => "".into(),
                 Some(0) => "".into(),
                 Some(count) => count.to_string().into(),
                 // A line nobody can read — kanji with no dictionary — measures as a shrug.
                 None => "?".into(),
             })
             .collect();
-        let over = measure.bars > spec.bars || mismatch;
-        let tally = (measure.notes > 0).then(|| {
+        let tally = (measure.notes > 0 && (self.song_advanced || over)).then(|| {
             format!(
                 "{} {} · {} / {} {}",
                 measure.notes,
@@ -387,38 +389,102 @@ impl AurisApp {
                             .child(tally)
                     })),
             )
-            .child(crate::ui::widgets::button(
-                ("song-melody-source", index),
-                format!(
-                    "{} · {}",
-                    self.t(Key::SongMelodyFrom),
-                    spec.melody_from
-                        .as_deref()
-                        .unwrap_or(self.t(Key::SongChordsOwn))
-                ),
-                crate::ui::widgets::ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
-            ))
-            .children(expected.map(|expected| {
-                div()
-                    .text_xs()
-                    .text_color(if mismatch {
-                        theme.danger
-                    } else {
-                        theme.text_faint
+            .when(self.song_advanced, |this| {
+                this.child(crate::ui::widgets::button(
+                    ("song-melody-source", index),
+                    format!(
+                        "{} · {}",
+                        self.t(Key::SongMelodyFrom),
+                        spec.melody_from
+                            .as_deref()
+                            .unwrap_or(self.t(Key::SongChordsOwn))
+                    ),
+                    crate::ui::widgets::ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
+                ))
+            })
+            .children(
+                expected
+                    .filter(|expected| {
+                        mismatch || (self.song_advanced && !expected.phrases.is_empty())
                     })
-                    .child(format!(
-                        "{}: {:?} / {:?}",
-                        self.t(Key::SongLyricsMatch),
-                        measure.phrases,
-                        expected.phrases
-                    ))
-            }))
+                    .map(|expected| {
+                        div()
+                            .debug_selector(move || format!("song-lyrics-match-{index}"))
+                            .text_xs()
+                            .text_color(if mismatch {
+                                theme.danger
+                            } else {
+                                theme.text_faint
+                            })
+                            .child(self.t(Key::SongLyricsMatch))
+                            .child(
+                                div().child(
+                                    self.t(Key::SongLyricsCounts)
+                                        .replace("{actual}", &phrase_counts(self, &measure.phrases))
+                                        .replace(
+                                            "{expected}",
+                                            &phrase_counts(self, &expected.phrases),
+                                        ),
+                                ),
+                            )
+                    }),
+            )
+            .when(
+                !self.song_advanced && source.is_some() && !mismatch,
+                |this| {
+                    this.child(
+                        div().text_xs().text_color(theme.text_faint).child(
+                            self.t(Key::SongSharedLyricsHint)
+                                .replace("{section}", &section_label(self, &source.unwrap().name)),
+                        ),
+                    )
+                },
+            )
             .child(words)
             .into_any_element()
+    }
+}
+
+/// Render phrase sizes without Rust's debug-list notation.
+fn phrase_counts(app: &AurisApp, counts: &[usize]) -> String {
+    if counts.is_empty() {
+        app.t(Key::LyricsNoWords).to_string()
+    } else {
+        counts
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(" / ")
+    }
+}
+
+/// Give preset section names human labels while preserving custom names and stored identifiers.
+fn section_label(app: &AurisApp, name: &str) -> String {
+    for (prefix, key) in [
+        ("verse", Key::SongVerseLabel),
+        ("chorus", Key::SongChorusLabel),
+    ] {
+        if let Some(suffix) = name.strip_prefix(prefix) {
+            let suffix = suffix.trim();
+            let number = if suffix.is_empty() {
+                Some(1)
+            } else {
+                suffix.parse::<u32>().ok()
+            };
+            if let Some(number) = number {
+                return app.t(key).replace("{n}", &number.to_string());
+            }
+        }
+    }
+    match name {
+        "intro" => app.t(Key::SongIntroLabel).to_string(),
+        "outro" => app.t(Key::SongOutroLabel).to_string(),
+        "bridge" => app.t(Key::SongBridgeLabel).to_string(),
+        _ => name.to_string(),
     }
 }
 
@@ -473,6 +539,43 @@ mod tests {
     }
 
     #[gpui::test]
+    fn basic_lyrics_show_mismatch_feedback_without_an_empty_count_warning(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let later = app.update(cx, |this, _| {
+            let spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+            this.song_sheet = Some(super::super::song_dials(&spec));
+            this.song_sheet
+                .as_ref()
+                .unwrap()
+                .sections
+                .iter()
+                .position(|s| s.name == "verse2")
+                .unwrap()
+        });
+        crate::harness::paint(&app, cx);
+        let selector: &'static str =
+            Box::leak(format!("song-lyrics-match-{later}").into_boxed_str());
+        assert!(cx.debug_bounds(selector).is_none());
+        app.update(cx, |this, _| {
+            for section in &mut this.song_sheet.as_mut().unwrap().sections {
+                if section.name == "verse" {
+                    section.lyrics = "さくら".into();
+                }
+                if section.name == "verse2" {
+                    section.lyrics = "はる".into();
+                }
+            }
+        });
+        crate::harness::paint(&app, cx);
+        assert!(
+            cx.debug_bounds(selector).is_some(),
+            "basic mode keeps actionable lyric feedback"
+        );
+    }
+
+    #[gpui::test]
     fn mismatched_later_words_leave_the_sheet_and_document_intact(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
@@ -497,6 +600,7 @@ mod tests {
         resize(&app, cx, gpui::size(gpui::px(1600.0), gpui::px(2000.0)));
         let band = app.update(cx, |this, _| {
             this.open_song_sheet();
+            this.song_advanced = true;
             this.song_sheet
                 .as_ref()
                 .unwrap()

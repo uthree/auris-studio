@@ -1,6 +1,7 @@
 //! The panel: the sheet drawn, and the handful of things its buttons hand back.
 //!
-//! The song, form and words reflow into fewer columns in smaller windows. A single scrolling
+//! Basic controls and lyrics lead; detailed settings disclose the form and instrument roster.
+//! Both layouts reflow into fewer columns in smaller windows. A single scrolling
 //! body holds the fields and part cards, while the title and actions stay visible. The pickers
 //! the buttons open are in `menus`; the words' own rules and elements are in `lyrics`.
 
@@ -63,7 +64,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let viewport = window.viewport_size();
         let width = (viewport.width - px(32.0)).max(px(0.0)).min(px(1120.0));
-        let columns = if width >= px(1050.0) {
+        let columns = if self.song_advanced && width >= px(1050.0) {
             3
         } else if width >= px(760.0) {
             2
@@ -75,6 +76,7 @@ impl AurisApp {
             .use_keyed_state("song-sheet-scroll", cx, |_, _| gpui::ScrollHandle::new())
             .read(cx)
             .clone();
+        let toggle_scroll = scroll.clone();
         let spec = song_spec(&dials);
         let length = format!(
             "{} · {} {}",
@@ -114,10 +116,35 @@ impl AurisApp {
                         .border_color(theme.border)
                         .child(
                             div()
+                                .flex()
                                 .flex_shrink_0()
-                                .text_sm()
-                                .text_color(theme.text)
-                                .child(self.t(Key::SongSheetTitle)),
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_sm()
+                                        .text_color(theme.text)
+                                        .child(self.t(Key::SongSheetTitle)),
+                                )
+                                .child(button(
+                                    "song-advanced",
+                                    self.t(if self.song_advanced {
+                                        Key::SongBasic
+                                    } else {
+                                        Key::SongAdvanced
+                                    }),
+                                    ButtonStyle::Normal,
+                                    self.song_advanced,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.song_advanced = !this.song_advanced;
+                                        // Both layouts start at their first field, without changing the song.
+                                        toggle_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+                                        cx.notify();
+                                    }),
+                                )),
                         )
                         .child(
                             div()
@@ -139,6 +166,16 @@ impl AurisApp {
                                                 .gap_3()
                                                 .child(
                                                     div()
+                                                        .text_xs()
+                                                        .text_color(theme.text_muted)
+                                                        .child(self.t(if self.song_advanced {
+                                                            Key::SongAdvancedHint
+                                                        } else {
+                                                            Key::SongStartHint
+                                                        })),
+                                                )
+                                                .child(
+                                                    div()
                                                         .grid()
                                                         .grid_cols(columns)
                                                         .gap_4()
@@ -156,19 +193,22 @@ impl AurisApp {
                                                                     self.song_rows(&dials, cx),
                                                                 ),
                                                         )
-                                                        .child(
-                                                            div()
-                                                                .debug_selector(|| {
-                                                                    "song-sheet-form".to_string()
-                                                                })
-                                                                .flex()
-                                                                .flex_col()
-                                                                .gap_1()
-                                                                .min_w_0()
-                                                                .children(
-                                                                    self.song_form_rows(&dials, cx),
-                                                                ),
-                                                        )
+                                                        .when(self.song_advanced, |this| {
+                                                            this.child(
+                                                                div()
+                                                                    .debug_selector(|| {
+                                                                        "song-sheet-form"
+                                                                            .to_string()
+                                                                    })
+                                                                    .flex()
+                                                                    .flex_col()
+                                                                    .gap_1()
+                                                                    .min_w_0()
+                                                                    .children(self.song_form_rows(
+                                                                        &dials, cx,
+                                                                    )),
+                                                            )
+                                                        })
                                                         .child(
                                                             div()
                                                                 .debug_selector(|| {
@@ -178,9 +218,11 @@ impl AurisApp {
                                                                 .flex_col()
                                                                 .gap_1()
                                                                 .min_w_0()
-                                                                .when(columns == 2, |this| {
-                                                                    this.col_span_full()
-                                                                })
+                                                                .when(
+                                                                    self.song_advanced
+                                                                        && columns == 2,
+                                                                    |this| this.col_span_full(),
+                                                                )
                                                                 .children(
                                                                     self.song_lyrics_rows(
                                                                         &dials, cx,
@@ -188,29 +230,39 @@ impl AurisApp {
                                                                 ),
                                                         ),
                                                 )
-                                                .child(divider(&theme))
-                                                .child(
-                                                    div()
-                                                        .debug_selector(|| {
-                                                            "song-sheet-drums".to_string()
-                                                        })
-                                                        .flex()
-                                                        .flex_col()
-                                                        .gap_2()
-                                                        .children(self.song_drum_rows(&dials, cx)),
-                                                )
-                                                .child(divider(&theme))
-                                                .child(self.song_parts_header(&dials, cx))
-                                                .child(
-                                                    div()
-                                                        .debug_selector(|| {
-                                                            "song-sheet-parts".to_string()
-                                                        })
-                                                        .grid()
-                                                        .grid_cols(if columns == 3 { 2 } else { 1 })
-                                                        .gap_2()
-                                                        .children(self.song_part_rows(&dials, cx)),
-                                                ),
+                                                .when(self.song_advanced, |this| {
+                                                    this.child(divider(&theme))
+                                                        .child(
+                                                            div()
+                                                                .debug_selector(|| {
+                                                                    "song-sheet-drums".to_string()
+                                                                })
+                                                                .flex()
+                                                                .flex_col()
+                                                                .gap_2()
+                                                                .children(
+                                                                    self.song_drum_rows(&dials, cx),
+                                                                ),
+                                                        )
+                                                        .child(divider(&theme))
+                                                        .child(self.song_parts_header(&dials, cx))
+                                                        .child(
+                                                            div()
+                                                                .debug_selector(|| {
+                                                                    "song-sheet-parts".to_string()
+                                                                })
+                                                                .grid()
+                                                                .grid_cols(if columns == 3 {
+                                                                    2
+                                                                } else {
+                                                                    1
+                                                                })
+                                                                .gap_2()
+                                                                .children(
+                                                                    self.song_part_rows(&dials, cx),
+                                                                ),
+                                                        )
+                                                }),
                                         ),
                                 )
                                 .child(
@@ -249,32 +301,34 @@ impl AurisApp {
                                         cx.notify();
                                     }),
                                 ))
-                                .child(button(
-                                    "song-sheet-save",
-                                    self.t(Key::SongSaveSpec),
-                                    ButtonStyle::Normal,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, window, cx| {
-                                        this.save_song_specification(window, cx);
-                                    }),
-                                ))
-                                .child(button(
-                                    "song-sheet-take",
-                                    self.t(Key::SongAnotherTake),
-                                    ButtonStyle::Normal,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        if let Some(dials) = this.song_sheet.as_mut() {
-                                            another_take(dials);
-                                        }
-                                        this.write_song_from_sheet();
-                                        cx.notify();
-                                    }),
-                                ))
+                                .when(self.song_advanced, |this| {
+                                    this.child(button(
+                                        "song-sheet-save",
+                                        self.t(Key::SongSaveSpec),
+                                        ButtonStyle::Normal,
+                                        false,
+                                        theme.accent,
+                                        &theme,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.save_song_specification(window, cx);
+                                        }),
+                                    ))
+                                    .child(button(
+                                        "song-sheet-take",
+                                        self.t(Key::SongAnotherTake),
+                                        ButtonStyle::Normal,
+                                        false,
+                                        theme.accent,
+                                        &theme,
+                                        cx.listener(|this, _, _, cx| {
+                                            if let Some(dials) = this.song_sheet.as_mut() {
+                                                another_take(dials);
+                                            }
+                                            this.write_song_from_sheet();
+                                            cx.notify();
+                                        }),
+                                    ))
+                                })
                                 .child(button(
                                     "song-sheet-write",
                                     self.t(Key::SongWrite),
@@ -378,88 +432,76 @@ impl AurisApp {
             )
             .into_any_element(),
         );
-        rows.push(
-            self.sheet_picker(
-                "song-key",
-                Key::SongKey,
-                dials.key.to_text(),
-                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    let title = this.t(Key::SongKey);
-                    let current = this
-                        .song_sheet
-                        .as_ref()
-                        .map_or_else(String::new, |dials| dials.key.to_text());
-                    this.open_prompt(Prompt::new(title, PromptTarget::SongKey, current));
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
-                "song-meter",
-                Key::SongMeter,
-                dials.meter.to_string(),
-                Self::opens_menu(cx, |this, at| this.song_meter_menu(at)),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
-                "song-mood",
-                Key::SongMood,
-                match mood_word(dials.mood) {
-                    Some(name) => this_word(self, name),
-                    None => self.t(Key::SongMoodCustom).to_string(),
-                },
-                Self::opens_menu(cx, |this, at| this.song_mood_menu(at)),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
-                "song-groove",
-                Key::PartGroove,
-                dials.groove.clone(),
-                Self::opens_menu(cx, |this, at| this.song_groove_menu(at)),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
-                "song-seed",
-                Key::PartSeed,
-                dials.seed.to_string(),
-                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    let title = this.t(Key::PartSeed);
-                    let current = this
-                        .song_sheet
-                        .as_ref()
-                        .map_or_else(String::new, |dials| dials.seed.to_string());
-                    this.open_prompt(Prompt::new(title, PromptTarget::SongSeed, current));
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-
+        if self.song_advanced {
+            rows.push(
+                self.sheet_picker(
+                    "song-key",
+                    Key::SongKey,
+                    dials.key.to_text(),
+                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                        let title = this.t(Key::SongKey);
+                        let current = this
+                            .song_sheet
+                            .as_ref()
+                            .map_or_else(String::new, |dials| dials.key.to_text());
+                        this.open_prompt(Prompt::new(title, PromptTarget::SongKey, current));
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+            rows.push(
+                self.sheet_picker(
+                    "song-meter",
+                    Key::SongMeter,
+                    dials.meter.to_string(),
+                    Self::opens_menu(cx, |this, at| this.song_meter_menu(at)),
+                )
+                .into_any_element(),
+            );
+            rows.push(
+                self.sheet_picker(
+                    "song-mood",
+                    Key::SongMood,
+                    match mood_word(dials.mood) {
+                        Some(name) => this_word(self, name),
+                        None => self.t(Key::SongMoodCustom).to_string(),
+                    },
+                    Self::opens_menu(cx, |this, at| this.song_mood_menu(at)),
+                )
+                .into_any_element(),
+            );
+            rows.push(
+                self.sheet_picker(
+                    "song-groove",
+                    Key::PartGroove,
+                    dials.groove.clone(),
+                    Self::opens_menu(cx, |this, at| this.song_groove_menu(at)),
+                )
+                .into_any_element(),
+            );
+            rows.push(
+                self.sheet_picker(
+                    "song-seed",
+                    Key::PartSeed,
+                    dials.seed.to_string(),
+                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                        let title = this.t(Key::PartSeed);
+                        let current = this
+                            .song_sheet
+                            .as_ref()
+                            .map_or_else(String::new, |dials| dials.seed.to_string());
+                        this.open_prompt(Prompt::new(title, PromptTarget::SongSeed, current));
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
         rows.push(self.song_pad(dials, false, cx));
-        rows.push(self.song_pad(dials, true, cx));
-        rows.push(
-            button(
-                "song-advanced",
-                self.t(Key::SongAdvanced),
-                ButtonStyle::Normal,
-                self.song_advanced,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.song_advanced = !this.song_advanced;
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
+        if self.song_advanced {
+            rows.push(self.song_pad(dials, true, cx));
+        }
         for dial in SONG_DIALS {
             if !self.song_advanced && *dial != SongDial::Tempo {
                 continue;
@@ -1153,9 +1195,103 @@ mod window_tests {
     use crate::harness::{click, open, paint, resize};
 
     #[gpui::test]
+    fn basic_song_controls_reflow_and_disclosure_preserves_the_song_and_lyrics(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            assert!(!this.song_advanced);
+        });
+        for width in [1500.0, 900.0, 640.0] {
+            let viewport = size(px(width), px(600.0));
+            resize(&app, cx, viewport);
+            for selector in [
+                "song-sheet-form",
+                "song-sheet-drums",
+                "song-sheet-parts",
+                "song-rhythm-pad",
+                "song-key",
+                "song-meter",
+                "song-seed",
+                "song-sheet-save",
+                "song-sheet-take",
+            ] {
+                assert!(
+                    cx.debug_bounds(selector).is_none(),
+                    "{selector} is reserved for detailed settings"
+                );
+            }
+            let song = cx.debug_bounds("song-sheet-song").unwrap();
+            let lyrics = cx.debug_bounds("song-sheet-lyrics").unwrap();
+            if width >= 792.0 {
+                assert_eq!(song.top(), lyrics.top());
+                assert!(song.right() <= lyrics.left());
+            } else {
+                assert!(lyrics.top() >= song.bottom());
+            }
+            for selector in ["song-advanced", "song-sheet-write", "song-sheet-cancel"] {
+                let bounds = cx.debug_bounds(selector).unwrap();
+                assert!(bounds.left() >= px(0.0) && bounds.right() <= viewport.width);
+                assert!(bounds.top() >= px(0.0) && bounds.bottom() <= viewport.height);
+            }
+        }
+        app.update(cx, |this, _| {
+            let dials = this.song_sheet.as_mut().unwrap();
+            dials.seed = 827;
+            dials.motif = vec![0, 2, 4];
+            let verse = dials
+                .sections
+                .iter()
+                .position(|s| s.name == "verse")
+                .unwrap();
+            this.focus_section_lyrics(verse);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        let before = app.read_with(cx, |this, _| {
+            (this.song_sheet.clone(), this.lyrics_edit.clone())
+        });
+        for advanced in [true, false] {
+            click("song-advanced", cx);
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert_eq!(this.song_advanced, advanced);
+                assert_eq!((this.song_sheet.clone(), this.lyrics_edit.clone()), before);
+            });
+        }
+        cx.simulate_input("のはな");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit.as_ref().unwrap().field.content(),
+                "さくらのはな"
+            );
+            assert!(
+                this.song_sheet
+                    .as_ref()
+                    .unwrap()
+                    .sections
+                    .iter()
+                    .any(|s| s.lyrics == "さくらのはな")
+            );
+        });
+        click("song-sheet-write", cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.song_sheet.is_none());
+            let saved = SongSpec::parse(this.project().song_spec.as_deref().unwrap()).unwrap();
+            assert_eq!(saved.seed, 827);
+            assert_eq!(saved.motif, vec![0, 2, 4]);
+            assert_eq!(saved.sections["verse"].lyrics, "さくらのはな");
+        });
+    }
+
+    #[gpui::test]
     fn the_song_sheet_reflows_without_hiding_fields_or_actions(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
-        app.update(cx, |this, _| this.open_song_sheet());
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.song_advanced = true;
+        });
         // gpui's selector lookup requires a static name, as in the harness's menu helper.
         let last_part_selector: &'static str = Box::leak(
             app.read_with(cx, |this, _| {
@@ -1227,6 +1363,16 @@ mod window_tests {
                     cx.simulate_event(gpui::ScrollWheelEvent {
                         position: body.center(),
                         delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-10000.0))),
+                        ..Default::default()
+                    });
+                    paint(&app, cx);
+                    let name = cx.debug_bounds(last_part_selector).unwrap();
+                    cx.simulate_event(gpui::ScrollWheelEvent {
+                        position: body.center(),
+                        delta: gpui::ScrollDelta::Pixels(gpui::point(
+                            px(0.0),
+                            body.center().y - name.center().y,
+                        )),
                         ..Default::default()
                     });
                     paint(&app, cx);

@@ -134,7 +134,7 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{drag, open, paint};
+    use crate::harness::{click, drag, open, paint};
 
     #[gpui::test]
     fn song_pads_follow_a_gesture_on_both_axes_and_preserve_the_seed(
@@ -147,6 +147,10 @@ mod tests {
         });
         paint(&app, cx);
         for (id, detail) in [("song-mood-pad", false), ("song-rhythm-pad", true)] {
+            if detail {
+                click("song-advanced", cx);
+                paint(&app, cx);
+            }
             let before = app.read_with(cx, |this, _| this.song_sheet.clone().unwrap());
             let bounds = cx.debug_bounds(id).expect("song pad is visible");
             drag(

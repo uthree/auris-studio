@@ -887,9 +887,11 @@ pub mod composition {
     //! names its speaker. The session validates both before replacing the document and assigns
     //! the voice and speaker's timing tables to the generated vocal track in the same undo step.
     //! The desktop song sheet offers installed voices, a file picker and speaker selection,
-    //! including asynchronous VOICEVOX Engine discovery before any singer track exists. Two XY
-    //! pads control mood and harmonic/rhythmic character. A separate drum area selects one kit
-    //! source, while melodic parts have their own roster and add control.
+    //! including asynchronous VOICEVOX Engine discovery before any singer track exists. The basic
+    //! view pairs lyrics with style, voice, title, tempo and a brightness/energy XY pad. Detailed
+    //! settings discloses key, meter, groove, seed, the second XY pad and section/part controls;
+    //! toggling the presentation preserves every setting and the active lyrics editor. A separate
+    //! drum area selects one kit source, while melodic parts have their own roster and add control.
     //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
     //! specification's range, with an empty field following the song tempo.
     //!

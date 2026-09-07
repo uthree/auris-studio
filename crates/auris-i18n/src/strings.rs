@@ -706,8 +706,18 @@ strings! {
     SongSectionTempo { en: "Section Tempo", ja: "セクションのテンポ" }
     SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
     SongAdvanced { en: "Detailed settings", ja: "詳細設定" }
+    SongBasic { en: "Back to basics", ja: "基本設定に戻る" }
+    SongStartHint { en: "Choose a style, adjust the mood, then create your song. Lyrics are optional.", ja: "スタイルを選び、雰囲気を調整して曲を作りましょう。歌詞は空欄でも作れます。" }
+    SongAdvancedHint { en: "Adjust the form, chords, rhythm and instruments. Returning to basics keeps every setting.", ja: "曲の構成・コード進行・リズム・楽器を調整できます。基本設定に戻っても、設定は保持されます。" }
+    SongVerseLabel { en: "Verse {n}", ja: "{n}番 Aメロ" }
+    SongChorusLabel { en: "Chorus {n}", ja: "{n}番 サビ" }
+    SongIntroLabel { en: "Intro", ja: "イントロ" }
+    SongOutroLabel { en: "Outro", ja: "エンディング" }
+    SongBridgeLabel { en: "Bridge", ja: "ブリッジ" }
+    SongSharedLyricsHint { en: "Uses the melody from {section}. You can enter different lyrics.", ja: "{section}と同じメロディです。別の歌詞を入力できます。" }
     SongMelodyFrom { en: "Shared melody", ja: "メロディ共有" }
-    SongLyricsMatch { en: "Match the notes in each phrase", ja: "フレーズごとのノート数を合わせてください" }
+    SongLyricsMatch { en: "Match the notes in each phrase to the original lyrics", ja: "元の歌詞と、フレーズごとの音数を合わせてください" }
+    SongLyricsCounts { en: "These lyrics: {actual} · Original: {expected}", ja: "今の歌詞: {actual} ・ 元の歌詞: {expected}" }
     SongSectionTempoFollows { en: "Follow the Song", ja: "曲に合わせる" }
     // Writing a progression out, and keeping the one written. The second reaches past the song
     // into the book this installation carries.
@@ -744,7 +754,7 @@ strings! {
     SongPartNameTitle { en: "Name for this part", ja: "このパートの名前" }
     // The three things the sheet can do. "Another take" is the next seed rather than a random
     // one, which is what makes a take somebody liked reachable again.
-    SongWrite { en: "Write", ja: "書き出す" }
+    SongWrite { en: "Create Song", ja: "曲を作る" }
     SongAnotherTake { en: "Another Take", ja: "別テイク" }
     SongSaveSpec { en: "Save as Specification…", ja: "仕様ファイルに保存…" }
     // What the roles are called where a part names one. `Role::name` is the word the document

@@ -5,10 +5,15 @@ chords with **Write It Again**. The rest of the application is in [Features](fea
 
 ## The song specification
 
-**Compose → Compose a Song…** opens the song sheet with song controls, form and lyrics side by
-side, followed by the instrument roster. The columns stack in smaller windows. Two XY pads
-pair brightness with energy and harmonic tension with syncopation; moving right or up raises
-the labelled value. **Detailed settings** expands the individual performance dials.
+**Compose → Compose a Song…** starts with style, voice, title, tempo and one XY pad for brightness
+and energy beside the lyrics. Moving right or up raises the labelled value. Lyrics are optional;
+**Create Song** also works with every box empty. The columns stack in smaller windows.
+
+**Detailed settings** reveals key, meter, groove, seed, the tension/syncopation pad, performance
+dials, section structure, melody sharing and the drum/instrument roster. The toggle stays above
+the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
+The basic lyrics view uses familiar section labels and shows note counts only when they need
+attention; detailed mode also exposes the routine counts.
 The **Voice** selector offers installed singers and a file picker. **Speaker** selects a named
 speaker within that voice. VOICEVOX offers saved styles immediately and fetches current singing
 styles from its Engine; saved choices remain available when the Engine is offline. The choices
@@ -23,7 +28,8 @@ empty image frame.
 **Drums** has its own source selector and add/remove controls. **Instruments** lists melodic
 parts separately, with its own add button. Removing or restoring the drum kit preserves the
 instrument parts and their settings.
-**Write**, **Another Take** — the same dials and the next seed — and **Save as Specification…**.
+**Create Song** writes the piece. Detailed settings also offers **Another Take** — the same dials
+and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
 
