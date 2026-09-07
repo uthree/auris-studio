@@ -85,9 +85,10 @@ For manual work, create_project starts empty; import_audio adds an audio track a
 import_midi creates a new project from MIDI. export_midi writes the instrumental score.
 For a new composition: spec_reference teaches the TOML .asong format; list_presets and
 list_progressions provide vocabulary. check_spec validates; compose saves the new project.
-For a local change: edit_harmony changes harmony without rewriting notes; edit_recipe,
-another_take and write_again regenerate selected clips. Regeneration requires explicit
-replace_hand_edits for manually edited generated notes. edit_clip freeze preserves a take.
+For a local change: edit_harmony changes harmony without rewriting notes; edit_recipe changes
+recipe controls. regenerate_clips regenerates selected clips with take kind same, next or seed.
+Regeneration requires explicit replace_hand_edits for manually edited generated notes.
+edit_clip freeze preserves a take.
 Do not replace the whole project to make a local edit.
 
 add_track requires an explicit kind: instrument, drum, singer, audio or bus. A name containing
@@ -98,7 +99,7 @@ sound. automation with target kind instrument and operation action read discover
 parameters; set_instrument_param sets a static value. Use native parameter units.
 
 mixer reads levels and processing. set_level adjusts fader/pan; set_track_state sets mute/solo.
-routing reads or changes outputs and creates/removes sends; set_send changes an existing
+routing reads or changes outputs and creates/removes sends; its send_level operation changes an existing
 send level. A bus name alone adds no processing: effects inserts real effect slots and
 connects sidechains. effects and automation take operation objects, such as {\"action\":\"list\"}
 and {\"action\":\"read\"}. set_effect requires the 1-based slot from mixer and changes one static
@@ -387,10 +388,8 @@ pub const WRITES_PROJECTS: &[&str] = &[
     edit_recipe::NAME,
     compose::NAME,
     compose_lyrics::NAME,
-    another_take::NAME,
-    write_again::NAME,
+    regenerate_clips::NAME,
     set_level::NAME,
-    set_send::NAME,
     set_effect::NAME,
     section_gain::NAME,
     add_track::NAME,
@@ -425,27 +424,6 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         checkpoints::NAME => args.get("action").and_then(|v| v.as_str()) == Some("restore"),
         _ => true,
     }
-}
-
-/// The address of one project change: which clip, and which take of it.
-///
-/// Shared by `another_take` and `write_again`, which aim the same way and differ only in the
-/// seed they keep.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RegenerateArgs {
-    /// Explicitly allow replacement of manual notes on every targeted generated clip.
-    #[serde(default)]
-    pub replace_hand_edits: bool,
-    /// The project to change — an absolute path to a `.auris` file.
-    pub project: String,
-    /// The track whose clip to write again, by name as `describe` lists it.
-    pub track: String,
-    /// Which clip on that track, by the 1-based number `describe` shows. Every generated
-    /// clip on the track when left out.
-    pub clip: Option<usize>,
-    /// `another_take` only: the exact seed to take, instead of the next one — how a take
-    /// that measured better earlier is got back, since every result names its seed.
-    pub seed: Option<u64>,
 }
 
 /// The `.asong` format, taught by example.
@@ -782,8 +760,7 @@ pub mod describe {
             if !routing.is_empty() {
                 text.push_str(&format!("    {:<20} {}\n", "", routing.join(", ")));
             }
-            // The clips, numbered — this numbering is the address `another_take` and
-            // `write_again` take, so it is printed rather than implied.
+            // Clip numbers are the addresses `regenerate_clips` accepts.
             if let Some(clips) = track.kind.note_clips() {
                 for (index, clip) in clips.iter().enumerate() {
                     let last = (clip.start + clip.length - Ticks(1)).max_zero();
@@ -899,7 +876,7 @@ pub mod mixer {
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Reads the mixer as it stands: every track's fader, pan, \
         mute and solo, its sends, and each effect's parameters with key, value and range — the \
-        vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` \
+        vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` \
         is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.";
 
     /// Arguments to `mixer`.
@@ -1175,96 +1152,6 @@ pub mod set_level {
             "{} — fader {gain:+.1} dB, pan {pan:+.2}. Saved.{notes}",
             args.track
         ))
-    }
-}
-
-/// A send level, moved.
-pub mod set_send {
-    use super::*;
-
-    /// The tool's name at every door.
-    pub const NAME: &str = "set_send";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Sets how much of a track one of its sends carries, \
-        addressed by the bus it feeds — the routing `mixer` and `describe` show. Send levels \
-        run -60 to 0 dB; there is no headroom above unity on a send. The change is saved.";
-
-    /// Arguments to `set_send`.
-    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-    pub struct Args {
-        /// The project to change — an absolute path to a `.auris` file.
-        pub project: String,
-        /// The track the send is taken from, by name.
-        /// Also accepts a stable `id:<number>` selector from describe.
-        pub track: String,
-        /// The bus the send feeds, by name — `mixer` lists each track's sends.
-        pub to: String,
-        /// How much to send, in decibels (-60 to 0).
-        pub level_db: f32,
-    }
-
-    /// Finds the send by the bus it feeds and moves it.
-    pub fn run(args: &Args) -> Result<String, String> {
-        if !(-60.0..=0.0).contains(&args.level_db) {
-            return Err(format!(
-                "send levels run -60 to 0 dB; {} is outside that",
-                args.level_db
-            ));
-        }
-        let mut session = opened(&args.project)?;
-        let (track_id, send_id) = {
-            let project = session.project();
-            let track = track_by_name(project, &args.track)?;
-            let named: Vec<(SendId, String)> = track
-                .sends
-                .iter()
-                .map(|send| {
-                    let name = project
-                        .track(send.target)
-                        .map_or_else(|| format!("#{}", send.target.0), |bus| bus.name.clone());
-                    (send.id, name)
-                })
-                .collect();
-            let found = named
-                .iter()
-                .find(|(_, name)| name.eq_ignore_ascii_case(&args.to))
-                .map(|(id, _)| *id)
-                .ok_or_else(|| match named.is_empty() {
-                    true => format!("'{}' has no sends", track.name),
-                    false => format!(
-                        "'{}' sends to: {} — not '{}'",
-                        track.name,
-                        named
-                            .iter()
-                            .map(|(_, name)| name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        args.to
-                    ),
-                })?;
-            (track.id, found)
-        };
-        let automated = session.is_automated(ParamTarget::Send {
-            track: track_id,
-            send: send_id,
-        });
-        session
-            .set_send_level(track_id, send_id, args.level_db)
-            .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
-        let mut text = format!(
-            "{} => {} at {:+.1} dB. Saved.",
-            args.track, args.to, args.level_db
-        );
-        if automated {
-            text.push_str(
-                "\nNote: a lane is driving this send, so the stored level is not what plays \
-                 until the lane is cleared.",
-            );
-        }
-        Ok(text)
     }
 }
 
@@ -1568,43 +1455,146 @@ pub mod section_gain {
     }
 }
 
-/// A different take of a generated clip.
-pub mod another_take {
-    /// The tool's name at every door.
-    pub const NAME: &str = "another_take";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Writes another take of a generated clip: the same ask, the \
-        next seed, different notes. The change is saved into the project — render again to hear \
-        it. Aim it with `track` and the clip number `describe` shows; without a number, every \
-        generated clip on the track gets a new take. Every answer names its seed, and passing \
-        `seed` takes that exact take again — how a rewrite that measured worse is rolled back. \
-        Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.";
+/// Regenerates selected clips with an explicit seed policy.
+pub mod regenerate_clips {
+    use super::*;
 
-    /// The shared rewrite address.
-    pub use crate::RegenerateArgs as Args;
+    /// The tool's wire name.
+    pub const NAME: &str = "regenerate_clips";
+    /// The model-facing description.
+    pub const DESCRIPTION: &str = "Regenerates selected clips against the current harmony. Required take is an object: {kind:same} keeps each seed, {kind:next} writes a new take, or {kind:seed,seed:42} selects an exact seed for one clip. Track and optional 1-based clip come from describe; omitting clip selects all generated clips on the track. Every target is checked before changes; hand-edited clips require replace_hand_edits:true. Saves a checkpoint and reports each seed.";
 
-    /// The next seed — or a named one.
-    pub fn run(args: &Args) -> Result<String, String> {
-        crate::regenerate(args, crate::Take::Another)
+    /// How to choose the regenerated take.
+    #[derive(Debug, Clone, Copy, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+    pub enum Take {
+        /// Keep each clip's seed and follow the current harmony.
+        Same {},
+        /// Advance each clip to its next seed.
+        Next {},
+        /// Select an exact seed for one clip.
+        Seed {
+            /// The seed to render.
+            seed: u64,
+        },
     }
-}
 
-/// The same take, following the harmony as it stands now.
-pub mod write_again {
-    /// The tool's name at every door.
-    pub const NAME: &str = "write_again";
-    /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Writes a generated clip again with its own seed, following \
-        the key and chords as they stand now — the tool to reach for after changing the harmony \
-        under an existing piece. The change is saved into the project. Addressed exactly like \
-        `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.";
+    /// The clips to regenerate and the seed policy to apply.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Args {
+        /// Absolute project path.
+        pub project: String,
+        /// Track name or stable id:N selector from describe.
+        pub track: String,
+        /// 1-based clip number; omitted selects all generated clips on the track.
+        pub clip: Option<usize>,
+        /// Keep, advance, or choose the seed explicitly.
+        pub take: Take,
+        /// Allow replacement of manual notes on every targeted generated clip.
+        #[serde(default)]
+        pub replace_hand_edits: bool,
+    }
 
-    /// The shared rewrite address.
-    pub use crate::RegenerateArgs as Args;
-
-    /// The same seed, the current harmony.
+    /// Validates the complete target set, regenerates and saves.
     pub fn run(args: &Args) -> Result<String, String> {
-        crate::regenerate(args, crate::Take::Same)
+        let mut session = opened(&args.project)?;
+
+        let track = track_by_name(session.project(), &args.track)?;
+        let clips: Vec<(usize, ClipId, String, bool)> = track
+            .kind
+            .note_clips()
+            .ok_or_else(|| format!("'{}' holds no note clips", track.name))?
+            .iter()
+            .enumerate()
+            .map(|(index, clip)| (index + 1, clip.id, clip.name.clone(), clip.recipe.is_some()))
+            .collect();
+
+        let chosen: Vec<(usize, ClipId, String)> = match args.clip {
+            Some(wanted) => {
+                let (index, id, name, generated) = clips
+                    .iter()
+                    .find(|(index, ..)| *index == wanted)
+                    .cloned()
+                    .ok_or_else(|| {
+                        format!(
+                            "'{}' has {} clips, numbered as `describe` shows them — there is no [{wanted}]",
+                            args.track,
+                            clips.len()
+                        )
+                    })?;
+                if !generated {
+                    return Err(format!(
+                        "clip [{index}] '{name}' was not generated — it carries no recipe, so \
+                         there is nothing to write again"
+                    ));
+                }
+                vec![(index, id, name)]
+            }
+            None => {
+                let generated: Vec<_> = clips
+                    .iter()
+                    .filter(|(.., generated)| *generated)
+                    .map(|(index, id, name, _)| (*index, *id, name.clone()))
+                    .collect();
+                if generated.is_empty() {
+                    return Err(format!("'{}' has no generated clips", args.track));
+                }
+                generated
+            }
+        };
+
+        if matches!(args.take, Take::Seed { .. }) && chosen.len() > 1 {
+            return Err("a chosen seed belongs to one clip — pass clip when setting a seed".into());
+        }
+
+        if !args.replace_hand_edits {
+            let edited: Vec<_> = chosen
+                .iter()
+                .filter(|(_, id, _)| session.clip_hand_edited(*id))
+                .map(|(index, _, name)| format!("[{index}] '{name}'"))
+                .collect();
+            if !edited.is_empty() {
+                return Err(format!(
+                    "Hand-edited clips: {}. No clips were changed. Set replace_hand_edits: true to replace them, or freeze them first.",
+                    edited.join(", ")
+                ));
+            }
+        }
+        let mut text = String::new();
+        for (index, id, name) in &chosen {
+            // Asked before the rewrite, because writing the clip again is exactly what resets
+            // the measurement that knows.
+            let edited = session.clip_hand_edited(*id);
+            let notes = match args.take {
+                // The named seed, so a take that measured better two rewrites ago is not lost
+                // behind a counter that only advances.
+                Take::Seed { seed } => {
+                    let recipe = session
+                        .clip_recipe(*id)
+                        .expect("only generated clips were chosen above")
+                        .with_seed(seed);
+                    session.set_clip_recipe(*id, recipe)
+                }
+                Take::Next {} => session.reroll_clip(*id),
+                Take::Same {} => session.regenerate_clip(*id),
+            }
+            .map_err(|error| error.to_string())?;
+            let seed = session
+                .clip_recipe(*id)
+                .map_or_else(String::new, |recipe| format!(", seed {}", recipe.seed));
+            text.push_str(&format!("[{index}] '{name}' — {notes} notes{seed}.\n"));
+            if edited {
+                text.push_str(&format!(
+                    "Note: [{index}] had been edited by hand; those edits are gone.\n"
+                ));
+            }
+        }
+        session
+            .save_with_checkpoint()
+            .map_err(|error| error.to_string())?;
+        text.push_str("Saved. Render again to hear it.");
+        Ok(text)
     }
 }
 
@@ -1774,7 +1764,7 @@ pub mod list_instruments {
         text.push_str(
             "\nOr pass `sound` instead of `instrument`: any General MIDI sound by name \
              (\"Electric Piano 1\", \"Fretless Bass\") or program number 0-127, with \
-             `drums: true` to read the number as a drum kit.",
+             `kind: drum` in add_track, or `drums: true` in set_instrument, for a drum kit.",
         );
         text.trim_end().to_string()
     }
@@ -1787,7 +1777,7 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; drums:true also creates a drum track when kind is instrument. New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
+    pub const DESCRIPTION: &str = "Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
 
     /// The explicit type of track to create.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
@@ -1831,9 +1821,6 @@ pub mod add_track {
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         pub sound: Option<String>,
-        /// Select a drum track when kind is instrument and read sound as a drum kit.
-        #[serde(default)]
-        pub drums: bool,
         /// The track type. Use bus for a mixer bus; the track name does not determine its type.
         pub kind: Kind,
     }
@@ -1844,11 +1831,7 @@ pub mod add_track {
             return Err("the track needs a name — a blank one no tool can address again".into());
         }
         let mut session = opened(&args.project)?;
-        let kind = if args.kind == Kind::Instrument && args.drums {
-            Kind::Drum
-        } else {
-            args.kind
-        };
+        let kind = args.kind;
         validate_track_name(session.project(), &args.name, None)?;
         let voiced = match kind {
             Kind::Instrument | Kind::Drum => {
@@ -1872,7 +1855,7 @@ pub mod add_track {
                     &mut session,
                     id,
                     &args.sound,
-                    args.drums || kind == Kind::Drum,
+                    kind == Kind::Drum,
                     &args.instrument,
                 )?
             }
@@ -1965,7 +1948,7 @@ pub mod add_part {
     pub const DESCRIPTION: &str = "Writes a generated part onto an existing instrument track, \
         from the key and chords already under the song — lead, chords, pad, arp, bass, stab, \
         drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. \
-        The clip keeps its recipe, so `another_take` rerolls it and `write_again` follows a \
+        The clip keeps its recipe, so `regenerate_clips` chooses a new take or follows a \
         harmony change; the answer numbers it the way `describe` does.";
 
     /// Arguments to `add_part`.
@@ -1982,7 +1965,7 @@ pub mod add_part {
         pub start_bar: Option<u32>,
         /// How many bars it covers. To the end of the song when left out.
         pub bars: Option<u32>,
-        /// The seed of the take. 0 when left out; every answer names it, and `another_take`
+        /// The seed of the take. 0 when left out; every answer names it, and `regenerate_clips`
         /// moves to the next.
         pub seed: Option<u64>,
     }
@@ -2326,7 +2309,7 @@ pub mod edit_notes {
         takes the numbers `notes` lists, `add` takes notes as pitch (a name like \"F#4\" or a \
         MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 \
         (0.75 when left out). Removals happen first. The change is saved. On a generated clip \
-        the edit sticks until `another_take` or `write_again` rewrites the clip whole.";
+        the edit sticks until `regenerate_clips` rewrites the clip whole.";
 
     /// One note to place.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2464,7 +2447,7 @@ pub mod edit_notes {
         );
         if generated {
             text.push_str(
-                "\nNote: this clip is generated; `another_take` or `write_again` would rewrite \
+                "\nNote: this clip is generated; `regenerate_clips` would rewrite \
                  it whole, these edits included.",
             );
         }
@@ -2483,7 +2466,7 @@ pub mod accompany {
         and backing tracks under it — the melody-first way around: place the tune with \
         `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks \
         the band (bass, chords and drums when left out); the harmony it writes is a first \
-        draft to argue with — `write_again` re-derives any part after a correction. The \
+        draft to argue with — `regenerate_clips` re-derives any part after a correction. The \
         change is saved.";
 
     /// Arguments to `accompany`.
@@ -2559,7 +2542,7 @@ pub mod accompany {
         }
         text.push_str(
             "\nThe key and chords are written into the song — a wrong guess is corrected by \
-             ear: `analyze`, then `write_again` on any part after fixing what it follows.",
+             ear: `analyze`, then `regenerate_clips` on any part after fixing what it follows.",
         );
         Ok(text)
     }
@@ -3291,124 +3274,6 @@ fn analysis_text(report: &auris_session::MixAnalysis) -> String {
     text
 }
 
-/// Which seed a rewritten clip keeps — the difference between the two rewrite tools.
-#[derive(Clone, Copy)]
-enum Take {
-    /// The next seed: different notes for the same ask.
-    Another,
-    /// The same seed: the same take, following the harmony as it stands now.
-    Same,
-}
-
-/// The work behind `another_take` and `write_again`.
-fn regenerate(args: &RegenerateArgs, take: Take) -> Result<String, String> {
-    let mut session = opened(&args.project)?;
-
-    let track = track_by_name(session.project(), &args.track)?;
-    let clips: Vec<(usize, ClipId, String, bool)> = track
-        .kind
-        .note_clips()
-        .ok_or_else(|| format!("'{}' holds no note clips", track.name))?
-        .iter()
-        .enumerate()
-        .map(|(index, clip)| (index + 1, clip.id, clip.name.clone(), clip.recipe.is_some()))
-        .collect();
-
-    let chosen: Vec<(usize, ClipId, String)> = match args.clip {
-        Some(wanted) => {
-            let (index, id, name, generated) = clips
-                .iter()
-                .find(|(index, ..)| *index == wanted)
-                .cloned()
-                .ok_or_else(|| {
-                    format!(
-                        "'{}' has {} clips, numbered as `describe` shows them — there is no [{wanted}]",
-                        args.track,
-                        clips.len()
-                    )
-                })?;
-            if !generated {
-                return Err(format!(
-                    "clip [{index}] '{name}' was not generated — it carries no recipe, so \
-                     there is nothing to write again"
-                ));
-            }
-            vec![(index, id, name)]
-        }
-        None => {
-            let generated: Vec<_> = clips
-                .iter()
-                .filter(|(.., generated)| *generated)
-                .map(|(index, id, name, _)| (*index, *id, name.clone()))
-                .collect();
-            if generated.is_empty() {
-                return Err(format!("'{}' has no generated clips", args.track));
-            }
-            generated
-        }
-    };
-
-    if matches!(take, Take::Same) && args.seed.is_some() {
-        return Err(
-            "write_again keeps the clip's own seed — use another_take with `seed` to choose one"
-                .to_string(),
-        );
-    }
-    if matches!(take, Take::Another) && args.seed.is_some() && chosen.len() > 1 {
-        return Err(
-            "a chosen seed belongs to one clip — pass `clip` when setting `seed`".to_string(),
-        );
-    }
-
-    if !args.replace_hand_edits {
-        let edited: Vec<_> = chosen
-            .iter()
-            .filter(|(_, id, _)| session.clip_hand_edited(*id))
-            .map(|(index, _, name)| format!("[{index}] '{name}'"))
-            .collect();
-        if !edited.is_empty() {
-            return Err(format!(
-                "Hand-edited clips: {}. No clips were changed. Set replace_hand_edits: true to replace them, or freeze them first.",
-                edited.join(", ")
-            ));
-        }
-    }
-    let mut text = String::new();
-    for (index, id, name) in &chosen {
-        // Asked before the rewrite, because writing the clip again is exactly what resets
-        // the measurement that knows.
-        let edited = session.clip_hand_edited(*id);
-        let notes = match (take, args.seed) {
-            // The named seed, so a take that measured better two rewrites ago is not lost
-            // behind a counter that only advances.
-            (Take::Another, Some(seed)) => {
-                let recipe = session
-                    .clip_recipe(*id)
-                    .expect("only generated clips were chosen above")
-                    .with_seed(seed);
-                session.set_clip_recipe(*id, recipe)
-            }
-            (Take::Another, None) => session.reroll_clip(*id),
-            (Take::Same, _) => session.regenerate_clip(*id),
-        }
-        .map_err(|error| error.to_string())?;
-        let seed = session
-            .clip_recipe(*id)
-            .map_or_else(String::new, |recipe| format!(", seed {}", recipe.seed));
-        text.push_str(&format!("[{index}] '{name}' — {notes} notes{seed}.\n"));
-        if edited {
-            text.push_str(&format!(
-                "Note: [{index}] had been edited by hand; those edits are gone.\n"
-            ));
-        }
-    }
-    session
-        .save_with_checkpoint()
-        .map_err(|error| error.to_string())?;
-    text.push_str("Saved. Render again to hear it.");
-    Ok(text)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3597,23 +3462,6 @@ mod tests {
             "the refusal lists the real tracks: {missing}"
         );
 
-        // The send is addressed by the bus it feeds.
-        let send = |to: &str, level_db| {
-            set_send::run(&set_send::Args {
-                project: path.clone(),
-                track: "Probe".to_string(),
-                to: to.to_string(),
-                level_db,
-            })
-        };
-        let sent = send("Wash", -12.0).unwrap();
-        assert!(sent.contains("-12.0"), "{sent}");
-        let nowhere = send("Elsewhere", -12.0).unwrap_err();
-        assert!(
-            nowhere.contains("Wash"),
-            "the refusal lists the real sends: {nowhere}"
-        );
-
         // The dial turns, and both wrong names and wrong values answer with the truth.
         let dial = |param: &str, value| {
             set_effect::run(&set_effect::Args {
@@ -3736,7 +3584,6 @@ mod tests {
             name: "Keys".to_string(),
             instrument: None,
             sound: None,
-            drums: false,
             kind: add_track::Kind::Instrument,
         })
         .unwrap();
@@ -3750,7 +3597,6 @@ mod tests {
             name: "EP".to_string(),
             instrument: None,
             sound: Some("Electric Piano 1".to_string()),
-            drums: false,
             kind: add_track::Kind::Instrument,
         });
         match voiced {
@@ -3762,7 +3608,6 @@ mod tests {
             name: "X".to_string(),
             instrument: None,
             sound: Some("Theremin Choir 9".to_string()),
-            drums: false,
             kind: add_track::Kind::Instrument,
         })
         .unwrap_err();
@@ -3788,7 +3633,7 @@ mod tests {
         .unwrap();
         assert!(
             described.contains("generated (chords, seed 0)"),
-            "the part is addressable by `another_take`: {described}"
+            "the part is addressable by `regenerate_clips`: {described}"
         );
 
         // A wrong part name answers with the whole vocabulary.
@@ -3937,7 +3782,6 @@ mod tests {
             name: "Lead".to_string(),
             instrument: None,
             sound: None,
-            drums: false,
             kind: add_track::Kind::Instrument,
         })
         .unwrap();
@@ -4133,12 +3977,14 @@ mod tests {
         // A new take of one part, addressed the way describe numbers it, lands in the file.
         let before = std::fs::read_to_string(&document).unwrap();
         let take_of_lead = |clip: Option<usize>, seed: Option<u64>| {
-            another_take::run(&RegenerateArgs {
+            regenerate_clips::run(&regenerate_clips::Args {
                 replace_hand_edits: false,
                 project: document.display().to_string(),
                 track: "lead".to_string(),
                 clip,
-                seed,
+                take: seed.map_or(regenerate_clips::Take::Next {}, |seed| {
+                    regenerate_clips::Take::Seed { seed }
+                }),
             })
         };
         let took = take_of_lead(Some(1), None).unwrap();
@@ -4170,12 +4016,12 @@ mod tests {
             "naming the seed brings the earlier take back exactly"
         );
 
-        let missing = another_take::run(&RegenerateArgs {
+        let missing = regenerate_clips::run(&regenerate_clips::Args {
             replace_hand_edits: false,
             project: document.display().to_string(),
             track: "nobody".to_string(),
             clip: None,
-            seed: None,
+            take: regenerate_clips::Take::Next {},
         })
         .unwrap_err();
         assert!(
@@ -4314,7 +4160,6 @@ mod tests {
             name: "Vocal".to_string(),
             instrument: None,
             sound: None,
-            drums: false,
             kind: add_track::Kind::Singer,
         })
         .unwrap();

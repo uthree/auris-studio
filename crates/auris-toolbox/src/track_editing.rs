@@ -9,7 +9,7 @@ pub mod routing {
     /// The tool's wire name.
     pub const NAME: &str = "routing";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Reads or changes a track's output and sends. Start with operation list to discover available buses and send IDs. Output requires destination (a bus name, id:N, or master). Add_send requires a bus destination and optionally level_db (-60 to 0) and pre_fader. Remove_send and send_mode select an existing send by destination or send_id; send_mode also requires pre_fader. A bus can be created with add_track kind bus. Returns the actual routing; changes are checkpointed and saved.";
+    pub const DESCRIPTION: &str = "Reads or changes a track's output and sends. Start with operation list to discover available buses and send IDs. Output requires destination (a bus name, id:N, or master). Add_send requires a bus destination and optionally level_db (-60 to 0) and pre_fader. Remove_send, send_mode and send_level select an existing send by destination or send_id; send_mode requires pre_fader and send_level requires level_db (-60 to 0). Send levels report whether automation overrides the static value. A bus can be created with add_track kind bus. Returns the actual routing; changes are checkpointed and saved.";
 
     /// Which routing command to perform.
     #[derive(Debug, Clone, Copy, serde::Deserialize, schemars::JsonSchema)]
@@ -25,6 +25,8 @@ pub mod routing {
         RemoveSend,
         /// Change whether an existing send is taken before the fader.
         SendMode,
+        /// Change the static level of an existing send.
+        SendLevel,
     }
 
     /// A routing request with its operation's fields at the top level.
@@ -35,17 +37,17 @@ pub mod routing {
         pub project: String,
         /// Source track name or stable id:N selector from describe.
         pub track: String,
-        /// list, output, add_send, remove_send, or send_mode.
+        /// list, output, add_send, remove_send, send_mode, or send_level.
         pub operation: Operation,
         /// Bus name or id:N; output also accepts master. Required for output/add_send.
-        /// For remove_send/send_mode, supply this or send_id, never both.
+        /// For existing sends, supply this or send_id, never both.
         pub destination: Option<String>,
-        /// Initial send level, -60 to 0 dB; add_send only. Defaults to 0.
+        /// Send level, -60 to 0 dB; required for send_level, optional for add_send (defaults to 0).
         pub level_db: Option<f32>,
         /// True takes a send before the fader. Required for send_mode, optional for
         /// add_send (defaults to false); omit for other operations.
         pub pre_fader: Option<bool>,
-        /// Stable send ID returned by list; remove_send/send_mode only. Use this
+        /// Stable send ID returned by list; existing-send operations only. Use this
         /// instead of destination when multiple sends feed the same bus.
         pub send_id: Option<u64>,
     }
@@ -65,6 +67,11 @@ pub mod routing {
                     && args.send_id.is_none()
             }
             Operation::AddSend => args.destination.is_some() && args.send_id.is_none(),
+            Operation::SendLevel => {
+                (args.destination.is_some() != args.send_id.is_some())
+                    && args.level_db.is_some()
+                    && args.pre_fader.is_none()
+            }
             Operation::RemoveSend | Operation::SendMode => {
                 (args.destination.is_some() != args.send_id.is_some())
                     && args.level_db.is_none()
@@ -85,6 +92,9 @@ pub mod routing {
                 }
                 Operation::SendMode => {
                     "send_mode requires destination or send_id, never both, and pre_fader; omit level_db"
+                }
+                Operation::SendLevel => {
+                    "send_level requires destination or send_id, never both, and level_db; omit pre_fader"
                 }
             }
             .into());
@@ -191,7 +201,7 @@ pub mod routing {
                     .iter()
                     .any(|send| send.target == destination)
                 {
-                    return Err("this track already sends to that bus; use set_send for its level or routing send_mode for its tap".into());
+                    return Err("this track already sends to that bus; use routing send_level for its level or send_mode for its tap".into());
                 }
                 let send = session
                     .add_send(track, destination)
@@ -213,6 +223,12 @@ pub mod routing {
                 let send = existing_send(&session, track, args)?;
                 session
                     .set_send_pre_fader(track, send, args.pre_fader.expect("validated tap"))
+                    .map_err(|e| e.to_string())?;
+            }
+            Operation::SendLevel => {
+                let send = existing_send(&session, track, args)?;
+                session
+                    .set_send_level(track, send, args.level_db.expect("validated level"))
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -429,6 +445,20 @@ mod tests {
         assert_eq!(track.sends[0].level_db, -12.0);
         assert!(track.sends[0].pre_fader);
         assert!(!reopened.checkpoints().unwrap().is_empty());
+        let level = fixture
+            .route(json!({"operation":"send_level","destination":"Reverb","level_db":-18.0}))
+            .unwrap();
+        assert_eq!(level["sends"][0]["level_db"], -18.0);
+        assert_eq!(
+            opened(&fixture.path)
+                .unwrap()
+                .project()
+                .track(fixture.lead)
+                .unwrap()
+                .sends[0]
+                .level_db,
+            -18.0
+        );
         fixture
             .route(json!({"operation":"send_mode","send_id":send_id,"pre_fader":false}))
             .unwrap();
@@ -466,6 +496,13 @@ mod tests {
             json!({"operation":"list","destination":"Reverb"}),
             json!({"operation":"send_mode","destination":"Reverb"}),
             json!({"operation":"add_send","destination":"Reverb","level_db":1.0}),
+            json!({"operation":"send_level","destination":"Reverb"}),
+            json!({"operation":"send_level","level_db":-12.0}),
+            json!({"operation":"send_level","destination":"Reverb","send_id":1,"level_db":-12.0}),
+            json!({"operation":"send_level","destination":"Reverb","level_db":1.0}),
+            json!({"operation":"send_level","destination":"Reverb","level_db":-61.0}),
+            json!({"operation":"send_level","destination":"Reverb","level_db":-12.0,"pre_fader":true}),
+            json!({"operation":"send_level","send_id":u64::MAX,"level_db":-12.0}),
         ] {
             assert!(fixture.route(request).is_err());
             assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
@@ -524,6 +561,22 @@ mod tests {
                 .contains("send_id")
         );
         assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+        assert!(
+            fixture
+                .route(json!({"operation":"send_level","destination":"Reverb","level_db":-24.0}))
+                .unwrap_err()
+                .contains("send_id")
+        );
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+        let changed = fixture
+            .route(json!({"operation":"send_level","send_id":second.0,"level_db":-24.0}))
+            .unwrap();
+        assert_eq!(changed["sends"][0]["level_db"], 0.0);
+        assert_eq!(changed["sends"][1]["level_db"], -24.0);
+        assert_eq!(changed["sends"][1]["automated"], true);
+        let reopened = opened(&fixture.path).unwrap();
+        assert!(reopened.is_automated(first_target));
+        assert!(reopened.is_automated(second_target));
         fixture
             .route(json!({"operation":"remove_send","send_id":first.0}))
             .unwrap();

@@ -110,7 +110,8 @@ and `add_clip` requires a `name`. A track named Reverb is a bus only when its ki
 is `bus`. Read back exact requested names and types along with musical values.
 
 `routing` lists available buses and send IDs, changes a track output, and creates
-or removes sends. `set_send` adjusts an existing send. `set_track_state` sets mute
+or removes sends. Its `send_level` operation adjusts an existing send with `level_db`,
+selected by `destination` or `send_id`. `set_track_state` sets mute
 and solo explicitly, with other tracks' solo states preserved. Discover instrument
 parameters, discrete choices and ranges through `automation` with
 `target:{kind:"instrument"},operation:{action:"read"}`; `set_instrument_param`
@@ -119,8 +120,9 @@ sets a static value and reports when an existing lane overrides it.
 ## Local musical changes
 
 Composition stores authored motif steps and rhythm patterns in each generated clip's
-recipe. `write_again`, `another_take` and `edit_recipe` retain them. Older projects
-without those fields retain generated defaults. `edit_recipe` accepts `motif` (relative
+recipe. `regenerate_clips` and `edit_recipe` retain them. The required `take` in
+`regenerate_clips` is `{kind:"same"}` to keep each seed, `{kind:"next"}` to advance it,
+or `{kind:"seed",seed:42}` to choose a seed for one clip. `edit_recipe` accepts `motif` (relative
 scale steps such as `0 2 4 2`) and `rhythm` (`x` hit, `X` accent, `o` ghost, `.` rest);
 an empty string clears that authored control. Density, gate, dynamics and subdivision
 remain available for articulation and phrasing.

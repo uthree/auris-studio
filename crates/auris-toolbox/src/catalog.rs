@@ -190,11 +190,9 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         ),
         definition::<mixer::Args>(mixer::NAME, mixer::DESCRIPTION),
         definition::<set_level::Args>(set_level::NAME, set_level::DESCRIPTION),
-        definition::<set_send::Args>(set_send::NAME, set_send::DESCRIPTION),
         definition::<set_effect::Args>(set_effect::NAME, set_effect::DESCRIPTION),
         definition::<section_gain::Args>(section_gain::NAME, section_gain::DESCRIPTION),
-        definition::<another_take::Args>(another_take::NAME, another_take::DESCRIPTION),
-        definition::<write_again::Args>(write_again::NAME, write_again::DESCRIPTION),
+        definition::<regenerate_clips::Args>(regenerate_clips::NAME, regenerate_clips::DESCRIPTION),
         definition::<teach_progression::Args>(
             teach_progression::NAME,
             teach_progression::DESCRIPTION,
@@ -296,7 +294,13 @@ pub mod tool_help {
             ]),
             "routing" => serde_json::json!([
                 {"project":project,"track":"Lead","operation":"add_send","destination":"Reverb","level_db":-12},
+                {"project":project,"track":"Lead","operation":"send_level","send_id":4,"level_db":-18},
                 {"project":project,"track":"Lead","operation":"output","destination":"master"}
+            ]),
+            "regenerate_clips" => serde_json::json!([
+                {"project":project,"track":"Lead","clip":1,"take":{"kind":"same"}},
+                {"project":project,"track":"Lead","take":{"kind":"next"}},
+                {"project":project,"track":"Lead","clip":1,"take":{"kind":"seed","seed":42}}
             ]),
             "edit_notes" => serde_json::json!([
                 {"project":project,"track":"Lead","clip":1,"add":[{"pitch":"C4","bar":1,"beat":1,"beats":1,"velocity":0.75}]}
@@ -349,7 +353,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_drum_kind_and_drum_flag_save_tracks_for_the_drum_editor() {
+    fn explicit_drum_kind_saves_tracks_for_the_drum_editor() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("Song.auris");
         let mut session = Session::new(SessionOptions::headless()).unwrap();
@@ -359,23 +363,73 @@ mod tests {
             .unwrap()
             .to_string();
         session.save(&path).unwrap();
-        for (name, kind, drums, instrument) in [
-            ("Default kit", "drum", false, None),
-            ("Explicit kit", "drum", false, Some(instrument.clone())),
-            ("Flagged kit", "instrument", true, Some(instrument)),
-            ("Melody", "instrument", false, None),
+        assert!(
+            serde_json::from_value::<add_track::Args>(serde_json::json!({
+                "project":path,"name":"Kit","kind":"instrument","drums":true
+            }))
+            .is_err()
+        );
+        for (name, kind, instrument) in [
+            ("Default kit", "drum", None),
+            ("Explicit kit", "drum", Some(instrument)),
+            ("Melody", "instrument", None),
         ] {
             let args = serde_json::from_value::<add_track::Args>(serde_json::json!({
-                "project":path,"name":name,"kind":kind,"drums":drums,
+                "project":path,"name":name,"kind":kind,
                 "instrument":instrument
             }))
             .unwrap();
             add_track::run(&args).unwrap();
             let reopened = opened(path.to_str().unwrap()).unwrap();
             let track = track_by_name(reopened.project(), name).unwrap();
-            assert_eq!(track.kind.is_drum(), kind == "drum" || drums, "{name}");
+            assert_eq!(track.kind.is_drum(), kind == "drum", "{name}");
             assert!(track.kind.as_instrument().unwrap().clips.is_empty());
         }
+    }
+
+    #[test]
+    fn regeneration_requires_one_complete_seed_policy() {
+        for take in [
+            serde_json::json!({"kind":"same"}),
+            serde_json::json!({"kind":"next"}),
+            serde_json::json!({"kind":"seed","seed":42}),
+        ] {
+            assert!(
+                serde_json::from_value::<regenerate_clips::Args>(serde_json::json!({
+                    "project":"/song.auris","track":"Lead","take":take
+                }))
+                .is_ok()
+            );
+        }
+        for take in [
+            serde_json::Value::Null,
+            serde_json::json!("same"),
+            serde_json::json!({"kind":"same","seed":42}),
+            serde_json::json!({"kind":"next","seed":42}),
+            serde_json::json!({"kind":"seed"}),
+            serde_json::json!({"kind":"seed","seed":-1}),
+        ] {
+            assert!(
+                serde_json::from_value::<regenerate_clips::Args>(serde_json::json!({
+                    "project":"/song.auris","track":"Lead","take":take
+                }))
+                .is_err()
+            );
+        }
+        let schema = parameter_schema::<regenerate_clips::Args>();
+        assert!(
+            schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("take"))
+        );
+        assert_eq!(
+            schema["properties"]["take"]["oneOf"]
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
     }
 
     #[test]
@@ -408,7 +462,14 @@ mod tests {
         assert_eq!(operation["type"], "string");
         assert_eq!(
             operation["enum"],
-            serde_json::json!(["list", "output", "add_send", "remove_send", "send_mode"])
+            serde_json::json!([
+                "list",
+                "output",
+                "add_send",
+                "remove_send",
+                "send_mode",
+                "send_level"
+            ])
         );
         assert!(operation.get("oneOf").is_none());
         let effects = parameter_schema::<effects::Args>();
