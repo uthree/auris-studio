@@ -896,6 +896,10 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! A sokuon keeps its own lyric-bearing closure slot, capped at an eighth note. It is
+    //! excluded from pitch search and ornaments; its pitch follows a neighbouring sung note.
+    //! Shared melodies require closures in the same positions as well as matching mora counts.
+    //!
     //! Presets give later verses their own section names (`verse2`, `chorus2`) and lyrics.
     //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
     //! ornaments. The session validates mora counts phrase by phrase before replacing a
@@ -1294,6 +1298,28 @@ pub mod singing {
     //! to disable those edits and explain the restriction, while keeping notes, lyrics, pitch
     //! and volume editable. A track without a voice still permits phoneme authoring for a voice
     //! chosen later.
+    //!
+    //! Curve ownership is independent for pitch and energy: [`auris_singer::CurveSources`]
+    //! declares whether each comes from the host or a backend predictor. The session samples
+    //! [`auris_vocal::render_frames_with_sources`] accordingly. Host curves include acoustic
+    //! articulation; backend controls omit the automatic pitch glide or the phoneme levels
+    //! and note envelope, respectively. Written bends, ornaments, velocity and expression
+    //! remain available in either case.
+    //!
+    //! A predictor implements [`auris_singer::CurveGenerator`]. Its prediction retains typed,
+    //! backend-owned decoder context beside optional pitch and energy arrays and their leading
+    //! and trailing frame counts. The common preparation step validates the frame grid,
+    //! modulates predicted pitch relative to score keys, scales predicted energy, and copies
+    //! host-owned curves unchanged. Controls extend into rests for anticipated consonants
+    //! and trailing decoder context; predicted energy still determines silence. VOICEVOX uses
+    //! this contract with its frame query as context; another backend can keep tensors instead.
+    //!
+    //! File formats provide default capabilities, while a loaded
+    //! [`auris_singer::SingingBackend::capabilities`] can override them for a particular model.
+    //! The session caches this immutable description outside the inference mutex. Full renders
+    //! load the voice before sampling controls; previews and take fingerprints use the same
+    //! cached sources without waiting for inference. A cold metadata read uses format defaults
+    //! until the model is loaded. No predicted curves or capability flags are stored in the song.
     //!
     //! The frame-level representation is never stored. It is a pure function of the track and
     //! the tempo map — [`auris_vocal::render_frames`] — sampled at the track's

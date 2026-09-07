@@ -4,7 +4,7 @@ use std::path::Path;
 
 use auris_vocal::{SingerFrames, SingerScore};
 
-use crate::{Acceleration, SingError, VoiceInfo};
+use crate::{Acceleration, CurveGenerator, CurveSources, SingError, VoiceInfo};
 
 /// A singing engine understood by Auris Studio.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -50,6 +50,10 @@ impl BackendKind {
         VoiceCapabilities {
             manual_phonemes: direct_phonemes,
             phoneme_timing: direct_phonemes,
+            curves: match self {
+                Self::Voicevox => crate::voicevox::VoicevoxBackend::SOURCES,
+                Self::Auris | Self::DiffSinger | Self::LeapSinger => CurveSources::default(),
+            },
         }
     }
 }
@@ -57,6 +61,8 @@ impl BackendKind {
 /// Editable vocal details that a synthesis backend can honour.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct VoiceCapabilities {
+    /// Who supplies each curve's acoustic articulation during synthesis.
+    pub curves: CurveSources,
     /// Whether manually corrected IPA phonemes affect the voice's pronunciation.
     pub manual_phonemes: bool,
     /// Whether per-phoneme duration pins affect the voice's pronunciation timing.
@@ -71,6 +77,13 @@ pub struct VoiceCapabilities {
 pub trait SingingBackend: Send {
     /// Which file format and inference pipeline this backend implements.
     fn kind(&self) -> BackendKind;
+    /// Capabilities of this loaded model, overriding format defaults when needed.
+    ///
+    /// A native model with an optional curve predictor can report its own sources here.
+    /// Curve generators should use `CurveGenerator::curve_sources` in this result.
+    fn capabilities(&self) -> VoiceCapabilities {
+        self.kind().capabilities()
+    }
     /// The voice information shared with the document and frontends.
     fn info(&self) -> &VoiceInfo;
     /// What processor preference the backend was opened with.
@@ -80,6 +93,10 @@ pub trait SingingBackend: Send {
     /// The entry file used to open this voice.
     fn path(&self) -> &Path;
     /// Sings frames, reporting progress as `(completed chunks, total chunks)`.
+    ///
+    /// Sample score-bearing frames with the sources in [`Self::capabilities`]: host-owned
+    /// arrays are acoustic features, backend-owned arrays are musical controls. A predictor
+    /// resolves those controls through [`crate::CurveGenerator::prepare_curves`].
     fn sing_with(
         &mut self,
         frames: &SingerFrames,
@@ -96,6 +113,18 @@ pub struct VoiceModel {
 }
 
 impl VoiceModel {
+    /// Wraps an engine implementation, including its model-specific capabilities.
+    pub fn from_backend(backend: impl SingingBackend + 'static) -> Self {
+        Self {
+            backend: Box::new(backend),
+        }
+    }
+
+    /// Capabilities reported by the loaded model rather than inferred from its file name.
+    pub fn capabilities(&self) -> VoiceCapabilities {
+        self.backend.capabilities()
+    }
+
     /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, `.voicevox.json` connection,
     /// or `.leapsinger.json` voicebank manifest.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
@@ -164,6 +193,9 @@ impl VoiceModel {
     }
 
     /// Sings a note-level score, using its parallel frame curves where the backend supports it.
+    ///
+    /// Sample the parallel frames with [`auris_vocal::render_frames_with_sources`] and this
+    /// model's [`Self::capabilities`], so predicted articulation receives only musical edits.
     pub fn sing_score(
         &mut self,
         frames: &SingerFrames,
@@ -192,6 +224,62 @@ impl VoiceModel {
 mod tests {
     use super::*;
 
+    struct NativePredictor(VoiceInfo);
+
+    impl SingingBackend for NativePredictor {
+        fn kind(&self) -> BackendKind {
+            BackendKind::Auris
+        }
+        fn capabilities(&self) -> VoiceCapabilities {
+            let mut capabilities = self.kind().capabilities();
+            capabilities.curves.pitch = crate::CurveSource::Backend;
+            capabilities
+        }
+        fn info(&self) -> &VoiceInfo {
+            &self.0
+        }
+        fn acceleration(&self) -> Acceleration {
+            Acceleration::Cpu
+        }
+        fn on_gpu(&self) -> bool {
+            false
+        }
+        fn path(&self) -> &Path {
+            Path::new("native-with-predictor.onnx")
+        }
+        fn sing_with(
+            &mut self,
+            _: &SingerFrames,
+            _: Option<&SingerScore>,
+            _: u32,
+            _: u64,
+            _: &mut dyn FnMut(usize, usize) -> bool,
+        ) -> Result<Vec<f32>, SingError> {
+            panic!("reading capabilities must not run inference")
+        }
+    }
+
+    #[test]
+    fn a_native_model_can_report_a_predictor_without_changing_format_defaults() {
+        let info = serde_json::from_value(serde_json::json!({
+            "format_version": crate::FORMAT_VERSION,
+            "sample_rate": 24000, "hop_length": 256, "inter_channels": 1,
+            "symbols": ["<sil>", "<unk>"]
+        }))
+        .unwrap();
+        let model = VoiceModel::from_backend(NativePredictor(info));
+        assert_eq!(model.backend_kind(), BackendKind::Auris);
+        assert_eq!(
+            model.capabilities().curves.pitch,
+            crate::CurveSource::Backend
+        );
+        assert_eq!(model.capabilities().curves.energy, crate::CurveSource::Host);
+        assert_eq!(
+            BackendKind::Auris.capabilities().curves,
+            CurveSources::default()
+        );
+    }
+
     #[test]
     fn capabilities_follow_the_backend_that_consumes_the_score() {
         for (entry, kind, phonemes) in [
@@ -204,6 +292,12 @@ mod tests {
             assert_eq!(backend, kind);
             assert_eq!(backend.capabilities().manual_phonemes, phonemes);
             assert_eq!(backend.capabilities().phoneme_timing, phonemes);
+            let expected = if kind == BackendKind::Voicevox {
+                crate::voicevox::VoicevoxBackend::SOURCES
+            } else {
+                CurveSources::default()
+            };
+            assert_eq!(backend.capabilities().curves, expected);
         }
     }
 }

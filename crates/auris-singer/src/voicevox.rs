@@ -11,7 +11,10 @@ use unicode_normalization::UnicodeNormalization;
 
 use crate::backend::{BackendKind, SingingBackend};
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
-use crate::{Acceleration, SingError, validate_frames};
+use crate::{
+    Acceleration, CurveGenerator, CurvePrediction, CurveSource, CurveSources, SingError,
+    validate_frames,
+};
 
 const NAME: &str = "VOICEVOX";
 
@@ -308,6 +311,67 @@ impl VoicevoxBackend {
     }
 }
 
+fn prediction_from_query(
+    query: Value,
+    padding: usize,
+) -> Result<CurvePrediction<Value>, SingError> {
+    let read = |name: &str| -> Result<Vec<f64>, SingError> {
+        serde_json::from_value(query[name].clone())
+            .map_err(|_| SingError::Inference(format!("VOICEVOX query has invalid {name} frames")))
+    };
+    let pitch_hz = read("f0")?;
+    let mut energy = read("volume")?;
+    // Engine 0.25.2 can predict small negative volumes around silence. They are
+    // amplitude undershoot, not negative energy; retain every positive prediction.
+    // Nonfinite values remain invalid and are rejected by the shared curve validation.
+    for value in &mut energy {
+        if value.is_finite() && *value < 0.0 {
+            *value = 0.0;
+        }
+    }
+    Ok(CurvePrediction {
+        pitch_hz: Some(pitch_hz),
+        energy: Some(energy),
+        leading_frames: padding,
+        trailing_frames: padding,
+        context: query,
+    })
+}
+
+impl CurveGenerator for VoicevoxBackend {
+    type Context = Value;
+
+    const SOURCES: CurveSources = CurveSources {
+        pitch: CurveSource::Backend,
+        energy: CurveSource::Backend,
+    };
+
+    fn generate_curves(
+        &mut self,
+        _frames: &SingerFrames,
+        score: &SingerScore,
+        speaker: u32,
+        _seed: u64,
+    ) -> Result<CurvePrediction<Value>, SingError> {
+        let style = self
+            .config
+            .styles
+            .get(speaker as usize)
+            .ok_or(SingError::NoSuchSpeaker {
+                speaker,
+                count: self.info.n_speakers,
+            })?;
+        let padding = (self.config.frame_rate * BOUNDARY_SECONDS).ceil() as u32;
+        let padded = padded_score(score, padding)?;
+        let query = self.post_json(
+            "/sing_frame_audio_query",
+            style.query_style_id,
+            json!({ "notes": padded.notes }),
+        )?;
+        prediction_from_query(query, padding as usize)
+    }
+}
+
 impl SingingBackend for VoicevoxBackend {
     fn kind(&self) -> BackendKind {
         BackendKind::Voicevox
@@ -334,7 +398,7 @@ impl SingingBackend for VoicevoxBackend {
         frames: &SingerFrames,
         score: Option<&SingerScore>,
         speaker: u32,
-        _seed: u64,
+        seed: u64,
         progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
         validate_frames(frames)?;
@@ -367,34 +431,19 @@ impl SingingBackend for VoicevoxBackend {
         if !progress(0, 2) {
             return Err(SingError::Cancelled);
         }
-        let padding = (self.config.frame_rate * BOUNDARY_SECONDS).ceil() as u32;
-        let padded = padded_score(score, padding)?;
-        let padding = padding as usize;
-        let query_frames = frames.len() + 2 * padding;
-        let mut query = self.post_json(
-            "/sing_frame_audio_query",
-            style.query_style_id,
-            json!({ "notes": padded.notes }),
-        )?;
-        let f0 = query.get("f0").and_then(Value::as_array).map(Vec::len);
-        let volume = query.get("volume").and_then(Value::as_array).map(Vec::len);
-        if f0 != Some(query_frames) || volume != Some(query_frames) {
-            return Err(SingError::Inference(format!(
-                "VOICEVOX query returned {f0:?} pitch and {volume:?} volume frames for {query_frames} score frames"
-            )));
-        }
-        let mut pitch = vec![0.0; query_frames];
-        let mut energy = vec![0.0; query_frames];
-        pitch[padding..padding + frames.len()].copy_from_slice(&frames.f0_hz);
-        energy[padding..padding + frames.len()].copy_from_slice(&frames.energy);
-        query["f0"] = json!(pitch);
-        query["volume"] = json!(energy);
+        let decode_style = style.decode_style_id;
+        let prepared = self.prepare_curves(frames, score, speaker, seed)?;
+        let padding = prepared.leading_frames;
+        let query_frames = prepared.pitch_hz.len();
+        let mut query = prepared.context;
+        query["f0"] = json!(prepared.pitch_hz);
+        query["volume"] = json!(prepared.energy);
         query["outputSamplingRate"] = json!(self.info.sample_rate);
         query["outputStereo"] = json!(false);
         if !progress(1, 2) {
             return Err(SingError::Cancelled);
         }
-        let wav = self.synthesize(style.decode_style_id, query)?;
+        let wav = self.synthesize(decode_style, query)?;
         if !progress(2, 2) {
             return Err(SingError::Cancelled);
         }
@@ -499,9 +548,17 @@ mod tests {
             let mut requests = Vec::new();
             let (mut query, _) = listener.accept().unwrap();
             requests.push(read_request(&mut query));
+            let mut predicted_pitch = vec![0.0; query_frames];
+            let mut predicted_volume = vec![0.0; query_frames];
+            if !opening_rest {
+                predicted_pitch[padding] = 220.0;
+                predicted_volume[padding] = 1.0;
+            }
+            predicted_pitch[padding + 1] = 440.0;
+            predicted_volume[padding + 1] = 1.0;
             let response = json!({
-                "f0": vec![0.0; query_frames],
-                "volume": vec![0.0; query_frames],
+                "f0": predicted_pitch,
+                "volume": predicted_volume,
                 "phonemes": [],
                 "outputSamplingRate": 24000,
                 "outputStereo": false,
@@ -574,6 +631,39 @@ mod tests {
 
     fn request_body(request: &str) -> Value {
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    #[test]
+    fn predicted_volume_undershoot_is_silent_without_losing_articulation() {
+        let query = json!({
+            "f0": [0.0, 0.0, 440.0, 438.0, 0.0, 0.0],
+            "volume": [-0.00038448721170425415, 0.04, 0.4, 0.2, -0.000013425946235656738, 0.0],
+            "phonemes": [{"phoneme": "k", "frame_length": 2}, {"phoneme": "a", "frame_length": 4}]
+        });
+        let frames = SingerFrames {
+            hop_seconds: 256.0 / 24000.0,
+            inventory: vec!["<sil>".into(), "a".into()],
+            phonemes: vec![1; 4],
+            f0_hz: vec![880.0; 4],
+            energy: vec![0.5, 0.5, 0.25, 0.5],
+        };
+        let score = SingerScore {
+            notes: vec![SingerNote {
+                key: Some(69),
+                frame_length: 4,
+                lyric: "カ".into(),
+            }],
+        };
+        let prepared = prediction_from_query(query.clone(), 1)
+            .unwrap()
+            .apply_expression(&frames, &score, VoicevoxBackend::SOURCES)
+            .unwrap();
+        assert_eq!(prepared.pitch_hz, [0.0, 0.0, 880.0, 876.0, 0.0, 0.0]);
+        assert_eq!(prepared.energy, [0.0, 0.02, 0.2, 0.05, 0.0, 0.0]);
+        assert_eq!(
+            prepared.context, query,
+            "pronunciation context is untouched"
+        );
     }
 
     fn test_score(events: &[(u32, &str)]) -> SingerScore {
@@ -756,7 +846,7 @@ mod tests {
             let mut pitch = vec![0.0; 2 * padding + 2];
             let mut energy = pitch.clone();
             pitch[padding + 1] = 440.0;
-            energy[padding + 1] = 0.8_f32;
+            energy[padding + 1] = f64::from(0.8_f32);
             assert_eq!(query["f0"], json!(pitch));
             assert_eq!(query["volume"], json!(energy));
         }
@@ -774,7 +864,7 @@ mod tests {
         assert_eq!(score["notes"][1]["lyric"], "ア");
         let query = request_body(&requests[1]);
         assert_eq!(query["f0"][94], json!(220.0_f32));
-        assert_eq!(query["volume"][94], json!(0.4_f32));
+        assert_eq!(query["volume"][94], json!(f64::from(0.4_f32)));
     }
 
     #[test]

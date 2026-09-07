@@ -15,8 +15,8 @@ use auris_core::project::BEND_LIMIT;
 use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
 use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
-    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_frames,
-    render_score, split_kana_lyric,
+    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_score,
+    split_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -67,6 +67,7 @@ pub(super) struct LoadedVoice {
     stamp: Option<VoiceStamp>,
     info: Arc<VoiceInfo>,
     backend: BackendKind,
+    capabilities: VoiceCapabilities,
     model: Arc<Mutex<VoiceModel>>,
 }
 
@@ -77,6 +78,30 @@ pub(super) struct LoadedVoice {
 pub const MIN_PHONEME_SECONDS: f64 = 0.01;
 
 impl Session {
+    /// Reads model-specific capabilities from the immutable cache, with cold format defaults.
+    fn capabilities_for_singer(&self, singer: &auris_core::SingerTrack) -> VoiceCapabilities {
+        let Some(voice) = &singer.voice else {
+            return BackendKind::Auris.capabilities();
+        };
+        voice
+            .path
+            .resolve(self.project_folder())
+            .and_then(|path| self.voices.get(&path))
+            .map_or_else(
+                || BackendKind::from_path(voice.path.as_stored()).capabilities(),
+                |loaded| loaded.capabilities,
+            )
+    }
+
+    /// Previews, exported curves and take fingerprints all use the same source selection.
+    fn render_singer_frames(&self, singer: &auris_core::SingerTrack) -> SingerFrames {
+        auris_vocal::render_frames_with_sources(
+            singer,
+            &self.project.tempo_map,
+            self.capabilities_for_singer(singer).curves,
+        )
+    }
+
     /// Appends a singer track, previewing through the built-in vocal instrument.
     pub fn add_singer_track(&mut self, name: impl Into<String>) -> TrackId {
         self.record(Edit::AddSingerTrack);
@@ -511,7 +536,7 @@ impl Session {
     /// export goes through this, and so can anything that wants to show the sequences.
     pub fn singer_frames(&self, track: TrackId) -> Result<SingerFrames, SessionError> {
         let singer = self.require_singer(track)?;
-        Ok(render_frames(singer, &self.project.tempo_map))
+        Ok(self.render_singer_frames(singer))
     }
 
     /// Writes a singer track's frames to `path` as JSON, and says how many frames there were.
@@ -869,7 +894,7 @@ impl Session {
             backend,
             speakers,
             speaker,
-            capabilities: backend.capabilities(),
+            capabilities: loaded.map_or_else(|| backend.capabilities(), |voice| voice.capabilities),
         }))
     }
 
@@ -878,10 +903,7 @@ impl Session {
     /// A track with no voice supports authoring phonemes and timing for a future voice.
     pub fn singer_capabilities(&self, track: TrackId) -> Result<VoiceCapabilities, SessionError> {
         let singer = self.require_singer(track)?;
-        let backend = singer.voice.as_ref().map_or(BackendKind::Auris, |voice| {
-            BackendKind::from_path(voice.path.as_stored())
-        });
-        Ok(backend.capabilities())
+        Ok(self.capabilities_for_singer(singer))
     }
 
     /// Tells a singer track which of its voice's speakers sings: a name from
@@ -985,9 +1007,8 @@ impl Session {
         let seed = seed
             .or(singer.take.as_ref().map(|take| take.seed))
             .unwrap_or(0);
-        let frames = render_frames(singer, &self.project.tempo_map);
         let score = render_score(singer, &self.project.tempo_map);
-        if frames.is_empty() {
+        if score.notes.is_empty() {
             return Err(SessionError::NothingToSing(track.0));
         }
         let folder = self
@@ -997,8 +1018,15 @@ impl Session {
             .path
             .resolve(Some(folder))
             .ok_or(SessionError::NoVoice(track.0))?;
-        let fingerprint = take_fingerprint(&frames, &voice.path, voice.speaker.as_deref(), seed);
         let loaded = self.loaded_voice_at(&resolved)?;
+        // Load before sampling: two native voices may have different optional predictors.
+        let frames = auris_vocal::render_frames_with_sources(
+            self.require_singer(track)?,
+            &self.project.tempo_map,
+            loaded.capabilities.curves,
+        );
+        let fingerprint =
+            take_fingerprint(&frames, &score, &voice.path, voice.speaker.as_deref(), seed);
         let speaker = speaker_id(&loaded.info, voice.speaker.as_deref())?;
         let sample_rate = loaded.info.sample_rate;
         Ok(SingPlan {
@@ -1047,8 +1075,8 @@ impl Session {
     ///
     /// A tiny score built around the note alone — its pitch, its phonemes, a fixed held
     /// length with a silent tail for the release — rendered through the same
-    /// [`render_frames`] as the song, so what a dragged note sounds like and what the take
-    /// will sing stay one story. The velocity is the default on purpose: a preview keyed by
+    /// [`auris_vocal::render_frames_with_sources`] as the song, so a dragged note and the take
+    /// will sing the same way. The velocity is the default on purpose: a preview keyed by
     /// every velocity would defeat the cache every caller wants to keep.
     pub fn preview_note_frames(
         &self,
@@ -1074,7 +1102,7 @@ impl Session {
             voice: singer.voice.clone(),
             take: None,
         };
-        let mut frames = render_frames(&one_note, tempo);
+        let mut frames = self.render_singer_frames(&one_note);
         // The tail is appended rather than scored: silence after the note is where the
         // model lets go of the syllable, and the first inventory entry is always SILENCE.
         let tail = (PREVIEW_TAIL_SECONDS / frames.hop_seconds).ceil() as usize;
@@ -1176,6 +1204,7 @@ impl Session {
             stamp,
             info: Arc::new(model.info().clone()),
             backend: model.backend_kind(),
+            capabilities: model.capabilities(),
             model: Arc::new(Mutex::new(model)),
         };
         if stamp.is_some() {
@@ -1316,9 +1345,11 @@ impl Session {
             .as_ref()
             .ok_or(SessionError::NoVoice(track.0))?;
         let seed = singer.take.as_ref().map_or(0, |take| take.seed);
-        let frames = render_frames(singer, &self.project.tempo_map);
+        let frames = self.render_singer_frames(singer);
+        let score = render_score(singer, &self.project.tempo_map);
         Ok(take_fingerprint(
             &frames,
+            &score,
             &voice.path,
             voice.speaker.as_deref(),
             seed,
@@ -1503,7 +1534,7 @@ fn ornament_seconds(seconds: f64, frame_hop: f64) -> Result<f64, SessionError> {
     }
 }
 
-/// One number naming everything a render reads: the frames, the voice, the seed.
+/// One number naming everything a render reads: the frames, score, voice, speaker and seed.
 ///
 /// FNV-1a, written out the way [`auris_core::rng`] writes it and for the same reason: the value
 /// is stored in project files, so it has to mean the same thing next year, and std's hashers
@@ -1511,6 +1542,7 @@ fn ornament_seconds(seconds: f64, frame_hop: f64) -> Result<f64, SessionError> {
 /// parts cannot trade bytes and hash the same.
 pub fn take_fingerprint(
     frames: &SingerFrames,
+    score: &SingerScore,
     voice: &AssetPath,
     speaker: Option<&str>,
     seed: u64,
@@ -1546,6 +1578,15 @@ pub fn take_fingerprint(
     }
     for energy in &frames.energy {
         eat(&energy.to_le_bytes());
+    }
+    // Musical controls can be identical across different note boundaries. A score-based
+    // backend still articulates those notes separately, so the score is an input of its own.
+    eat(&(score.notes.len() as u64).to_le_bytes());
+    for note in &score.notes {
+        eat(&[u8::from(note.key.is_some()), note.key.unwrap_or(0)]);
+        eat(&note.frame_length.to_le_bytes());
+        eat(&(note.lyric.len() as u64).to_le_bytes());
+        eat(note.lyric.as_bytes());
     }
     hash
 }
@@ -1617,6 +1658,135 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn loaded_curve_capabilities_override_format_defaults_without_locking_inference() {
+        let scratch = Scratch::new("model-curve-sources");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(2);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let model = session.voices[&path].model.clone();
+        let _render_in_progress = model.lock().unwrap();
+        let sources = auris_singer::CurveSources {
+            pitch: auris_singer::CurveSource::Backend,
+            energy: auris_singer::CurveSource::Host,
+        };
+        session.voices.get_mut(&path).unwrap().capabilities.curves = sources;
+        let expected = auris_vocal::render_frames_with_sources(
+            session.require_singer(track).unwrap(),
+            &session.project.tempo_map,
+            sources,
+        );
+        assert_eq!(session.singer_capabilities(track).unwrap().curves, sources);
+        assert_eq!(
+            session
+                .singer_voice_info(track)
+                .unwrap()
+                .unwrap()
+                .capabilities
+                .curves,
+            sources
+        );
+        assert_eq!(session.singer_frames(track).unwrap(), expected);
+        let plan = session.sing_plan(track, None).unwrap();
+        assert_eq!(plan.frames, expected);
+        assert_eq!(
+            plan.fingerprint,
+            session.singer_input_fingerprint(track).unwrap()
+        );
+        let preview = session
+            .preview_note_frames(track, 69, &["a".into()])
+            .unwrap();
+        assert_eq!(
+            preview.energy[0], 0.0,
+            "host energy retains its attack envelope"
+        );
+    }
+
+    #[test]
+    fn voicevox_preview_and_take_use_engine_expression_controls() {
+        let scratch = Scratch::new("voicevox-expression");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(2);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let singer = session.require_singer(track).unwrap();
+        let expected = auris_vocal::render_expression_frames(singer, &session.project.tempo_map);
+        assert_eq!(session.singer_frames(track).unwrap(), expected);
+        let plan = session.sing_plan(track, None).unwrap();
+        assert_eq!(plan.frames, expected);
+        assert_eq!(
+            plan.fingerprint,
+            session.singer_input_fingerprint(track).unwrap()
+        );
+        let preview = session
+            .preview_note_frames(track, 69, &["a".into()])
+            .unwrap();
+        assert!(
+            preview.energy[0] > 0.0,
+            "the Engine supplies the preview attack"
+        );
+    }
+
+    #[test]
+    fn voicevox_note_boundaries_invalidate_takes_even_when_control_frames_match() {
+        let scratch = Scratch::new("voicevox-score-fingerprint");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, clip) = sung(1);
+        session
+            .add_note(clip, Note::new(60, Ticks::QUARTER, Ticks::QUARTER))
+            .unwrap();
+        session.set_note_lyric(clip, 0, "あ").unwrap();
+        session.set_note_lyric(clip, 1, "あ").unwrap();
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let original = session.sing_plan(track, None).unwrap();
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .take = Some(SingerTake {
+            source: auris_core::SourceId(999),
+            fingerprint: original.fingerprint,
+            seed: original.seed,
+        });
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Current
+        );
+
+        session.remove_notes(clip, &[1]).unwrap();
+        session.resize_note(clip, 0, Ticks::QUARTER * 2).unwrap();
+        let edited = session.sing_plan(track, None).unwrap();
+        assert_eq!(
+            original.frames, edited.frames,
+            "identical held notes have the same pitch and expression controls"
+        );
+        assert_ne!(
+            original.score, edited.score,
+            "the Engine receives a new articulation"
+        );
+        assert_ne!(
+            original.fingerprint, edited.fingerprint,
+            "score boundaries must invalidate a take even when its control frames are unchanged"
+        );
+        assert_eq!(
+            session.singer_input_fingerprint(track).unwrap(),
+            edited.fingerprint
+        );
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Behind
+        );
+        session.undo().unwrap();
+        session.undo().unwrap();
+        assert_eq!(
+            session.singer_take_state(track).unwrap(),
+            SingerTakeState::Current,
+            "undo restores the score that the take sang"
+        );
     }
 
     #[test]
@@ -2483,37 +2653,63 @@ mod tests {
     }
 
     #[test]
-    fn the_fingerprint_pins_frames_voice_and_seed() {
+    fn the_fingerprint_pins_frames_score_voice_and_seed() {
         let (mut session, track, clip) = sung(1);
         let voice = AssetPath::external("/voices/test.onnx");
         let frames = session.singer_frames(track).unwrap();
+        let score = render_score(
+            session.require_singer(track).unwrap(),
+            &session.project.tempo_map,
+        );
         assert_eq!(
-            take_fingerprint(&frames, &voice, None, 3),
-            take_fingerprint(&frames, &voice, None, 3),
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(&frames, &score, &voice, None, 3),
             "the same inputs are the same number, today and next year"
         );
         assert_ne!(
-            take_fingerprint(&frames, &voice, None, 3),
-            take_fingerprint(&frames, &voice, None, 4),
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(&frames, &score, &voice, None, 4),
             "another seed is another take"
         );
         assert_ne!(
-            take_fingerprint(&frames, &voice, None, 3),
-            take_fingerprint(&frames, &AssetPath::external("/voices/other.onnx"), None, 3),
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(
+                &frames,
+                &score,
+                &AssetPath::external("/voices/other.onnx"),
+                None,
+                3
+            ),
             "another voice is another take"
         );
         assert_ne!(
-            take_fingerprint(&frames, &voice, None, 3),
-            take_fingerprint(&frames, &voice, Some("alto"), 3),
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(&frames, &score, &voice, Some("alto"), 3),
             "another speaker is another take"
+        );
+        let mut new_words = score.clone();
+        new_words
+            .notes
+            .iter_mut()
+            .find(|note| note.key.is_some())
+            .unwrap()
+            .lyric = "カ".into();
+        assert_ne!(
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(&frames, &new_words, &voice, None, 3),
+            "score-based engines read the lyrics independently of the frame phonemes"
         );
         session
             .add_note(clip, Note::new(64, Ticks::QUARTER, Ticks::QUARTER))
             .unwrap();
         let edited = session.singer_frames(track).unwrap();
+        let edited_score = render_score(
+            session.require_singer(track).unwrap(),
+            &session.project.tempo_map,
+        );
         assert_ne!(
-            take_fingerprint(&frames, &voice, None, 3),
-            take_fingerprint(&edited, &voice, None, 3),
+            take_fingerprint(&frames, &score, &voice, None, 3),
+            take_fingerprint(&edited, &edited_score, &voice, None, 3),
             "an edited score is another take"
         );
     }
@@ -2528,8 +2724,12 @@ mod tests {
 
         put_voice(&mut session, track);
         let frames = session.singer_frames(track).unwrap();
+        let score = render_score(
+            session.require_singer(track).unwrap(),
+            &session.project.tempo_map,
+        );
         let voice = AssetPath::external("/voices/test.onnx");
-        let fingerprint = take_fingerprint(&frames, &voice, None, 0);
+        let fingerprint = take_fingerprint(&frames, &score, &voice, None, 0);
         if let Some(singer) = session
             .project
             .track_mut(track)

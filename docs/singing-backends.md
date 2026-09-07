@@ -122,6 +122,34 @@ noise behavior follow the upstream
 [export wrappers](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/export/wrappers.py)
 and [excitation graph](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/export/excitation_onnx.py).
 
+## Adding a curve predictor
+
+`auris_singer::CurveGenerator` is the common interface for a backend that predicts pitch,
+energy, or both. `SOURCES: CurveSources` declares each independently as `Host` or `Backend`.
+Expose those sources through `VoiceCapabilities::curves`; format defaults live in
+`BackendKind::capabilities`, and `SingingBackend::capabilities` can override them for a loaded
+model, including a native Auris model with an optional predictor.
+Such predictors can also override `CurveGenerator::curve_sources` per instance; report the
+same value in the loaded model's capabilities so frame sampling and prediction agree.
+
+Implement `generate_curves` to return a `CurvePrediction<Context>` with the base performance,
+before applying the user's edits. Each predicted array includes its declared leading and
+trailing context frames on the input frame clock. Leave host-owned arrays as `None`. `Context`
+keeps whatever the decoder needs: phoneme timing, an HTTP query, or model tensors. The shared
+code does not interpret it.
+
+During synthesis, call `prepare_curves` with the score, parallel frames, speaker and seed.
+It validates lengths and numeric values, applies relative pitch edits and energy multipliers
+to predictions, and copies host-owned acoustic curves unchanged. Decode the returned
+`PreparedCurves` together with its context, then trim the declared context from the waveform.
+Keep progress and cancellation at the backend's existing inference boundaries.
+
+The session samples frames with `render_frames_with_sources` using the loaded model's
+capabilities. For backend-owned pitch it omits the automatic glide; for backend-owned energy
+it omits the generic phoneme levels and attack/release. This avoids applying articulation
+twice while retaining bends, ornaments, velocity and expression. Cold metadata reads use the
+format defaults; a full render loads the model before sampling its inputs.
+
 ## VOICEVOX Engine
 
 Start a [VOICEVOX Engine](https://github.com/VOICEVOX/voicevox_engine), then place a file named
@@ -150,11 +178,17 @@ Find the two style IDs in `GET /singers`: `query_style_id` must name a `sing` or
 `singing_teacher` style, while `decode_style_id` must name a `frame_decode` style. Multiple entries
 become speaker choices in Auris Studio.
 
-The backend sends the lyric-bearing score to `POST /sing_frame_audio_query`, applies Auris'
-pitch and energy curves to the returned frame query, and sends that query to
+The backend sends the lyric-bearing score to `POST /sing_frame_audio_query`, preserves the
+Engine's pitch contour, unvoiced frames and phoneme volume balance, and sends the query to
 `POST /frame_synthesis`. The Engine must be running when rendering. Raw `SingerFrames` files do
 not contain lyrics and therefore cannot be rendered through this backend; full singer tracks and
 note previews can.
+
+Written bends and ornaments shift the predicted pitch relative to each note's key; velocity
+and expression scale the predicted volume. Auris does not add its generic glide or note
+attack/release envelope to this backend. Controls extend into rests so the Engine can sound
+anticipatory consonants without being muted by the host's note boundaries. Existing audio
+takes stay as recorded; render the singer track again to hear this behavior.
 
 A standalone prolonged-sound mark (`ー`) is expanded to the preceding vowel only in the
 outgoing score: `こ・ー・ひ・ー` is sent as `こ・オ・ひ・イ`. Notes, rests, pitches,
