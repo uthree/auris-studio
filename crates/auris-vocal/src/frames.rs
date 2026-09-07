@@ -191,6 +191,23 @@ struct TimedNote<'a> {
 
 /// Samples a singer track into the frames its voice model is fed.
 pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
+    render_frames_impl(track, tempo_map, false)
+}
+
+/// Samples musical controls for an engine that predicts its own articulation.
+///
+/// Pitch contains the written note, bend and ornaments, without the automatic glide.
+/// Energy is velocity times expression, without phoneme levels or attack/release:
+/// these controls modulate the engine's predictions rather than replacing them.
+pub fn render_expression_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames {
+    render_frames_impl(track, tempo_map, true)
+}
+
+fn render_frames_impl(
+    track: &SingerTrack,
+    tempo_map: &TempoMap,
+    expression_only: bool,
+) -> SingerFrames {
     let hop = match track.frame_hop.is_finite() {
         true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
         false => default_frame_hop(),
@@ -255,6 +272,7 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
             notes.get(walker + 1),
             t,
         );
+        let glide = if expression_only { 0.0 } else { glide };
         f0_hz.push(pitch_to_hz(note.pitch + glide + bend + ornament));
 
         let expression = match note.expression.is_empty() {
@@ -267,7 +285,12 @@ pub fn render_frames(track: &SingerTrack, tempo_map: &TempoMap) -> SingerFrames 
         } else {
             level_gain(note.levels, token)
         };
-        energy.push(note.velocity * expression * envelope(note, t) * gain);
+        let articulation = if expression_only {
+            1.0
+        } else {
+            envelope(note, t) * gain
+        };
+        energy.push(note.velocity * expression * articulation);
     }
 
     SingerFrames {
@@ -669,6 +692,40 @@ mod tests {
         let frames = render_frames(&singer, &map());
         assert_eq!(frames.hop_seconds, MAX_FRAME_HOP);
         assert_eq!(frames.len(), 6);
+    }
+
+    #[test]
+    fn engine_expression_keeps_note_edges_without_adding_a_second_glide() {
+        let singer = track(vec![
+            sung(69, 1.0, 2.0, &["k", "a"]),
+            sung(81, 3.0, 2.0, &["a"]),
+        ]);
+        let controls = render_expression_frames(&singer, &map());
+        let acoustic = render_frames(&singer, &map());
+        assert_eq!(controls.len(), acoustic.len());
+        assert_eq!(controls.energy[0], 0.0);
+        for frame in [50, 51, 149, 150, 249] {
+            assert!((controls.energy[frame] - 0.8).abs() < 1e-6);
+        }
+        assert_eq!(acoustic.energy[50], 0.0);
+        assert!((controls.f0_hz[149] - 440.0).abs() < 1e-3);
+        assert!((controls.f0_hz[150] - 880.0).abs() < 1e-3);
+        assert!(acoustic.f0_hz[149] > controls.f0_hz[149]);
+        let mut edited = singer.clone();
+        edited.clips[0].bend = vec![CurvePoint {
+            at: Ticks::ZERO,
+            value: 12.0,
+        }];
+        edited.clips[0].controllers.insert(
+            CC_EXPRESSION,
+            vec![CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.5,
+            }],
+        );
+        let edited = render_expression_frames(&edited, &map());
+        assert!((edited.f0_hz[100] - 880.0).abs() < 1e-3);
+        assert!((edited.energy[100] - 0.4).abs() < 1e-6);
     }
 
     #[test]

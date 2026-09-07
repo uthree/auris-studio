@@ -31,7 +31,8 @@ pub mod phoneme;
 
 pub use accent::{AccentPhrase, SungMora, accent_contour, kana_accent_phrase};
 pub use frames::{
-    SingerFrames, SingerNote, SingerScore, phoneme_layout, render_frames, render_score,
+    SingerFrames, SingerNote, SingerScore, phoneme_layout, render_expression_frames, render_frames,
+    render_score,
 };
 pub use g2p::{JapaneseDictionary, VocalError, lyric_phonemes};
 pub use kana::{kana_phonemes, split_kana_lyric, split_kana_moras};

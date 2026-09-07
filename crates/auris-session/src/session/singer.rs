@@ -15,8 +15,8 @@ use auris_core::project::BEND_LIMIT;
 use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
 use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
-    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_frames,
-    render_score, split_kana_lyric,
+    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_score,
+    split_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -26,6 +26,17 @@ use crate::voice_setup::{
 };
 
 use super::Session;
+
+/// Keep every render, preview and take fingerprint on the same backend-specific controls.
+fn render_frames(singer: &auris_core::SingerTrack, tempo: &auris_core::TempoMap) -> SingerFrames {
+    if singer.voice.as_ref().is_some_and(|voice| {
+        BackendKind::from_path(voice.path.as_stored()) == BackendKind::Voicevox
+    }) {
+        auris_vocal::render_expression_frames(singer, tempo)
+    } else {
+        auris_vocal::render_frames(singer, tempo)
+    }
+}
 
 /// The lyric written on every note of a phrase after its first, OpenUTAU's way.
 ///
@@ -1617,6 +1628,30 @@ mod tests {
         )
         .unwrap();
         path
+    }
+
+    #[test]
+    fn voicevox_preview_and_take_use_engine_expression_controls() {
+        let scratch = Scratch::new("voicevox-expression");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(2);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let singer = session.require_singer(track).unwrap();
+        let expected = auris_vocal::render_expression_frames(singer, &session.project.tempo_map);
+        assert_eq!(session.singer_frames(track).unwrap(), expected);
+        let plan = session.sing_plan(track, None).unwrap();
+        assert_eq!(plan.frames, expected);
+        assert_eq!(
+            plan.fingerprint,
+            session.singer_input_fingerprint(track).unwrap()
+        );
+        let preview = session
+            .preview_note_frames(track, 69, &["a".into()])
+            .unwrap();
+        assert!(
+            preview.energy[0] > 0.0,
+            "the Engine supplies the preview attack"
+        );
     }
 
     #[test]

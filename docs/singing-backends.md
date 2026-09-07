@@ -150,11 +150,17 @@ Find the two style IDs in `GET /singers`: `query_style_id` must name a `sing` or
 `singing_teacher` style, while `decode_style_id` must name a `frame_decode` style. Multiple entries
 become speaker choices in Auris Studio.
 
-The backend sends the lyric-bearing score to `POST /sing_frame_audio_query`, applies Auris'
-pitch and energy curves to the returned frame query, and sends that query to
+The backend sends the lyric-bearing score to `POST /sing_frame_audio_query`, preserves the
+Engine's pitch contour, unvoiced frames and phoneme volume balance, and sends the query to
 `POST /frame_synthesis`. The Engine must be running when rendering. Raw `SingerFrames` files do
 not contain lyrics and therefore cannot be rendered through this backend; full singer tracks and
 note previews can.
+
+Written bends and ornaments shift the predicted pitch relative to each note's key; velocity
+and expression scale the predicted volume. Auris does not add its generic glide or note
+attack/release envelope to this backend. Controls extend into rests so the Engine can sound
+anticipatory consonants without being muted by the host's note boundaries. Existing audio
+takes stay as recorded; render the singer track again to hear this behavior.
 
 A standalone prolonged-sound mark (`ー`) is expanded to the preceding vowel only in the
 outgoing score: `こ・ー・ひ・ー` is sent as `こ・オ・ひ・イ`. Notes, rests, pitches,

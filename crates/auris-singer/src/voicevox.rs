@@ -18,6 +18,68 @@ const NAME: &str = "VOICEVOX";
 /// Gives consonants room before a first-beat note and the decoder context at both boundaries.
 const BOUNDARY_SECONDS: f64 = 1.0;
 
+/// Modulate the Engine's articulation rather than replacing its acoustic features.
+fn apply_expression(
+    query: &mut Value,
+    frames: &SingerFrames,
+    score: &SingerScore,
+    padding: usize,
+) -> Result<(), SingError> {
+    let count = frames.len() + 2 * padding;
+    let read = |name: &str| -> Result<Vec<f64>, SingError> {
+        let values: Vec<f64> = serde_json::from_value(query[name].clone()).map_err(|_| {
+            SingError::Inference(format!("VOICEVOX query has invalid {name} frames"))
+        })?;
+        if values.len() != count || values.iter().any(|v| !v.is_finite() || *v < 0.0) {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX query has invalid {name} frames; expected {count} nonnegative values"
+            )));
+        }
+        Ok(values)
+    };
+    let mut pitch = read("f0")?;
+    let mut volume = read("volume")?;
+    let mut controls = vec![None; count];
+    let mut offset = padding;
+    for note in &score.notes {
+        let end = offset + note.frame_length as usize;
+        if let Some(key) = note.key {
+            let base = auris_core::plugin::pitch_to_hz(f32::from(key));
+            for (index, control) in controls[offset..end].iter_mut().enumerate() {
+                let source = offset + index - padding;
+                let ratio = if frames.f0_hz[source] > 0.0 {
+                    f64::from(frames.f0_hz[source] / base)
+                } else {
+                    1.0
+                };
+                *control = Some((ratio, f64::from(frames.energy[source])));
+            }
+        }
+        offset = end;
+    }
+    // Consonants can begin inside the preceding rest. Carry the upcoming note's
+    // controls across that rest; the Engine's own volume still defines silence.
+    let mut next = None;
+    for control in controls.iter_mut().rev() {
+        if control.is_some() {
+            next = *control;
+        } else {
+            *control = next;
+        }
+    }
+    // Preserve the last syllable's release in the decoder's trailing context too.
+    let mut previous = (1.0, 0.0);
+    for (index, control) in controls.into_iter().enumerate() {
+        let (ratio, gain) = control.unwrap_or(previous);
+        previous = (ratio, gain);
+        pitch[index] *= ratio;
+        volume[index] *= gain;
+    }
+    query["f0"] = json!(pitch);
+    query["volume"] = json!(volume);
+    Ok(())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VoicevoxConfig {
@@ -376,19 +438,7 @@ impl SingingBackend for VoicevoxBackend {
             style.query_style_id,
             json!({ "notes": padded.notes }),
         )?;
-        let f0 = query.get("f0").and_then(Value::as_array).map(Vec::len);
-        let volume = query.get("volume").and_then(Value::as_array).map(Vec::len);
-        if f0 != Some(query_frames) || volume != Some(query_frames) {
-            return Err(SingError::Inference(format!(
-                "VOICEVOX query returned {f0:?} pitch and {volume:?} volume frames for {query_frames} score frames"
-            )));
-        }
-        let mut pitch = vec![0.0; query_frames];
-        let mut energy = vec![0.0; query_frames];
-        pitch[padding..padding + frames.len()].copy_from_slice(&frames.f0_hz);
-        energy[padding..padding + frames.len()].copy_from_slice(&frames.energy);
-        query["f0"] = json!(pitch);
-        query["volume"] = json!(energy);
+        apply_expression(&mut query, frames, score, padding)?;
         query["outputSamplingRate"] = json!(self.info.sample_rate);
         query["outputStereo"] = json!(false);
         if !progress(1, 2) {
@@ -499,9 +549,17 @@ mod tests {
             let mut requests = Vec::new();
             let (mut query, _) = listener.accept().unwrap();
             requests.push(read_request(&mut query));
+            let mut predicted_pitch = vec![0.0; query_frames];
+            let mut predicted_volume = vec![0.0; query_frames];
+            if !opening_rest {
+                predicted_pitch[padding] = 220.0;
+                predicted_volume[padding] = 1.0;
+            }
+            predicted_pitch[padding + 1] = 440.0;
+            predicted_volume[padding + 1] = 1.0;
             let response = json!({
-                "f0": vec![0.0; query_frames],
-                "volume": vec![0.0; query_frames],
+                "f0": predicted_pitch,
+                "volume": predicted_volume,
                 "phonemes": [],
                 "outputSamplingRate": 24000,
                 "outputStereo": false,
@@ -586,6 +644,62 @@ mod tests {
                     lyric: (*lyric).into(),
                 })
                 .collect(),
+        }
+    }
+
+    #[test]
+    fn expression_preserves_unvoiced_consonants_natural_pitch_and_volume_ratios() {
+        let frames = SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec!["<sil>".into(), "a".into()],
+            phonemes: vec![0, 1, 1, 1, 0],
+            f0_hz: vec![0.0, 880.0, 440.0, 440.0, 0.0],
+            energy: vec![0.0, 0.5, 0.25, 0.0, 0.0],
+        };
+        let score = SingerScore {
+            notes: vec![
+                SingerNote {
+                    key: None,
+                    frame_length: 1,
+                    lyric: String::new(),
+                },
+                SingerNote {
+                    key: Some(69),
+                    frame_length: 3,
+                    lyric: "カ".into(),
+                },
+                SingerNote {
+                    key: None,
+                    frame_length: 1,
+                    lyric: String::new(),
+                },
+            ],
+        };
+        let mut query = json!({
+            "f0": [0.0, 0.0, 442.0, 438.0, 441.0, 0.0, 0.0],
+            "volume": [0.0, 0.04, 0.4, 0.2, 0.3, 0.0, 0.0],
+            "phonemes": [{"phoneme": "k", "frame_length": 2}]
+        });
+        let phonemes = query["phonemes"].clone();
+        apply_expression(&mut query, &frames, &score, 1).unwrap();
+        assert_eq!(
+            query["f0"],
+            json!([0.0, 0.0, 884.0, 438.0, 441.0, 0.0, 0.0])
+        );
+        assert_eq!(
+            query["volume"],
+            json!([0.0, 0.02, 0.2, 0.05, 0.0, 0.0, 0.0])
+        );
+        assert_eq!(query["phonemes"], phonemes);
+        // The anticipatory /k/ stays audible even though the host calls its frame a rest.
+        assert_eq!(query["volume"][1], 0.02);
+        for invalid in [
+            json!([0.0]),
+            json!(vec![Value::Null; 7]),
+            json!(vec![-1.0; 7]),
+        ] {
+            query["volume"] = invalid;
+            assert!(apply_expression(&mut query, &frames, &score, 1).is_err());
         }
     }
 
@@ -756,7 +870,7 @@ mod tests {
             let mut pitch = vec![0.0; 2 * padding + 2];
             let mut energy = pitch.clone();
             pitch[padding + 1] = 440.0;
-            energy[padding + 1] = 0.8_f32;
+            energy[padding + 1] = f64::from(0.8_f32);
             assert_eq!(query["f0"], json!(pitch));
             assert_eq!(query["volume"], json!(energy));
         }
@@ -774,7 +888,7 @@ mod tests {
         assert_eq!(score["notes"][1]["lyric"], "ア");
         let query = request_body(&requests[1]);
         assert_eq!(query["f0"][94], json!(220.0_f32));
-        assert_eq!(query["volume"][94], json!(0.4_f32));
+        assert_eq!(query["volume"][94], json!(f64::from(0.4_f32)));
     }
 
     #[test]
