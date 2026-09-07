@@ -408,18 +408,58 @@ fn paint_ornament_handles(
     }
 }
 
+/// The selected clip's occupied time ranges, merging overlapping and adjacent notes.
+fn note_pitch_spans(notes: &[Note], clip_start: Ticks, clip_end: Ticks) -> Vec<(Ticks, Ticks)> {
+    let mut spans: Vec<_> = notes
+        .iter()
+        .filter_map(|note| {
+            let start = (clip_start + note.start).max(clip_start);
+            let end = (clip_start + note.end()).min(clip_end);
+            (start < end).then_some((start, end))
+        })
+        .collect();
+    spans.sort_unstable();
+    let mut merged: Vec<(Ticks, Ticks)> = Vec::new();
+    for (start, end) in spans {
+        if let Some(last) = merged.last_mut()
+            && start <= last.1
+        {
+            last.1 = last.1.max(end);
+        } else {
+            merged.push((start, end));
+        }
+    }
+    merged
+}
+
+/// Clips each voiced run separately to each occupied range, so even a rest shorter than
+/// one frame cannot become a connecting line between neighbouring notes.
+fn pitch_runs_in_notes<'a>(
+    contour: &'a PitchContour,
+    spans: &'a [(Ticks, Ticks)],
+) -> impl Iterator<Item = &'a [(Ticks, f32)]> + 'a {
+    spans.iter().flat_map(move |&(start, end)| {
+        contour
+            .iter()
+            .map(move |run| {
+                let from = run.partition_point(|(tick, _)| *tick < start);
+                let to = run.partition_point(|(tick, _)| *tick < end);
+                &run[from..to]
+            })
+            .filter(|run| !run.is_empty())
+    })
+}
+
 /// Draws the sung pitch contour over the notes.
 ///
-/// Trimmed to the edited clip's span — the frames cover the whole track, and the
+/// Trimmed to the edited clip's occupied note spans — the frames cover the whole track, and the
 /// neighbouring clips are already ghosts — with y at the centre of the row a note at that
 /// pitch would occupy, which is where the eye lines a curve up against a note.
-#[allow(clippy::too_many_arguments)]
 fn paint_f0_curve(
     window: &mut Window,
     bounds: Bounds<Pixels>,
     contour: &PitchContour,
-    from: Ticks,
-    to: Ticks,
+    spans: &[(Ticks, Ticks)],
     view: &TimelineView,
     pitch_view: &PitchView,
     color: gpui::Hsla,
@@ -427,10 +467,9 @@ fn paint_f0_curve(
     let centre = |pitch: f32| {
         (pitch_view.top_pitch as f32 - pitch) * pitch_view.row_height + pitch_view.row_height / 2.0
     };
-    for run in contour {
+    for run in pitch_runs_in_notes(contour, spans) {
         let drawn: Vec<gpui::Point<Pixels>> = run
             .iter()
-            .filter(|(tick, _)| *tick >= from && *tick < to)
             .map(|(tick, pitch)| {
                 point(
                     bounds.origin.x + view.tick_to_x(*tick),
@@ -772,6 +811,11 @@ impl AurisApp {
                                                 geometry.is_some() || !manual_phonemes,
                                             );
                                             if let Some(geometry) = &geometry {
+                                                let pitch_spans = note_pitch_spans(
+                                                    &notes,
+                                                    clip_start,
+                                                    clip_start + clip_length,
+                                                );
                                                 if manual_phonemes {
                                                     paint_phoneme_spans(
                                                         window,
@@ -789,8 +833,7 @@ impl AurisApp {
                                                     window,
                                                     bounds,
                                                     &geometry.contour,
-                                                    clip_start,
-                                                    clip_start + clip_length,
+                                                    &pitch_spans,
                                                     &view,
                                                     &pitch_view,
                                                     theme.accent,
@@ -799,8 +842,7 @@ impl AurisApp {
                                                     window,
                                                     bounds,
                                                     &geometry.backend_contour,
-                                                    clip_start,
-                                                    clip_start + clip_length,
+                                                    &pitch_spans,
                                                     &view,
                                                     &pitch_view,
                                                     theme.warning,
@@ -2553,6 +2595,64 @@ mod tests {
             runs[1][0].0,
             tempo.seconds_to_ticks(Seconds(4.0 * 256.0 / 24000.0))
         );
+    }
+
+    #[test]
+    fn pitch_is_drawn_only_inside_the_selected_clips_notes() {
+        let notes = [
+            Note::new(60, Ticks(20), Ticks(20)),
+            Note::new(62, Ticks(61), Ticks(19)),
+        ];
+        let spans = note_pitch_spans(&notes, Ticks(100), Ticks(200));
+        // Nonzero backend pitch everywhere, including before, between and after the notes.
+        let contour = vec![
+            (100..=200)
+                .step_by(10)
+                .map(|tick| (Ticks(tick), 60.0))
+                .collect(),
+        ];
+        let drawn: Vec<_> = pitch_runs_in_notes(&contour, &spans).collect();
+        assert_eq!(
+            drawn,
+            [
+                &[(Ticks(120), 60.0), (Ticks(130), 60.0)][..],
+                &[(Ticks(170), 60.0)][..],
+            ]
+        );
+        assert_eq!(pitch_runs_in_notes(&contour, &[]).count(), 0);
+
+        // A one-tick rest contains no sampled point, but must still split the polyline.
+        let notes = [
+            Note::new(60, Ticks(20), Ticks(20)),
+            Note::new(62, Ticks(41), Ticks(39)),
+        ];
+        let spans = note_pitch_spans(&notes, Ticks(100), Ticks(200));
+        let contour = vec![vec![
+            (Ticks(125), 60.0),
+            (Ticks(135), 60.0),
+            (Ticks(145), 61.0),
+            (Ticks(155), 61.0),
+        ]];
+        let drawn: Vec<_> = pitch_runs_in_notes(&contour, &spans).collect();
+        assert_eq!(drawn.len(), 2);
+        assert_eq!(drawn[0], &contour[0][..2]);
+        assert_eq!(drawn[1], &contour[0][2..]);
+    }
+
+    #[test]
+    fn pitch_spans_merge_overlaps_and_clip_notes_to_the_clip_edges() {
+        let notes = [
+            Note::new(64, Ticks(30), Ticks(100)),
+            Note::new(60, Ticks(0), Ticks(20)),
+            Note::new(62, Ticks(10), Ticks(20)),
+            Note::new(65, Ticks(200), Ticks(20)),
+        ];
+        let spans = note_pitch_spans(&notes, Ticks(100), Ticks(200));
+        assert_eq!(spans, [(Ticks(100), Ticks(200))]);
+        // Restricting to notes must also preserve the backend's unvoiced gaps.
+        let contour = vec![vec![(Ticks(110), 60.0)], vec![(Ticks(130), 62.0)]];
+        assert_eq!(pitch_runs_in_notes(&contour, &spans).count(), 2);
+        assert!(note_pitch_spans(&[], Ticks(100), Ticks(200)).is_empty());
     }
 
     #[gpui::test]

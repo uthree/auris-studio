@@ -1271,7 +1271,9 @@ pub mod singing {
     //! musical edits and with decoder padding removed. The take keeps that curve with its audio
     //! through saving, reopening and undo. The piano roll overlays it in the theme's warning
     //! colour beside the host contour in the accent colour, with a legend and gaps at unvoiced
-    //! frames. The session exposes it only while the take matches the current synthesis inputs;
+    //! frames. Both contours are drawn only within the selected clip's notes, breaking at rests
+    //! even when the backend predicts nonzero pitch there. The session exposes the backend curve
+    //! only while the take matches the current synthesis inputs;
     //! editing the score hides it until the next successful render. Loading an older take simply
     //! leaves this optional curve absent until that track is sung again.
     //!
