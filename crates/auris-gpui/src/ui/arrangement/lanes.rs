@@ -86,6 +86,7 @@ impl AurisApp {
                     .flex()
                     .flex_col()
                     .pr(self.scrollbar_width(ScrollPanel::Lanes))
+                    .flex_shrink_0()
                     .child(
                         div()
                             .id("ruler")
@@ -158,6 +159,9 @@ impl AurisApp {
                     })
                     .when(self.panels.lanes.harmony, |this| {
                         this.child(self.render_harmony_lane(cx))
+                    })
+                    .when(self.spectrograms.project_enabled, |this| {
+                        this.child(self.render_project_spectrogram(cx))
                     }),
             )
             .child(
@@ -474,6 +478,9 @@ impl AurisApp {
                     top,
                     height: track.height,
                     spectrogram: self.spectrogram_tracks.contains(&track.id),
+                    rendered_spectrum: (self.spectrogram_tracks.contains(&track.id)
+                        && track.kind.as_audio().is_none())
+                    .then(|| self.rendered_spectrum_paint(Some(track.id))),
                     color,
                     clips,
                     selected: self.selected_clip_ids(),
@@ -503,6 +510,7 @@ pub(super) struct LanePaint {
     height: f32,
     pub(super) color: gpui::Hsla,
     pub(super) spectrogram: bool,
+    pub(super) rendered_spectrum: Option<crate::ui::spectrogram::RenderedSpectrumPaint>,
     pub(super) clips: Vec<ClipPaint>,
     /// Every selected clip, so a rubber band can light up more than one at a time.
     pub(super) selected: std::collections::BTreeSet<ClipId>,

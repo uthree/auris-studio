@@ -1441,7 +1441,7 @@ pub struct AurisApp {
     /// to have open is a view of it, and the rule is that presentation stays in the frontend. A
     /// track with no entry has its lane closed, which is also what a freshly opened project gets.
     pub(crate) automation_lanes: BTreeMap<TrackId, ParamTarget>,
-    /// Audio tracks displaying source frequency content instead of waveform peaks.
+    /// Tracks displaying source or rendered frequency content in their lanes.
     pub(crate) spectrogram_tracks: std::collections::HashSet<TrackId>,
     /// Source analysis and rendered images, prepared by one background worker at a time.
     pub(crate) spectrograms: crate::ui::spectrogram::SpectrogramCache,
@@ -2666,6 +2666,7 @@ impl AurisApp {
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
+        let panels = self.panels.clone();
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -2692,6 +2693,7 @@ impl AurisApp {
                         dictionary,
                         singer_acceleration,
                         export,
+                        panels,
                         cx,
                     )
                 })

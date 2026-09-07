@@ -1,10 +1,15 @@
-//! Audio-source spectrograms, analysed and coloured away from the UI and audio threads.
+//! Source, performed-track and project spectrograms prepared away from the UI and audio threads.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use auris_i18n::Key;
 use auris_session::prelude::*;
-use gpui::{Bounds, Context, Corners, Pixels, RenderImage, Window, point, px, size};
+use gpui::{
+    Bounds, Context, Corners, IntoElement, Pixels, RenderImage, Window, canvas, div, point,
+    prelude::*, px, size,
+};
 use image::{Frame, Rgba, RgbaImage};
 
 use crate::app::AurisApp;
@@ -14,6 +19,7 @@ use crate::ui::paint;
 /// Retain recently viewed sources, with room for every source currently visible.
 const CACHE_LIMIT: usize = 32;
 const DISPLAY_FLOOR_DB: f32 = -90.0;
+pub(crate) const PROJECT_SPECTROGRAM_HEIGHT: Pixels = px(132.0);
 
 /// One source texture and the coordinates needed to crop it to an audio clip.
 pub(crate) struct SpectrogramImage {
@@ -28,13 +34,31 @@ struct Entry {
     image: Option<Arc<SpectrogramImage>>,
 }
 
-/// One worker at a time; source identity prevents an old result entering a new document.
+/// One worker at a time; source identity and revision checks reject obsolete results.
 #[derive(Default)]
 pub(crate) struct SpectrogramCache {
     entries: VecDeque<Entry>,
     pending: Option<(SourceId, u64)>,
     generation: u64,
     retired: Vec<Arc<RenderImage>>,
+    pub(crate) project_enabled: bool,
+    rendered: Vec<RenderedEntry>,
+    rendering: Option<(Option<TrackId>, u64, Arc<AtomicBool>)>,
+}
+
+struct RenderedEntry {
+    track: Option<TrackId>,
+    revision: u64,
+    image: Option<Arc<SpectrogramImage>>,
+    failed: bool,
+}
+
+/// A rendered spectrum and its mapping from elapsed samples to musical time.
+pub(crate) struct RenderedSpectrumPaint {
+    image: Option<Arc<SpectrogramImage>>,
+    message: String,
+    tempo: TempoMap,
+    rate: f64,
 }
 
 impl SpectrogramCache {
@@ -60,6 +84,15 @@ impl SpectrogramCache {
     }
 
     pub(crate) fn clear(&mut self) {
+        self.project_enabled = false;
+        if let Some((_, _, cancel)) = &self.rendering {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        for entry in self.rendered.drain(..) {
+            if let Some(image) = entry.image {
+                self.retired.push(Arc::clone(&image.image));
+            }
+        }
         while let Some(entry) = self.entries.pop_front() {
             self.retire(entry);
         }
@@ -101,11 +134,7 @@ impl AurisApp {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self
-            .project()
-            .track(track)
-            .is_some_and(|track| matches!(track.kind, TrackKind::Audio(_)))
-        {
+        if self.project().track(track).is_none() {
             return;
         }
         if enabled {
@@ -120,11 +149,9 @@ impl AurisApp {
     /// Schedules visible sources, so zooming and scrolling do not run FFTs during paint.
     pub(crate) fn poll_spectrograms(&mut self, cx: &mut Context<Self>) {
         let tracks = &self.session.project().tracks;
-        self.spectrogram_tracks.retain(|id| {
-            tracks
-                .iter()
-                .any(|track| track.id == *id && matches!(track.kind, TrackKind::Audio(_)))
-        });
+        self.spectrogram_tracks
+            .retain(|id| tracks.iter().any(|track| track.id == *id));
+        self.poll_rendered_spectrograms(cx);
         let mut visible = Vec::new();
         if let Some(bounds) = self.canvas.lanes.get() {
             let (start, end) = self.timeline.visible_range(bounds.size.width);
@@ -155,7 +182,7 @@ impl AurisApp {
         }
         self.spectrograms
             .prune(&self.session, &visible.iter().copied().collect());
-        if self.spectrograms.pending.is_some() {
+        if self.spectrograms.pending.is_some() || self.spectrograms.rendering.is_some() {
             return;
         }
         let job = visible.into_iter().find_map(|source| {
@@ -199,6 +226,232 @@ impl AurisApp {
         })
         .detach();
     }
+
+    pub(crate) fn set_project_spectrogram(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.spectrograms.project_enabled = enabled;
+        self.poll_spectrograms(cx);
+        cx.notify();
+    }
+
+    fn poll_rendered_spectrograms(&mut self, cx: &mut Context<Self>) {
+        let revision = self.session.revision();
+        let mut wanted = Vec::new();
+        if self.spectrograms.project_enabled {
+            wanted.push(None);
+        }
+        if let Some(bounds) = self.canvas.lanes.get() {
+            for row in self.lane_rows() {
+                if row.target().is_none()
+                    && row.top + row.height >= self.lane_scroll
+                    && row.top <= self.lane_scroll + bounds.size.height
+                    && self.spectrogram_tracks.contains(&row.track)
+                    && self
+                        .project()
+                        .track(row.track)
+                        .is_some_and(|track| track.kind.as_audio().is_none())
+                {
+                    wanted.push(Some(row.track));
+                }
+            }
+        }
+        let mut index = 0;
+        while index < self.spectrograms.rendered.len() {
+            let entry = &self.spectrograms.rendered[index];
+            if entry.revision != revision || !wanted.contains(&entry.track) {
+                let entry = self.spectrograms.rendered.remove(index);
+                if let Some(image) = entry.image {
+                    self.spectrograms.retired.push(Arc::clone(&image.image));
+                }
+            } else {
+                index += 1;
+            }
+        }
+        if let Some((track, captured, cancel)) = &self.spectrograms.rendering {
+            if *captured != revision || !wanted.contains(track) {
+                cancel.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        if self.spectrograms.pending.is_some() {
+            return;
+        }
+        let Some(track) = wanted.into_iter().find(|track| {
+            !self
+                .spectrograms
+                .rendered
+                .iter()
+                .any(|entry| entry.track == *track)
+        }) else {
+            return;
+        };
+        let Some(job) = self.session.rendered_spectrogram_job(track) else {
+            return;
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.spectrograms.rendering = Some((track, revision, Arc::clone(&cancel)));
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn({
+                    let cancel = Arc::clone(&cancel);
+                    async move { job.run(&cancel).map(|spectrum| make_image(&spectrum)) }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.spectrograms.rendering = None;
+                if !cancel.load(Ordering::Relaxed) && this.session.revision() == revision {
+                    let failed = result.is_err();
+                    if let Err(error) = &result {
+                        log::warn!("could not render spectrogram: {error}");
+                    }
+                    this.spectrograms.rendered.push(RenderedEntry {
+                        track,
+                        revision,
+                        image: result.ok().flatten(),
+                        failed,
+                    });
+                }
+                this.poll_spectrograms(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn rendered_spectrum_paint(&self, track: Option<TrackId>) -> RenderedSpectrumPaint {
+        let entry = self
+            .spectrograms
+            .rendered
+            .iter()
+            .find(|entry| entry.track == track && entry.revision == self.session.revision());
+        let message = match entry {
+            None => Key::SpectrogramLoading,
+            Some(entry) if entry.failed => Key::SpectrogramFailed,
+            Some(_) => Key::SpectrogramEmpty,
+        };
+        RenderedSpectrumPaint {
+            image: entry.and_then(|entry| entry.image.clone()),
+            message: self.t(message).to_string(),
+            tempo: self.project().tempo_map.clone(),
+            rate: self.project().sample_rate,
+        }
+    }
+
+    pub(crate) fn render_project_spectrogram(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let spectrum = self.rendered_spectrum_paint(None);
+        let view = self.timeline.clone();
+        let theme = self.theme.clone();
+        div()
+            .id("project-spectrogram")
+            .flex()
+            .flex_col()
+            .h(PROJECT_SPECTROGRAM_HEIGHT)
+            .flex_shrink_0()
+            .overflow_hidden()
+            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+                this.scroll_timeline(event, cx);
+            }))
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .px(px(6.0))
+                    .text_size(px(11.0))
+                    .child(self.t(Key::MenuProjectSpectrogram))
+                    .child(
+                        div()
+                            .id("close-project-spectrogram")
+                            .debug_selector(|| "close-project-spectrogram".to_string())
+                            .cursor_pointer()
+                            .child("×")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.set_project_spectrogram(false, cx)
+                            })),
+                    ),
+            )
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |bounds, _, window, cx| {
+                        paint::clipped(window, bounds, |window| {
+                            paint_rendered_spectrum(window, cx, bounds, &spectrum, &view, &theme);
+                        });
+                    },
+                )
+                .w_full()
+                .flex_1(),
+            )
+    }
+}
+
+/// Split at tempo changes so an elapsed-time texture follows the musical ruler.
+pub(crate) fn paint_rendered_spectrum(
+    window: &mut Window,
+    cx: &mut gpui::App,
+    bounds: Bounds<Pixels>,
+    spectrum: &RenderedSpectrumPaint,
+    view: &crate::ui::timeline::TimelineView,
+    theme: &Theme,
+) {
+    paint::rect(window, bounds, theme.surface_sunken);
+    let Some(image) = &spectrum.image else {
+        paint::label(
+            window,
+            cx,
+            bounds.origin + point(px(4.0), px(22.0)),
+            spectrum.message.clone(),
+            px(11.0),
+            theme.text_muted,
+        );
+        return;
+    };
+    for (start, end, offset, length) in
+        rendered_segments(&spectrum.tempo, spectrum.rate, image.frames)
+    {
+        let segment = Bounds {
+            origin: point(bounds.origin.x + view.tick_to_x(start), bounds.origin.y),
+            size: size(view.duration_to_width(end - start), bounds.size.height),
+        };
+        let visible = segment.intersect(&bounds);
+        if visible.size.width > px(0.0) {
+            paint::clipped(window, visible, |window| {
+                paint_spectrogram(window, cx, segment, image, offset, length, false, theme);
+            });
+        }
+    }
+}
+
+fn rendered_segments(tempo: &TempoMap, rate: f64, frames: u64) -> Vec<(Ticks, Ticks, u64, u64)> {
+    let end = tempo.seconds_to_ticks(Seconds(frames as f64 / rate));
+    let mut ticks = vec![Ticks::ZERO];
+    ticks.extend(
+        tempo
+            .points()
+            .iter()
+            .map(|point| point.tick)
+            .filter(|tick| *tick > Ticks::ZERO && *tick < end),
+    );
+    ticks.push(end);
+    ticks
+        .windows(2)
+        .filter_map(|pair| {
+            let offset = tempo.ticks_to_samples(pair[0], rate).raw().min(frames);
+            let limit = if pair[1] == end {
+                frames
+            } else {
+                tempo.ticks_to_samples(pair[1], rate).raw().min(frames)
+            };
+            (limit > offset && pair[1] > pair[0]).then_some((
+                pair[0],
+                pair[1],
+                offset,
+                limit - offset,
+            ))
+        })
+        .collect()
 }
 
 /// A fixed, ordered colour scale keeps equal source levels comparable across tracks.
@@ -354,6 +607,22 @@ mod integration_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rendered_time_mapping_splits_at_tempo_changes_and_keeps_the_tail() {
+        let mut tempo = TempoMap::default();
+        tempo.set_initial_bpm(120.0);
+        tempo.set_point(Ticks::QUARTER, 60.0);
+        let segments = rendered_segments(&tempo, 48_000.0, 96_000);
+        assert_eq!(
+            segments,
+            vec![
+                (Ticks::ZERO, Ticks::QUARTER, 0, 24_000),
+                (Ticks::QUARTER, Ticks::from_beats(2.5), 24_000, 72_000),
+            ]
+        );
+        assert!(rendered_segments(&tempo, 48_000.0, 0).is_empty());
+    }
 
     #[test]
     fn source_crop_keeps_offsets_and_stretched_lengths_on_the_timeline() {

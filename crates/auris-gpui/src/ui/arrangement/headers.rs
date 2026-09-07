@@ -81,7 +81,14 @@ impl AurisApp {
             .flex_col()
             .w(self.panels.header_width)
             .flex_shrink_0()
-            .child(self.track_header_toolbar())
+            .child(self.track_header_toolbar(cx))
+            .when(self.spectrograms.project_enabled, |this| {
+                this.child(
+                    div()
+                        .h(crate::ui::spectrogram::PROJECT_SPECTROGRAM_HEIGHT)
+                        .flex_shrink_0(),
+                )
+            })
             .child(
                 div()
                     .id("track-headers")
@@ -562,14 +569,19 @@ impl AurisApp {
     ///
     /// Tracks are added from the arrangement's context menu. Keeping the strip itself preserves
     /// alignment with the ruler and any open automation strips opposite it.
-    fn track_header_toolbar(&self) -> impl IntoElement + use<> {
+    fn track_header_toolbar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
         div()
             // Matches the ruler and whichever strips are showing opposite. See the method.
             .h(self.panels.lanes.header_height())
+            .flex_shrink_0()
             .bg(theme.surface_raised)
             .border_b_1()
             .border_color(theme.border)
+            .on_mouse_down(
+                MouseButton::Right,
+                AurisApp::opens_menu(cx, |this, at| this.arrangement_menu(at)),
+            )
     }
 
     fn gain_control(
@@ -681,7 +693,7 @@ mod tests {
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.menu.as_ref().expect("the creation menu opened").title,
-                this.t(Key::MenuNewTrack)
+                this.t(Key::MenuArrangement)
             );
         });
         choose(&app, cx, &MenuCommand::NewAudioTrack);

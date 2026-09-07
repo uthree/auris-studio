@@ -120,6 +120,15 @@ impl AurisMcp {
         blocking(move || toolbox::set_track_state::run(&args)).await
     }
 
+    /// Renders an instrument, drum or singer track and replaces it with an audio track at the same position, preserving its ID, mixer, effects and routing. Instrument automation is baked; mixer automation stays editable. A singer uses its current take or generates a fresh one through its chosen voice. Saves with a checkpoint so the original score can be restored. Refuses audio tracks, buses, empty tracks and unavailable sounds.
+    #[tool(input_schema = tool_schema("convert_track_to_audio"))]
+    async fn convert_track_to_audio(
+        &self,
+        Parameters(args): Parameters<toolbox::convert_track_to_audio::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::convert_track_to_audio::run(&args)).await
+    }
+
     /// Sets one instrument parameter's static value and saves with a checkpoint. Discover exact parameter keys, units and ranges using automation with target {kind:instrument} and operation {action:read}. Values use those units; invalid ranges and fractional discrete choices are refused. Existing automation is preserved and reported because it overrides the static value during playback.
     #[tool(input_schema = tool_schema("set_instrument_param"))]
     async fn set_instrument_param(

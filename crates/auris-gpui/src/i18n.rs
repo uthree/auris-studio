@@ -113,6 +113,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::AddBusTrack => Key::EditAddBusTrack,
         Edit::DeleteTrack => Key::EditDeleteTrack,
         Edit::DuplicateTrack => Key::EditDuplicateTrack,
+        Edit::ConvertTrackToAudio => Key::EditConvertTrackToAudio,
         Edit::MoveTrack => Key::EditMoveTrack,
         Edit::RenameTrack => Key::EditRenameTrack,
         Edit::SetTrackColor => Key::EditSetTrackColor,
@@ -221,6 +222,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     match error {
         SessionError::SongLyrics(detail) => with(Key::SongLyricsMatch, detail.clone()),
         SessionError::InvalidDrumRecipe(detail)
+        | SessionError::TrackConversion(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::MusicAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),

@@ -1147,6 +1147,17 @@ what is currently on screen.
 
 ## Settings, where dotfiles can reach them
 
+The search field at the top of Settings searches General, Audio and key bindings together.
+Settings match Japanese and English labels and descriptions, regardless of the interface language;
+space-separated words narrow the results. Matching sections keep their controls, so changes can
+be made directly from the results. Clear the field, press Escape in it, or choose a tab to return
+to the full page.
+
+**General → Panel positions** assigns the library, piano roll, mixer, inspector, log and agent
+to the left, bottom or right dock. A moved panel opens at its new position, replacing the panel
+that dock was showing. The layout is saved for the next launch, and changes made through a panel's
+own menu also appear in Settings.
+
 Settings uses dropdowns for mutually exclusive choices, including language, pointer gestures,
 audio devices and export formats. Open a selector with Enter or Space, move through its options
 with the arrow keys, and press Enter to apply or Escape to cancel. Refresh devices on the Audio

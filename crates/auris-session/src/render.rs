@@ -10,7 +10,6 @@ use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId
 use auris_dsp::stretch::time_stretch;
 use auris_engine::{
     OfflineOptions, OfflineRender, PlacedEffects, PlacedInstruments, RenderProgress,
-    render_project_using,
 };
 use auris_io::{WavExportSettings, resample_buffer, write_wav};
 
@@ -127,6 +126,16 @@ pub struct RenderJob {
 }
 
 impl RenderJob {
+    pub(crate) fn restrict_to_source(&mut self, project: Project, track: TrackId) {
+        self.project = project;
+        self.placed.clear();
+        self.instruments.retain(|id, _| *id == track);
+    }
+
+    pub(crate) fn has_placed_instrument(&self, track: TrackId) -> bool {
+        self.instruments.contains_key(&track)
+    }
+
     pub(crate) fn new(
         project: Project,
         bank: AudioSourceBank,
@@ -176,21 +185,36 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<AudioBuffer, SessionError> {
+        self.render_target(None, options, progress)
+    }
+
+    /// Render the mix, optionally listening through one track's solo routing.
+    pub(crate) fn render_target(
+        &mut self,
+        track: Option<TrackId>,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<AudioBuffer, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let mut bank = bank_at_rate(&self.bank, rate);
         // An export builds its own graph from its own bank, so it stretches its own copies. They
         // are made at the rate the export runs at, which is the rate the clips are measured
         // against — a copy borrowed from the session's bank would be at the *device's*.
         fill_stretches(&self.project, &mut bank);
-        Ok(render_project_using(
+        let mut render = OfflineRender::new(
             &self.project,
             &bank,
             &self.registry,
             &mut self.placed,
             &mut self.instruments,
             options,
-            progress,
-        )?)
+        )?;
+        if let Some(track) = track {
+            render.set_audible(&self.project.soloed_alone(track));
+        }
+        let mut audio = render.buffer();
+        render.render(&mut audio, progress)?;
+        Ok(audio)
     }
 
     /// Renders and writes a WAV file.

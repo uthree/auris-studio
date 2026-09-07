@@ -305,6 +305,10 @@ strings! {
     ScopeMixer { en: "in the Mixer", ja: "ミキサー内" }
     ScopeInspector { en: "in the Inspector", ja: "インスペクタ内" }
     SearchCommands { en: "Search commands", ja: "コマンドを検索" }
+    SearchSettings { en: "Search settings", ja: "設定を検索" }
+    NoSettingsMatch { en: "No settings match.", ja: "一致する設定がありません。" }
+    PanelPositions { en: "Panel positions", ja: "パネルの表示位置" }
+    PanelPositionsNote { en: "Choose the dock for each panel. Moving a panel shows it there; each dock shows one panel at a time. Changes are saved automatically.", ja: "各パネルを左・下・右のどこに表示するか選べます。移動するとその位置で開き、同じ位置のパネルは切り替えて表示します。変更は自動で保存されます。" }
     AddKeystroke { en: "Add another key", ja: "キーを追加" }
     UnbindCommand { en: "Use no key", ja: "キーを割り当てない" }
     NoKeystroke { en: "—", ja: "―" }
@@ -535,6 +539,9 @@ strings! {
     MenuNote { en: "Note", ja: "ノート" }
     MenuCycleTitle { en: "Cycle", ja: "サイクル" }
     MenuDuplicateTrack { en: "Duplicate Track", ja: "トラックを複製" }
+    MenuConvertTrackToAudio { en: "Convert to Audio Track", ja: "オーディオトラックに変換" }
+    TrackConvertedToAudio { en: "Converted to an audio track", ja: "オーディオトラックに変換しました" }
+    EditConvertTrackToAudio { en: "converting a track to audio", ja: "オーディオトラックへの変換" }
     MenuRename { en: "Rename…", ja: "名前を変更…" }
     MenuRenameTrack { en: "Rename Track…", ja: "トラック名を変更…" }
     MenuRenameClip { en: "Rename Clip…", ja: "クリップ名を変更…" }
@@ -1063,6 +1070,11 @@ strings! {
     MenuAudioDisplay { en: "Audio Display", ja: "表示形式" }
     MenuWaveform { en: "Waveform", ja: "波形" }
     MenuSpectrogram { en: "Spectrogram", ja: "スペクトログラム" }
+    MenuClipDisplay { en: "Clips", ja: "クリップ" }
+    MenuProjectSpectrogram { en: "Project Spectrogram", ja: "プロジェクト全体のスペクトログラム" }
+    MenuArrangement { en: "Arrangement", ja: "アレンジメント" }
+    SpectrogramFailed { en: "Could not analyse spectrum", ja: "スペクトルを解析できませんでした" }
+    SpectrogramEmpty { en: "No audio to analyse", ja: "解析する音声がありません" }
     SpectrogramLoading { en: "Analysing spectrum…", ja: "スペクトルを解析中…" }
     MenuInputOff { en: "Not Armed", ja: "録音待機しない" }
     MenuCountInOff { en: "No Count-In", ja: "カウントインしない" }
@@ -1320,6 +1332,8 @@ COMMANDS
       --acknowledge-noncommercial [--midi <new.mid>] [--project <file.auris> --apply]
                                   Transcribe a mixture with user-converted noncommercial ONNX models
     render <project.auris> [opts] Render a project to a WAV file
+    convert-track-to-audio <project.auris> --track <name|id:number>
+                                  Replace an instrument, drum or singer track with audio
     analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
                                   Measure drum sounds and optionally apply the computed mapping
         --first-note <n> --last-note <n>  Limit the measured MIDI key range (default: 0-127)

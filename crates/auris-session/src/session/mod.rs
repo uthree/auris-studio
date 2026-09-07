@@ -39,6 +39,7 @@ mod checkpoints;
 mod clipboard;
 mod clips;
 mod compose;
+mod convert;
 mod drum_analysis;
 mod drum_assignments;
 mod files;
@@ -72,6 +73,7 @@ pub use analysis::{MixAnalysis, SectionLoudness, TrackLoudness};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use convert::{TrackConversion, TrackConversionJob};
 pub use drum_analysis::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
     DrumVoiceAnalysis, probe_drum_request,
@@ -98,7 +100,7 @@ pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,
 };
-pub use spectrogram::SpectrogramJob;
+pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
@@ -778,12 +780,13 @@ impl Session {
         // A hosted plugin keeps no clock of its own and its window does not repaint without one.
         // This is also where a window the user closed is noticed, and where a plugin that changed
         // itself — a preset loaded in its own window — puts the unsaved mark back on the title
-        // bar. All three are things the plugin says by setting a flag and nothing else.
-        if self.hosted.service() {
+        // bar and invalidates answers rendered from its old sound. All three are things the
+        // plugin says by setting a flag and nothing else. Service both formats on every tick.
+        let hosted_changed = self.hosted.service();
+        let vst3_changed = self.vst3.service();
+        if hosted_changed || vst3_changed {
             self.dirty = true;
-        }
-        if self.vst3.service() {
-            self.dirty = true;
+            self.revision = self.revision.wrapping_add(1);
         }
     }
 
@@ -868,11 +871,11 @@ impl Session {
         self.dirty
     }
 
-    /// A number that moves whenever the document does — edits, undo, redo, another document.
+    /// A number that moves on edits, undo, redo, another document or hosted sound-state changes.
     ///
-    /// For caching answers derived from the document: a frontend that repaints on a timer
-    /// compares this against the value it computed under, and only a change makes it ask an
-    /// expensive question again. Monotonic within a session, meaningless across two.
+    /// For caching answers derived from the document and its hosted sounds: a frontend that
+    /// repaints on a timer compares this against the value it computed under, and only a change
+    /// makes it ask an expensive question again. Monotonic within a session, meaningless across two.
     pub fn revision(&self) -> u64 {
         self.revision
     }

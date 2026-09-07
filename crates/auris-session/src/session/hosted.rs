@@ -1488,6 +1488,157 @@ mod tests {
     }
 
     #[test]
+    fn a_native_plugin_edit_invalidates_rendered_spectrogram_revision() {
+        for instrument in [false, true] {
+            let (mut session, file) = if instrument {
+                session_with_instrument()
+            } else {
+                session_with_fixture()
+            };
+            let track = session.add_default_instrument_track("Lead").unwrap();
+            let which = if instrument {
+                session
+                    .set_hosted_instrument(track, &file, TONE_ID)
+                    .unwrap();
+                PluginWindow::Instrument(track)
+            } else {
+                PluginWindow::Effect(
+                    session
+                        .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+                        .unwrap(),
+                )
+            };
+            session.poll();
+            session.forget_history();
+            let document = session.project.clone();
+            let revision = session.revision();
+            session
+                .hosted
+                .window_slot(which)
+                .and_then(HostedSlot::plugin_mut)
+                .unwrap()
+                .pretend_the_state_changed();
+            assert_eq!(session.revision(), revision);
+
+            session.poll();
+            assert_ne!(
+                session.revision(),
+                revision,
+                "a native sound edit must invalidate a rendered spectrum for {which:?}"
+            );
+            assert_eq!(session.project, document);
+            assert!(session.is_dirty());
+            assert!(!session.can_undo());
+            let changed = session.revision();
+            session.poll();
+            assert_eq!(session.revision(), changed, "a quiet poll is not an edit");
+        }
+    }
+
+    fn session_with_instrument_score() -> (super::Session, TrackId) {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        session
+            .add_note(clip, auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        session.poll();
+        session.forget_history();
+        (session, track)
+    }
+
+    fn change_native_instrument_level(
+        session: &mut super::Session,
+        track: TrackId,
+        level: f32,
+    ) -> Vec<u8> {
+        let plugin = session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap();
+        let before = plugin.save_state().unwrap();
+        let changed = level.to_le_bytes().to_vec();
+        assert_ne!(
+            before, changed,
+            "the fixture must actually change its sound"
+        );
+        plugin.load_state(&changed).unwrap();
+        plugin.pretend_the_state_changed();
+        assert_eq!(plugin.save_state().unwrap(), changed);
+        changed
+    }
+
+    #[test]
+    fn conversion_undo_restores_a_native_instrument_edit() {
+        let (mut session, track) = session_with_instrument_score();
+        let document = session.project.clone();
+        let changed = change_native_instrument_level(&mut session, track, 0.25);
+        session.poll();
+        assert_eq!(
+            session.project, document,
+            "the native edit is not saved yet"
+        );
+
+        session.convert_track_to_audio(track).unwrap();
+        assert!(
+            session
+                .project
+                .track(track)
+                .unwrap()
+                .kind
+                .as_audio()
+                .is_some()
+        );
+        assert_eq!(session.undo(), Some(Edit::ConvertTrackToAudio));
+        assert_eq!(
+            session.hosted.save_instrument_state(track).unwrap(),
+            changed,
+            "undo must restore the preset that was heard before conversion"
+        );
+        assert!(
+            !session.can_undo(),
+            "conversion must add exactly one undo step"
+        );
+    }
+
+    #[test]
+    fn conversion_rejects_a_native_instrument_edit_before_landing() {
+        let (mut session, track) = session_with_instrument_score();
+        let result = session
+            .convert_track_job(track)
+            .unwrap()
+            .render(&mut |_| {}, &std::sync::atomic::AtomicBool::new(false))
+            .unwrap();
+        let document = session.project.clone();
+        let changed = change_native_instrument_level(&mut session, track, 0.25);
+        session.poll();
+        assert_eq!(
+            session.project, document,
+            "the native edit is not saved yet"
+        );
+
+        assert!(
+            matches!(
+                session.land_track_conversion(result),
+                Err(SessionError::TrackConversion(_))
+            ),
+            "a pending render must not replace a newer native preset"
+        );
+        assert_eq!(session.project, document);
+        assert_eq!(
+            session.hosted.save_instrument_state(track).unwrap(),
+            changed
+        );
+        assert!(!session.can_undo());
+    }
+
+    #[test]
     fn a_native_instrument_edit_changes_only_its_drum_analysis_key_after_poll() {
         let (mut session, file) = session_with_instrument();
         let track = session.add_default_drum_track("Kit").unwrap();

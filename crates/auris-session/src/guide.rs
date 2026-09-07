@@ -142,6 +142,18 @@ pub mod architecture {
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
     //!
+    //! Track conversion follows this boundary too. [`Session::convert_track_job`](crate::Session::convert_track_job)
+    //! captures an instrument/drum source or a singer performance for a worker; the session lands
+    //! the result as a float WAV in `Audio/` and replaces the track in one undo step. Only source
+    //! processing, including instrument automation, is baked. The track id, mixer, effects, sends
+    //! and mixer automation survive, so the audio passes through the same mix exactly once.
+    //! Singer conversion reuses a current take or renders the selected voice for the current score.
+    //! The resulting clip starts at zero, retaining lead-in silence and the original timing; it
+    //! plays at a fixed audio speed. A cancelled render or an edited document cannot replace a score.
+    //! The desktop track menu, `auris convert-track-to-audio <project.auris> --track <name|id:number>`,
+    //! and the toolbox's `convert_track_to_audio` command share this operation. File-based frontends
+    //! checkpoint the saved score before saving the converted project.
+    //!
     //! [`Session::offset_gain_range`](crate::Session::offset_gain_range) shifts an existing
     //! envelope, preserving its shape and the values outside the requested range.
     //! [`Session::render_range_options`](crate::Session::render_range_options) converts a
@@ -260,6 +272,13 @@ pub mod architecture {
     //! sources. The frontend owns the display mode and image cache, and validates the job against
     //! the session's current source buffer before publishing it. Analysis stays in source
     //! coordinates: clip offsets, repeats and stretching are presentation mappings of that data.
+    //! Other track kinds and the project overview use
+    //! [`Session::rendered_spectrogram_job`](crate::Session::rendered_spectrogram_job): a render
+    //! snapshot performs the arrangement on the worker before the same FFT analysis. Track
+    //! views use the stem renderer's solo routing, including buses, sends and master effects;
+    //! the project view uses the current mix's mute and solo settings. The cache is keyed by
+    //! document revision, obsolete renders are cancelled, and results from older revisions are
+    //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
     //! # The third thread, and why recording needed one
     //!

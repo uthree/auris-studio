@@ -439,7 +439,7 @@ impl AurisApp {
     }
 
     /// Wheel handling: plain moves down the tracks, Shift moves along the song, Ctrl or Alt zooms.
-    pub(super) fn scroll_timeline(
+    pub(crate) fn scroll_timeline(
         &mut self,
         event: &gpui::ScrollWheelEvent,
         cx: &mut gpui::Context<Self>,

@@ -118,6 +118,23 @@ pub(super) fn paint_lane(
     theme: &Theme,
     language: auris_i18n::Language,
 ) {
+    if let Some(spectrum) = &lane.rendered_spectrum {
+        let spectrum_bounds = Bounds {
+            origin: point(bounds.origin.x, bounds.origin.y + TITLE_HEIGHT),
+            size: size(
+                bounds.size.width,
+                (bounds.size.height - TITLE_HEIGHT).max(px(0.0)),
+            ),
+        };
+        crate::ui::spectrogram::paint_rendered_spectrum(
+            window,
+            cx,
+            spectrum_bounds,
+            spectrum,
+            view,
+            theme,
+        );
+    }
     for clip in &lane.clips {
         let x = bounds.origin.x + view.tick_to_x(clip.start);
         // The block covers the repeats too: a looped clip is one thing on the timeline, with one
@@ -138,7 +155,9 @@ pub(super) fn paint_lane(
             Theme::translucent(lane.color, 0.30)
         };
         let radius = Metrics::RADIUS_MD;
-        paint::rounded_rect(window, clip_bounds, radius, body);
+        if lane.rendered_spectrum.is_none() {
+            paint::rounded_rect(window, clip_bounds, radius, body);
+        }
         // A brighter top strip carries the clip name and doubles as the grab area. Only its
         // top corners are rounded, so it sits inside the clip's outline instead of cutting a
         // square notch out of it.
@@ -213,7 +232,9 @@ pub(super) fn paint_lane(
             };
             paint::clipped(window, visible, |window| match &clip.content {
                 ClipContent::Notes(notes) => {
-                    paint::clip_notes(window, content_bounds, notes, clip.length, ink);
+                    if !lane.spectrogram {
+                        paint::clip_notes(window, content_bounds, notes, clip.length, ink);
+                    }
                 }
                 ClipContent::Waveform {
                     source,
@@ -409,14 +430,14 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_daylight_clip_changes_both_its_title_and_ink() {
+    fn selecting_a_daylight_clip_uses_the_theme_selection_fill() {
         let theme = Theme::named("daylight");
         let track = theme.track_color(0x4f9dde);
         let (plain, plain_ink) = clip_title_colors(&theme, track, false, false);
         let (selected, selected_ink) = clip_title_colors(&theme, track, true, false);
         assert_ne!(plain, selected);
         assert_eq!(selected, theme.selection);
-        assert!(plain_ink.l < 0.5);
+        assert!(contrast_ratio(plain, plain_ink) >= 4.5);
         assert!(selected_ink.l > 0.5);
     }
 }

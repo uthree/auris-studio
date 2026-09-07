@@ -55,6 +55,7 @@ fn main() -> ExitCode {
         "compose" => compose(&args),
         "info" => with_path(&args, info),
         "render" => render(&args),
+        "convert-track-to-audio" => convert_track_to_audio(&args),
         "analyze-drums" => analyze_drums(&args),
         "analyze-chords"
         | "analyze-audio"
@@ -121,6 +122,43 @@ fn print_usage() {
     // Ignored on purpose: usage goes to whoever is still listening, and a reader that has
     // gone away is not a failure worth reporting over the top of the one being explained.
     let _ = writeln!(std::io::stdout(), "{}", Key::CliUsage.get(LANGUAGE));
+}
+
+/// Converts one software instrument or singer, preserving the previous file in a checkpoint.
+fn convert_track_to_audio(args: &[String]) -> Result<(), String> {
+    let usage = "auris convert-track-to-audio <project.auris> --track <name|id:number>";
+    if args.len() != 4 || args[2] != "--track" {
+        return Err(usage.into());
+    }
+    let mut session = headless()?;
+    session
+        .open(Path::new(&args[1]))
+        .map_err(|error| error.to_string())?;
+    let selector = &args[3];
+    let candidates: Vec<_> = session
+        .project()
+        .tracks
+        .iter()
+        .filter(|entry| match selector.strip_prefix("id:") {
+            Some(id) => id.parse::<u64>().ok() == Some(entry.id.0),
+            None => entry.name == *selector,
+        })
+        .map(|entry| entry.id)
+        .collect();
+    let [track] = candidates.as_slice() else {
+        return Err(usage.into());
+    };
+    session
+        .convert_track_to_audio(*track)
+        .map_err(|error| error.to_string())?;
+    session
+        .save_with_checkpoint()
+        .map_err(|error| error.to_string())?;
+    printed(writeln!(
+        std::io::stdout(),
+        "{}",
+        Key::TrackConvertedToAudio.get(LANGUAGE)
+    ))
 }
 
 /// Turns a listing's write errors into the command's verdict.

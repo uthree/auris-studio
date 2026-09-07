@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// A track cannot be converted, or its document changed while rendering.
+    #[error("track conversion: {0}")]
+    TrackConversion(String),
     /// Automatic placement was requested inside an existing clip on the target track.
     #[error("there is already a clip at this position; choose an empty area on the track")]
     GenerationPositionOccupied,

@@ -573,38 +573,49 @@ impl Theme {
         }
     }
 
-    /// The colour standing for one group of a list, at `hue`.
+    /// A group marker, with its hue offset from the current theme's accent.
     ///
-    /// Only the hue is asked for, because the groups are told apart *by* hue: sixteen hues at one
-    /// lightness read as sixteen labels, and the same sixteen at sixteen lightnesses read as a
-    /// gradient with no labels in it. The lightness starts where this scheme puts the colours that
-    /// have to show against its background — the same place a meter sits — and moves only as far
-    /// as the hue makes it, which is the one thing that has to give.
+    /// Offsets preserve the distinction between groups while their hues, saturation and
+    /// lightness follow built-in and custom themes. Zero uses the accent's hue.
     ///
     /// Never put text in this. It is a mark beside a name, not the name — the hues that make the
     /// best labels are the ones that make the worst body text, and the two jobs cannot be done by
     /// one colour without one of them being done badly.
-    pub fn group_color(&self, hue: f32) -> Hsla {
-        let hue = hue.rem_euclid(1.0);
+    pub fn group_color(&self, hue_offset: f32) -> Hsla {
+        self.categorical_color(hue_offset, 1.0)
+    }
+
+    /// Shared tint for library markers and tracks, with contrast on every panel surface.
+    fn categorical_color(&self, hue_offset: f32, chroma: f32) -> Hsla {
+        let hue = (self.accent.h + hue_offset.rem_euclid(1.0)).rem_euclid(1.0);
+        // Keep groups distinguishable even when a custom accent is grey. A track explicitly
+        // stored as grey still stays neutral through its zero chroma multiplier.
+        let saturation = (self.accent.s.clamp(0.25, 0.85) * chroma).clamp(0.0, 1.0);
         let toward = if self.background.l < 0.5 { 1.0 } else { -1.0 };
-        let mut lightness = if toward > 0.0 { 0.62 } else { 0.46 };
-        // Walked outwards until the mark can actually be seen, the way `readable_shade` walks the
-        // grey ramp, and for a sharper version of the same reason: lightness is not luminance, and
-        // the gap between the two is *widest* across the hues. Pure blue at the lightness that
-        // makes yellow comfortable carries about a quarter of yellow's luminance — which is how a
-        // fixed lightness came out at 2.7:1 on Midnight's hovered rows for one group in ten while
-        // the other nine were fine.
-        //
-        // 3.2 rather than 3.0, so the colour clears the threshold it is measured against instead of
-        // landing on it and rounding under.
-        for _ in 0..60 {
-            let candidate = hsla(hue, 0.58, lightness, 1.0);
-            if contrast_ratio(candidate, self.surface_hover) >= 3.2 {
+        let mut lightness = if toward > 0.0 {
+            self.accent.l.clamp(0.50, 0.72)
+        } else {
+            self.accent.l.clamp(0.30, 0.48)
+        };
+        // Equal HSL lightness does not mean equal contrast across hues. Move towards the
+        // foreground until the tint clears 3:1 on all surfaces, with a small rounding margin.
+        for _ in 0..=100 {
+            let candidate = hsla(hue, saturation, lightness, 1.0);
+            if [
+                self.background,
+                self.surface_sunken,
+                self.surface,
+                self.surface_raised,
+                self.surface_hover,
+            ]
+            .into_iter()
+            .all(|surface| contrast_ratio(candidate, surface) >= 3.2)
+            {
                 return candidate;
             }
             lightness = (lightness + 0.01 * toward).clamp(0.0, 1.0);
         }
-        hsla(hue, 0.58, lightness, 1.0)
+        hsla(hue, saturation, lightness, 1.0)
     }
 
     /// Colour for a meter or clip indicator at `level_db`.
@@ -618,9 +629,15 @@ impl Theme {
         }
     }
 
-    /// Converts a packed `0xRRGGBB` track colour into an `Hsla`.
+    /// Interprets a stored `0xRRGGBB` track colour in the current theme.
+    ///
+    /// The first document palette entry anchors the accent; other colours retain their hue
+    /// offsets and relative saturation. This is a display transform: switching themes never
+    /// rewrites a project's colours, and every clip, header, mixer and picker shares it.
     pub fn track_color(&self, packed: u32) -> Hsla {
-        rgb(packed).into()
+        let source: Hsla = rgb(packed).into();
+        let anchor: Hsla = rgb(auris_session::prelude::Color::PALETTE[0].0).into();
+        self.categorical_color(source.h - anchor.h, source.s / anchor.s)
     }
 
     /// A translucent variant of `color`, for clip fills over a grid.
@@ -954,6 +971,57 @@ mod tests {
         // clamping every group past the end onto one colour.
         let theme = Theme::dark();
         assert_eq!(theme.group_color(1.25), theme.group_color(0.25));
+    }
+
+    #[test]
+    fn track_tints_stay_distinct_and_readable_in_every_scheme() {
+        use auris_session::prelude::Color;
+
+        for entry in SCHEMES {
+            let theme = Theme::from_scheme(entry);
+            let colors = Color::PALETTE.map(|color| theme.track_color(color.0));
+            for (index, color) in colors.iter().enumerate() {
+                assert!(
+                    !colors[..index].contains(color),
+                    "{}: duplicate tint",
+                    entry.name
+                );
+                for surface in [
+                    theme.surface_sunken,
+                    theme.background,
+                    theme.surface,
+                    theme.surface_raised,
+                    theme.surface_hover,
+                ] {
+                    assert!(contrast_ratio(*color, surface) >= 3.0, "{}", entry.name);
+                }
+                assert!(contrast_ratio(theme.text_on(*color), *color) >= 4.5);
+            }
+            for neutral in [0x000000, 0x888888, 0xffffff] {
+                assert_eq!(theme.track_color(neutral).s, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn categorical_tints_follow_custom_accents_without_changing_their_spacing() {
+        let base = *scheme_or_default(DEFAULT_SCHEME);
+        let before = Theme::from_scheme(&base);
+        let after = Theme::from_scheme(&Scheme {
+            accent: hsla((base.accent.h + 0.25).rem_euclid(1.0), 0.40, 0.70, 1.0),
+            ..base
+        });
+        for packed in auris_session::prelude::Color::PALETTE {
+            let old = before.track_color(packed.0);
+            let new = after.track_color(packed.0);
+            assert!(((new.h - old.h).rem_euclid(1.0) - 0.25).abs() < 0.0001);
+            assert!(new.s < old.s);
+        }
+        let old = before.group_color(0.0);
+        let new = after.group_color(0.0);
+        assert_ne!(old.h, new.h);
+        assert_ne!(old.s, new.s);
+        assert_ne!(old.l, new.l);
     }
 
     #[test]

@@ -6,6 +6,64 @@ use gpui::TestAppContext;
 
 use super::*;
 use crate::harness::{open, paint};
+use crate::ui::context_menu::MenuCommand;
+
+#[gpui::test]
+fn rendered_tracks_and_project_refresh_after_edits_and_reset(cx: &mut TestAppContext) {
+    let (app, cx, track, clip) = crate::harness::with_a_clip(cx);
+    app.update(cx, |this, cx| {
+        this.session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        let revision = this.session.revision();
+        this.run_menu_command(
+            MenuCommand::SetTrackSpectrogram {
+                track,
+                enabled: true,
+            },
+            cx,
+        );
+        this.run_menu_command(MenuCommand::SetProjectSpectrogram(true), cx);
+        assert_eq!(this.session.revision(), revision);
+    });
+    cx.run_until_parked();
+    paint(&app, cx);
+    app.update(cx, |this, cx| {
+        assert!(this.rendered_spectrum_paint(Some(track)).image.is_some());
+        assert!(this.rendered_spectrum_paint(None).image.is_some());
+        assert!(this.spectrograms.rendering.is_none());
+        this.session.move_clip(clip, Ticks::QUARTER).unwrap();
+        assert!(this.rendered_spectrum_paint(Some(track)).image.is_none());
+        assert!(this.rendered_spectrum_paint(None).image.is_none());
+        this.poll_spectrograms(cx);
+        assert!(this.spectrograms.rendering.is_some());
+        this.new_project();
+        assert!(!this.spectrograms.project_enabled);
+        assert!(this.spectrograms.rendered.is_empty());
+    });
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.spectrograms.rendering.is_none());
+        assert!(this.spectrograms.rendered.is_empty());
+        assert!(this.spectrogram_tracks.is_empty());
+    });
+}
+
+#[gpui::test]
+fn project_spectrum_can_be_closed_without_changing_the_document(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        this.run_menu_command(MenuCommand::SetProjectSpectrogram(true), cx)
+    });
+    cx.run_until_parked();
+    paint(&app, cx);
+    let revision = app.read_with(cx, |this, _| this.session.revision());
+    crate::harness::click("close-project-spectrogram", cx);
+    app.read_with(cx, |this, _| {
+        assert!(!this.spectrograms.project_enabled);
+        assert_eq!(this.session.revision(), revision);
+    });
+}
 
 /// Use the decoded half of audio import so the fixture needs no file or audio device.
 fn import_tone(app: &mut AurisApp, name: &str, frames: usize) -> (TrackId, ClipId, SourceId) {

@@ -436,6 +436,7 @@ session_tool!(Capabilities, capabilities);
 session_tool!(ToolHelp, tool_help);
 session_tool!(Routing, routing);
 session_tool!(SetTrackState, set_track_state);
+session_tool!(ConvertTrackToAudio, convert_track_to_audio);
 session_tool!(SetInstrumentParam, set_instrument_param);
 session_tool!(CreateProject, create_project);
 session_tool!(ImportAudio, import_audio);
@@ -644,6 +645,7 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(ToolHelp)
         .tool(Routing)
         .tool(SetTrackState)
+        .tool(ConvertTrackToAudio)
         .tool(SetInstrumentParam)
         .tool(CreateProject)
         .tool(ImportAudio)
