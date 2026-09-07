@@ -42,7 +42,6 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
             "analyze-instruments" => ["--model", "--threshold"].contains(&key),
             "transcribe-mixture" => [
                 "--model",
-                "--python",
                 "--acknowledge-noncommercial",
                 "--midi",
                 "--project",
@@ -77,7 +76,6 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         }
         let start = beat(options.get("--at-beat").copied().unwrap_or("0"))?;
         let config = auris_session::MixtureOptions {
-            python: (*options.get("--python").ok_or(usage)?).into(),
             model: (*options.get("--model").ok_or(usage)?).into(),
             acknowledge_noncommercial: true,
         };
@@ -206,14 +204,7 @@ mod tests {
     use super::*;
     #[test]
     fn mixture_requires_explicit_per_invocation_acknowledgement() {
-        let args = [
-            "transcribe-mixture",
-            "absent.wav",
-            "--python",
-            "absent",
-            "--model",
-            "absent",
-        ];
+        let args = ["transcribe-mixture", "absent.wav", "--model", "absent"];
         assert!(
             run(&args.into_iter().map(str::to_string).collect::<Vec<_>>())
                 .unwrap_err()

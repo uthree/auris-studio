@@ -21,12 +21,14 @@
 //! the job boundary, never to the audio callback. Unknown harmony and silence are distinct,
 //! and candidate scores are matching scores rather than calibrated probabilities.
 //!
-//! Optional multi-instrument transcription uses a separate, pinned MuScriptor Python CPU
-//! worker. The session requires per-run acknowledgement of the model's noncommercial terms
-//! before decoding or spawning it; checkpoints are local, external data. The parent owns and
-//! reaps the child on completion, cancellation or timeout. Instrument-labeled drafts follow
-//! the same source validation and tempo mapping as other analysis, with all new tracks in one
-//! undo transaction. No model, subprocess or temporary-file I/O belongs on the audio callback.
+//! Optional multi-instrument transcription runs a user-converted MuScriptor Small ONNX package
+//! in `auris-analysis`, using the CPU provider and a bounded Rust token loop with KV caches.
+//! Its audio graph includes STFT/log-mel preprocessing; Rust joins sustained notes across chunks.
+//! Python is only conversion tooling. The session requires per-run acknowledgement of the model's
+//! noncommercial terms before decoding; models remain local external data, verified against their
+//! export manifest. Cancellation is checked between inference calls. Instrument-labeled drafts
+//! follow source validation and tempo mapping, with all new tracks in one undo transaction.
+//! No model inference or model-file I/O belongs on the audio callback.
 //!
 //! # The smallest complete program
 //!

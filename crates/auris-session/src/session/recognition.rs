@@ -928,6 +928,7 @@ mod tests {
                 algorithm: "test-fixture",
                 model_license: "CC-BY-NC-4.0",
                 model_sha256: "test".into(),
+                checkpoint_sha256: "test".into(),
                 seconds: 2.0,
                 notes: vec![
                     super::mixture::MixtureNote {

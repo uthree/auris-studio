@@ -45,8 +45,8 @@ memory limits. Cancellation is checked between inference windows.
 ## MuScriptor is a separate noncommercial option
 
 MuScriptor's code is MIT, but its **weights are CC BY-NC 4.0**. The desktop presents a warning
-on every invocation and starts no worker until the user explicitly chooses noncommercial
-use. Cancel closes the warning without loading Python or a checkpoint. CLI and model-facing
+on every invocation and starts no inference until the user explicitly chooses noncommercial
+use. Cancel closes the warning without loading a model. CLI and model-facing
 tools require an explicit acknowledgement on every call. Acknowledgement is not a commercial
 license: do not use this model for commercial work without separate permission from its
 rights holders. Review the [model's additional terms](https://huggingface.co/MuScriptor/muscriptor-small)
@@ -58,36 +58,52 @@ every generated MIDI file automatically changes license; model use and rights to
 music/output still need to satisfy the applicable terms. Commercial workflows can use the
 ordinary commands and YAMNet without invoking MuScriptor.
 
-### Prepare the optional runtime
+### Obtain and convert the model once
 
-The tested setup is Python 3.12, `muscriptor==0.3.0`, `torch==2.5.1+cpu` and
-`torchaudio==2.5.1+cpu` in a separate `uv` environment. For example, in PowerShell:
-
-```powershell
-uv venv --python 3.12 models/muscriptor-venv
-uv pip install --python models/muscriptor-venv/Scripts/python.exe `
-  muscriptor==0.3.0 torch==2.5.1 torchaudio==2.5.1 --torch-backend cpu
-```
+The user downloads the original checkpoint directly from Hugging Face after accepting its
+terms. Neither the original weights nor converted ONNX weights are redistributed with Auris.
+The converter only accepts local files and does not download a checkpoint itself.
 
 Accept access terms on the model page and authenticate locally with `hf auth login`.
-Never put a token in a project, command example or chat. Explicitly download the tested revision:
+Never put a token in a project or chat. Download the tested revision in PowerShell:
 
 ```powershell
 hf download MuScriptor/muscriptor-small model.safetensors config.json README.md `
   --revision 8c127f603b807520fa465c838e9bfee8a91ada4e --local-dir models/muscriptor-small
-$env:AURIS_MUSCRIPTOR_PYTHON = (Resolve-Path models/muscriptor-venv/Scripts/python.exe).Path
-cargo run
 ```
 
-Set the environment variable before launching the desktop. Keep the original `config.json`
-beside `model.safetensors`; only the tested Small architecture is accepted. No file named
-`small`, model URL or automatic Hugging Face download is accepted by the worker. A new
-terminal needs the environment variable again unless it is configured in the app's launcher.
+Create a separate CPU conversion environment with `uv` (Python is needed only for conversion):
+
+```powershell
+uv venv --python 3.12 models/muscriptor-convert
+uv pip install --python models/muscriptor-convert/Scripts/python.exe `
+  muscriptor==0.3.0 torch==2.5.1 torchaudio==2.5.1 `
+  onnx==1.17.0 onnxruntime==1.20.1 "numpy>=1.26,<3" --torch-backend cpu
+models/muscriptor-convert/Scripts/python.exe tools/music-models/export_muscriptor.py `
+  --checkpoint models/muscriptor-small/model.safetensors `
+  --output-directory models/muscriptor-onnx --acknowledge-noncommercial
+```
+
+Keep the original `config.json` beside the checkpoint. The converter accepts only the tested
+Small architecture and refuses an existing output directory. It generates:
+
+* `audio.onnx`: five seconds of 16 kHz mono audio to the conditioning prefix, including STFT,
+  magnitude mel features and the original null instrument/dataset conditioning.
+* `decoder.onnx`: token embeddings, positions, Transformer, logits and explicit KV caches.
+* `muscriptor.json`: format/version, original checkpoint hash, graph checksums, token vocabulary,
+  instrument names, noncommercial license metadata and numerical verification results.
+
+The converter checks audio features and consecutive cached decoding steps against official
+PyTorch inference on silence, noise and a sine. A failed check does not publish the package.
+Keep these three output files together. Select **decoder.onnx** in Auris; normal transcription
+runs through Rust and ONNX Runtime and requires neither Python nor a Python environment variable.
+Conversion does not remove the model's noncommercial restrictions. The adapted implementation's
+[MIT attribution](../crates/auris-analysis/NOTICE-MUSCRIPTOR.md) is separate from weight licensing.
 
 ### Make and accept a draft
 
 Import audio and choose **Transcribe Mixture (Noncommercial)…** from its context menu.
-Accept the warning for this use, select the checkpoint, and inspect **View Analysis Draft**.
+Accept the warning for this use, select the converted decoder.onnx, and inspect **View Analysis Draft**.
 **Add Draft as Instrument Tracks** creates a track per predicted instrument group in one
 Undo step. It preserves the source clip, maps trim/stretch/repeats through the tempo map,
 and refuses results after source/document edits. Tracks retain `MuScriptor [NC]` in their names.
@@ -97,27 +113,29 @@ use the built-in drum kit when available. Group names are predictions, not recov
 For file-based JSON and a new MIDI file:
 
 ```powershell
-$python = (Resolve-Path models/muscriptor-venv/Scripts/python.exe).Path
-$model = (Resolve-Path models/muscriptor-small/model.safetensors).Path
-auris transcribe-mixture recording.wav --python $python --model $model `
+auris transcribe-mixture recording.wav --model models/muscriptor-onnx/decoder.onnx `
   --acknowledge-noncommercial --midi draft.mid
 ```
 
 Omit `--midi` for read-only JSON. To add tracks to an existing project, supply
 `--project Song.auris --apply [--at-beat 0]`. Existing MIDI destinations are refused.
-The MCP/agent tool `transcribe_mixture` takes `audio`, `python`, `model`,
+The MCP/agent tool `transcribe_mixture` takes `audio`, `model`,
 `acknowledge_noncommercial` (false by default), optional `midi_output`, and
 `project`/`apply`/`at_beat`. The caller must present the restriction and obtain explicit
 acknowledgement for that invocation before passing true. JSON preserves the checkpoint hash,
 backend version, model license and source-second events.
 
-The worker runs in a separate Python process, with CPU float32, two compute threads,
-batch size one, greedy decoding and the package's five-second chunking. It disables CUDA
-and Hugging Face online access. Input is limited to ten minutes/eight channels, checkpoints
-to 512 MiB, output to 200,000 notes and runtime to thirty minutes. Cancellation or timeout
-kills and reaps the worker and deletes its temporary audio. Decode/resample completes before
-worker cancellation takes effect. This is a local runtime boundary, not a sandbox for
-untrusted Python packages; use the documented environment.
+Inference uses ONNX Runtime's CPU provider, float32, two compute threads, greedy decoding
+and five-second chunks. Rust maintains KV caches and forces the next chunk's tie prologue
+from unfinished notes, following MuScriptor 0.3.0. There are no Python subprocesses or temporary
+audio files. The application never contacts Hugging Face during transcription.
+
+Input is limited to ten minutes/eight channels, each graph to 512 MiB, the manifest to 256 KiB,
+and generation to 2,000 tokens per chunk, 200,000 notes and thirty minutes. The runtime checks
+model hashes, metadata, vocabulary and output shapes before using them. Hashes detect changed
+files; they are not a signature authenticating the person who prepared a package. Cancellation
+is checked between ONNX calls. Loading, decoding/resampling and an in-flight ONNX call finish
+before cancellation is observed. These bounds are not a streaming or peak-RAM guarantee.
 
 These are editable note drafts, not guaranteed complete scores. The model does not recover
 velocity; imported notes use a fixed value. Pitch, onset, offset, instrument groups and drum
@@ -138,10 +156,17 @@ was not measured. The fixture generator is `render_analysis_fixture` in `auris-s
   The separate `measure_instruments` synthetic three-minute timing probe took 0.33 s for
   model loading/inference, excluding process startup and source generation/decoding; it has
   no instrument ground truth and is not directly comparable to the CLI timings above.
-* MuScriptor Small: 22.46 s for twelve seconds (real-time factor 1.87), 58 estimated notes
+* MuScriptor Small ONNX: 7.33 s for twelve seconds (real-time factor 0.61), including graph
+  loading and MIDI export. All 58 notes exactly matched the previous PyTorch result in pitch,
+  onset, offset and instrument label across three chunks. The converter checked three
+  waveforms and eight decoding steps each; maximum prefix/logit errors were 0.001971/0.001727.
+  This is float32 numerical parity, not a guarantee that every future near-tied argmax agrees.
+* The previous PyTorch measurement was 22.46 s for twelve seconds (real-time factor 1.87), 58 estimated notes
   against 56 references, and successful MIDI export. Instrument-agnostic onset F1 was 0.912;
   onset-and-offset F1 was 0.807. Every note was assigned to `acoustic_piano`, including bass
   pitches. Requiring the correct instrument lowered onset F1 to 0.789 and offset F1 to 0.737.
+  ONNX retained these scores and instrument confusions; changing the runtime does not improve
+  the model's transcription accuracy.
 * A separate four-second pure-tone mixture returned no notes. Synthetic timbres alone are
   insufficient to establish real-recording performance.
 

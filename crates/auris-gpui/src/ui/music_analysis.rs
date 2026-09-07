@@ -194,7 +194,7 @@ impl MusicAnalysisState {
 }
 
 impl AurisApp {
-    /// Shows the model-use notice without loading Python, a checkpoint or source audio.
+    /// Shows the model-use notice before loading a model or source audio.
     pub(crate) fn request_mixture_transcription(&mut self, clip: ClipId) {
         self.music_analysis.cancel();
         self.music_analysis.report = None;
@@ -217,12 +217,6 @@ impl AurisApp {
         if generation != self.music_analysis.generation {
             return;
         }
-        let Some(python) =
-            std::env::var_os("AURIS_MUSCRIPTOR_PYTHON").map(std::path::PathBuf::from)
-        else {
-            self.set_failed_status(self.t(Key::MuscriptorSetup));
-            return;
-        };
         let job = match self
             .session
             .audio_analysis_job(clip, AudioOptions::default())
@@ -237,14 +231,13 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let Some(file) = rfd::AsyncFileDialog::new()
                 .set_title(title)
-                .add_filter("MuScriptor Small", &["safetensors"])
+                .add_filter("MuScriptor Small ONNX", &["onnx"])
                 .pick_file()
                 .await
             else {
                 return;
             };
             let options = auris_session::MixtureOptions {
-                python,
                 model: file.path().to_path_buf(),
                 acknowledge_noncommercial: true,
             };

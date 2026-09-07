@@ -5,7 +5,8 @@ Assessment date: 2026-09-07. This accompanies the
 
 No cloud resources have been provisioned, no model has been trained, and no audio has been
 uploaded. YAMNet and the explicitly authorized noncommercial MuScriptor Small checkpoint
-have now been prepared and run locally on CPU. Their integration, hashes, measurements and
+have now been prepared and run locally on CPU. MuScriptor now runs through user-converted
+ONNX graphs and a Rust decoder, with Python needed only for conversion. Their integration, hashes, measurements and
 accuracy limits are in [the model guide](music-analysis-models.md).
 
 ## AMD-only hardware does not make every neural method a cloud workload
@@ -42,7 +43,7 @@ matrix only after the device is known.
 | YAMNet | Implemented optional CPU instrument-presence tagging. | Google weights and architecture Apache-2.0, export/reference parity checked. The local sampled fixture exposed low instrument coverage at threshold 0.2. [Weight terms](https://groups.google.com/g/audioset-users/c/Ly4guQnlv_o) |
 | MT3 | External inference reference for multi-instrument notes. | T5X research stack; repository Apache-2.0. Pin checkpoint and runnable environment before estimating compute. [Source](https://github.com/magenta/mt3) |
 | YourMT3+ | Priority commercial-workflow candidate; CPU trial before a RunPod proposal. | The author's actual HF source files carry Apache-2.0 headers and the checkpoint card explicitly licenses weights Apache-2.0, despite the separate GitHub landing page's GPL label. Pin the exact HF artifacts. Source acquisition failed with HTTP 429/500 during this session; no checkpoint was run. This is not evidence that CPU inference is impossible. [Code](https://huggingface.co/spaces/mimbres/YourMT3/blob/5e66c1ea173a8186e0d20432b841d3180cc015b5/amt/src/model/ymt3.py), [weights](https://huggingface.co/mimbres/YourMT3/blob/main/README.md) |
-| MuScriptor Small | Implemented optional local noncommercial CPU transcription draft. | Code MIT, weights CC BY-NC 4.0; explicit per-run warning/acknowledgement. 411,888,600-byte checkpoint; twelve-second mixture completed in 22.46 s including startup. Instrument confusions remain. Medium/large are separate evaluation candidates. [Model](https://huggingface.co/MuScriptor/muscriptor-small) |
+| MuScriptor Small | Implemented optional local noncommercial ONNX CPU transcription draft. | Code MIT, weights CC BY-NC 4.0; explicit per-run warning/acknowledgement. Users download and convert their own checkpoint. Twelve-second mixture completed in 7.33 s through Rust/ONNX, matching all 58 notes of the 22.46 s PyTorch reference. Instrument confusions remain. [Model](https://huggingface.co/MuScriptor/muscriptor-small) |
 | Demucs plus transcription | Optional external diagnostic: does separation improve accepted note accuracy? | MIT repository; four broad default stems do not identify arbitrary individual parts. Compare end-to-end accuracy, runtime and separation artifacts against direct transcription. [Source](https://github.com/facebookresearch/demucs) |
 | Training/fine-tuning any transcription or tagging model | Separate RunPod proposal after error analysis shows a concrete data/model gap. | Needs dataset rights, a training recipe, checkpoint choice and measured memory/throughput. No defensible fixed GPU-hour estimate yet. |
 

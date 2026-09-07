@@ -216,5 +216,61 @@
       "onset_offset_matches": 42,
       "onset_offset_f1": 0.7368421052631579
     }
+  },
+  "muscriptor_onnx": {
+    "algorithm": "muscriptor-small-onnx-cpu-v1",
+    "runtime": "ONNX Runtime CPU (ort 2.0.0-rc.9), no Python subprocess",
+    "checkpoint_sha256": "bbd482c786b895cf7d8f44185073d951adae2ebb8a66f82ca84cd1f84569549c",
+    "files": {
+      "audio.onnx": "d73f9d8cee63b9d4c69996a753e0d1b057e7029873a19e6f333a0d84835ab4ab",
+      "decoder.onnx": "a99973476c82ba8ed3d9068223fc51c94e12629862456316041a3e0ef9775a4e"
+    },
+    "audio_graph_bytes": 3695751,
+    "decoder_graph_bytes": 405179695,
+    "conversion_checks": [
+      {
+        "prefix_max_error": 4.410743713378906E-06,
+        "logits_max_error": 0.00046062469482421875,
+        "greedy_steps_checked": 8
+      },
+      {
+        "prefix_max_error": 2.086162567138672E-06,
+        "logits_max_error": 0.0005132555961608887,
+        "greedy_steps_checked": 8
+      },
+      {
+        "prefix_max_error": 0.001970648765563965,
+        "logits_max_error": 0.0017266273498535156,
+        "greedy_steps_checked": 8
+      }
+    ],
+    "wall_seconds": 7.3320488,
+    "real_time_factor": 0.6110040666666666,
+    "notes_identical_to_pytorch": 58,
+    "midi_export_succeeded": true,
+    "metrics": {
+      "estimated_notes": 58,
+      "offset_duration_ratio": 0.2,
+      "offset_seconds_min": 0.05,
+      "onset": {
+        "f1": 0.912280701754386,
+        "false_negatives": 4,
+        "false_positives": 6,
+        "matches": 52,
+        "precision": 0.896551724137931,
+        "recall": 0.9285714285714286
+      },
+      "onset_offset": {
+        "f1": 0.8070175438596492,
+        "false_negatives": 10,
+        "false_positives": 12,
+        "matches": 46,
+        "precision": 0.7931034482758621,
+        "recall": 0.8214285714285714
+      },
+      "onset_seconds": 0.05,
+      "pitch_cents": 50,
+      "reference_notes": 56
+    }
   }
 }

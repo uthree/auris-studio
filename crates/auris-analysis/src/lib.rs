@@ -8,6 +8,7 @@
 pub mod audio;
 pub mod chords;
 pub mod instruments;
+pub mod mixture;
 mod pitch;
 
 use std::sync::{

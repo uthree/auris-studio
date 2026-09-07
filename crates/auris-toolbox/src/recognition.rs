@@ -46,15 +46,13 @@ pub mod transcribe_mixture {
     /// Wire name.
     pub const NAME: &str = "transcribe_mixture";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Uses optional local MuScriptor Small on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Requires a prepared Python environment and local checkpoint; no downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.";
+    pub const DESCRIPTION: &str = "Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.";
     /// Local inference and optional write destinations.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
         /// Absolute input audio path.
         pub audio: String,
-        /// Absolute Python executable in the optional muscriptor==0.3.0 environment.
-        pub python: String,
-        /// Absolute local MuScriptor Small safetensors checkpoint.
+        /// Absolute converted decoder.onnx path beside audio.onnx and muscriptor.json.
         pub model: String,
         /// True only after the user explicitly accepted noncommercial use for this invocation.
         #[serde(default)]
@@ -86,7 +84,6 @@ pub mod transcribe_mixture {
         }
         let start = beats(args.at_beat.unwrap_or(0.0))?;
         let config = auris_session::MixtureOptions {
-            python: args.python.clone().into(),
             model: args.model.clone().into(),
             acknowledge_noncommercial: true,
         };
@@ -267,8 +264,7 @@ mod tests {
     #[test]
     fn mixture_tool_defaults_to_no_consent_and_refuses_before_io() {
         let args: transcribe_mixture::Args =
-            serde_json::from_str(r#"{"audio":"missing.wav","python":"missing","model":"missing"}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"audio":"missing.wav","model":"missing"}"#).unwrap();
         assert!(!args.acknowledge_noncommercial);
         assert!(
             transcribe_mixture::run(&args)
