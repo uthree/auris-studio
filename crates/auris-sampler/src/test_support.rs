@@ -114,6 +114,18 @@ pub(crate) fn soundfont(voices: &[Voice], sample_rate: i32) -> Arc<SoundFont> {
     Arc::new(font)
 }
 
+/// One preset whose note starts two sample layers, for testing note-level release.
+pub(crate) fn layered_font(sample_rate: i32) -> Arc<SoundFont> {
+    let voices = [Voice {
+        name: "Layered",
+        bank: 0,
+        patch: 0,
+        amplitude: 0.25,
+    }];
+    let bytes = soundfont_bytes_with_layers(&voices, sample_rate, 2);
+    Arc::new(SoundFont::new(&mut Cursor::new(bytes)).expect("the layered test font"))
+}
+
 /// The default fixture: two tones an even four to one apart, at two different patches.
 ///
 /// The ratio is the point. A test that only asked "is there sound" would pass just as happily
@@ -182,7 +194,7 @@ fn runaway_bytes(claimed_rate: i32) -> Vec<u8> {
     pdta.extend(chunk(b"pbag", zones(1)));
     pdta.extend(chunk(b"pmod", modulator_terminator()));
     pdta.extend(chunk(b"pgen", generators(GENERATOR_INSTRUMENT, 1)));
-    pdta.extend(chunk(b"inst", instrument_headers(voices)));
+    pdta.extend(chunk(b"inst", instrument_headers(voices, 1)));
     // The one instrument zone holds two generators, so its bag spans 0..2.
     pdta.extend(chunk(b"ibag", {
         let mut out = Vec::new();
@@ -237,6 +249,10 @@ fn runaway_bytes(claimed_rate: i32) -> Vec<u8> {
 
 /// Writes the file.
 fn soundfont_bytes(voices: &[Voice], sample_rate: i32) -> Vec<u8> {
+    soundfont_bytes_with_layers(voices, sample_rate, 1)
+}
+
+fn soundfont_bytes_with_layers(voices: &[Voice], sample_rate: i32, layers: usize) -> Vec<u8> {
     assert!(!voices.is_empty(), "a font needs at least one sound");
 
     let mut info = Vec::new();
@@ -259,13 +275,20 @@ fn soundfont_bytes(voices: &[Voice], sample_rate: i32) -> Vec<u8> {
         b"pgen",
         generators(GENERATOR_INSTRUMENT, voices.len()),
     ));
-    pdta.extend(chunk(b"inst", instrument_headers(voices)));
-    pdta.extend(chunk(b"ibag", zones(voices.len())));
+    pdta.extend(chunk(b"inst", instrument_headers(voices, layers)));
+    pdta.extend(chunk(b"ibag", zones(voices.len() * layers)));
     pdta.extend(chunk(b"imod", modulator_terminator()));
-    pdta.extend(chunk(
-        b"igen",
-        generators(GENERATOR_SAMPLE_ID, voices.len()),
-    ));
+    pdta.extend(chunk(b"igen", {
+        let mut out = Vec::new();
+        for index in 0..voices.len() {
+            for _ in 0..layers {
+                push_u16(&mut out, GENERATOR_SAMPLE_ID);
+                push_u16(&mut out, index as u16);
+            }
+        }
+        out.extend_from_slice(&[0; 4]);
+        out
+    }));
     pdta.extend(chunk(b"shdr", sample_headers(voices, sample_rate)));
 
     let mut body = Vec::new();
@@ -324,14 +347,14 @@ fn preset_headers(voices: &[Voice]) -> Vec<u8> {
     out
 }
 
-fn instrument_headers(voices: &[Voice]) -> Vec<u8> {
+fn instrument_headers(voices: &[Voice], layers: usize) -> Vec<u8> {
     let mut out = Vec::new();
     for (index, voice) in voices.iter().enumerate() {
         push_name(&mut out, voice.name);
-        push_u16(&mut out, index as u16);
+        push_u16(&mut out, (index * layers) as u16);
     }
     push_name(&mut out, "EOI");
-    push_u16(&mut out, voices.len() as u16);
+    push_u16(&mut out, (voices.len() * layers) as u16);
     out
 }
 

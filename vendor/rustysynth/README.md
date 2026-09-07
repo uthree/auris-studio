@@ -28,6 +28,9 @@ tables. Upstream trusts those file-provided indices and can panic on a malformed
 Auris treats them as ordinary `SoundFontError` values so opening a bad library file cannot take
 down the application.
 
+Overlapping notes now release in note-on order, preserving later notes at the same pitch.
+See [note release](doc/note-release.md) for the implementation and regression tests.
+
 ## What it does not do
 
 * **Only the two filter destinations are read through modulators** — `initialFilterFc` and
