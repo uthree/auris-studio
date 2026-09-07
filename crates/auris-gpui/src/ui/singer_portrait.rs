@@ -79,15 +79,32 @@ impl SingerPortraits {
 }
 
 impl AurisApp {
+    fn song_portrait_source(&self) -> Option<SingerPortraitSource> {
+        let dials = self.song_sheet.as_ref()?;
+        Some(SingerPortraitSource::for_voice(
+            dials.singer.as_ref()?.into(),
+            dials.singer_speaker.clone(),
+        ))
+    }
+
+    /// The open song sheet takes priority over the inspector behind it.
+    fn visible_portrait_source(&self) -> Option<SingerPortraitSource> {
+        if self.song_sheet.is_some() {
+            return self.song_portrait_source();
+        }
+        if !self.panels.is_open(Panel::Inspector) {
+            return None;
+        }
+        self.selected_track
+            .and_then(|track| self.session.singer_portrait_source(track).ok().flatten())
+    }
+
     /// The timer notices selection changes; painting never reads a model or contacts an Engine.
     pub(crate) fn poll_singer_portrait(&mut self, cx: &mut Context<Self>) {
-        if !self.panels.is_open(Panel::Inspector) || self.singer_portraits.pending.is_some() {
+        if self.singer_portraits.pending.is_some() {
             return;
         }
-        let Some(source) = self
-            .selected_track
-            .and_then(|track| self.session.singer_portrait_source(track).ok().flatten())
-        else {
+        let Some(source) = self.visible_portrait_source() else {
             return;
         };
         if self.singer_portraits.get(&source).is_some() {
@@ -127,10 +144,37 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let source = self.session.singer_portrait_source(track).ok()??;
+        self.portrait_row(source, false, cx)
+    }
+
+    /// The selected song speaker's artwork, without creating a track or performing I/O.
+    pub(crate) fn song_singer_portrait_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.portrait_row(self.song_portrait_source()?, true, cx)
+    }
+
+    fn portrait_row(
+        &self,
+        source: SingerPortraitSource,
+        song: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (frame_id, image_id, retry_id) = if song {
+            (
+                "song-singer-portrait",
+                "song-singer-portrait-image",
+                "song-singer-portrait-retry",
+            )
+        } else {
+            (
+                "singer-portrait",
+                "singer-portrait-image",
+                "singer-portrait-retry",
+            )
+        };
         match self.singer_portraits.get(&source)? {
             Ok(Some(image)) => Some(
                 div()
-                    .debug_selector(|| "singer-portrait".into())
+                    .debug_selector(move || frame_id.into())
                     .w_full()
                     .h(px(180.0))
                     .flex_shrink_0()
@@ -141,7 +185,7 @@ impl AurisApp {
                         // block can grow from its width even with a requested height, so cap
                         // the image itself before Contain fits the complete figure inside it.
                         img(Arc::clone(image))
-                            .debug_selector(|| "singer-portrait-image".into())
+                            .debug_selector(move || image_id.into())
                             .w_full()
                             .h(px(180.0))
                             .max_h(px(180.0))
@@ -154,7 +198,7 @@ impl AurisApp {
             Ok(None) => None,
             Err(_) => Some(
                 button(
-                    "singer-portrait-retry",
+                    retry_id,
                     self.t(Key::SingerPortraitRetry),
                     ButtonStyle::Ghost,
                     false,
@@ -222,6 +266,112 @@ mod tests {
         let generation = app.singer_portraits.generation;
         app.singer_portraits.pending = Some((source.clone(), generation));
         app.singer_portraits.finish(source, generation, result);
+    }
+
+    #[gpui::test]
+    fn the_song_portrait_follows_its_speaker_without_changing_the_inspector_or_project(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::ui::context_menu::MenuCommand;
+        let file = VoiceFile::new();
+        let (app, cx, track, _) = with_a_singer_clip(cx);
+        let (first, inspector, before) = app.update(cx, |this, cx| {
+            this.panels = Default::default();
+            this.select_track(track);
+            this.session.set_singer_voice(track, Some(&file.0)).unwrap();
+            let inspector = this.session.singer_portrait_source(track).unwrap().unwrap();
+            supply(this, inspector.clone(), Ok(Some(image())));
+            this.panels.toggle(Panel::Inspector);
+            this.open_song_sheet();
+            this.run_menu_command(
+                MenuCommand::SongSinger(Some(file.0.to_string_lossy().into_owned())),
+                cx,
+            );
+            let first = this.song_portrait_source().unwrap();
+            assert_eq!(this.visible_portrait_source(), Some(first.clone()));
+            supply(this, first.clone(), Ok(Some(image())));
+            (first, inspector, this.project().clone())
+        });
+        paint(&app, cx);
+        let frame = cx.debug_bounds("song-singer-portrait").unwrap();
+        let artwork = cx.debug_bounds("song-singer-portrait-image").unwrap();
+        let speaker = cx.debug_bounds("song-speaker").unwrap();
+        let title = cx.debug_bounds("song-title").unwrap();
+        assert!(frame.top() >= speaker.bottom() && frame.bottom() <= title.top());
+        assert!(artwork.left() >= frame.left() && artwork.right() <= frame.right());
+        assert!(artwork.top() >= frame.top() && artwork.bottom() <= frame.bottom());
+        app.update(cx, |this, cx| {
+            this.run_menu_command(
+                MenuCommand::SongSpeaker {
+                    path: file.0.to_string_lossy().into_owned(),
+                    speaker: "Second".into(),
+                },
+                cx,
+            );
+            let second = this.song_portrait_source().unwrap();
+            assert_ne!(first, second);
+            assert_eq!(second.speaker(), Some("Second"));
+            assert!(this.song_singer_portrait_row(cx).is_none());
+            // A late response for the previous speaker cannot be shown as the new speaker.
+            supply(this, first, Ok(Some(image())));
+            assert!(this.song_singer_portrait_row(cx).is_none());
+            supply(this, second, Ok(Some(image())));
+            assert!(this.song_singer_portrait_row(cx).is_some());
+            this.run_menu_command(MenuCommand::SongSinger(None), cx);
+            assert!(this.song_singer_portrait_row(cx).is_none());
+            assert!(this.visible_portrait_source().is_none());
+            this.song_sheet = None;
+            this.panels.toggle(Panel::Inspector);
+            assert_eq!(this.visible_portrait_source(), Some(inspector));
+            assert!(this.singer_portrait_row(track, cx).is_some());
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn song_artwork_loads_and_retries_with_the_inspector_closed(cx: &mut TestAppContext) {
+        use crate::ui::context_menu::MenuCommand;
+        let file = VoiceFile::new();
+        let (app, cx) = crate::harness::open(cx);
+        let (source, before) = app.update(cx, |this, cx| {
+            this.panels = Default::default();
+            this.panels.toggle(Panel::Inspector);
+            this.open_song_sheet();
+            this.run_menu_command(
+                MenuCommand::SongSinger(Some(file.0.to_string_lossy().into_owned())),
+                cx,
+            );
+            let source = this.song_portrait_source().unwrap();
+            this.poll_singer_portrait(cx);
+            assert_eq!(
+                this.singer_portraits.pending.as_ref().map(|(key, _)| key),
+                Some(&source)
+            );
+            (source, this.project().clone())
+        });
+        cx.run_until_parked();
+        app.update(cx, |this, cx| {
+            assert!(matches!(this.singer_portraits.get(&source), Some(Err(_))));
+            this.poll_singer_portrait(cx);
+            assert!(
+                this.singer_portraits.pending.is_none(),
+                "failed artwork is cached until retry"
+            );
+        });
+        paint(&app, cx);
+        click("song-singer-portrait-retry", cx);
+        cx.run_until_parked();
+        app.update(cx, |this, cx| {
+            assert!(matches!(this.singer_portraits.get(&source), Some(Err(_))));
+            assert!(this.singer_portraits.pending.is_none());
+            assert_eq!(this.project(), &before);
+            assert!(!this.status_failed);
+            supply(this, source, Ok(None));
+            assert!(
+                this.song_singer_portrait_row(cx).is_none(),
+                "voices without artwork leave no empty frame"
+            );
+        });
     }
 
     #[gpui::test]

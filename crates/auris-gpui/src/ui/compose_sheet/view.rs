@@ -358,6 +358,9 @@ impl AurisApp {
                 .into_any_element(),
             );
         }
+        if let Some(portrait) = self.song_singer_portrait_row(cx) {
+            rows.push(portrait);
+        }
         rows.push(
             self.sheet_picker(
                 "song-title",

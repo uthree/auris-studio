@@ -15,6 +15,11 @@ styles from its Engine; saved choices remain available when the Engine is offlin
 are saved in the specification's `singer` and `singer_speaker` fields and assigned to the generated
 vocal track. Changing the voice resets the speaker to that voice's default.
 
+When the selected speaker has artwork, its portrait appears below **Speaker**, fitted inside
+the song controls. It follows voice and speaker changes independently of the inspector. Artwork
+loads in the background; a failed request offers a retry, and voices without artwork leave no
+empty image frame.
+
 **Drums** has its own source selector and add/remove controls. **Instruments** lists melodic
 parts separately, with its own add button. Removing or restoring the drum kit preserves the
 instrument parts and their settings.

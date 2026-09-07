@@ -13,7 +13,7 @@ use crate::voice_setup::read_voicevox_connection;
 
 const MAX_JSON_BYTES: usize = 2 * 1024 * 1024;
 
-/// A track's saved voice identity, suitable for caching an asynchronous artwork request.
+/// A saved voice identity, suitable for caching an asynchronous artwork request.
 ///
 /// This contains no model, file contents or image data. Compare it with the current source
 /// before displaying a worker's result so a previous speaker's portrait cannot replace it.
@@ -26,6 +26,18 @@ pub struct SingerPortraitSource {
 }
 
 impl SingerPortraitSource {
+    /// Identifies a voice file and speaker before a singer track exists.
+    ///
+    /// Construction performs no I/O or model loading and is safe during view rendering.
+    pub fn for_voice(path: PathBuf, speaker: Option<String>) -> Self {
+        Self {
+            track: TrackId(0),
+            backend: BackendKind::from_path(&path),
+            path,
+            speaker,
+        }
+    }
+
     /// The voice entry resolved against the project folder.
     pub fn path(&self) -> &Path {
         &self.path
@@ -457,12 +469,7 @@ mod tests {
             ok(PNG),
         ]);
         let file = VoiceFile::new(&root);
-        let source = SingerPortraitSource {
-            track: TrackId(17),
-            path: file.0.clone(),
-            backend: BackendKind::Voicevox,
-            speaker: Some("Selected".into()),
-        };
+        let source = SingerPortraitSource::for_voice(file.0.clone(), Some("Selected".into()));
         assert_eq!(
             load_singer_portrait(&source)
                 .unwrap()
