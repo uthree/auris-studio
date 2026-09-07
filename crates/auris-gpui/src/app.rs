@@ -2666,6 +2666,7 @@ impl AurisApp {
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
+        let panels = self.panels.clone();
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -2692,6 +2693,7 @@ impl AurisApp {
                         dictionary,
                         singer_acceleration,
                         export,
+                        panels,
                         cx,
                     )
                 })

@@ -427,7 +427,7 @@ impl SettingsWindow {
     }
 
     pub(super) fn sync_editor_focus(&mut self, window: &Window) -> bool {
-        if self.tab != SettingsTab::General {
+        if self.tab != SettingsTab::General && !self.searching() {
             return false;
         }
         let Some(editor) = &mut self.appearance_editor else {

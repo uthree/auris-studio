@@ -305,6 +305,10 @@ strings! {
     ScopeMixer { en: "in the Mixer", ja: "ミキサー内" }
     ScopeInspector { en: "in the Inspector", ja: "インスペクタ内" }
     SearchCommands { en: "Search commands", ja: "コマンドを検索" }
+    SearchSettings { en: "Search settings", ja: "設定を検索" }
+    NoSettingsMatch { en: "No settings match.", ja: "一致する設定がありません。" }
+    PanelPositions { en: "Panel positions", ja: "パネルの表示位置" }
+    PanelPositionsNote { en: "Choose the dock for each panel. Moving a panel shows it there; each dock shows one panel at a time. Changes are saved automatically.", ja: "各パネルを左・下・右のどこに表示するか選べます。移動するとその位置で開き、同じ位置のパネルは切り替えて表示します。変更は自動で保存されます。" }
     AddKeystroke { en: "Add another key", ja: "キーを追加" }
     UnbindCommand { en: "Use no key", ja: "キーを割り当てない" }
     NoKeystroke { en: "—", ja: "―" }

@@ -28,6 +28,10 @@ mod appearance_editor;
 #[cfg(test)]
 mod appearance_tests;
 mod dropdown;
+mod search;
+
+use crate::dock::PanelLayout;
+use search::Section;
 
 /// Which page the settings window is showing.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -95,12 +99,16 @@ pub struct SettingsWindow {
     live: Option<AudioStatus>,
     /// Which slot the next key press is being captured into, if any.
     capturing: Option<Capture>,
-    /// What the key list is being filtered by.
+    /// What settings and key bindings are being filtered by.
     ///
     /// A real text field rather than a string built from key events, because the labels are
     /// translated: a Japanese user filtering on 「トラック」 needs the IME, and a field that reads
     /// key events never sees a composition at all.
     search: TextField,
+    search_focus: FocusHandle,
+    editing_search: bool,
+    panels: PanelLayout,
+    body_scroll: gpui::ScrollHandle,
     status: String,
     focus: FocusHandle,
     dropdown_menu: Option<dropdown::DropdownMenu>,
@@ -154,11 +162,22 @@ impl SettingsWindow {
         japanese_dictionary: Option<std::path::PathBuf>,
         singer_acceleration: Acceleration,
         export: ExportPreferences,
+        panels: PanelLayout,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut font_families = cx.text_system().all_font_names();
         font_families.sort_by_key(|name| name.to_lowercase());
         font_families.dedup();
+        if let Some(main) = app.upgrade() {
+            cx.observe(&main, |this, main, cx| {
+                let panels = main.read(cx).panels.clone();
+                if this.panels != panels {
+                    this.panels = panels;
+                    cx.notify();
+                }
+            })
+            .detach();
+        }
         Self {
             app,
             theme: appearance.theme(),
@@ -181,6 +200,10 @@ impl SettingsWindow {
             pointer,
             capturing: None,
             search: TextField::new(String::new()),
+            search_focus: cx.focus_handle().tab_stop(true),
+            editing_search: true,
+            panels,
+            body_scroll: gpui::ScrollHandle::new(),
             status: String::new(),
             focus: cx.focus_handle(),
             dropdown_menu: None,
@@ -320,43 +343,56 @@ impl SettingsWindow {
                 "tab-general",
                 self.t(Key::TabGeneral),
                 ButtonStyle::Normal,
-                tab == SettingsTab::General,
+                !self.searching() && tab == SettingsTab::General,
                 theme.accent,
                 &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::General;
-                    this.capturing = None;
-                    this.dropdown_menu = None;
-                    cx.notify();
+                cx.listener(|this, _, window, cx| {
+                    this.select_tab(SettingsTab::General, window, cx);
                 }),
             ))
             .child(button(
                 "tab-audio",
                 self.t(Key::TabAudio),
                 ButtonStyle::Normal,
-                tab == SettingsTab::Audio,
+                !self.searching() && tab == SettingsTab::Audio,
                 theme.accent,
                 &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::Audio;
-                    this.capturing = None;
-                    this.dropdown_menu = None;
-                    cx.notify();
+                cx.listener(|this, _, window, cx| {
+                    this.select_tab(SettingsTab::Audio, window, cx);
                 }),
             ))
             .child(button(
                 "tab-keys",
                 self.t(Key::TabKeys),
                 ButtonStyle::Normal,
-                tab == SettingsTab::Keys,
+                !self.searching() && tab == SettingsTab::Keys,
                 theme.accent,
                 &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.tab = SettingsTab::Keys;
-                    this.dropdown_menu = None;
-                    cx.notify();
+                cx.listener(|this, _, window, cx| {
+                    this.select_tab(SettingsTab::Keys, window, cx);
                 }),
             ))
+    }
+
+    fn select_tab(&mut self, tab: SettingsTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.tab = tab;
+        self.capturing = None;
+        self.editing_search = true;
+        self.search = TextField::new(String::new());
+        self.text_changed();
+        window.focus(&self.search_focus);
+        cx.notify();
+    }
+
+    /// Keeps the last text field active while a button or dropdown holds focus.
+    fn sync_text_focus(&mut self, window: &Window) -> bool {
+        let editor_focused = self.sync_editor_focus(window);
+        if editor_focused {
+            self.editing_search = false;
+        } else if self.search_focus.is_focused(window) || self.appearance_editor.is_none() {
+            self.editing_search = true;
+        }
+        editor_focused
     }
 
     /// Appearance, language, editing behaviour and singer preferences.
@@ -403,142 +439,164 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap_2()
-            .child(appearance_control)
-            .child(divider(&theme))
-            .child(section_title(self.t(Key::LanguageHeading), &theme))
-            .child(language_control)
-            .child(note(self.t(Key::LanguageNote), &theme))
-            .child(divider(&theme))
-            .child(section_title(self.t(Key::PointerHeading), &theme))
-            .child(self.gesture_row(
-                "pointer-create",
-                Key::PointerCreate,
-                self.pointer.create,
-                |_| true,
-                PointerGestures::set_create,
-                cx,
-            ))
-            .child(self.gesture_row(
-                "pointer-delete",
-                Key::PointerDelete,
-                self.pointer.delete,
-                PointerGesture::may_delete,
-                PointerGestures::set_delete,
-                cx,
-            ))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(Key::PointerNote)),
-            )
-            // Only while it applies. A standing warning about a setting nobody has chosen is a
-            // line every user reads once and no user acts on.
-            .when(self.pointer.create == PointerGesture::Click, |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(self.t(Key::PointerClickNote)),
-                )
+            .when(self.matches_section(Section::Appearance), |view| {
+                view.child(appearance_control)
             })
-            .child(divider(&theme))
-            .child(section_title(self.t(Key::Autosave), &theme))
-            .child(div().flex().gap_1().child(button(
-                "autosave",
-                self.t(if self.autosave {
-                    Key::ValueOn
-                } else {
-                    Key::ValueOff
-                }),
-                ButtonStyle::Normal,
-                self.autosave,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.apply_autosave(!this.autosave, cx);
-                }),
-            )))
-            .child(note(self.t(Key::AutosaveNote), &theme))
-            .child(divider(&theme))
-            .child(section_title(self.t(Key::SnapNoteLengths), &theme))
-            .child(div().flex().gap_1().child(button(
-                "snap-note-lengths",
-                self.t(if self.snap_note_lengths {
-                    Key::ValueOn
-                } else {
-                    Key::ValueOff
-                }),
-                ButtonStyle::Normal,
-                self.snap_note_lengths,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.apply_snap_note_lengths(!this.snap_note_lengths, cx);
-                }),
-            )))
-            .child(note(self.t(Key::SnapNoteLengthsNote), &theme))
-            .child(divider(&theme))
-            .child(section_title(
-                self.t(Key::JapaneseDictionaryHeading),
-                &theme,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
+            .when(self.matches_section(Section::Language), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(self.t(Key::LanguageHeading), &theme))
+                    .child(language_control)
+                    .child(note(self.t(Key::LanguageNote), &theme))
+            })
+            .when(self.matches_section(Section::Pointer), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(self.t(Key::PointerHeading), &theme))
+                    .child(self.gesture_row(
+                        "pointer-create",
+                        Key::PointerCreate,
+                        self.pointer.create,
+                        |_| true,
+                        PointerGestures::set_create,
+                        cx,
+                    ))
+                    .child(self.gesture_row(
+                        "pointer-delete",
+                        Key::PointerDelete,
+                        self.pointer.delete,
+                        PointerGesture::may_delete,
+                        PointerGestures::set_delete,
+                        cx,
+                    ))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .text_color(
-                                match (
-                                    &self.japanese_dictionary,
-                                    auris_session::library::installed_dictionary(),
-                                ) {
-                                    (None, None) => theme.text_muted,
-                                    _ => theme.text,
-                                },
-                            )
-                            .truncate()
-                            // An empty setting is not an empty state: the shipped dictionary
-                            // stands in, and the row should say which one is answering.
-                            .child(match &self.japanese_dictionary {
-                                Some(folder) => folder.display().to_string(),
-                                None => match auris_session::library::installed_dictionary() {
-                                    Some(_) => self.t(Key::ValueShippedDictionary).to_string(),
-                                    None => self.t(Key::ValueNotSet).to_string(),
-                                },
-                            }),
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(self.t(Key::PointerNote)),
                     )
-                    .child(button(
-                        "dictionary-choose",
-                        self.t(Key::MenuChoose),
+                    // Only while it applies. A standing warning about a setting nobody has chosen is a
+                    // line every user reads once and no user acts on.
+                    .when(self.pointer.create == PointerGesture::Click, |this| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .child(self.t(Key::PointerClickNote)),
+                        )
+                    })
+            })
+            .when(self.matches_section(Section::Autosave), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(self.t(Key::Autosave), &theme))
+                    .child(div().flex().gap_1().child(button(
+                        "autosave",
+                        self.t(if self.autosave {
+                            Key::ValueOn
+                        } else {
+                            Key::ValueOff
+                        }),
                         ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.choose_japanese_dictionary(cx)),
-                    ))
-                    .child(button(
-                        "dictionary-clear",
-                        self.t(Key::MenuClear),
-                        ButtonStyle::Ghost,
-                        false,
+                        self.autosave,
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
-                            this.apply_japanese_dictionary(None, cx);
+                            this.apply_autosave(!this.autosave, cx);
                         }),
-                    )),
-            )
-            .child(note(self.t(Key::JapaneseDictionaryNote), &theme))
-            .child(divider(&theme))
-            .child(section_title(self.t(Key::SingerComputeHeading), &theme))
-            .child(acceleration_control)
-            .child(note(self.t(Key::SingerComputeNote), &theme))
+                    )))
+                    .child(note(self.t(Key::AutosaveNote), &theme))
+            })
+            .when(self.matches_section(Section::Snap), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(self.t(Key::SnapNoteLengths), &theme))
+                    .child(div().flex().gap_1().child(button(
+                        "snap-note-lengths",
+                        self.t(if self.snap_note_lengths {
+                            Key::ValueOn
+                        } else {
+                            Key::ValueOff
+                        }),
+                        ButtonStyle::Normal,
+                        self.snap_note_lengths,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.apply_snap_note_lengths(!this.snap_note_lengths, cx);
+                        }),
+                    )))
+                    .child(note(self.t(Key::SnapNoteLengthsNote), &theme))
+            })
+            .when(self.matches_section(Section::Dictionary), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(
+                        self.t(Key::JapaneseDictionaryHeading),
+                        &theme,
+                    ))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .text_color(
+                                        match (
+                                            &self.japanese_dictionary,
+                                            auris_session::library::installed_dictionary(),
+                                        ) {
+                                            (None, None) => theme.text_muted,
+                                            _ => theme.text,
+                                        },
+                                    )
+                                    .truncate()
+                                    // An empty setting is not an empty state: the shipped dictionary
+                                    // stands in, and the row should say which one is answering.
+                                    .child(match &self.japanese_dictionary {
+                                        Some(folder) => folder.display().to_string(),
+                                        None => {
+                                            match auris_session::library::installed_dictionary() {
+                                                Some(_) => {
+                                                    self.t(Key::ValueShippedDictionary).to_string()
+                                                }
+                                                None => self.t(Key::ValueNotSet).to_string(),
+                                            }
+                                        }
+                                    }),
+                            )
+                            .child(button(
+                                "dictionary-choose",
+                                self.t(Key::MenuChoose),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| this.choose_japanese_dictionary(cx)),
+                            ))
+                            .child(button(
+                                "dictionary-clear",
+                                self.t(Key::MenuClear),
+                                ButtonStyle::Ghost,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.apply_japanese_dictionary(None, cx);
+                                }),
+                            )),
+                    )
+                    .child(note(self.t(Key::JapaneseDictionaryNote), &theme))
+            })
+            .when(self.matches_section(Section::Singer), |view| {
+                view.child(divider(&theme))
+                    .child(section_title(self.t(Key::SingerComputeHeading), &theme))
+                    .child(acceleration_control)
+                    .child(note(self.t(Key::SingerComputeNote), &theme))
+            })
+            .when(self.matches_section(Section::Panels), |view| {
+                view.child(divider(&theme))
+                    .child(self.render_panel_positions(cx))
+            })
             .into_any_element()
     }
 
@@ -621,268 +679,287 @@ impl SettingsWindow {
         let export = self.export;
         let mut rows: Vec<AnyElement> = Vec::new();
 
-        rows.push(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(section_title(self.t(Key::AudioHost), &theme))
-                .child(button(
-                    "refresh-audio-devices",
-                    self.t(Key::RefreshAudioDevices),
-                    ButtonStyle::Ghost,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.hosts = Session::audio_hosts();
-                        if let Ok(devices) = this.app.read_with(cx, |app, _| AudioDevices {
-                            output: app.session.output_devices(),
-                            input: app.session.input_devices(),
-                        }) {
-                            this.devices = devices;
-                        }
-                        cx.notify();
-                    }),
-                ))
-                .into_any_element(),
-        );
-        let mut hosts = vec![(
-            None,
-            self.t(Key::SystemDefaultDevice).to_owned(),
-            String::new(),
-        )];
-        hosts.extend(
-            self.hosts
-                .iter()
-                .map(|host| (Some(host.clone()), host.clone(), String::new())),
-        );
-        if let Some(host) = &audio.host
-            && !self.hosts.contains(host)
-        {
-            hosts.push((
-                Some(host.clone()),
-                host.clone(),
-                self.t(Key::SettingUnavailable).to_owned(),
-            ));
-        }
-        rows.push(self.dropdown(
-            "audio-host",
-            hosts,
-            &audio.host,
-            |this, host, cx| {
-                if this.audio.host != host {
-                    this.apply_audio(
-                        AudioPreferences {
-                            host,
-                            device: None,
-                            input_device: None,
-                            sample_rate: None,
-                            ..this.audio.clone()
-                        },
-                        cx,
-                    );
-                }
-            },
-            cx,
-        ));
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::OutputDevice), &theme));
-        rows.push(self.device_dropdown(DeviceSlot::Output, cx));
-
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::InputDevice), &theme));
-        if audio.uses_asio() {
-            rows.push(note(self.t(Key::AsioInputNote), &theme));
-        } else {
-            rows.push(self.device_dropdown(DeviceSlot::Input, cx));
-            rows.push(note(self.t(Key::InputDeviceNote), &theme));
-        }
-
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::SampleRate), &theme));
-        let rates = self.rate_choices();
-        let mut rate_choices = vec![(
-            None,
-            self.t(Key::DeviceDefaultRate).to_owned(),
-            String::new(),
-        )];
-        rate_choices.extend(rates.iter().map(|rate| {
-            (
-                Some(*rate),
-                messages::rate_single(self.language, f64::from(*rate) / 1000.0),
-                String::new(),
-            )
-        }));
-        if let Some(rate) = audio.sample_rate
-            && !rates.contains(&rate)
-        {
-            rate_choices.push((
-                Some(rate),
-                messages::rate_single(self.language, f64::from(rate) / 1000.0),
-                self.t(Key::SettingUnavailable).to_owned(),
-            ));
-        }
-        rows.push(self.dropdown(
-            "sample-rate",
-            rate_choices,
-            &audio.sample_rate,
-            |this, sample_rate, cx| {
-                this.apply_audio(
-                    AudioPreferences {
-                        sample_rate,
-                        ..this.audio.clone()
-                    },
-                    cx,
-                );
-            },
-            cx,
-        ));
-
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::BufferSize), &theme));
-        let mut block_sizes = AudioPreferences::BLOCK_CHOICES.to_vec();
-        if !block_sizes.contains(&audio.block_frames) {
-            block_sizes.push(audio.block_frames);
-        }
-        let rate = live.as_ref().map_or(48_000.0, |status| status.sample_rate);
-        let blocks = block_sizes
-            .into_iter()
-            .map(|frames| {
-                let latency = frames as f64 / rate.max(1.0) * 1000.0;
-                (
-                    frames,
-                    messages::buffer_choice(self.language, frames, latency),
-                    String::new(),
-                )
-            })
-            .collect();
-        rows.push(self.dropdown(
-            "block",
-            blocks,
-            &audio.block_frames,
-            |this, block_frames, cx| {
-                this.apply_audio(
-                    AudioPreferences {
-                        block_frames,
-                        ..this.audio.clone()
-                    },
-                    cx,
-                );
-            },
-            cx,
-        ));
-        rows.push(note(self.t(Key::RequestedBufferNote), &theme));
-        let actual = live
-            .as_ref()
-            .and_then(|status| {
-                let frames = status.buffer_frames?;
-                Some(messages::actual_buffer(
-                    self.language,
-                    status.host.as_deref().unwrap_or(""),
-                    frames,
-                    f64::from(frames) / status.sample_rate.max(1.0) * 1000.0,
-                ))
-            })
-            .unwrap_or_else(|| self.t(Key::ActualBufferUnknown).to_owned());
-        rows.push(note(&actual, &theme));
-
-        // Export preferences describe the file, independently of the output device's settings.
-        rows.push(divider(&theme).into_any_element());
-        rows.push(section_title(self.t(Key::ExportFormat), &theme));
-        let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
-            .into_iter()
-            .map(|depth| (depth, depth.label().to_owned(), String::new()))
-            .collect();
-        rows.push(self.dropdown(
-            "depth",
-            depths,
-            &export.bit_depth,
-            |this, bit_depth, cx| {
-                this.apply_export(
-                    ExportPreferences {
-                        bit_depth,
-                        ..this.export
-                    },
-                    cx,
-                );
-            },
-            cx,
-        ));
-        rows.push(section_title(self.t(Key::ExportRate), &theme));
-        let mut export_rates = vec![(None, self.t(Key::ProjectRate).to_owned(), String::new())];
-        export_rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(|rate| {
-            (
-                Some(rate),
-                messages::rate_single(self.language, f64::from(rate) / 1000.0),
-                String::new(),
-            )
-        }));
-        if let Some(rate) = export.sample_rate
-            && !AudioPreferences::RATE_CHOICES.contains(&rate)
-        {
-            export_rates.push((
-                Some(rate),
-                messages::rate_single(self.language, f64::from(rate) / 1000.0),
-                String::new(),
-            ));
-        }
-        rows.push(self.dropdown(
-            "export-rate",
-            export_rates,
-            &export.sample_rate,
-            |this, sample_rate, cx| {
-                this.apply_export(
-                    ExportPreferences {
-                        sample_rate,
-                        ..this.export
-                    },
-                    cx,
-                );
-            },
-            cx,
-        ));
-        rows.push(section_title(self.t(Key::ExportDither), &theme));
-        let dithers = export.dither_applies();
-        let on = export.dither && dithers;
-        if dithers {
+        if self.matches_section(Section::Host) {
             rows.push(
                 div()
                     .flex()
-                    .gap_1()
+                    .items_center()
+                    .justify_between()
+                    .child(section_title(self.t(Key::AudioHost), &theme))
                     .child(button(
-                        "export-dither",
-                        self.t(if on { Key::ValueOn } else { Key::ValueOff }),
-                        ButtonStyle::Normal,
-                        on,
+                        "refresh-audio-devices",
+                        self.t(Key::RefreshAudioDevices),
+                        ButtonStyle::Ghost,
+                        false,
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
-                            this.apply_export(
-                                ExportPreferences {
-                                    dither: !this.export.dither,
-                                    ..this.export
-                                },
-                                cx,
-                            );
+                            this.hosts = Session::audio_hosts();
+                            if let Ok(devices) = this.app.read_with(cx, |app, _| AudioDevices {
+                                output: app.session.output_devices(),
+                                input: app.session.input_devices(),
+                            }) {
+                                this.devices = devices;
+                            }
+                            cx.notify();
                         }),
                     ))
                     .into_any_element(),
             );
-        } else {
-            rows.push(
-                div()
-                    .id("export-dither-disabled")
-                    .text_xs()
-                    .text_color(theme.text_faint)
-                    .child(self.t(Key::ValueOff))
-                    .into_any_element(),
+            let mut hosts = vec![(
+                None,
+                self.t(Key::SystemDefaultDevice).to_owned(),
+                String::new(),
+            )];
+            hosts.extend(
+                self.hosts
+                    .iter()
+                    .map(|host| (Some(host.clone()), host.clone(), String::new())),
             );
+            if let Some(host) = &audio.host
+                && !self.hosts.contains(host)
+            {
+                hosts.push((
+                    Some(host.clone()),
+                    host.clone(),
+                    self.t(Key::SettingUnavailable).to_owned(),
+                ));
+            }
+            rows.push(self.dropdown(
+                "audio-host",
+                hosts,
+                &audio.host,
+                |this, host, cx| {
+                    if this.audio.host != host {
+                        this.apply_audio(
+                            AudioPreferences {
+                                host,
+                                device: None,
+                                input_device: None,
+                                sample_rate: None,
+                                ..this.audio.clone()
+                            },
+                            cx,
+                        );
+                    }
+                },
+                cx,
+            ));
         }
-        rows.push(note(self.t(Key::ExportDitherNote), &theme));
+        if self.matches_section(Section::Output) {
+            if !rows.is_empty() {
+                rows.push(divider(&theme).into_any_element());
+            }
+            rows.push(section_title(self.t(Key::OutputDevice), &theme));
+            rows.push(self.device_dropdown(DeviceSlot::Output, cx));
+        }
+        if self.matches_section(Section::Input) {
+            if !rows.is_empty() {
+                rows.push(divider(&theme).into_any_element());
+            }
+            rows.push(section_title(self.t(Key::InputDevice), &theme));
+            if audio.uses_asio() {
+                rows.push(note(self.t(Key::AsioInputNote), &theme));
+            } else {
+                rows.push(self.device_dropdown(DeviceSlot::Input, cx));
+                rows.push(note(self.t(Key::InputDeviceNote), &theme));
+            }
+        }
+        if self.matches_section(Section::Rate) {
+            if !rows.is_empty() {
+                rows.push(divider(&theme).into_any_element());
+            }
+            rows.push(section_title(self.t(Key::SampleRate), &theme));
+            let rates = self.rate_choices();
+            let mut rate_choices = vec![(
+                None,
+                self.t(Key::DeviceDefaultRate).to_owned(),
+                String::new(),
+            )];
+            rate_choices.extend(rates.iter().map(|rate| {
+                (
+                    Some(*rate),
+                    messages::rate_single(self.language, f64::from(*rate) / 1000.0),
+                    String::new(),
+                )
+            }));
+            if let Some(rate) = audio.sample_rate
+                && !rates.contains(&rate)
+            {
+                rate_choices.push((
+                    Some(rate),
+                    messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                    self.t(Key::SettingUnavailable).to_owned(),
+                ));
+            }
+            rows.push(self.dropdown(
+                "sample-rate",
+                rate_choices,
+                &audio.sample_rate,
+                |this, sample_rate, cx| {
+                    this.apply_audio(
+                        AudioPreferences {
+                            sample_rate,
+                            ..this.audio.clone()
+                        },
+                        cx,
+                    );
+                },
+                cx,
+            ));
+        }
+        if self.matches_section(Section::Buffer) {
+            if !rows.is_empty() {
+                rows.push(divider(&theme).into_any_element());
+            }
+            rows.push(section_title(self.t(Key::BufferSize), &theme));
+            let mut block_sizes = AudioPreferences::BLOCK_CHOICES.to_vec();
+            if !block_sizes.contains(&audio.block_frames) {
+                block_sizes.push(audio.block_frames);
+            }
+            let rate = live.as_ref().map_or(48_000.0, |status| status.sample_rate);
+            let blocks = block_sizes
+                .into_iter()
+                .map(|frames| {
+                    let latency = frames as f64 / rate.max(1.0) * 1000.0;
+                    (
+                        frames,
+                        messages::buffer_choice(self.language, frames, latency),
+                        String::new(),
+                    )
+                })
+                .collect();
+            rows.push(self.dropdown(
+                "block",
+                blocks,
+                &audio.block_frames,
+                |this, block_frames, cx| {
+                    this.apply_audio(
+                        AudioPreferences {
+                            block_frames,
+                            ..this.audio.clone()
+                        },
+                        cx,
+                    );
+                },
+                cx,
+            ));
+            rows.push(note(self.t(Key::RequestedBufferNote), &theme));
+            let actual = live
+                .as_ref()
+                .and_then(|status| {
+                    let frames = status.buffer_frames?;
+                    Some(messages::actual_buffer(
+                        self.language,
+                        status.host.as_deref().unwrap_or(""),
+                        frames,
+                        f64::from(frames) / status.sample_rate.max(1.0) * 1000.0,
+                    ))
+                })
+                .unwrap_or_else(|| self.t(Key::ActualBufferUnknown).to_owned());
+            rows.push(note(&actual, &theme));
+        }
+        if self.matches_section(Section::Export) {
+            if !rows.is_empty() {
+                rows.push(divider(&theme).into_any_element());
+            }
+            // Export preferences describe the file, independently of the output device's settings.
 
-        if let Some(status) = live {
-            rows.push(divider(&theme).into_any_element());
+            rows.push(section_title(self.t(Key::ExportFormat), &theme));
+            let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+                .into_iter()
+                .map(|depth| (depth, depth.label().to_owned(), String::new()))
+                .collect();
+            rows.push(self.dropdown(
+                "depth",
+                depths,
+                &export.bit_depth,
+                |this, bit_depth, cx| {
+                    this.apply_export(
+                        ExportPreferences {
+                            bit_depth,
+                            ..this.export
+                        },
+                        cx,
+                    );
+                },
+                cx,
+            ));
+            rows.push(section_title(self.t(Key::ExportRate), &theme));
+            let mut export_rates = vec![(None, self.t(Key::ProjectRate).to_owned(), String::new())];
+            export_rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(|rate| {
+                (
+                    Some(rate),
+                    messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                    String::new(),
+                )
+            }));
+            if let Some(rate) = export.sample_rate
+                && !AudioPreferences::RATE_CHOICES.contains(&rate)
+            {
+                export_rates.push((
+                    Some(rate),
+                    messages::rate_single(self.language, f64::from(rate) / 1000.0),
+                    String::new(),
+                ));
+            }
+            rows.push(self.dropdown(
+                "export-rate",
+                export_rates,
+                &export.sample_rate,
+                |this, sample_rate, cx| {
+                    this.apply_export(
+                        ExportPreferences {
+                            sample_rate,
+                            ..this.export
+                        },
+                        cx,
+                    );
+                },
+                cx,
+            ));
+            rows.push(section_title(self.t(Key::ExportDither), &theme));
+            let dithers = export.dither_applies();
+            let on = export.dither && dithers;
+            if dithers {
+                rows.push(
+                    div()
+                        .flex()
+                        .gap_1()
+                        .child(button(
+                            "export-dither",
+                            self.t(if on { Key::ValueOn } else { Key::ValueOff }),
+                            ButtonStyle::Normal,
+                            on,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.apply_export(
+                                    ExportPreferences {
+                                        dither: !this.export.dither,
+                                        ..this.export
+                                    },
+                                    cx,
+                                );
+                            }),
+                        ))
+                        .into_any_element(),
+                );
+            } else {
+                rows.push(
+                    div()
+                        .id("export-dither-disabled")
+                        .text_xs()
+                        .text_color(theme.text_faint)
+                        .child(self.t(Key::ValueOff))
+                        .into_any_element(),
+                );
+            }
+            rows.push(note(self.t(Key::ExportDitherNote), &theme));
+        }
+        if !self.searching()
+            && let Some(status) = live
+        {
             rows.push(
                 div()
                     .flex()
@@ -1003,7 +1080,7 @@ impl SettingsWindow {
     }
     /// The commands the search box is showing.
     ///
-    /// Matched on the group and the name together, in this language and in English, by the same
+    /// Matched on the group and the name together, in both languages, by the same
     /// scoring the command palette uses — so a query means the same thing in both lists. Filtered
     /// but *not* reordered: this list is arranged under section headings, and sorting by score
     /// would scatter the sections.
@@ -1012,13 +1089,14 @@ impl SettingsWindow {
         BINDABLE
             .iter()
             .filter(|command| {
-                let drawn = format!("{} {}", self.t(command.group), self.t(command.label));
-                let english = palette::english_haystack(
-                    self.language,
-                    command.group,
-                    command.label.get(Language::English),
-                );
-                palette::best_score(query, &drawn, english.as_deref()).is_some()
+                Language::ALL.into_iter().any(|language| {
+                    let labels = format!(
+                        "{} {}",
+                        command.group.get(language),
+                        command.label.get(language)
+                    );
+                    palette::best_score(query, &labels, None).is_some()
+                })
             })
             .collect()
     }
@@ -1026,7 +1104,6 @@ impl SettingsWindow {
     fn render_keys(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let found = self.found_commands();
-        let search = self.render_search(cx);
 
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut group: Option<Key> = None;
@@ -1052,7 +1129,6 @@ impl SettingsWindow {
             .flex()
             .flex_col()
             .gap_1()
-            .child(search)
             .children(rows)
             .child(div().flex().justify_end().pt_3().child(button(
                 "reset-all",
@@ -1081,6 +1157,10 @@ impl SettingsWindow {
         let armed = self.capturing.is_some();
         let empty = self.search.content().is_empty();
         div()
+            .id("settings-search")
+            .debug_selector(|| "settings-search".to_owned())
+            .track_focus(&self.search_focus)
+            .tab_index(0)
             .flex()
             .items_center()
             .h(px(28.0))
@@ -1109,7 +1189,7 @@ impl SettingsWindow {
                             .pl(crate::ui::prompt::FIELD_PADDING)
                             .text_size(crate::ui::prompt::TEXT_SIZE)
                             .text_color(theme.text_faint)
-                            .child(self.t(Key::SearchCommands))
+                            .child(self.t(Key::SearchSettings))
                     }))
                     .child(if armed {
                         // A row is waiting for a key press, and the field must not take it. Drawn
@@ -1128,13 +1208,36 @@ impl SettingsWindow {
                             self.search.content().to_string().into(),
                             self.search.selection(),
                             self.search.marked(),
-                            self.focus.clone(),
+                            self.search_focus.clone(),
                             cx.entity(),
                             theme.clone(),
                         )
                         .into_any_element()
                     }),
             )
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    this.capturing = None;
+                    this.dropdown_menu = None;
+                    this.editing_search = true;
+                    window.focus(&this.search_focus);
+                    cx.notify();
+                }),
+            )
+            .when(!empty, |view| {
+                view.child(button(
+                    "clear-settings-search",
+                    self.t(Key::MenuClear),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.select_tab(this.tab, window, cx);
+                    }),
+                ))
+            })
             .into_any_element()
     }
 
@@ -1362,10 +1465,7 @@ impl SettingsWindow {
         if self.dropdown_menu.is_some() && self.dropdown_key(event, cx) {
             return true;
         }
-        if self.tab == SettingsTab::General
-            && self.sync_editor_focus(window)
-            && self.appearance_editor_key(event, cx)
-        {
+        if self.sync_text_focus(window) && self.appearance_editor_key(event, cx) {
             return true;
         }
         if self.capturing.is_some() {
@@ -1381,7 +1481,7 @@ impl SettingsWindow {
             cx.notify();
             return true;
         }
-        if self.tab != SettingsTab::Keys {
+        if !self.search_focus.is_focused(window) {
             return false;
         }
         self.search_key(event, cx)
@@ -1436,7 +1536,7 @@ impl SettingsWindow {
             // Escape clears the filter rather than closing the window: the list under a query is
             // a list with most of itself missing, and getting it back should not cost a trip
             // through the menu. This window's own, so it is answered before the shared list.
-            "escape" if !self.search.content().is_empty() => {
+            "escape" if !self.search.content().is_empty() && self.search.marked().is_none() => {
                 self.search = TextField::new(String::new());
                 true
             }
@@ -1474,6 +1574,10 @@ fn output_device_preferences(
 
 impl HasTextField for SettingsWindow {
     fn text_changed(&mut self) {
+        if self.editing_search {
+            self.dropdown_menu = None;
+            self.body_scroll.set_offset(gpui::point(px(0.0), px(0.0)));
+        }
         if let Some(field) = self.field()
             && field.content().contains(['\r', '\n'])
         {
@@ -1483,22 +1587,22 @@ impl HasTextField for SettingsWindow {
     }
 
     fn field(&mut self) -> Option<&mut TextField> {
-        if self.tab == SettingsTab::General {
+        if !self.editing_search {
             return self.appearance_editor.as_mut().map(|editor| editor.field());
         }
         // Only while the list is on screen and no row is waiting for a key press — the same two
         // conditions under which the box is drawn as an editable one.
-        (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&mut self.search)
+        self.capturing.is_none().then_some(&mut self.search)
     }
 
     fn readable_field(&self) -> Option<&TextField> {
-        if self.tab == SettingsTab::General {
+        if !self.editing_search {
             return self
                 .appearance_editor
                 .as_ref()
                 .map(|editor| editor.readable_field());
         }
-        (self.tab == SettingsTab::Keys && self.capturing.is_none()).then_some(&self.search)
+        self.capturing.is_none().then_some(&self.search)
     }
 }
 
@@ -1506,14 +1610,15 @@ crate::entity_input_handler!(SettingsWindow);
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let editor_focused = self.sync_editor_focus(window);
+        let editor_focused = self.sync_text_focus(window);
         if window.window_title() != self.t(Key::Settings) {
             window.set_window_title(self.t(Key::Settings));
         }
         // Preserve focus on child controls across renders while keeping the window's shortcuts
         // and text input available when the window first opens.
         if !editor_focused && !self.focus.contains_focused(window, cx) {
-            window.focus(&self.focus);
+            self.editing_search = true;
+            window.focus(&self.search_focus);
         }
 
         let theme = self.theme.clone();
@@ -1536,10 +1641,14 @@ impl Render for SettingsWindow {
             .child(titlebar::controls(window, &theme, |_, window, _| {
                 window.remove_window();
             }));
-        let body = match self.tab {
-            SettingsTab::General => self.render_general(cx),
-            SettingsTab::Audio => self.render_audio(cx),
-            SettingsTab::Keys => self.render_keys(cx),
+        let body = if self.searching() {
+            self.render_results(cx)
+        } else {
+            match self.tab {
+                SettingsTab::General => self.render_general(cx),
+                SettingsTab::Audio => self.render_audio(cx),
+                SettingsTab::Keys => self.render_keys(cx),
+            }
         };
         let status = self.status.clone();
         let dropdown = self.render_dropdown(window, cx);
@@ -1567,10 +1676,18 @@ impl Render for SettingsWindow {
             .child(titlebar)
             .child(
                 div()
+                    .px_3()
+                    .pt_2()
+                    .flex_shrink_0()
+                    .child(self.render_search(cx)),
+            )
+            .child(
+                div()
                     .id("settings-body")
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .track_scroll(&self.body_scroll)
                     .p_3()
                     .child(body),
             )
