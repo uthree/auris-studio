@@ -106,7 +106,7 @@ pub use session::{
 pub use session::{
     MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
-pub use session::{MusicalClipAnalysis, SpectrogramJob};
+pub use session::{MusicalClipAnalysis, RenderedSpectrogramJob, SpectrogramJob};
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir,
@@ -170,8 +170,8 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// text. Both names would compile — an explicit `use` beats a glob — but a reader would have to
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
-    pub use crate::SpectrogramJob;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
+    pub use crate::{RenderedSpectrogramJob, SpectrogramJob};
     /// General MIDI: the programs a part can ask for, and the kits a drum part can.
     ///
     /// A whole module rather than the type alone, because a picker needs the name table beside

@@ -118,6 +118,23 @@ pub(super) fn paint_lane(
     theme: &Theme,
     language: auris_i18n::Language,
 ) {
+    if let Some(spectrum) = &lane.rendered_spectrum {
+        let spectrum_bounds = Bounds {
+            origin: point(bounds.origin.x, bounds.origin.y + TITLE_HEIGHT),
+            size: size(
+                bounds.size.width,
+                (bounds.size.height - TITLE_HEIGHT).max(px(0.0)),
+            ),
+        };
+        crate::ui::spectrogram::paint_rendered_spectrum(
+            window,
+            cx,
+            spectrum_bounds,
+            spectrum,
+            view,
+            theme,
+        );
+    }
     for clip in &lane.clips {
         let x = bounds.origin.x + view.tick_to_x(clip.start);
         // The block covers the repeats too: a looped clip is one thing on the timeline, with one
@@ -138,7 +155,9 @@ pub(super) fn paint_lane(
             Theme::translucent(lane.color, 0.30)
         };
         let radius = Metrics::RADIUS_MD;
-        paint::rounded_rect(window, clip_bounds, radius, body);
+        if lane.rendered_spectrum.is_none() {
+            paint::rounded_rect(window, clip_bounds, radius, body);
+        }
         // A brighter top strip carries the clip name and doubles as the grab area. Only its
         // top corners are rounded, so it sits inside the clip's outline instead of cutting a
         // square notch out of it.
@@ -213,7 +232,9 @@ pub(super) fn paint_lane(
             };
             paint::clipped(window, visible, |window| match &clip.content {
                 ClipContent::Notes(notes) => {
-                    paint::clip_notes(window, content_bounds, notes, clip.length, ink);
+                    if !lane.spectrogram {
+                        paint::clip_notes(window, content_bounds, notes, clip.length, ink);
+                    }
                 }
                 ClipContent::Waveform {
                     source,

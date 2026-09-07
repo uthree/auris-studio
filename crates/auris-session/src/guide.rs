@@ -260,6 +260,13 @@ pub mod architecture {
     //! sources. The frontend owns the display mode and image cache, and validates the job against
     //! the session's current source buffer before publishing it. Analysis stays in source
     //! coordinates: clip offsets, repeats and stretching are presentation mappings of that data.
+    //! Other track kinds and the project overview use
+    //! [`Session::rendered_spectrogram_job`](crate::Session::rendered_spectrogram_job): a render
+    //! snapshot performs the arrangement on the worker before the same FFT analysis. Track
+    //! views use the stem renderer's solo routing, including buses, sends and master effects;
+    //! the project view uses the current mix's mute and solo settings. The cache is keyed by
+    //! document revision, obsolete renders are cancelled, and results from older revisions are
+    //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
     //! # The third thread, and why recording needed one
     //!

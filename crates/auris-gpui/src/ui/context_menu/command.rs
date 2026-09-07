@@ -132,20 +132,22 @@ pub enum MenuCommand {
     ToggleTrackSolo(TrackId),
     /// Tint a track with a palette entry.
     SetTrackColor(TrackId, Color),
-    /// Open the waveform and spectrogram choices for an audio track.
+    /// Open the clip content and spectrogram choices for a track.
     ShowAudioDisplayPicker {
         /// The track whose clips are drawn.
         track: TrackId,
         /// Where the display choices should open.
         at: Point<Pixels>,
     },
-    /// Change how an audio track is drawn without changing its audio or document.
+    /// Change how a track is drawn without changing its audio or document.
     SetTrackSpectrogram {
-        /// The audio track to display.
+        /// The track to display.
         track: TrackId,
         /// Whether to draw its frequency content instead of its waveform.
         enabled: bool,
     },
+    /// Show or hide the whole project's rendered spectrogram.
+    SetProjectSpectrogram(bool),
     /// Drop every recipe on a track, so nothing on it is written again.
     FreezeTrack(TrackId),
     /// Show a track's automation lane on a parameter, or hide it when it is already showing that
@@ -841,6 +843,9 @@ impl AurisApp {
             }
             MenuCommand::SetTrackSpectrogram { track, enabled } => {
                 self.set_track_spectrogram(track, enabled, cx);
+            }
+            MenuCommand::SetProjectSpectrogram(enabled) => {
+                self.set_project_spectrogram(enabled, cx);
             }
             MenuCommand::FreezeTrack(track) => self.freeze_track(track),
             MenuCommand::ShowAutomation(track, target) => self.show_automation(track, target),

@@ -98,7 +98,7 @@ pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,
 };
-pub use spectrogram::SpectrogramJob;
+pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,

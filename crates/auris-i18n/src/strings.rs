@@ -1063,6 +1063,11 @@ strings! {
     MenuAudioDisplay { en: "Audio Display", ja: "表示形式" }
     MenuWaveform { en: "Waveform", ja: "波形" }
     MenuSpectrogram { en: "Spectrogram", ja: "スペクトログラム" }
+    MenuClipDisplay { en: "Clips", ja: "クリップ" }
+    MenuProjectSpectrogram { en: "Project Spectrogram", ja: "プロジェクト全体のスペクトログラム" }
+    MenuArrangement { en: "Arrangement", ja: "アレンジメント" }
+    SpectrogramFailed { en: "Could not analyse spectrum", ja: "スペクトルを解析できませんでした" }
+    SpectrogramEmpty { en: "No audio to analyse", ja: "解析する音声がありません" }
     SpectrogramLoading { en: "Analysing spectrum…", ja: "スペクトルを解析中…" }
     MenuInputOff { en: "Not Armed", ja: "録音待機しない" }
     MenuCountInOff { en: "No Count-In", ja: "カウントインしない" }

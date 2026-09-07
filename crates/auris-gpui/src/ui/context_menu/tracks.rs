@@ -74,17 +74,16 @@ impl AurisApp {
         // Where a take would come from, which is also the only way to arm a track on anything
         // other than the channels the session picked for it.
         let menu = match records {
-            true => menu
-                .item(
-                    self.t(Key::MenuRecordInput),
-                    MenuCommand::ShowInputPicker { track, at: anchor },
-                )
-                .item(
-                    self.t(Key::MenuAudioDisplay),
-                    MenuCommand::ShowAudioDisplayPicker { track, at: anchor },
-                ),
+            true => menu.item(
+                self.t(Key::MenuRecordInput),
+                MenuCommand::ShowInputPicker { track, at: anchor },
+            ),
             false => menu,
-        };
+        }
+        .item(
+            self.t(Key::MenuAudioDisplay),
+            MenuCommand::ShowAudioDisplayPicker { track, at: anchor },
+        );
         let menu = if entry.kind.is_drum() {
             menu.item(
                 self.t(Key::MenuAnalyzeDrums),
@@ -170,20 +169,19 @@ impl AurisApp {
             .item(self.t(Key::MenuNewBusTrack), MenuCommand::NewBusTrack)
     }
 
-    /// The two ways an audio track's clips can be drawn, with the current one checked.
+    /// Normal clip content or the track's frequency content, with the current one checked.
     pub(crate) fn audio_display_menu(&self, anchor: Point<Pixels>, track: TrackId) -> ContextMenu {
         let menu = ContextMenu::new(anchor, self.t(Key::MenuAudioDisplay));
-        if self
-            .project()
-            .track(track)
-            .and_then(|entry| entry.kind.as_audio())
-            .is_none()
-        {
+        let Some(entry) = self.project().track(track) else {
             return menu;
-        }
+        };
         let spectrogram = self.spectrogram_tracks.contains(&track);
         menu.toggle(
-            self.t(Key::MenuWaveform),
+            self.t(if entry.kind.as_audio().is_some() {
+                Key::MenuWaveform
+            } else {
+                Key::MenuClipDisplay
+            }),
             MenuCommand::SetTrackSpectrogram {
                 track,
                 enabled: false,
@@ -241,8 +239,7 @@ impl AurisApp {
                 self.t(Key::MenuPasteHere),
                 MenuCommand::PasteClips { track, at: start },
             )
-            .item_if(
-                entry.kind.as_audio().is_some(),
+            .item(
                 self.t(Key::MenuAudioDisplay),
                 MenuCommand::ShowAudioDisplayPicker { track, at: anchor },
             )
@@ -269,7 +266,13 @@ impl AurisApp {
 
     /// The menu for the arrangement below the last track.
     pub(crate) fn arrangement_menu(&self, anchor: Point<Pixels>) -> ContextMenu {
-        ContextMenu::new(anchor, self.t(Key::MenuNewTrack))
+        ContextMenu::new(anchor, self.t(Key::MenuArrangement))
+            .toggle(
+                self.t(Key::MenuProjectSpectrogram),
+                MenuCommand::SetProjectSpectrogram(!self.spectrograms.project_enabled),
+                self.spectrograms.project_enabled,
+            )
+            .separator()
             .item(
                 self.t(Key::MenuNewInstrumentTrack),
                 MenuCommand::NewInstrumentTrack,
@@ -766,7 +769,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn audio_display_choices_are_offered_only_for_audio_tracks(cx: &mut TestAppContext) {
+    fn display_choices_are_offered_for_every_track_kind(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         app.update(cx, |this, _| {
             let audio = this.session.add_audio_track("Audio");
@@ -775,9 +778,10 @@ mod tests {
                 .add_default_instrument_track("Instrument")
                 .expect("the registry nominates an instrument");
             let singer = this.session.add_singer_track("Singer");
+            let drum = this.session.add_default_drum_track("Drums").unwrap();
             let bus = this.session.add_bus_track("Bus");
             let at = point(px(120.), px(80.));
-            for track in [audio, instrument, singer, bus] {
+            for track in [audio, instrument, singer, drum, bus] {
                 let command = MenuCommand::ShowAudioDisplayPicker { track, at };
                 for menu in [
                     this.track_menu(at, track),
@@ -787,12 +791,9 @@ mod tests {
                         matches!(entry, MenuEntry::Item(item)
                             if item.enabled && item.command == command)
                     });
-                    assert_eq!(offered, track == audio);
+                    assert!(offered);
                 }
-                assert_eq!(
-                    this.audio_display_menu(at, track).is_empty(),
-                    track != audio
-                );
+                assert!(!this.audio_display_menu(at, track).is_empty());
             }
         });
     }
