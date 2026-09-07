@@ -189,14 +189,26 @@ fn grabbed_phoneme_boundary(
 /// it is and a consonant rides its vowel's pitch the way the model will sing it. Pure
 /// arithmetic on the frames, which is what lets a test hear it without a window.
 fn f0_contour(frames: &SingerFrames, tempo: &TempoMap) -> PitchContour {
+    pitch_contour(
+        frames.f0_hz.iter().map(|hz| f64::from(*hz)),
+        frames.hop_seconds,
+        tempo,
+    )
+}
+
+fn pitch_contour(
+    hz: impl Iterator<Item = f64>,
+    hop_seconds: f64,
+    tempo: &TempoMap,
+) -> PitchContour {
     let mut runs: PitchContour = Vec::new();
     let mut run: Vec<(Ticks, f32)> = Vec::new();
-    for (index, hz) in frames.f0_hz.iter().enumerate() {
-        if *hz > 0.0 {
-            let seconds = index as f64 * frames.hop_seconds;
+    for (index, hz) in hz.enumerate() {
+        if hz.is_finite() && hz > 0.0 {
+            let seconds = index as f64 * hop_seconds;
             let tick = tempo.seconds_to_ticks(Seconds(seconds));
             let pitch = 69.0 + 12.0 * (hz / 440.0).log2();
-            run.push((tick, pitch));
+            run.push((tick, pitch as f32));
         } else if !run.is_empty() {
             runs.push(std::mem::take(&mut run));
         }
@@ -410,7 +422,7 @@ fn paint_f0_curve(
     to: Ticks,
     view: &TimelineView,
     pitch_view: &PitchView,
-    theme: &Theme,
+    color: gpui::Hsla,
 ) {
     let centre = |pitch: f32| {
         (pitch_view.top_pitch as f32 - pitch) * pitch_view.row_height + pitch_view.row_height / 2.0
@@ -427,7 +439,7 @@ fn paint_f0_curve(
             })
             .collect();
         if drawn.len() > 1 {
-            paint::polyline(window, &drawn, px(1.5), theme.accent);
+            paint::polyline(window, &drawn, px(1.5), color);
         }
     }
 }
@@ -453,6 +465,11 @@ impl AurisApp {
         let tempo = &self.project().tempo_map;
         let geometry = std::sync::Arc::new(SungGeometry {
             contour: f0_contour(&frames, tempo),
+            backend_contour: self
+                .session
+                .singer_backend_pitch(track)
+                .map(|pitch| pitch_contour(pitch.hz.iter().copied(), pitch.hop_seconds, tempo))
+                .unwrap_or_default(),
             phonemes: phoneme_spans(&frames, tempo),
         });
         self.sung_geometry
@@ -562,6 +579,27 @@ impl AurisApp {
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
                     )
                     .child(self.tool_strip(cx))
+                    .when(
+                        geometry
+                            .as_ref()
+                            .is_some_and(|g| !g.backend_contour.is_empty()),
+                        |row| {
+                            row.child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.accent)
+                                    .child(self.t(Key::SingerHostPitch)),
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.warning)
+                                    .child(self.t(Key::SingerBackendPitch)),
+                            )
+                        },
+                    )
                     .child(div().flex_1().min_w_0())
                     // The hint describes the tool in hand. It named the create and delete
                     // gestures unconditionally, and holding the velocity tool while being told
@@ -755,7 +793,17 @@ impl AurisApp {
                                                     clip_start + clip_length,
                                                     &view,
                                                     &pitch_view,
-                                                    &theme,
+                                                    theme.accent,
+                                                );
+                                                paint_f0_curve(
+                                                    window,
+                                                    bounds,
+                                                    &geometry.backend_contour,
+                                                    clip_start,
+                                                    clip_start + clip_length,
+                                                    &view,
+                                                    &pitch_view,
+                                                    theme.warning,
                                                 );
                                                 paint_ornament_handles(
                                                     window,
@@ -2484,6 +2532,63 @@ mod tests {
         // An unadorned note offers nothing to grab.
         let plain = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
         assert!(ornament_handles(&plain, 1.0).is_empty());
+    }
+
+    #[test]
+    fn backend_contour_uses_its_frame_clock_and_breaks_at_unvoiced_frames() {
+        let tempo = TempoMap::constant(120.0);
+        let hz = [0.0, 440.0, 466.1637615, 0.0, 220.0, f64::NAN, -1.0];
+        let runs = pitch_contour(hz.into_iter(), 256.0 / 24000.0, &tempo);
+        assert_eq!(runs.len(), 2);
+        assert_eq!(runs[0].len(), 2);
+        assert_eq!(runs[1].len(), 1);
+        assert_eq!(
+            runs[0][0].0,
+            tempo.seconds_to_ticks(Seconds(256.0 / 24000.0))
+        );
+        assert!((runs[0][0].1 - 69.0).abs() < 0.001);
+        assert!((runs[0][1].1 - 70.0).abs() < 0.001);
+        assert!((runs[1][0].1 - 57.0).abs() < 0.001);
+        assert_eq!(
+            runs[1][0].0,
+            tempo.seconds_to_ticks(Seconds(4.0 * 256.0 / 24000.0))
+        );
+    }
+
+    #[gpui::test]
+    fn the_roll_keeps_both_contours_and_refreshes_after_take_and_note_edits(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx, track, clip) = crate::harness::with_a_singer_clip(cx);
+        app.update(cx, |this, cx| {
+            let path = this.session.project_folder().unwrap().join("pitch.voicevox.json");
+            std::fs::write(&path, r#"{"format_version":1,"url":"http://127.0.0.1:1","styles":[{"name":"Test","query_style_id":6000,"decode_style_id":3001}]}"#).unwrap();
+            this.session.set_singer_voice(track, Some(&path)).unwrap();
+            this.session.add_note(clip, Note::new(69, Ticks::ZERO, Ticks::QUARTER)).unwrap();
+            this.selected_clip = Some(clip);
+            let before = this.singer_sung_geometry().unwrap();
+            assert!(!before.contour.is_empty());
+            assert!(before.backend_contour.is_empty());
+            let plan = this.session.sing_plan(track, None).unwrap();
+            let render = auris_session::SingingRender {
+                samples: vec![0.0; plan.frames.len() * 256],
+                backend_pitch: Some(SingerPitch {
+                    hop_seconds: plan.frames.hop_seconds,
+                    hz: vec![450.0; plan.frames.len()],
+                }),
+            };
+            this.session.land_singer_render(&plan, &render).unwrap();
+            let after = this.singer_sung_geometry().unwrap();
+            assert_eq!(before.contour, after.contour);
+            assert!(!after.backend_contour.is_empty());
+            assert_ne!(after.contour, after.backend_contour);
+            this.session.transpose_notes(clip, &[0], 1).unwrap();
+            assert!(this.singer_sung_geometry().unwrap().backend_contour.is_empty());
+            this.session.undo();
+            assert_eq!(this.singer_sung_geometry().unwrap().backend_contour, after.backend_contour);
+            cx.notify();
+        });
+        crate::harness::paint(&app, cx);
     }
 
     #[test]

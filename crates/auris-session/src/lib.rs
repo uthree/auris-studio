@@ -127,7 +127,7 @@ pub use voice_setup::{
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
 pub use auris_singer::{
-    Acceleration, BackendKind, CurveSource, CurveSources, SingError, SingingBackend,
+    Acceleration, BackendKind, CurveSource, CurveSources, SingError, SingingBackend, SingingRender,
     VoiceCapabilities, VoiceModel, VoicePortrait,
 };
 
@@ -211,8 +211,8 @@ pub mod prelude {
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip,
         MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop,
-        SectionMap, SectionPoint, SectionSpan, SendId, SingerTrack, SoundFontId, SoundFontRef,
-        SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
+        SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId,
+        SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
         default_loop_end, loop_passes, sounding_length,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].

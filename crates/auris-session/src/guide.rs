@@ -1260,12 +1260,20 @@ pub mod singing {
     //! [`Session::sing`](crate::Session::sing) is the whole pipeline in one synchronous call;
     //! a window that must keep painting takes the three-step form —
     //! [`sing_plan`](crate::Session::sing_plan) checks and gathers everything up front,
-    //! [`VoiceModel::sing_score_with`](crate::VoiceModel::sing_score_with) runs on the caller's thread,
-    //! [`land_singer_take`](crate::Session::land_singer_take) files the result. The take lands
+    //! [`VoiceModel::sing_render_with`](crate::VoiceModel::sing_render_with) runs on the caller's thread,
+    //! [`land_singer_render`](crate::Session::land_singer_render) files the result. The take lands
     //! in `Audio/` exactly as a recorded take does: an ordinary audio source, reloaded with
     //! everything else when the project reopens, played by the graph from the beginning of the
     //! timeline. The engine keeps the preview instrument standing by under a take, fed nothing
     //! but auditioned notes, so clicking a note in the roll still sounds.
+    //!
+    //! A backend that predicts pitch also returns the acoustic curve used for decoding, after
+    //! musical edits and with decoder padding removed. The take keeps that curve with its audio
+    //! through saving, reopening and undo. The piano roll overlays it in the theme's warning
+    //! colour beside the host contour in the accent colour, with a legend and gaps at unvoiced
+    //! frames. The session exposes it only while the take matches the current synthesis inputs;
+    //! editing the score hides it until the next successful render. Loading an older take simply
+    //! leaves this optional curve absent until that track is sung again.
     //!
     //! Once a voice is chosen, the audition itself sings. The pieces:
     //! [`Session::preview_note_frames`](crate::Session::preview_note_frames) writes a tiny

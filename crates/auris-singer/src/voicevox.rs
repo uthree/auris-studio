@@ -401,6 +401,18 @@ impl SingingBackend for VoicevoxBackend {
         seed: u64,
         progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
+        self.sing_render_with(frames, score, speaker, seed, progress)
+            .map(|render| render.samples)
+    }
+
+    fn sing_render_with(
+        &mut self,
+        frames: &SingerFrames,
+        score: Option<&SingerScore>,
+        speaker: u32,
+        seed: u64,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<crate::SingingRender, SingError> {
         validate_frames(frames)?;
         let score = score.ok_or_else(|| SingError::Unsupported {
             backend: NAME,
@@ -426,7 +438,7 @@ impl SingingBackend for VoicevoxBackend {
             )));
         }
         if frames.is_empty() {
-            return Ok(Vec::new());
+            return Ok(crate::SingingRender::default());
         }
         if !progress(0, 2) {
             return Err(SingError::Cancelled);
@@ -435,6 +447,10 @@ impl SingingBackend for VoicevoxBackend {
         let prepared = self.prepare_curves(frames, score, speaker, seed)?;
         let padding = prepared.leading_frames;
         let query_frames = prepared.pitch_hz.len();
+        let backend_pitch = auris_core::SingerPitch {
+            hop_seconds: frames.hop_seconds,
+            hz: prepared.pitch_hz[padding..padding + frames.len()].to_vec(),
+        };
         let mut query = prepared.context;
         query["f0"] = json!(prepared.pitch_hz);
         query["volume"] = json!(prepared.energy);
@@ -459,7 +475,10 @@ impl SingingBackend for VoicevoxBackend {
         // The padding belongs to this adapter, never to the track's saved score or timeline.
         samples.drain(..padding * hop);
         samples.truncate(frames.len() * hop);
-        Ok(samples)
+        Ok(crate::SingingRender {
+            samples,
+            backend_pitch: Some(backend_pitch),
+        })
     }
 }
 
@@ -623,7 +642,24 @@ mod tests {
                 },
             ],
         };
-        let samples = model.sing_score(&frames, &score, 0, 0);
+        let samples = model
+            .sing_render_with(&frames, &score, 0, 0, |_, _| true)
+            .map(|render| {
+                let pitch = render
+                    .backend_pitch
+                    .expect("the prediction travels with its audio");
+                assert_eq!(pitch.hop_seconds, frames.hop_seconds);
+                assert_eq!(
+                    pitch.hz,
+                    frames
+                        .f0_hz
+                        .iter()
+                        .map(|hz| f64::from(*hz))
+                        .collect::<Vec<_>>(),
+                    "decoder padding is removed and unvoiced frames are preserved"
+                );
+                render.samples
+            });
         let requests = server.join().unwrap();
         std::fs::remove_file(path).unwrap();
         (samples, requests)

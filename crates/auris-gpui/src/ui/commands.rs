@@ -1273,7 +1273,7 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_score_with(
+                        .sing_render_with(
                             &plan.frames,
                             &plan.score,
                             plan.speaker,
@@ -1308,7 +1308,7 @@ impl AurisApp {
                     return;
                 }
                 let message = match sung {
-                    Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
+                    Ok((plan, samples)) => match this.session.land_singer_render(&plan, &samples) {
                         Ok(seconds) => {
                             this.sung_failures.remove(&track);
                             this.sung_retry.remove(&track);
@@ -1552,7 +1552,7 @@ impl AurisApp {
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
                     model
-                        .sing_score_with(
+                        .sing_render_with(
                             &plan.frames,
                             &plan.score,
                             plan.speaker,
@@ -1577,7 +1577,7 @@ impl AurisApp {
                     return;
                 }
                 match sung {
-                    Ok((plan, samples)) => match this.session.land_singer_take(&plan, &samples) {
+                    Ok((plan, samples)) => match this.session.land_singer_render(&plan, &samples) {
                         Ok(seconds) => {
                             this.sung_failures.remove(&track);
                             let language = this.language();

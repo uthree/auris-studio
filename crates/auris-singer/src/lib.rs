@@ -45,7 +45,7 @@ mod portrait;
 mod score;
 mod voicevox;
 
-pub use backend::{BackendKind, SingingBackend, VoiceCapabilities, VoiceModel};
+pub use backend::{BackendKind, SingingBackend, SingingRender, VoiceCapabilities, VoiceModel};
 pub use curves::{CurveGenerator, CurvePrediction, CurveSource, CurveSources, PreparedCurves};
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE};
