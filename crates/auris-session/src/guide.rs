@@ -896,6 +896,10 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! A sokuon keeps its own lyric-bearing closure slot, capped at an eighth note. It is
+    //! excluded from pitch search and ornaments; its pitch follows a neighbouring sung note.
+    //! Shared melodies require closures in the same positions as well as matching mora counts.
+    //!
     //! Presets give later verses their own section names (`verse2`, `chorus2`) and lyrics.
     //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
     //! ornaments. The session validates mora counts phrase by phrase before replacing a

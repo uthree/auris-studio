@@ -14,9 +14,9 @@
 //! is free: the Orpheus constraint — sing the words the way they are spoken — only has teeth
 //! where something actually analysed the accent. The report says which of the two happened.
 
-use auris_compose::vocal::{VocalRange, ornament_vocal, vocal_rhythm, write_vocal};
+use auris_compose::vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};
 use auris_core::theory::contour::Contour;
-use auris_core::time::{Ticks, TimeSignature};
+use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
 use auris_core::{ClipId, ClipPreset, Note, PresetRef, TrackId};
 use auris_vocal::{SungMora, kana_accent_phrase};
 
@@ -34,6 +34,68 @@ pub const DEFAULT_LYRIC_PROGRESSION: &str = "royal-road";
 struct LyricPhrase {
     moras: Vec<SungMora>,
     contours: Vec<Contour>,
+}
+
+fn is_closure(mora: &SungMora) -> bool {
+    mora.phonemes == ["ʔ"]
+}
+
+/// Search only the voiced melody, then restore the unvoiced, lyric-bearing closure slots.
+fn write_lyric_vocal(
+    project: &auris_core::Project,
+    start: Ticks,
+    rhythm: &VocalRhythm,
+    phrases: &[LyricPhrase],
+    seed: u64,
+) -> Vec<Note> {
+    let mut sung = rhythm.clone();
+    let mut contours = Vec::new();
+    let mut closures = Vec::new();
+    for (slots, phrase) in sung.phrases.iter_mut().zip(phrases) {
+        let mut voiced_contours = Vec::new();
+        let mut index = 0;
+        let mut skipped = false;
+        slots.retain(|&(onset, length)| {
+            let mora = &phrase.moras[index];
+            let contour = phrase.contours[index];
+            index += 1;
+            if is_closure(mora) {
+                closures.push((onset, length.min(Ticks(TICKS_PER_QUARTER / 2))));
+                skipped = true;
+                false
+            } else {
+                // The contour describes adjacent spoken moras. Across a closure there is
+                // no single audible step to constrain, so let harmony choose that interval.
+                voiced_contours.push(if skipped { Contour::Free } else { contour });
+                skipped = false;
+                true
+            }
+        });
+        contours.push(voiced_contours);
+    }
+    let mut notes = write_vocal(
+        &project.harmony,
+        start,
+        &sung,
+        &contours,
+        VocalRange::default(),
+        seed,
+    );
+    ornament_vocal(&mut notes, &sung, &project.tempo_map, start);
+    let closure_notes: Vec<_> = closures
+        .into_iter()
+        .map(|(onset, length)| {
+            let pitch = notes
+                .iter()
+                .find(|note| note.start > onset)
+                .or_else(|| notes.last())
+                .map_or(60, |note| note.pitch);
+            Note::new(pitch, onset, length)
+        })
+        .collect();
+    notes.extend(closure_notes);
+    notes.sort_by_key(|note| note.start);
+    notes
 }
 
 /// What composing from lyrics produced.
@@ -98,6 +160,17 @@ impl Session {
                     "{name} → {source}: notes per phrase must match; expected {expected:?}, got {actual:?}"
                 )));
             }
+            let closures = |words: &str| -> Result<Vec<Vec<bool>>, SessionError> {
+                Ok(read_lyrics(words, self.japanese.as_ref())?
+                    .iter()
+                    .map(|phrase| phrase.moras.iter().map(is_closure).collect())
+                    .collect())
+            };
+            if closures(&original.lyrics)? != closures(&section.lyrics)? {
+                return Err(SessionError::SongLyrics(format!(
+                    "{name} → {source}: closure positions per phrase must match"
+                )));
+            }
             let length = vocal_rhythm(&expected, spec.meter).length;
             for section in [original, section] {
                 if length > spec.meter.ticks_per_bar() * section.bars as i64 {
@@ -139,10 +212,6 @@ impl Session {
         let rhythm = vocal_rhythm(&counts, meter);
         let bar = meter.ticks_per_bar().raw().max(1);
         let bars = (rhythm.length.raw() / bar) as usize;
-        let contours: Vec<Vec<Contour>> = phrases
-            .iter()
-            .map(|phrase| phrase.contours.clone())
-            .collect();
 
         self.begin_transaction(Edit::ComposeLyrics);
 
@@ -159,17 +228,7 @@ impl Session {
             }
         }
 
-        let mut notes = write_vocal(
-            &self.project.harmony,
-            Ticks::ZERO,
-            &rhythm,
-            &contours,
-            VocalRange::default(),
-            seed,
-        );
-        // The ornaments a singer would add, by rule: scoop into each phrase, sway on the
-        // held notes, let go at the end. Ordinary note data, adjustable one by one.
-        ornament_vocal(&mut notes, &rhythm, &self.project.tempo_map, Ticks::ZERO);
+        let notes = write_lyric_vocal(&self.project, Ticks::ZERO, &rhythm, &phrases, seed);
 
         // Each note finds its mora by onset rather than by position in a flat list, so a
         // phrase the writer could not fill (a degenerate range) cannot shift every word
@@ -322,20 +381,8 @@ impl Session {
                 continue;
             }
             let counts: Vec<_> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
-            let contours: Vec<_> = phrases
-                .iter()
-                .map(|phrase| phrase.contours.clone())
-                .collect();
             let rhythm = vocal_rhythm(&counts, meter);
-            let mut notes = write_vocal(
-                &project.harmony,
-                span.start,
-                &rhythm,
-                &contours,
-                VocalRange::default(),
-                spec.seed,
-            );
-            ornament_vocal(&mut notes, &rhythm, &project.tempo_map, span.start);
+            let notes = write_lyric_vocal(project, span.start, &rhythm, phrases, spec.seed);
             melodies.insert(span.label.clone(), notes);
         }
         let (mut sung, mut clips) = (0usize, 0usize);
@@ -561,6 +608,79 @@ mod tests {
         "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn closures_keep_words_and_timing_without_sung_ornaments() {
+        for words in ["ずっと", "あっ", "ッあ", "あっっと", "っっ"] {
+            let mut session = session();
+            let report = session.compose_from_lyrics(words, &[], 7).unwrap();
+            let clip = session.midi_clip(report.clip).unwrap();
+            let moras = auris_vocal::split_kana_lyric(words).unwrap();
+            assert_eq!(clip.notes.len(), moras.len());
+            for (index, (note, (text, phonemes))) in clip.notes.iter().zip(moras).enumerate() {
+                assert_eq!(note.lyric, text);
+                assert_eq!(note.phonemes, phonemes);
+                assert_eq!(note.start, Ticks(TICKS_PER_QUARTER / 2 * index as i64));
+                if phonemes == ["ʔ"] {
+                    assert_eq!(note.length, Ticks(TICKS_PER_QUARTER / 2));
+                    assert!(note.scoop.is_none() && note.fall.is_none() && note.vibrato.is_none());
+                }
+            }
+            assert!(
+                clip.notes
+                    .windows(2)
+                    .all(|pair| pair[0].end() <= pair[1].start)
+            );
+        }
+    }
+
+    #[test]
+    fn shared_melodies_require_matching_closures() {
+        let mut session = session();
+        let mut spec = two_verses();
+        spec.sections.get_mut("verse").unwrap().lyrics = "ずっと\nあっっ".into();
+        spec.sections.get_mut("verse2").unwrap().lyrics = "きっと\nうっっ".into();
+        spec.sections.get_mut("verse3").unwrap().lyrics.clear();
+        session.validate_song_lyrics(&spec).unwrap();
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        let closures: Vec<_> = session
+            .project()
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.as_singer())
+            .flat_map(|track| &track.clips)
+            .flat_map(|clip| &clip.notes)
+            .filter(|note| note.phonemes == ["ʔ"])
+            .collect();
+        assert_eq!(closures.len(), 6);
+        assert!(
+            closures
+                .iter()
+                .all(|note| note.length == Ticks(TICKS_PER_QUARTER / 2)
+                    && note.vibrato.is_none()
+                    && note.fall.is_none()
+                    && note.scoop.is_none())
+        );
+        spec.sections.get_mut("verse2").unwrap().lyrics = "きみと\nうっっ".into();
+        let before = session.project().clone();
+        assert!(session.compose(&auris_compose::compose(&spec)).is_err());
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn a_closure_cannot_steer_the_pitch_search() {
+        let session = session();
+        let mut phrases = read_lyrics("ずっと", None).unwrap();
+        let rhythm = vocal_rhythm(&[3], TimeSignature::default());
+        let original = write_lyric_vocal(session.project(), Ticks::ZERO, &rhythm, &phrases, 7);
+        phrases[0].contours[1] = Contour::Fall;
+        let falling = write_lyric_vocal(session.project(), Ticks::ZERO, &rhythm, &phrases, 7);
+        phrases[0].contours[1] = Contour::Rise;
+        let rising = write_lyric_vocal(session.project(), Ticks::ZERO, &rhythm, &phrases, 7);
+        assert_eq!(original, falling);
+        assert_eq!(original, rising);
+        assert_eq!(original[1].pitch, original[2].pitch);
     }
 
     #[test]
