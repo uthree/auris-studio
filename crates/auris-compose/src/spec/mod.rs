@@ -548,7 +548,8 @@ impl SongSpec {
     /// composer invents for it, so every caller — the planner, a picker showing what a section
     /// will play, a clip being re-taken — sees the same real bars and none of them has to know
     /// the marker exists. The invention is drawn from the song's seed and the chart's own name,
-    /// which is what makes two sections naming one unwritten chart play one progression.
+    /// so two sections naming one unwritten chart at the same length play one progression.
+    /// Each length gets its own phrase boundaries, rather than truncating or looping eight bars.
     pub fn chart_for(&self, section: &SectionSpec) -> Chart {
         let named = self
             .charts
@@ -557,7 +558,7 @@ impl SongSpec {
             .or_else(|| self.charts.iter().next());
         match named {
             Some((name, chart)) if chart.is_unwritten() => {
-                crate::progression::invent_chart(self.seed, name, self.key, self.mood)
+                crate::progression::invent_chart(self.seed, name, self.key, self.mood, section.bars)
             }
             Some((_, chart)) => chart.clone(),
             None => Chart::new(Vec::new(), ChartOrigin::Given),
