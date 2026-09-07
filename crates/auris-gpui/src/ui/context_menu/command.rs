@@ -34,6 +34,10 @@ pub enum MenuCommand {
     CancelMusicAnalysis,
     /// Display the current draft with its alternatives.
     ViewMusicAnalysis,
+    /// Choose a local model and estimate instruments in the audio clip.
+    AnalyzeInstruments(ClipId),
+    /// Ask for noncommercial acknowledgement before optional mixture transcription.
+    TranscribeMixture(ClipId),
     /// Explicitly accept supported chord intervals.
     ApplyMusicChords,
     /// Accept one alternative in the symbolic chord report.
@@ -762,6 +766,8 @@ impl AurisApp {
                 self.set_status(self.t(Key::AnalysisCancelled));
             }
             MenuCommand::ViewMusicAnalysis => self.view_music_analysis(),
+            MenuCommand::AnalyzeInstruments(clip) => self.choose_instrument_model(clip, cx),
+            MenuCommand::TranscribeMixture(clip) => self.request_mixture_transcription(clip),
             MenuCommand::ApplyMusicChords => self.accept_music_analysis(None, false, None),
             MenuCommand::ApplyMusicCandidate { segment, candidate } => {
                 self.accept_music_analysis(Some((segment, candidate)), false, None)

@@ -57,7 +57,11 @@ fn main() -> ExitCode {
         "info" => with_path(&args, info),
         "render" => render(&args),
         "analyze-drums" => analyze_drums(&args),
-        "analyze-chords" | "analyze-audio" | "transcribe-audio" => music_analysis::run(&args),
+        "analyze-chords"
+        | "analyze-audio"
+        | "transcribe-audio"
+        | "analyze-instruments"
+        | "transcribe-mixture" => music_analysis::run(&args),
         "sing" => sing(&args),
         "frames" => frames(&args),
         "sing-frames" => sing_frames(&args),

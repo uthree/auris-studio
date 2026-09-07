@@ -3,9 +3,10 @@
 Assessment date: 2026-09-07. This accompanies the
 [research and implementation plan](music-analysis-plan.md).
 
-No cloud resources have been provisioned, no model has been trained or downloaded, and no
-audio has been uploaded. Full-mixture transcription and training are evaluation proposals,
-not work to run on the present AMD machine during implementation of the CPU baseline.
+No cloud resources have been provisioned, no model has been trained, and no audio has been
+uploaded. YAMNet and the explicitly authorized noncommercial MuScriptor Small checkpoint
+have now been prepared and run locally on CPU. Their integration, hashes, measurements and
+accuracy limits are in [the model guide](music-analysis-models.md).
 
 ## AMD-only hardware does not make every neural method a cloud workload
 
@@ -14,9 +15,9 @@ pitch tracking should first use CPU implementations. Basic Pitch and small beat/
 are candidates for pretrained CPU inference; training requirements do not determine inference
 requirements. Their speed in Auris is still unmeasured.
 
-The known environment is Windows with an AMD GPU, as supplied by the user. Exact GPU model,
-VRAM, CPU and available RAM were not established; sandboxed hardware queries were denied.
-Do not infer them from the GPU vendor. Record them in the first benchmark session.
+The measured environment is Windows with an AMD Ryzen 7 9800X3D CPU and an AMD GPU.
+These trials use CPU only. GPU compatibility and peak RAM/VRAM requirements have not been
+measured; do not infer them from the GPU vendor or checkpoint size.
 
 The current singer already enables ONNX Runtime DirectML on Windows. DirectML supports
 DirectX 12 hardware including AMD, so it is a possible later accelerator for compatible ONNX
@@ -38,10 +39,10 @@ matrix only after the device is known.
 | --- | --- | --- |
 | Basic Pitch | Local CPU trial for isolated-instrument polyphony; optional DirectML after parity checks. | Official ONNX artifact; repository Apache-2.0. Verify exact downloaded artifact, preprocessing/postprocessing parity and `ort` compatibility. [Source](https://github.com/spotify/basic-pitch) |
 | Beat this! small | Local CPU trial for beats and downbeats if DSP accuracy is insufficient. | Small checkpoint about 8.1 MB; code and weights MIT. File size does not equal peak RAM. Rust/ONNX export needs separate validation. [Source](https://github.com/CPJKU/beat_this) |
-| YAMNet / selected small PANNs | Local CPU pilot for instrument-family presence. | General event classifiers; pin runtime, label mapping and exact weight terms. Do not substitute repository license for model-weight evidence. [YAMNet](https://github.com/tensorflow/models/blob/master/research/audioset/yamnet/README.md), [PANNs](https://github.com/qiuqiangkong/audioset_tagging_cnn) |
+| YAMNet | Implemented optional CPU instrument-presence tagging. | Google weights and architecture Apache-2.0, export/reference parity checked. The local sampled fixture exposed low instrument coverage at threshold 0.2. [Weight terms](https://groups.google.com/g/audioset-users/c/Ly4guQnlv_o) |
 | MT3 | External inference reference for multi-instrument notes. | T5X research stack; repository Apache-2.0. Pin checkpoint and runnable environment before estimating compute. [Source](https://github.com/magenta/mt3) |
-| YourMT3+ | External candidate for full-mixture transcription, compared against MT3 and isolated-source baselines. | Main GitHub page labels GPL-3.0, while the author's HF Space metadata says Apache-2.0. Resolve the exact code/checkpoint provenance and terms before shipping or bundling it. [GitHub](https://github.com/mimbres/YourMT3), [HF metadata](https://huggingface.co/spaces/mimbres/YourMT3/blob/main/README.md) |
-| MuScriptor | External comparison for multi-instrument transcription; prioritize medium, then assess large only if justified. | Official sizes: small 103M, medium 307M, large 1.4B parameters. Code MIT, weights CC BY-NC 4.0 with gated download. Small is described as CPU-practical, but these models remain outside the initial lightweight local pilot. [Source](https://github.com/muscriptor/muscriptor) |
+| YourMT3+ | Priority commercial-workflow candidate; CPU trial before a RunPod proposal. | The author's actual HF source files carry Apache-2.0 headers and the checkpoint card explicitly licenses weights Apache-2.0, despite the separate GitHub landing page's GPL label. Pin the exact HF artifacts. Source acquisition failed with HTTP 429/500 during this session; no checkpoint was run. This is not evidence that CPU inference is impossible. [Code](https://huggingface.co/spaces/mimbres/YourMT3/blob/5e66c1ea173a8186e0d20432b841d3180cc015b5/amt/src/model/ymt3.py), [weights](https://huggingface.co/mimbres/YourMT3/blob/main/README.md) |
+| MuScriptor Small | Implemented optional local noncommercial CPU transcription draft. | Code MIT, weights CC BY-NC 4.0; explicit per-run warning/acknowledgement. 411,888,600-byte checkpoint; twelve-second mixture completed in 22.46 s including startup. Instrument confusions remain. Medium/large are separate evaluation candidates. [Model](https://huggingface.co/MuScriptor/muscriptor-small) |
 | Demucs plus transcription | Optional external diagnostic: does separation improve accepted note accuracy? | MIT repository; four broad default stems do not identify arbitrary individual parts. Compare end-to-end accuracy, runtime and separation artifacts against direct transcription. [Source](https://github.com/facebookresearch/demucs) |
 | Training/fine-tuning any transcription or tagging model | Separate RunPod proposal after error analysis shows a concrete data/model gap. | Needs dataset rights, a training recipe, checkpoint choice and measured memory/throughput. No defensible fixed GPU-hour estimate yet. |
 

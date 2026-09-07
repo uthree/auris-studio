@@ -10,6 +10,112 @@ fn beats(value: f64) -> Result<Ticks, String> {
     Ok(Ticks::from_beats(value))
 }
 
+/// Optional local instrument-presence tagging without project edits.
+pub mod analyze_instruments {
+    use super::*;
+    /// Wire name.
+    pub const NAME: &str = "analyze_instruments";
+    /// Model-facing command description.
+    pub const DESCRIPTION: &str = "Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits.";
+    /// Audio input and an explicitly prepared model.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// Absolute audio-file path.
+        pub audio: String,
+        /// Absolute path to the ONNX file prepared by tools/music-models/export_yamnet.py.
+        pub model: String,
+        /// Minimum displayed instrument score in 0..1; defaults to 0.2.
+        pub threshold: Option<f32>,
+    }
+    /// Runs local inference and serializes the read-only report.
+    pub fn run(args: &Args) -> Result<String, String> {
+        let report = auris_session::analyze_instrument_file(
+            Path::new(&args.audio),
+            Path::new(&args.model),
+            args.threshold.unwrap_or(0.2),
+            &AnalysisControl::default(),
+        )
+        .map_err(|e| e.to_string())?;
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+    }
+}
+
+/// Optional noncommercial mixture transcription and explicit draft acceptance.
+pub mod transcribe_mixture {
+    use super::*;
+    /// Wire name.
+    pub const NAME: &str = "transcribe_mixture";
+    /// Model-facing command description.
+    pub const DESCRIPTION: &str = "Uses optional local MuScriptor Small on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Requires a prepared Python environment and local checkpoint; no downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.";
+    /// Local inference and optional write destinations.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    pub struct Args {
+        /// Absolute input audio path.
+        pub audio: String,
+        /// Absolute Python executable in the optional muscriptor==0.3.0 environment.
+        pub python: String,
+        /// Absolute local MuScriptor Small safetensors checkpoint.
+        pub model: String,
+        /// True only after the user explicitly accepted noncommercial use for this invocation.
+        #[serde(default)]
+        pub acknowledge_noncommercial: bool,
+        /// New MIDI destination; existing files are refused.
+        pub midi_output: Option<String>,
+        /// Existing project to receive new tracks; requires apply.
+        pub project: Option<String>,
+        /// Zero-based insertion beat; defaults to zero.
+        pub at_beat: Option<f64>,
+        /// Explicitly modify and save the project; defaults to false.
+        #[serde(default)]
+        pub apply: bool,
+    }
+    /// Requires acknowledgement before any audio I/O, worker creation or project edit.
+    pub fn run(args: &Args) -> Result<String, String> {
+        if !args.acknowledge_noncommercial {
+            return Err(auris_session::MUSCRIPTOR_NOTICE.into());
+        }
+        if args.apply != args.project.is_some() {
+            return Err("project and apply must be supplied together".into());
+        }
+        if args
+            .midi_output
+            .as_ref()
+            .is_some_and(|p| Path::new(p).exists())
+        {
+            return Err("MIDI output already exists".into());
+        }
+        let start = beats(args.at_beat.unwrap_or(0.0))?;
+        let config = auris_session::MixtureOptions {
+            python: args.python.clone().into(),
+            model: args.model.clone().into(),
+            acknowledge_noncommercial: true,
+        };
+        let report = auris_session::transcribe_mixture_file(
+            Path::new(&args.audio),
+            &config,
+            &AnalysisControl::default(),
+        )
+        .map_err(|e| e.to_string())?;
+        if let Some(path) = &args.midi_output {
+            let mut output = Session::new(SessionOptions::headless()).map_err(|e| e.to_string())?;
+            output
+                .create_mixture_tracks(&report, Ticks::ZERO)
+                .map_err(|e| e.to_string())?;
+            output
+                .export_midi(Path::new(path))
+                .map_err(|e| e.to_string())?;
+        }
+        if let Some(path) = &args.project {
+            let mut output = opened(path)?;
+            output
+                .create_mixture_tracks(&report, start)
+                .map_err(|e| e.to_string())?;
+            output.save_with_checkpoint().map_err(|e| e.to_string())?;
+        }
+        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+    }
+}
+
 /// Written notes to chromatic chord candidates and optional explicit harmony edits.
 pub mod analyze_chords {
     use super::*;
@@ -158,6 +264,18 @@ pub mod transcribe_audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mixture_tool_defaults_to_no_consent_and_refuses_before_io() {
+        let args: transcribe_mixture::Args =
+            serde_json::from_str(r#"{"audio":"missing.wav","python":"missing","model":"missing"}"#)
+                .unwrap();
+        assert!(!args.acknowledge_noncommercial);
+        assert!(
+            transcribe_mixture::run(&args)
+                .unwrap_err()
+                .contains("CC BY-NC 4.0")
+        );
+    }
     #[test]
     fn invalid_ranges_and_accidental_project_writes_are_rejected_before_io() {
         assert!(beats(f64::NAN).is_err());

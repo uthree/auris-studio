@@ -427,6 +427,8 @@ macro_rules! text_tool {
 session_tool!(AnalyzeMusic, analyze_music);
 session_tool!(AnalyzeChords, analyze_chords);
 session_tool!(AnalyzeAudio, analyze_audio);
+session_tool!(AnalyzeInstruments, analyze_instruments);
+session_tool!(TranscribeMixture, transcribe_mixture);
 session_tool!(TranscribeAudio, transcribe_audio);
 session_tool!(Effects, effects);
 session_tool!(Automation, automation);
@@ -622,6 +624,8 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(AnalyzeMusic)
         .tool(AnalyzeChords)
         .tool(AnalyzeAudio)
+        .tool(AnalyzeInstruments)
+        .tool(TranscribeMixture)
         .tool(TranscribeAudio)
         .tool(InspectComposition)
         .tool(EditHarmony)
@@ -898,13 +902,18 @@ fn write_destination(tool: &str, args: &str) -> Result<(), String> {
         .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
     if matches!(
         tool,
-        toolbox::analyze_chords::NAME | toolbox::transcribe_audio::NAME
+        toolbox::analyze_chords::NAME
+            | toolbox::transcribe_audio::NAME
+            | toolbox::transcribe_mixture::NAME
     ) {
         let mut fields = Vec::new();
         if toolbox::writes_project(tool, &parsed) {
             fields.push("project");
         }
-        if tool == toolbox::transcribe_audio::NAME {
+        if matches!(
+            tool,
+            toolbox::transcribe_audio::NAME | toolbox::transcribe_mixture::NAME
+        ) {
             fields.push("midi_output");
         }
         for field in fields {

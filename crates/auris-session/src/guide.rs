@@ -12,13 +12,21 @@
 //! # Offline music recognition
 //!
 //! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events
-//! on the CPU. It depends only on core vocabulary and DSP, and carries no learned model or GPU
-//! runtime. The session collects selected written notes or shares immutable source audio with
+//! on the CPU. It also runs an explicitly prepared YAMNet ONNX model for instrument-presence
+//! tagging, using ONNX Runtime's CPU provider. The optional weights are external runtime data,
+//! and inference never downloads them. The session collects written notes or shares source audio with
 //! a worker job. Analysis returns a draft; applying harmony or placing transcribed notes is an
 //! explicit, undoable session command. Source audio times stay in seconds until placement maps
 //! them through the current tempo map. Cancellation and source/document validation belong to
 //! the job boundary, never to the audio callback. Unknown harmony and silence are distinct,
 //! and candidate scores are matching scores rather than calibrated probabilities.
+//!
+//! Optional multi-instrument transcription uses a separate, pinned MuScriptor Python CPU
+//! worker. The session requires per-run acknowledgement of the model's noncommercial terms
+//! before decoding or spawning it; checkpoints are local, external data. The parent owns and
+//! reaps the child on completion, cancellation or timeout. Instrument-labeled drafts follow
+//! the same source validation and tempo mapping as other analysis, with all new tracks in one
+//! undo transaction. No model, subprocess or temporary-file I/O belongs on the audio callback.
 //!
 //! # The smallest complete program
 //!

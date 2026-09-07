@@ -252,13 +252,17 @@ models or research datasets must not become a normal Rust test requirement.
 
 This is a targeted review of primary papers, author-maintained implementations, runtime
 documentation and the existing Rust code, covering classical baselines and deployable learned
-systems. Publication dates come from papers, not search-engine crawl timestamps. No weights
-or evaluation corpora were downloaded, and no accuracy or hardware measurements were run.
+systems. Publication dates come from papers, not search-engine crawl timestamps. The initial
+research stage downloaded no weights or evaluation corpora. Subsequent CPU implementations
+and optional model trials are recorded in [the user guide](music-analysis.md) and
+[local model measurements](music-analysis-models.md), including the separate MuScriptor
+noncommercial opt-in.
 This is not an exhaustive literature review or a ranking of methods across incompatible tests.
 
 Before stage 0 ends, settle the first target genres, the vocabulary for instrument families,
 the CPU performance machine, and whether the first score deliverable ends at MIDI or includes
 MusicXML. The proposed defaults are tonal popular music, broad families, CPU-first deployment
 and editable MIDI followed by MusicXML. Cloud execution and any training remain separate
-decisions in the compute assessment. The next concrete implementation unit is stage 0 plus
-symbolic recognition fixtures, followed by stage 1.
+decisions in the compute assessment. The implemented CPU baseline and local model drafts
+now need broader real-recording evaluation; the commercial multi-instrument backend remains
+a separate artifact and runtime evaluation.

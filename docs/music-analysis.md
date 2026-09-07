@@ -1,10 +1,14 @@
-# CPU music analysis
+# Music analysis
 
 Auris can estimate chords from written notes, estimate constant tempo and major/minor chords
 from audio, and turn isolated monophonic audio into an editable note draft. These operations
 use Rust signal processing and fixed templates on the CPU. They load no learned weights and
 require no GPU. The research and longer-term evaluation plan is in
 [music-analysis-plan.md](music-analysis-plan.md).
+
+Optional CPU models now add instrument-presence tagging and multi-instrument note drafts.
+See [local model setup, license notices and measured limitations](music-analysis-models.md).
+MuScriptor is a separate noncommercial option requiring acknowledgement on every invocation.
 
 ## Use the desktop controls
 

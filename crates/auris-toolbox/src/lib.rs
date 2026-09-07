@@ -52,7 +52,9 @@ pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
 };
 pub use mix_editing::{automation, effects};
-pub use recognition::{analyze_audio, analyze_chords, transcribe_audio};
+pub use recognition::{
+    analyze_audio, analyze_chords, analyze_instruments, transcribe_audio, transcribe_mixture,
+};
 
 /// What a model is told before it has called anything.
 ///
@@ -342,6 +344,7 @@ pub struct SpecArgs {
 pub const WRITES_PROJECTS: &[&str] = &[
     analyze_chords::NAME,
     transcribe_audio::NAME,
+    transcribe_mixture::NAME,
     analyze_drum_kit::NAME,
     effects::NAME,
     automation::NAME,
@@ -375,7 +378,10 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         return false;
     }
     match tool {
-        analyze_drum_kit::NAME | analyze_chords::NAME | transcribe_audio::NAME => {
+        analyze_drum_kit::NAME
+        | analyze_chords::NAME
+        | transcribe_audio::NAME
+        | transcribe_mixture::NAME => {
             args.get("apply").and_then(|value| value.as_bool()) == Some(true)
         }
         effects::NAME => args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("list"),

@@ -1,0 +1,220 @@
+{
+  "schema": 1,
+  "date": "2026-09-07",
+  "cpu": "AMD Ryzen 7 9800X3D",
+  "os": "Windows",
+  "compute": "CPU, two intra-operation threads",
+  "build": "Rust optimized debug",
+  "scope": "Single original sampled excerpt, not real-recording accuracy; concurrent development activity; peak RAM unmeasured",
+  "fixture": {
+    "seconds": 12,
+    "generator": "crates/auris-session/examples/render_analysis_fixture.rs",
+    "soundfont_sha256": "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3",
+    "mixture_sha256": "f79c13415e01ef10071d504e92e8ea90bec61e89e13c8565bbb948daf423994c",
+    "reference_notes": 56,
+    "piano_notes": 48,
+    "bass_notes": 8
+  },
+  "yamnet": {
+    "onnx_sha256": "f6a3feead7a295cb94d800a4f32a5d817c856fa56e4409aaeae6a1f5ad2b232d",
+    "weights_sha256": "13c3308955bbfaef262f175ac9c40e47b134573a93984f009220dd7cc12a1744",
+    "export_max_absolute_error": 3.915280103683472E-05,
+    "threshold": 0.2,
+    "timing": [
+      {
+        "stem": "piano",
+        "exit_code": 0,
+        "seconds": 0.8428782
+      },
+      {
+        "stem": "bass",
+        "exit_code": 0,
+        "seconds": 1.0187958
+      },
+      {
+        "stem": "mixture",
+        "exit_code": 0,
+        "seconds": 0.354391
+      }
+    ],
+    "results": [
+      {
+        "stem": "piano",
+        "mean_candidates": [],
+        "mean_raw_top": [
+          {
+            "class_index": 132,
+            "label": "Music",
+            "score": 0.7155770659446716
+          },
+          {
+            "class_index": 494,
+            "label": "Silence",
+            "score": 0.2500419616699219
+          },
+          {
+            "class_index": 149,
+            "label": "Electric piano",
+            "score": 0.03417152911424637
+          },
+          {
+            "class_index": 148,
+            "label": "Piano",
+            "score": 0.025827359408140182
+          },
+          {
+            "class_index": 133,
+            "label": "Musical instrument",
+            "score": 0.02237842045724392
+          }
+        ],
+        "windows_with_candidates": 1
+      },
+      {
+        "stem": "bass",
+        "mean_candidates": [],
+        "mean_raw_top": [
+          {
+            "class_index": 132,
+            "label": "Music",
+            "score": 0.6410561800003052
+          },
+          {
+            "class_index": 494,
+            "label": "Silence",
+            "score": 0.2507690489292145
+          },
+          {
+            "class_index": 133,
+            "label": "Musical instrument",
+            "score": 0.0819970965385437
+          },
+          {
+            "class_index": 147,
+            "label": "Keyboard (musical)",
+            "score": 0.07324337959289551
+          },
+          {
+            "class_index": 153,
+            "label": "Synthesizer",
+            "score": 0.06311006098985672
+          }
+        ],
+        "windows_with_candidates": 2
+      },
+      {
+        "stem": "mixture",
+        "mean_candidates": [],
+        "mean_raw_top": [
+          {
+            "class_index": 132,
+            "label": "Music",
+            "score": 0.681726336479187
+          },
+          {
+            "class_index": 494,
+            "label": "Silence",
+            "score": 0.2503739595413208
+          },
+          {
+            "class_index": 149,
+            "label": "Electric piano",
+            "score": 0.05327141284942627
+          },
+          {
+            "class_index": 148,
+            "label": "Piano",
+            "score": 0.03361736238002777
+          },
+          {
+            "class_index": 147,
+            "label": "Keyboard (musical)",
+            "score": 0.02499569021165371
+          }
+        ],
+        "windows_with_candidates": 1
+      }
+    ],
+    "synthetic_runtime_probe": {
+      "audio_seconds": 180.0,
+      "candidates": [],
+      "elapsed_seconds_including_load": 0.3323459,
+      "fixture": "180-second synthetic decaying two-harmonic arpeggio; no instrument ground truth",
+      "model_sha256": "f6a3feead7a295cb94d800a4f32a5d817c856fa56e4409aaeae6a1f5ad2b232d",
+      "raw_top": [
+        {
+          "class_index": 498,
+          "label": "Sound effect",
+          "score": 0.13057203590869904
+        },
+        {
+          "class_index": 488,
+          "label": "Plop",
+          "score": 0.11459052562713623
+        },
+        {
+          "class_index": 132,
+          "label": "Music",
+          "score": 0.0950532779097557
+        },
+        {
+          "class_index": 494,
+          "label": "Silence",
+          "score": 0.07176744937896729
+        },
+        {
+          "class_index": 435,
+          "label": "Glass",
+          "score": 0.040534716099500656
+        }
+      ],
+      "real_time_factor": 0.0018463661111111113,
+      "windows": 374
+    }
+  },
+  "muscriptor": {
+    "revision": "8c127f603b807520fa465c838e9bfee8a91ada4e",
+    "checkpoint_sha256": "bbd482c786b895cf7d8f44185073d951adae2ebb8a66f82ca84cd1f84569549c",
+    "checkpoint_bytes": 411888600,
+    "license": "CC-BY-NC-4.0",
+    "package": "muscriptor==0.3.0",
+    "torch": "2.5.1+cpu",
+    "wall_seconds": 22.4615037,
+    "real_time_factor": 1.871791975,
+    "estimated_instruments": {
+      "acoustic_piano": 58
+    },
+    "midi_export_succeeded": true,
+    "instrument_agnostic": {
+      "reference_notes": 56,
+      "estimated_notes": 58,
+      "onset_seconds": 0.05,
+      "pitch_cents": 50,
+      "offset_seconds_min": 0.05,
+      "offset_duration_ratio": 0.2,
+      "onset": {
+        "matches": 52,
+        "precision": 0.896551724137931,
+        "recall": 0.9285714285714286,
+        "f1": 0.912280701754386,
+        "false_positives": 6,
+        "false_negatives": 4
+      },
+      "onset_offset": {
+        "matches": 46,
+        "precision": 0.7931034482758621,
+        "recall": 0.8214285714285714,
+        "f1": 0.8070175438596492,
+        "false_positives": 12,
+        "false_negatives": 10
+      }
+    },
+    "instrument_aware": {
+      "method": "Match piano references to acoustic_piano estimates; no bass estimates. Include all 56 references and 58 estimates in denominators.",
+      "onset_matches": 45,
+      "onset_f1": 0.7894736842105263,
+      "onset_offset_matches": 42,
+      "onset_offset_f1": 0.7368421052631579
+    }
+  }
+}

@@ -122,6 +122,14 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze_audio::run(&args)).await
     }
+    /// Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits.
+    #[tool]
+    async fn analyze_instruments(
+        &self,
+        Parameters(args): Parameters<toolbox::analyze_instruments::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::analyze_instruments::run(&args)).await
+    }
     /// Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved.
     #[tool]
     async fn transcribe_audio(
@@ -129,6 +137,14 @@ impl AurisMcp {
         Parameters(args): Parameters<toolbox::transcribe_audio::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::transcribe_audio::run(&args)).await
+    }
+    /// Uses optional local MuScriptor Small on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Requires a prepared Python environment and local checkpoint; no downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.
+    #[tool]
+    async fn transcribe_mixture(
+        &self,
+        Parameters(args): Parameters<toolbox::transcribe_mixture::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::transcribe_mixture::run(&args)).await
     }
     /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
     #[tool]
@@ -581,8 +597,16 @@ mod tests {
                 toolbox::analyze_audio::DESCRIPTION,
             ),
             (
+                toolbox::analyze_instruments::NAME,
+                toolbox::analyze_instruments::DESCRIPTION,
+            ),
+            (
                 toolbox::transcribe_audio::NAME,
                 toolbox::transcribe_audio::DESCRIPTION,
+            ),
+            (
+                toolbox::transcribe_mixture::NAME,
+                toolbox::transcribe_mixture::DESCRIPTION,
             ),
             (
                 toolbox::capabilities::NAME,

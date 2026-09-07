@@ -56,3 +56,7 @@ vendor/rustysynth/Cargo.lock
 
 # python cache
 *.pyc
+/.pytest_cache/
+
+# Optional local music-model checkpoints, exports and Python environments.
+/models/
