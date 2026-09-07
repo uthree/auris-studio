@@ -40,14 +40,15 @@ remain visible in the editor even when their role's assignment is cleared.
 
 The desktop automatically analyzes drum sounds in the background when a drum track is created
 or loaded, and analyzes the new sound after its instrument, preset or parameters change. Each
-track keeps its own analysis status and result. The inspector shows whether analysis is queued,
+track keeps its own analysis status and result. Select the track and open **Analysis → Drum Sound
+Analysis…** to see whether analysis is queued,
 running, complete, cancelled or failed. You can cancel a pending analysis, retry it after a
 failure, or choose **Rescan Drum Sounds** from the track's context menu. Unchanged sources are
 not repeatedly scanned; cancelled and failed analyses wait for a retry or a source change.
 
 The worker triggers every MIDI key at three velocities, twice each, and measures the resulting
 stereo audio. Built-in instruments, an explicitly selected SoundFont preset, and stateful hosted
-CLAP or VST3 instruments use the same analysis. The inspector shows proposed roles, numeric
+CLAP or VST3 instruments use the same analysis. The analysis panel shows proposed roles, numeric
 fitness, spectral centroid and energy duration.
 
 Applying a result is a separate, explicit action. **Use Mapping for New Clips Only** saves the

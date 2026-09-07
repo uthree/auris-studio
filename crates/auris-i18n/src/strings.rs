@@ -1088,6 +1088,10 @@ strings! {
     AnalysisInstrumentMean { en: "Whole-clip mean scores", ja: "クリップ全体の平均スコア" }
     CliAnalyzeInstrumentsUsage { en: "Usage: auris analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]", ja: "使い方: auris analyze-instruments <audio-file> --model <yamnet.onnx> [--threshold 0.2]" }
     MenuTranscribeAudio { en: "Transcribe Isolated Melody", ja: "単音の音声を採譜" }
+    GroupAnalysis { en: "Analysis", ja: "分析" }
+    AnalysisResults { en: "Analysis Results…", ja: "分析結果…" }
+    AnalysisDrums { en: "Drum Sound Analysis…", ja: "ドラム音の分析…" }
+    AnalysisSelectSource { en: "Select a compatible track or audio clip first", ja: "先に対象のトラックまたは音声クリップを選択してください" }
     AnalysisTitle { en: "Music Analysis", ja: "音楽分析" }
     AnalysisStale { en: "The source or document changed. Run analysis again.", ja: "音声または曲が変更されました。もう一度解析してください。" }
     AnalysisScores { en: "Scores measure agreement, not probability. Review alternatives before applying.", ja: "数値は一致度で、正解の確率ではありません。候補を確認してから反映してください。" }

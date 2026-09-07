@@ -160,7 +160,6 @@ impl AurisApp {
         // appear for every MIDI clip, because a phrase played by hand takes a swing exactly as
         // a written one does.
         let mut sections: Vec<AnyElement> = self.part_rows(cx);
-        sections.extend(self.music_analysis_rows(cx));
         sections.extend(self.perform_rows(cx));
 
         let Some(track_id) = self.selected_track else {
@@ -243,7 +242,7 @@ impl AurisApp {
                     .into_any_element(),
             );
             if is_drum {
-                sections.extend(self.drum_analysis_rows(track_id, cx));
+                sections.extend(self.drum_assignment_rows(track_id, cx));
             }
             sections.push(divider(&theme).into_any_element());
         }

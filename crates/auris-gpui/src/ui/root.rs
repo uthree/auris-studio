@@ -32,6 +32,7 @@ fn note_resize_end(end: Ticks, start: Ticks, grid: Ticks, snap: bool) -> Ticks {
 }
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
+use crate::ui::music_analysis::AnalysisCommand;
 use crate::ui::widgets::splitter;
 
 /// The sizes the three docks are drawn at, once the window has had its say.
@@ -114,6 +115,7 @@ impl Render for AurisApp {
 
         let theme = self.theme.clone();
         let title_bar = self.render_title_bar(window, cx);
+        let analysis_panel = self.render_analysis_panel(cx);
         let menu_bar = self.render_menu_bar(window, cx);
         let menu_bar_dismissal = self.menu_bar.is_some().then(|| {
             div().absolute().inset_0().occlude().on_mouse_down(
@@ -264,6 +266,42 @@ impl Render for AurisApp {
             .on_action(cx.listener(Self::on_open_settings))
             .on_action(cx.listener(Self::on_open_command_palette))
             .on_action(cx.listener(Self::on_open_menu_bar))
+            .on_action(
+                cx.listener(|this, _: &actions::AnalyzeSelectedChords, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::SelectedChords, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &actions::AnalyzeAllChords, _, cx| {
+                this.open_analysis_command(AnalysisCommand::AllChords, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &actions::AnalyzeSelectedAudio, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::Audio, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &actions::TranscribeSelectedAudio, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::Transcribe, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &actions::AnalyzeSelectedInstruments, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::Instruments, cx)
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &actions::TranscribeSelectedMixture, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::Mixture, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &actions::OpenDrumAnalysis, _, cx| {
+                this.open_analysis_command(AnalysisCommand::Drums, cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &actions::OpenAnalysisResults, _, cx| {
+                    this.open_analysis_command(AnalysisCommand::Results, cx)
+                }),
+            )
             .on_action(cx.listener(Self::on_focus_next_pane))
             .on_action(cx.listener(Self::on_focus_previous_pane))
             // Drags are tracked on the root so they keep working after the pointer leaves the
@@ -316,6 +354,7 @@ impl Render for AurisApp {
             .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
+            .children(analysis_panel)
             .children(prompt)
             .children(palette)
             // Under the plugin editor: of the two floating panels, the editor is the one being
@@ -2332,6 +2371,11 @@ impl AurisApp {
         // "silence everything" arriving from there should still put a menu away rather than
         // leave it hanging over a stopped engine.
         if self.close_menu() || self.close_menu_bar() {
+            cx.notify();
+            return;
+        }
+        if self.analysis_panel {
+            self.analysis_panel = false;
             cx.notify();
             return;
         }

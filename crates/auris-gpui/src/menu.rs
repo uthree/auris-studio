@@ -641,6 +641,53 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
         ],
     });
 
+    sections.push(MenuSection {
+        name: t(Key::GroupAnalysis),
+        rows: vec![
+            command(
+                t(Key::MenuAnalyzeChords),
+                actions::AnalyzeSelectedChords,
+                "analysis.chords",
+            ),
+            command(
+                t(Key::MenuAnalyzeAllChords),
+                actions::AnalyzeAllChords,
+                "analysis.all_chords",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::MenuAnalyzeAudio),
+                actions::AnalyzeSelectedAudio,
+                "analysis.audio",
+            ),
+            command(
+                t(Key::MenuTranscribeAudio),
+                actions::TranscribeSelectedAudio,
+                "analysis.transcribe",
+            ),
+            command(
+                t(Key::MenuAnalyzeInstruments),
+                actions::AnalyzeSelectedInstruments,
+                "analysis.instruments",
+            ),
+            command(
+                t(Key::MenuTranscribeMixture),
+                actions::TranscribeSelectedMixture,
+                "analysis.mixture",
+            ),
+            MenuRow::Separator,
+            command(
+                t(Key::AnalysisDrums),
+                actions::OpenDrumAnalysis,
+                "analysis.drums",
+            ),
+            command(
+                t(Key::AnalysisResults),
+                actions::OpenAnalysisResults,
+                "analysis.results",
+            ),
+        ],
+    });
     sections
 }
 

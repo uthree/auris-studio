@@ -1304,6 +1304,8 @@ pub struct AurisApp {
     pub(crate) sung_preview_rendering: bool,
     /// Per-track acoustic measurements and the serial background probe queue.
     pub(crate) drum_analysis: crate::ui::drums::DrumAnalysisState,
+    /// Whether the dedicated analysis panel is open.
+    pub(crate) analysis_panel: bool,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
     /// Invalidates results started before a voice or its connection settings changed.
@@ -1640,6 +1642,7 @@ impl AurisApp {
             sung_preview_wish: None,
             sung_preview_rendering: false,
             drum_analysis: Default::default(),
+            analysis_panel: false,
             music_analysis: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),

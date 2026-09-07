@@ -194,6 +194,22 @@ actions!(
         OpenCommandPalette,
         /// Drop open the menu bar this window draws for itself.
         OpenMenuBar,
+        /// Analyze the selected note track.
+        AnalyzeSelectedChords,
+        /// Analyze all note tracks.
+        AnalyzeAllChords,
+        /// Estimate tempo and chords from audio.
+        AnalyzeSelectedAudio,
+        /// Transcribe monophonic audio.
+        TranscribeSelectedAudio,
+        /// Estimate instruments in audio.
+        AnalyzeSelectedInstruments,
+        /// Transcribe an audio mixture.
+        TranscribeSelectedMixture,
+        /// Open drum measurements.
+        OpenDrumAnalysis,
+        /// Open analysis progress and results.
+        OpenAnalysisResults,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -525,6 +541,14 @@ bindable! {
         "view.menu_bar",        GroupView,      CmdOpenMenuBar,        "f10"         => OpenMenuBar;
         "view.focus_next",      GroupView,      CmdFocusNextPane,      "tab"         => FocusNextPane;
         "view.focus_previous",  GroupView,      CmdFocusPreviousPane,  "shift-tab"   => FocusPreviousPane;
+        "analysis.chords", GroupAnalysis, MenuAnalyzeChords, "" => AnalyzeSelectedChords;
+        "analysis.all_chords", GroupAnalysis, MenuAnalyzeAllChords, "" => AnalyzeAllChords;
+        "analysis.audio", GroupAnalysis, MenuAnalyzeAudio, "" => AnalyzeSelectedAudio;
+        "analysis.transcribe", GroupAnalysis, MenuTranscribeAudio, "" => TranscribeSelectedAudio;
+        "analysis.instruments", GroupAnalysis, MenuAnalyzeInstruments, "" => AnalyzeSelectedInstruments;
+        "analysis.mixture", GroupAnalysis, MenuTranscribeMixture, "" => TranscribeSelectedMixture;
+        "analysis.drums", GroupAnalysis, AnalysisDrums, "" => OpenDrumAnalysis;
+        "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 
     // Scoped to the roll, which is what having contexts buys: `t` is a bare letter, and a bare
