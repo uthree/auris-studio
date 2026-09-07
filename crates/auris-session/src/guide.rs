@@ -1606,6 +1606,14 @@ pub mod harmony {
     //! the whole value of naming a progression is that it comes out sounding like itself. A
     //! chart somebody wrote out by hand declares no mode and is taken at face value.
     //!
+    //! An unwritten song chart (`chords = "?"`, or the progression picker's automatic choice)
+    //! is composed for the section's full bar count. Short phrases shape the arrivals without
+    //! turning a long section into repetitions of an eight-bar loop. Sections sharing a chart
+    //! name and length share its invention; a different length gets its own phrase boundaries.
+    //! Energy and tension admit additional half-bar chords, chosen to connect the preceding
+    //! harmony to the bar's destination in both major and minor. The seed makes these choices
+    //! repeatable within a build. Explicit charts still keep their written harmonic rhythm.
+    //!
     //! # Clips that write themselves
     //!
     //! A [`MidiClip`](auris_core::MidiClip) may carry a

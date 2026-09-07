@@ -23,9 +23,11 @@ pub struct Mood {
     /// it composes with the key instead of fighting it. The melodic skeleton reads it, and every
     /// part hangs off that skeleton.
     pub brightness: f32,
-    /// Calm to driving. Sets note density and how hard the drums hit.
+    /// Calm to driving. Sets note density, how hard the drums hit, and how often invented
+    /// harmony changes within a bar.
     pub energy: f32,
-    /// Plain to coloured. Governs sevenths, ninths and borrowed chords.
+    /// Plain to coloured. Governs sevenths, ninths, borrowed chords and half-bar approaches
+    /// in invented progressions.
     pub tension: f32,
     /// Straight to syncopated.
     pub syncopation: f32,

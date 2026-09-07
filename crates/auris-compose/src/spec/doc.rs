@@ -1340,6 +1340,48 @@ mod tests {
     }
 
     #[test]
+    fn invented_harmony_follows_section_lengths_and_survives_round_trip() {
+        for meter in ["3/4", "4/4", "6/8"] {
+            let spec = SongSpec::parse(&format!(
+                r#"
+                seed = 7
+                meter = "{meter}"
+                chords = "?"
+                energy = 1.0
+                tension = 1.0
+                form = ["verse", "chorus", "verse"]
+                [section.verse]
+                bars = 5
+                [section.chorus]
+                bars = 13
+                "#
+            ))
+            .unwrap();
+            let again = SongSpec::parse(&spec.to_toml()).unwrap();
+            for name in ["verse", "chorus"] {
+                let section = &spec.sections[name];
+                let chart = spec.chart_for(section);
+                assert_eq!(chart.bar_count(), section.bars);
+                assert_eq!(chart, again.chart_for(&again.sections[name]));
+                assert!(chart.bars.iter().any(|bar| bar.len() == 2));
+            }
+            let frame = crate::frame::plan(&spec);
+            let bar_ticks = crate::rhythm::Grid::new(spec.meter, 4).bar_ticks();
+            for section in &frame.sections {
+                let mut end = auris_core::time::Ticks::ZERO;
+                for event in &section.events {
+                    assert_eq!(event.start, end);
+                    end = event.start + event.length;
+                }
+                assert_eq!(end, section.length);
+            }
+            assert_eq!(frame.sections[0].length, bar_ticks * 5);
+            assert_eq!(frame.sections[1].length, bar_ticks * 13);
+            assert!(crate::compose(&spec).note_count() > 100);
+        }
+    }
+
+    #[test]
     fn a_motif_is_given_read_and_kept() {
         let spec = SongSpec::parse("motif = \"0 2 4 2\"").unwrap();
         assert_eq!(spec.motif, [0, 2, 4, 2]);

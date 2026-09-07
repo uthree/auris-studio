@@ -8,9 +8,9 @@
 //!
 //! # How it composes
 //!
-//! A weighted walk over root degrees, eight bars long, shaped like a period: two four-bar
-//! phrases, the first leaning onto the dominant at its end and the second often restating the
-//! opening before closing toward a cadence. The walk's weights are **the catalogue, counted**:
+//! A weighted walk over root degrees spans the requested section. Balanced phrases of at most
+//! four bars lean onto the dominant at their ends and sometimes restate the opening. The
+//! section's final bar leans toward a cadence. The walk's weights are **the catalogue, counted**:
 //! every move between two chords in the major-mode entries of
 //! [`CATALOG`](crate::theory::chart::CATALOG), wraparound included
 //! because those charts are loops. That is the same trick the melody's interval table pulls —
@@ -26,16 +26,17 @@
 //! `V` excepted, which carries its major third explicitly so nothing demotes it), because
 //! sevenths and ninths are what [`colour`](crate::frame) already adds in proportion to the
 //! mood's tension — per section and per playing, which is finer-grained than a chart, shared by
-//! every section that names one, could ever be. What tension does add *here* is the ii–V: a
-//! dominant bar may be split in two, which is the one change of harmonic rhythm this composer
-//! makes and the reason a jazz-leaning mood gets `| ii V |` where a pop one gets `| V |`.
+//! every section that names one, could ever be. Energy and tension add harmonic motion here:
+//! a bar may split into an approach and its destination, with both transitions supported by
+//! the same vocabulary. This works for any destination in either mode, including major ii–V.
 //!
 //! # Determinism
 //!
 //! One stream, named by the chart's own name — `["progression", "sabi"]` — so two sections
 //! pointing at one unwritten chart hear one progression, two unwritten charts in one song hear
-//! two, and the seed dial re-deals all of them. Every draw is taken whether or not it is used,
-//! so the phrase keeps its shape when one decision's odds are tuned.
+//! two, and the seed dial re-deals all of them. Sharing also requires the same section length,
+//! since length determines phrase boundaries. Harmonic rhythm has a separate random stream,
+//! so changing density preserves the destination chords.
 
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::Mood;
@@ -44,17 +45,10 @@ use crate::theory::chord::Quality;
 use crate::theory::key::Key;
 use crate::theory::numeral::Numeral;
 
-/// How many bars an invented progression runs.
+/// How often a later phrase opens by restating the first's opening chord.
 ///
-/// A period: two four-bar phrases. [`Chart::fit_to`] already turns that into anything a section
-/// needs — a four-bar section takes the first phrase, which is written to stand alone, and a
-/// sixteen-bar one plays the period twice.
-const PHRASE_BARS: usize = 8;
-
-/// How often the second phrase opens by restating the first's opening chord.
-///
-/// The antecedent–consequent shape: saying the beginning again is what makes eight bars one
-/// period rather than two strangers. Well over half, because the catalogue's own eight-bar
+/// Restating the beginning ties successive phrases together. Well over half, because the
+/// catalogue's own eight-bar
 /// entries (the canon and 純情進行) both do it.
 const RESTATE: f32 = 0.6;
 
@@ -118,11 +112,13 @@ const MINOR_OPENINGS: [f32; 6] = [4.0, 0.0, 1.0, 0.0, 1.5, 0.0];
 /// Invents the progression an unwritten chart stands for.
 ///
 /// `name` is the chart's name in the song, which is the stream the draw comes from: the same
-/// seed and name always invent the same progression, which is what lets a `.asong` that says
+/// seed, name, key, length and mood invent the same progression, which lets a `.asong` that says
 /// `chords = "?"` describe one reproducible piece. The chart comes back
 /// [`ChartOrigin::Generated`], so the mood may colour it and the turnaround may lean on it —
 /// that is not a courtesy, it is the point.
-pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood) -> Chart {
+///
+/// `bar_count` is the full section length; zero returns an empty chart.
+pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usize) -> Chart {
     let mode = ChartMode::of(key);
     let minor = mode == ChartMode::Minor;
     let (states, moves, openings) = if minor {
@@ -147,20 +143,24 @@ pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood) -> Chart {
     // The walk itself: one root degree per bar. Two draws per bar whatever happens to them, so
     // the eighth bar of one seed is drawn from the same point of the stream as the eighth bar
     // of any other.
-    let mut line: Vec<usize> = Vec::with_capacity(PHRASE_BARS);
-    for bar in 0..PHRASE_BARS {
+    let phrases = phrase_lengths(bar_count);
+    let mut phrase_start = 0;
+    let mut phrase_index = 0;
+    let mut line: Vec<usize> = Vec::with_capacity(bar_count);
+    for bar in 0..bar_count {
+        let phrase_end = phrase_start + phrases[phrase_index] - 1;
         let mut weights = match line.last() {
             None => *openings,
             Some(previous) => moves[*previous],
         };
-        if bar == PHRASE_BARS / 2 - 1 {
-            // The half cadence: the first phrase leans onto the dominant and away from home,
-            // which is what makes bar five feel like an answer. A lean and not a rule — a row
+        if bar == phrase_end && bar + 1 < bar_count {
+            // A phrase leans onto the dominant and away from home, making the next phrase
+            // feel like an answer. A lean and not a rule — a row
             // with no dominant in it simply is not leant.
             weights[dominant] *= 2.5;
             weights[tonic] *= 0.5;
         }
-        if bar == PHRASE_BARS - 1 {
+        if bar + 1 == bar_count && bar > 0 {
             // The close: toward the dominant above all, the subdominant as the plagal second
             // choice, and almost never the tonic — a loop that ends at home has nowhere to go
             // when it comes round again.
@@ -170,32 +170,53 @@ pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood) -> Chart {
         }
         let step = rng.weighted(&weights);
         let restate = rng.chance(RESTATE);
-        line.push(if bar == PHRASE_BARS / 2 && restate {
+        line.push(if bar == phrase_start && bar > 0 && restate {
             line[0]
         } else {
             step
         });
+        if bar == phrase_end {
+            phrase_start = bar + 1;
+            phrase_index += 1;
+        }
     }
 
-    // The ii–V: a dominant bar may be split into approach and arrival. Major only — the minor
-    // version is iiø7–V, a colour this vocabulary does not yet hold — but the roll is taken in
-    // both modes and for every bar, so the walk above reads the same stream whatever the mood.
-    let split_rate = (mood.tension * 0.4).min(0.35);
-    let mut bars: Vec<Vec<Numeral>> = Vec::with_capacity(PHRASE_BARS);
+    // A bridge preserves the destination while adding motion on the first half of the bar.
+    // Excluding both endpoints avoids a repeated chord masquerading as harmonic motion.
+    let mut rhythm = Rng::stream(seed, &[RngKey::Word("harmonic-rhythm"), RngKey::Word(name)]);
+    let split_rate = (mood.energy * 0.35 + mood.tension * 0.4).clamp(0.0, 0.75);
+    let mut bars: Vec<Vec<Numeral>> = Vec::with_capacity(bar_count);
     for (bar, state) in line.iter().enumerate() {
-        let split = rng.chance(split_rate);
-        let arriving = *state == dominant
-            && bar > 0
-            && line[bar - 1] != dominant
-            && states[line[bar - 1]] != "ii";
-        if !minor && split && arriving {
-            bars.push(vec![state_numeral("ii", minor), state_numeral("V", minor)]);
+        let split = rhythm.chance(split_rate);
+        let previous = line[bar.saturating_sub(1)];
+        let weights: [f32; 6] = std::array::from_fn(|candidate| {
+            if candidate == previous || candidate == *state {
+                0.0
+            } else {
+                moves[previous][candidate] * moves[candidate][*state]
+            }
+        });
+        let approach = rhythm.weighted(&weights);
+        if bar > 0 && split && weights[approach] > 0.0 {
+            bars.push(vec![
+                state_numeral(states[approach], minor),
+                state_numeral(states[*state], minor),
+            ]);
         } else {
             bars.push(vec![state_numeral(states[*state], minor)]);
         }
     }
 
     Chart::new(bars, ChartOrigin::Generated).written_in(mode)
+}
+
+/// Divides the section evenly, avoiding a one-bar tail after a run of four-bar phrases.
+/// For example, ten bars become 4 + 3 + 3, and five become 3 + 2.
+fn phrase_lengths(bars: usize) -> Vec<usize> {
+    let count = bars.div_ceil(4);
+    (0..count)
+        .map(|index| bars / count + usize::from(index < bars % count))
+        .collect()
 }
 
 /// The numeral one state of the walk stands for.
@@ -288,7 +309,7 @@ mod tests {
 
     #[test]
     fn an_invented_progression_is_the_same_one_every_time() {
-        let again = |seed, name: &str, key| invent_chart(seed, name, key, Mood::default());
+        let again = |seed, name: &str, key| invent_chart(seed, name, key, Mood::default(), 8);
         assert_eq!(again(7, "main", major()), again(7, "main", major()));
         assert_eq!(again(7, "main", minor()), again(7, "main", minor()));
 
@@ -302,8 +323,8 @@ mod tests {
     fn an_invented_progression_stays_inside_its_key() {
         for seed in 0..64 {
             for key in [major(), minor()] {
-                let chart = invent_chart(seed, "main", key, Mood::default());
-                assert_eq!(chart.bar_count(), PHRASE_BARS);
+                let chart = invent_chart(seed, "main", key, Mood::default(), 8);
+                assert_eq!(chart.bar_count(), 8);
                 assert_eq!(chart.origin, ChartOrigin::Generated);
                 assert!(!chart.is_unwritten());
                 for event in chart.resolve(key, BAR) {
@@ -328,7 +349,7 @@ mod tests {
         let mut closes_open = 0;
         let deals = 200;
         for seed in 0..deals {
-            let chart = invent_chart(seed, "main", major(), Mood::default());
+            let chart = invent_chart(seed, "main", major(), Mood::default(), 8);
             let events = chart.resolve(major(), BAR);
             if events.first().unwrap().chord.root == major().tonic {
                 opens_home += 1;
@@ -351,44 +372,97 @@ mod tests {
     }
 
     #[test]
-    fn tension_is_what_puts_a_two_five_in_a_bar() {
+    fn busy_harmony_adds_connected_half_bar_chords_in_both_modes() {
         let tense = Mood {
+            energy: 1.0,
             tension: 1.0,
             ..Mood::default()
         };
         let calm = Mood {
+            energy: 0.0,
             tension: 0.0,
             ..Mood::default()
         };
-        let mut split = 0;
-        for seed in 0..64 {
-            let chart = invent_chart(seed, "main", major(), tense);
-            for bar in &chart.bars {
-                if bar.len() == 2 {
-                    split += 1;
-                    // The split bar is the ii–V, approach then arrival.
-                    assert_eq!(bar[0].degree, 2);
-                    assert_eq!(bar[1].degree, 5);
+        for key in [major(), minor()] {
+            let mut split = 0;
+            let mut destinations = std::collections::BTreeSet::new();
+            for seed in 0..64 {
+                let chart = invent_chart(seed, "main", key, tense, 13);
+                let (states, moves) = if key.is_minor() {
+                    (&MINOR_STATES, &MINOR_MOVES)
+                } else {
+                    (&MAJOR_STATES, &MAJOR_MOVES)
+                };
+                for (index, bar) in chart.bars.iter().enumerate() {
+                    if bar.len() == 2 {
+                        split += 1;
+                        assert!(index > 0, "the opening is not displaced by an approach");
+                        let previous =
+                            state_of(states, chart.bars[index - 1].last().unwrap()).unwrap();
+                        let approach = state_of(states, &bar[0]).unwrap();
+                        let target = state_of(states, &bar[1]).unwrap();
+                        assert_ne!(approach, previous);
+                        assert_ne!(approach, target);
+                        assert!(moves[previous][approach] > 0.0);
+                        assert!(moves[approach][target] > 0.0);
+                        destinations.insert(target);
+                    }
+                    assert!(bar.len() <= 2, "no bar holds more than an approach");
                 }
-                assert!(bar.len() <= 2, "no bar holds more than an approach");
+                // And the walk itself is the same walk: tension splits bars, it does not re-deal
+                // the progression underneath them.
+                let roots: Vec<u8> = chart
+                    .bars
+                    .iter()
+                    .map(|bar| bar.last().unwrap().degree)
+                    .collect();
+                let calm_chart = invent_chart(seed, "main", key, calm, 13);
+                let calm_roots: Vec<u8> = calm_chart
+                    .bars
+                    .iter()
+                    .map(|bar| bar.last().unwrap().degree)
+                    .collect();
+                assert_eq!(roots, calm_roots);
+                assert!(calm_chart.bars.iter().all(|bar| bar.len() == 1));
             }
-            // And the walk itself is the same walk: tension splits bars, it does not re-deal
-            // the progression underneath them.
-            let roots: Vec<u8> = chart
-                .bars
-                .iter()
-                .map(|bar| bar.last().unwrap().degree)
-                .collect();
-            let calm_chart = invent_chart(seed, "main", major(), calm);
-            let calm_roots: Vec<u8> = calm_chart
-                .bars
-                .iter()
-                .map(|bar| bar.last().unwrap().degree)
-                .collect();
-            assert_eq!(roots, calm_roots);
-            assert!(calm_chart.bars.iter().all(|bar| bar.len() == 1));
+            assert!(
+                split > 64,
+                "busy harmony should regularly move within a bar"
+            );
+            assert!(
+                destinations.len() >= 3,
+                "approaches must serve more than the dominant"
+            );
         }
-        assert!(split > 0, "full tension never wrote a single ii–V");
+    }
+
+    #[test]
+    fn sections_are_composed_to_length_including_odd_and_short_forms() {
+        for bars in [0, 1, 2, 3, 5, 7, 9, 10, 13, 16, 31] {
+            for key in [major(), minor()] {
+                let chart = invent_chart(7, "main", key, Mood::default(), bars);
+                assert_eq!(chart.bar_count(), bars);
+                let events = chart.resolve(key, BAR);
+                let mut end = Ticks::ZERO;
+                for event in events {
+                    assert_eq!(
+                        event.start, end,
+                        "harmony must cover the section without gaps"
+                    );
+                    assert!(event.length > Ticks::ZERO);
+                    end = event.start + event.length;
+                }
+                assert_eq!(end, Ticks(BAR.raw() * bars as i64));
+            }
+        }
+        let long = invent_chart(7, "main", major(), Mood::default(), 16);
+        assert_ne!(
+            long.bars[..8],
+            long.bars[8..],
+            "long sections must not tile eight bars"
+        );
+        assert_eq!(phrase_lengths(5), [3, 2]);
+        assert_eq!(phrase_lengths(10), [4, 3, 3]);
     }
 
     #[test]
@@ -397,7 +471,7 @@ mod tests {
         // natural minor's v, minor. The vocabulary writes the quality on, so what reaches the
         // chart is the harmonic-minor dominant however the mood leans on it.
         for seed in 0..64 {
-            let chart = invent_chart(seed, "main", minor(), Mood::default());
+            let chart = invent_chart(seed, "main", minor(), Mood::default(), 8);
             for event in chart.resolve(minor(), BAR) {
                 if event.chord.root == minor().tonic.transposed(7) {
                     assert!(!event.numeral.is_colourable());
@@ -430,15 +504,21 @@ mod tests {
     /// to any constant above is a visible, deliberate act. When it moves: update the strings
     /// and prepend a line saying why.
     ///
-    /// It last moved when it was written.
+    /// Updated for connecting half-bar approaches in both modes and a separate rhythm stream.
     #[test]
     fn the_inventor_writes_what_it_wrote_before() {
-        let deal = |seed, key| invent_chart(seed, "main", key, Mood::default()).to_string();
-        assert_eq!(deal(0, major()), "| I | V | vi | iii | IV | I | vi | IV |");
-        assert_eq!(deal(1, major()), "| I | I | IV | V | I | I | V | vi |");
+        let deal = |seed, key| invent_chart(seed, "main", key, Mood::default(), 8).to_string();
+        assert_eq!(
+            deal(0, major()),
+            "| I | V | I vi | iii | IV | V I | vi | I IV |"
+        );
+        assert_eq!(
+            deal(1, major()),
+            "| I | IV I | vi IV | V | IV I | I | V | vi |"
+        );
         assert_eq!(
             deal(0, minor()),
-            "| i | bVII | bVI | bIII | iv | V | bVI | iv |"
+            "| i | bVII | i bVI | bIII | iv | bVI V | bVI | bIII iv |"
         );
     }
 }
