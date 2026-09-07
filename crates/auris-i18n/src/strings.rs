@@ -535,6 +535,9 @@ strings! {
     MenuNote { en: "Note", ja: "ノート" }
     MenuCycleTitle { en: "Cycle", ja: "サイクル" }
     MenuDuplicateTrack { en: "Duplicate Track", ja: "トラックを複製" }
+    MenuConvertTrackToAudio { en: "Convert to Audio Track", ja: "オーディオトラックに変換" }
+    TrackConvertedToAudio { en: "Converted to an audio track", ja: "オーディオトラックに変換しました" }
+    EditConvertTrackToAudio { en: "converting a track to audio", ja: "オーディオトラックへの変換" }
     MenuRename { en: "Rename…", ja: "名前を変更…" }
     MenuRenameTrack { en: "Rename Track…", ja: "トラック名を変更…" }
     MenuRenameClip { en: "Rename Clip…", ja: "クリップ名を変更…" }
@@ -1320,6 +1323,8 @@ COMMANDS
       --acknowledge-noncommercial [--midi <new.mid>] [--project <file.auris> --apply]
                                   Transcribe a mixture with user-converted noncommercial ONNX models
     render <project.auris> [opts] Render a project to a WAV file
+    convert-track-to-audio <project.auris> --track <name|id:number>
+                                  Replace an instrument, drum or singer track with audio
     analyze-drums <project.auris> --track <name|id:number> [--apply] [--remap-clips]
                                   Measure drum sounds and optionally apply the computed mapping
         --first-note <n> --last-note <n>  Limit the measured MIDI key range (default: 0-127)

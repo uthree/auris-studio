@@ -39,6 +39,7 @@ mod checkpoints;
 mod clipboard;
 mod clips;
 mod compose;
+mod convert;
 mod drum_analysis;
 mod drum_assignments;
 mod files;
@@ -72,6 +73,7 @@ pub use analysis::{MixAnalysis, SectionLoudness, TrackLoudness};
 pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
+pub use convert::{TrackConversion, TrackConversionJob};
 pub use drum_analysis::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
     DrumVoiceAnalysis, probe_drum_request,

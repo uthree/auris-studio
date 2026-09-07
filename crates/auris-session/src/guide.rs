@@ -142,6 +142,18 @@ pub mod architecture {
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
     //!
+    //! Track conversion follows this boundary too. [`Session::convert_track_job`](crate::Session::convert_track_job)
+    //! captures an instrument/drum source or a singer performance for a worker; the session lands
+    //! the result as a float WAV in `Audio/` and replaces the track in one undo step. Only source
+    //! processing, including instrument automation, is baked. The track id, mixer, effects, sends
+    //! and mixer automation survive, so the audio passes through the same mix exactly once.
+    //! Singer conversion reuses a current take or renders the selected voice for the current score.
+    //! The resulting clip starts at zero, retaining lead-in silence and the original timing; it
+    //! plays at a fixed audio speed. A cancelled render or an edited document cannot replace a score.
+    //! The desktop track menu, `auris convert-track-to-audio <project.auris> --track <name|id:number>`,
+    //! and the toolbox's `convert_track_to_audio` command share this operation. File-based frontends
+    //! checkpoint the saved score before saving the converted project.
+    //!
     //! [`Session::offset_gain_range`](crate::Session::offset_gain_range) shifts an existing
     //! envelope, preserving its shape and the values outside the requested range.
     //! [`Session::render_range_options`](crate::Session::render_range_options) converts a

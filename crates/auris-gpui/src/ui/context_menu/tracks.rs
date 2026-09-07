@@ -52,6 +52,13 @@ impl AurisApp {
                 MenuCommand::DuplicateTrack(track),
             )
             .item(self.t(Key::MenuRename), MenuCommand::RenameTrack(track))
+            .item_if(
+                entry.kind.holds_notes()
+                    && entry.end_tick(&self.project().tempo_map, self.project().sample_rate)
+                        > Ticks::ZERO,
+                self.t(Key::MenuConvertTrackToAudio),
+                MenuCommand::ConvertTrackToAudio(track),
+            )
             .item(self.t(Key::CmdDeleteTrack), MenuCommand::DeleteTrack(track))
             .separator()
             .toggle(

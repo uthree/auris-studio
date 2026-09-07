@@ -219,6 +219,10 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<tool_help::Args>(tool_help::NAME, tool_help::DESCRIPTION),
         definition::<routing::Args>(routing::NAME, routing::DESCRIPTION),
         definition::<set_track_state::Args>(set_track_state::NAME, set_track_state::DESCRIPTION),
+        definition::<convert_track_to_audio::Args>(
+            convert_track_to_audio::NAME,
+            convert_track_to_audio::DESCRIPTION,
+        ),
         definition::<set_instrument_param::Args>(
             set_instrument_param::NAME,
             set_instrument_param::DESCRIPTION,

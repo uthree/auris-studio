@@ -62,7 +62,7 @@ pub use project_files::{create_project, export_midi, import_audio, import_midi};
 pub use recognition::{
     analyze_audio, analyze_chords, analyze_instruments, transcribe_audio, transcribe_mixture,
 };
-pub use track_editing::{routing, set_instrument_param, set_track_state};
+pub use track_editing::{convert_track_to_audio, routing, set_instrument_param, set_track_state};
 
 /// What a model is told before it has called anything.
 ///
@@ -374,6 +374,7 @@ pub const WRITES_PROJECTS: &[&str] = &[
     import_midi::NAME,
     routing::NAME,
     set_track_state::NAME,
+    convert_track_to_audio::NAME,
     set_instrument_param::NAME,
     analyze_chords::NAME,
     transcribe_audio::NAME,

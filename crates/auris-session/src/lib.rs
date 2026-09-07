@@ -107,6 +107,7 @@ pub use session::{
     MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
 pub use session::{MusicalClipAnalysis, SpectrogramJob};
+pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
     WindowPlacement, config_dir,
@@ -172,6 +173,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 pub mod prelude {
     pub use crate::SpectrogramJob;
     pub use crate::session::{PlaybackReadiness, PlaybackState};
+    pub use crate::session::{TrackConversion, TrackConversionJob};
     /// General MIDI: the programs a part can ask for, and the kits a drum part can.
     ///
     /// A whole module rather than the type alone, because a picker needs the name table beside

@@ -127,6 +127,16 @@ pub struct RenderJob {
 }
 
 impl RenderJob {
+    pub(crate) fn restrict_to_source(&mut self, project: Project, track: TrackId) {
+        self.project = project;
+        self.placed.clear();
+        self.instruments.retain(|id, _| *id == track);
+    }
+
+    pub(crate) fn has_placed_instrument(&self, track: TrackId) -> bool {
+        self.instruments.contains_key(&track)
+    }
+
     pub(crate) fn new(
         project: Project,
         bank: AudioSourceBank,

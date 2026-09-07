@@ -63,6 +63,8 @@ pub enum Edit {
     DeleteTrack,
     /// A track was copied.
     DuplicateTrack,
+    /// A note track was rendered and replaced with audio.
+    ConvertTrackToAudio,
     /// A track was moved up or down the list.
     MoveTrack,
     /// A track was renamed.

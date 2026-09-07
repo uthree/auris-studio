@@ -122,6 +122,8 @@ pub enum MenuCommand {
     },
     /// Copy a track, its clips and its effects.
     DuplicateTrack(TrackId),
+    /// Render the source and replace this track with audio in one undo step.
+    ConvertTrackToAudio(TrackId),
     /// Rename a track.
     RenameTrack(TrackId),
     /// Delete a track.
@@ -826,6 +828,7 @@ impl AurisApp {
                 Err(error) => self.set_failed_status(self.failure(Key::MenuDuplicate, &error)),
             },
             MenuCommand::RenameTrack(track) => self.prompt_to_rename_track(track),
+            MenuCommand::ConvertTrackToAudio(track) => self.convert_track_to_audio(track, cx),
             MenuCommand::DeleteTrack(track) => {
                 self.select_track(track);
                 self.delete_selected_track();
