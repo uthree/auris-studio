@@ -61,7 +61,7 @@ pub mod edit_harmony {
     /// The tool's wire name.
     pub const NAME: &str = "edit_harmony";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call write_again on the parts that should follow the new harmony.";
+    pub const DESCRIPTION: &str = "Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call regenerate_clips on the parts that should follow the new harmony.";
     /// A bounded change to the musical timeline.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -175,7 +175,7 @@ pub mod edit_harmony {
         session
             .save_with_checkpoint()
             .map_err(|error| error.to_string())?;
-        Ok("Saved the timeline changes. Notes and mix are preserved. Use write_again only on parts you want regenerated; inspect_composition reads the result.".into())
+        Ok("Saved the timeline changes. Notes and mix are preserved. Use regenerate_clips only on parts you want regenerated; inspect_composition reads the result.".into())
     }
 }
 
@@ -651,8 +651,8 @@ mod tests {
         assert_eq!(recipe.motif, [1, 3, 5, 3]);
         let expected = session.midi_clip(fixture.clip).unwrap().notes.clone();
         drop(session);
-        write_again::run(&args(
-            json!({"project":fixture.path,"track":"Lead","clip":1}),
+        regenerate_clips::run(&args(
+            json!({"project":fixture.path,"track":"Lead","clip":1,"take":{"kind":"same"}}),
         ))
         .unwrap();
         let session = opened(&fixture.path).unwrap();
@@ -797,16 +797,26 @@ mod tests {
             .unwrap();
         session.save_in_place().unwrap();
         let before = std::fs::read(&fixture.path).unwrap();
-        let request = args(json!({"project":fixture.path,"track":"Lead"}));
+        let mut request =
+            args(json!({"project":fixture.path,"track":"Lead","take":{"kind":"next"}}));
         assert!(
-            another_take::run(&request)
+            regenerate_clips::run(&request)
                 .unwrap_err()
                 .contains("No clips were changed")
         );
-        assert!(write_again::run(&request).is_err());
+        request.take = regenerate_clips::Take::Same {};
+        assert!(regenerate_clips::run(&request).is_err());
         assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
-        another_take::run(&args(
-            json!({"project":fixture.path,"track":"Lead","replace_hand_edits":true}),
+        request.take = regenerate_clips::Take::Seed { seed: 42 };
+        request.replace_hand_edits = true;
+        assert!(
+            regenerate_clips::run(&request)
+                .unwrap_err()
+                .contains("one clip")
+        );
+        assert_eq!(std::fs::read(&fixture.path).unwrap(), before);
+        regenerate_clips::run(&args(
+            json!({"project":fixture.path,"track":"Lead","take":{"kind":"next"},"replace_hand_edits":true}),
         ))
         .unwrap();
         let changed = opened(&fixture.path).unwrap();

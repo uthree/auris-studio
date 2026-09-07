@@ -967,11 +967,6 @@ impl RenderGraph {
         }
     }
 
-    /// Whether the click is heard.
-    pub fn metronome_enabled(&self) -> bool {
-        self.metronome.is_enabled()
-    }
-
     /// Turns the click on or off without rebuilding.
     ///
     /// A rebuild would carry it too — the document holds the switch — but a rebuild instantiates

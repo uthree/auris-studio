@@ -79,11 +79,6 @@ impl SmoothedValue {
         self.difference = 0.0;
     }
 
-    /// Jumps straight to the current target.
-    pub fn snap_to_target(&mut self) {
-        self.difference = 0.0;
-    }
-
     /// Advances one sample and returns the new value.
     pub fn next_value(&mut self) -> f32 {
         self.difference *= self.coefficient;

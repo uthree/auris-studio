@@ -166,16 +166,6 @@ impl AudioBuffer {
         }
     }
 
-    /// Changes the channel count, keeping existing channels and adding silent ones.
-    pub fn set_channel_count(&mut self, channels: usize) {
-        let frames = self.frame_count();
-        self.channels.resize(channels.max(1), vec![0.0; frames]);
-        // `resize` clones the template only for *new* entries, so make sure they match.
-        for channel in &mut self.channels {
-            channel.resize(frames, 0.0);
-        }
-    }
-
     /// Fills the whole buffer with silence, keeping its dimensions.
     pub fn clear(&mut self) {
         for channel in &mut self.channels {
@@ -263,22 +253,6 @@ impl AudioBuffer {
             }
         }
         out
-    }
-
-    /// Downmixes to a single channel by averaging.
-    pub fn to_mono(&self) -> AudioBuffer {
-        let frames = self.frame_count();
-        let scale = 1.0 / self.channel_count() as f32;
-        let mut mono = vec![0.0; frames];
-        for channel in &self.channels {
-            for (m, s) in mono.iter_mut().zip(channel) {
-                *m += *s * scale;
-            }
-        }
-        AudioBuffer {
-            channels: vec![mono],
-            sample_rate: self.sample_rate,
-        }
     }
 
     /// Largest absolute sample value across all channels.

@@ -59,26 +59,6 @@ impl EnvelopeFollower {
         self.recompute();
     }
 
-    /// Sets the attack time constant in seconds.
-    pub fn set_attack(&mut self, seconds: f32) {
-        self.attack_seconds = seconds;
-        self.recompute();
-    }
-
-    /// Sets the release time constant in seconds.
-    pub fn set_release(&mut self, seconds: f32) {
-        self.release_seconds = seconds;
-        self.recompute();
-    }
-
-    /// Switches between peak and RMS detection, clearing the state so the units stay coherent.
-    pub fn set_mode(&mut self, mode: EnvelopeMode) {
-        if self.mode != mode {
-            self.mode = mode;
-            self.state = 0.0;
-        }
-    }
-
     /// The detection mode in use.
     pub fn mode(&self) -> EnvelopeMode {
         self.mode

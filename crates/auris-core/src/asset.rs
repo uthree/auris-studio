@@ -42,7 +42,7 @@ fn plain_names(path: &Path) -> impl Iterator<Item = &std::ffi::OsStr> {
 /// an `Inside` and an `External` reference that happen to resolve to the same file are not equal,
 /// and should not be, since only one of them survives the folder being moved.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(from = "AssetPathRepr", into = "AssetPathRepr")]
+#[serde(rename_all = "snake_case")]
 pub enum AssetPath {
     /// Inside the project folder, at this relative path.
     Inside(PathBuf),
@@ -132,45 +132,6 @@ impl std::fmt::Display for AssetPath {
     }
 }
 
-/// On-disk shape of an [`AssetPath`].
-///
-/// Format version 1 wrote a bare path string, which meant "somewhere on this machine" — exactly
-/// what [`AssetPath::External`] means now, so an old document needs no migration beyond being
-/// read as one.
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
-enum AssetPathRepr {
-    Located(Located),
-    Legacy(PathBuf),
-}
-
-/// The tagged form written from format version 2 onwards.
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum Located {
-    Inside(PathBuf),
-    External(PathBuf),
-}
-
-impl From<AssetPathRepr> for AssetPath {
-    fn from(repr: AssetPathRepr) -> Self {
-        match repr {
-            AssetPathRepr::Located(Located::Inside(relative)) => AssetPath::Inside(relative),
-            AssetPathRepr::Located(Located::External(absolute)) => AssetPath::External(absolute),
-            AssetPathRepr::Legacy(path) => AssetPath::External(path),
-        }
-    }
-}
-
-impl From<AssetPath> for AssetPathRepr {
-    fn from(path: AssetPath) -> Self {
-        AssetPathRepr::Located(match path {
-            AssetPath::Inside(relative) => Located::Inside(relative),
-            AssetPath::External(absolute) => Located::External(absolute),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,12 +191,6 @@ mod tests {
             serde_json::to_string(&AssetPath::external("/libraries/GM.sf2")).unwrap(),
             r#"{"external":"/libraries/GM.sf2"}"#
         );
-    }
-
-    #[test]
-    fn a_version_one_path_reads_as_external() {
-        let asset: AssetPath = serde_json::from_str(r#""/music/loops/kick.wav""#).unwrap();
-        assert_eq!(asset, AssetPath::external("/music/loops/kick.wav"));
     }
 
     #[test]

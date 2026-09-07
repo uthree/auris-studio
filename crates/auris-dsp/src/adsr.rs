@@ -143,11 +143,6 @@ impl Adsr {
         self.sustain
     }
 
-    /// Release time in seconds.
-    pub fn release_time(&self) -> f32 {
-        self.release_seconds
-    }
-
     /// Starts the attack stage.
     ///
     /// The current level is kept rather than reset to zero, so retriggering a voice that is

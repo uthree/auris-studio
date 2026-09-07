@@ -17,39 +17,12 @@ use std::sync::Arc;
 
 use realfft::num_complex::Complex;
 use realfft::{RealFftPlanner, RealToComplex};
-use rustfft::FftPlanner;
 
 /// Level reported for a bin with nothing in it.
 ///
 /// Far enough down to read as silence on any scale a display might use, and finite, so a caller
 /// can average or interpolate bins without special-casing negative infinity.
 pub const SILENCE_DB: f32 = -120.0;
-
-/// An in-place radix-2 FFT.
-///
-/// `real` and `imag` must be the same length and that length must be a power of two; anything
-/// else is left untouched, because the alternative is a panic somewhere a caller cannot see.
-///
-/// The planned transform comes from `rustfft`, whose planner selects the best available SIMD
-/// implementation for the machine. This compatibility entry point keeps separate real and
-/// imaginary slices; [`SpectrumAnalyzer`] uses the cheaper real-input transform directly.
-pub fn fft(real: &mut [f32], imag: &mut [f32]) {
-    let n = real.len();
-    if n != imag.len() || n < 2 || !n.is_power_of_two() {
-        return;
-    }
-    let mut values: Vec<Complex<f32>> = real
-        .iter()
-        .copied()
-        .zip(imag.iter().copied())
-        .map(|(re, im)| Complex::new(re, im))
-        .collect();
-    FftPlanner::new().plan_fft_forward(n).process(&mut values);
-    for ((real, imag), value) in real.iter_mut().zip(imag).zip(values) {
-        *real = value.re;
-        *imag = value.im;
-    }
-}
 
 /// A rolling window of the signal, and the transform of it.
 ///
@@ -240,47 +213,6 @@ mod tests {
                 if *level > best.1 { (bin, *level) } else { best }
             })
             .0
-    }
-
-    #[test]
-    fn the_transform_of_a_constant_is_all_in_the_first_bin() {
-        let mut real = vec![1.0f32; 8];
-        let mut imag = vec![0.0f32; 8];
-        fft(&mut real, &mut imag);
-        assert!((real[0] - 8.0).abs() < 1e-4, "got {}", real[0]);
-        for bin in 1..8 {
-            assert!(real[bin].abs() < 1e-4, "bin {bin} is {}", real[bin]);
-            assert!(imag[bin].abs() < 1e-4);
-        }
-    }
-
-    #[test]
-    fn a_sine_on_a_bin_centre_lands_entirely_in_that_bin() {
-        // Three cycles across eight samples is exactly bin 3, so there is nothing to smear.
-        let size = 8;
-        let mut real: Vec<f32> = (0..size)
-            .map(|n| (TAU * 3.0 * n as f32 / size as f32).sin())
-            .collect();
-        let mut imag = vec![0.0f32; size];
-        fft(&mut real, &mut imag);
-        let power: Vec<f32> = (0..size / 2 + 1)
-            .map(|bin| real[bin] * real[bin] + imag[bin] * imag[bin])
-            .collect();
-        assert_eq!(loudest(&power), 3);
-    }
-
-    #[test]
-    fn a_length_that_is_not_a_power_of_two_is_left_alone() {
-        // A panic here would be on whichever thread happened to be drawing.
-        let mut real = vec![1.0f32, 2.0, 3.0];
-        let mut imag = vec![0.0f32; 3];
-        fft(&mut real, &mut imag);
-        assert_eq!(real, vec![1.0, 2.0, 3.0]);
-
-        let mut mismatched_real = vec![1.0f32; 4];
-        let mut short_imag = vec![0.0f32; 2];
-        fft(&mut mismatched_real, &mut short_imag);
-        assert_eq!(mismatched_real, vec![1.0; 4]);
     }
 
     #[test]

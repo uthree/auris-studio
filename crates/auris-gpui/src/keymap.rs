@@ -15,25 +15,13 @@ use crate::actions::{self, BINDABLE, Bindable};
 use crate::gestures::PointerGestures;
 
 /// Everything in `keymap.json`.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct InputSettings {
     /// Key bindings the user has changed.
     pub keys: Keymap,
     /// What a click creates and what deletes.
     pub pointer: PointerGestures,
-}
-
-/// The file as it may be found on disk.
-///
-/// Before pointer gestures existed the file was a bare map of bindings, and a great many of
-/// those files exist. Reading both shapes costs one enum and keeps a user's bindings when they
-/// update; reading only the new shape would parse the old file as "no overrides" and quietly
-/// throw them away.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredInput {
-    Current(CurrentInput),
-    Legacy(Keymap),
 }
 
 /// Whether a stored list says exactly what this build already ships for the command.
@@ -47,19 +35,6 @@ fn matches_defaults(command: &Bindable, keystrokes: &[String]) -> bool {
         .map(|keystroke| actions::normalise_keystroke(keystroke))
         .collect();
     written == shipped
-}
-
-/// The current shape.
-///
-/// `deny_unknown_fields` is what makes the two shapes distinguishable: without it a bare map of
-/// bindings would match here as "every field defaulted" and the bindings would vanish.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CurrentInput {
-    #[serde(default)]
-    keys: Keymap,
-    #[serde(default)]
-    pointer: PointerGestures,
 }
 
 impl InputSettings {
@@ -77,9 +52,8 @@ impl InputSettings {
         let Ok(text) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        match serde_json::from_str::<StoredInput>(&text) {
-            Ok(stored) => {
-                let mut settings = Self::from(stored);
+        match serde_json::from_str::<Self>(&text) {
+            Ok(mut settings) => {
                 settings.keys.discard_unusable();
                 settings
             }
@@ -102,65 +76,17 @@ impl InputSettings {
     }
 }
 
-impl From<StoredInput> for InputSettings {
-    fn from(stored: StoredInput) -> Self {
-        match stored {
-            StoredInput::Current(current) => Self {
-                keys: current.keys,
-                pointer: current.pointer,
-            },
-            StoredInput::Legacy(keys) => Self {
-                keys,
-                pointer: PointerGestures::default(),
-            },
-        }
-    }
-}
-
-/// One command's overridden bindings, as a settings file may spell them.
-///
-/// A single keystroke was the only shape until a command could hold more than one, and files
-/// written then are still on disk. Reading both costs one enum; reading only the list would parse
-/// `"cmd-p"` as a malformed entry and drop a binding the user had chosen.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredBinding {
-    One(String),
-    Many(Vec<String>),
-}
-
-impl From<StoredBinding> for Vec<String> {
-    fn from(stored: StoredBinding) -> Self {
-        match stored {
-            StoredBinding::One(keystroke) => vec![keystroke],
-            StoredBinding::Many(keystrokes) => keystrokes,
-        }
-    }
-}
-
 /// Key bindings, as overrides on top of the defaults.
 ///
 /// A command absent from the map keeps its default. A command mapped to an empty list is
 /// *deliberately unbound* — the two are different answers, and a map that could only hold
 /// keystrokes had no way to say the second one. Anything longer is a list of alternates, tried
 /// in the order it is written.
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Keymap {
     /// Command id to keystrokes, for the commands the user has changed.
     overrides: BTreeMap<String, Vec<String>>,
-}
-
-impl<'de> Deserialize<'de> for Keymap {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let stored = BTreeMap::<String, StoredBinding>::deserialize(deserializer)?;
-        Ok(Self {
-            overrides: stored
-                .into_iter()
-                .map(|(id, binding)| (id, binding.into()))
-                .collect(),
-        })
-    }
 }
 
 impl Keymap {
@@ -544,9 +470,9 @@ mod tests {
     fn loading_discards_bindings_this_build_cannot_use() {
         let mut keymap: Keymap = serde_json::from_str(
             r#"{
-                "transport.play": "cmd-p",
-                "gone.in.a.later.build": "cmd-g",
-                "edit.undo": "notakey-x",
+                "transport.play": ["cmd-p"],
+                "gone.in.a.later.build": ["cmd-g"],
+                "edit.undo": ["notakey-x"],
                 "edit.redo": ["cmd-y", "notakey-z"]
             }"#,
         )
@@ -587,47 +513,6 @@ mod tests {
     }
 
     #[test]
-    fn a_file_written_before_pointer_gestures_existed_keeps_its_bindings() {
-        // The old shape was a bare map. Parsing it as the new shape must not quietly yield
-        // "no overrides", which is what would happen without the untagged fallback.
-        let legacy = r#"{"transport.play":"cmd-p","view.zoom_in":"cmd-shift-="}"#;
-        let stored: StoredInput = serde_json::from_str(legacy).unwrap();
-        let settings = InputSettings::from(stored);
-
-        assert_eq!(
-            settings.keys.keystroke(command("transport.play")),
-            Some("cmd-p")
-        );
-        assert_eq!(
-            settings.keys.keystroke(command("view.zoom_in")),
-            Some("cmd-shift-=")
-        );
-        assert_eq!(
-            settings.pointer,
-            PointerGestures::default(),
-            "an old file has no gestures, so it gets the defaults"
-        );
-    }
-
-    #[test]
-    fn a_file_written_before_a_command_could_hold_two_keys_keeps_its_bindings() {
-        // The value was a bare string until a command could answer to more than one keystroke.
-        // Reading only the list would parse `"cmd-p"` as malformed and throw away a binding the
-        // user had chosen — silently, since a malformed entry is dropped by design.
-        let stored = r#"{"keys":{"transport.play":"cmd-p","edit.undo":["cmd-z","f1"]}}"#;
-        let settings = InputSettings::from(serde_json::from_str::<StoredInput>(stored).unwrap());
-
-        assert_eq!(
-            settings.keys.keystrokes(command("transport.play")),
-            vec!["cmd-p"]
-        );
-        assert_eq!(
-            settings.keys.keystrokes(command("edit.undo")),
-            vec!["cmd-z", "f1"]
-        );
-    }
-
-    #[test]
     fn a_command_can_answer_to_more_than_one_key() {
         let mut keymap = Keymap::default();
         let play = command("transport.play");
@@ -650,6 +535,16 @@ mod tests {
         );
         assert!(!keymap.add(play, "notakey-x"));
         assert_eq!(keymap.keystrokes(play), vec![preset(play), "f5"]);
+    }
+
+    #[test]
+    fn input_requires_named_sections_and_binding_lists() {
+        for json in [
+            r#"{"transport.play":["f5"]}"#,
+            r#"{"keys":{"transport.play":"f5"}}"#,
+        ] {
+            assert!(serde_json::from_str::<InputSettings>(json).is_err());
+        }
     }
 
     #[test]
@@ -738,13 +633,13 @@ mod tests {
             .set_create(crate::gestures::PointerGesture::OptionClick);
 
         let text = serde_json::to_string(&settings).unwrap();
-        let restored = InputSettings::from(serde_json::from_str::<StoredInput>(&text).unwrap());
+        let restored = serde_json::from_str::<InputSettings>(&text).unwrap();
         assert_eq!(restored, settings);
     }
 
     #[test]
     fn an_empty_file_is_the_defaults() {
-        let settings = InputSettings::from(serde_json::from_str::<StoredInput>("{}").unwrap());
+        let settings = serde_json::from_str::<InputSettings>("{}").unwrap();
         assert_eq!(settings, InputSettings::default());
     }
 

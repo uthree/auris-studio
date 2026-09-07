@@ -59,15 +59,15 @@ pub enum IoError {
     #[error("project JSON error: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// The project file was written by a newer build of Auris Studio.
+    /// The project file uses a different schema version.
     #[error(
-        "project format version {found} is newer than the supported version {supported}; \
-         update Auris Studio to open this project"
+        "project format version {found} does not match the supported version {supported}; \
+         open this project with a build supporting its format"
     )]
     ProjectVersionMismatch {
         /// Version recorded in the file.
         found: u32,
-        /// Newest version this build understands.
+        /// Format version this build understands.
         supported: u32,
     },
 

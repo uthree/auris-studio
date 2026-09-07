@@ -1270,13 +1270,14 @@ rejected spec names its lines and fields, a render reports each file's length an
 The loop that *improves* a piece is `analyze`: the server renders the project and listens in
 the model's place, reporting loudness and peaks for the whole mix, per named section — the
 piece's dynamic arc as numbers — and, on request, per track alone. Against that answer the
-model either edits the specification and composes again, or aims `another_take` (same ask,
-next seed) or `write_again` (same seed, follows the harmony as it stands) at one clip, using
-the numbering `describe` prints. `teach_progression` keeps a chord progression by name on
+model either edits the specification and composes again, or aims `regenerate_clips` at clips
+numbered by `describe`. Its `take` selects `{kind:"same"}` to follow the current harmony,
+`{kind:"next"}` for new takes, or `{kind:"seed",seed:42}` for one exact seed.
+`teach_progression` keeps a chord progression by name on
 this machine, and `forget_progression` takes it back out.
 
 The mix has a smaller loop of its own, one tool per hand on the desk: `mixer` reads the whole
-board — every fader, pan, send and effect parameter with its range — `set_level`, `set_send`
+board — every fader, pan, send and effect parameter with its range — `set_level`, `routing`
 and `set_effect` move one each, and `section_gain` holds a track's (or the master's) gain at a
 level across one named section, written as gain automation with short ramps so the fader keeps
 ruling outside the stretch and holds on different sections compose. Where `analyze` says a
@@ -1289,7 +1290,7 @@ instrument id (`list_instruments` names them) or by any General MIDI sound, aske
 ("Electric Piano 1") or program number, with the shipped font adopted into the project as part
 of the same step — `add_part` writes a generated part (lead, chords, pad, arp, bass, stab, or
 the kit and its pieces) onto a track from the key and chords already under the song, keeping
-its recipe so `another_take` and `write_again` apply to it like any composed clip, and
+its recipe so `regenerate_clips` applies to it like any composed clip, and
 `set_instrument`, `rename_track` and `remove_track` do what they say.
 
 Notes can be placed one by one, which turns the composer around: `add_clip` opens an empty
@@ -1313,7 +1314,7 @@ The same tool set is available at both model doors.
 Existing songs can be revised without composing a replacement. `inspect_composition` reads
 the original specification separately from the current harmony, tempo, sections and clip
 recipes. `edit_harmony` changes a specified bar range while leaving notes and the mix intact;
-`write_again` explicitly updates the parts that should follow it. `edit_recipe` changes one
+`regenerate_clips` explicitly updates the parts that should follow it. `edit_recipe` changes one
 clip's density, intensity, rhythm, octave or groove, retaining its seed and unspecified
 controls. Hand-edited notes need an explicit replacement flag. `edit_clip` moves, duplicates,
 splits, resizes, removes, mutes or freezes a note clip. `analyze_music` measures stored notes'
@@ -1323,7 +1324,7 @@ not an aesthetic score.
 Every `track` argument also accepts a stable selector such as `id:4`, shown by `describe`
 and `mixer`. IDs continue to address the same track after a rename, including in documents
 that already contain duplicate names. Adding or renaming a track through the tools requires
-a unique name. `write_again` and `another_take` check every targeted clip before changing
+a unique name. `regenerate_clips` checks every targeted clip before changing
 anything; hand edits require `replace_hand_edits: true`, just as with `edit_recipe`.
 
 `section_gain` accepts either an absolute `gain_db` or a relative `gain_delta_db`. A relative

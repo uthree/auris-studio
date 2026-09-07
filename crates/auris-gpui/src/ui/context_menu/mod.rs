@@ -17,7 +17,7 @@
 //!   clip with the notes inside it. None of the three calls the others.
 //! * `recipe` is the dials of a generated clip, which is document work wearing a menu.
 //!
-//! Everything is re-exported from here, so every path into the module is the one it always was.
+//! The menu widget and command vocabulary are re-exported here.
 
 mod clips;
 mod command;
@@ -28,12 +28,8 @@ mod tracks;
 
 pub use command::MenuCommand;
 pub use menu::ContextMenu;
-// The two types `ContextMenu::entries` is made of. Nothing outside names them today, and this is
-// a binary crate, so there is no external user to prove the re-export carries its weight — but a
-// panel that wanted to read a menu's rows could not name their types without it, and they were
-// nameable here before the file became a directory.
-#[allow(unused_imports)]
-pub use menu::{MenuEntry, MenuItem};
+#[cfg(test)]
+pub use menu::MenuEntry;
 
 pub(crate) use recipe::{preset_key, subdivision_key};
 pub(crate) use timeline::count_in_label;

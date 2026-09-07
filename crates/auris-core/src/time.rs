@@ -36,11 +36,6 @@ impl Ticks {
         Ticks((beats * TICKS_PER_QUARTER as f64).round() as i64)
     }
 
-    /// Builds a tick position from a number of bars in the given time signature.
-    pub fn from_bars(bars: f64, signature: TimeSignature) -> Self {
-        Ticks::from_beats(bars * signature.beats_per_bar())
-    }
-
     /// This position expressed in quarter notes.
     pub fn as_beats(self) -> f64 {
         self.0 as f64 / TICKS_PER_QUARTER as f64
@@ -174,18 +169,6 @@ impl Seconds {
         let seconds = within_minute / 1_000;
         let millis = within_minute % 1_000;
         format!("{minutes:02}:{seconds:02}.{millis:03}")
-    }
-}
-
-/// A duration in quarter notes.
-#[derive(Copy, Clone, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Beats(pub f64);
-
-impl Beats {
-    /// Converts to the integer tick grid.
-    pub fn as_ticks(self) -> Ticks {
-        Ticks::from_beats(self.0)
     }
 }
 

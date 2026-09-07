@@ -449,10 +449,10 @@ fn io_error_text(error: &IoError, language: Language) -> String {
         ),
         IoError::ProjectVersionMismatch { found, supported } => (
             format!(
-                "project format version {found} is newer than the supported version {supported}; update Auris Studio to open this project"
+                "project format version {found} does not match the supported version {supported}; open this project with a build supporting its format"
             ),
             format!(
-                "プロジェクト形式のバージョン{found}は対応上限{supported}より新しいため、Auris Studioを更新してください"
+                "プロジェクト形式のバージョン{found}は対応バージョン{supported}と異なります。この形式に対応したビルドで開いてください"
             ),
         ),
         IoError::ProjectIdsExhausted => (

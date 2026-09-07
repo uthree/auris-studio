@@ -459,11 +459,9 @@ session_tool!(AnalyzeDrumKit, analyze_drum_kit);
 session_tool!(SetDrumAssignment, set_drum_assignment);
 session_tool!(Mixer, mixer);
 session_tool!(SetLevel, set_level);
-session_tool!(SetSend, set_send);
 session_tool!(SetEffect, set_effect);
 session_tool!(SectionGain, section_gain);
-session_tool!(AnotherTake, another_take);
-session_tool!(WriteAgain, write_again);
+session_tool!(RegenerateClips, regenerate_clips);
 session_tool!(TeachProgression, teach_progression);
 session_tool!(ForgetProgression, forget_progression);
 text_tool!(ListProgressions, list_progressions);
@@ -667,11 +665,9 @@ fn armed(builder: AgentBuilder) -> Agent {
         .tool(SetDrumAssignment)
         .tool(Mixer)
         .tool(SetLevel)
-        .tool(SetSend)
         .tool(SetEffect)
         .tool(SectionGain)
-        .tool(AnotherTake)
-        .tool(WriteAgain)
+        .tool(RegenerateClips)
         .tool(TeachProgression)
         .tool(ForgetProgression)
         .tool(ListProgressions)
@@ -1461,7 +1457,6 @@ fn main() -> ExitCode {
     // Like the other frontends: this may be the first one to run on a machine, and an
     // installation predating `~/.config/auris-studio` only has its settings carried across by
     // whichever one does.
-    auris_session::migrate_legacy_config();
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let prefs = auris_session::Settings::load().agent;

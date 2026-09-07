@@ -89,7 +89,7 @@ pub use pack::DspPack;
 pub use reverb::Reverb;
 pub use smooth::{SmoothedValue, one_pole_coefficient};
 pub use spectrogram::Spectrogram;
-pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins, fft};
+pub use spectrum::{SILENCE_DB, SpectrumAnalyzer, bands_from_bins};
 
 #[cfg(test)]
 mod tests {

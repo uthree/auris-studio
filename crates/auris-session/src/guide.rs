@@ -1448,17 +1448,7 @@ pub mod documents {
     //! # Versions
     //!
     //! [`Project::FORMAT_VERSION`](auris_core::Project::FORMAT_VERSION) is checked before the full
-    //! parse, so a file from a newer build produces "update Auris Studio" rather than a confusing
-    //! complaint about an unknown field. Backwards compatibility is carried by `serde(default)` on
-    //! every optional field: version 1 stored assets as bare path strings, which is exactly what
-    //! `External` means, so reading those as `External` is the whole of that migration.
-    //!
-    //! The version moves when an older build could *misread* a newer file, not merely when the
-    //! schema grows. A field an old build has never heard of is skipped and everything else opens;
-    //! `AssetPath` bumped the version because it changed an *existing* field from a path string
-    //! to a tagged object, which an old build would fail to deserialize.
-    //! [`harmony`](auris_core::harmony) did not, because nothing already in the file changed
-    //! meaning.
+    //! parse and must match this build. Asset paths use tagged `inside` or `external` objects.
 }
 
 pub mod timelines {
@@ -1807,10 +1797,6 @@ pub mod platforms {
     //! two machines by cloning a repository. `AURIS_CONFIG_DIR` names the directory outright and
     //! `XDG_CONFIG_HOME` moves its parent, for a setup that has already relocated one.
     //!
-    //! [`migrate_legacy_config`](crate::migrate_legacy_config) carries an older installation's
-    //! files across on the first run after the move. It copies rather than moves and never writes
-    //! over a file already in the new place, so it is safe to call on every start-up — which both
-    //! frontends do, before the first `Settings::load`.
 }
 
 #[cfg(test)]
@@ -1832,10 +1818,6 @@ mod tests {
 
     /// The account of the configuration directory has to name every file that turns up in it.
     ///
-    /// A list of files is the kind of claim that goes stale in silence. Nothing at runtime reads
-    /// it — [`migrate_legacy_config`](crate::migrate_legacy_config) carries whatever the directory
-    /// holds rather than a list of names — so a file nobody added to the prose costs nothing at
-    /// all until somebody trusts the guide, which is the one thing the guide is for.
     #[test]
     fn every_configuration_file_is_named_in_the_account_of_the_directory() {
         let account = account();

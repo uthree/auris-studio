@@ -102,7 +102,7 @@ impl AurisMcp {
         blocking(move || toolbox::export_midi::run(&args)).await
     }
 
-    /// Reads or changes a track's output and sends. Start with operation list to discover available buses and send IDs. Output requires destination (a bus name, id:N, or master). Add_send requires a bus destination and optionally level_db (-60 to 0) and pre_fader. Remove_send and send_mode select an existing send by destination or send_id; send_mode also requires pre_fader. A bus can be created with add_track kind bus. Returns the actual routing; changes are checkpointed and saved.
+    /// Reads or changes a track's output and sends. Start with operation list to discover available buses and send IDs. Output requires destination (a bus name, id:N, or master). Add_send requires a bus destination and optionally level_db (-60 to 0) and pre_fader. Remove_send, send_mode and send_level select an existing send by destination or send_id; send_mode requires pre_fader and send_level requires level_db (-60 to 0). Send levels report whether automation overrides the static value. A bus can be created with add_track kind bus. Returns the actual routing; changes are checkpointed and saved.
     #[tool(input_schema = tool_schema("routing"))]
     async fn routing(
         &self,
@@ -251,7 +251,7 @@ impl AurisMcp {
         blocking(move || toolbox::inspect_composition::run(&args)).await
     }
 
-    /// Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call write_again on the parts that should follow the new harmony.
+    /// Changes key, chord progression, tempo or section label at a bar in an existing project. Optional bars bounds the progression and restores the previous key and tempo at the end. Existing notes stay unchanged; explicitly call regenerate_clips on the parts that should follow the new harmony.
     #[tool(input_schema = tool_schema("edit_harmony"))]
     async fn edit_harmony(
         &self,
@@ -366,7 +366,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_drum_assignment::run(&args)).await
     }
 
-    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `set_send` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
+    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
     #[tool(input_schema = tool_schema("mixer"))]
     async fn mixer(
         &self,
@@ -382,15 +382,6 @@ impl AurisMcp {
         Parameters(args): Parameters<toolbox::set_level::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::set_level::run(&args)).await
-    }
-
-    /// Sets how much of a track one of its sends carries, addressed by the bus it feeds — the routing `mixer` and `describe` show. Send levels run -60 to 0 dB; there is no headroom above unity on a send. The change is saved.
-    #[tool(input_schema = tool_schema("set_send"))]
-    async fn set_send(
-        &self,
-        Parameters(args): Parameters<toolbox::set_send::Args>,
-    ) -> Result<CallToolResult, ErrorData> {
-        blocking(move || toolbox::set_send::run(&args)).await
     }
 
     /// Sets one static effect parameter. Read mixer, then provide track (or master), slot (1-based chain position), param (key/name) and value in its listed units. Example: slot 1, param threshold_db, value -18. Optional effect checks that the slot contains the expected effect id. Out-of-range values are refused. Changes are saved. Lower the master limiter's input_db when loud sections hit its ceiling.
@@ -411,22 +402,13 @@ impl AurisMcp {
         blocking(move || toolbox::section_gain::run(&args)).await
     }
 
-    /// Writes another take of a generated clip: the same ask, the next seed, different notes. The change is saved into the project — render again to hear it. Aim it with `track` and the clip number `describe` shows; without a number, every generated clip on the track gets a new take. Every answer names its seed, and passing `seed` takes that exact take again — how a rewrite that measured worse is rolled back. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
-    #[tool(input_schema = tool_schema("another_take"))]
-    async fn another_take(
+    /// Regenerates selected clips against the current harmony. Required take is an object: {kind:same} keeps each seed, {kind:next} writes a new take, or {kind:seed,seed:42} selects an exact seed for one clip. Track and optional 1-based clip come from describe; omitting clip selects all generated clips on the track. Every target is checked before changes; hand-edited clips require replace_hand_edits:true. Saves a checkpoint and reports each seed.
+    #[tool(input_schema = tool_schema("regenerate_clips"))]
+    async fn regenerate_clips(
         &self,
-        Parameters(args): Parameters<toolbox::another_take::Args>,
+        Parameters(args): Parameters<toolbox::regenerate_clips::Args>,
     ) -> Result<CallToolResult, ErrorData> {
-        blocking(move || toolbox::another_take::run(&args)).await
-    }
-
-    /// Writes a generated clip again with its own seed, following the key and chords as they stand now — the tool to reach for after changing the harmony under an existing piece. The change is saved into the project. Addressed exactly like `another_take`. Hand-edited clips require replace_hand_edits: true; the whole target set is checked before changing anything.
-    #[tool(input_schema = tool_schema("write_again"))]
-    async fn write_again(
-        &self,
-        Parameters(args): Parameters<toolbox::write_again::Args>,
-    ) -> Result<CallToolResult, ErrorData> {
-        blocking(move || toolbox::write_again::run(&args)).await
+        blocking(move || toolbox::regenerate_clips::run(&args)).await
     }
 
     /// Keeps a chord progression under a name on this machine. It then shows up in `list_progressions` and the desktop picker; a specification still writes the chords out in full — only the built-in catalogue is quotable as `@name`, so a document stays portable.
@@ -465,7 +447,7 @@ impl AurisMcp {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; drums:true also creates a drum track when kind is instrument. New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
+    /// Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
     #[tool(input_schema = tool_schema("add_track"))]
     async fn add_track(
         &self,
@@ -474,7 +456,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_track::run(&args)).await
     }
 
-    /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `another_take` rerolls it and `write_again` follows a harmony change; the answer numbers it the way `describe` does.
+    /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `regenerate_clips` chooses a new take or follows a harmony change; the answer numbers it the way `describe` does.
     #[tool(input_schema = tool_schema("add_part"))]
     async fn add_part(
         &self,
@@ -528,7 +510,7 @@ impl AurisMcp {
         blocking(move || toolbox::notes::run(&args)).await
     }
 
-    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `another_take` or `write_again` rewrites the clip whole.
+    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `regenerate_clips` rewrites the clip whole.
     #[tool(input_schema = tool_schema("edit_notes"))]
     async fn edit_notes(
         &self,
@@ -537,7 +519,7 @@ impl AurisMcp {
         blocking(move || toolbox::edit_notes::run(&args)).await
     }
 
-    /// Reads a melody clip and writes a key, a chord progression and backing tracks under it — the melody-first way around: place the tune with `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks the band (bass, chords and drums when left out); the harmony it writes is a first draft to argue with — `write_again` re-derives any part after a correction. The change is saved.
+    /// Reads a melody clip and writes a key, a chord progression and backing tracks under it — the melody-first way around: place the tune with `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks the band (bass, chords and drums when left out); the harmony it writes is a first draft to argue with — `regenerate_clips` re-derives any part after a correction. The change is saved.
     #[tool(input_schema = tool_schema("accompany"))]
     async fn accompany(
         &self,
@@ -683,7 +665,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Like the CLI: nothing here reads the configuration, but this may still be the frontend
     // that runs first on a machine, and an installation predating the move to
     // `~/.config/auris-studio` only has its settings carried across by whichever one does.
-    auris_session::migrate_legacy_config();
 
     tokio::runtime::Runtime::new()?.block_on(async {
         let service = AurisMcp::default().serve(rmcp::transport::stdio()).await?;
