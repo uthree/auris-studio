@@ -266,13 +266,20 @@ fn paint_control_icon(
 
 #[cfg(test)]
 mod tests {
-    use crate::harness::{open, press, release};
+    use crate::harness::{open, paint, press, release};
 
     #[gpui::test]
     fn a_caption_press_does_not_let_the_focusable_root_cancel_native_dragging(
         cx: &mut gpui::TestAppContext,
     ) {
         let (app, cx) = open(cx);
+        if !cfg!(target_os = "windows") {
+            // The headless platform cannot perform a native window move. Fullscreen keeps
+            // the same caption occlusion while avoiding that unsupported OS operation.
+            // Windows uses its native hitbox instead, so retain the normal-window case there.
+            cx.update(|window, _| window.toggle_fullscreen());
+            paint(&app, cx);
+        }
         let caption = cx.debug_bounds("project-title").expect("caption is drawn");
         cx.update(|window, cx| {
             assert!(!app.read(cx).focus.is_focused(window));
