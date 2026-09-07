@@ -124,7 +124,11 @@ impl AurisApp {
             if let Some(file) = file {
                 let _ = this.update(cx, |this, cx| {
                     if let Some(dials) = this.song_sheet.as_mut() {
-                        dials.singer = Some(file.path().to_string_lossy().into_owned());
+                        let path = Some(file.path().to_string_lossy().into_owned());
+                        if dials.singer != path {
+                            dials.singer_speaker = None;
+                        }
+                        dials.singer = path;
                     }
                     cx.notify();
                 });
@@ -401,7 +405,7 @@ impl AurisApp {
         part: usize,
     ) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartRole));
-        for role in Role::ALL {
+        for role in Role::ALL.into_iter().filter(|role| !role.is_drum()) {
             menu = menu.item(
                 self.t(role_key(role)),
                 MenuCommand::SongPartRole { part, role },
@@ -413,13 +417,6 @@ impl AurisApp {
     /// A role for a part that does not exist yet.
     pub(super) fn song_add_part_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongAddPart));
-        if !self
-            .song_sheet
-            .as_ref()
-            .is_some_and(|d| d.parts.iter().any(|p| p.role.is_drum()))
-        {
-            menu = menu.item(self.t(Key::PresetDrums), MenuCommand::SongDrums(true));
-        }
         for role in Role::ALL {
             if role.is_drum() {
                 continue;

@@ -112,6 +112,8 @@ pub const MAIN_CHART: &str = "main";
 pub struct SongDials {
     /// Voice model selected for the sung part.
     pub singer: Option<String>,
+    /// Speaker name within the selected voice; absent selects its default speaker.
+    pub singer_speaker: Option<String>,
     /// What the piece is called, and what the project is named after.
     pub title: String,
     /// The key everything is measured from.
@@ -181,6 +183,7 @@ impl Default for SongDials {
 pub fn song_spec(dials: &SongDials) -> SongSpec {
     SongSpec {
         singer: dials.singer.clone(),
+        singer_speaker: dials.singer_speaker.clone(),
         title: dials.title.clone(),
         key: dials.key,
         tempo: dials.tempo,
@@ -268,6 +271,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
 
     SongDials {
         singer: spec.singer.clone(),
+        singer_speaker: spec.singer_speaker.clone(),
         title: spec.title.clone(),
         key: spec.key,
         tempo: spec.tempo,

@@ -19,6 +19,7 @@ mod dials;
 mod lyrics;
 mod menus;
 mod pad;
+mod singers;
 mod view;
 
 pub use dials::*;

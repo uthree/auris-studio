@@ -9,8 +9,15 @@ chords with **Write It Again**. The rest of the application is in [Features](fea
 side, followed by the instrument roster. The columns stack in smaller windows. Two XY pads
 pair brightness with energy and harmonic tension with syncopation; moving right or up raises
 the labelled value. **Detailed settings** expands the individual performance dials.
-The **Voice** selector offers installed singers and a file picker. That choice is saved in the
-specification's `singer` field and assigned to the generated vocal track.
+The **Voice** selector offers installed singers and a file picker. **Speaker** selects a named
+speaker within that voice. VOICEVOX offers saved styles immediately and fetches current singing
+styles from its Engine; saved choices remain available when the Engine is offline. The choices
+are saved in the specification's `singer` and `singer_speaker` fields and assigned to the generated
+vocal track. Changing the voice resets the speaker to that voice's default.
+
+**Drums** has its own source selector and add/remove controls. **Instruments** lists melodic
+parts separately, with its own add button. Removing or restoring the drum kit preserves the
+instrument parts and their settings.
 **Write**, **Another Take** — the same dials and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.

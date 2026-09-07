@@ -405,6 +405,8 @@ impl SectionSpec {
 pub struct SongSpec {
     /// Voice model path for the sung part, or the built-in preview voice when absent.
     pub singer: Option<String>,
+    /// Speaker name within the selected voice; absent selects its default speaker.
+    pub singer_speaker: Option<String>,
     /// What the piece is called.
     pub title: String,
     /// Beats per minute.
@@ -496,6 +498,7 @@ impl Default for SongSpec {
         Self {
             title: "Untitled".to_string(),
             singer: None,
+            singer_speaker: None,
             tempo: 120.0,
             meter: TimeSignature::default(),
             key: Key::parse("C major").expect("C major is a key"),

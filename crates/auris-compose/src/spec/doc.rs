@@ -270,6 +270,8 @@ struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     singer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    singer_speaker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key: Option<String>,
@@ -457,6 +459,7 @@ impl SongDoc {
     fn into_spec(self) -> Result<SongSpec, Vec<SpecError>> {
         let mut spec = SongSpec {
             singer: self.singer,
+            singer_speaker: self.singer_speaker,
             ..SongSpec::default()
         };
         let mut errors = Vec::new();
@@ -925,6 +928,7 @@ impl From<&SongSpec> for SongDoc {
         let plain = SongSpec::default();
         Self {
             singer: spec.singer.clone(),
+            singer_speaker: spec.singer_speaker.clone(),
             title: (spec.title != plain.title).then(|| spec.title.clone()),
             key: (spec.key != plain.key).then(|| spec.key.to_text()),
             // The key already carries the scale, and writing both would be two chances to

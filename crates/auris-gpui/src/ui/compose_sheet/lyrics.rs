@@ -489,6 +489,52 @@ mod tests {
     }
 
     #[gpui::test]
+    fn drums_have_a_separate_area_and_can_be_removed_and_added_without_changing_instruments(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{click, open, paint, resize};
+        let (app, cx) = open(cx);
+        resize(&app, cx, gpui::size(gpui::px(1600.0), gpui::px(2000.0)));
+        let band = app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.song_sheet
+                .as_ref()
+                .unwrap()
+                .parts
+                .iter()
+                .filter(|part| !part.role.is_drum())
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        paint(&app, cx);
+        let drums = cx.debug_bounds("song-sheet-drums").unwrap();
+        let instruments = cx.debug_bounds("song-sheet-parts").unwrap();
+        assert!(
+            drums.bottom() < instruments.top(),
+            "the kit occupies its own area above the instrument grid"
+        );
+        click("song-remove-drums", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.song_sheet.as_ref().unwrap().parts, band)
+        });
+        click("song-add-drums", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let parts = &this.song_sheet.as_ref().unwrap().parts;
+            assert!(parts.iter().any(|part| part.role.is_drum()));
+            assert_eq!(
+                parts
+                    .iter()
+                    .filter(|part| !part.role.is_drum())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                band
+            );
+        });
+    }
+
+    #[gpui::test]
     fn choosing_one_drum_source_unifies_every_writer_and_keeps_the_band(
         cx: &mut gpui::TestAppContext,
     ) {

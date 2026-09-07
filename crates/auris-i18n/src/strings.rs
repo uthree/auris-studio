@@ -1136,6 +1136,9 @@ strings! {
         en: "the shipped sound library is not installed, so General MIDI sounds are unavailable",
         ja: "同梱の音色ライブラリが未インストールのため、General MIDI音源は使えません"
     }
+    SongSpeakerDefault { en: "Default speaker", ja: "標準の話者" }
+    SongInstrumentsHeading { en: "Instruments", ja: "楽器" }
+    SongAddDrums { en: "Add drums", ja: "ドラムを追加" }
     ErrorGenerationPositionOccupied {
         en: "there is already a clip at this position; choose an empty area on the track",
         ja: "この位置にはクリップがあります。同じトラックの空いている場所を選んでください"

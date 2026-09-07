@@ -189,6 +189,17 @@ impl AurisApp {
                                                         ),
                                                 )
                                                 .child(divider(&theme))
+                                                .child(
+                                                    div()
+                                                        .debug_selector(|| {
+                                                            "song-sheet-drums".to_string()
+                                                        })
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .children(self.song_drum_rows(&dials, cx)),
+                                                )
+                                                .child(divider(&theme))
                                                 .child(self.song_parts_header(&dials, cx))
                                                 .child(
                                                     div()
@@ -331,6 +342,22 @@ impl AurisApp {
             )
             .into_any_element(),
         );
+        if dials.singer.is_some() {
+            rows.push(
+                self.sheet_picker(
+                    "song-speaker",
+                    Key::SingerSpeakerLabel,
+                    dials
+                        .singer_speaker
+                        .clone()
+                        .unwrap_or_else(|| self.t(Key::SongSpeakerDefault).to_string()),
+                    cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                        this.open_song_speaker_menu(event.position(), cx);
+                    }),
+                )
+                .into_any_element(),
+            );
+        }
         rows.push(
             self.sheet_picker(
                 "song-title",
@@ -705,7 +732,7 @@ impl AurisApp {
             .child(
                 div()
                     .flex_1()
-                    .child(self.group_heading(Key::SongPartsHeading)),
+                    .child(self.group_heading(Key::SongInstrumentsHeading)),
             )
             .child(button(
                 "song-add-part",
@@ -719,12 +746,10 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// The roster: one card per part, sized so two stand side by side in the strip.
-    fn song_part_rows(&mut self, dials: &SongDials, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// The shared kit has its own source and add/remove controls, outside the instrument grid.
+    fn song_drum_rows(&mut self, dials: &SongDials, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = self.theme.clone();
-        let removable = dials.parts.len() > 1;
-        let mut rows: Vec<AnyElement> = Vec::new();
-
+        let mut rows = vec![self.group_heading(Key::PresetDrums).into_any_element()];
         if let Some(index) = dials.parts.iter().position(|part| part.role.is_drum()) {
             let part = &dials.parts[index];
             let sound = part
@@ -746,7 +771,7 @@ impl AurisApp {
                     .gap_2()
                     .child(div().flex_1().min_w_0().child(self.sheet_picker(
                         "song-drum-kit",
-                        Key::PresetDrums,
+                        Key::SongPartInstrument,
                         sound,
                         Self::opens_menu(cx, |this, at| this.song_drum_menu(at)),
                     )));
@@ -759,15 +784,44 @@ impl AurisApp {
                     theme.accent,
                     &theme,
                     cx.listener(|this, _, _, cx| {
-                        if let Some(dials) = this.song_sheet.as_mut() {
-                            set_song_drums(dials, false);
-                        }
+                        this.run_menu_command(
+                            crate::ui::context_menu::MenuCommand::SongDrums(false),
+                            cx,
+                        );
                         cx.notify();
                     }),
                 ));
             }
             rows.push(kit_row.into_any_element());
+        } else {
+            rows.push(
+                button(
+                    "song-add-drums",
+                    self.t(Key::SongAddDrums),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.run_menu_command(
+                            crate::ui::context_menu::MenuCommand::SongDrums(true),
+                            cx,
+                        );
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            );
         }
+        rows
+    }
+
+    /// The roster: one card per melodic part, sized so two stand side by side.
+    fn song_part_rows(&mut self, dials: &SongDials, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let theme = self.theme.clone();
+        let removable = dials.parts.len() > 1;
+        let mut rows: Vec<AnyElement> = Vec::new();
+
         for (index, part) in dials.parts.iter().enumerate() {
             if part.role.is_drum() {
                 continue;

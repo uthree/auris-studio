@@ -131,7 +131,12 @@ impl Session {
         let voice = spec
             .singer
             .as_ref()
-            .map(|path| self.prepare_composed_voice(std::path::Path::new(path)))
+            .map(|path| {
+                self.prepare_composed_voice(
+                    std::path::Path::new(path),
+                    spec.singer_speaker.as_deref(),
+                )
+            })
             .transpose()?;
         let fallback = self
             .registry

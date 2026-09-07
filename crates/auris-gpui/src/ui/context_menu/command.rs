@@ -7,6 +7,7 @@
 
 use auris_i18n::{Key, messages};
 use auris_session::prelude::*;
+use auris_session::{VoicevoxConnection, VoicevoxSpeakerChoice};
 
 use gpui::{Context, Pixels, Point};
 
@@ -22,6 +23,15 @@ use super::timeline::progression_target;
 pub enum MenuCommand {
     /// Voice model for the song sheet's vocal part.
     SongSinger(Option<String>),
+    /// Speaker within the song sheet's selected voice file.
+    SongSpeaker { path: String, speaker: String },
+    /// An Engine singing style discovered for the song sheet.
+    SongVoicevoxSpeaker {
+        connection: std::sync::Arc<VoicevoxConnection>,
+        choice: VoicevoxSpeakerChoice,
+    },
+    /// Refreshes the song sheet's speaker picker.
+    RefreshSongSpeakers(Point<Pixels>),
     /// Browse for a voice before composing the song.
     ChooseSongSinger,
     /// Add or remove the song's shared kit.
@@ -887,9 +897,23 @@ impl AurisApp {
             }
             MenuCommand::SongSinger(path) => {
                 if let Some(dials) = self.song_sheet.as_mut() {
+                    if dials.singer != path {
+                        dials.singer_speaker = None;
+                    }
                     dials.singer = path;
                 }
             }
+            MenuCommand::SongSpeaker { path, speaker } => {
+                if let Some(dials) = self.song_sheet.as_mut()
+                    && dials.singer.as_deref() == Some(&path)
+                {
+                    dials.singer_speaker = Some(speaker);
+                }
+            }
+            MenuCommand::SongVoicevoxSpeaker { connection, choice } => {
+                self.select_song_voicevox_speaker(&connection, &choice);
+            }
+            MenuCommand::RefreshSongSpeakers(at) => self.open_song_speaker_menu(at, cx),
             MenuCommand::ChooseSongSinger => self.choose_song_singer(cx),
             MenuCommand::SongDrums(enabled) => {
                 if let Some(dials) = self.song_sheet.as_mut() {

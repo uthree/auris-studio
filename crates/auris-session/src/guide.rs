@@ -883,10 +883,13 @@ pub mod composition {
     //! An empty later lyric leaves that section instrumental. A shared melody names an original
     //! section in the form; it cannot refer to itself or another shared melody.
     //!
-    //! The top-level `singer` field selects a voice model path. The session loads its metadata
-    //! before replacing the document and assigns the voice to the generated vocal track in the
-    //! same undo step. The desktop song sheet offers installed voices and a file picker, two XY
-    //! pads for mood and harmonic/rhythmic character, and one source selector for the drum kit.
+    //! The top-level `singer` field selects a voice model path, and `singer_speaker` optionally
+    //! names its speaker. The session validates both before replacing the document and assigns
+    //! the voice and speaker's timing tables to the generated vocal track in the same undo step.
+    //! The desktop song sheet offers installed voices, a file picker and speaker selection,
+    //! including asynchronous VOICEVOX Engine discovery before any singer track exists. Two XY
+    //! pads control mood and harmonic/rhythmic character. A separate drum area selects one kit
+    //! source, while melodic parts have their own roster and add control.
     //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
     //! specification's range, with an empty field following the song tempo.
     //!
