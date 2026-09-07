@@ -84,11 +84,13 @@ and dynamic-programming beat alignment. Up to three tempo candidates expose comp
 rates. A short or nonperiodic signal may have no estimate. The report estimates one constant
 tempo; beat timestamps do not assert meter, downbeats or tempo automation.
 
-Transcription uses YIN's cumulative normalized difference with parabolic period refinement,
-level gating, pitch-change segmentation and onset splitting. It assumes one isolated pitched
+Transcription retains several continuous YIN pitch candidates per frame, then uses a fixed-cost
+Viterbi decoder to stabilize note identity across vibrato and brief competing estimates. The
+compared signal windows are centered on their reported timestamp. Level gating preserves rests;
+pitch changes and level attacks split note events. It assumes one isolated pitched
 voice at a time, approximately 65–1,000 Hz. Events shorter than about 60 ms are filtered out.
 The strongest channel supplies pitch at each frame. Reverb, overlapping notes, breath/noise,
-vibrato and strong overtones can produce missed or spurious notes. Estimated relative level
+wide or slow pitch bends and strong overtones can produce missed or spurious notes. Estimated relative level
 is mapped to note velocity; it does not recover the original MIDI performance.
 
 Requests are limited to thirty minutes/eight audio channels, 16,384 chord intervals and 200,000
@@ -125,3 +127,6 @@ worker, the example measured 0.206 s for tempo/chords and 0.381 s including tran
 returned 360 notes, all A4, matching the 360 generated pulses. This is one warm-machine run
 on a simple prepared fixture, not a real-recording benchmark. Peak process memory was not
 measured.
+
+The follow-up CPU transcription evaluation, reproducible before/after results, and current
+timing/memory measurements are in [music-analysis-evaluation.md](music-analysis-evaluation.md).

@@ -7,6 +7,7 @@
 use crate::{
     AnalysisControl, AnalysisError,
     chords::{ChordReading, rank, smooth},
+    pitch,
 };
 use auris_core::AudioBuffer;
 use auris_dsp::SpectrumAnalyzer;
@@ -16,7 +17,6 @@ use serde::Serialize;
 pub const ANALYSIS_RATE: f64 = 11_025.0;
 const HOP: usize = 220;
 const FFT: usize = 2048;
-const PITCH_WINDOW: usize = 1024;
 
 /// Independent work the audio worker should perform.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -116,7 +116,7 @@ pub fn analyze_audio(
     let mut window = vec![0.0f32; FFT];
     let mut magnitudes = vec![0.0f32; FFT / 2 + 1];
     let mut spectrum = vec![0.0f32; FFT / 2 + 1];
-    let mut pitch_window = [0.0f32; PITCH_WINDOW];
+    let mut pitch_window = [0.0f32; pitch::WINDOW];
     let mut difference = [0.0f32; 174];
     for frame in 0..count {
         control.check(frame as f32 / count.max(1) as f32 * 0.8)?;
@@ -187,13 +187,13 @@ pub fn analyze_audio(
             let samples = audio.channel(best_channel);
             for (i, sample) in pitch_window.iter_mut().enumerate() {
                 *sample = samples
-                    .get((center as isize + i as isize - PITCH_WINDOW as isize / 2) as usize)
+                    .get((center as isize + i as isize - pitch::WINDOW as isize / 2) as usize)
                     .copied()
                     .unwrap_or(0.0);
             }
-            pitches.push(yin(&pitch_window, &mut difference));
+            pitches.push(pitch::candidates(&pitch_window, &mut difference));
         } else {
-            pitches.push(None);
+            pitches.push(Vec::new());
         }
     }
     let mut onset: Vec<f32> = envelope
@@ -208,7 +208,12 @@ pub fn analyze_audio(
     }
     let tempo = estimate_tempo(&onset, duration, control)?;
     let raw = chroma.iter().map(|w| rank(w, None, true)).collect();
-    let readings = smooth(raw, control, 0.9)?;
+    let readings = smooth(
+        raw,
+        control,
+        0.9,
+        if options.transcribe { 0.94 } else { 1.0 },
+    )?;
     let chords = readings
         .into_iter()
         .enumerate()
@@ -219,13 +224,14 @@ pub fn analyze_audio(
         })
         .collect();
     let notes = if options.transcribe {
-        note_events(&pitches, &envelope, duration)
+        let path = pitch::decode(&pitches, &envelope, control)?;
+        note_events(&path, &envelope, duration)
     } else {
         Vec::new()
     };
     control.check(1.0)?;
     Ok(AudioAnalysis {
-        algorithm: "cpu-spectral-yin-v1",
+        algorithm: "cpu-spectral-yin-v2",
         seconds: duration,
         options,
         tempo,
@@ -340,44 +346,6 @@ fn estimate_tempo(
     }
     result.beats.reverse();
     Ok(result)
-}
-
-fn yin(samples: &[f32; PITCH_WINDOW], difference: &mut [f32; 174]) -> Option<u8> {
-    difference.fill(1.0);
-    let mut sum = 0.0;
-    for tau in 1..difference.len() {
-        let d = (0..PITCH_WINDOW / 2)
-            .map(|i| (samples[i] - samples[i + tau]).powi(2))
-            .sum::<f32>();
-        sum += d;
-        difference[tau] = if sum > 1e-10 {
-            d * tau as f32 / sum
-        } else {
-            1.0
-        };
-    }
-    let mut tau = 11;
-    while tau + 1 < difference.len() {
-        if difference[tau] < 0.15 {
-            while tau + 1 < difference.len() && difference[tau + 1] < difference[tau] {
-                tau += 1;
-            }
-            if tau + 1 == difference.len() {
-                return None;
-            }
-            let (a, b, c) = (difference[tau - 1], difference[tau], difference[tau + 1]);
-            let shift = if (a - 2.0 * b + c).abs() > 1e-8 {
-                (0.5 * (a - c) / (a - 2.0 * b + c)).clamp(-0.5, 0.5)
-            } else {
-                0.0
-            };
-            let hz = ANALYSIS_RATE / (tau as f64 + f64::from(shift));
-            let pitch = (69.0 + 12.0 * (hz / 440.0).log2()).round();
-            return (65.0..=1000.0).contains(&hz).then_some(pitch as u8);
-        }
-        tau += 1;
-    }
-    None
 }
 
 fn note_events(pitches: &[Option<u8>], levels: &[f32], duration: f64) -> Vec<TranscribedNote> {

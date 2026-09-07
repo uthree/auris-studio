@@ -1,0 +1,986 @@
+{
+  "algorithm": "cpu-spectral-yin-v1",
+  "cases": [
+    {
+      "elapsed_seconds": 0.0077754,
+      "estimate": [
+        {
+          "end": 0.5587301587301587,
+          "pitch": 48.0,
+          "start": 0.23945578231292516
+        },
+        {
+          "end": 1.0775510204081633,
+          "pitch": 60.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 1.5764172335600906,
+          "pitch": 64.0,
+          "start": 1.217233560090703
+        },
+        {
+          "end": 2.0752834467120183,
+          "pitch": 67.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 2.5741496598639455,
+          "pitch": 48.0,
+          "start": 2.234920634920635
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 60.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 3.5718820861678005,
+          "pitch": 64.0,
+          "start": 3.212698412698413
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 67.0,
+          "start": 3.71156462585034
+        }
+      ],
+      "id": "clean",
+      "metrics": {
+        "estimated_notes": 8,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "7788cb44d007a6d386b1ef786966021b1b6dcc94e366c1e3a3d67227fc43767e",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 48.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 60.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 64.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 67.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 48.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 60.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 64.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 67.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0076699,
+      "estimate": [
+        {
+          "end": 0.27936507936507937,
+          "pitch": 70.0,
+          "start": 0.21950113378684807
+        },
+        {
+          "end": 0.33922902494331064,
+          "pitch": 69.0,
+          "start": 0.27936507936507937
+        },
+        {
+          "end": 0.41904761904761906,
+          "pitch": 69.0,
+          "start": 0.35918367346938773
+        },
+        {
+          "end": 0.5188208616780046,
+          "pitch": 69.0,
+          "start": 0.45895691609977324
+        },
+        {
+          "end": 0.7782312925170067,
+          "pitch": 69.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 0.8780045351473923,
+          "pitch": 69.0,
+          "start": 0.818140589569161
+        },
+        {
+          "end": 0.9777777777777777,
+          "pitch": 69.0,
+          "start": 0.9179138321995465
+        },
+        {
+          "end": 1.0575963718820862,
+          "pitch": 69.0,
+          "start": 0.9977324263038548
+        },
+        {
+          "end": 1.3369614512471655,
+          "pitch": 69.0,
+          "start": 1.2770975056689342
+        },
+        {
+          "end": 1.436734693877551,
+          "pitch": 69.0,
+          "start": 1.3768707482993197
+        },
+        {
+          "end": 1.5165532879818593,
+          "pitch": 69.0,
+          "start": 1.456689342403628
+        },
+        {
+          "end": 1.7959183673469388,
+          "pitch": 69.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 1.8757369614512471,
+          "pitch": 69.0,
+          "start": 1.8158730158730159
+        },
+        {
+          "end": 1.9755102040816326,
+          "pitch": 69.0,
+          "start": 1.9156462585034013
+        },
+        {
+          "end": 2.055328798185941,
+          "pitch": 69.0,
+          "start": 1.9954648526077097
+        },
+        {
+          "end": 2.274829931972789,
+          "pitch": 70.0,
+          "start": 2.214965986394558
+        },
+        {
+          "end": 2.3346938775510204,
+          "pitch": 69.0,
+          "start": 2.274829931972789
+        },
+        {
+          "end": 2.5142857142857142,
+          "pitch": 69.0,
+          "start": 2.454421768707483
+        },
+        {
+          "end": 2.7936507936507935,
+          "pitch": 69.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 2.873469387755102,
+          "pitch": 69.0,
+          "start": 2.8136054421768706
+        },
+        {
+          "end": 2.9732426303854873,
+          "pitch": 69.0,
+          "start": 2.913378684807256
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 69.0,
+          "start": 3.0131519274376415
+        },
+        {
+          "end": 3.3324263038548754,
+          "pitch": 69.0,
+          "start": 3.272562358276644
+        },
+        {
+          "end": 3.432199546485261,
+          "pitch": 69.0,
+          "start": 3.3723356009070296
+        },
+        {
+          "end": 3.512018140589569,
+          "pitch": 69.0,
+          "start": 3.452154195011338
+        },
+        {
+          "end": 3.7913832199546484,
+          "pitch": 69.0,
+          "start": 3.71156462585034
+        },
+        {
+          "end": 3.871201814058957,
+          "pitch": 69.0,
+          "start": 3.8113378684807255
+        },
+        {
+          "end": 3.9709750566893423,
+          "pitch": 69.0,
+          "start": 3.911111111111111
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 69.0,
+          "start": 3.9909297052154193
+        }
+      ],
+      "id": "vibrato",
+      "metrics": {
+        "estimated_notes": 29,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 0.2162162162162162,
+          "false_negatives": 4,
+          "false_positives": 25,
+          "matches": 4,
+          "precision": 0.13793103448275862,
+          "recall": 0.5
+        },
+        "onset_offset": {
+          "f1": 0.0,
+          "false_negatives": 8,
+          "false_positives": 29,
+          "matches": 0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "407c2bd7504ca07f23c3e8e9ef8e9598137d243936bb17c0fcdd4e260825bf84",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 69.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 69.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 69.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 69.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 69.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 69.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 69.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 69.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0076775,
+      "estimate": [
+        {
+          "end": 0.5786848072562358,
+          "pitch": 48.0,
+          "start": 0.23945578231292516
+        },
+        {
+          "end": 1.0775510204081633,
+          "pitch": 60.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 1.5764172335600906,
+          "pitch": 64.0,
+          "start": 1.217233560090703
+        },
+        {
+          "end": 2.0752834467120183,
+          "pitch": 67.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 2.5741496598639455,
+          "pitch": 48.0,
+          "start": 2.234920634920635
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 60.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 3.5718820861678005,
+          "pitch": 64.0,
+          "start": 3.212698412698413
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 67.0,
+          "start": 3.71156462585034
+        }
+      ],
+      "id": "weak_fundamental",
+      "metrics": {
+        "estimated_notes": 8,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "af5af7dfd0e5581c254376d9f5bad85c295b7a15abeeb035341d673c4ca31da4",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 48.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 60.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 64.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 67.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 48.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 60.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 64.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 67.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.008937,
+      "estimate": [
+        {
+          "end": 0.7383219954648526,
+          "pitch": 60.0,
+          "start": 0.21950113378684807
+        },
+        {
+          "end": 1.23718820861678,
+          "pitch": 61.0,
+          "start": 0.7383219954648526
+        },
+        {
+          "end": 1.7360544217687075,
+          "pitch": 62.0,
+          "start": 1.23718820861678
+        },
+        {
+          "end": 2.234920634920635,
+          "pitch": 63.0,
+          "start": 1.7360544217687075
+        },
+        {
+          "end": 2.7337868480725622,
+          "pitch": 64.0,
+          "start": 2.234920634920635
+        },
+        {
+          "end": 3.23265306122449,
+          "pitch": 65.0,
+          "start": 2.7337868480725622
+        },
+        {
+          "end": 3.731519274376417,
+          "pitch": 66.0,
+          "start": 3.23265306122449
+        },
+        {
+          "end": 4.210430839002267,
+          "pitch": 67.0,
+          "start": 3.731519274376417
+        }
+      ],
+      "id": "legato",
+      "metrics": {
+        "estimated_notes": 8,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "1cb552189a9f838764ce7554947e83faefb78162b520750bf8d6420e60282548",
+      "reference": [
+        {
+          "end": 0.7,
+          "pitch": 60.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.2,
+          "pitch": 61.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.7,
+          "pitch": 62.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.2,
+          "pitch": 63.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.7,
+          "pitch": 64.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.2,
+          "pitch": 65.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.7,
+          "pitch": 66.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.2,
+          "pitch": 67.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0075139,
+      "estimate": [
+        {
+          "end": 0.5786848072562358,
+          "pitch": 69.0,
+          "start": 0.21950113378684807
+        },
+        {
+          "end": 1.0775510204081633,
+          "pitch": 69.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 1.5764172335600906,
+          "pitch": 69.0,
+          "start": 1.217233560090703
+        },
+        {
+          "end": 2.0752834467120183,
+          "pitch": 69.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 2.5741496598639455,
+          "pitch": 69.0,
+          "start": 2.214965986394558
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 69.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 3.5718820861678005,
+          "pitch": 69.0,
+          "start": 3.212698412698413
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 69.0,
+          "start": 3.71156462585034
+        }
+      ],
+      "id": "repeated",
+      "metrics": {
+        "estimated_notes": 8,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "c1574f2ec9515274ac1d519aaf7df9080d96aeb9e8d6b257e4ee9c9158c4d6fe",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 69.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 69.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 69.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 69.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 69.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 69.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 69.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 69.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0075734,
+      "estimate": [
+        {
+          "end": 0.5587301587301587,
+          "pitch": 48.0,
+          "start": 0.23945578231292516
+        },
+        {
+          "end": 1.0775510204081633,
+          "pitch": 60.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 1.5564625850340135,
+          "pitch": 64.0,
+          "start": 1.217233560090703
+        },
+        {
+          "end": 2.0752834467120183,
+          "pitch": 67.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 2.5741496598639455,
+          "pitch": 48.0,
+          "start": 2.234920634920635
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 60.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 3.5718820861678005,
+          "pitch": 64.0,
+          "start": 3.212698412698413
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 67.0,
+          "start": 3.71156462585034
+        }
+      ],
+      "id": "dynamics",
+      "metrics": {
+        "estimated_notes": 8,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 1.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 8,
+          "precision": 1.0,
+          "recall": 1.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "268b57f35f5d750104f1af4c73456af762399382dbf173d1be75e9b77a2ba2c5",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 48.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 60.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 64.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 67.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 48.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 60.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 64.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 67.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0082534,
+      "estimate": [
+        {
+          "end": 0.3791383219954648,
+          "pitch": 69.0,
+          "start": 0.21950113378684807
+        },
+        {
+          "end": 0.5786848072562358,
+          "pitch": 69.0,
+          "start": 0.3791383219954648
+        },
+        {
+          "end": 0.8780045351473923,
+          "pitch": 69.0,
+          "start": 0.7183673469387755
+        },
+        {
+          "end": 1.0775510204081633,
+          "pitch": 69.0,
+          "start": 0.8780045351473923
+        },
+        {
+          "end": 1.5764172335600906,
+          "pitch": 69.0,
+          "start": 1.217233560090703
+        },
+        {
+          "end": 2.0752834467120183,
+          "pitch": 69.0,
+          "start": 1.7160997732426304
+        },
+        {
+          "end": 2.5741496598639455,
+          "pitch": 69.0,
+          "start": 2.214965986394558
+        },
+        {
+          "end": 3.0730158730158728,
+          "pitch": 69.0,
+          "start": 2.713832199546485
+        },
+        {
+          "end": 3.5718820861678005,
+          "pitch": 69.0,
+          "start": 3.212698412698413
+        },
+        {
+          "end": 4.070748299319728,
+          "pitch": 69.0,
+          "start": 3.71156462585034
+        }
+      ],
+      "id": "dropout",
+      "metrics": {
+        "estimated_notes": 10,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 0.888888888888889,
+          "false_negatives": 0,
+          "false_positives": 2,
+          "matches": 8,
+          "precision": 0.8,
+          "recall": 1.0
+        },
+        "onset_offset": {
+          "f1": 0.6666666666666665,
+          "false_negatives": 2,
+          "false_positives": 4,
+          "matches": 6,
+          "precision": 0.6,
+          "recall": 0.75
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 8
+      },
+      "pcm_sha256": "e1591b490f5444cdd8c4fc980060f2b9a5dc1806d6f6d275cf1950be26a10829",
+      "reference": [
+        {
+          "end": 0.56,
+          "pitch": 69.0,
+          "start": 0.2
+        },
+        {
+          "end": 1.06,
+          "pitch": 69.0,
+          "start": 0.7
+        },
+        {
+          "end": 1.56,
+          "pitch": 69.0,
+          "start": 1.2
+        },
+        {
+          "end": 2.06,
+          "pitch": 69.0,
+          "start": 1.7
+        },
+        {
+          "end": 2.56,
+          "pitch": 69.0,
+          "start": 2.2
+        },
+        {
+          "end": 3.06,
+          "pitch": 69.0,
+          "start": 2.7
+        },
+        {
+          "end": 3.56,
+          "pitch": 69.0,
+          "start": 3.2
+        },
+        {
+          "end": 4.0600000000000005,
+          "pitch": 69.0,
+          "start": 3.7
+        }
+      ],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0125443,
+      "estimate": [],
+      "id": "noise",
+      "metrics": {
+        "estimated_notes": 0,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 0.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "onset_offset": {
+          "f1": 0.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 0
+      },
+      "pcm_sha256": "13c3339ace41bcaec7853c2b11ffde35126c4a5e16316e70ab530112c69120fb",
+      "reference": [],
+      "seconds": 4.5
+    },
+    {
+      "elapsed_seconds": 0.0092435,
+      "estimate": [],
+      "id": "dc",
+      "metrics": {
+        "estimated_notes": 0,
+        "offset_duration_ratio": 0.2,
+        "offset_seconds_min": 0.05,
+        "onset": {
+          "f1": 0.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "onset_offset": {
+          "f1": 0.0,
+          "false_negatives": 0,
+          "false_positives": 0,
+          "matches": 0,
+          "precision": 0.0,
+          "recall": 0.0
+        },
+        "onset_seconds": 0.05,
+        "pitch_cents": 50,
+        "reference_notes": 0
+      },
+      "pcm_sha256": "b6d5570c97d872f1d64bc2a118e4c90115db3cfc0c577870e43b3eba56c77137",
+      "reference": [],
+      "seconds": 4.5
+    }
+  ],
+  "provenance": "Original deterministic signals generated by evaluate_transcription.rs; repository license; diagnostic cases, not held-out recordings.",
+  "sample_rate": 11025.0,
+  "schema": 1,
+  "suite": "synthetic-monophonic-v1"
+}

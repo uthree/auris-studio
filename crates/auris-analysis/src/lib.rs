@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod chords;
+mod pitch;
 
 use std::sync::{
     Arc,

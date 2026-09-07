@@ -149,7 +149,7 @@ pub fn analyze_notes(
         .zip(bass)
         .map(|(w, b)| rank(w, b, false))
         .collect();
-    let readings = smooth(readings, control, 0.6)?;
+    let readings = smooth(readings, control, 0.6, 1.0)?;
     let mut result: Vec<SymbolicChordSegment> = Vec::new();
     for (i, reading) in readings.into_iter().enumerate() {
         let start = from + options.window * i as i64;
@@ -234,12 +234,13 @@ pub(crate) fn smooth(
     mut readings: Vec<ChordReading>,
     control: &AnalysisControl,
     start: f32,
+    finish: f32,
 ) -> Result<Vec<ChordReading>, AnalysisError> {
     // Four candidates per frame make both time and backtracking storage linear in duration.
     let mut scores: Vec<Vec<f32>> = Vec::with_capacity(readings.len());
     let mut previous: Vec<Vec<usize>> = Vec::with_capacity(readings.len());
     for (i, reading) in readings.iter().enumerate() {
-        control.check(start + (1.0 - start) * i as f32 / readings.len().max(1) as f32)?;
+        control.check(start + (finish - start) * i as f32 / readings.len().max(1) as f32)?;
         let mut values = Vec::new();
         let mut links = Vec::new();
         for c in &reading.candidates {
