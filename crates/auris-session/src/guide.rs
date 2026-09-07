@@ -875,6 +875,21 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! Presets give later verses their own section names (`verse2`, `chorus2`) and lyrics.
+    //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
+    //! ornaments. The session validates mora counts phrase by phrase before replacing a
+    //! document: line breaks and sentence punctuation delimit the phrases, and both sections
+    //! must have enough bars for every note. New words replace only the lyrics and phonemes.
+    //! An empty later lyric leaves that section instrumental. A shared melody names an original
+    //! section in the form; it cannot refer to itself or another shared melody.
+    //!
+    //! The top-level `singer` field selects a voice model path. The session loads its metadata
+    //! before replacing the document and assigns the voice to the generated vocal track in the
+    //! same undo step. The desktop song sheet offers installed voices and a file picker, two XY
+    //! pads for mood and harmonic/rhythmic character, and one source selector for the drum kit.
+    //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
+    //! specification's range, with an empty field following the song tempo.
+    //!
     //! [`auris_compose`] turns a text document into notes on a timeline. The whole crate is one
     //! function — [`compose`](auris_compose::compose) — and everything it does is a pure function
     //! of the specification and its seed, so the same document always writes the same piece.

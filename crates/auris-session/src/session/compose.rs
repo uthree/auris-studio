@@ -125,6 +125,14 @@ impl Session {
         &mut self,
         composition: &auris_compose::Composition,
     ) -> Result<ComposeReport, SessionError> {
+        let spec = auris_compose::SongSpec::parse(&composition.spec)
+            .map_err(|errors| SessionError::SongLyrics(format!("{errors:?}")))?;
+        self.validate_song_lyrics(&spec)?;
+        let voice = spec
+            .singer
+            .as_ref()
+            .map(|path| self.prepare_composed_voice(std::path::Path::new(path)))
+            .transpose()?;
         let fallback = self
             .registry
             .default_instrument_id()
@@ -385,6 +393,14 @@ impl Session {
         // [`Session::write_spec_vocal`]. Before the buses move down, so the voice stands
         // with the music rather than among the plumbing.
         let (sung, sung_clips, unsung) = self.write_spec_vocal(&mut project, composition);
+        if let Some((voice, hop)) = voice {
+            for track in &mut project.tracks {
+                if let Some(singer) = track.kind.as_singer_mut() {
+                    singer.voice = Some(voice.clone());
+                    singer.frame_hop = hop;
+                }
+            }
+        }
         if sung_clips > 0 {
             report.tracks += 1;
         }

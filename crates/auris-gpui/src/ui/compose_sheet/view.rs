@@ -274,9 +274,10 @@ impl AurisApp {
                                     // Write closes the sheet and Another Take does not: one is
                                     // "this is the song", the other is "not that one, again".
                                     cx.listener(|this, _, _, cx| {
-                                        this.write_song_from_sheet();
-                                        this.song_sheet = None;
-                                        this.lyrics_edit = None;
+                                        if this.write_song_from_sheet() {
+                                            this.song_sheet = None;
+                                            this.lyrics_edit = None;
+                                        }
                                         cx.notify();
                                     }),
                                 )),
@@ -300,6 +301,33 @@ impl AurisApp {
                 Key::SongStyle,
                 self.t(Key::SongStyleChoose).to_string(),
                 Self::opens_menu(cx, |this, at| this.song_preset_menu(at)),
+            )
+            .into_any_element(),
+        );
+        let singer = dials
+            .singer
+            .as_ref()
+            .map(|path| {
+                if let Some((name, _)) = self
+                    .voice_list()
+                    .into_iter()
+                    .find(|(_, installed)| installed == std::path::Path::new(path))
+                {
+                    return name;
+                }
+                std::path::Path::new(path)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .unwrap_or_else(|| self.t(Key::SingerNoVoice).to_string());
+        rows.push(
+            self.sheet_picker(
+                "song-singer",
+                Key::SingerVoiceLabel,
+                singer,
+                Self::opens_menu(cx, |this, at| this.song_singer_menu(at)),
             )
             .into_any_element(),
         );
@@ -369,29 +397,6 @@ impl AurisApp {
         );
         rows.push(
             self.sheet_picker(
-                "song-motif",
-                Key::SongMotif,
-                // The row says おまかせ when no motif was given, because that is what it means:
-                // the composer draws the piece's germ from the seed.
-                if dials.motif.is_empty() {
-                    self.t(Key::SongChordsOwn).to_string()
-                } else {
-                    motif_text(&dials.motif)
-                },
-                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                    let title = this.t(Key::SongMotif);
-                    let current = this
-                        .song_sheet
-                        .as_ref()
-                        .map_or_else(String::new, |dials| motif_text(&dials.motif));
-                    this.open_prompt(Prompt::new(title, PromptTarget::SongMotif, current));
-                    cx.notify();
-                }),
-            )
-            .into_any_element(),
-        );
-        rows.push(
-            self.sheet_picker(
                 "song-seed",
                 Key::PartSeed,
                 dials.seed.to_string(),
@@ -408,7 +413,33 @@ impl AurisApp {
             .into_any_element(),
         );
 
+        rows.push(self.song_pad(dials, false, cx));
+        rows.push(self.song_pad(dials, true, cx));
+        rows.push(
+            button(
+                "song-advanced",
+                self.t(Key::SongAdvanced),
+                ButtonStyle::Normal,
+                self.song_advanced,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.song_advanced = !this.song_advanced;
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
         for dial in SONG_DIALS {
+            if !self.song_advanced && *dial != SongDial::Tempo {
+                continue;
+            }
+            if matches!(
+                dial,
+                SongDial::Brightness | SongDial::Energy | SongDial::Tension | SongDial::Syncopation
+            ) {
+                continue;
+            }
             let dial = *dial;
             let target = DialTarget::Song(dial);
             let fraction = dial.fraction(dials);
@@ -530,7 +561,25 @@ impl AurisApp {
                 false,
                 theme.accent,
                 &theme,
-                Self::opens_menu(cx, move |this, at| this.song_section_tempo_menu(at, index)),
+                cx.listener(move |this, _, _, cx| {
+                    let current = this
+                        .song_sheet
+                        .as_ref()
+                        .and_then(|d| d.sections.get(index))
+                        .and_then(|s| s.tempo)
+                        .map(|bpm| bpm.to_string())
+                        .unwrap_or_default();
+                    this.open_prompt(Prompt::new(
+                        format!(
+                            "{} · {}",
+                            this.t(Key::SongSectionTempo),
+                            this.t(Key::SongTempoHint)
+                        ),
+                        PromptTarget::SongSectionTempo(index),
+                        current,
+                    ));
+                    cx.notify();
+                }),
             )));
 
             rows.push(
@@ -676,7 +725,53 @@ impl AurisApp {
         let removable = dials.parts.len() > 1;
         let mut rows: Vec<AnyElement> = Vec::new();
 
+        if let Some(index) = dials.parts.iter().position(|part| part.role.is_drum()) {
+            let part = &dials.parts[index];
+            let sound = part
+                .program
+                .map(|p| p.kit_name().to_string())
+                .unwrap_or_else(|| {
+                    self.registry()
+                        .instruments()
+                        .find(|d| d.id == part.instrument)
+                        .map(|d| {
+                            auris_i18n::audio::plugin_name(&d.name, self.language()).to_string()
+                        })
+                        .unwrap_or_else(|| part.instrument.clone())
+                });
+            let mut kit_row =
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().child(self.sheet_picker(
+                        "song-drum-kit",
+                        Key::PresetDrums,
+                        sound,
+                        Self::opens_menu(cx, |this, at| this.song_drum_menu(at)),
+                    )));
+            if dials.parts.iter().any(|part| !part.role.is_drum()) {
+                kit_row = kit_row.child(button(
+                    "song-remove-drums",
+                    self.t(Key::SongRemovePart),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        if let Some(dials) = this.song_sheet.as_mut() {
+                            set_song_drums(dials, false);
+                        }
+                        cx.notify();
+                    }),
+                ));
+            }
+            rows.push(kit_row.into_any_element());
+        }
         for (index, part) in dials.parts.iter().enumerate() {
+            if part.role.is_drum() {
+                continue;
+            }
             let source_owner = part_source_owner(dials, index).unwrap_or(index);
             let shared_source = format!(
                 "{} · {}",
@@ -701,6 +796,9 @@ impl AurisApp {
 
             let mut dial_row = div().flex().gap_2();
             for dial in PART_DIALS {
+                if !self.song_advanced {
+                    continue;
+                }
                 let dial = *dial;
                 if part.role.is_drum() && matches!(dial, PartDial::Gain | PartDial::Pan) {
                     continue;
@@ -906,12 +1004,20 @@ impl AurisApp {
     }
 
     /// Writes the piece the sheet describes, replacing the document.
-    pub(crate) fn write_song_from_sheet(&mut self) {
+    pub(crate) fn write_song_from_sheet(&mut self) -> bool {
         let Some(dials) = self.song_sheet.as_ref() else {
-            return;
+            return false;
         };
         let spec = song_spec(dials);
-        self.compose_spec(&spec);
+        if let Err(error) = self.session.validate_song_lyrics(&spec) {
+            let message = self.failure(Key::CmdComposeSong, &error);
+            self.open_prompt(Prompt::notice(
+                self.t(Key::CmdComposeSong),
+                [message.into()],
+            ));
+            return false;
+        }
+        self.compose_spec(&spec)
     }
 
     /// Saves the sheet as a specification file.
@@ -998,7 +1104,13 @@ mod window_tests {
             app.read_with(cx, |this, _| {
                 format!(
                     "song-part-name-{}",
-                    this.song_sheet.as_ref().unwrap().parts.len() - 1
+                    this.song_sheet
+                        .as_ref()
+                        .unwrap()
+                        .parts
+                        .iter()
+                        .rposition(|p| !p.role.is_drum())
+                        .unwrap()
                 )
             })
             .into_boxed_str(),

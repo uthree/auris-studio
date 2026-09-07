@@ -228,6 +228,18 @@ impl AurisApp {
         // dials otherwise.
         let words_now = edit.map_or(spec.lyrics.as_str(), |edit| edit.field.content());
         let measure = self.session.measure_lyrics(words_now, dials.meter);
+        let source = spec
+            .melody_from
+            .as_ref()
+            .and_then(|name| dials.sections.iter().find(|s| &s.name == name));
+        let expected = source.map(|s| self.session.measure_lyrics(&s.lyrics, dials.meter));
+        let mismatch = !words_now.trim().is_empty()
+            && expected.as_ref().is_some_and(|expected| {
+                expected.phrases.is_empty()
+                    || expected.phrases != measure.phrases
+                    || expected.lines.contains(&None)
+                    || measure.lines.contains(&None)
+            });
         let counts: Vec<gpui::SharedString> = measure
             .lines
             .iter()
@@ -238,7 +250,7 @@ impl AurisApp {
                 None => "?".into(),
             })
             .collect();
-        let over = measure.bars > spec.bars;
+        let over = measure.bars > spec.bars || mismatch;
         let tally = (measure.notes > 0).then(|| {
             format!(
                 "{} {} · {} / {} {}",
@@ -254,6 +266,7 @@ impl AurisApp {
             let field = &edit.field;
             div()
                 .h(area_height(field.content(), MIN_ROWS, MAX_ROWS))
+                .flex_shrink_0()
                 .w_full()
                 .rounded(Metrics::RADIUS_SM)
                 .bg(theme.surface_sunken)
@@ -345,6 +358,7 @@ impl AurisApp {
         div()
             .flex()
             .flex_col()
+            .flex_shrink_0()
             .gap_1()
             .child(
                 div()
@@ -373,6 +387,36 @@ impl AurisApp {
                             .child(tally)
                     })),
             )
+            .child(crate::ui::widgets::button(
+                ("song-melody-source", index),
+                format!(
+                    "{} · {}",
+                    self.t(Key::SongMelodyFrom),
+                    spec.melody_from
+                        .as_deref()
+                        .unwrap_or(self.t(Key::SongChordsOwn))
+                ),
+                crate::ui::widgets::ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
+            ))
+            .children(expected.map(|expected| {
+                div()
+                    .text_xs()
+                    .text_color(if mismatch {
+                        theme.danger
+                    } else {
+                        theme.text_faint
+                    })
+                    .child(format!(
+                        "{}: {:?} / {:?}",
+                        self.t(Key::SongLyricsMatch),
+                        measure.phrases,
+                        expected.phrases
+                    ))
+            }))
             .child(words)
             .into_any_element()
     }
@@ -381,6 +425,133 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn section_tempo_accepts_decimals_rejects_invalid_input_and_can_follow_the_song(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, paint};
+        use crate::ui::prompt::{Prompt, PromptTarget};
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.open_prompt(Prompt::new("BPM", PromptTarget::SongSectionTempo(0), ""));
+        });
+        paint(&app, cx);
+        cx.simulate_input("123.45");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap().sections[0].tempo,
+                Some(123.45)
+            );
+        });
+        for invalid in ["NaN", "401", "19", "abc"] {
+            app.update(cx, |this, _| {
+                this.open_prompt(Prompt::new("BPM", PromptTarget::SongSectionTempo(0), ""))
+            });
+            paint(&app, cx);
+            cx.simulate_input(invalid);
+            cx.simulate_keystrokes("enter");
+            app.read_with(cx, |this, _| {
+                assert!(this.prompt.is_some());
+                assert_eq!(
+                    this.song_sheet.as_ref().unwrap().sections[0].tempo,
+                    Some(123.45)
+                );
+            });
+            cx.simulate_keystrokes("secondary-a");
+            cx.simulate_keystrokes("backspace");
+            cx.simulate_keystrokes("enter");
+            app.update(cx, |this, _| {
+                assert!(this.prompt.is_none());
+                assert_eq!(this.song_sheet.as_ref().unwrap().sections[0].tempo, None);
+                this.song_sheet.as_mut().unwrap().sections[0].tempo = Some(123.45);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn mismatched_later_words_leave_the_sheet_and_document_intact(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
+            spec.sections.get_mut("verse").unwrap().lyrics = "さくら".into();
+            spec.sections.get_mut("verse2").unwrap().lyrics = "はる".into();
+            this.song_sheet = Some(super::super::song_dials(&spec));
+            let before = this.project().clone();
+            assert!(!this.write_song_from_sheet());
+            assert!(this.song_sheet.is_some());
+            assert!(this.prompt.is_some());
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn choosing_one_drum_source_unifies_every_writer_and_keeps_the_band(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::ui::context_menu::MenuCommand;
+        use auris_session::prelude::*;
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            let band: Vec<_> = dials
+                .parts
+                .iter()
+                .filter(|p| !p.role.is_drum())
+                .cloned()
+                .collect();
+            let mut other = PartSpec::of_role("other-kit", Role::Kick);
+            other.program = Some(gm::Program(8));
+            dials.parts.push(other);
+            let instrument = PartSpec::of_role("kit", Role::Kick).instrument;
+            this.run_menu_command(
+                MenuCommand::SongDrumSource {
+                    instrument: instrument.clone(),
+                    program: Some(16),
+                },
+                cx,
+            );
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert!(
+                dials
+                    .parts
+                    .iter()
+                    .filter(|p| p.role.is_drum())
+                    .all(|p| p.instrument == instrument && p.program == Some(gm::Program(16)))
+            );
+            assert_eq!(
+                dials
+                    .parts
+                    .iter()
+                    .filter(|p| !p.role.is_drum())
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                band
+            );
+            let piece = compose(&super::super::song_spec(dials));
+            assert_eq!(
+                piece
+                    .tracks
+                    .iter()
+                    .filter(|t| !t.drum_parts.is_empty())
+                    .count(),
+                1
+            );
+            this.run_menu_command(
+                MenuCommand::SongSinger(Some("C:/Voices/Test.onnx".into())),
+                cx,
+            );
+            let spec = super::super::song_spec(this.song_sheet.as_ref().unwrap());
+            assert_eq!(
+                super::super::song_dials(&SongSpec::parse(&spec.to_toml()).unwrap()).singer,
+                spec.singer
+            );
+        });
+    }
 
     #[test]
     fn the_column_lists_each_section_once_in_the_order_the_form_plays_them() {

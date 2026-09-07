@@ -704,6 +704,10 @@ strings! {
     SongTranspose { en: "Transpose", ja: "移調" }
     SongSectionParts { en: "Who Plays", ja: "演奏するパート" }
     SongSectionTempo { en: "Section Tempo", ja: "セクションのテンポ" }
+    SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
+    SongAdvanced { en: "Detailed settings", ja: "詳細設定" }
+    SongMelodyFrom { en: "Shared melody", ja: "メロディ共有" }
+    SongLyricsMatch { en: "Match the notes in each phrase", ja: "フレーズごとのノート数を合わせてください" }
     SongSectionTempoFollows { en: "Follow the Song", ja: "曲に合わせる" }
     // Writing a progression out, and keeping the one written. The second reaches past the song
     // into the book this installation carries.

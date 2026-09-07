@@ -548,6 +548,13 @@ pub enum Drag {
     ///
     /// Separate from every other dial drag because nothing is being edited: the sheet is not the
     /// document, so this writes no undo step and rebuilds no graph.
+    SongPad {
+        /// Whether the pad controls harmony and rhythm rather than brightness and energy.
+        detail: bool,
+        /// Musical area used to normalize both pointer coordinates.
+        bounds: gpui::Bounds<Pixels>,
+    },
+    /// Turning a song field.
     SongDial {
         /// Which dial, and which part it belongs to when it belongs to one.
         target: crate::ui::compose_sheet::DialTarget,
@@ -736,7 +743,7 @@ impl Drag {
             // A dial on the song sheet turns nothing in the document: the sheet is a question
             // about a song that has not been written yet, and nothing it does belongs on the
             // undo stack until Write is pressed.
-            Drag::SongDial { .. } => None,
+            Drag::SongDial { .. } | Drag::SongPad { .. } => None,
             Drag::Tempo { at, .. } => Some(Edit::ChangeTempo(*at)),
             // Selecting is not an edit; it changes what a later edit will act on.
             Drag::RubberBand { .. } => None,
@@ -1304,6 +1311,8 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    /// Whether the song sheet shows its individual technical controls.
+    pub(crate) song_advanced: bool,
     /// The lyrics box on that sheet holding the keyboard, when one does.
     ///
     /// Also sheet state: it edits `song_sheet`'s sections in place, keystroke by keystroke,
@@ -1632,6 +1641,7 @@ impl AurisApp {
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
+            song_advanced: false,
             lyrics_edit: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,

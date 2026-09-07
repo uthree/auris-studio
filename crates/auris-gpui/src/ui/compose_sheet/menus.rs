@@ -15,6 +15,123 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use super::dials::*;
 
 impl AurisApp {
+    /// One kit source for all of the composer's independent drum writers.
+    pub(super) fn song_drum_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PresetDrums));
+        let fallback = PartSpec::of_role("drums", Role::Kick).instrument;
+        for (program, name) in gm::KITS {
+            menu = menu.item(
+                name,
+                MenuCommand::SongDrumSource {
+                    instrument: fallback.clone(),
+                    program: Some(program),
+                },
+            );
+        }
+        menu = menu.separator();
+        for descriptor in self
+            .registry()
+            .instruments()
+            .filter(|d| d.category == PluginCategory::Drum)
+        {
+            menu = menu.item(
+                auris_i18n::audio::plugin_name(&descriptor.name, self.language()).to_string(),
+                MenuCommand::SongDrumSource {
+                    instrument: descriptor.id.to_string(),
+                    program: None,
+                },
+            );
+        }
+        menu
+    }
+
+    /// Original vocal sections available as a shared melody for this lyric.
+    pub(super) fn song_melody_menu(
+        &self,
+        anchor: gpui::Point<gpui::Pixels>,
+        index: usize,
+    ) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongMelodyFrom));
+        let Some(dials) = &self.song_sheet else {
+            return menu;
+        };
+        let Some(section) = dials.sections.get(index) else {
+            return menu;
+        };
+        menu = menu.toggle(
+            self.t(Key::SongChordsOwn),
+            MenuCommand::SongMelodySource {
+                section: index,
+                source: None,
+            },
+            section.melody_from.is_none(),
+        );
+        // A source with dependants stays an original; linking it would create a chain.
+        if dials
+            .sections
+            .iter()
+            .any(|s| s.melody_from.as_ref() == Some(&section.name))
+        {
+            return menu;
+        }
+        for source in &dials.sections {
+            if source.name == section.name || source.melody_from.is_some() {
+                continue;
+            }
+            menu = menu.toggle(
+                source.name.clone(),
+                MenuCommand::SongMelodySource {
+                    section: index,
+                    source: Some(source.name.clone()),
+                },
+                section.melody_from.as_ref() == Some(&source.name),
+            );
+        }
+        menu
+    }
+
+    /// Installed singers, and a file picker for a model outside the library.
+    pub(super) fn song_singer_menu(&mut self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let current = self.song_sheet.as_ref().and_then(|d| d.singer.clone());
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SingerVoiceLabel)).toggle(
+            self.t(Key::SingerNoVoice),
+            MenuCommand::SongSinger(None),
+            current.is_none(),
+        );
+        for (name, path) in self.voice_list() {
+            let path = path.to_string_lossy().into_owned();
+            menu = menu.toggle(
+                name,
+                MenuCommand::SongSinger(Some(path.clone())),
+                current.as_ref() == Some(&path),
+            );
+        }
+        menu.separator()
+            .item(self.t(Key::CmdChooseVoice), MenuCommand::ChooseSongSinger)
+    }
+
+    pub(crate) fn choose_song_singer(&mut self, cx: &mut gpui::Context<Self>) {
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let file = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogChooseVoice.get(language))
+                .add_filter(
+                    Key::FilterVoiceModel.get(language),
+                    &["onnx", "yaml", "json"],
+                )
+                .pick_file()
+                .await;
+            if let Some(file) = file {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(dials) = this.song_sheet.as_mut() {
+                        dials.singer = Some(file.path().to_string_lossy().into_owned());
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
     /// The meters the sheet offers: the common list with a tick beside the one in force, then a
     /// way to type any meter the list does not hold — the same two halves as the transport's
     /// signature field, because they are the same question asked in two places.
@@ -168,48 +285,6 @@ impl AurisApp {
         menu
     }
 
-    /// The tempo a section plays at: the song's, or one of a short list around it.
-    ///
-    /// The rows are labelled with the tempo they arrive at rather than with the offset that
-    /// reaches it, because a tempo is the thing a musician has an opinion about and `+8` is
-    /// arithmetic somebody would have to do. What is stored is that number: a section pins a
-    /// tempo rather than tracking the song, so a chorus at 132 stays at 132 while the verse is
-    /// slowed down to try something.
-    pub(super) fn song_section_tempo_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        section: usize,
-    ) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::SongSectionTempo));
-        let Some(dials) = self.song_sheet.as_ref() else {
-            return menu;
-        };
-        menu = menu.toggle(
-            self.t(Key::SongSectionTempoFollows),
-            MenuCommand::SongSectionTempo { section, bpm: None },
-            dials
-                .sections
-                .get(section)
-                .is_some_and(|section| section.tempo.is_none()),
-        );
-        menu = menu.separator();
-        for offset in SECTION_TEMPOS {
-            let bpm = (dials.tempo + offset).clamp(*TEMPO.start(), *TEMPO.end());
-            menu = menu.toggle(
-                format!("{bpm:.0}"),
-                MenuCommand::SongSectionTempo {
-                    section,
-                    bpm: Some(bpm),
-                },
-                dials
-                    .sections
-                    .get(section)
-                    .is_some_and(|section| section.tempo == Some(bpm)),
-            );
-        }
-        menu
-    }
-
     /// Which parts of the roster play in a section.
     ///
     /// One row per part with a tick against the ones that play, rather than a list to edit: the
@@ -338,7 +413,17 @@ impl AurisApp {
     /// A role for a part that does not exist yet.
     pub(super) fn song_add_part_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongAddPart));
+        if !self
+            .song_sheet
+            .as_ref()
+            .is_some_and(|d| d.parts.iter().any(|p| p.role.is_drum()))
+        {
+            menu = menu.item(self.t(Key::PresetDrums), MenuCommand::SongDrums(true));
+        }
         for role in Role::ALL {
+            if role.is_drum() {
+                continue;
+            }
             menu = menu.item(self.t(role_key(role)), MenuCommand::SongAddPart(role));
         }
         menu

@@ -5,11 +5,12 @@ chords with **Write It Again**. The rest of the application is in [Features](fea
 
 ## The song specification
 
-**Compose → Compose a Song…** opens the song sheet, in three columns: the **song** — key, tempo,
-meter, mood, groove, seed and the feel dials; the **form** — one row per playing of a section,
-each with its length, how hard it is played, what progression it plays, how far it is moved from
-the key and which parts play it; and the **parts** — one row each, with role, instrument, octave
-and four dials.
+**Compose → Compose a Song…** opens the song sheet with song controls, form and lyrics side by
+side, followed by the instrument roster. The columns stack in smaller windows. Two XY pads
+pair brightness with energy and harmonic tension with syncopation; moving right or up raises
+the labelled value. **Detailed settings** expands the individual performance dials.
+The **Voice** selector offers installed singers and a file picker. That choice is saved in the
+specification's `singer` field and assigned to the generated vocal track.
 **Write**, **Another Take** — the same dials and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
@@ -44,11 +45,11 @@ nobody can read — and the built-in plugins under a rule below them. A drum par
 eight kits instead, because on a drum part that number is a whole kit. Choosing a plugin clears the
 program, so the row never says one thing while the piece plays another.
 
-Drum parts sharing an instrument and sound program form one kit track. The first part in each
-kit has the shared sound picker; each part keeps its own rhythm, density and gate. Each section
-becomes one clip containing those voices. The track fader, pan, inserts and sends belong to the
+The song sheet has one **Drums** source selector. Choosing a kit applies it to all of the
+drum writers; adding or removing drums changes the kit as a whole. Each section becomes one
+clip containing the independent voices. The track fader, pan, inserts and sends belong to the
 whole kit. A clip's **Drums** context submenu can rewrite or reroll one voice while preserving
-the other voices' notes and performance settings. Distinct kit sounds remain distinct tracks.
+the other voices' notes and performance settings.
 See [Drum sound measurement](drums.md) for assigning a configured instrument by its actual audio.
 
 A row in the form is a *playing*, not a section: a name that appears twice is one section played
@@ -56,6 +57,15 @@ twice, and editing either row edits the one section, because that is what makes 
 the same chorus. The section picker offers the song's own names first — choosing one of those is a
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
+
+Presets already include separate `verse2` and, where applicable, `chorus2` sections. Each has
+its own lyrics box and shares the original section's vocal melody through **Shared melody**.
+For a third verse, add a section and choose its original there. In a specification this is
+`melody_from = "verse"`. Line breaks and sentence punctuation divide musical phrases: each
+phrase must have the same number of moras as its original, and both sections must have enough
+bars for every note. The editor shows the actual and required phrase counts. An incompatible
+lyric keeps the sheet open for correction before the current project changes. An empty lyric
+leaves that section instrumental.
 
 **A section can change how a part plays**, as a patch rather than a second declaration: what it
 does not name it does not touch, so a busier chorus is one line. The lead an octave up in the last
@@ -79,7 +89,8 @@ was meant.
 
 **A section can play at a tempo of its own**, which is the difference between a chorus that lifts
 and one that is only louder. Its button on the dial row reads `—` for a section that follows the
-song and the tempo itself for one that does not, and the menu offers the song's tempo either side.
+song and the tempo itself for one that does not. Click it to type any value from 20 to 400 BPM,
+including decimals; clear the field to follow the song again.
 It is a **step**, in force from that section's first bar until something changes it back — a
 ritardando slows *through* a passage, and neither the specification nor the document's tempo map,
 which is piecewise-constant, can say that. Nothing pretends otherwise. A composed piece arrives
@@ -194,11 +205,10 @@ contour — the *germ* — resampled onto each section's own rhythm, and `motif 
 that contour over instead of leaving it to the seed: scale steps around the first note, the same
 numbers in every key. A busy chorus fills the given line in with passing steps and a sparse verse
 says it in fewer, wider words; the rhythm each section says it in stays the section's own (a
-part's `rhythm` pattern pins that half by hand). On the song sheet the **Motif** row edits it —
-empty means おまかせ, the seed draws its own — and right-clicking a MIDI clip offers **Take as
-the Motif…**, which reads the clip's top voice as scale steps in the document's key and opens
-the sheet holding the result. From the command line, `--set "motif: 0 2 4 2"` does the same to
-any specification.
+part's `rhythm` pattern pins that half by hand). The song sheet's XY pads let the mood and seed
+control the contour automatically. Right-clicking a MIDI clip offers **Take as the Motif…**,
+which reads the clip's top voice as scale steps in the document's key and opens the sheet holding
+the result. From the command line, `--set "motif: 0 2 4 2"` supplies it to any specification.
 
 A third answer is to give no progression at all: `chords = "?"` (or any `[harmony]` entry set to
 `"?"`) asks the composer to **invent** one. The invention is a weighted walk over the moves the

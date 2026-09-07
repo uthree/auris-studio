@@ -21,6 +21,26 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Voice model for the song sheet's vocal part.
+    SongSinger(Option<String>),
+    /// Browse for a voice before composing the song.
+    ChooseSongSinger,
+    /// Add or remove the song's shared kit.
+    SongDrums(bool),
+    /// One sound source applied to every drum writer in the song.
+    SongDrumSource {
+        /// Built-in kit instrument, also used as the SoundFont fallback.
+        instrument: String,
+        /// General MIDI kit program, or the instrument on its own.
+        program: Option<u8>,
+    },
+    /// Share an original section's sung note slots with another lyric.
+    SongMelodySource {
+        /// Position in the sheet's section list.
+        section: usize,
+        /// Original section name, or an independently composed melody.
+        source: Option<String>,
+    },
     /// Measure this instrument using rendered audio, without changing its notes.
     AnalyzeDrums(TrackId),
     /// Store the measured assignment for future generation, preserving every existing clip.
@@ -198,13 +218,6 @@ pub enum MenuCommand {
         section: usize,
         /// How far, in semitones.
         steps: i32,
-    },
-    /// Pin one section of the song sheet to a tempo, or let it follow the song's.
-    SongSectionTempo {
-        /// Which section, by position in the sheet's list.
-        section: usize,
-        /// The tempo it plays at, or `None` to follow the song.
-        bpm: Option<f64>,
     },
     /// Turn one part of the roster on or off for one section of the song sheet.
     SongSectionPart {
@@ -873,13 +886,35 @@ impl AurisApp {
                     section.transpose = steps;
                 }
             }
-            MenuCommand::SongSectionTempo { section, bpm } => {
+            MenuCommand::SongSinger(path) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.singer = path;
+                }
+            }
+            MenuCommand::ChooseSongSinger => self.choose_song_singer(cx),
+            MenuCommand::SongDrums(enabled) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_song_drums(dials, enabled);
+                }
+            }
+            MenuCommand::SongDrumSource {
+                instrument,
+                program,
+            } => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    for part in dials.parts.iter_mut().filter(|p| p.role.is_drum()) {
+                        part.instrument = instrument.clone();
+                        part.program = program.map(gm::Program);
+                    }
+                }
+            }
+            MenuCommand::SongMelodySource { section, source } => {
                 if let Some(section) = self
                     .song_sheet
                     .as_mut()
-                    .and_then(|dials| dials.sections.get_mut(section))
+                    .and_then(|d| d.sections.get_mut(section))
                 {
-                    section.tempo = bpm;
+                    section.melody_from = source;
                 }
             }
             MenuCommand::SongSectionPart { section, part } => {

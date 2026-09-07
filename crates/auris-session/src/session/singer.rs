@@ -674,6 +674,28 @@ impl Session {
         Ok(())
     }
 
+    /// Loads a composition's voice before the current project is replaced.
+    pub(super) fn prepare_composed_voice(
+        &mut self,
+        file: &Path,
+    ) -> Result<(SingerVoice, f64), SessionError> {
+        let absolute =
+            std::path::absolute(file).map_err(|error| auris_io::IoError::from_fs(file, error))?;
+        let file = absolute.as_path();
+        let loaded = self.loaded_voice_at(file)?;
+        let info = &loaded.info;
+        Ok((
+            SingerVoice {
+                path: AssetPath::external(file),
+                name: voice_name(info, file),
+                consonants: info.consonant_widths(0),
+                levels: info.consonant_levels(0),
+                speaker: None,
+            },
+            info.hop_seconds(),
+        ))
+    }
+
     /// The voice a singer track is sung by, when one has been chosen.
     pub fn singer_voice(&self, track: TrackId) -> Result<Option<&SingerVoice>, SessionError> {
         Ok(self.require_singer(track)?.voice.as_ref())

@@ -1126,6 +1126,9 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_song_dial(target, start_fraction, delta);
             }
+            Drag::SongPad { detail, bounds } => {
+                self.drag_song_pad(detail, bounds, event.position);
+            }
             Drag::TimeZoom {
                 start_fraction,
                 start_x,

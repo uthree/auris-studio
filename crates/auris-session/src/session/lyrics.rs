@@ -63,6 +63,54 @@ pub struct LyricSongReport {
 }
 
 impl Session {
+    /// Checks shared vocal phrases before composing can replace the document.
+    /// Different verses must fit the same note slots, including phrase boundaries.
+    pub fn validate_song_lyrics(&self, spec: &auris_compose::SongSpec) -> Result<(), SessionError> {
+        for name in &spec.form {
+            let Some(section) = spec.sections.get(name) else {
+                continue;
+            };
+            let Some(source) = &section.melody_from else {
+                continue;
+            };
+            if section.lyrics.trim().is_empty() {
+                continue;
+            }
+            let original = spec
+                .sections
+                .get(source)
+                .filter(|s| s.melody_from.is_none() && source != name && spec.form.contains(source))
+                .ok_or_else(|| {
+                    SessionError::SongLyrics(format!(
+                        "{name}: original section `{source}` must be in the form"
+                    ))
+                })?;
+            let counts = |words: &str| -> Result<Vec<usize>, SessionError> {
+                Ok(read_lyrics(words, self.japanese.as_ref())?
+                    .iter()
+                    .map(|p| p.moras.len())
+                    .collect())
+            };
+            let expected = counts(&original.lyrics)?;
+            let actual = counts(&section.lyrics)?;
+            if expected.is_empty() || expected != actual {
+                return Err(SessionError::SongLyrics(format!(
+                    "{name} → {source}: notes per phrase must match; expected {expected:?}, got {actual:?}"
+                )));
+            }
+            let length = vocal_rhythm(&expected, spec.meter).length;
+            for section in [original, section] {
+                if length > spec.meter.ticks_per_bar() * section.bars as i64 {
+                    return Err(SessionError::SongLyrics(format!(
+                        "{}: lyrics need more than {} bars",
+                        section.name, section.bars
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Writes a song from a lyric: a melody that follows the words, sung notes that carry
     /// them, and a band behind it. One undo step for the lot.
     ///
@@ -211,10 +259,10 @@ impl Session {
     /// being built.
     ///
     /// Called from [`Session::compose`] before the document is swapped in, so the vocal is
-    /// part of the same single edit. Every *playing* of a section sings that section's own
-    /// lyrics — the same words both times round is what makes the second chorus the same
-    /// chorus — over the harmony already stamped under that span, dressed by the ornament
-    /// rules, one clip per playing. Words that outrun their section are dropped with a
+    /// part of the same single edit. Each original melody is written once over its first
+    /// playing's harmony. A section with `melody_from` reuses those notes with its own words,
+    /// after validation has proved that every mora fits. There is one clip per playing.
+    /// Unlinked words that outrun their section are dropped with a
     /// warning rather than spilling into the next one, and a lyric that cannot be read at
     /// all (kanji with no dictionary anywhere) costs its sections, never the piece: their
     /// names come back for the report. Answers `(sung notes, clips, unsung sections)`.
@@ -264,10 +312,17 @@ impl Session {
 
         let track = project.add_singer_track("Vocal", auris_synth::Vocal::ID);
         let meter = composition.meter;
-        let (mut sung, mut clips) = (0usize, 0usize);
-        for (span, phrases) in prepared {
-            let counts: Vec<usize> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
-            let contours: Vec<Vec<Contour>> = phrases
+        // Compose originals once. Repeated sections reuse the actual notes, so a
+        // new lyric's accent cannot change the melody or consume different slots.
+        let mut melodies = std::collections::HashMap::new();
+        for (span, phrases) in &prepared {
+            if spec.sections[&span.label].melody_from.is_some()
+                || melodies.contains_key(&span.label)
+            {
+                continue;
+            }
+            let counts: Vec<_> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
+            let contours: Vec<_> = phrases
                 .iter()
                 .map(|phrase| phrase.contours.clone())
                 .collect();
@@ -281,6 +336,19 @@ impl Session {
                 spec.seed,
             );
             ornament_vocal(&mut notes, &rhythm, &project.tempo_map, span.start);
+            melodies.insert(span.label.clone(), notes);
+        }
+        let (mut sung, mut clips) = (0usize, 0usize);
+        for (span, phrases) in prepared {
+            let counts: Vec<usize> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
+            let rhythm = vocal_rhythm(&counts, meter);
+            let source = spec.sections[&span.label]
+                .melody_from
+                .as_ref()
+                .unwrap_or(&span.label);
+            let Some(notes) = melodies.get(source).cloned() else {
+                continue;
+            };
 
             let mut moras: std::collections::HashMap<Ticks, &SungMora> = Default::default();
             for (slots, phrase) in rhythm.phrases.iter().zip(&phrases) {
@@ -332,6 +400,8 @@ impl Session {
 /// a display that ran its own arithmetic would drift the day either side changed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LyricsMeasure {
+    /// Mora counts of readable musical phrases, including punctuation boundaries.
+    pub phrases: Vec<usize>,
     /// Notes each line of the lyric would sing — one per mora — or `None` for a line that
     /// cannot be read at all (kanji with no dictionary anywhere).
     pub lines: Vec<Option<usize>>,
@@ -390,7 +460,12 @@ impl Session {
                 (vocal_rhythm(&counts, meter).length.raw() / bar) as usize
             }
         };
-        LyricsMeasure { lines, notes, bars }
+        LyricsMeasure {
+            lines,
+            notes,
+            bars,
+            phrases: counts,
+        }
     }
 }
 
@@ -451,6 +526,120 @@ fn part_name(preset: ClipPreset) -> String {
 mod tests {
     use super::*;
     use crate::session::fixtures::session;
+
+    fn two_verses() -> auris_compose::SongSpec {
+        auris_compose::SongSpec::parse(
+            r#"
+            form = "verse verse2 verse3"
+            [section.verse]
+            lyrics = "さくら\nさいた"
+            [section.verse2]
+            melody_from = "verse"
+            lyrics = "ひかり\nとどく"
+            [section.verse3]
+            melody_from = "verse"
+            lyrics = "あした\nはれる"
+        "#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn later_verses_change_only_words_and_keep_every_note_slot() {
+        let mut session = session();
+        let spec = two_verses();
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+        assert_eq!(report.sung, 18);
+        let vocal = session
+            .project()
+            .tracks
+            .iter()
+            .find(|t| t.kind.is_singer())
+            .unwrap();
+        let clips = &vocal.kind.as_singer().unwrap().clips;
+        assert_eq!(clips.len(), 3);
+        for repeated in &clips[1..] {
+            assert_eq!(repeated.notes.len(), clips[0].notes.len());
+            for (original, note) in clips[0].notes.iter().zip(&repeated.notes) {
+                assert_ne!(original.lyric, note.lyric);
+                assert!(!note.phonemes.is_empty());
+                let mut musical = note.clone();
+                musical.lyric = original.lyric.clone();
+                musical.phonemes = original.phonemes.clone();
+                assert_eq!(&musical, original);
+            }
+        }
+    }
+
+    #[test]
+    fn mismatched_phrases_and_short_sections_refuse_before_editing() {
+        let mut session = session();
+        let before = session.project().clone();
+        for lyrics in [
+            "あい\nうえおか",
+            "あいうえ\nおか",
+            "あいうえおか",
+            "あい、うえおか",
+        ] {
+            let mut spec = two_verses();
+            spec.sections.get_mut("verse2").unwrap().lyrics = lyrics.into();
+            assert!(matches!(
+                session.compose(&auris_compose::compose(&spec)),
+                Err(SessionError::SongLyrics(_))
+            ));
+            assert_eq!(session.project(), &before);
+        }
+        let mut spec = two_verses();
+        spec.sections.get_mut("verse2").unwrap().bars = 1;
+        assert!(session.validate_song_lyrics(&spec).is_err());
+        spec.sections.get_mut("verse2").unwrap().lyrics.clear();
+        assert!(session.validate_song_lyrics(&spec).is_ok());
+        spec.sections.get_mut("verse").unwrap().lyrics.clear();
+        assert!(session.validate_song_lyrics(&spec).is_err());
+    }
+
+    #[test]
+    fn a_missing_selected_singer_does_not_replace_the_song() {
+        let mut session = session();
+        let before = session.project().clone();
+        let mut spec = two_verses();
+        spec.singer = Some("missing-composition-test-voice.onnx".into());
+        assert!(session.compose(&auris_compose::compose(&spec)).is_err());
+        assert_eq!(session.project(), &before);
+    }
+
+    #[test]
+    fn the_selected_voice_and_song_arrive_as_one_undoable_document() {
+        let scratch = crate::session::fixtures::Scratch::new("composed-singer");
+        let path = scratch.join("singer.voicevox.json");
+        std::fs::write(
+            &path,
+            r#"{
+            "format_version": 1, "name": "Song singer", "url": "http://127.0.0.1:1",
+            "styles": [{"name": "First", "query_style_id": 6000, "decode_style_id": 3001}]
+        }"#,
+        )
+        .unwrap();
+        let mut session = session();
+        let before = session.project().clone();
+        let mut spec = two_verses();
+        spec.singer = Some(path.to_string_lossy().into_owned());
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        let singer = session
+            .project()
+            .tracks
+            .iter()
+            .find_map(|t| t.kind.as_singer())
+            .unwrap();
+        let voice = singer.voice.as_ref().unwrap();
+        assert_eq!(voice.name, "Song singer");
+        assert_eq!(voice.path, auris_core::AssetPath::external(&path));
+        let saved =
+            auris_compose::SongSpec::parse(session.project().song_spec.as_ref().unwrap()).unwrap();
+        assert_eq!(saved.singer, spec.singer);
+        assert!(session.undo().is_some());
+        assert_eq!(session.project(), &before);
+    }
 
     #[test]
     fn a_kana_lyric_becomes_a_sung_clip_over_stamped_chords() {

@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// Repeated vocal sections have incompatible lyrics or insufficient space.
+    #[error("song lyrics: {0}")]
+    SongLyrics(String),
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),

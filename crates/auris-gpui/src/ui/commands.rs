@@ -1883,7 +1883,7 @@ impl AurisApp {
     /// Split out of the file path because the song sheet arrives here holding a `SongSpec` it
     /// built from its dials and never wrote down. Everything after the parse is the same for
     /// both, and a second copy of it would be a second answer to "what happens after Write".
-    pub(crate) fn compose_spec(&mut self, spec: &SongSpec) {
+    pub(crate) fn compose_spec(&mut self, spec: &SongSpec) -> bool {
         self.reset_drum_analysis();
         let language = self.language();
         let piece = compose(spec);
@@ -1920,8 +1920,19 @@ impl AurisApp {
                     None => written,
                 });
             }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdComposeSong, &error)),
+            Err(error) => {
+                let message = self.failure(Key::CmdComposeSong, &error);
+                self.set_failed_status(message.clone());
+                if self.song_sheet.is_some() {
+                    self.open_prompt(crate::ui::prompt::Prompt::notice(
+                        self.t(Key::CmdComposeSong),
+                        [message.into()],
+                    ));
+                }
+                return false;
+            }
         }
+        true
     }
 
     /// Renders every track alone, measures it, and sets the mix from what came out.
