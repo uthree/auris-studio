@@ -15,11 +15,17 @@
 //! Everything `dials` makes public is re-exported here, so the rest of the crate goes on writing
 //! `compose_sheet::SongDials` exactly as it did when this was one file.
 
+#[cfg(test)]
+mod density_tests;
 mod dials;
 mod lyrics;
 mod menus;
 mod pad;
+#[cfg(test)]
+mod part_role_tests;
 mod singers;
+#[cfg(test)]
+mod tempo_tests;
 mod view;
 
 pub use dials::*;

@@ -424,10 +424,15 @@ impl AurisApp {
         part: usize,
     ) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartRole));
+        let current = self
+            .song_sheet
+            .as_ref()
+            .and_then(|dials| dials.parts.get(part));
         for role in Role::ALL.into_iter().filter(|role| !role.is_drum()) {
-            menu = menu.item(
+            menu = menu.toggle(
                 self.t(role_key(role)),
                 MenuCommand::SongPartRole { part, role },
+                current.is_some_and(|part| part.role == role),
             );
         }
         menu

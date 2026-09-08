@@ -60,6 +60,7 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
+        self.reconcile_section_lyrics();
         let dials = self.song_sheet.clone()?;
         let theme = self.theme.clone();
         let viewport = window.viewport_size();
@@ -530,25 +531,79 @@ impl AurisApp {
             let dial = *dial;
             let target = DialTarget::Song(dial);
             let fraction = dial.fraction(dials);
-            rows.push(
-                value_slider(
-                    ("song-dial", dial as usize),
-                    self.t(dial.label()),
-                    dial.text(dials),
-                    fraction,
-                    theme.accent,
-                    SliderFill::FromStart,
-                    &theme,
-                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                        this.begin_drag(Drag::SongDial {
-                            target,
-                            start_fraction: fraction,
-                            start_x: event.position.x,
-                        });
-                    }),
-                )
-                .into_any_element(),
+            let slider = value_slider(
+                ("song-dial", dial as usize),
+                self.t(dial.label()),
+                if dial == SongDial::Tempo {
+                    String::new()
+                } else {
+                    dial.text(dials)
+                },
+                fraction,
+                theme.accent,
+                SliderFill::FromStart,
+                &theme,
+                cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                    this.begin_drag(Drag::SongDial {
+                        target,
+                        start_fraction: fraction,
+                        start_x: event.position.x,
+                    });
+                }),
             );
+            if dial == SongDial::Tempo {
+                let mut tempo_row = div().flex().items_center().gap_1().child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(slider.debug_selector(|| "song-tempo-dial".to_string())),
+                );
+                for (id, label, step) in [
+                    ("song-tempo-decrease", "−1", -1.0),
+                    ("song-tempo-increase", "+1", 1.0),
+                ] {
+                    if step > 0.0 {
+                        tempo_row = tempo_row.child(button(
+                            "song-tempo-value",
+                            format!("{} BPM", dial.text(dials)),
+                            ButtonStyle::Normal,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                let current = this
+                                    .song_sheet
+                                    .as_ref()
+                                    .map_or_else(String::new, |dials| dials.tempo.to_string());
+                                this.open_prompt(Prompt::new(
+                                    format!("{} (20–400 BPM)", this.t(Key::Tempo)),
+                                    PromptTarget::SongTempo,
+                                    current,
+                                ));
+                                cx.notify();
+                            }),
+                        ));
+                    }
+                    tempo_row = tempo_row.child(button(
+                        id,
+                        label,
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            if let Some(dials) = this.song_sheet.as_mut() {
+                                dials.tempo =
+                                    (dials.tempo + step).clamp(*TEMPO.start(), *TEMPO.end());
+                            }
+                            cx.notify();
+                        }),
+                    ));
+                }
+                rows.push(tempo_row.into_any_element());
+            } else {
+                rows.push(slider.into_any_element());
+            }
         }
         rows
     }
@@ -910,7 +965,7 @@ impl AurisApp {
 
             let mut dial_row = div().flex().gap_2();
             for dial in PART_DIALS {
-                if !self.song_advanced {
+                if !self.song_advanced || *dial == PartDial::Density {
                     continue;
                 }
                 let dial = *dial;
@@ -918,11 +973,11 @@ impl AurisApp {
                     continue;
                 }
                 let target = DialTarget::Part(index, dial);
-                let fraction = dial.fraction(part);
+                let fraction = dial.fraction(part, dials.mood);
                 dial_row = dial_row.child(div().flex_1().min_w_0().child(value_slider(
                     ("song-part-dial", index * PART_DIALS.len() + dial as usize),
                     self.t(dial.label()),
-                    dial.text(part),
+                    dial.text(part, dials.mood),
                     fraction,
                     theme.accent,
                     match dial.is_centred() {
@@ -1058,11 +1113,68 @@ impl AurisApp {
                                 }),
                             ))),
                     )
+                    .child(self.song_part_density(dials, index, cx))
                     .child(dial_row)
                     .into_any_element(),
             );
         }
         rows
+    }
+
+    /// A part's density follows the mood until adjusted, and can be returned to that policy.
+    fn song_part_density(
+        &self,
+        dials: &SongDials,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let part = &dials.parts[index];
+        let theme = &self.theme;
+        let fraction = PartDial::Density.fraction(part, dials.mood);
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div().flex_1().min_w_0().child(
+                    value_slider(
+                        ("song-part-density", index),
+                        self.t(Key::PartDensity),
+                        PartDial::Density.text(part, dials.mood),
+                        fraction,
+                        theme.accent,
+                        SliderFill::FromStart,
+                        theme,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            this.begin_drag(Drag::SongDial {
+                                target: DialTarget::Part(index, PartDial::Density),
+                                start_fraction: fraction,
+                                start_x: event.position.x,
+                            });
+                        }),
+                    )
+                    .debug_selector(move || format!("song-part-density-{index}")),
+                ),
+            )
+            .child(button(
+                ("song-part-density-auto", index),
+                self.t(Key::SongDensityAuto),
+                ButtonStyle::Normal,
+                part.density.is_none(),
+                theme.accent,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if let Some(dials) = this.song_sheet.as_mut()
+                        && let Some(part) = dials.parts.get_mut(index)
+                    {
+                        part.density = match part.density {
+                            Some(_) => None,
+                            None => Some(dials.mood.density()),
+                        };
+                    }
+                    cx.notify();
+                }),
+            ))
     }
 
     /// A row with a label at the start and a button holding the value.

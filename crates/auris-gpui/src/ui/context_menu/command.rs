@@ -1100,16 +1100,8 @@ impl AurisApp {
                 }
             }
             MenuCommand::SongPartRole { part, role } => {
-                if let Some(part) = self
-                    .song_sheet
-                    .as_mut()
-                    .and_then(|dials| dials.parts.get_mut(part))
-                {
-                    // Everything the role implies comes with it, and the name does not: the name
-                    // is what the document keys its material by, and changing it under somebody
-                    // would rewrite the part they were listening to.
-                    let name = part.name.clone();
-                    *part = PartSpec::of_role(name, role);
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_part_role(dials, part, role);
                 }
             }
             MenuCommand::SongPartInstrument { part, id } => {
@@ -1135,6 +1127,7 @@ impl AurisApp {
                     // The whole sheet, title and all. Half a preset is the arrangement of one
                     // style at the tempo of another, which is not a style at all.
                     self.song_sheet = Some(song_dials(&preset.spec()));
+                    self.lyrics_edit = None;
                 }
             }
             MenuCommand::SongPartOctave { part, octave } => {

@@ -56,6 +56,30 @@ const MIN_ROWS: usize = 2;
 const MAX_ROWS: usize = 12;
 
 impl AurisApp {
+    /// Keeps the editor attached to the current form and the words Write will read.
+    ///
+    /// Form edits can remove its section, and replacing the sheet can change its words without
+    /// a keystroke. Reconcile before displaying or accepting input, leaving the caret and IME
+    /// composition alone whenever the words still agree.
+    pub(crate) fn reconcile_section_lyrics(&mut self) {
+        let Some(edit) = self.lyrics_edit.as_mut() else {
+            return;
+        };
+        let Some(section) = self
+            .song_sheet
+            .as_ref()
+            .filter(|dials| dials.form.contains(&edit.section))
+            .and_then(|dials| dials.sections.iter().find(|spec| spec.name == edit.section))
+        else {
+            self.lyrics_edit = None;
+            return;
+        };
+        if edit.field.content() != section.lyrics {
+            edit.field = TextField::new(section.lyrics.clone());
+            edit.field.caret_to_end();
+        }
+    }
+
     /// Puts the keyboard into one section's lyrics box.
     pub(crate) fn focus_section_lyrics(&mut self, section: usize) {
         let Some((section, lyrics)) = self
@@ -104,6 +128,7 @@ impl AurisApp {
         event: &gpui::KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.reconcile_section_lyrics();
         let Some(edit) = self.lyrics_edit.as_mut() else {
             return false;
         };
@@ -526,6 +551,203 @@ fn section_label(app: &AurisApp, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn choosing_a_style_replaces_the_lyrics_editor_and_the_words_saved(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{choose, click, open, paint};
+        use crate::ui::context_menu::MenuCommand;
+        use crate::ui::text_field::HasTextField;
+        use auris_session::prelude::{SongSpec, preset};
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくらさいた");
+        app.update(cx, |this, _| {
+            let field = this.field().unwrap();
+            field.replace_and_mark(field.selection(), "は", None);
+            this.text_changed();
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.lyrics_edit.as_ref().unwrap().field.marked().is_some());
+        });
+        click("song-style", cx);
+        paint(&app, cx);
+        choose(&app, cx, &MenuCommand::SongPreset("pop-band"));
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            assert!(
+                this.lyrics_edit.is_none(),
+                "the old editor is retired with its sheet"
+            );
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap(),
+                &super::super::song_dials(&preset("pop-band").unwrap().spec())
+            );
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("はるがきた");
+        app.read_with(cx, |this, _| {
+            let edit = this.lyrics_edit.as_ref().unwrap();
+            let spec = super::super::song_spec(this.song_sheet.as_ref().unwrap());
+            assert_eq!(edit.field.content(), "はるがきた");
+            assert_eq!(spec.sections[&edit.section].lyrics, edit.field.content());
+            let saved = SongSpec::parse(&spec.to_toml()).unwrap();
+            assert_eq!(saved.sections[&edit.section].lyrics, edit.field.content());
+        });
+    }
+
+    #[gpui::test]
+    fn song_menus_own_navigation_editing_keys_and_text_until_closed(cx: &mut gpui::TestAppContext) {
+        use crate::harness::{open, paint};
+        use crate::ui::context_menu::{ContextMenu, MenuCommand};
+        use crate::ui::text_field::HasTextField;
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input("さいた");
+        let before = app.update(cx, |this, _| {
+            let before = this.lyrics_edit.clone();
+            this.open_menu(
+                ContextMenu::new(gpui::point(px(120.0), px(120.0)), "Groove")
+                    .item("Straight", MenuCommand::SongGroove("straight"))
+                    .item("Swing", MenuCommand::SongGroove("swing")),
+            );
+            before
+        });
+        paint(&app, cx);
+        cx.simulate_keystrokes("down down");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.menu.as_ref().unwrap().highlighted, Some(1));
+            assert!(this.readable_field().is_none());
+        });
+        for key in ["left", "right", "backspace", "delete", "secondary-a", "tab"] {
+            cx.simulate_keystrokes(key);
+        }
+        cx.simulate_input("隠れた入力");
+        app.update(cx, |this, _| {
+            assert!(
+                this.field().is_none(),
+                "IME insertions have no covered field"
+            );
+            assert_eq!(this.lyrics_edit, before);
+        });
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            assert_eq!(this.song_sheet.as_ref().unwrap().groove, "swing");
+            assert_eq!(
+                this.lyrics_edit, before,
+                "Return chooses without adding a lyric line"
+            );
+        });
+        cx.simulate_input("はる");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit.as_ref().unwrap().field.content(),
+                "さくら\nさいたはる"
+            );
+        });
+        app.update(cx, |this, _| {
+            this.open_menu(
+                ContextMenu::new(gpui::point(px(120.0), px(120.0)), "Groove")
+                    .item("Straight", MenuCommand::SongGroove("straight")),
+            );
+        });
+        paint(&app, cx);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            assert!(
+                this.lyrics_edit.is_some(),
+                "Escape dismisses only the foreground menu"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn removing_the_last_playing_of_a_section_releases_its_lyrics_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{click, open, paint, resize};
+
+        let (app, cx) = open(cx);
+        resize(&app, cx, gpui::size(px(1600.0), px(2000.0)));
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.song_advanced = true;
+            let dials = this.song_sheet.as_mut().unwrap();
+            dials.form = vec![
+                dials.sections[0].name.clone(),
+                dials.sections[0].name.clone(),
+                dials.sections[1].name.clone(),
+            ];
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        let before = app.read_with(cx, |this, _| this.lyrics_edit.clone());
+        click("song-form-remove-0", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit, before,
+                "a repeated section is still editable"
+            );
+        });
+        click("song-form-remove-0", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.lyrics_edit.is_none(),
+                "there is no invisible editor after removal"
+            );
+            assert_eq!(this.song_sheet.as_ref().unwrap().form.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn replacing_the_focused_form_section_releases_its_lyrics_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, paint};
+        use crate::ui::context_menu::MenuCommand;
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            this.open_song_sheet();
+            this.song_sheet.as_mut().unwrap().form.truncate(1);
+            this.focus_section_lyrics(0);
+            this.run_menu_command(
+                MenuCommand::SongFormName {
+                    place: 0,
+                    name: "new verse".into(),
+                },
+                cx,
+            );
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.lyrics_edit.is_none());
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap().sections[0].name,
+                "new verse"
+            );
+        });
+    }
 
     #[gpui::test]
     fn section_tempo_accepts_decimals_rejects_invalid_input_and_can_follow_the_song(

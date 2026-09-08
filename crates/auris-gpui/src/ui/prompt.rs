@@ -119,11 +119,13 @@ pub enum PromptTarget {
     Position,
     /// The song sheet's title, which its project is named after.
     ///
-    /// These four edit the *sheet* and not the document: nothing they set has been written until
+    /// These song targets edit the *sheet* and not the document: nothing they set has been written until
     /// Write is pressed, which is why none of them records an undo step.
     SongTitle,
     /// The key the song sheet is set to.
     SongKey,
+    /// The song sheet's tempo, in beats per minute.
+    SongTempo,
     /// The meter the song sheet is set to, as `11/8`.
     ///
     /// The menu on the row covers the meters nearly everybody wants; this field is the way to
@@ -210,7 +212,8 @@ impl PromptTarget {
             | PromptTarget::SignatureFrom(_)
             | PromptTarget::SongMeter => Notation::Signature,
             PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
-            PromptTarget::SongSectionTempo(_)
+            PromptTarget::SongTempo
+            | PromptTarget::SongSectionTempo(_)
             | PromptTarget::Tempo(_)
             | PromptTarget::TempoFrom(_)
             | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
@@ -671,6 +674,7 @@ impl AurisApp {
     /// Opens a rename sheet, replacing any open menu.
     pub(crate) fn open_prompt(&mut self, prompt: Prompt) {
         self.menu = None;
+        self.menu_bar = None;
         self.prompt = Some(prompt);
     }
 
@@ -827,7 +831,7 @@ impl AurisApp {
                 self.session.set_section(at, Some(text));
                 Ok(())
             }
-            // The four that edit the song sheet. None of them records an undo step: the sheet is
+            // Targets that edit the song sheet do not record an undo step: the sheet is
             // a question about a song nobody has written yet.
             PromptTarget::SongTitle => {
                 if let Some(dials) = self.song_sheet.as_mut() {
@@ -844,6 +848,21 @@ impl AurisApp {
                 }
                 None => {
                     self.reject_prompt(messages::not_a_key(self.language(), &text));
+                    return;
+                }
+            },
+            PromptTarget::SongTempo => match text.parse::<f64>() {
+                Ok(bpm) if crate::ui::compose_sheet::TEMPO.contains(&bpm) => {
+                    if let Some(dials) = self.song_sheet.as_mut() {
+                        dials.tempo = bpm;
+                    }
+                    Ok(())
+                }
+                _ => {
+                    self.reject_prompt(format!(
+                        "{} (20–400 BPM)",
+                        messages::not_a_tempo(self.language(), &text)
+                    ));
                     return;
                 }
             },
@@ -1260,7 +1279,8 @@ impl AurisApp {
                     self.cancel_prompt();
                 }
                 "enter" => self.commit_prompt(window, cx),
-                _ => return false,
+                // Notices and questions cover the fields behind them as fully as text prompts.
+                _ => {}
             }
             return true;
         };
@@ -1721,18 +1741,26 @@ impl AurisApp {
     /// The palette first: opening it closes the rename sheet, so the two are never both open, and
     /// asking in this order means the answer does not depend on that staying true.
     fn writable_field(&mut self) -> Option<&mut TextField> {
+        self.reconcile_section_lyrics();
+        // Menus sit above every field and accept choices rather than text. Keep both ordinary
+        // input and IME updates away from the editor they cover.
+        if self.menu.is_some() || self.menu_bar.is_some() {
+            return None;
+        }
         // In the order they sit in front of each other. The library's field is in a panel rather
         // than in a sheet, so anything modal opened over it takes the typing back.
         if let Some(palette) = self.palette.as_mut() {
             return Some(&mut palette.field);
         }
-        if let Some(field) = self.prompt.as_mut().and_then(Prompt::field_mut) {
-            return Some(field);
+        if let Some(prompt) = self.prompt.as_mut() {
+            return prompt.field_mut();
         }
-        // The lyrics box on the song sheet, while one holds the keyboard; nothing opens over
-        // the sheet but the palette and a prompt — both already answered above.
+        // The lyrics box on the song sheet, while one holds the keyboard.
         if let Some(edit) = self.lyrics_edit.as_mut() {
             return Some(&mut edit.field);
+        }
+        if self.song_sheet.is_some() {
+            return None;
         }
         if self.library_search_focused {
             return Some(&mut self.library_search);
@@ -1749,14 +1777,20 @@ impl crate::ui::text_field::HasTextField for AurisApp {
     }
 
     fn readable_field(&self) -> Option<&TextField> {
+        if self.menu.is_some() || self.menu_bar.is_some() {
+            return None;
+        }
         if let Some(palette) = self.palette.as_ref() {
             return Some(&palette.field);
         }
-        if let Some(field) = self.prompt.as_ref().and_then(Prompt::field) {
-            return Some(field);
+        if let Some(prompt) = self.prompt.as_ref() {
+            return prompt.field();
         }
         if let Some(edit) = self.lyrics_edit.as_ref() {
             return Some(&edit.field);
+        }
+        if self.song_sheet.is_some() {
+            return None;
         }
         if self.library_search_focused {
             return Some(&self.library_search);
@@ -1980,6 +2014,7 @@ mod tests {
             PromptTarget::Position,
             PromptTarget::SongTitle,
             PromptTarget::SongKey,
+            PromptTarget::SongTempo,
             PromptTarget::SongMeter,
             PromptTarget::SongSeed,
             PromptTarget::SongPartName(0),
@@ -2009,6 +2044,7 @@ mod tests {
                 | PromptTarget::Position
                 | PromptTarget::SongTitle
                 | PromptTarget::SongKey
+                | PromptTarget::SongTempo
                 | PromptTarget::SongMeter
                 | PromptTarget::SongSeed
                 | PromptTarget::SongPartName(_)
@@ -2286,6 +2322,119 @@ mod window_tests {
     use crate::harness::{
         CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
     };
+
+    #[gpui::test]
+    fn a_prompt_opened_over_the_menu_bar_takes_text_and_return(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            // A close guard or an asynchronous result can open a prompt while a menu is up.
+            // Install that state directly so the transition is exercised on macOS too.
+            this.menu_bar = Some(crate::ui::menu_bar::OpenMenu::at(0));
+            this.open_prompt(Prompt::new(
+                "Time signature",
+                PromptTarget::Signature(Ticks::ZERO),
+                "4/4",
+            ));
+        });
+        paint(&app, cx);
+        cx.simulate_input("7/8");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu_bar.is_none());
+            assert_eq!(
+                this.prompt.as_ref().unwrap().field().unwrap().content(),
+                "7/8",
+                "the new prompt receives platform text immediately"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.is_none(),
+                "Return accepts the foreground prompt"
+            );
+            assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "7/8");
+        });
+    }
+
+    #[gpui::test]
+    fn a_notice_over_song_lyrics_blocks_text_and_editing_until_dismissed(cx: &mut TestAppContext) {
+        use crate::ui::text_field::HasTextField;
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        let before = app.update(cx, |this, _| {
+            let before = this.lyrics_edit.clone();
+            this.open_prompt(Prompt::notice("Song", ["Please review the song.".into()]));
+            before
+        });
+        paint(&app, cx);
+        cx.simulate_input("隠れた入力");
+        cx.simulate_keystrokes("left backspace delete secondary-a tab");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_some());
+            assert!(this.readable_field().is_none());
+            assert_eq!(this.lyrics_edit, before);
+            let edit = this.lyrics_edit.as_ref().unwrap();
+            assert_eq!(
+                this.song_sheet
+                    .as_ref()
+                    .unwrap()
+                    .sections
+                    .iter()
+                    .find(|section| section.name == edit.section)
+                    .unwrap()
+                    .lyrics,
+                "さくら"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+        paint(&app, cx);
+        cx.simulate_input("のはな");
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.lyrics_edit.as_ref().unwrap().field.content(),
+                "さくらのはな"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_song_sheet_without_lyrics_focus_blocks_background_search_input(cx: &mut TestAppContext) {
+        use crate::ui::text_field::{HasTextField, TextField};
+
+        let (app, cx) = open(cx);
+        let before = app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Library);
+            this.library_search_focused = true;
+            this.library_search = TextField::new("Piano".to_string());
+            this.library_search.caret_to_end();
+            this.open_song_sheet();
+            this.library_search.clone()
+        });
+        paint(&app, cx);
+        cx.simulate_input("hidden");
+        cx.simulate_keystrokes("left backspace delete secondary-a tab enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.song_sheet.is_some());
+            assert!(this.lyrics_edit.is_none());
+            assert!(this.readable_field().is_none());
+            assert!(this.library_search_focused);
+            assert_eq!(this.library_search, before);
+        });
+        click("song-sheet-cancel", cx);
+        paint(&app, cx);
+        cx.simulate_input("s");
+        app.read_with(cx, |this, _| {
+            assert!(this.song_sheet.is_none());
+            assert_eq!(this.library_search.content(), "Pianos");
+        });
+    }
 
     #[gpui::test]
     fn a_rejected_meter_keeps_the_selection_and_can_be_corrected(cx: &mut TestAppContext) {

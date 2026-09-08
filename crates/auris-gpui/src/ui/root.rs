@@ -1164,7 +1164,10 @@ impl AurisApp {
                 start_fraction,
                 start_x,
             } => {
-                let delta = f32::from(event.position.x - start_x);
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
                 self.drag_song_dial(target, start_fraction, delta);
             }
             Drag::SongPad { detail, bounds } => {
@@ -1264,31 +1267,45 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Keys the open rename sheet claims before anything else sees them.
+    /// Routes keys through the controls in front-to-back order.
     ///
     /// Only the ones the platform does not deliver as text: characters reach the field through
     /// the input handler instead, which is what lets an IME compose into it.
     ///
     /// The typing keyboard is asked first, and answers for nothing at all unless it is switched
-    /// on and nothing is claiming the keyboard above it — so a rename sheet gets its letters even
-    /// with the mode left on, which is the order somebody who names a track mid-take needs.
+    /// on and nothing is claiming the keyboard above it. Menus then take every key while open;
+    /// fields underneath resume editing only after the menu closes.
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.typing_key(event)
-            || self.palette_key(event, window, cx)
-            || self.prompt_key(event, window, cx)
-            || self.lyrics_key(event, cx)
-            || self.menu_key(event, window, cx)
-            || self.menu_bar_key(event, window, cx)
-            || self.library_search_key(event, cx)
-            // Last, because everything above it is in front of the agent field on the screen and
-            // has to answer for a key first.
-            || self.agent_key(event, window, cx)
-        {
+        // Choose one owner before handling the key. An editor must leave character keys to
+        // platform text input, without offering those unhandled keys to a covered control.
+        let handled = if self.typing_key(event) {
+            true
+        } else if self.menu.is_some() {
+            self.menu_key(event, window, cx)
+        } else if self.menu_bar.is_some() {
+            self.menu_bar_key(event, window, cx)
+        } else if self.palette.is_some() {
+            self.palette_key(event, window, cx)
+        } else if self.prompt.is_some() {
+            self.prompt_key(event, window, cx)
+        } else if self.song_sheet.is_some() {
+            self.reconcile_section_lyrics();
+            if self.lyrics_edit.is_some() {
+                self.lyrics_key(event, cx)
+            } else {
+                true
+            }
+        } else if self.library_search_focused {
+            self.library_search_key(event, cx)
+        } else {
+            self.agent_key(event, window, cx)
+        };
+        if handled {
             cx.stop_propagation();
             cx.notify();
         }
@@ -1468,7 +1485,9 @@ impl AurisApp {
                     window.dispatch_action(action, cx);
                 }
             }
-            _ => return false,
+            // A menu owns the keyboard even for keys it does not use. Editing keys must not
+            // reach a field underneath it.
+            _ => {}
         }
         true
     }
@@ -1533,7 +1552,8 @@ impl AurisApp {
                 self.close_menu();
                 self.run_menu_command(command, cx);
             }
-            _ => return false,
+            // Unknown keys still belong to the menu, never to a covered editor.
+            _ => {}
         }
         true
     }

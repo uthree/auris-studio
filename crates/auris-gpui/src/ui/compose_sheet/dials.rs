@@ -515,6 +515,38 @@ pub fn set_part_program(dials: &mut SongDials, index: usize, program: gm::Progra
     }
 }
 
+/// Changes a part's role, carrying over its adjustments and updating untouched role defaults.
+///
+/// Selecting the current role leaves the entire part alone. The specification stores values,
+/// not edit history, so a value equal to the previous role's default still follows the role.
+/// Explicit optional settings and fields shared by every role are retained as written.
+pub fn set_part_role(dials: &mut SongDials, index: usize, role: Role) -> bool {
+    let Some(part) = dials.parts.get_mut(index) else {
+        return false;
+    };
+    let previous = part.role;
+    if previous == role {
+        return false;
+    }
+    if part.instrument == previous.default_instrument() {
+        part.instrument = role.default_instrument().to_string();
+    }
+    if part.octave == previous.default_octave() {
+        part.octave = role.default_octave();
+    }
+    if part.gate == previous.default_gate() {
+        part.gate = role.default_gate();
+    }
+    if part.gain_db == previous.default_gain_db() {
+        part.gain_db = role.default_gain_db();
+    }
+    if part.pan == previous.default_pan() {
+        part.pan = role.default_pan();
+    }
+    part.role = role;
+    true
+}
+
 /// The shared kit is exactly the group the composer will merge, before the source is changed.
 fn part_source_group(dials: &SongDials, index: usize) -> Vec<usize> {
     let Some(selected) = dials.parts.get(index) else {
@@ -854,7 +886,7 @@ impl SongDial {
     /// What the readout at the end of the bar says.
     pub fn text(self, dials: &SongDials) -> String {
         match self {
-            SongDial::Tempo => format!("{:.0}", dials.tempo),
+            SongDial::Tempo => dials.tempo.to_string(),
             SongDial::Swing if dials.swing == 50 => "50".to_string(),
             SongDial::Swing => dials.swing.to_string(),
             other => percent(other.fraction(dials)),
@@ -949,12 +981,10 @@ impl PartDial {
     }
 
     /// Where the bar sits, from 0 to 1.
-    pub fn fraction(self, part: &PartSpec) -> f32 {
+    pub fn fraction(self, part: &PartSpec, mood: Mood) -> f32 {
         match self {
-            // A part that says nothing about its density is drawn where the mood would put it,
-            // which is the middle of the dial: the bar has to start somewhere, and starting at
-            // the floor would say the part is silent.
-            PartDial::Density => part.density.unwrap_or(0.5),
+            // Start a manual adjustment at the same base density the composer currently uses.
+            PartDial::Density => part.density.unwrap_or_else(|| mood.density()),
             PartDial::Gate => part.gate,
             PartDial::Gain => between(part.gain_db, *GAIN_DB.start(), *GAIN_DB.end()),
             PartDial::Pan => (part.pan + 1.0) / 2.0,
@@ -982,13 +1012,13 @@ impl PartDial {
     }
 
     /// What the readout at the end of the bar says.
-    pub fn text(self, part: &PartSpec) -> String {
+    pub fn text(self, part: &PartSpec, mood: Mood) -> String {
         match self {
             PartDial::Gain => format!("{:.1}", part.gain_db),
             PartDial::Pan if part.pan.abs() < 0.005 => "C".to_string(),
             PartDial::Pan if part.pan < 0.0 => format!("L{:.0}", part.pan.abs() * 100.0),
             PartDial::Pan => format!("R{:.0}", part.pan * 100.0),
-            other => percent(other.fraction(part)),
+            other => percent(other.fraction(part, mood)),
         }
     }
 }
@@ -1044,6 +1074,66 @@ impl DialTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn customized_part() -> PartSpec {
+        PartSpec {
+            instrument: "custom.instrument".to_string(),
+            program: Some(gm::Program(48)),
+            octave: 6,
+            density: Some(0.67),
+            subdivision: Subdivision::EighthTriplet,
+            gate: 0.42,
+            rhythm: Some(Pattern::parse("X..x..x.").unwrap()),
+            note: Some(42),
+            gain_db: -4.5,
+            pan: -0.6,
+            ..PartSpec::of_role("my lead", Role::Melody)
+        }
+    }
+
+    #[test]
+    fn reselecting_a_part_role_keeps_every_setting_and_section_reference() {
+        let mut dials = SongDials::default();
+        dials.parts[0] = customized_part();
+        let before = dials.clone();
+
+        assert!(!set_part_role(&mut dials, 0, Role::Melody));
+        assert_eq!(dials, before);
+        assert!(!set_part_role(&mut dials, usize::MAX, Role::Bass));
+        assert_eq!(dials, before);
+    }
+
+    #[test]
+    fn changing_a_part_role_retains_custom_sound_and_performance_settings() {
+        let mut dials = SongDials::default();
+        let index = 0;
+        let name = dials.parts[index].name.clone();
+        dials.parts[index] = PartSpec {
+            name,
+            ..customized_part()
+        };
+        let before = dials.clone();
+        for role in [Role::Bass, Role::Stab, Role::Pad] {
+            assert!(set_part_role(&mut dials, index, role));
+            let mut expected = before.clone();
+            expected.parts[index].role = role;
+            assert_eq!(dials, expected);
+        }
+    }
+
+    #[test]
+    fn changing_an_untouched_part_role_adopts_the_new_roles_defaults() {
+        for previous in Role::ALL {
+            for role in Role::ALL {
+                let mut dials = SongDials {
+                    parts: vec![PartSpec::of_role("my part", previous)],
+                    ..SongDials::default()
+                };
+                assert_eq!(set_part_role(&mut dials, 0, role), previous != role);
+                assert_eq!(dials.parts[0], PartSpec::of_role("my part", role));
+            }
+        }
+    }
 
     #[test]
     fn one_source_picker_changes_every_voice_of_only_its_current_kit() {
@@ -1415,7 +1505,7 @@ mod tests {
             for target in [0.05, 0.25, 0.5, 0.75, 1.0] {
                 let mut part = PartSpec::of_role("lead", Role::Melody);
                 dial.set(&mut part, target);
-                let back = dial.fraction(&part);
+                let back = dial.fraction(&part, Mood::default());
                 assert!(
                     (back - target).abs() < 0.03,
                     "{dial:?} set to {target} read back {back}"
@@ -1502,7 +1592,7 @@ mod tests {
         let mut part = SongDials::default().parts.remove(0);
         for gain in [-60.0, -45.0, 0.0, 12.0] {
             part.gain_db = gain;
-            let fraction = PartDial::Gain.fraction(&part);
+            let fraction = PartDial::Gain.fraction(&part, Mood::default());
             PartDial::Gain.set(&mut part, fraction);
             assert!((part.gain_db - gain).abs() < 1e-4, "gain {gain}");
         }

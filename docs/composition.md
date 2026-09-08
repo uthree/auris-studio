@@ -9,6 +9,10 @@ chords with **Write It Again**. The rest of the application is in [Features](fea
 and energy beside the lyrics. Moving right or up raises the labelled value. Lyrics are optional;
 **Create Song** also works with every box empty. The columns stack in smaller windows.
 
+Click the tempo's BPM value to enter an exact number between 20 and 400, including decimals.
+The −1 and +1 buttons adjust it one BPM at a time; hold Shift while dragging a song dial for
+fine adjustment.
+
 **Detailed settings** reveals key, meter, groove, seed, the tension/syncopation pad, performance
 dials, section structure, melody sharing and the drum/instrument roster. The toggle stays above
 the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
@@ -36,6 +40,11 @@ empty image frame.
 **Drums** has its own source selector and add/remove controls. **Instruments** lists melodic
 parts separately, with its own add button. Removing or restoring the drum kit preserves the
 instrument parts and their settings.
+Each melodic part's **Density** follows the mood while **Follow mood** is selected. Dragging
+the density starts from that current value and pins it; select **Follow mood** again to restore
+automatic changes with the song's energy. Changing a part's role retains its custom settings
+and updates values still equal to the previous role's defaults. Selecting the same role keeps
+every setting.
 **Create Song** writes the piece. Detailed settings also offers **Another Take** — the same dials
 and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one

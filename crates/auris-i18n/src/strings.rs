@@ -835,6 +835,7 @@ strings! {
     SongPartNote { en: "Note", ja: "ノート" }
     SongPartGain { en: "Level", ja: "音量" }
     SongPartPan { en: "Pan", ja: "定位" }
+    SongDensityAuto { en: "Follow mood", ja: "曲調に合わせる" }
     SongAddPart { en: "Add Part", ja: "パートを追加" }
     SongRemovePart { en: "Remove", ja: "削除" }
     SongPartNameTitle { en: "Name for this part", ja: "このパートの名前" }
