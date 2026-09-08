@@ -1194,6 +1194,32 @@ impl Session {
     }
 }
 
+/// Installs the in-process native fixture for tests outside this module.
+#[cfg(test)]
+pub(super) fn install_fixture_instrument(session: &mut Session, track: TrackId) {
+    let file = PathBuf::from("/auris/testkit/test-tone.clap");
+    session
+        .hosted
+        .libraries
+        .insert(file.clone(), auris_clap::testkit::instrument_library());
+    session
+        .set_hosted_instrument(track, &file, auris_clap::testkit::TONE_ID)
+        .unwrap();
+    session.poll();
+}
+
+/// Changes the fixture inside the plugin, leaving the document's serialized state stale.
+#[cfg(test)]
+pub(super) fn change_fixture_instrument_level(session: &mut Session, track: TrackId, level: f32) {
+    let plugin = session
+        .hosted
+        .window_slot(PluginWindow::Instrument(track))
+        .and_then(HostedSlot::plugin_mut)
+        .expect("installed instrument fixture");
+    plugin.load_state(&level.to_le_bytes()).unwrap();
+    plugin.pretend_the_state_changed();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

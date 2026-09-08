@@ -153,6 +153,7 @@ impl Render for AurisApp {
         let status = self.render_status_bar(window.viewport_size().width, cx);
         let export_overlay = self.render_export_overlay(cx);
         let song_sheet = self.render_song_sheet(window, cx);
+        let reference_match = self.render_reference_match(window, cx);
         let song_library = self.render_song_library_overlay(window, cx);
         let compose_progress = self.render_compose_progress(window);
         let prompt = self.render_prompt(cx);
@@ -198,6 +199,9 @@ impl Render for AurisApp {
                     .on_action(cx.listener(Self::on_accompany_melody))
                     .on_action(cx.listener(Self::on_compose_from_lyrics))
                     .on_action(cx.listener(Self::on_balance_levels))
+                    .on_action(cx.listener(|this, _: &actions::MatchReference, _, cx| {
+                        this.open_reference_match(cx);
+                    }))
                     .on_action(cx.listener(Self::on_save_project))
                     .on_action(cx.listener(Self::on_save_project_as))
                     .on_action(cx.listener(Self::on_import_audio))
@@ -375,6 +379,7 @@ impl Render for AurisApp {
             .children(typing_panel)
             .children(plugin_window)
             .children(menu)
+            .children(reference_match)
             .children(compose_progress)
     }
 }
@@ -1314,6 +1319,11 @@ impl AurisApp {
             self.prompt_key(event, window, cx)
         } else if self.song_library.is_some() {
             self.song_library_key(event, cx)
+        } else if self.reference_match.open {
+            if event.keystroke.key == "escape" {
+                self.close_reference_match(cx);
+            }
+            true
         } else if self.song_sheet.is_some() {
             self.reconcile_section_lyrics();
             if self.lyrics_edit.is_some() {

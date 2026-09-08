@@ -64,6 +64,7 @@ pub mod gain;
 pub mod limiter;
 pub mod loudness;
 pub mod pack;
+pub mod reference_features;
 pub mod reverb;
 pub mod smooth;
 pub mod spectrogram;

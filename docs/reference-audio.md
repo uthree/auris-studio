@@ -1,0 +1,139 @@
+# Match a reference recording
+
+**Compose → Match Reference Audio…** searches small changes to the current project's mix and
+performance. Every candidate is rendered through the project's instruments, routing and effects,
+then compared with an excerpt from a reference recording. Written notes and instrument choices
+stay intact. The unchanged project is the first candidate and remains the result when no measured
+improvement is found.
+
+## Use the desktop app
+
+1. Open or compose the project you want to adjust, then choose **Compose → Match Reference Audio…**.
+2. Choose a reference audio file. Set its excerpt start and the project excerpt start separately;
+   **Use Playhead** selects the current project position. Choose a length of 1–30 seconds that
+   contains the sound you want to compare.
+3. Enable **Adjust Mix**, **Adjust Performance**, or both. Set the attempt limit and search seed.
+   The default run measures eight candidates, including the unchanged baseline.
+4. Choose **Render & Search**. Progress reports the actual candidate render and completed
+   evaluations. The project remains editable and unchanged by the search.
+5. Compare **Before** and **Best**, including the individual feature distances. Use **Play
+   Reference**, **Play Before**, and **Play Best** to listen, and **Stop Preview** to stop audition.
+6. Choose **Apply Best** to keep the retained changes. One Undo restores the original state.
+
+The reference and project excerpts need not have the same starting position in their respective
+songs. The comparison summarizes their sound; it does not align their notes, beat grids, or
+waveforms. Choose representative passages, such as a chorus against a chorus, to make the
+comparison useful.
+
+Cancel preserves an already evaluated partial winner. Cancellation before a complete baseline
+leaves no comparison to adopt. Editing the project or changing the reference or settings makes
+the old comparison stale. Search again before applying. Closing the panel cancels its task;
+another run waits for the old worker to return.
+
+## What can change
+
+Mix proposals adjust unmuted non-bus tracks. A gain or pan parameter with an automation lane is
+left to its automation. Performance proposals adjust the expression or gate of nonempty,
+unmuted instrument and drum clips. Recorded audio and already synthesized singing remain part
+of the rendered mix and can have their track balance adjusted.
+
+Each move changes one control on one track. The proposal order is seeded and alternates mix and
+performance controls when both are enabled. Bounds stay relative to the original project,
+including after several accepted improvements.
+
+| Control | Maximum change from the original | Proposal step |
+| --- | ---: | ---: |
+| Track gain | 3 dB | 1.5 dB |
+| Track pan | 0.3 | 0.15 |
+| Timing wander | 0.2 | 0.1 |
+| Velocity wander | 0.2 | 0.1 |
+| Phrase swell | 0.2 | 0.1 |
+| Beat/offbeat accent | 0.3 | 0.15 |
+| Performance delay | 8 ms | 4 ms |
+| Note gate | 0.1 | 0.05 |
+
+Controls also obey their normal parameter ranges. Expression and gate are stored as editable
+performance transforms; they do not rewrite the score. The exact winning project changes are
+applied without a subsequent automatic balance pass that would replace the searched gains.
+
+## What the distance measures
+
+The current evaluator uses deterministic CPU measurements without model downloads. Reference
+features are captured once and remain fixed for the entire run. Candidate audio is rendered at
+44.1 kHz, and the reference and candidate use the same analysis method.
+
+| Component | Measurement | Weight |
+| --- | --- | ---: |
+| Frequency balance | Relative energy in 24 logarithmic bands from 40 Hz to 12 kHz; Hellinger distance squared between the distributions | 45% |
+| Dynamics | Quantiles of the 50 ms RMS envelope relative to the whole excerpt, plus crest factor; differences use a fixed 24 dB scale | 25% |
+| Stereo image | Overall and short-window channel balance and side-energy statistics | 15% |
+| Rhythmic texture | Quantiles and activity of normalized positive spectral flux, measured with a 10 ms hop | 15% |
+
+Each component and the weighted total lie in `[0, 1]`. **Lower distance means closer measured
+features.** Zero means the measured summaries agree, not that the recordings are identical. The
+optimizer maximizes `fitness = -round(distance * 1_000_000) / 1_000_000` and retains the earlier
+candidate on ties. This rounds ranking distance to the nearest 0.000001 so tiny floating-point
+differences from shared gain do not count as improvements. All diagnostic distances remain
+unrounded. This precision applies only to the reference evaluator; other objectives define their
+own fitness units and precision.
+
+Analysis normalizes shared gain before measuring features. Turning the whole recording up or
+down therefore does not improve its similarity. Stereo channel powers are combined after the
+FFT, so opposite-phase stereo is not mistaken for silence. Silence, non-finite samples, and
+excerpts too short to measure are rejected rather than assigned a successful score.
+
+These summaries describe tonal balance, envelope, spatial balance and transient activity. They
+are useful for searching a particular acoustic direction, but are not judgments of musical
+quality, semantic mood, melody, or arrangement. Their distributions also do not reproduce the
+reference's rhythmic sequence. A nearby result can still differ audibly: listen to the retained
+renders before deciding to apply it.
+
+## Audition and adoption
+
+The baseline and best buffers retain the exact PCM that was evaluated. Audition plays those
+buffers directly at the output, bypassing the current project graph so its processing is not
+applied twice. Starting audition stops song playback and clears its effect tails without moving
+the playhead or editing the document.
+
+Preview preparation resamples to the current output device on a worker, then applies one uniform
+gain toward -20 dBFS RMS while holding sample peaks below -1 dBFS. A peak-limited excerpt may
+remain below that RMS target. This changes only the audition copy, not the stored render or
+project. Applying the winner keeps the evaluated mix and performance settings in one undo step.
+
+## Replaceable audio objectives
+
+The session layer separates the search from its evaluator:
+
+```rust
+pub trait AudioEvaluator: Send + Sync {
+    fn evaluate(&self, audio: &AudioBuffer) -> Result<AudioEvaluation, String>;
+    fn description(&self) -> String;
+}
+```
+
+`AudioEvaluation` carries a finite, higher-is-better `fitness` and named `AudioMetric` values.
+`validate()` rejects non-finite fitness or diagnostics before ranking. A caller constructs
+`ReferenceAudioEvaluator::new(&reference_pcm)` for the feature comparison above and passes the
+evaluator to the session's staged reference-matching job. Rendering runs on a worker; the
+session thread prepares each next render and explicitly adopts the completed report.
+
+A learned audio/text CLAP objective can implement the same trait with its model and text
+embedding held fixed for a search. It would define its own score and diagnostic units; the
+optimizer does not require a negative distance or a particular feature vector. The current
+reference evaluator's acoustic distance should not be relabeled as CLAP similarity or as a
+percentage of semantic agreement.
+
+## Reproduce a render comparison
+
+The session examples provide a small built-in-instrument fixture and a headless search runner:
+
+```sh
+cargo run -p auris-session --example reference_match_demo -- target/reference-demo
+cargo run -p auris-session --example match_reference -- target/reference-demo/Baseline/Baseline.auris target/reference-demo/reference.wav target/reference-demo/matched 32 12
+```
+
+Choose new output directories. The fixture supplies an unchanged project and a reference made
+by changing pan and gate. The runner writes the exact reference, baseline and best WAVs, a JSON
+metric report, and the adopted project. These files can also be opened in the desktop app to
+compare the GUI result. Seeds reproduce proposal order within a build; hosted instruments or
+effects with their own unpinned randomness may still render different audio between passes.

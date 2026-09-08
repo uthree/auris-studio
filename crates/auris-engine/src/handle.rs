@@ -19,7 +19,7 @@ use crate::meter::MeterBank;
 pub enum Retired {
     /// A render graph replaced by [`EngineCommand::SetGraph`].
     Graph(Box<RenderGraph>),
-    /// A preview buffer replaced by [`EngineCommand::PlayOneShot`].
+    /// A buffer replaced by [`EngineCommand::PlayOneShot`] or [`EngineCommand::PlayOutputPreview`].
     Buffer(Arc<auris_core::AudioBuffer>),
     /// A solo-resolution array consumed by [`EngineCommand::SetSoloResolution`].
     SoloResolution(Box<[bool]>),

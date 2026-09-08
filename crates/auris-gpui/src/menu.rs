@@ -474,6 +474,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                 actions::BalanceLevels,
                 "mix.balance",
             ),
+            command(
+                t(Key::CmdMatchReference),
+                actions::MatchReference,
+                "mix.reference",
+            ),
         ],
     });
 

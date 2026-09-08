@@ -54,11 +54,13 @@ mod mixture;
 mod monitor;
 mod musical_analysis;
 mod notes;
+mod output_preview;
 mod perform;
 mod punch;
 mod readiness;
 mod recognition;
 mod record;
+mod reference_match;
 mod singer;
 mod spectrogram;
 mod timbre;
@@ -94,10 +96,15 @@ pub use mixture::{
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
+pub use output_preview::prepare_output_preview;
 pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use recognition::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
     ClipInstrumentAnalysis, ClipMixtureAnalysis, analyze_audio_file, analyze_instrument_file,
+};
+pub use reference_match::{
+    ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
+    ReferenceMatchSettings, ReferenceMatchStep,
 };
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,

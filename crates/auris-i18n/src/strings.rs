@@ -40,7 +40,46 @@ macro_rules! strings {
 }
 
 strings! {
-    SongSearchToggle { en: "Search", ja: "探索" }
+    CmdMatchReference { en: "Match Reference Audio…", ja: "リファレンス音源に近づける…" }
+    EditMatchReference { en: "Match Reference Audio", ja: "参考音源への調整" }
+    ReferenceMatchPreviewHint { en: "Preview at a similar listening level (peak-limited). These playback gains are not applied to the project.", ja: "音量を揃えて試聴します（ピーク上限あり）。試聴用の音量補正はプロジェクトに適用されません。" }
+    ReferenceMatchHint { en: "Render the current project and search small mix and performance changes toward a reference excerpt. Written notes stay unchanged.", ja: "現在のプロジェクトをレンダーし、参考音源の特徴に近づくミックスと演奏の微調整を探します。元の音符は保持されます。" }
+    ReferenceMatchChoose { en: "Choose Reference Audio…", ja: "参考音源を選ぶ…" }
+    ReferenceMatchMissing { en: "Choose a reference audio file first.", ja: "最初に参考音源ファイルを選んでください。" }
+    ReferenceMatchLoading { en: "Reading reference audio…", ja: "参考音源を読み込み中…" }
+    ReferenceMatchSource { en: "Reference", ja: "参考音源" }
+    ReferenceMatchProjectStart { en: "Project start (seconds)", ja: "プロジェクト開始位置（秒）" }
+    ReferenceMatchReferenceStart { en: "Reference start (seconds)", ja: "参考音源の開始位置（秒）" }
+    ReferenceMatchDuration { en: "Excerpt length (seconds)", ja: "比較する長さ（秒）" }
+    ReferenceMatchPlayhead { en: "Use Playhead", ja: "再生位置を使う" }
+    ReferenceMatchMix { en: "Adjust Mix", ja: "ミックスを調整" }
+    ReferenceMatchPerformance { en: "Adjust Performance", ja: "演奏を調整" }
+    ReferenceMatchScope { en: "Mix changes affect track levels and pan. Performance changes affect instrument and drum clips. Audio and synthesized singing are mixed as rendered.", ja: "ミックス調整はトラック音量とパン、演奏調整は楽器・ドラムのクリップが対象です。録音音声と合成済み歌唱もミックスに含めて評価します。" }
+    ReferenceMatchNeedScope { en: "Enable Mix or Performance to search.", ja: "ミックスか演奏の調整を有効にしてください。" }
+    ReferenceMatchStart { en: "Render & Search", ja: "レンダーして探索" }
+    ReferenceMatchPreparing { en: "Preparing the reference excerpt…", ja: "参考音源の抜粋を準備中…" }
+    ReferenceMatchRendering { en: "Rendering candidate", ja: "候補をレンダー中" }
+    ReferenceMatchFailed { en: "Reference matching failed", ja: "参考音源への調整に失敗しました" }
+    ReferenceMatchChanged { en: "The project, reference, or settings changed. Search again before applying.", ja: "プロジェクト・参考音源・設定が変更されました。適用するには探索をやり直してください。" }
+    ReferenceMatchShort { en: "The reference does not contain the requested excerpt. Choose an earlier start or shorter length.", ja: "参考音源に指定した長さの範囲がありません。開始位置を前にするか、比較時間を短くしてください。" }
+    ReferenceMatchDistance { en: "Distance to reference · lower is closer", ja: "参考音源との距離 · 小さいほど近い" }
+    ReferenceMatchBefore { en: "Before", ja: "調整前" }
+    ReferenceMatchBest { en: "Best", ja: "最良候補" }
+    ReferenceMatchSpectrum { en: "Frequency balance", ja: "周波数バランス" }
+    ReferenceMatchDynamics { en: "Dynamics", ja: "ダイナミクス" }
+    ReferenceMatchStereo { en: "Stereo image", ja: "ステレオの広がり" }
+    ReferenceMatchRhythm { en: "Rhythmic texture", ja: "リズムの質感" }
+    ReferenceMatchMetricHint { en: "These distances compare audio features; they do not rate musical quality or reproduce the reference melody.", ja: "距離は音声の特徴を比較する指標です。音楽的な良さの評価や、参考音源の旋律の再現ではありません。" }
+    ReferenceMatchPreviewReference { en: "Play Reference", ja: "参考音源を試聴" }
+    ReferenceMatchPreviewBefore { en: "Play Before", ja: "調整前を試聴" }
+    ReferenceMatchPreviewBest { en: "Play Best", ja: "最良候補を試聴" }
+    ReferenceMatchStop { en: "Stop Preview", ja: "試聴を停止" }
+    ReferenceMatchApply { en: "Apply Best", ja: "最良候補を適用" }
+    ReferenceMatchApplyHint { en: "Apply keeps the selected adjustments in one undo step. Preview does not edit the project.", ja: "適用した調整は1回の元に戻す操作で戻せます。試聴ではプロジェクトを変更しません。" }
+    ReferenceMatchApplied { en: "Reference adjustments applied", ja: "参考音源への調整を適用しました" }
+    ReferenceMatchUnchanged { en: "The original remains the closest candidate.", ja: "元の設定が最も近い候補です。" }
+    ReferenceMatchFileDuration { en: "Source length", ja: "音源の長さ" }
+    SongSearchToggle { en: "Density Search", ja: "音符密度の探索" }
     SongSearchHint { en: "Find settings close to a target note density. Counts all written notes and drum hits across tracks; this does not rate musical quality or rendered vocals.", ja: "目標の音符密度に近い設定を探します。全トラックの音符とドラム打音を数えます。音楽的な良さや、音声合成された歌唱は評価しません。" }
     SongSearchMethod { en: "Method", ja: "探索方法" }
     SongSearchRandom { en: "Random", ja: "ランダム探索" }

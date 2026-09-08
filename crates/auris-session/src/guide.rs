@@ -1088,6 +1088,34 @@ pub mod composition {
     //! ordinary source-preparation and balance pipeline, as one undoable composition command;
     //! playback begins only after successful completion.
     //!
+    //! # Rendered reference matching
+    //!
+    //! [`Session::begin_reference_match`](crate::Session::begin_reference_match) captures the
+    //! current project and a fixed excerpt. Each proposal adjusts bounded mixer gain/pan or
+    //! note-domain expression/gate, renders the complete mix, and evaluates its PCM through
+    //! [`AudioEvaluator`](crate::audio_evaluation::AudioEvaluator). The unchanged baseline is
+    //! measured first; ties keep the earlier candidate. Source audio and SoundFonts remain fixed
+    //! during the pass. Missing render dependencies fail explicitly before they become silence.
+    //!
+    //! Native plugin factories stay on the session thread. A staged
+    //! [`ReferenceMatchJob`](crate::ReferenceMatchJob) moves only their render halves to a worker;
+    //! continuation checks the originating session, revision, document and project folder.
+    //! Cancellation keeps any fully measured partial best. Explicit adoption restores that exact
+    //! retained project in one undo step, without rewriting notes or running another balance pass.
+    //!
+    //! [`ReferenceAudioEvaluator`](crate::audio_evaluation::ReferenceAudioEvaluator) compares fixed
+    //! spectral, envelope, stereo and transient statistics. Its negative distance is an acoustic
+    //! objective, not a semantic quality score. Learned evaluators can retain a model and prompt
+    //! behind the same trait without changing the search or rendering protocol.
+    //!
+    //! Retained renders are auditioned through
+    //! [`prepare_output_preview`](crate::prepare_output_preview) and
+    //! [`Session::play_output_preview`](crate::Session::play_output_preview): worker-side rate
+    //! conversion and uniform level adjustment, then PCM directly at the device output. This
+    //! bypasses the project graph so an already rendered mix is not processed twice. The callback
+    //! retains finished PCM until replacement and returns old buffers for destruction off-thread.
+    //! The desktop workflow and exact parameter bounds are described in `docs/reference-audio.md`.
+    //!
     //! # Two stages
     //!
     //! **The frame is planned first and then frozen.** Harmony, form and a melodic skeleton are

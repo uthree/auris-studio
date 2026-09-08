@@ -1325,6 +1325,8 @@ pub struct AurisApp {
     pub(crate) compose_progress: Option<crate::ui::compose_progress::ComposeProgressState>,
     /// Independent composition-search settings, worker control, and exact retained result.
     pub(crate) composition_search: crate::ui::song_search::CompositionSearchState,
+    /// Reference-audio matching controls, render worker and retained comparison.
+    pub(crate) reference_match: crate::ui::reference_match::ReferenceMatchState,
     /// The library browser currently choosing a song part's source.
     pub(crate) song_library: Option<crate::ui::library::SongLibrary>,
     /// Fonts browsed while composing, without adding assets to the current document.
@@ -1530,6 +1532,8 @@ impl Drop for AurisApp {
         self.music_analysis.cancel();
         self.timbre_map.cancel();
         self.composition_search.dismiss();
+        self.reference_match.cancel();
+        self.session.stop_output_preview();
     }
 }
 
@@ -1577,6 +1581,7 @@ impl AurisApp {
                     .update(cx, |this, cx| {
                         this.session.poll();
                         this.poll_song_search();
+                        this.poll_reference_match();
                         // Here rather than while drawing, and here rather than in `poll`: the
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
@@ -1669,6 +1674,7 @@ impl AurisApp {
             song_sheet: None,
             compose_progress: None,
             composition_search: Default::default(),
+            reference_match: Default::default(),
             song_library: None,
             song_library_fonts: Vec::new(),
             song_advanced: false,
@@ -1768,6 +1774,7 @@ impl AurisApp {
             // The song sheet is a form, and every letter typed into one of its fields has to
             // reach the field rather than the binding that letter would otherwise fire.
             || self.song_sheet.is_some()
+            || self.reference_match.open
     }
 
     /// Whether text is being typed into something in this window.

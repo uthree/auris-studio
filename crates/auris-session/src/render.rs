@@ -126,6 +126,89 @@ pub struct RenderJob {
 }
 
 impl RenderJob {
+    /// Refuse the silent-source and bypass fallbacks that ordinary playback permits.
+    pub(crate) fn validate_complete(&self) -> Result<(), SessionError> {
+        for strip in self
+            .project
+            .tracks
+            .iter()
+            .map(|track| &track.mixer)
+            .chain([&self.project.master])
+        {
+            for slot in &strip.effects {
+                let available = if slot.is_hosted() {
+                    self.placed.contains_key(&slot.id)
+                } else {
+                    self.registry.has_effect(&slot.effect_id)
+                };
+                if !available {
+                    return Err(SessionError::ReferenceMatch(format!(
+                        "effect {} is unavailable",
+                        slot.effect_id
+                    )));
+                }
+            }
+        }
+        for track in &self.project.tracks {
+            if let Some(instrument) = track.kind.as_instrument() {
+                let available = if instrument.is_hosted() {
+                    self.instruments.contains_key(&track.id)
+                } else {
+                    self.registry.has_instrument(&instrument.instrument_id)
+                };
+                if !available {
+                    return Err(SessionError::ReferenceMatch(format!(
+                        "instrument on {} is unavailable",
+                        track.name
+                    )));
+                }
+            }
+            let sources: Vec<_> = match &track.kind {
+                TrackKind::Audio(audio) => audio.clips.iter().map(|clip| clip.source).collect(),
+                TrackKind::Singer(singer) => singer.take.iter().map(|take| take.source).collect(),
+                _ => Vec::new(),
+            };
+            for source in sources {
+                let Some(audio) = self.bank.get(source) else {
+                    return Err(SessionError::ReferenceMatch(format!(
+                        "audio on {} is unavailable",
+                        track.name
+                    )));
+                };
+                if !audio.sample_rate().is_finite()
+                    || audio.sample_rate() <= 0.0
+                    || audio.frame_count() == 0
+                    || audio
+                        .channels()
+                        .iter()
+                        .flatten()
+                        .any(|sample| !sample.is_finite())
+                {
+                    return Err(SessionError::ReferenceMatch(format!(
+                        "audio on {} is empty or invalid",
+                        track.name
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Render a measurement only when every referenced source survives rate conversion.
+    pub(crate) fn render_complete(
+        &mut self,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<AudioBuffer, SessionError> {
+        self.validate_complete()?;
+        self.bank = bank_at_rate(
+            &self.bank,
+            options.sample_rate.unwrap_or(self.project.sample_rate),
+        );
+        self.validate_complete()?;
+        self.render(options, progress)
+    }
+
     pub(crate) fn restrict_to_source(&mut self, project: Project, track: TrackId) {
         self.project = project;
         self.placed.clear();

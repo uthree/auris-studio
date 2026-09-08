@@ -681,6 +681,7 @@ fn build_stream(
 /// The audio-thread half of the engine.
 pub(crate) struct AudioEngine {
     graph: Option<Box<RenderGraph>>,
+    output_preview: Option<OutputPreview>,
     transport: Transport,
     commands: Receiver<EngineCommand>,
     returned_graphs: Sender<Retired>,
@@ -724,6 +725,41 @@ pub(crate) struct AudioEngine {
     max_block: usize,
 }
 
+/// Finished PCM stays owned until a later command retires it off the callback thread.
+struct OutputPreview {
+    buffer: Arc<AudioBuffer>,
+    position: usize,
+    active: bool,
+}
+
+impl OutputPreview {
+    fn fill(&mut self, out: &mut AudioBuffer) {
+        out.clear();
+        let count = out
+            .frame_count()
+            .min(self.buffer.frame_count() - self.position);
+        for channel in 0..out.channel_count().min(2) {
+            let source = if self.buffer.channel_count() == 1 {
+                0
+            } else {
+                channel
+            };
+            for frame in 0..count {
+                let value = if out.channel_count() == 1 && self.buffer.channel_count() == 2 {
+                    (self.buffer.sample(0, self.position + frame)
+                        + self.buffer.sample(1, self.position + frame))
+                        * 0.5
+                } else {
+                    self.buffer.sample(source, self.position + frame)
+                };
+                out.channel_mut(channel)[frame] = if value.is_finite() { value } else { 0.0 };
+            }
+        }
+        self.position += count;
+        self.active = self.position < self.buffer.frame_count();
+    }
+}
+
 impl AudioEngine {
     // Ten arguments, all of them shared state the callback needs; grouping them into a struct
     // would only move the same list one level down.
@@ -745,6 +781,7 @@ impl AudioEngine {
         scratch.reserve_frames(max_block);
         Self {
             graph: None,
+            output_preview: None,
             transport: Transport::new(),
             commands,
             returned_graphs,
@@ -784,16 +821,44 @@ impl AudioEngine {
         while written < frames {
             let count = (frames - written).min(self.max_block);
             self.scratch.set_frame_count(count);
-            match &mut self.graph {
-                Some(graph) => {
-                    render_block(graph, &mut self.transport, &mut self.scratch, false);
+            let previewing = self
+                .output_preview
+                .as_ref()
+                .is_some_and(|preview| preview.active);
+            if previewing {
+                self.output_preview
+                    .as_mut()
+                    .expect("an active preview exists")
+                    .fill(&mut self.scratch);
+            } else {
+                match &mut self.graph {
+                    Some(graph) => {
+                        render_block(graph, &mut self.transport, &mut self.scratch, false);
+                    }
+                    None => self.scratch.clear(),
                 }
-                None => self.scratch.clear(),
             }
             let start = written * self.channels;
             let end = start + count * self.channels;
             interleave(&self.scratch, &mut data[start..end], self.channels);
-            self.publish_meters(count);
+            if previewing {
+                self.meters.clear_tracks_from(0);
+                for channel in 0..2 {
+                    let peak = if channel < self.scratch.channel_count() {
+                        self.scratch
+                            .channel(channel)
+                            .iter()
+                            .map(|value| value.abs())
+                            .fold(0.0, f32::max)
+                    } else {
+                        0.0
+                    };
+                    self.meters
+                        .report_master(channel, peak, count, self.sample_rate);
+                }
+            } else {
+                self.publish_meters(count);
+            }
             written += count;
         }
         // Automation writes effect parameters while rendering, and those parameters may change
@@ -829,6 +894,10 @@ impl AudioEngine {
 
     fn publish_meters(&self, frames: usize) {
         let Some(graph) = &self.graph else {
+            for channel in 0..2 {
+                self.meters
+                    .report_master(channel, 0.0, frames, self.sample_rate);
+            }
             return;
         };
         let metered = graph.track_count().min(self.meters.track_capacity());
@@ -891,6 +960,7 @@ impl AudioEngine {
     fn apply(&mut self, command: EngineCommand) {
         match command {
             EngineCommand::SetGraph(graph) => {
+                self.stop_output_preview();
                 // Meters past the new track count would otherwise sit at the level a deleted
                 // track last reached, with nothing left to report them down.
                 self.meters.clear_tracks_from(graph.track_count());
@@ -901,9 +971,13 @@ impl AudioEngine {
                 // staleness the graph it replaced had reported.
                 self.publish_latency();
             }
-            EngineCommand::Play => self.transport.playing = true,
+            EngineCommand::Play => {
+                self.stop_output_preview();
+                self.transport.playing = true;
+            }
             EngineCommand::CountIn(count) => self.transport.set_count_in(count),
             EngineCommand::Stop => {
+                self.stop_output_preview();
                 self.transport.playing = false;
                 // A count nobody is going to play to is over. Left running, it would hold the
                 // next press of Play at the position this one was stopped at, counting out the
@@ -914,6 +988,7 @@ impl AudioEngine {
                 }
             }
             EngineCommand::Seek { frames } => {
+                self.stop_output_preview();
                 self.transport.seek(frames);
                 // Counted in to a position the transport is no longer at.
                 self.transport.count_in = None;
@@ -1031,17 +1106,45 @@ impl AudioEngine {
                     graph.stop_one_shot(track);
                 }
             }
+            EngineCommand::PlayOutputPreview(buffer) => {
+                if buffer.sample_rate() != self.sample_rate || buffer.frame_count() == 0 {
+                    self.retire(Retired::Buffer(buffer));
+                    return;
+                }
+                self.transport.playing = false;
+                self.transport.count_in = None;
+                if let Some(graph) = &mut self.graph {
+                    graph.panic();
+                }
+                self.meters.reset();
+                let next = OutputPreview {
+                    buffer,
+                    position: 0,
+                    active: true,
+                };
+                if let Some(previous) = self.output_preview.replace(next) {
+                    self.retire(Retired::Buffer(previous.buffer));
+                }
+            }
+            EngineCommand::StopOutputPreview => self.stop_output_preview(),
             EngineCommand::SetMetronome(enabled) => {
                 if let Some(graph) = &mut self.graph {
                     graph.set_metronome(enabled);
                 }
             }
             EngineCommand::Panic => {
+                self.stop_output_preview();
                 if let Some(graph) = &mut self.graph {
                     graph.panic();
                 }
                 self.meters.reset();
             }
+        }
+    }
+
+    fn stop_output_preview(&mut self) {
+        if let Some(preview) = &mut self.output_preview {
+            preview.active = false;
         }
     }
 }
@@ -1052,6 +1155,7 @@ fn command_may_retire(command: &EngineCommand) -> bool {
         EngineCommand::SetGraph(_)
             | EngineCommand::SetSoloResolution(_)
             | EngineCommand::PlayOneShot { .. }
+            | EngineCommand::PlayOutputPreview(_)
     )
 }
 
@@ -1273,6 +1377,120 @@ mod tests {
         engine.fill(&mut data);
         assert!(data.iter().all(|sample| *sample == 0.0));
         assert_eq!(playhead.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn output_preview_bypasses_the_master_and_does_not_advance_the_song() {
+        let (mut engine, commands, _retired, _meters, playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands.send(EngineCommand::SetMasterGain(-60.0)).unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+        let audio = Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 17]], SAMPLE_RATE).unwrap());
+        commands
+            .send(EngineCommand::PlayOutputPreview(audio))
+            .unwrap();
+        let mut data = [1.0f32; 64];
+        engine.fill(&mut data);
+        assert_eq!(&data[..34], &[0.25; 34]);
+        assert!(data[34..].iter().all(|sample| *sample == 0.0));
+        assert_eq!(playhead.load(Ordering::Relaxed), 0);
+        assert!(!engine.transport.playing);
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn preview_completion_and_stop_keep_buffer_destruction_off_the_audio_thread() {
+        let (mut engine, commands, returned, _meters, _playhead) = engine();
+        let audio = Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 16]], SAMPLE_RATE).unwrap());
+        let weak = Arc::downgrade(&audio);
+        commands
+            .send(EngineCommand::PlayOutputPreview(audio))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert!(
+            weak.upgrade().is_some(),
+            "completion retains the finished PCM"
+        );
+        commands.send(EngineCommand::StopOutputPreview).unwrap();
+        engine.fill(&mut data);
+        assert!(
+            weak.upgrade().is_some(),
+            "Stop never frees PCM on the callback"
+        );
+        let next = Arc::new(AudioBuffer::from_planar(vec![vec![0.4; 64]], SAMPLE_RATE).unwrap());
+        assert!(command_may_retire(&EngineCommand::PlayOutputPreview(
+            Arc::clone(&next)
+        )));
+        commands
+            .send(EngineCommand::PlayOutputPreview(next))
+            .unwrap();
+        engine.fill(&mut data);
+        assert_eq!(data, [0.4; 64]);
+        let retired = returned.try_recv().unwrap();
+        assert!(matches!(retired, Retired::Buffer(_)));
+        assert!(weak.upgrade().is_some());
+        drop(retired);
+        assert!(
+            weak.upgrade().is_none(),
+            "the owner thread releases retired PCM"
+        );
+    }
+
+    #[test]
+    fn output_preview_downmixes_stereo_and_meters_decay_without_a_graph() {
+        let audio = Arc::new(
+            AudioBuffer::from_planar(vec![vec![0.0; 16], vec![0.6; 16]], SAMPLE_RATE).unwrap(),
+        );
+        let mut preview = OutputPreview {
+            buffer: audio,
+            position: 0,
+            active: true,
+        };
+        let mut mono = AudioBuffer::from_planar(vec![vec![0.0; 16]], SAMPLE_RATE).unwrap();
+        preview.fill(&mut mono);
+        assert_eq!(mono.channel(0), &[0.3; 16]);
+        let (mut engine, commands, _retired, meters, _playhead) = engine();
+        commands
+            .send(EngineCommand::PlayOutputPreview(Arc::new(mono)))
+            .unwrap();
+        let mut data = [0.0; 32];
+        engine.fill(&mut data);
+        let peak = meters.master_peak();
+        assert!(peak > 0.0);
+        engine.fill(&mut data);
+        assert!(meters.master_peak() < peak);
+    }
+
+    #[test]
+    fn transport_commands_stop_output_preview_and_wrong_rate_is_rejected() {
+        let (mut engine, commands, returned, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let audio =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 1024]], SAMPLE_RATE).unwrap());
+        commands
+            .send(EngineCommand::PlayOutputPreview(audio))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        commands.send(EngineCommand::Stop).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
+        commands.send(EngineCommand::Play).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().any(|sample| *sample != 0.0));
+        let invalid =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.9; 64]], SAMPLE_RATE * 2.0).unwrap());
+        commands
+            .send(EngineCommand::PlayOutputPreview(invalid))
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(
+            engine.transport.playing,
+            "a rejected buffer leaves current transport alone"
+        );
+        assert!(matches!(returned.try_recv(), Ok(Retired::Buffer(_))));
     }
 
     #[test]

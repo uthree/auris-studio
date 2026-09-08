@@ -42,6 +42,7 @@
 
 #![warn(missing_docs)]
 
+pub mod audio_evaluation;
 pub mod audio_review;
 /// Headless composition search and its request/result types.
 ///
@@ -92,6 +93,7 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
+pub use session::prepare_output_preview;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeBalanceJob,
     ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep,
@@ -116,6 +118,10 @@ pub use session::{
     MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
 pub use session::{MusicalClipAnalysis, RenderedSpectrogramJob, SpectrogramJob};
+pub use session::{
+    ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
+    ReferenceMatchSettings, ReferenceMatchStep,
+};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{

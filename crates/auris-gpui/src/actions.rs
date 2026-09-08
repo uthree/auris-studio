@@ -25,6 +25,8 @@ actions!(
         ComposeFromLyrics,
         /// Render every track alone, measure it, and set the mix from what came out.
         BalanceLevels,
+        /// Adjust mix and performance toward a local reference recording.
+        MatchReference,
         /// Save the current project.
         SaveProject,
         /// Save the current project under a new name.
@@ -467,6 +469,7 @@ bindable! {
         // before it answers, which is seconds rather than milliseconds. A command that costs that
         // much is one to reach for on purpose, not one to land on with a slip of the hand.
         "mix.balance",          GroupCompose,   CmdBalanceLevels,      ""            => BalanceLevels;
+        "mix.reference",        GroupCompose,   CmdMatchReference,     ""            => MatchReference;
 
         "edit.undo",            GroupEdit,      CmdUndo,               "secondary-z" => Undo;
         "edit.redo",            GroupEdit,      CmdRedo,               "secondary-shift-z" => Redo;

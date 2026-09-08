@@ -27,6 +27,12 @@ the table reads the *pattern* the composer chose rather than where the feel late
 The functions behind the table are `auris_compose::metrics`, public and unit-tested, so a
 future command or test can read the same numbers the example prints.
 
+The desktop [reference-audio search](reference-audio.md) renders bounded mix and performance
+adjustments to the current project and evaluates their PCM against a chosen reference excerpt.
+Its fixed acoustic features compare tonal balance, dynamics, stereo and transient distributions;
+they do not measure semantic mood or musical quality. The session's replaceable `AudioEvaluator`
+boundary also supports future learned objectives with a fixed model and prompt.
+
 The optional [composition search](composition-search.md) uses a separate, explicit symbolic
 target: written note events per bar. It maximizes negative absolute distance from that target,
 with parameter bounds and a fixed composition seed. Moving closer to a requested density is
