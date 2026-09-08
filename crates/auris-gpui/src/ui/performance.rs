@@ -50,7 +50,7 @@ pub enum PerformDial {
     StrumUpVelocity,
     /// Extra emphasis on the lower pitches of downstrokes.
     StrumLowAccent,
-    /// Strength of short release retriggers on notes held for at least an eighth note.
+    /// Strength of short retriggers replacing the tail of notes held for at least an eighth note.
     Mute,
     /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
     Brush,

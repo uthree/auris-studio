@@ -211,18 +211,21 @@ fn mute(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
         return;
     }
     let mut added = Vec::new();
-    for note in notes.iter() {
+    for index in 0..notes.len() {
+        let note = &notes[index];
         // Read the held length at this stage, after gate or other earlier articulation.
-        if note.length < Ticks(Ticks::QUARTER.raw() / 2) {
+        let end = note.end().min(context.length);
+        let held = end - note.start;
+        if held < Ticks(Ticks::QUARTER.raw() / 2) {
             continue;
         }
-        let start = note.end();
-        if start < Ticks::ZERO || start >= context.length {
-            continue;
-        }
-        let length = milliseconds(12.0, context.bpm).min(context.length - start);
+        let length = milliseconds(12.0, context.bpm).min(held - Ticks(1));
+        let start = end - length;
         if notes
             .iter()
+            .enumerate()
+            .filter(|(other, _)| *other != index)
+            .map(|(_, note)| note)
             .chain(&added)
             .any(|other: &Note| other.pitch == note.pitch && overlaps(other, start, start + length))
         {
@@ -235,6 +238,8 @@ fn mute(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
             length,
             0.35 * amount.clamp(0.0, 1.0),
         ));
+        // Replace the performed tail, leaving both the source and the phrase's end intact.
+        notes[index].length = start - notes[index].start;
     }
     notes.extend(added);
 }
@@ -359,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn mute_retriggers_releases_quietly_without_releasing_a_following_note() {
+    fn mute_replaces_the_tail_without_overlapping_the_source_or_following_attack() {
         let mut original = n(60, 0, 480);
         original.lyric = "word".into();
         let clip = clip(
@@ -367,13 +372,28 @@ mod tests {
             vec![NoteTransform::Mute { amount: 1.0 }],
         );
         let heard: Vec<_> = clip.sounding_notes(120.0).collect();
+        assert_eq!(heard.len(), 6);
         let mute = &heard[3];
         assert_eq!(
             (mute.pitch, mute.start, mute.length),
-            (60, Ticks(480), Ticks(23))
+            (60, Ticks(457), Ticks(23))
         );
         assert!((mute.velocity - 0.28).abs() < 1e-6);
         assert!(mute.lyric.is_empty() && mute.phonemes.is_empty());
+        for ((source, tail), original) in heard[..3].iter().zip(&heard[3..]).zip(&clip.notes) {
+            assert_eq!(source.end(), tail.start);
+            assert_eq!(tail.end(), original.end());
+        }
+        assert_eq!(
+            heard[3].end(),
+            heard[2].start,
+            "different pitches meet without overlap"
+        );
+        assert_eq!(
+            heard[4].end(),
+            heard[2].start,
+            "repeated pitches meet without overlap"
+        );
         assert_eq!(
             heard
                 .iter()
@@ -382,6 +402,39 @@ mod tests {
             1
         );
         assert_eq!(clip.notes[0], original);
+    }
+
+    #[test]
+    fn mute_stays_inside_a_clipped_note_and_keeps_the_loop_boundary() {
+        let mut clip = clip(
+            vec![n(60, 0, 960)],
+            vec![NoteTransform::Mute { amount: 1.0 }],
+        );
+        clip.length = Ticks(600);
+        clip.loop_end = Ticks(1200);
+        let heard: Vec<_> = clip.sounding_notes(120.0).collect();
+        assert_eq!(
+            heard
+                .iter()
+                .map(|n| (n.start.raw(), n.end().raw()))
+                .collect::<Vec<_>>(),
+            vec![(0, 577), (577, 600), (600, 1177), (1177, 1200)]
+        );
+        assert_eq!(clip.notes, vec![n(60, 0, 960)]);
+        clip.length = Ticks(479);
+        clip.loop_end = Ticks(479);
+        assert_eq!(
+            clip.sounding_notes(120.0).count(),
+            1,
+            "a clipped short note gets no mute"
+        );
+    }
+
+    #[test]
+    fn a_conflicting_same_pitch_tail_does_not_shorten_the_original() {
+        let source = vec![n(60, 0, 960), n(60, 930, 120)];
+        let clip = clip(source.clone(), vec![NoteTransform::Mute { amount: 1.0 }]);
+        assert_eq!(clip.sounding_notes(120.0).collect::<Vec<_>>(), source);
     }
 
     #[test]
@@ -422,14 +475,19 @@ mod tests {
         let clip = clip(original.clone(), vec![NoteTransform::Mute { amount: 1.0 }]);
         for (bpm, duration) in [(60.0, 12), (120.0, 23), (240.0, 46)] {
             let heard: Vec<_> = clip.sounding_notes(bpm).collect();
-            assert_eq!(&heard[..3], original);
+            assert_eq!(heard[0], original[0]);
+            assert_eq!(heard[1].end(), Ticks(480 - duration));
+            assert_eq!(heard[2].end(), Ticks(481 - duration));
             assert_eq!(heard.len(), 5);
             assert_eq!(
                 heard[3..]
                     .iter()
                     .map(|note| (note.pitch, note.start.raw(), note.length.raw()))
                     .collect::<Vec<_>>(),
-                vec![(64, 480, duration), (67, 481, duration)]
+                vec![
+                    (64, 480 - duration, duration),
+                    (67, 481 - duration, duration)
+                ]
             );
         }
         assert_eq!(clip.notes, original);
@@ -446,7 +504,8 @@ mod tests {
         );
         let heard: Vec<_> = clip.sounding_notes(120.0).collect();
         assert_eq!(heard.len(), 3);
-        assert_eq!((heard[2].pitch, heard[2].start), (64, Ticks(480)));
+        assert_eq!((heard[2].pitch, heard[2].start), (64, Ticks(457)));
+        assert_eq!(heard[1].end(), heard[2].start);
         assert_eq!(clip.notes[0].length, Ticks(480));
     }
 
@@ -553,7 +612,9 @@ mod tests {
             }],
         );
         let heard: Vec<_> = clip.sounding_notes(120.0).collect();
-        assert_eq!(&heard[..2], &[first, second]);
+        assert_eq!(heard[0].end(), Ticks(457));
+        assert_eq!(heard[1], second);
+        assert_eq!(clip.notes[0], first);
         assert_eq!(heard[2].drum_voice, "first");
     }
 

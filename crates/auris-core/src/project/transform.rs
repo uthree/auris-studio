@@ -77,8 +77,9 @@ pub enum NoteTransform {
         /// Pitch order in which the strings are struck.
         direction: StrokeDirection,
     },
-    /// Adds a quiet, 12 ms retrigger where that pitch is free after a note held for at least
-    /// an eighth note. The length is read after the preceding stages in the stack.
+    /// Replaces the last 12 ms of a note held for at least an eighth note with a quiet
+    /// retrigger, shortening the performed source to avoid overlap. The held length is
+    /// read after preceding stages and clipped to the content window.
     Mute {
         /// Strength from 0 (off) to 1 (35% of the preceding note's velocity).
         amount: f32,

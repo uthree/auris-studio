@@ -1752,8 +1752,9 @@ pub mod harmony {
     //!
     //! Articulation is phrase-aware: [`performed_notes`](auris_core::performed_notes) sees
     //! simultaneous chords and the spaces between them. Stroke spreads a chord in pitch order
-    //! (ascending, descending or alternating), mute adds a short release retrigger to notes held
-    //! for at least an eighth note, brush recalls the last chord on silent sixteenth-note grid
+    //! (ascending, descending or alternating), mute replaces the tail with a short retrigger in notes held
+    //! for at least an eighth note, shortening the performed source and preserving its release.
+    //! Brush recalls the last chord on silent sixteenth-note grid
     //! positions, and slide connects unambiguous single-note
     //! attacks with an intermediate pitch. Inserted notes carry no copied lyrics. These are
     //! note events, so their timbre still comes from the selected instrument.

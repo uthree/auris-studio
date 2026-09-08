@@ -58,7 +58,7 @@ deleting that clip does not change the result. Select it again to refresh the sn
 | Gate | Shortens held notes, opening space for subsequent articulations. |
 | Brush strength | Repeats the most recent simultaneous chord on silent sixteenth-note grid positions, for 20 ms, at up to 30% of its velocity. The grid starts at each bar line in every meter. A brush is skipped if any written note occupies its interval. |
 | Slide strength | Inserts one intermediate MIDI pitch just before the next attack, at up to 65% of the previous note's velocity. The note lasts at most 60 ms or a quarter of the previous note's duration. Legato gives up that much of the previous note's tail; a short rest can hold it instead. |
-| Mute strength | Retriggers the same pitch at its release for 12 ms, at up to 35% of its velocity, only when the held note is at least an eighth note long after earlier stages such as gate. It skips releases where that pitch is still occupied or the clip has ended. |
+| Mute strength | Replaces the final 12 ms inside a note with a same-pitch retrigger at up to 35% of its velocity. The performed source ends where the retrigger starts, and the retrigger ends at the original release. Only notes held for at least an eighth note after earlier stages and clip clipping qualify; conflicting same-pitch tails are skipped. The stored score stays intact. |
 | Stroke spread | Spreads simultaneous notes from first to last across 0–100 ms. Choose low-to-high, high-to-low, or alternating directions. Release times are preserved, and a stroke is bounded by the next attack and its shortest note. |
 | Humanize | Adds related timing and velocity variation: a smooth four-beat gesture, a one-beat gesture, and a smaller individual difference. |
 
