@@ -673,6 +673,19 @@ strings! {
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }
     PerformStrumSettings { en: "Strum settings", ja: "ストロークの詳細" }
+    PerformExpressionSettings { en: "Expression & groove", ja: "表情・グルーヴの詳細" }
+    PerformTiming { en: "Timing variation", ja: "タイミングの揺らぎ" }
+    PerformVelocity { en: "Velocity variation", ja: "ベロシティの揺らぎ" }
+    PerformSwell { en: "Phrase swell", ja: "フレーズの抑揚" }
+    PerformAccent { en: "Beat (+) / offbeat (−)", ja: "表拍（＋）／裏拍（−）" }
+    PerformShared { en: "Shared motion", ja: "合奏の連動" }
+    PerformDelay { en: "Push (−) / lay back (+)", ja: "前ノリ（−）／後ノリ（＋）" }
+    PerformEnsembleGroup { en: "Ensemble group", ja: "合奏グループ" }
+    PerformGrooveReference { en: "Groove reference", ja: "グルーヴ参照元" }
+    PerformGrooveChoose { en: "Choose a MIDI clip", ja: "MIDIクリップを選択" }
+    PerformGrooveTiming { en: "Groove timing", ja: "グルーヴのタイミング" }
+    PerformGrooveVelocity { en: "Groove dynamics", ja: "グルーヴの強弱" }
+    PerformGrooveEmpty { en: "The reference clip has no playable notes.", ja: "参照元クリップに再生可能な音符がありません。" }
     PerformStrumUpVelocity { en: "Upstroke velocity", ja: "アップの強さ" }
     PerformStrumLowAccent { en: "Downstroke bass accent", ja: "ダウンの低音アクセント" }
     PerformStrumClock { en: "Alternation clock", ja: "上下運動の基準" }

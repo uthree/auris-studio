@@ -215,7 +215,7 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
-    pub use auris_core::{Strum, StrumClock};
+    pub use auris_core::{Expression, GroovePoint, GrooveTemplate, Strum, StrumClock};
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those

@@ -17,6 +17,7 @@ pub mod drum_assignments;
 pub mod drum_editor;
 pub mod drums;
 pub mod envelope;
+pub(crate) mod expression;
 pub mod icons;
 pub mod inspector;
 pub mod library;

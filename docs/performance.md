@@ -31,6 +31,27 @@ velocity scale. Downstrokes can emphasize lower pitches. This uses pitch order, 
 guitar fingering model. Skipped pitches remain in Source; freezing explicitly removes
 those attacks from the visible phrase while preserving hidden notes outside the clip.
 
+**Expression & groove** separates timing wander from velocity wander without changing the
+take's seed. The main Humanize control scales both while preserving their current ratio.
+Phrase swell adds a crescendo and decrescendo between the first and last attacks; a rest
+longer than a quarter note starts a new phrase. Beat accent is signed: positive emphasizes
+quarter-note beats, negative emphasizes eighth-note offbeats. Push / lay back moves the
+performance by up to 50 ms in either direction, bounded by the clip's start.
+
+**Shared motion** blends private variation with a timeline-aligned gesture. Clips using
+the same ensemble group share that gesture across tracks, pitches and loop boundaries;
+their independent timing and velocity strengths still apply. This common pulse is measured
+in beats at the 120 BPM humanisation scale so clips with different start tempos agree.
+The private component retains its millisecond scale.
+
+**Groove reference** captures another MIDI clip's first performed pass on a sixteenth grid.
+It copies timing offsets and relative dynamics, not pitches, durations or note count.
+Chord attacks are averaged at each slot; empty reference slots leave the target unchanged.
+The pattern repeats over the reference clip's length, rounded up to the grid. Timing and
+dynamics have separate strengths. A new groove joins before other stages so it cannot
+collapse a later strum. The saved template is independent of its reference: editing or
+deleting that clip does not change the result. Select it again to refresh the snapshot.
+
 | Control | What it does |
 | --- | --- |
 | Swing | Delays offbeats on an eighth- or sixteenth-note grid. |
@@ -66,5 +87,5 @@ nominal velocity scale is 6% of the written velocity.
 the score and clears all performance stages. It is undoable. A frozen loop repeats that take.
 Generated-clip recipe freezing is a separate control.
 
-Saved projects use format version 24 for configurable ghost notes and strumming. Current builds read
+Saved projects use format version 25 for expression and groove templates. Current builds read
 older clips with their existing defaults; older builds must reject this newer format.

@@ -75,6 +75,9 @@ pub fn performed_note_slots(
             continue;
         }
         match transform {
+            NoteTransform::Expression { settings } => {
+                super::expression::express(&mut notes, settings, context)
+            }
             NoteTransform::Strum { settings } => {
                 suppressed.extend(super::strum::strum(&mut notes, settings, context))
             }

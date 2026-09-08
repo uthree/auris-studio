@@ -1766,6 +1766,15 @@ pub mod harmony {
     //! and lower-pitch downstroke accents. Skipped strings retain optional source slots
     //! through scoped stages; playback flattens them and freezing uses their positions to
     //! preserve hidden text and source mapping. Zero velocity still means the softest note.
+    //! [`Expression`](auris_core::Expression) separates timing and velocity wander, adds a
+    //! phrase arch and signed beat accents, and blends private motion with a group-addressed
+    //! absolute-timeline gesture. The shared gesture uses the 120 BPM beat scale so clips
+    //! starting under different tempo segments agree; private timing retains milliseconds.
+    //! [`capture_clip_groove`](crate::Session::capture_clip_groove) stores a
+    //! [`GrooveTemplate`](auris_core::GrooveTemplate) from the reference's first performed
+    //! pass. It averages offsets and relative dynamics on a sixteenth-note grid and inserts
+    //! the stage before articulation. It neither copies pitches nor retains a live dependency
+    //! on the reference. Recapture is explicit and undoable; empty references change nothing.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,

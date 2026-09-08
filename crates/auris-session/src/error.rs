@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// A groove reference has no playable MIDI notes.
+    #[error("the groove reference has no playable notes")]
+    EmptyGroove,
     /// A track cannot be converted, or its document changed while rendering.
     #[error("track conversion: {0}")]
     TrackConversion(String),

@@ -21,6 +21,10 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Independent note expression, without rewriting the score.
+    SetExpressionSettings { clip: ClipId, settings: Expression },
+    /// Snapshot a reference MIDI clip's groove.
+    CaptureGroove { target: ClipId, source: ClipId },
     /// Updates right-hand clock, pitch coverage and stroke dynamics.
     SetStrumSettings { clip: ClipId, settings: Strum },
     /// Updates one clip's non-destructive ghost-note settings.
@@ -817,6 +821,20 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::SetExpressionSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::expression::with_expression_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                    let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
+                }
+            }
+            MenuCommand::CaptureGroove { target, source } => {
+                if let Err(error) = self.session.capture_clip_groove(target, source) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
             MenuCommand::SetStrumSettings { clip, settings } => {
                 if let Ok(stack) = self.session.clip_transforms(clip) {
                     let next = crate::ui::strum::with_strum_settings(stack, settings);

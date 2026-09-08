@@ -20,6 +20,7 @@ use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Point, div, prelude:
 
 use crate::app::{AurisApp, Drag};
 use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
+use crate::ui::expression::{expression_settings, with_expression_settings};
 use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
 use crate::ui::strum::{strum_settings, with_strum_settings};
 use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
@@ -27,6 +28,22 @@ use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider}
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PerformDial {
+    /// Independent timing wander.
+    ExpressionTiming,
+    /// Independent velocity wander.
+    ExpressionVelocity,
+    /// Crescendo and decrescendo within a phrase.
+    PhraseSwell,
+    /// Signed beat versus offbeat emphasis.
+    BeatAccent,
+    /// Blend with other clips in the ensemble group.
+    EnsembleShared,
+    /// Deliberate timing push or delay.
+    PerformanceDelay,
+    /// Reference groove timing strength.
+    GrooveTiming,
+    /// Reference groove dynamic strength.
+    GrooveVelocity,
     /// Time between the first and last notes in a chord stroke.
     Stroke,
     /// Velocity scale of upstrokes.
@@ -77,6 +94,14 @@ impl PerformDial {
     /// the phrase was written or played.
     pub fn label(self) -> Key {
         match self {
+            PerformDial::ExpressionTiming => Key::PerformTiming,
+            PerformDial::ExpressionVelocity => Key::PerformVelocity,
+            PerformDial::PhraseSwell => Key::PerformSwell,
+            PerformDial::BeatAccent => Key::PerformAccent,
+            PerformDial::EnsembleShared => Key::PerformShared,
+            PerformDial::PerformanceDelay => Key::PerformDelay,
+            PerformDial::GrooveTiming => Key::PerformGrooveTiming,
+            PerformDial::GrooveVelocity => Key::PerformGrooveVelocity,
             PerformDial::StrumUpVelocity => Key::PerformStrumUpVelocity,
             PerformDial::StrumLowAccent => Key::PerformStrumLowAccent,
             PerformDial::GhostDensity => Key::PerformGhostDensity,
@@ -106,7 +131,8 @@ pub(super) fn rank(transform: &NoteTransform) -> usize {
         // The lean sits between: deterministic feel before random feel, and after the swing for
         // the same reason the humanise is — a leaned note is off the grid the swing reads.
         NoteTransform::Lean { .. } => 7,
-        NoteTransform::Humanize { .. } => 8,
+        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
+        NoteTransform::Groove { .. } => 0,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
         NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 3,
@@ -121,6 +147,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
     matches!(
         (transform, dial),
         (NoteTransform::Humanize { .. }, PerformDial::Humanize)
+            | (NoteTransform::Expression { .. }, PerformDial::Humanize)
             | (NoteTransform::Stroke { .. }, PerformDial::Stroke)
             | (NoteTransform::Strum { .. }, PerformDial::Stroke)
             | (NoteTransform::Mute { .. }, PerformDial::Mute)
@@ -139,6 +166,32 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::ExpressionTiming => expression_settings(stack, 0).timing.clamp(0.0, 1.0),
+        PerformDial::ExpressionVelocity => expression_settings(stack, 0).velocity.clamp(0.0, 1.0),
+        PerformDial::PhraseSwell => expression_settings(stack, 0).swell.clamp(0.0, 1.0),
+        PerformDial::BeatAccent => {
+            (expression_settings(stack, 0).accent.clamp(-1.0, 1.0) + 1.0) / 2.0
+        }
+        PerformDial::EnsembleShared => expression_settings(stack, 0).shared.clamp(0.0, 1.0),
+        PerformDial::PerformanceDelay => {
+            (expression_settings(stack, 0).delay_ms.clamp(-50.0, 50.0) + 50.0) / 100.0
+        }
+        PerformDial::GrooveTiming | PerformDial::GrooveVelocity => stack
+            .iter()
+            .find_map(|t| match t {
+                NoteTransform::Groove {
+                    timing, velocity, ..
+                } => Some(
+                    if dial == PerformDial::GrooveTiming {
+                        *timing
+                    } else {
+                        *velocity
+                    }
+                    .clamp(0.0, 1.0),
+                ),
+                _ => None,
+            })
+            .unwrap_or(0.0),
         PerformDial::StrumUpVelocity => strum_settings(stack).up_velocity.clamp(0.0, 1.0),
         PerformDial::StrumLowAccent => strum_settings(stack).low_accent.clamp(0.0, 1.0),
         PerformDial::GhostDensity => ghost_settings(stack, 0).density.clamp(0.0, 1.0),
@@ -163,6 +216,9 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
             .iter()
             .find_map(|transform| match transform {
                 NoteTransform::Humanize { amount, .. } => Some(amount.clamp(0.0, 1.0)),
+                NoteTransform::Expression { settings } => {
+                    Some(settings.timing.max(settings.velocity).clamp(0.0, 1.0))
+                }
                 _ => None,
             })
             .unwrap_or(0.0),
@@ -219,6 +275,60 @@ pub fn with_dial(
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
     if matches!(
         dial,
+        PerformDial::GrooveTiming | PerformDial::GrooveVelocity
+    ) {
+        let mut out = stack.to_vec();
+        if let Some(NoteTransform::Groove {
+            timing, velocity, ..
+        }) = out
+            .iter_mut()
+            .find(|t| matches!(t, NoteTransform::Groove { .. }))
+        {
+            if dial == PerformDial::GrooveTiming {
+                *timing = fraction;
+            } else {
+                *velocity = fraction;
+            }
+        }
+        return out;
+    }
+    if matches!(
+        dial,
+        PerformDial::ExpressionTiming
+            | PerformDial::ExpressionVelocity
+            | PerformDial::PhraseSwell
+            | PerformDial::BeatAccent
+            | PerformDial::EnsembleShared
+            | PerformDial::PerformanceDelay
+    ) || (dial == PerformDial::Humanize
+        && stack
+            .iter()
+            .any(|t| matches!(t, NoteTransform::Expression { .. })))
+    {
+        let mut settings = expression_settings(stack, seed);
+        match dial {
+            PerformDial::ExpressionTiming => settings.timing = fraction,
+            PerformDial::ExpressionVelocity => settings.velocity = fraction,
+            PerformDial::PhraseSwell => settings.swell = fraction,
+            PerformDial::BeatAccent => settings.accent = fraction * 2.0 - 1.0,
+            PerformDial::EnsembleShared => settings.shared = fraction,
+            PerformDial::PerformanceDelay => settings.delay_ms = fraction * 100.0 - 50.0,
+            PerformDial::Humanize => {
+                let peak = settings.timing.max(settings.velocity);
+                if peak > 0.0 {
+                    settings.timing *= fraction / peak;
+                    settings.velocity *= fraction / peak;
+                } else {
+                    settings.timing = fraction;
+                    settings.velocity = fraction;
+                }
+            }
+            _ => unreachable!(),
+        }
+        return with_expression_settings(stack, settings);
+    }
+    if matches!(
+        dial,
         PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent
     ) {
         let mut settings = strum_settings(stack);
@@ -248,6 +358,14 @@ pub fn with_dial(
         return with_ghost_settings(stack, settings);
     }
     let replacement = match dial {
+        PerformDial::ExpressionTiming
+        | PerformDial::ExpressionVelocity
+        | PerformDial::PhraseSwell
+        | PerformDial::BeatAccent
+        | PerformDial::EnsembleShared
+        | PerformDial::PerformanceDelay
+        | PerformDial::GrooveTiming
+        | PerformDial::GrooveVelocity => unreachable!(),
         PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
             unreachable!()
         }
@@ -342,6 +460,16 @@ fn direction_label(direction: StrokeDirection) -> Key {
 /// What a dial's value button reads, with the swing's straight end in words.
 pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> String {
     match dial {
+        PerformDial::BeatAccent => format!("{:+.0}%", expression_settings(stack, 0).accent * 100.0),
+        PerformDial::PerformanceDelay => {
+            format!("{:+.0} ms", expression_settings(stack, 0).delay_ms)
+        }
+        PerformDial::ExpressionTiming
+        | PerformDial::ExpressionVelocity
+        | PerformDial::PhraseSwell
+        | PerformDial::EnsembleShared
+        | PerformDial::GrooveTiming
+        | PerformDial::GrooveVelocity => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
         PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
             format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
         }
@@ -365,6 +493,14 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
 /// A stable element key per dial, so gpui tells the sliders apart.
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
+        PerformDial::ExpressionTiming => 12,
+        PerformDial::ExpressionVelocity => 13,
+        PerformDial::PhraseSwell => 14,
+        PerformDial::BeatAccent => 15,
+        PerformDial::EnsembleShared => 16,
+        PerformDial::PerformanceDelay => 17,
+        PerformDial::GrooveTiming => 18,
+        PerformDial::GrooveVelocity => 19,
         PerformDial::StrumUpVelocity => 10,
         PerformDial::StrumLowAccent => 11,
         PerformDial::GhostDensity => 7,
@@ -395,7 +531,14 @@ impl AurisApp {
             dial_text(stack, dial, self.t(Key::PartStraight)),
             fraction,
             self.theme.accent,
-            SliderFill::FromStart,
+            if matches!(
+                dial,
+                PerformDial::BeatAccent | PerformDial::PerformanceDelay
+            ) {
+                SliderFill::FromCentre
+            } else {
+                SliderFill::FromStart
+            },
             &self.theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
                 this.begin_drag(Drag::PerformDial {
@@ -665,6 +808,7 @@ impl AurisApp {
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.ghost_detail_rows(clip, &stack, cx));
         rows.extend(self.strum_detail_rows(clip, &stack, cx));
+        rows.extend(self.expression_detail_rows(clip, &stack, cx));
         rows
     }
 

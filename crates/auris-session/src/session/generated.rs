@@ -463,6 +463,11 @@ fn retake_performance(
             auris_core::NoteTransform::Humanize { seed, .. } if *seed == previous.seed => {
                 *seed = next.seed
             }
+            auris_core::NoteTransform::Expression { settings }
+                if settings.seed == previous.seed =>
+            {
+                settings.seed = next.seed;
+            }
             auris_core::NoteTransform::ForDrumVoice { voice, transforms } => {
                 let old = previous
                     .drum_voices
@@ -1345,6 +1350,45 @@ mod tests {
         // And one undo step takes the take back, not one note.
         assert_eq!(session.undo(), Some(Edit::GenerateClip));
         assert_eq!(session.project().midi_clip(clip).unwrap().1.notes, first);
+    }
+
+    #[test]
+    fn expression_retake_updates_only_the_inherited_private_seed() {
+        let old = ClipRecipe::new(ClipPreset::Lead, 5);
+        let new = ClipRecipe::new(ClipPreset::Lead, 6);
+        let settings = auris_core::Expression {
+            timing: 0.3,
+            velocity: 0.8,
+            shared: 0.5,
+            group: 3,
+            seed: 5,
+            ..auris_core::Expression::default()
+        };
+        let mut stages = vec![
+            NoteTransform::Expression {
+                settings: settings.clone(),
+            },
+            NoteTransform::Expression {
+                settings: auris_core::Expression {
+                    seed: 99,
+                    ..settings.clone()
+                },
+            },
+        ];
+        retake_performance(&mut stages, &old, &new);
+        assert_eq!(
+            stages[0],
+            NoteTransform::Expression {
+                settings: auris_core::Expression {
+                    seed: 6,
+                    ..settings
+                }
+            }
+        );
+        let NoteTransform::Expression { settings: custom } = &stages[1] else {
+            unreachable!()
+        };
+        assert_eq!(custom.seed, 99);
     }
 
     #[test]

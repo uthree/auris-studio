@@ -50,12 +50,13 @@ pub use plugin::{
 pub use project::{
     AudioClip, AudioSource, AudioSourceBank, AudioTrack, AuxSend, ClipId, ClipPreset, ClipRecipe,
     Color, ConsonantLevels, ConsonantWidths, DrumMap, DrumRole, DrumVoiceRecipe, EffectSlot,
-    EffectSlotId, FadeCurve, Fall, GhostNotes, GhostPattern, InstrumentTrack, MidiClip, MixerStrip,
-    Note, NoteTransform, Output, PerformanceContext, PresetRef, Project, Scoop, SendId,
-    SingerPitch, SingerTake, SingerTrack, SingerVoice, SoundFontId, SoundFontRef, SourceId,
-    StrokeDirection, Strum, StrumClock, Subdivision, Track, TrackId, TrackKind, Vibrato,
-    default_frame_hop, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
-    performed, performed_note_slots, performed_notes, sounding_length,
+    EffectSlotId, Expression, FadeCurve, Fall, GhostNotes, GhostPattern, GroovePoint,
+    GrooveTemplate, InstrumentTrack, MidiClip, MixerStrip, Note, NoteTransform, Output,
+    PerformanceContext, PresetRef, Project, Scoop, SendId, SingerPitch, SingerTake, SingerTrack,
+    SingerVoice, SoundFontId, SoundFontRef, SourceId, StrokeDirection, Strum, StrumClock,
+    Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop, default_loop_end,
+    loop_passes, notes_digest, notes_trimmed_from_front, performed, performed_note_slots,
+    performed_notes, sounding_length,
 };
 pub use registry::{PluginPack, PluginRegistry};
 pub use structure::{SectionMap, SectionPoint, SectionSpan};

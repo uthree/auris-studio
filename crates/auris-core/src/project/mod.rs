@@ -36,7 +36,11 @@ mod clip;
 mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
+mod expression;
 mod ghost;
+mod groove;
+pub use expression::Expression;
+pub use groove::{GroovePoint, GrooveTemplate};
 mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
@@ -273,8 +277,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 24 adds metrical strumming and partial upstrokes to the transform stack.
-    pub const FORMAT_VERSION: u32 = 24;
+    /// Version 25 adds independent expression and stored MIDI groove templates.
+    pub const FORMAT_VERSION: u32 = 25;
 
     /// An empty project.
     ///

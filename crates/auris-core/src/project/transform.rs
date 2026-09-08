@@ -46,6 +46,20 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Independent wander, phrase dynamics and ensemble motion.
+    Expression {
+        /// The performance settings; the score stays unchanged.
+        settings: super::Expression,
+    },
+    /// Timing and relative dynamics captured from a reference MIDI performance.
+    Groove {
+        /// Portable snapshot, independent of later edits to its reference.
+        template: super::GrooveTemplate,
+        /// Blend toward the reference timing, in 0..=1.
+        timing: f32,
+        /// Blend toward the reference relative velocity, in 0..=1.
+        velocity: f32,
+    },
     /// Metrical strumming, including air strokes, partial upstrokes and accents.
     Strum {
         /// Right-hand performance settings.
@@ -157,11 +171,13 @@ pub enum StrokeDirection {
 /// them.
 ///
 /// An empty stack is the identity, bit for bit. This single-note helper applies only local
-/// transforms; stroke, mute, brush and slide require [`super::performed_notes`] instead.
+/// transforms; expression, strum, stroke, ghost, mute, brush and slide require
+/// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
         note = match transform {
             NoteTransform::Stroke { .. }
+            | NoteTransform::Expression { .. }
             | NoteTransform::Strum { .. }
             | NoteTransform::Ghost { .. }
             | NoteTransform::Mute { .. }
@@ -175,6 +191,14 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
                 }
             }
             NoteTransform::Humanize { amount, seed } => humanized(note, *amount, *seed, pass, bpm),
+            NoteTransform::Groove {
+                template,
+                timing,
+                velocity,
+            } => {
+                template.apply(&mut note, *timing, *velocity);
+                note
+            }
             NoteTransform::Lean { ticks } => leaned(note, *ticks),
             NoteTransform::Swing {
                 percent,
@@ -193,9 +217,21 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
 /// does not re-time the whole clip — the composer's own rule, kept for the same reason. The
 /// velocity draw follows the timing draw out of the same stream whether either is used, which
 /// is the roll-anyway rule: turning the dial to zero and back must land on the same take.
-fn humanized(mut note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Note {
-    let amount = amount.clamp(0.0, 1.0);
-    if amount <= 0.0 {
+fn humanized(note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Note {
+    humanized_axes(note, amount, amount, seed, pass, bpm)
+}
+
+pub(super) fn humanized_axes(
+    mut note: Note,
+    timing_amount: f32,
+    velocity_amount: f32,
+    seed: u64,
+    pass: u64,
+    bpm: f64,
+) -> Note {
+    let timing_amount = timing_amount.clamp(0.0, 1.0);
+    let velocity_amount = velocity_amount.clamp(0.0, 1.0);
+    if timing_amount <= 0.0 && velocity_amount <= 0.0 {
         return note;
     }
     let mut rng = Rng::stream(
@@ -212,9 +248,9 @@ fn humanized(mut note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Not
     let position = note.start.raw().max(0) as f64 / TICKS_PER_QUARTER as f64;
     let timing = layered_wander(seed, pass, position, "timing", rng.jitter(1.0));
     let velocity = layered_wander(seed, pass, position, "velocity", rng.jitter(1.0));
-    let wander = timing * WANDER_MS * amount * ticks_per_ms;
+    let wander = timing * WANDER_MS * timing_amount * ticks_per_ms;
     note.start = (note.start + Ticks(wander.round() as i64)).max_zero();
-    let scale = 1.0 + velocity * VELOCITY_WANDER * amount;
+    let scale = 1.0 + velocity * VELOCITY_WANDER * velocity_amount;
     // Quiet inserted notes must stay quiet; a fixed velocity floor would amplify a brush.
     note.velocity = (note.velocity * scale).clamp(0.0, 1.0);
     note
