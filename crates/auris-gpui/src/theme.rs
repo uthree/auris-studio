@@ -1,7 +1,8 @@
 //! Colours and metrics for the whole UI.
 //!
 //! Everything visual reads from one [`Theme`] value, and every [`Theme`] is derived from a
-//! [`Scheme`] — four numbers and an accent. Retuning the palette, or adding a light one, is
+//! [`Scheme`] — neutral surface parameters, an accent and optional categorical colours.
+//! Retuning the palette, or adding a light one, is
 //! therefore a matter of naming a scheme rather than of hunting hex literals through view code,
 //! and the tests below can check every scheme against the same rules at once.
 
@@ -72,12 +73,15 @@ pub struct Scheme<'a> {
     pub base: f32,
     /// The interactive accent, named outright because it is the scheme's whole character.
     pub accent: Hsla,
+    /// Optional RGB overrides for the document's eight stable palette slots.
+    pub track_palette: [Option<u32>; 8],
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
 pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
+        track_palette: [None; 8],
         id: "midnight",
         name: "Midnight",
         hue: 0.625,
@@ -92,6 +96,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     },
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
+        track_palette: [None; 8],
         id: "graphite",
         name: "Graphite",
         hue: 0.08,
@@ -107,6 +112,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The same architecture read the other way up: a near-white window, and every step from it
     // taken downwards.
     Scheme {
+        track_palette: [None; 8],
         id: "daylight",
         name: "Daylight",
         hue: 0.60,
@@ -122,6 +128,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // A warm light scheme: paper rather than screen, with a deep teal accent to stay off the
     // yellow the greys sit on.
     Scheme {
+        track_palette: [None; 8],
         id: "parchment",
         name: "Parchment",
         hue: 0.11,
@@ -139,6 +146,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // own 0.18, because the signals sit at one lightness for the whole ramp and a failure in the
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
+        track_palette: [None; 8],
         id: "one-dark",
         name: "One Dark",
         hue: 0.611,
@@ -155,6 +163,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // — a brighter accent than the light schemes above carry, which is most of what makes this
     // one recognisable as itself.
     Scheme {
+        track_palette: [None; 8],
         id: "one-light",
         name: "One Light",
         hue: 0.633,
@@ -170,6 +179,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // GitHub's dark canvas, #0d1117: the deepest background here and the bluest greys, under the
     // link blue #58a6ff at full saturation.
     Scheme {
+        track_palette: [None; 8],
         id: "github-dark",
         name: "GitHub Dark",
         hue: 0.597,
@@ -186,6 +196,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // *away* from the background, so at 1.0 there is nowhere for it to go: the timeline would be
     // cut into the window at exactly the window's colour.
     Scheme {
+        track_palette: [None; 8],
         id: "github-light",
         name: "GitHub Light",
         hue: 0.583,
@@ -342,6 +353,20 @@ fn readable_on(color: Hsla, neutral: Hsla) -> Hsla {
     }
 }
 
+/// Localized names for the shared track and library palette slots.
+pub(crate) fn palette_label(language: auris_i18n::Language, index: usize) -> String {
+    use auris_i18n::{Key, t};
+    let key = match index {
+        0 => Key::TrackKindInstrument,
+        1 => Key::TrackKindAudio,
+        2 => Key::TrackKindDrum,
+        3 => Key::TrackKindBus,
+        4 => Key::TrackKindSinger,
+        _ => return format!("{} {}", t(Key::MenuTrackColor, language), index + 1),
+    };
+    t(key, language).to_owned()
+}
+
 /// The application colour palette.
 #[derive(Clone, Debug)]
 pub struct Theme {
@@ -428,6 +453,8 @@ pub struct Theme {
     pub velocity_soft: Hsla,
     /// Colour of the hardest-struck note in the piano roll.
     pub velocity_loud: Hsla,
+    /// Resolved track, clip and library colours, indexed by the document palette.
+    pub track_palette: [Hsla; 8],
 }
 
 impl gpui::Global for Theme {}
@@ -446,8 +473,9 @@ impl Theme {
     /// surfaces from furthest to nearest, and every scheme gets the same stack.
     pub fn from_scheme(scheme: &Scheme<'_>) -> Self {
         let accent = scheme.accent;
-        Self {
+        let mut theme = Self {
             scheme: scheme.id.to_owned(),
+            track_palette: [accent; 8],
             font: ui_font(),
             surface_sunken: scheme.shade(-0.020),
             background: scheme.shade(0.0),
@@ -526,7 +554,14 @@ impl Theme {
                 if scheme.direction() > 0.0 { 0.58 } else { 0.50 },
                 1.0,
             ),
-        }
+        };
+        theme.track_palette = std::array::from_fn(|index| {
+            scheme.track_palette[index].map_or_else(
+                || theme.group_color([0.0, -0.18, -0.32, -0.44, 0.23, 0.10, 0.42, -0.08][index]),
+                |packed| rgb(packed).into(),
+            )
+        });
+        theme
     }
 
     /// The palette named by `id`, or the default one when nothing answers to it.
@@ -631,10 +666,15 @@ impl Theme {
 
     /// Interprets a stored `0xRRGGBB` track colour in the current theme.
     ///
-    /// The first document palette entry anchors the accent; other colours retain their hue
-    /// offsets and relative saturation. This is a display transform: switching themes never
-    /// rewrites a project's colours, and every clip, header, mixer and picker shares it.
+    /// Document palette values identify theme slots. Other RGB values from older projects
+    /// retain their hue offsets from the accent. Changing a theme never rewrites a project.
     pub fn track_color(&self, packed: u32) -> Hsla {
+        if let Some(index) = auris_session::prelude::Color::PALETTE
+            .iter()
+            .position(|color| color.0 == packed)
+        {
+            return self.track_palette[index];
+        }
         let source: Hsla = rgb(packed).into();
         let anchor: Hsla = rgb(auris_session::prelude::Color::PALETTE[0].0).into();
         self.categorical_color(source.h - anchor.h, source.s / anchor.s)

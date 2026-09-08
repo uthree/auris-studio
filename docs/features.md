@@ -1169,6 +1169,12 @@ with fallback fonts retained for Japanese and other scripts. Create a theme from
 palette, give it a name, and enter its accent colour as `#RRGGBB`. The preview leaves the applied
 theme alone until **Save and apply**. Saved custom themes can be selected and edited here.
 
+The editor also exposes eight track, clip and library palette colours. Enter `#RRGGBB` for a
+slot, or leave it blank to derive its colour from the accent. New tracks choose a slot by kind:
+instrument, drums, singer, audio or bus. The library uses the corresponding colours, with effects
+sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
+colour. Changing the theme updates their appearance without changing the saved project.
+
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
 rather than `~/Library/Application Support` and `%APPDATA%`:
 

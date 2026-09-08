@@ -28,6 +28,9 @@ pub struct CustomScheme {
     pub base: f32,
     /// Opaque accent colour packed as `0xRRGGBB`.
     pub accent: u32,
+    /// Optional RGB colours for track, clip and library palette slots.
+    #[serde(default)]
+    pub track_palette: [Option<u32>; 8],
 }
 
 impl CustomScheme {
@@ -42,6 +45,7 @@ impl CustomScheme {
             chroma: base.chroma,
             base: base.base,
             accent: (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b),
+            track_palette: base.track_palette,
         }
     }
 
@@ -54,6 +58,7 @@ impl CustomScheme {
             chroma: self.chroma,
             base: self.base,
             accent: gpui::rgb(self.accent).into(),
+            track_palette: self.track_palette,
         }
     }
 
@@ -76,6 +81,11 @@ impl CustomScheme {
             .into_iter()
             .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
             || self.accent > 0xff_ffff
+            || self
+                .track_palette
+                .iter()
+                .flatten()
+                .any(|color| *color > 0xff_ffff)
         {
             return Err("the theme contains an invalid colour");
         }
@@ -289,6 +299,35 @@ mod tests {
             );
             assert_eq!(custom.validate(), Ok(()), "{}", base.name);
         }
+    }
+
+    #[test]
+    fn palette_overrides_round_trip_and_old_preferences_keep_the_defaults() {
+        let mut palette = custom();
+        palette.track_palette[0] = Some(0x123456);
+        palette.track_palette[7] = Some(0xfedcba);
+        let json = serde_json::to_string(&palette).unwrap();
+        let loaded: CustomScheme = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, palette);
+        let theme = Theme::from_scheme(&loaded.definition());
+        assert_eq!(
+            theme.track_palette[0],
+            gpui::Hsla::from(gpui::rgb(0x123456))
+        );
+        assert_eq!(
+            theme.track_palette[7],
+            gpui::Hsla::from(gpui::rgb(0xfedcba))
+        );
+        let copy = CustomScheme::from_scheme("copy".into(), "Copy".into(), &loaded.definition());
+        assert_eq!(copy.track_palette, loaded.track_palette);
+
+        let mut old = serde_json::to_value(&palette).unwrap();
+        old.as_object_mut().unwrap().remove("track_palette");
+        let loaded: CustomScheme = serde_json::from_value(old).unwrap();
+        assert_eq!(loaded.track_palette, [None; 8]);
+        assert!(loaded.validate().is_ok());
+        palette.track_palette[1] = Some(0x1000000);
+        assert!(palette.validate().is_err());
     }
 
     #[test]

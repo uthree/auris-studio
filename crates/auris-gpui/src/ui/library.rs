@@ -12,9 +12,8 @@
 //! default is not the same everywhere: the plugins want to be visible, the hundred and
 //! twenty-eight sounds want to be asked for.
 //!
-//! Colour identifies what a choice does: cyan for instruments and sampled sounds, amber for
-//! effects, violet for singing voices. File containers stay neutral until their contents are
-//! known. Headings and item icons share these colours in both the tree and search results;
+//! Colour identifies what a choice does, using the theme slots shared with track kinds.
+//! Headings and item icons share these colours in both the tree and search results;
 //! names, indentation and check marks carry the same information without relying on colour.
 
 use std::collections::HashMap;
@@ -195,6 +194,7 @@ fn indent(depth: usize) -> Pixels {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum LibraryRole {
     Instrument,
+    Drum,
     Effect,
     Voice,
     File,
@@ -203,16 +203,17 @@ enum LibraryRole {
 impl LibraryRole {
     fn color(self, theme: &Theme) -> gpui::Hsla {
         match self {
-            Self::Instrument => theme.group_color(0.0),
-            Self::Effect => theme.group_color(-0.44),
-            Self::Voice => theme.group_color(0.23),
+            Self::Instrument => theme.track_color(Color::INSTRUMENT.0),
+            Self::Drum => theme.track_color(Color::DRUM.0),
+            Self::Effect => theme.track_color(Color::BUS.0),
+            Self::Voice => theme.track_color(Color::SINGER.0),
             Self::File => theme.text_muted,
         }
     }
 
     fn icon(self) -> Icon {
         match self {
-            Self::Instrument => Icon::Keyboard,
+            Self::Instrument | Self::Drum => Icon::Keyboard,
             Self::Effect => Icon::Knob,
             Self::Voice => Icon::Microphone,
             Self::File => Icon::Library,
@@ -1482,7 +1483,11 @@ impl AurisApp {
             self.row_style(
                 theme.text,
                 Some(if matches!(branch, Branch::InstrumentCategory(_)) {
-                    LibraryRole::Instrument
+                    if category == PluginCategory::Drum {
+                        LibraryRole::Drum
+                    } else {
+                        LibraryRole::Instrument
+                    }
                 } else {
                     LibraryRole::Effect
                 }),
@@ -1625,7 +1630,12 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
-        let accent = role.color(&theme);
+        let accent = if role == LibraryRole::Instrument && category == PluginCategory::Drum {
+            LibraryRole::Drum
+        } else {
+            role
+        }
+        .color(&theme);
         let searching = !self.library_search.content().trim().is_empty();
         let enabled = role != LibraryRole::Instrument || self.selected_track_takes_an_instrument();
         let selected = role == LibraryRole::Instrument
@@ -1723,7 +1733,12 @@ impl AurisApp {
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
         let theme = self.theme.clone();
-        let accent = LibraryRole::Instrument.color(&theme);
+        let accent = if choice.bank == PERCUSSION_BANK {
+            LibraryRole::Drum
+        } else {
+            LibraryRole::Instrument
+        }
+        .color(&theme);
         let searching = !self.library_search.content().trim().is_empty();
         let enabled = self.selected_track_takes_an_instrument();
         let selected = self
@@ -1888,6 +1903,7 @@ mod tests {
     fn library_roles_follow_each_theme_and_remain_distinct() {
         let roles = [
             LibraryRole::Instrument,
+            LibraryRole::Drum,
             LibraryRole::Effect,
             LibraryRole::Voice,
         ];
@@ -1902,6 +1918,21 @@ mod tests {
                 }
             }
             assert_eq!(LibraryRole::File.color(&theme), theme.text_muted);
+        }
+    }
+
+    #[test]
+    fn custom_library_colours_match_track_and_clip_palette_slots() {
+        let mut scheme = *crate::theme::scheme_or_default(crate::theme::DEFAULT_SCHEME);
+        scheme.track_palette = std::array::from_fn(|i| Some(0x204060 + i as u32 * 0x102030));
+        let theme = Theme::from_scheme(&scheme);
+        for (role, slot) in [
+            (LibraryRole::Instrument, Color::INSTRUMENT),
+            (LibraryRole::Drum, Color::DRUM),
+            (LibraryRole::Effect, Color::BUS),
+            (LibraryRole::Voice, Color::SINGER),
+        ] {
+            assert_eq!(role.color(&theme), theme.track_color(slot.0));
         }
     }
 

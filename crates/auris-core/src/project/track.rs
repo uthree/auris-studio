@@ -29,7 +29,9 @@ use super::{ClipId, EffectSlotId, Project, SendId, TrackId};
 pub struct Color(pub u32);
 
 impl Color {
-    /// The palette new tracks cycle through.
+    /// Stable document identifiers for the eight theme palette slots.
+    ///
+    /// Kept as RGB values so existing projects retain their palette selections.
     pub const PALETTE: [Color; 8] = [
         Color(0x4f9dde),
         Color(0x5fc9a3),
@@ -41,10 +43,16 @@ impl Color {
         Color(0xd16b8a),
     ];
 
-    /// Picks a palette entry by index, wrapping around.
-    pub fn from_palette(index: usize) -> Color {
-        Self::PALETTE[index % Self::PALETTE.len()]
-    }
+    /// Palette slot for melodic instruments.
+    pub const INSTRUMENT: Self = Self::PALETTE[0];
+    /// Palette slot for imported or recorded audio.
+    pub const AUDIO: Self = Self::PALETTE[1];
+    /// Palette slot for percussion instruments.
+    pub const DRUM: Self = Self::PALETTE[2];
+    /// Palette slot shared by buses and library effects.
+    pub const BUS: Self = Self::PALETTE[3];
+    /// Palette slot shared by singer tracks and library voices.
+    pub const SINGER: Self = Self::PALETTE[4];
 
     /// Red, green and blue components.
     pub fn rgb(self) -> (u8, u8, u8) {
@@ -277,6 +285,17 @@ pub enum TrackKind {
 }
 
 impl TrackKind {
+    /// Default theme palette slot, independent of track order or count.
+    pub fn default_color(&self) -> Color {
+        match self {
+            Self::Instrument(_) => Color::INSTRUMENT,
+            Self::Drum(_) => Color::DRUM,
+            Self::Singer(_) => Color::SINGER,
+            Self::Audio(_) => Color::AUDIO,
+            Self::Bus => Color::BUS,
+        }
+    }
+
     /// Short label for the UI.
     pub fn label(&self) -> &'static str {
         match self {
@@ -477,7 +496,7 @@ impl Project {
     /// Appends a track of any kind, routed to the master with no sends.
     fn push_track(&mut self, name: impl Into<String>, kind: TrackKind) -> TrackId {
         let id = TrackId(self.allocate_id());
-        let color = Color::from_palette(self.tracks.len());
+        let color = kind.default_color();
         self.tracks.push(Track {
             id,
             name: name.into(),
@@ -1031,5 +1050,32 @@ mod tests {
         assert!(project.remove_track(id));
         assert!(project.tracks.is_empty());
         assert!(!project.remove_track(id));
+    }
+
+    #[test]
+    fn track_kinds_choose_stable_colours_regardless_of_creation_order() {
+        let mut project = Project::new("Colours", 48_000.0);
+        for _ in 0..10 {
+            let tracks = [
+                (project.add_bus_track("Bus"), Color::BUS),
+                (project.add_singer_track("Voice", "voice"), Color::SINGER),
+                (
+                    project.add_instrument_track("Piano", "piano"),
+                    Color::INSTRUMENT,
+                ),
+                (project.add_audio_track("Audio"), Color::AUDIO),
+                (project.add_drum_track("Drums", "kit"), Color::DRUM),
+            ];
+            for (id, expected) in tracks {
+                assert_eq!(project.track(id).unwrap().color, expected);
+            }
+        }
+        let id = project.tracks[0].id;
+        project.track_mut(id).unwrap().color = Color::PALETTE[7];
+        let copy = project.duplicate_track(id).unwrap();
+        assert_eq!(project.track(copy).unwrap().color, Color::PALETTE[7]);
+        let loaded: Project =
+            serde_json::from_str(&serde_json::to_string(&project).unwrap()).unwrap();
+        assert_eq!(loaded.tracks, project.tracks);
     }
 }

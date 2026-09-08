@@ -4,6 +4,9 @@ use gpui::{Entity, EntityInputHandler, TestAppContext, VisualTestContext, Window
 
 use super::*;
 
+// The harness isolates preferences per process, so persistence tests must share a writer lock.
+static APPEARANCE_WRITER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct RestoreAppearance(Appearance);
 
 impl Drop for RestoreAppearance {
@@ -37,13 +40,14 @@ fn open_appearance_settings(
     let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
     let cx = VisualTestContext::from_window(handle.into(), cx);
     // Keep the draft and its actions in view; text metrics on the test platform are synthetic.
-    cx.simulate_resize(size(px(760.0), px(1040.0)));
+    cx.simulate_resize(size(px(760.0), px(1320.0)));
     cx.run_until_parked();
     (app, handle, cx)
 }
 
 #[gpui::test]
 fn a_japanese_theme_is_committed_then_edited_without_losing_its_font(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
     let (app, handle, mut cx) = open_appearance_settings(cx);
     let _restore = RestoreAppearance(Appearance::load());
     let cx = &mut cx;
@@ -184,6 +188,56 @@ fn cancelling_a_theme_draft_preserves_the_applied_appearance(cx: &mut TestAppCon
             .unwrap();
         app.read_with(cx, |this, _| assert_eq!(this.appearance, before));
     }
+}
+
+#[gpui::test]
+fn palette_edits_apply_only_on_save_and_can_return_to_theme_defaults(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
+    let (app, handle, mut cx) = open_appearance_settings(cx);
+    let _restore = RestoreAppearance(Appearance::load());
+    let cx = &mut cx;
+    let before = app.read_with(cx, |this, _| this.theme.track_palette);
+    crate::harness::click("create-theme", cx);
+    cx.simulate_input("Palette test");
+    for (id, color) in [("theme-color-1", "#123456"), ("theme-color-5", "#ABCDEF")] {
+        crate::harness::click(id, cx);
+        cx.simulate_input(color);
+    }
+    app.read_with(cx, |this, _| assert_eq!(this.theme.track_palette, before));
+    crate::harness::click("save-theme", cx);
+    let expected = gpui::Hsla::from(gpui::rgb(0x123456));
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.theme
+                .track_color(auris_session::prelude::Color::INSTRUMENT.0),
+            expected
+        );
+        assert_eq!(
+            this.theme.track_palette[4],
+            gpui::Hsla::from(gpui::rgb(0xabcdef))
+        );
+    });
+    assert_eq!(Appearance::load().theme().track_palette[0], expected);
+
+    crate::harness::click("edit-theme", cx);
+    crate::harness::click("theme-color-1", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#12");
+    crate::harness::click("save-theme", cx);
+    handle
+        .update(cx, |this, _, _| {
+            assert!(this.appearance_editor.is_some());
+            assert_eq!(this.theme.track_palette[0], expected);
+            assert_eq!(this.status, this.t(Key::ThemeAccentInvalid));
+        })
+        .unwrap();
+    crate::harness::click("theme-color-1", cx);
+    cx.simulate_keystrokes("secondary-a backspace");
+    crate::harness::click("save-theme", cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.theme.track_palette[0], this.theme.group_color(0.0))
+    });
+    assert_eq!(Appearance::load().custom_schemes[0].track_palette[0], None);
 }
 
 #[gpui::test]

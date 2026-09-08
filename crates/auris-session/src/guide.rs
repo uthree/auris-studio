@@ -416,6 +416,14 @@ pub mod architecture {
     //! platform's key events with it, so a picture of the keyboard in one would stop the keyboard
     //! working the moment somebody clicked on the picture.
     //!
+    //! # Track colours
+    //!
+    //! Track colours are stable document palette slots, defaulted by track kind. Clips inherit
+    //! their track's slot. The desktop theme resolves these slots to editable colours and shares
+    //! them with the library: instruments, percussion, voices and effects (buses).
+    //! Applying a theme changes presentation without editing the document. Older arbitrary RGB
+    //! tints remain readable, and composition uses the same kind defaults as manual creation.
+    //!
     //! # Where the audio actually goes
     //!
     //! [`auris_engine::render_block`] is the single implementation of "produce N frames".

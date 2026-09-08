@@ -808,6 +808,8 @@ strings! {
     ThemeName { en: "Theme name", ja: "テーマ名" }
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
+    ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemeTrackPaletteNote { en: "Enter #RRGGBB, or leave blank to follow the accent. Clips use their track's colour. Buses share the effects colour.", ja: "#RRGGBB で指定します。空欄はアクセントに連動します。クリップはトラックの色、バスはエフェクトと同じ色を使います。" }
     ThemePreview { en: "Preview", ja: "プレビュー" }
     ThemePreviewText { en: "Track · Piano · Settings", ja: "トラック・ピアノ・設定" }
     ThemeSave { en: "Save and apply", ja: "保存して適用" }

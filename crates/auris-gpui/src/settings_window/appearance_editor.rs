@@ -9,6 +9,7 @@ pub(super) struct AppearanceEditor {
     base: String,
     name: TextField,
     accent: TextField,
+    palette: [TextField; 8],
     active: ThemeField,
 }
 
@@ -16,13 +17,26 @@ pub(super) struct AppearanceEditor {
 enum ThemeField {
     Name,
     Accent,
+    Palette(usize),
 }
+
+const PALETTE_FIELDS: [&str; 8] = [
+    "theme-color-1",
+    "theme-color-2",
+    "theme-color-3",
+    "theme-color-4",
+    "theme-color-5",
+    "theme-color-6",
+    "theme-color-7",
+    "theme-color-8",
+];
 
 impl AppearanceEditor {
     pub(super) fn field(&mut self) -> &mut TextField {
         match self.active {
             ThemeField::Name => &mut self.name,
             ThemeField::Accent => &mut self.accent,
+            ThemeField::Palette(index) => &mut self.palette[index],
         }
     }
 
@@ -30,6 +44,7 @@ impl AppearanceEditor {
         match self.active {
             ThemeField::Name => &self.name,
             ThemeField::Accent => &self.accent,
+            ThemeField::Palette(index) => &self.palette[index],
         }
     }
 
@@ -58,6 +73,13 @@ impl AppearanceEditor {
             .unwrap_or_else(|| next_theme_id(appearance));
         let mut draft = CustomScheme::from_scheme(id, name.to_owned(), &base);
         draft.accent = accent;
+        for (index, field) in self.palette.iter().enumerate() {
+            draft.track_palette[index] = if field.content().trim().is_empty() {
+                None
+            } else {
+                Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
+            };
+        }
         draft.validate().map_err(|_| Key::ThemeInvalid)?;
         Ok(draft)
     }
@@ -187,6 +209,13 @@ impl SettingsWindow {
                 String::new()
             }),
             accent: TextField::new(format!("#{:06X}", copy.accent)),
+            palette: copy.track_palette.map(|color| {
+                TextField::new(
+                    color
+                        .map(|color| format!("#{color:06X}"))
+                        .unwrap_or_default(),
+                )
+            }),
             active: ThemeField::Name,
         });
         let focus = self
@@ -287,6 +316,37 @@ impl SettingsWindow {
             .child(base_picker)
             .child(section_title(self.t(Key::ThemeAccent), &theme))
             .child(self.theme_text_field(ThemeField::Accent, cx))
+            .child(section_title(self.t(Key::ThemeTrackPalette), &theme))
+            .child(note(self.t(Key::ThemeTrackPaletteNote), &theme))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .children((0..8).map(|index| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .w(px(250.0))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .w(px(14.0))
+                                    .h(px(14.0))
+                                    .rounded_sm()
+                                    .bg(preview.track_palette[index]),
+                            )
+                            .child(
+                                div()
+                                    .w(px(90.0))
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .child(crate::theme::palette_label(self.language, index)),
+                            )
+                            .child(self.theme_text_field(ThemeField::Palette(index), cx))
+                    })),
+            )
             .child(
                 div()
                     .flex()
@@ -370,6 +430,7 @@ impl SettingsWindow {
         let id = match field {
             ThemeField::Name => "theme-name",
             ThemeField::Accent => "theme-accent",
+            ThemeField::Palette(index) => PALETTE_FIELDS[index],
         };
         let focus = self
             .dropdown_focus
@@ -380,6 +441,7 @@ impl SettingsWindow {
         let text = match field {
             ThemeField::Name => &editor.name,
             ThemeField::Accent => &editor.accent,
+            ThemeField::Palette(index) => &editor.palette[index],
         };
         let active = editor.active == field;
         let contents = if active {
@@ -436,7 +498,14 @@ impl SettingsWindow {
         for (id, field) in [
             ("theme-name", ThemeField::Name),
             ("theme-accent", ThemeField::Accent),
-        ] {
+        ]
+        .into_iter()
+        .chain(
+            PALETTE_FIELDS
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| (id, ThemeField::Palette(index))),
+        ) {
             if self
                 .dropdown_focus
                 .get(id)
@@ -503,6 +572,7 @@ mod tests {
             base: appearance.scheme.clone(),
             name: TextField::new(""),
             accent: TextField::new("#60A5FA"),
+            palette: std::array::from_fn(|_| TextField::new("")),
             active: ThemeField::Name,
         };
         assert_eq!(
