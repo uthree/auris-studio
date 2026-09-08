@@ -83,8 +83,9 @@ pub use drum_analysis::{
 pub use files::{LoadedFont, decode_audio, read_soundfont};
 pub use hosted::PluginWindow;
 pub use levels::{
-    BalanceReport, CEILING_DB, LIMITER_ALLOWANCE_DB, TARGET_LUFS, TrackLevel, fader_for,
-    faders_lift_db, master_gain_db,
+    BalanceReport, CEILING_DB, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
+    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, TARGET_LUFS, TrackLevel,
+    fader_for, faders_lift_db, master_gain_db,
 };
 pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
 pub use mixture::{
@@ -1007,7 +1008,16 @@ impl Session {
             return None;
         }
         let edit = self.history.undo_edit()?;
+        if edit == Edit::Compose {
+            self.collect_hosted_state();
+        }
         let project = self.history.undo(&self.project)?;
+        if edit == Edit::Compose {
+            // The two songs can reuse a track id and plugin id while holding different native
+            // presets. Fresh slots restore the history snapshot rather than the outgoing sound.
+            self.hosted.clear();
+            self.vst3.clear();
+        }
         if edit == Edit::ExternalChanges {
             self.replace_external_project(project);
         } else {
@@ -1025,7 +1035,14 @@ impl Session {
             return None;
         }
         let edit = self.history.redo_edit()?;
+        if edit == Edit::Compose {
+            self.collect_hosted_state();
+        }
         let project = self.history.redo(&self.project)?;
+        if edit == Edit::Compose {
+            self.hosted.clear();
+            self.vst3.clear();
+        }
         if edit == Edit::ExternalChanges {
             self.replace_external_project(project);
         } else {

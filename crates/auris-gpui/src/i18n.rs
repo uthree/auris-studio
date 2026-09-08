@@ -222,6 +222,8 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     match error {
         SessionError::EmptyGroove => Key::PerformGrooveEmpty.get(language).to_string(),
         SessionError::SongLyrics(detail) => with(Key::SongLyricsMatch, detail.clone()),
+        SessionError::SongSource(detail) => with(Key::SongSourceUnavailable, detail.clone()),
+        SessionError::StaleBalance => Key::BalanceChanged.get(language).to_string(),
         SessionError::InvalidDrumRecipe(detail)
         | SessionError::TrackConversion(detail)
         | SessionError::InvalidDrumAssignment(detail)

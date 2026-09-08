@@ -9,9 +9,23 @@ chords with **Write It Again**. The rest of the application is in [Features](fea
 and energy beside the lyrics. Moving right or up raises the labelled value. Lyrics are optional;
 **Create Song** also works with every box empty. The columns stack in smaller windows.
 
-**Detailed settings** reveals key, meter, groove, seed, the tension/syncopation pad, performance
-dials, section structure, melody sharing and the drum/instrument roster. The toggle stays above
+Click the tempo's BPM value to enter an exact number between 20 and 400, including decimals.
+The −1 and +1 buttons adjust it one BPM at a time; hold Shift while dragging a song dial for
+fine adjustment.
+
+The participation matrix places parts and their instruments down the left and sections in song
+order across the top, with bar ranges under their names. Click a cell to switch between **Play**
+and **Rest**. Instrument names open the sound picker for that part. The labels stay in place while
+the timeline scrolls horizontally. Parts using the same sound, including individual drum writers,
+can enter separately; repeated occurrences of the same section share their participation settings.
+Every section keeps at least one playing part. The matrix is available in basic mode too.
+
+**Detailed settings** keeps the basic controls and lyrics in place and adds groups below them:
+harmony and rhythm, performance, section structure and the drum/instrument roster. Section cards
+name their transposition, tempo and shared melody. The toggle stays above
 the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
+Tab and Shift+Tab reveal the next or previous lyrics editor automatically. Long picker values
+are shortened to fit their columns; hovering shows the full value, and editing retains it all.
 The basic lyrics view shows note counts and estimated bars for every nonempty lyric. Estimates
 use the same mora reading and phrase rhythm as composition. Each section reports an exact fit,
 spare bars for accompaniment, or missing bars and notes that cannot fit. **Fit bars to lyrics**
@@ -36,10 +50,21 @@ empty image frame.
 **Drums** has its own source selector and add/remove controls. **Instruments** lists melodic
 parts separately, with its own add button. Removing or restoring the drum kit preserves the
 instrument parts and their settings.
+Each melodic part's **Density** follows the mood while **Follow mood** is selected. Dragging
+the density starts from that current value and pins it; select **Follow mood** again to restore
+automatic changes with the song's energy. Changing a part's role retains its custom settings
+and updates values still equal to the previous role's defaults. Selecting the same role keeps
+every setting.
 **Create Song** writes the piece. Detailed settings also offers **Another Take** — the same dials
 and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
+
+Song creation shows its current stage above the settings: writing the score, preparing the sounds,
+then balancing the mix. During balancing, the progress bar follows each track render and the two
+full-mix passes, naming the current measurement. The window keeps updating while the score and
+audio are calculated. Editing resumes when the job finishes; a rejected source leaves the draft
+open for correction. **Another Take** keeps the settings open after success as well.
 
 Every style also installs [non-destructive performance settings](performance.md#starting-from-automatic-composition)
 suited to its instruments: guitar strokes and muted tails, quiet pickups, shared phrasing,
@@ -71,14 +96,17 @@ Each is a `.asong` document embedded in the build rather than a structure assemb
 preset is meant to be *read*, the format was designed to be the readable one, and it means the
 presets are parser tests that fail loudly rather than silently.
 
-A part's instrument cell offers the General MIDI sounds first, grouped into the sixteen families
-the standard already divides them into — a hundred and twenty-eight names in one menu is a menu
-nobody can read — and the built-in plugins under a rule below them. A drum part is offered the
-eight kits instead, because on a drum part that number is a whole kit. Choosing a plugin clears the
-program, so the row never says one thing while the piece plays another.
+A part's instrument name opens the library inside the song sheet. Its search and category tree
+are shared with the main Library panel: choose a built-in instrument, an exact SoundFont preset,
+or an installed CLAP/VST3 instrument. **Import SoundFont…** adds another font to this browser;
+**Add plugin folder…** includes plugins stored outside the usual locations. Expand a plugin file
+to see the instruments it exports. Selecting a sound returns to the same matrix position.
+Closing the browser preserves the current draft and the main library's query and tree.
+Fonts imported here do not change the open project until **Create Song**.
 
-The song sheet has one **Drums** source selector. Choosing a kit applies it to all of the
-drum writers; adding or removing drums changes the kit as a whole. Each section becomes one
+The song sheet has a **Drums** source selector. Choosing a kit applies it to the drum writers
+sharing that source; separately configured kits retain their choices. Adding or removing drums
+changes the kit as a whole. Each section becomes one
 clip containing the independent voices. The track fader, pan, inserts and sends belong to the
 whole kit. A clip's **Drums** context submenu can rewrite or reroll one voice while preserving
 the other voices' notes and performance settings.
@@ -203,6 +231,23 @@ own listing. A part may carry both, and that is the point rather than a redundan
 is played when there is a font to play it from, and the plugin is what the part falls back to when
 there is not, so a specification asking for a string section on a build with no library comes out
 as an oscillator rather than as silence.
+
+An explicit `source` instead records the selected library asset. SoundFont banks and patches use
+the file's own identifiers (0–65535), including non-General-MIDI fonts:
+
+```toml
+[[part]]
+name = "keys"
+role = "chords"
+source = { type = "sound_font", path = 'C:\Sounds\Keys.sf2', bank = 257, patch = 301 }
+```
+
+For CLAP, use `source = { type = "clap", path = 'C:\Plugins\Instrument.clap', plugin_id = "vendor.instrument" }`;
+for VST3, use `type = "vst3"` and `class_id` with the bundle's class identifier. The library writes
+these identifiers automatically. `source` and `program` cannot be specified together. An explicit
+source must load successfully before the current document is replaced; unavailable files and
+effect-only plugins report an error. Saved projects and specifications retain the choice, and
+**Collect Assets** updates collected SoundFont paths for reopening and composing another take.
 
 On a **drum** part the same field means something else entirely, because in General MIDI it does:
 percussion patches select a whole *kit* — `"Standard Kit"`, `"TR-808 Kit"`, `"Brush Kit"` — and it

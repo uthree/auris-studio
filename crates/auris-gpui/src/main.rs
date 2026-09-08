@@ -95,6 +95,10 @@ fn main() {
         // fallback runs the same guard through the main window instead of quitting on the spot.
         cx.on_action(move |_: &actions::Quit, cx: &mut App| {
             let guarded = window.update(cx, |view, window, cx| {
+                if view.compose_progress.is_some() {
+                    window.activate_window();
+                    return false;
+                }
                 let go = view.confirm_discard(ui::prompt::PendingAction::Quit);
                 if !go {
                     // The sheet is asking in the main window; bring it forward so the
@@ -143,6 +147,9 @@ fn main() {
                 window.on_window_should_close(cx, move |_window, cx| {
                     asked
                         .update(cx, |this, cx| {
+                            if this.compose_progress.is_some() {
+                                return false;
+                            }
                             let go = this.confirm_discard(ui::prompt::PendingAction::CloseWindow);
                             if go {
                                 this.save_window_placement();

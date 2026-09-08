@@ -1814,6 +1814,9 @@ impl AurisApp {
     /// The whole piece is one undo step, so a composition that is not what was wanted is one
     /// press away from the document that was there before it.
     pub(crate) fn compose_from_spec(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.compose_progress.is_some() {
+            return;
+        }
         let language = self.language();
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
@@ -1828,17 +1831,7 @@ impl AurisApp {
             let path = handle.path().to_path_buf();
 
             let _ = this.update(cx, |this, cx| {
-                let text = messages::composing(this.language(), &path.display().to_string());
-                this.set_status(text);
-                cx.notify();
-            });
-            // Writing a whole piece is the slowest thing here that is not a render.
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
-                .await;
-
-            let _ = this.update(cx, |this, cx| {
-                this.compose_file(&path);
+                this.compose_file(&path, cx);
                 cx.notify();
             });
         })
@@ -1849,7 +1842,10 @@ impl AurisApp {
     ///
     /// Split out of the dialog so the failure paths are reachable without one: a file that will
     /// not open, will not parse, or asks for nothing this build can play.
-    fn compose_file(&mut self, path: &std::path::Path) {
+    fn compose_file(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        if self.compose_progress.is_some() {
+            return;
+        }
         let language = self.language();
         let shown = path.display().to_string();
 
@@ -1882,73 +1878,10 @@ impl AurisApp {
             }
         };
 
-        self.compose_spec(&spec);
-    }
-
-    /// Writes the piece a specification describes, replacing the document.
-    ///
-    /// Split out of the file path because the song sheet arrives here holding a `SongSpec` it
-    /// built from its dials and never wrote down. Everything after the parse is the same for
-    /// both, and a second copy of it would be a second answer to "what happens after Write".
-    pub(crate) fn compose_spec(&mut self, spec: &SongSpec) -> bool {
-        self.reset_drum_analysis();
-        let language = self.language();
-        let piece = compose(spec);
-        let seed = piece.seed;
-        match self.session.compose(&piece) {
-            Ok(report) => {
-                self.resync_selection();
-                self.reset_view();
-                // Point the editors at the first part rather than leaving them empty. Opening a
-                // project does not need this because its own selection is restored; a freshly
-                // composed document has no selection to restore, and an empty piano roll over a
-                // piece full of notes reads as a failure.
-                let first = self.project().tracks.first().map(|track| track.id);
-                self.selected_track = None;
-                if let Some(track) = first {
-                    self.select_track(track);
-                }
-                let written = if report.substituted.is_empty() {
-                    messages::composed_document(language, report.tracks, report.notes, seed)
-                } else {
-                    messages::composed_document_substituted(
-                        language,
-                        report.tracks,
-                        report.notes,
-                        seed,
-                        report.substituted.len(),
-                    )
-                };
-                // Composing ends by listening to the piece and setting its levels from what it
-                // heard, and a line that did not mention it would leave the seconds it takes
-                // looking like the composer being slow.
-                self.set_status(match report.balance.as_ref().and_then(|it| it.now_lufs) {
-                    Some(lufs) => format!("{written} · {}", messages::mixed_to(language, lufs)),
-                    None => written,
-                });
-            }
-            Err(error) => {
-                let message = self.failure(Key::CmdComposeSong, &error);
-                self.set_failed_status(message.clone());
-                if self.song_sheet.is_some() {
-                    self.open_prompt(crate::ui::prompt::Prompt::notice(
-                        self.t(Key::CmdComposeSong),
-                        [message.into()],
-                    ));
-                }
-                return false;
-            }
-        }
-        true
+        self.compose_spec(&spec, false, cx);
     }
 
     /// Renders every track alone, measures it, and sets the mix from what came out.
-    ///
-    /// Nothing is spawned. It is seconds of work on the thread that draws, and the window is
-    /// unresponsive for them — which is the honest shape of the current arrangement rather than a
-    /// choice: a render needs the session, the session is not `Send`, and the way an export gets
-    /// off this thread is `Session::render_job`, which hands over a *copy* and could not write the
-    /// faders back. Worth doing properly the day this is a command people run in a loop.
     pub(crate) fn balance_levels(&mut self) {
         let language = self.language();
         match self.session.balance_levels() {
@@ -2325,6 +2258,10 @@ impl AurisApp {
         // native binary at the same index, and stale disclosure state must never load it without
         // a new click from the user.
         self.library.forget_plugin_files();
+        if let Some(browser) = self.song_library.as_mut() {
+            browser.tree.forget_plugin_files();
+            browser.reveal = None;
+        }
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }

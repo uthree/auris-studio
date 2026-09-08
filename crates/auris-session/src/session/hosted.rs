@@ -125,6 +125,48 @@ struct HostedSlot {
 }
 
 impl HostedPlugins {
+    /// Prepares a user-selected source without changing any live slot or its state.
+    pub(super) fn prepare_composed_instrument(
+        &mut self,
+        file: &Path,
+        clap_id: &str,
+        prepare: &PrepareContext,
+    ) -> Result<ClapPlugin, ClapError> {
+        // SAFETY: the caller is composing with a source explicitly selected by the user.
+        unsafe { self.catalog(file) }?;
+        let library = &self.libraries[file];
+        let mut plugin = library.instantiate(clap_id)?;
+        let instrument = plugin.activate_instrument(prepare)?;
+        plugin.deactivate_instrument(instrument);
+        Ok(plugin)
+    }
+
+    /// Commits an already-validated source; old graph owners retire through the normal path.
+    pub(super) fn install_composed_instrument(
+        &mut self,
+        track: TrackId,
+        file: PathBuf,
+        clap_id: String,
+        plugin: ClapPlugin,
+    ) {
+        if let Some(old) = self.instruments.remove(&track) {
+            old.retire_into(&mut self.retiring);
+        }
+        self.instruments.insert(
+            track,
+            HostedSlot {
+                file,
+                clap_id,
+                live: None,
+                spare: Some(plugin),
+                editor: false,
+                sidechain: false,
+                values: Vec::new(),
+                source_revision: 0,
+            },
+        );
+    }
+
     pub(super) fn drum_source_revision(&self, track: TrackId) -> Option<u64> {
         let slot = self.instruments.get(&track)?;
         slot.plugin()?;
@@ -1161,6 +1203,201 @@ mod tests {
     use auris_core::time::Ticks;
     use auris_core::{AssetPath, AudioBuffer};
 
+    fn composed_instrument_spec(path: &Path, plugin_id: &str) -> auris_compose::SongSpec {
+        let mut spec =
+            auris_compose::SongSpec::parse("form = 'verse'\n[section.verse]\nbars = 1").unwrap();
+        let mut part = auris_compose::PartSpec::of_role("Selected", auris_compose::Role::Bass);
+        part.source = Some(auris_compose::spec::PartSource::Clap {
+            path: path.to_path_buf(),
+            plugin_id: plugin_id.into(),
+        });
+        spec.parts = vec![part];
+        spec
+    }
+
+    #[test]
+    fn composing_a_selected_clap_instrument_survives_save_open_and_recomposition() {
+        let scratch = super::super::fixtures::Scratch::new("composed-clap");
+        let file = scratch.join("tone.clap");
+        std::fs::write(&file, b"in-process instrument fixture").unwrap();
+        let mut session =
+            Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), instrument_library());
+        let spec = composed_instrument_spec(&file, TONE_ID);
+        let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+        assert!(report.substituted.is_empty());
+        let track = session
+            .project
+            .tracks
+            .iter()
+            .find(|track| track.name == "Selected")
+            .unwrap()
+            .id;
+        let inner = session
+            .project
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap();
+        assert_eq!(inner.instrument_id, format!("clap:{TONE_ID}"));
+        assert_eq!(inner.file, Some(AssetPath::external(&file)));
+        assert!(session.hosted.instruments[&track].plugin().is_some());
+        let state = change_native_instrument_level(&mut session, track, 0.17);
+        let document = session
+            .save_as(&scratch.join("Song.auris"))
+            .unwrap()
+            .document;
+        session.open(&document).unwrap();
+        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), state);
+        let clip = session
+            .project
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .clips[0]
+            .id;
+        session.regenerate_clip(clip).unwrap();
+        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), state);
+        let saved =
+            auris_compose::SongSpec::parse(session.project.song_spec.as_ref().unwrap()).unwrap();
+        session.compose(&auris_compose::compose(&saved)).unwrap();
+        let selected = session
+            .project
+            .tracks
+            .iter()
+            .find(|track| track.name == "Selected")
+            .unwrap();
+        assert_eq!(
+            selected.kind.as_instrument().unwrap().instrument_id,
+            format!("clap:{TONE_ID}")
+        );
+        assert!(session.hosted.instruments[&selected.id].plugin().is_some());
+    }
+
+    #[test]
+    fn composing_clap_sources_accepts_files_and_directory_bundles() {
+        let scratch = super::super::fixtures::Scratch::new("composed-clap-layouts");
+        for (name, bundle) in [("file.clap", false), ("bundle.clap", true)] {
+            let path = scratch.join(name);
+            if bundle {
+                std::fs::create_dir(&path).unwrap();
+            } else {
+                std::fs::write(&path, b"in-process instrument fixture").unwrap();
+            }
+            let mut session =
+                Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
+            // Preloading isolates source validation from native binary loading, so both
+            // platform layouts are exercised on every test host.
+            session
+                .hosted
+                .libraries
+                .insert(path.clone(), instrument_library());
+            let spec = composed_instrument_spec(&path, TONE_ID);
+            let report = session
+                .compose(&auris_compose::compose(&spec))
+                .unwrap_or_else(|error| panic!("cannot compose with {name}: {error}"));
+            assert!(report.substituted.is_empty());
+            let track = session
+                .project
+                .tracks
+                .iter()
+                .find(|track| track.name == "Selected")
+                .unwrap();
+            let inner = track.kind.as_instrument().unwrap();
+            assert_eq!(inner.instrument_id, format!("clap:{TONE_ID}"));
+            assert_eq!(inner.file, Some(AssetPath::external(&path)));
+            assert!(session.hosted.instruments[&track.id].plugin().is_some());
+        }
+    }
+
+    #[test]
+    fn composing_an_effect_as_an_instrument_is_refused_before_document_replacement() {
+        let scratch = super::super::fixtures::Scratch::new("composed-clap-refusal");
+        let file = scratch.join("effect.clap");
+        std::fs::write(&file, b"in-process effect fixture").unwrap();
+        let mut session =
+            Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), fixture_library());
+        session.add_default_instrument_track("Keep me").unwrap();
+        session.forget_history();
+        let before = session.project.clone();
+        for id in [FIXTURE_ID, "not.in.this.library"] {
+            let spec = composed_instrument_spec(&file, id);
+            assert!(matches!(
+                session.compose(&auris_compose::compose(&spec)),
+                Err(SessionError::SongSource(_))
+            ));
+            assert_eq!(session.project, before);
+            assert!(!session.can_undo());
+        }
+    }
+
+    #[test]
+    fn compose_undo_redo_restores_each_songs_unsaved_native_preset_for_the_same_track_id() {
+        let scratch = super::super::fixtures::Scratch::new("composed-clap-history");
+        let file = scratch.join("tone.clap");
+        std::fs::write(&file, b"in-process instrument fixture").unwrap();
+        let mut session =
+            Session::new(super::super::SessionOptions::headless().with_balance(false)).unwrap();
+        session
+            .hosted
+            .libraries
+            .insert(file.clone(), instrument_library());
+        let mut spec = composed_instrument_spec(&file, TONE_ID);
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        session.forget_history();
+        let track = session
+            .project
+            .tracks
+            .iter()
+            .find(|track| track.name == "Selected")
+            .unwrap()
+            .id;
+        let first = change_native_instrument_level(&mut session, track, 0.17);
+        assert_ne!(
+            session
+                .project
+                .track(track)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .instrument_state
+                .hosted_bytes(),
+            Some(first.clone()),
+            "the first sound exists only in the native plugin before Compose"
+        );
+        spec.seed = spec.seed.wrapping_add(1);
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        let next_track = session
+            .project
+            .tracks
+            .iter()
+            .find(|track| track.name == "Selected")
+            .unwrap()
+            .id;
+        assert_eq!(
+            next_track, track,
+            "the two documents deliberately reuse the hosted slot id"
+        );
+        let second = change_native_instrument_level(&mut session, track, 0.37);
+        assert_eq!(session.undo(), Some(Edit::Compose));
+        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), first);
+        assert_eq!(session.redo(), Some(Edit::Compose));
+        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), second);
+        assert_eq!(session.undo(), Some(Edit::Compose));
+        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), first);
+    }
+
     fn prepare() -> PrepareContext {
         PrepareContext::new(48_000.0, 64, 2)
     }
@@ -1533,6 +1770,60 @@ mod tests {
             session.poll();
             assert_eq!(session.revision(), changed, "a quiet poll is not an edit");
         }
+    }
+
+    #[test]
+    fn composed_balance_settles_native_setup_notifications_before_capture() {
+        let (mut session, track) = session_with_instrument_score();
+        session.balance_composed = true;
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .pretend_the_state_changed();
+        let before = session.revision();
+        let job = session.begin_composed_balance().unwrap();
+        assert_ne!(
+            session.revision(),
+            before,
+            "setup requests were not consumed"
+        );
+        let settled = session.revision();
+        session.poll();
+        assert_eq!(session.revision(), settled);
+        let result = job
+            .run(&mut auris_engine::RenderProgress::default())
+            .unwrap();
+        assert!(matches!(
+            session.continue_composed_balance(result),
+            Ok(crate::ComposeBalanceStep::Pending(_))
+        ));
+    }
+
+    #[test]
+    fn composed_balance_rejects_unpolled_native_edits_after_rendering() {
+        let (mut session, track) = session_with_instrument_score();
+        session.balance_composed = true;
+        let result = session
+            .begin_composed_balance()
+            .unwrap()
+            .run(&mut auris_engine::RenderProgress::default())
+            .unwrap();
+        let before = session.project().clone();
+        let revision = session.revision();
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .pretend_the_state_changed();
+        assert_eq!(session.revision(), revision, "no window tick has run yet");
+        assert!(matches!(
+            session.continue_composed_balance(result),
+            Err(SessionError::StaleBalance)
+        ));
+        assert_eq!(session.project(), &before);
     }
 
     fn session_with_instrument_score() -> (super::Session, TrackId) {

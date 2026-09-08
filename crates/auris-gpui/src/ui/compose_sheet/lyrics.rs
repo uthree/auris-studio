@@ -12,7 +12,9 @@
 //! Nothing sings until Write, exactly like every other dial.
 
 use auris_i18n::Key;
-use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, MouseButton, MouseDownEvent, ScrollHandle, canvas, div, prelude::*, px,
+};
 
 use crate::app::AurisApp;
 use crate::theme::Metrics;
@@ -56,6 +58,30 @@ const MIN_ROWS: usize = 2;
 const MAX_ROWS: usize = 12;
 
 impl AurisApp {
+    /// Keeps the editor attached to the current form and the words Write will read.
+    ///
+    /// Form edits can remove its section, and replacing the sheet can change its words without
+    /// a keystroke. Reconcile before displaying or accepting input, leaving the caret and IME
+    /// composition alone whenever the words still agree.
+    pub(crate) fn reconcile_section_lyrics(&mut self) {
+        let Some(edit) = self.lyrics_edit.as_mut() else {
+            return;
+        };
+        let Some(section) = self
+            .song_sheet
+            .as_ref()
+            .filter(|dials| dials.form.contains(&edit.section))
+            .and_then(|dials| dials.sections.iter().find(|spec| spec.name == edit.section))
+        else {
+            self.lyrics_edit = None;
+            return;
+        };
+        if edit.field.content() != section.lyrics {
+            edit.field = TextField::new(section.lyrics.clone());
+            edit.field.caret_to_end();
+        }
+    }
+
     /// Puts the keyboard into one section's lyrics box.
     pub(crate) fn focus_section_lyrics(&mut self, section: usize) {
         let Some((section, lyrics)) = self
@@ -72,6 +98,7 @@ impl AurisApp {
         // half written, and a rename's select-all would put the whole of it one keystroke from
         // gone.
         field.caret_to_end();
+        self.song_lyrics_reveal = Some(section.clone());
         self.lyrics_edit = Some(LyricsEdit { section, field });
     }
 
@@ -104,6 +131,7 @@ impl AurisApp {
         event: &gpui::KeyDownEvent,
         cx: &mut Context<Self>,
     ) -> bool {
+        self.reconcile_section_lyrics();
         let Some(edit) = self.lyrics_edit.as_mut() else {
             return false;
         };
@@ -181,14 +209,22 @@ impl AurisApp {
     pub(crate) fn song_lyrics_rows(
         &mut self,
         dials: &SongDials,
+        scroll: &ScrollHandle,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let reveal_section = self.song_lyrics_reveal.take();
         let mut rows: Vec<AnyElement> = vec![
             self.group_heading(Key::PromptSectionLyrics)
                 .into_any_element(),
         ];
         for index in sections_in_form_order(dials) {
-            rows.push(self.lyrics_box(dials, index, cx));
+            rows.push(self.lyrics_box(
+                dials,
+                index,
+                reveal_section.as_deref() == Some(&dials.sections[index].name),
+                scroll,
+                cx,
+            ));
         }
         rows.push(
             div()
@@ -205,7 +241,14 @@ impl AurisApp {
     ///
     /// The margin counts moras and checks whether the fixed section can hold the words,
     /// using the same rhythm allocator as Write.
-    fn lyrics_box(&self, dials: &SongDials, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn lyrics_box(
+        &self,
+        dials: &SongDials,
+        index: usize,
+        reveal: bool,
+        scroll: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = self.theme.clone();
         let Some(spec) = dials.sections.get(index) else {
             return div().into_any_element();
@@ -297,6 +340,8 @@ impl AurisApp {
         let words: AnyElement = if let Some(edit) = edit {
             let field = &edit.field;
             div()
+                .debug_selector(move || format!("song-lyrics-editor-{index}"))
+                .relative()
                 .h(area_height(field.content(), MIN_ROWS, MAX_ROWS))
                 .flex_shrink_0()
                 .w_full()
@@ -331,6 +376,63 @@ impl AurisApp {
                     cx.entity(),
                     theme.clone(),
                 ))
+                .when(reveal, |this| {
+                    let scroll = scroll.clone();
+                    let section = spec.name.clone();
+                    let app = cx.entity().downgrade();
+                    this.child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                // Measure after the display has expanded into an editor. The
+                                // previous frame's bounds can be shorter or off screen entirely.
+                                let viewport = scroll.bounds();
+                                let offset = scroll.offset();
+                                let margin = px(8.0);
+                                let dy = if bounds.bottom() > viewport.bottom() - margin
+                                    || bounds.size.height > viewport.size.height - margin * 2.0
+                                {
+                                    viewport.bottom() - margin - bounds.bottom()
+                                } else if bounds.top() < viewport.top() + margin {
+                                    viewport.top() + margin - bounds.top()
+                                } else {
+                                    px(0.0)
+                                };
+                                if dy != px(0.0) {
+                                    let scroll = scroll.clone();
+                                    let section = section.clone();
+                                    let app = app.clone();
+                                    // Finish the current render before mutating its entity. A
+                                    // deferred effect also works without a platform frame tick.
+                                    cx.defer(move |cx| {
+                                        let Some(app) = app.upgrade() else {
+                                            return;
+                                        };
+                                        app.update(cx, |this, cx| {
+                                            if this
+                                                .lyrics_edit
+                                                .as_ref()
+                                                .is_some_and(|edit| edit.section == section)
+                                                && scroll.offset() == offset
+                                            {
+                                                scroll.set_offset(gpui::point(
+                                                    offset.x,
+                                                    (offset.y + dy).clamp(
+                                                        -scroll.max_offset().height,
+                                                        px(0.0),
+                                                    ),
+                                                ));
+                                                cx.notify();
+                                            }
+                                        });
+                                    });
+                                }
+                            },
+                            |_, _, _, _| (),
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                })
                 .into_any_element()
         } else {
             let empty = spec.lyrics.is_empty();
@@ -425,23 +527,6 @@ impl AurisApp {
                     })
                     .child(capacity)
             }))
-            .when(self.song_advanced, |this| {
-                this.child(crate::ui::widgets::button(
-                    ("song-melody-source", index),
-                    format!(
-                        "{} · {}",
-                        self.t(Key::SongMelodyFrom),
-                        spec.melody_from
-                            .as_deref()
-                            .unwrap_or(self.t(Key::SongChordsOwn))
-                    ),
-                    crate::ui::widgets::ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
-                ))
-            })
             .children(shared_status.map(|(key, status)| {
                 div()
                     .debug_selector(move || format!("song-lyrics-match-{index}"))
@@ -498,7 +583,50 @@ fn phrase_counts(app: &AurisApp, counts: &[usize]) -> String {
 }
 
 /// Give preset section names human labels while preserving custom names and stored identifiers.
-fn section_label(app: &AurisApp, name: &str) -> String {
+pub(super) fn section_label(app: &AurisApp, name: &str) -> String {
+    let mut labels: Vec<_> = app.song_sheet.as_ref().map_or_else(Vec::new, |dials| {
+        dials
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    section.name.as_str(),
+                    translated_section_label(app, &section.name),
+                )
+            })
+            .collect()
+    });
+    let target = labels
+        .iter()
+        .position(|(identifier, _)| *identifier == name)
+        .unwrap_or_else(|| {
+            labels.push((name, translated_section_label(app, name)));
+            labels.len() - 1
+        });
+    loop {
+        let collisions: Vec<_> = labels
+            .iter()
+            .map(|(identifier, label)| {
+                labels
+                    .iter()
+                    .any(|(other, candidate)| other != identifier && candidate == label)
+            })
+            .collect();
+        if !collisions.iter().any(|collides| *collides) {
+            return labels.swap_remove(target).1;
+        }
+        // An identifier added for clarity can itself match a custom section's literal name.
+        // Resolve those collisions too, using the same simultaneous updates at every call site.
+        for ((identifier, label), collides) in labels.iter_mut().zip(collisions) {
+            if collides {
+                *label = format!("{label} ({identifier})");
+            }
+        }
+    }
+}
+
+/// Translate without disambiguation so every occurrence can compare the same base labels.
+fn translated_section_label(app: &AurisApp, name: &str) -> String {
     for (prefix, key) in [
         ("verse", Key::SongVerseLabel),
         ("chorus", Key::SongChorusLabel),
@@ -524,8 +652,209 @@ fn section_label(app: &AurisApp, name: &str) -> String {
 }
 
 #[cfg(test)]
+#[path = "lyrics_scroll_tests.rs"]
+mod scroll_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn choosing_a_style_replaces_the_lyrics_editor_and_the_words_saved(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{choose, click, open, paint};
+        use crate::ui::context_menu::MenuCommand;
+        use crate::ui::text_field::HasTextField;
+        use auris_session::prelude::{SongSpec, preset};
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくらさいた");
+        app.update(cx, |this, _| {
+            let field = this.field().unwrap();
+            field.replace_and_mark(field.selection(), "は", None);
+            this.text_changed();
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.lyrics_edit.as_ref().unwrap().field.marked().is_some());
+        });
+        click("song-style", cx);
+        paint(&app, cx);
+        choose(&app, cx, &MenuCommand::SongPreset("pop-band"));
+        paint(&app, cx);
+        app.update(cx, |this, _| {
+            assert!(
+                this.lyrics_edit.is_none(),
+                "the old editor is retired with its sheet"
+            );
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap(),
+                &super::super::song_dials(&preset("pop-band").unwrap().spec())
+            );
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("はるがきた");
+        app.read_with(cx, |this, _| {
+            let edit = this.lyrics_edit.as_ref().unwrap();
+            let spec = super::super::song_spec(this.song_sheet.as_ref().unwrap());
+            assert_eq!(edit.field.content(), "はるがきた");
+            assert_eq!(spec.sections[&edit.section].lyrics, edit.field.content());
+            let saved = SongSpec::parse(&spec.to_toml()).unwrap();
+            assert_eq!(saved.sections[&edit.section].lyrics, edit.field.content());
+        });
+    }
+
+    #[gpui::test]
+    fn song_menus_own_navigation_editing_keys_and_text_until_closed(cx: &mut gpui::TestAppContext) {
+        use crate::harness::{open, paint};
+        use crate::ui::context_menu::{ContextMenu, MenuCommand};
+        use crate::ui::text_field::HasTextField;
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        cx.simulate_keystrokes("enter");
+        cx.simulate_input("さいた");
+        let before = app.update(cx, |this, _| {
+            let before = this.lyrics_edit.clone();
+            this.open_menu(
+                ContextMenu::new(gpui::point(px(120.0), px(120.0)), "Groove")
+                    .item("Straight", MenuCommand::SongGroove("straight"))
+                    .item("Swing", MenuCommand::SongGroove("swing")),
+            );
+            before
+        });
+        paint(&app, cx);
+        cx.simulate_keystrokes("down down");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.menu.as_ref().unwrap().highlighted, Some(1));
+            assert!(this.readable_field().is_none());
+        });
+        for key in ["left", "right", "backspace", "delete", "secondary-a", "tab"] {
+            cx.simulate_keystrokes(key);
+        }
+        cx.simulate_input("隠れた入力");
+        app.update(cx, |this, _| {
+            assert!(
+                this.field().is_none(),
+                "IME insertions have no covered field"
+            );
+            assert_eq!(this.lyrics_edit, before);
+        });
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            assert_eq!(this.song_sheet.as_ref().unwrap().groove, "swing");
+            assert_eq!(
+                this.lyrics_edit, before,
+                "Return chooses without adding a lyric line"
+            );
+        });
+        cx.simulate_input("はる");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit.as_ref().unwrap().field.content(),
+                "さくら\nさいたはる"
+            );
+        });
+        app.update(cx, |this, _| {
+            this.open_menu(
+                ContextMenu::new(gpui::point(px(120.0), px(120.0)), "Groove")
+                    .item("Straight", MenuCommand::SongGroove("straight")),
+            );
+        });
+        paint(&app, cx);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            assert!(
+                this.lyrics_edit.is_some(),
+                "Escape dismisses only the foreground menu"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn removing_the_last_playing_of_a_section_releases_its_lyrics_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{click, open, paint, resize};
+
+        let (app, cx) = open(cx);
+        resize(&app, cx, gpui::size(px(1600.0), px(2000.0)));
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.song_advanced = true;
+            let dials = this.song_sheet.as_mut().unwrap();
+            dials.form = vec![
+                dials.sections[0].name.clone(),
+                dials.sections[0].name.clone(),
+                dials.sections[1].name.clone(),
+            ];
+            this.focus_section_lyrics(0);
+        });
+        paint(&app, cx);
+        cx.simulate_input("さくら");
+        let before = app.read_with(cx, |this, _| this.lyrics_edit.clone());
+        click("song-form-remove-0", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.lyrics_edit, before,
+                "a repeated section is still editable"
+            );
+        });
+        click("song-form-remove-0", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.lyrics_edit.is_none(),
+                "there is no invisible editor after removal"
+            );
+            assert_eq!(this.song_sheet.as_ref().unwrap().form.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn replacing_the_focused_form_section_releases_its_lyrics_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, paint};
+        use crate::ui::context_menu::MenuCommand;
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            this.open_song_sheet();
+            this.song_sheet.as_mut().unwrap().form.truncate(1);
+            this.focus_section_lyrics(0);
+            this.run_menu_command(
+                MenuCommand::SongFormName {
+                    place: 0,
+                    name: "new verse".into(),
+                },
+                cx,
+            );
+        });
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.lyrics_edit.is_none());
+            assert_eq!(
+                this.song_sheet.as_ref().unwrap().sections[0].name,
+                "new verse"
+            );
+        });
+    }
 
     #[gpui::test]
     fn section_tempo_accepts_decimals_rejects_invalid_input_and_can_follow_the_song(
@@ -685,13 +1014,13 @@ mod tests {
     #[gpui::test]
     fn mismatched_later_words_leave_the_sheet_and_document_intact(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
-        app.update(cx, |this, _| {
+        app.update(cx, |this, cx| {
             let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
             spec.sections.get_mut("verse").unwrap().lyrics = "さくら".into();
             spec.sections.get_mut("verse2").unwrap().lyrics = "はる".into();
             this.song_sheet = Some(super::super::song_dials(&spec));
             let before = this.project().clone();
-            assert!(!this.write_song_from_sheet());
+            assert!(!this.write_song_from_sheet(true, cx));
             assert!(this.song_sheet.is_some());
             assert!(this.prompt.is_some());
             assert_eq!(this.project(), &before);
@@ -703,6 +1032,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::harness::{click, open, paint, resize};
+        use gpui::{ScrollDelta, ScrollWheelEvent};
         let (app, cx) = open(cx);
         resize(&app, cx, gpui::size(gpui::px(1600.0), gpui::px(2000.0)));
         let band = app.update(cx, |this, _| {
@@ -724,11 +1054,39 @@ mod tests {
             drums.bottom() < instruments.top(),
             "the kit occupies its own area above the instrument grid"
         );
+        let reveal = |selector: &'static str, cx: &mut gpui::VisualTestContext| {
+            for _ in 0..4 {
+                let body = cx.debug_bounds("song-sheet-body").unwrap();
+                let target = cx.debug_bounds(selector).unwrap();
+                if target.top() >= body.top() && target.bottom() <= body.bottom() {
+                    break;
+                }
+                let delta = if target.top() < body.top() {
+                    body.top() + px(8.0) - target.top()
+                } else {
+                    body.bottom() - px(8.0) - target.bottom()
+                };
+                cx.simulate_event(ScrollWheelEvent {
+                    position: body.center(),
+                    delta: ScrollDelta::Pixels(gpui::point(px(0.0), delta)),
+                    ..Default::default()
+                });
+                paint(&app, cx);
+            }
+            let body = cx.debug_bounds("song-sheet-body").unwrap();
+            let target = cx.debug_bounds(selector).unwrap();
+            assert!(
+                target.top() >= body.top() && target.bottom() <= body.bottom(),
+                "{selector} must be inside the scrolling body before clicking: target={target:?}, body={body:?}"
+            );
+        };
+        reveal("song-remove-drums", cx);
         click("song-remove-drums", cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.song_sheet.as_ref().unwrap().parts, band)
         });
+        reveal("song-add-drums", cx);
         click("song-add-drums", cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
@@ -746,9 +1104,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn choosing_one_drum_source_unifies_every_writer_and_keeps_the_band(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn choosing_one_drum_source_keeps_other_kits_and_the_band(cx: &mut gpui::TestAppContext) {
         use crate::ui::context_menu::MenuCommand;
         use auris_session::prelude::*;
         let (app, cx) = crate::harness::open(cx);
@@ -763,23 +1119,28 @@ mod tests {
                 .collect();
             let mut other = PartSpec::of_role("other-kit", Role::Kick);
             other.program = Some(gm::Program(8));
-            dials.parts.push(other);
-            let instrument = PartSpec::of_role("kit", Role::Kick).instrument;
-            this.run_menu_command(
-                MenuCommand::SongDrumSource {
-                    instrument: instrument.clone(),
-                    program: Some(16),
-                },
-                cx,
-            );
+            dials.parts.push(other.clone());
+            let target = dials
+                .parts
+                .iter()
+                .position(|part| part.role.is_drum())
+                .unwrap();
+            let source = PartSource::SoundFont {
+                path: std::env::temp_dir().join("song-kit.sf2"),
+                bank: 128,
+                patch: 16,
+            };
+            this.open_song_library(target, cx);
+            this.choose_song_library_source(source.clone());
             let dials = this.song_sheet.as_ref().unwrap();
             assert!(
                 dials
                     .parts
                     .iter()
-                    .filter(|p| p.role.is_drum())
-                    .all(|p| p.instrument == instrument && p.program == Some(gm::Program(16)))
+                    .filter(|p| p.role.is_drum() && p.name != "other-kit")
+                    .all(|p| p.source == Some(source.clone()) && p.program.is_none())
             );
+            assert_eq!(dials.parts.last(), Some(&other));
             assert_eq!(
                 dials
                     .parts
@@ -796,7 +1157,7 @@ mod tests {
                     .iter()
                     .filter(|t| !t.drum_parts.is_empty())
                     .count(),
-                1
+                2
             );
             this.run_menu_command(
                 MenuCommand::SongSinger(Some("C:/Voices/Test.onnx".into())),

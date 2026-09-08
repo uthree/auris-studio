@@ -958,6 +958,14 @@ pub mod composition {
     //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
     //! specification's range, with an empty field following the song tempo.
     //!
+    //! A part's optional `source` names an exact SoundFont file, bank and patch, or a CLAP/VST3
+    //! instrument and its stable plugin id. The session validates these sources before replacing
+    //! the document, including hosted instrument activation, and never substitutes another sound.
+    //! Imported picker fonts are cached without changing the open document until composition.
+    //! Chosen sources use the existing sampler and hosted track representation for playback and
+    //! saving. Collect Assets and asset recovery also update the stored song specification, so
+    //! reopening the sheet and composing again follow the same file as the saved arrangement.
+    //!
     //! [`auris_compose`] turns a text document into notes on a timeline. The whole crate is one
     //! function — [`compose`](auris_compose::compose) — and everything it does is a pure function
     //! of the specification and its seed, so the same document always writes the same piece.
@@ -1148,6 +1156,17 @@ pub mod composition {
     //! whole piece, and one graph rebuild rather than one per note. A part naming an instrument
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
+    //!
+    //! A responsive frontend uses
+    //! [`Session::compose_without_balance`](crate::Session::compose_without_balance), followed by
+    //! [`Session::begin_composed_balance`](crate::Session::begin_composed_balance). Each
+    //! [`ComposeBalanceJob`](crate::ComposeBalanceJob) renders and measures one track or mix on a
+    //! worker; [`Session::continue_composed_balance`](crate::Session::continue_composed_balance)
+    //! captures the next job on the session thread, where hosted plugin factories must remain.
+    //! Progress covers every track render and both mix renders. Faders are calculated in a
+    //! detached document and applied together after the last measurement, within the composition's
+    //! existing undo step. An intervening edit or Undo rejects the stale result; a failed render
+    //! leaves the written levels intact. Synchronous callers use the same measurements and math.
     //!
     //! `ending = "loop"` makes the form circular: the final section prepares the first section's
     //! key and the writers treat their boundary as another join. No coda or fade is added.

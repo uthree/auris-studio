@@ -153,6 +153,8 @@ impl Render for AurisApp {
         let status = self.render_status_bar(window.viewport_size().width, cx);
         let export_overlay = self.render_export_overlay(cx);
         let song_sheet = self.render_song_sheet(window, cx);
+        let song_library = self.render_song_library_overlay(window, cx);
+        let compose_progress = self.render_compose_progress(window);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -173,138 +175,146 @@ impl Render for AurisApp {
             .text_color(theme.text)
             .font(theme.font.clone())
             .text_sm()
-            .on_action(cx.listener(Self::on_toggle_play))
-            .on_action(cx.listener(Self::on_return_to_zero))
-            .on_action(cx.listener(Self::on_toggle_loop))
-            .on_action(cx.listener(Self::on_toggle_metronome))
-            .on_action(cx.listener(Self::on_toggle_recording))
-            .on_action(cx.listener(Self::on_toggle_monitoring))
-            .on_action(cx.listener(Self::on_toggle_musical_typing))
-            .on_action(cx.listener(Self::on_toggle_punch))
-            .on_action(cx.listener(Self::on_new_project))
-            .on_action(cx.listener(Self::on_open_project))
-            .on_action(cx.listener(Self::on_quit))
-            .on_action(cx.listener(Self::on_compose_song))
-            .on_action(cx.listener(Self::on_compose_from_spec))
-            .on_action(cx.listener(Self::on_accompany_melody))
-            .on_action(cx.listener(Self::on_compose_from_lyrics))
-            .on_action(cx.listener(Self::on_balance_levels))
-            .on_action(cx.listener(Self::on_save_project))
-            .on_action(cx.listener(Self::on_save_project_as))
-            .on_action(cx.listener(Self::on_import_audio))
-            .on_action(cx.listener(Self::on_import_soundfont))
-            .on_action(cx.listener(Self::on_import_midi))
-            .on_action(cx.listener(Self::on_export_midi))
-            .on_action(cx.listener(Self::on_export_singer_frames))
-            .on_action(cx.listener(Self::on_choose_singer_voice))
-            .on_action(cx.listener(Self::on_next_singer_speaker))
-            .on_action(cx.listener(Self::on_sing))
-            .on_action(cx.listener(Self::on_collect_assets))
-            .on_action(cx.listener(Self::on_export_audio))
-            .on_action(cx.listener(Self::on_export_cycle))
-            .on_action(cx.listener(Self::on_export_stems))
-            .on_action(cx.listener(Self::on_open_recent))
-            .on_action(cx.listener(Self::on_show_about))
-            .on_action(cx.listener(Self::on_add_instrument_track))
-            .on_action(cx.listener(Self::on_add_drum_track))
-            .on_action(cx.listener(Self::on_add_singer_track))
-            .on_action(cx.listener(Self::on_add_audio_track))
-            .on_action(cx.listener(Self::on_add_bus_track))
-            .on_action(cx.listener(Self::on_duplicate_track))
-            .on_action(cx.listener(Self::on_toggle_track_mute))
-            .on_action(cx.listener(Self::on_toggle_track_solo))
-            .on_action(cx.listener(Self::on_select_previous_track))
-            .on_action(cx.listener(Self::on_select_next_track))
-            .on_action(cx.listener(Self::on_step_back))
-            .on_action(cx.listener(Self::on_step_forward))
-            .on_action(cx.listener(Self::on_nudge_notes_left))
-            .on_action(cx.listener(Self::on_nudge_notes_right))
-            .on_action(cx.listener(Self::on_nudge_clips_left))
-            .on_action(cx.listener(Self::on_nudge_clips_right))
-            .on_action(cx.listener(Self::on_delete_track))
-            .on_action(cx.listener(Self::on_delete_selection))
-            .on_action(cx.listener(Self::on_select_all_notes))
-            .on_action(cx.listener(Self::on_duplicate_notes))
-            .on_action(cx.listener(Self::on_cut_notes))
-            .on_action(cx.listener(Self::on_copy_notes))
-            .on_action(cx.listener(Self::on_paste_notes))
-            .on_action(cx.listener(Self::on_cut_clips))
-            .on_action(cx.listener(Self::on_copy_clips))
-            .on_action(cx.listener(Self::on_paste_clips))
-            .on_action(cx.listener(Self::on_transpose_up))
-            .on_action(cx.listener(Self::on_transpose_down))
-            .on_action(cx.listener(Self::on_octave_up))
-            .on_action(cx.listener(Self::on_octave_down))
-            .on_action(cx.listener(Self::on_select_all_clips))
-            .on_action(cx.listener(Self::on_duplicate_clip))
-            .on_action(cx.listener(Self::on_split_clip))
-            .on_action(cx.listener(Self::on_toggle_clip_mute))
-            .on_action(cx.listener(Self::on_toggle_clip_loop))
-            .on_action(cx.listener(Self::on_quantize_starts))
-            .on_action(cx.listener(Self::on_quantize_lengths))
-            .on_action(cx.listener(Self::on_quantize_notes))
-            .on_action(cx.listener(Self::on_next_tool))
-            .on_action(cx.listener(Self::on_set_tempo))
-            .on_action(cx.listener(Self::on_set_time_signature))
-            .on_action(cx.listener(Self::on_cycle_grid))
-            .on_action(cx.listener(Self::on_go_to_position))
-            .on_action(cx.listener(Self::on_undo))
-            .on_action(cx.listener(Self::on_redo))
-            .on_action(cx.listener(Self::on_panic_stop))
-            .on_action(cx.listener(Self::on_zoom_in))
-            .on_action(cx.listener(Self::on_zoom_out))
-            .on_action(cx.listener(Self::on_toggle_library))
-            .on_action(cx.listener(Self::on_toggle_inspector))
-            .on_action(cx.listener(Self::on_toggle_piano_roll))
-            .on_action(cx.listener(Self::on_toggle_mixer))
-            .on_action(cx.listener(Self::on_toggle_log))
-            .on_action(cx.listener(Self::on_toggle_agent))
-            .on_action(cx.listener(Self::on_toggle_structure_lane))
-            .on_action(cx.listener(Self::on_toggle_harmony_lane))
-            .on_action(cx.listener(Self::on_toggle_tempo_marks))
-            .on_action(cx.listener(Self::on_toggle_bend_lane))
-            .on_action(cx.listener(Self::on_toggle_modulation_lane))
-            .on_action(cx.listener(Self::on_open_settings))
-            .on_action(cx.listener(Self::on_open_command_palette))
-            .on_action(cx.listener(Self::on_open_menu_bar))
-            .on_action(
-                cx.listener(|this, _: &actions::AnalyzeSelectedChords, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::SelectedChords, cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &actions::AnalyzeAllChords, _, cx| {
-                this.open_analysis_command(AnalysisCommand::AllChords, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &actions::AnalyzeSelectedAudio, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::Audio, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &actions::TranscribeSelectedAudio, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::Transcribe, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &actions::AnalyzeSelectedInstruments, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::Instruments, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, _: &actions::TranscribeSelectedMixture, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::Mixture, cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &actions::OpenDrumAnalysis, _, cx| {
-                this.open_analysis_command(AnalysisCommand::Drums, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &actions::OpenAnalysisResults, _, cx| {
-                    this.open_analysis_command(AnalysisCommand::Results, cx)
-                }),
-            )
-            .on_action(cx.listener(Self::on_focus_next_pane))
-            .on_action(cx.listener(Self::on_focus_previous_pane))
+            .when(self.compose_progress.is_some(), |this| {
+                // Consume Quit here so it cannot fall through to the application fallback.
+                this.on_action(|_: &actions::Quit, _, _| {})
+            })
+            // The native menu dispatches actions without consulting key contexts. Register
+            // no document actions while the progress modal owns the root focus handle.
+            .when(self.compose_progress.is_none(), |this| {
+                this.on_action(cx.listener(Self::on_toggle_play))
+                    .on_action(cx.listener(Self::on_return_to_zero))
+                    .on_action(cx.listener(Self::on_toggle_loop))
+                    .on_action(cx.listener(Self::on_toggle_metronome))
+                    .on_action(cx.listener(Self::on_toggle_recording))
+                    .on_action(cx.listener(Self::on_toggle_monitoring))
+                    .on_action(cx.listener(Self::on_toggle_musical_typing))
+                    .on_action(cx.listener(Self::on_toggle_punch))
+                    .on_action(cx.listener(Self::on_new_project))
+                    .on_action(cx.listener(Self::on_open_project))
+                    .on_action(cx.listener(Self::on_quit))
+                    .on_action(cx.listener(Self::on_compose_song))
+                    .on_action(cx.listener(Self::on_compose_from_spec))
+                    .on_action(cx.listener(Self::on_accompany_melody))
+                    .on_action(cx.listener(Self::on_compose_from_lyrics))
+                    .on_action(cx.listener(Self::on_balance_levels))
+                    .on_action(cx.listener(Self::on_save_project))
+                    .on_action(cx.listener(Self::on_save_project_as))
+                    .on_action(cx.listener(Self::on_import_audio))
+                    .on_action(cx.listener(Self::on_import_soundfont))
+                    .on_action(cx.listener(Self::on_import_midi))
+                    .on_action(cx.listener(Self::on_export_midi))
+                    .on_action(cx.listener(Self::on_export_singer_frames))
+                    .on_action(cx.listener(Self::on_choose_singer_voice))
+                    .on_action(cx.listener(Self::on_next_singer_speaker))
+                    .on_action(cx.listener(Self::on_sing))
+                    .on_action(cx.listener(Self::on_collect_assets))
+                    .on_action(cx.listener(Self::on_export_audio))
+                    .on_action(cx.listener(Self::on_export_cycle))
+                    .on_action(cx.listener(Self::on_export_stems))
+                    .on_action(cx.listener(Self::on_open_recent))
+                    .on_action(cx.listener(Self::on_show_about))
+                    .on_action(cx.listener(Self::on_add_instrument_track))
+                    .on_action(cx.listener(Self::on_add_drum_track))
+                    .on_action(cx.listener(Self::on_add_singer_track))
+                    .on_action(cx.listener(Self::on_add_audio_track))
+                    .on_action(cx.listener(Self::on_add_bus_track))
+                    .on_action(cx.listener(Self::on_duplicate_track))
+                    .on_action(cx.listener(Self::on_toggle_track_mute))
+                    .on_action(cx.listener(Self::on_toggle_track_solo))
+                    .on_action(cx.listener(Self::on_select_previous_track))
+                    .on_action(cx.listener(Self::on_select_next_track))
+                    .on_action(cx.listener(Self::on_step_back))
+                    .on_action(cx.listener(Self::on_step_forward))
+                    .on_action(cx.listener(Self::on_nudge_notes_left))
+                    .on_action(cx.listener(Self::on_nudge_notes_right))
+                    .on_action(cx.listener(Self::on_nudge_clips_left))
+                    .on_action(cx.listener(Self::on_nudge_clips_right))
+                    .on_action(cx.listener(Self::on_delete_track))
+                    .on_action(cx.listener(Self::on_delete_selection))
+                    .on_action(cx.listener(Self::on_select_all_notes))
+                    .on_action(cx.listener(Self::on_duplicate_notes))
+                    .on_action(cx.listener(Self::on_cut_notes))
+                    .on_action(cx.listener(Self::on_copy_notes))
+                    .on_action(cx.listener(Self::on_paste_notes))
+                    .on_action(cx.listener(Self::on_cut_clips))
+                    .on_action(cx.listener(Self::on_copy_clips))
+                    .on_action(cx.listener(Self::on_paste_clips))
+                    .on_action(cx.listener(Self::on_transpose_up))
+                    .on_action(cx.listener(Self::on_transpose_down))
+                    .on_action(cx.listener(Self::on_octave_up))
+                    .on_action(cx.listener(Self::on_octave_down))
+                    .on_action(cx.listener(Self::on_select_all_clips))
+                    .on_action(cx.listener(Self::on_duplicate_clip))
+                    .on_action(cx.listener(Self::on_split_clip))
+                    .on_action(cx.listener(Self::on_toggle_clip_mute))
+                    .on_action(cx.listener(Self::on_toggle_clip_loop))
+                    .on_action(cx.listener(Self::on_quantize_starts))
+                    .on_action(cx.listener(Self::on_quantize_lengths))
+                    .on_action(cx.listener(Self::on_quantize_notes))
+                    .on_action(cx.listener(Self::on_next_tool))
+                    .on_action(cx.listener(Self::on_set_tempo))
+                    .on_action(cx.listener(Self::on_set_time_signature))
+                    .on_action(cx.listener(Self::on_cycle_grid))
+                    .on_action(cx.listener(Self::on_go_to_position))
+                    .on_action(cx.listener(Self::on_undo))
+                    .on_action(cx.listener(Self::on_redo))
+                    .on_action(cx.listener(Self::on_panic_stop))
+                    .on_action(cx.listener(Self::on_zoom_in))
+                    .on_action(cx.listener(Self::on_zoom_out))
+                    .on_action(cx.listener(Self::on_toggle_library))
+                    .on_action(cx.listener(Self::on_toggle_inspector))
+                    .on_action(cx.listener(Self::on_toggle_piano_roll))
+                    .on_action(cx.listener(Self::on_toggle_mixer))
+                    .on_action(cx.listener(Self::on_toggle_log))
+                    .on_action(cx.listener(Self::on_toggle_agent))
+                    .on_action(cx.listener(Self::on_toggle_structure_lane))
+                    .on_action(cx.listener(Self::on_toggle_harmony_lane))
+                    .on_action(cx.listener(Self::on_toggle_tempo_marks))
+                    .on_action(cx.listener(Self::on_toggle_bend_lane))
+                    .on_action(cx.listener(Self::on_toggle_modulation_lane))
+                    .on_action(cx.listener(Self::on_open_settings))
+                    .on_action(cx.listener(Self::on_open_command_palette))
+                    .on_action(cx.listener(Self::on_open_menu_bar))
+                    .on_action(
+                        cx.listener(|this, _: &actions::AnalyzeSelectedChords, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::SelectedChords, cx)
+                        }),
+                    )
+                    .on_action(cx.listener(|this, _: &actions::AnalyzeAllChords, _, cx| {
+                        this.open_analysis_command(AnalysisCommand::AllChords, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &actions::AnalyzeSelectedAudio, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::Audio, cx)
+                        }),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &actions::TranscribeSelectedAudio, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::Transcribe, cx)
+                        }),
+                    )
+                    .on_action(cx.listener(
+                        |this, _: &actions::AnalyzeSelectedInstruments, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::Instruments, cx)
+                        },
+                    ))
+                    .on_action(cx.listener(
+                        |this, _: &actions::TranscribeSelectedMixture, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::Mixture, cx)
+                        },
+                    ))
+                    .on_action(cx.listener(|this, _: &actions::OpenDrumAnalysis, _, cx| {
+                        this.open_analysis_command(AnalysisCommand::Drums, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &actions::OpenAnalysisResults, _, cx| {
+                            this.open_analysis_command(AnalysisCommand::Results, cx)
+                        }),
+                    )
+                    .on_action(cx.listener(Self::on_focus_next_pane))
+                    .on_action(cx.listener(Self::on_focus_previous_pane))
+            })
             // Drags are tracked on the root so they keep working after the pointer leaves the
             // control that started them, which is what makes a fader usable.
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -354,6 +364,7 @@ impl Render for AurisApp {
             .children(timbre_map)
             .children(export_overlay)
             .children(song_sheet)
+            .children(song_library)
             .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
@@ -364,6 +375,7 @@ impl Render for AurisApp {
             .children(typing_panel)
             .children(plugin_window)
             .children(menu)
+            .children(compose_progress)
     }
 }
 
@@ -709,6 +721,10 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.compose_progress.is_some() {
+            cx.stop_propagation();
+            return;
+        }
         let start = match lanes_offset(window.mouse_position(), self.canvas.lanes.get()) {
             Some(x) => self.snap(self.timeline.x_to_tick(x)).max_zero(),
             None => self.playhead_ticks(),
@@ -730,6 +746,9 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.compose_progress.is_some() {
+            return;
+        }
         // A key of the drawn keyboard held by a pointer that is no longer pressing anything is a
         // key whose release never arrived: letting go over another application, or off the edge of
         // the screen, is a mouse-up the platform hands to somebody else. Checked before the drag,
@@ -1164,7 +1183,10 @@ impl AurisApp {
                 start_fraction,
                 start_x,
             } => {
-                let delta = f32::from(event.position.x - start_x);
+                let delta = crate::ui::widgets::fine_scaled(
+                    f32::from(event.position.x - start_x),
+                    event.modifiers,
+                );
                 self.drag_song_dial(target, start_fraction, delta);
             }
             Drag::SongPad { detail, bounds } => {
@@ -1264,31 +1286,47 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Keys the open rename sheet claims before anything else sees them.
+    /// Routes keys through the controls in front-to-back order.
     ///
     /// Only the ones the platform does not deliver as text: characters reach the field through
     /// the input handler instead, which is what lets an IME compose into it.
     ///
     /// The typing keyboard is asked first, and answers for nothing at all unless it is switched
-    /// on and nothing is claiming the keyboard above it — so a rename sheet gets its letters even
-    /// with the mode left on, which is the order somebody who names a track mid-take needs.
+    /// on and nothing is claiming the keyboard above it. Menus then take every key while open;
+    /// fields underneath resume editing only after the menu closes.
     fn on_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.typing_key(event)
-            || self.palette_key(event, window, cx)
-            || self.prompt_key(event, window, cx)
-            || self.lyrics_key(event, cx)
-            || self.menu_key(event, window, cx)
-            || self.menu_bar_key(event, window, cx)
-            || self.library_search_key(event, cx)
-            // Last, because everything above it is in front of the agent field on the screen and
-            // has to answer for a key first.
-            || self.agent_key(event, window, cx)
-        {
+        // Choose one owner before handling the key. An editor must leave character keys to
+        // platform text input, without offering those unhandled keys to a covered control.
+        let handled = if self.compose_progress.is_some() || self.typing_key(event) {
+            true
+        } else if self.menu.is_some() {
+            self.menu_key(event, window, cx)
+        } else if self.menu_bar.is_some() {
+            self.menu_bar_key(event, window, cx)
+        } else if self.palette.is_some() {
+            self.palette_key(event, window, cx)
+        } else if self.prompt.is_some() {
+            self.prompt_key(event, window, cx)
+        } else if self.song_library.is_some() {
+            self.song_library_key(event, cx)
+        } else if self.song_sheet.is_some() {
+            self.reconcile_section_lyrics();
+            if self.lyrics_edit.is_some() {
+                self.lyrics_key(event, cx)
+            } else {
+                true
+            }
+        } else if self.library_search_focused {
+            self.library_search_key(event, cx)
+        } else {
+            self.agent_key(event, window, cx)
+        };
+        if handled {
             cx.stop_propagation();
             cx.notify();
         }
@@ -1468,7 +1506,9 @@ impl AurisApp {
                     window.dispatch_action(action, cx);
                 }
             }
-            _ => return false,
+            // A menu owns the keyboard even for keys it does not use. Editing keys must not
+            // reach a field underneath it.
+            _ => {}
         }
         true
     }
@@ -1533,7 +1573,8 @@ impl AurisApp {
                 self.close_menu();
                 self.run_menu_command(command, cx);
             }
-            _ => return false,
+            // Unknown keys still belong to the menu, never to a covered editor.
+            _ => {}
         }
         true
     }

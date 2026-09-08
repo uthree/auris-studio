@@ -2,7 +2,7 @@
 //!
 //! Its own file because it is a different job in a different vocabulary. Nothing here builds an
 //! element or reads the theme; every function walks a list the composer publishes — the moods,
-//! the grooves, the progressions, General MIDI — and turns it into items carrying a
+//! the grooves and the progressions — and turns it into items carrying a
 //! [`MenuCommand`]. The panel in `view` opens them, and `context_menu` carries out what was
 //! chosen, so a menu that gained an entry needs a command over there to answer it.
 
@@ -13,6 +13,7 @@ use crate::app::AurisApp;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 
 use super::dials::*;
+use super::lyrics::section_label;
 
 impl AurisApp {
     /// The closing gesture, including a return to the opening for background music.
@@ -29,36 +30,6 @@ impl AurisApp {
                 self.t(label),
                 MenuCommand::SongEnding(ending),
                 current == Some(ending),
-            );
-        }
-        menu
-    }
-
-    /// One kit source for all of the composer's independent drum writers.
-    pub(super) fn song_drum_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::PresetDrums));
-        let fallback = PartSpec::of_role("drums", Role::Kick).instrument;
-        for (program, name) in gm::KITS {
-            menu = menu.item(
-                name,
-                MenuCommand::SongDrumSource {
-                    instrument: fallback.clone(),
-                    program: Some(program),
-                },
-            );
-        }
-        menu = menu.separator();
-        for descriptor in self
-            .registry()
-            .instruments()
-            .filter(|d| d.category == PluginCategory::Drum)
-        {
-            menu = menu.item(
-                auris_i18n::audio::plugin_name(&descriptor.name, self.language()).to_string(),
-                MenuCommand::SongDrumSource {
-                    instrument: descriptor.id.to_string(),
-                    program: None,
-                },
             );
         }
         menu
@@ -98,7 +69,7 @@ impl AurisApp {
                 continue;
             }
             menu = menu.toggle(
-                source.name.clone(),
+                section_label(self, &source.name),
                 MenuCommand::SongMelodySource {
                     section: index,
                     source: Some(source.name.clone()),
@@ -308,47 +279,6 @@ impl AurisApp {
         menu
     }
 
-    /// Which parts of the roster play in a section.
-    ///
-    /// One row per part with a tick against the ones that play, rather than a list to edit: the
-    /// question a person has here is "does the pad come in yet", and a tick answers it at a glance
-    /// for the whole roster at once.
-    ///
-    /// The last part left is shown ticked and dead. A section that plays nothing is silence, and
-    /// the specification cannot say it — an empty list is already how *everything* is written down
-    /// — so the row that would produce one is unusable rather than quietly doing nothing.
-    pub(super) fn song_section_parts_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        section: usize,
-    ) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::SongSectionParts));
-        let Some(dials) = self.song_sheet.as_ref() else {
-            return menu;
-        };
-        let Some(plan) = dials.sections.get(section) else {
-            return menu;
-        };
-        let playing = dials
-            .parts
-            .iter()
-            .filter(|part| part_plays_in(plan, &part.name))
-            .count();
-        for part in &dials.parts {
-            let plays = part_plays_in(plan, &part.name);
-            menu = menu.toggle_if(
-                !(plays && playing <= 1),
-                part.name.clone(),
-                MenuCommand::SongSectionPart {
-                    section,
-                    part: part.name.clone(),
-                },
-                plays,
-            );
-        }
-        menu
-    }
-
     /// The sections a place in the form may play: every one the song has, and a new one.
     pub(super) fn song_form_name_menu(
         &self,
@@ -395,12 +325,12 @@ impl AurisApp {
             return menu;
         };
         for section in &dials.sections {
-            menu = menu.item(section.name.clone(), command(&section.name));
+            menu = menu.item(section_label(self, &section.name), command(&section.name));
         }
         menu = menu.separator();
         for stem in SECTION_NAMES {
             let name = unused_section_name(dials, stem);
-            menu = menu.item(name.clone(), command(&name));
+            menu = menu.item(section_label(self, &name), command(&name));
         }
         menu
     }
@@ -424,10 +354,15 @@ impl AurisApp {
         part: usize,
     ) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartRole));
+        let current = self
+            .song_sheet
+            .as_ref()
+            .and_then(|dials| dials.parts.get(part));
         for role in Role::ALL.into_iter().filter(|role| !role.is_drum()) {
-            menu = menu.item(
+            menu = menu.toggle(
                 self.t(role_key(role)),
                 MenuCommand::SongPartRole { part, role },
+                current.is_some_and(|part| part.role == role),
             );
         }
         menu
@@ -445,7 +380,6 @@ impl AurisApp {
         menu
     }
 
-    /// Every instrument this build can play.
     /// The whole songs the sheet can be filled from.
     pub(super) fn song_preset_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongStyle));
@@ -461,85 +395,6 @@ impl AurisApp {
                     auris_i18n::audio::preset_description(entry.description, language)
                 ),
                 MenuCommand::SongPreset(entry.name),
-            );
-        }
-        menu
-    }
-
-    /// What one part plays: a General MIDI sound, or one of the built-in plugins.
-    ///
-    /// The programs go in by family rather than all hundred and twenty-eight at once — a menu
-    /// that tall does not fit on a screen, and General MIDI already grouped them in eights.
-    pub(super) fn song_instrument_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        part: usize,
-    ) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartInstrument));
-        let language = self.language();
-        let drums = self
-            .song_sheet
-            .as_ref()
-            .and_then(|dials| dials.parts.get(part))
-            .is_some_and(|part| part.role.is_drum());
-        if drums {
-            // A drum part's number is a whole kit, so there is nothing to group: the eight kits
-            // are the list.
-            for (patch, name) in gm::KITS {
-                menu = menu.item(
-                    name,
-                    MenuCommand::SongPartProgram {
-                        part,
-                        program: patch,
-                    },
-                );
-            }
-        } else {
-            for (family, name) in gm::FAMILIES.iter().enumerate() {
-                menu = menu.item(
-                    format!("{name}…"),
-                    MenuCommand::SongPartFamily {
-                        part,
-                        family,
-                        anchor,
-                    },
-                );
-            }
-        }
-        menu = menu.separator();
-        let mut instruments: Vec<(String, String)> = self
-            .registry()
-            .instruments()
-            .map(|descriptor| {
-                (
-                    descriptor.id.to_string(),
-                    auris_i18n::audio::plugin_name(&descriptor.name, language).to_string(),
-                )
-            })
-            .collect();
-        instruments.sort_by(|one, other| one.1.cmp(&other.1));
-        for (id, name) in instruments {
-            menu = menu.item(name, MenuCommand::SongPartInstrument { part, id });
-        }
-        menu
-    }
-
-    /// The eight sounds of one General MIDI family.
-    pub(crate) fn song_program_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        part: usize,
-        family: usize,
-    ) -> ContextMenu {
-        let title = gm::FAMILIES.get(family).copied().unwrap_or_default();
-        let mut menu = ContextMenu::new(anchor, title);
-        for program in gm::Program::family_programs(family) {
-            menu = menu.item(
-                program.name(),
-                MenuCommand::SongPartProgram {
-                    part,
-                    program: program.0,
-                },
             );
         }
         menu
@@ -583,5 +438,241 @@ impl AurisApp {
     /// heard of it — which is what a chart somebody typed out by hand looks like.
     pub(super) fn progression_name(&self, name: &str) -> String {
         auris_i18n::audio::theory_name(name, self.language()).to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use auris_i18n::Language;
+    use gpui::{TestAppContext, point, px};
+
+    use crate::harness::open;
+    use crate::ui::context_menu::MenuEntry;
+
+    #[gpui::test]
+    fn localized_section_choices_keep_the_original_identifiers(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            let mut custom = dials.sections[0].clone();
+            custom.name = "verse reprise".to_string();
+            custom.melody_from = None;
+            dials.sections.push(custom);
+        });
+        let anchor = point(px(0.0), px(0.0));
+        for (language, verse, next_verse) in [
+            (Language::English, "Verse 1", "Verse 2"),
+            (Language::Japanese, "1番 Aメロ", "2番 Aメロ"),
+        ] {
+            app.update(cx, |this, _| this.language = language);
+            app.read_with(cx, |this, _| {
+                let form = this.song_form_name_menu(anchor, 0);
+                for (identifier, label) in [
+                    ("verse", verse),
+                    ("verse 2", next_verse),
+                    ("verse reprise", "verse reprise"),
+                ] {
+                    let item = form
+                        .entries
+                        .iter()
+                        .find_map(|entry| match entry {
+                            MenuEntry::Item(item)
+                                if item.command
+                                    == (MenuCommand::SongFormName {
+                                        place: 0,
+                                        name: identifier.to_string(),
+                                    }) =>
+                            {
+                                Some(item)
+                            }
+                            _ => None,
+                        })
+                        .expect(
+                            "the picker carries an existing or fresh section by its identifier",
+                        );
+                    assert_eq!(item.label.as_ref(), label);
+                }
+
+                let dials = this.song_sheet.as_ref().unwrap();
+                let chorus = dials
+                    .sections
+                    .iter()
+                    .position(|section| section.name == "chorus")
+                    .unwrap();
+                let melody = this.song_melody_menu(anchor, chorus);
+                let source = melody
+                    .entries
+                    .iter()
+                    .find_map(|entry| match entry {
+                        MenuEntry::Item(item)
+                            if item.command
+                                == (MenuCommand::SongMelodySource {
+                                    section: chorus,
+                                    source: Some("verse".to_string()),
+                                }) =>
+                        {
+                            Some(item)
+                        }
+                        _ => None,
+                    })
+                    .expect("the same translated source is available for a shared melody");
+                assert_eq!(source.label.as_ref(), verse);
+                assert!(dials.sections.iter().any(|section| section.name == "verse"));
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn sections_with_colliding_translations_remain_distinguishable(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            for name in ["verse 1", "1番 Aメロ", "Verse 1"] {
+                let mut section = dials
+                    .sections
+                    .iter()
+                    .find(|section| section.name == "verse")
+                    .unwrap()
+                    .clone();
+                section.name = name.to_string();
+                section.melody_from = None;
+                dials.sections.push(section);
+            }
+        });
+        let anchor = point(px(0.0), px(0.0));
+        for (language, translated, custom, unchanged) in [
+            (Language::English, "Verse 1", "Verse 1", "1番 Aメロ"),
+            (Language::Japanese, "1番 Aメロ", "1番 Aメロ", "Verse 1"),
+        ] {
+            app.update(cx, |this, _| this.language = language);
+            app.read_with(cx, |this, _| {
+                let dials = this.song_sheet.as_ref().unwrap();
+                let chorus = dials
+                    .sections
+                    .iter()
+                    .position(|section| section.name == "chorus")
+                    .unwrap();
+                let form = this.song_form_name_menu(anchor, 0);
+                let melody = this.song_melody_menu(anchor, chorus);
+                for name in ["verse", "verse 1", custom] {
+                    let expected = format!("{translated} ({name})");
+                    assert_eq!(section_label(this, name), expected);
+                    for menu in [&form, &melody] {
+                        let item = menu
+                            .entries
+                            .iter()
+                            .find_map(|entry| match entry {
+                                MenuEntry::Item(item) => match &item.command {
+                                    MenuCommand::SongFormName {
+                                        name: identifier, ..
+                                    }
+                                    | MenuCommand::SongMelodySource {
+                                        source: Some(identifier),
+                                        ..
+                                    } if identifier == name => Some(item),
+                                    _ => None,
+                                },
+                                _ => None,
+                            })
+                            .expect("the choice retains its stored identifier in either menu");
+                        assert_eq!(item.label.as_ref(), expected);
+                    }
+                }
+                assert_eq!(section_label(this, unchanged), unchanged);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn custom_names_cannot_collide_with_generated_disambiguation(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        for (language, translated) in [
+            (Language::English, "Verse 1"),
+            (Language::Japanese, "1番 Aメロ"),
+        ] {
+            let first_collision = format!("{translated} (verse)");
+            let second_collision = format!("{first_collision} (verse)");
+            app.update(cx, |this, _| {
+                this.language = language;
+                this.song_sheet = None;
+                this.open_song_sheet();
+                let dials = this.song_sheet.as_mut().unwrap();
+                for name in ["verse 1", &first_collision, &second_collision] {
+                    let mut section = dials
+                        .sections
+                        .iter()
+                        .find(|section| section.name == "verse")
+                        .unwrap()
+                        .clone();
+                    section.name = name.to_string();
+                    section.melody_from = None;
+                    dials.sections.push(section);
+                }
+            });
+            app.read_with(cx, |this, _| {
+                let dials = this.song_sheet.as_ref().unwrap();
+                let labels: Vec<_> = dials
+                    .sections
+                    .iter()
+                    .map(|section| section_label(this, &section.name))
+                    .collect();
+                let unique: std::collections::HashSet<_> = labels.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    labels.len(),
+                    "even nested custom names remain distinct: {labels:?}"
+                );
+                let chorus = dials
+                    .sections
+                    .iter()
+                    .position(|section| section.name == "chorus")
+                    .unwrap();
+                for menu in [
+                    this.song_form_name_menu(point(px(0.0), px(0.0)), 0),
+                    this.song_melody_menu(point(px(0.0), px(0.0)), chorus),
+                ] {
+                    for item in menu.entries.iter().filter_map(|entry| match entry {
+                        MenuEntry::Item(item) => Some(item),
+                        _ => None,
+                    }) {
+                        let identifier = match &item.command {
+                            MenuCommand::SongFormName { name, .. }
+                            | MenuCommand::SongMelodySource {
+                                source: Some(name), ..
+                            } => name,
+                            _ => continue,
+                        };
+                        assert_eq!(item.label.as_ref(), section_label(this, identifier));
+                    }
+                }
+                assert_eq!(
+                    section_label(this, "verse"),
+                    format!("{second_collision} (verse)")
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn duplicate_section_identifiers_do_not_require_disambiguation(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.language = Language::English;
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            let verse = dials
+                .sections
+                .iter()
+                .find(|section| section.name == "verse")
+                .unwrap()
+                .clone();
+            dials.sections.push(verse);
+        });
+        app.read_with(cx, |this, _| {
+            assert_eq!(section_label(this, "verse"), "Verse 1");
+        });
     }
 }

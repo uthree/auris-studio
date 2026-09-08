@@ -181,6 +181,14 @@ impl Session {
             .ok_or(SessionError::NoPath)?;
         let name = copy_into(from, &folder.join(AUDIO_DIR))?;
         let collected = Path::new(AUDIO_DIR).join(name);
+        if let Some(previous) = self
+            .project
+            .soundfonts
+            .get(&id)
+            .map(|font| font.path.clone())
+        {
+            self.relocate_composed_font(&previous, &AssetPath::inside(&collected));
+        }
         if let Some(font) = self.project.soundfonts.get_mut(&id) {
             font.path = AssetPath::inside(&collected);
         }
@@ -207,6 +215,7 @@ impl Session {
         let Some(reference) = self.moved_reference(stored, found) else {
             return;
         };
+        self.relocate_composed_font(stored, &reference);
         if let Some(font) = self.project.soundfonts.get_mut(&id) {
             font.path = reference;
             font.byte_size = byte_size(found);

@@ -747,6 +747,28 @@ strings! {
     // where one is already named above — density, gate, swing — the same string is reused and
     // only what the sheet adds appears here.
     SongSheetTitle { en: "Compose a Song", ja: "曲を作る" }
+    ComposeProgressTitle { en: "Creating your song", ja: "自動作曲中" }
+    ComposeProgressWriting { en: "Writing the music…", ja: "メロディーと編曲を作成しています…" }
+    ComposeProgressPreparing { en: "Preparing instruments…", ja: "音源を準備しています…" }
+    ComposeProgressBalancing { en: "Adjusting the mix…", ja: "音量バランスを調整しています…" }
+    ComposeProgressMix { en: "Measuring the full mix", ja: "曲全体の音量を測定" }
+    ComposeProgressVerification { en: "Checking the final levels", ja: "最終的な音量を確認" }
+    ComposeProgressHint {
+        en: "Longer songs and larger instruments can take more time.",
+        ja: "曲の長さや音源によって、時間がかかることがあります。"
+    }
+    ComposeProgressChanged {
+        en: "The project changed while the song was being created. The result was not applied.",
+        ja: "作曲中にプロジェクトが変更されたため、作成結果を適用しませんでした。"
+    }
+    ComposeProgressBalanceFailed {
+        en: "The song was created, but its levels could not be adjusted automatically.",
+        ja: "曲を作成しましたが、音量バランスの自動調整に失敗しました。"
+    }
+    BalanceChanged {
+        en: "The project changed while its levels were being measured. The adjustment was not applied.",
+        ja: "音量の測定中にプロジェクトが変更されたため、調整結果を適用しませんでした。"
+    }
     SongHeading { en: "Song", ja: "曲" }
     SongTitleField { en: "Title", ja: "タイトル" }
     SongKey { en: "Key", ja: "調" }
@@ -776,10 +798,18 @@ strings! {
     SongEndingLoop { en: "Loop (BGM)", ja: "ループ（BGM）" }
     SongEndingNone { en: "Stop", ja: "そのまま停止" }
     SongFormHeading { en: "Form", ja: "構成" }
+    SongHarmonyHeading { en: "Harmony and rhythm", ja: "調・拍子・リズム" }
+    SongPerformanceHeading { en: "Performance", ja: "演奏の表情" }
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }
     SongTranspose { en: "Transpose", ja: "移調" }
     SongSectionParts { en: "Who Plays", ja: "演奏するパート" }
+    SongMatrixHeading { en: "Instruments across the song", ja: "セクションごとの演奏" }
+    SongMatrixHint { en: "Click a cell to switch a part on or off. Columns follow the song from left to right.", ja: "マスを押して演奏・休みを切り替えます。左から右へ曲が進みます。" }
+    SongMatrixRepeated { en: "Repeated sections share their participation settings.", ja: "同じセクションを繰り返す列は、演奏設定が連動します。" }
+    SongMatrixPlaying { en: "Play", ja: "演奏" }
+    SongMatrixRest { en: "Rest", ja: "休み" }
+    SongMatrixLastPart { en: "Keep at least one part playing in each section.", ja: "各セクションで少なくとも1つのパートを演奏します。" }
     SongSectionTempo { en: "Section Tempo", ja: "セクションのテンポ" }
     SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
     SongAdvanced { en: "Detailed settings", ja: "詳細設定" }
@@ -823,6 +853,10 @@ strings! {
     SongPartName { en: "Name", ja: "名前" }
     SongPartRole { en: "Role", ja: "役割" }
     SongPartInstrument { en: "Instrument", ja: "音源" }
+    SongLibraryTitle { en: "Choose an instrument", ja: "音源を選択" }
+    SongLibraryHint { en: "Use the selected instrument for “{part}”.", ja: "選択した音源を「{part}」に使います。" }
+    SongLibraryNoInstruments { en: "This file contains no instrument plugins.", ja: "このファイルに楽器プラグインはありません。" }
+    SongSourceUnavailable { en: "The selected song instrument could not be loaded", ja: "選択した曲の音源を読み込めませんでした" }
     // Which MIDI note a drum part strikes. It stands where a pitched part shows its octave,
     // because a kit has no octave and does need this.
     // The strip under the piano roll, named by what is in it rather than by the word "lane".
@@ -835,6 +869,7 @@ strings! {
     SongPartNote { en: "Note", ja: "ノート" }
     SongPartGain { en: "Level", ja: "音量" }
     SongPartPan { en: "Pan", ja: "定位" }
+    SongDensityAuto { en: "Follow mood", ja: "曲調に合わせる" }
     SongAddPart { en: "Add Part", ja: "パートを追加" }
     SongRemovePart { en: "Remove", ja: "削除" }
     SongPartNameTitle { en: "Name for this part", ja: "このパートの名前" }

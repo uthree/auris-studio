@@ -65,6 +65,21 @@ const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
 const DRUM_CHANNEL: u8 = 9;
 
 impl Session {
+    /// Keeps a song picker's decoded font ready without importing it into the open document.
+    ///
+    /// The caller reads it off-thread with [`read_soundfont`]. Cancellation leaves the document,
+    /// undo history and library references unchanged; composing later allocates the real font id.
+    pub fn cache_song_soundfont(
+        &mut self,
+        path: &Path,
+        font: LoadedFont,
+    ) -> (String, Vec<SoundFontPreset>) {
+        let name = font_name(&font.0, path);
+        let presets = presets(&font.0);
+        self.cache_font(path, font.0, false);
+        (name, presets)
+    }
+
     /// Replaces the document with an empty project holding one instrument track.
     pub fn new_project(&mut self) {
         let mut project = Project::new("Untitled", self.project.sample_rate);
@@ -395,6 +410,14 @@ impl Session {
             let Some(from) = from else { continue };
             if let Err(error) = self.collect_font(id, &from) {
                 log::warn!("could not collect {}: {error}", from.display());
+                if let Some(previous) = self
+                    .project
+                    .soundfonts
+                    .get(&id)
+                    .map(|font| font.path.clone())
+                {
+                    self.relocate_composed_font(&previous, &AssetPath::external(&from));
+                }
                 if let Some(font) = self.project.soundfonts.get_mut(&id) {
                     font.path = AssetPath::external(&from);
                 }

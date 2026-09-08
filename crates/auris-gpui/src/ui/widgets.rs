@@ -6,11 +6,12 @@
 
 use gpui::{
     App, Axis, ClickEvent, ElementId, Hsla, IntoElement, Modifiers, MouseDownEvent, Pixels,
-    SharedString, Window, div, prelude::*, px, relative,
+    SharedString, Window, canvas, div, point, prelude::*, px, relative,
 };
 
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::{Icon, icon};
+use crate::ui::tooltip::keyed_tip;
 
 /// A horizontal separator.
 pub fn divider(theme: &Theme) -> impl IntoElement + use<> {
@@ -78,6 +79,25 @@ where
     A: Into<Latch>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    let label: SharedString = label.into();
+    button_with_content(id, label, style, active, active_color, theme, on_click)
+}
+
+fn button_with_content<I, L, A, F>(
+    id: I,
+    label: L,
+    style: ButtonStyle,
+    active: A,
+    active_color: Hsla,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: IntoElement,
+    A: Into<Latch>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
     let active = active.into();
     let (background, text_color, border) = match (style, active) {
         // Read against whatever it is latched to — mute is orange, solo is amber, a track's
@@ -125,7 +145,7 @@ where
         .cursor_pointer()
         .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
-        .child(label.into())
+        .child(label)
         .on_click(on_click)
 }
 
@@ -307,6 +327,68 @@ pub enum RowColumn {
     Value(Pixels),
 }
 
+/// A single-line picker value, ellipsized at its final layout width without measuring the row.
+pub fn bounded_picker_label(value: impl Into<SharedString>) -> gpui::Div {
+    let value = value.into();
+    // Picker values are one line even when an imported title contains line breaks. The
+    // enclosing button's tooltip still carries the original text.
+    let value = if value.contains(['\r', '\n']) {
+        SharedString::from(value.replace(['\r', '\n'], " "))
+    } else {
+        value
+    };
+    div()
+        .w_full()
+        .min_w_0()
+        .h_full()
+        .relative()
+        .overflow_hidden()
+        .child(
+            canvas(
+                move |bounds, window, _| {
+                    shape_picker_label(value.clone(), bounds.size.width, window)
+                },
+                |bounds, (line, line_height), window, cx| {
+                    if bounds.size.width <= px(0.0) || bounds.size.height <= px(0.0) {
+                        return;
+                    }
+                    let origin = point(
+                        bounds.left(),
+                        bounds.top() + (bounds.size.height - line_height) / 2.0,
+                    );
+                    let _ = line.paint(origin, line_height, window, cx);
+                },
+            )
+            .absolute()
+            .inset_0(),
+        )
+}
+
+fn shape_picker_label(
+    value: SharedString,
+    width: Pixels,
+    window: &Window,
+) -> (gpui::ShapedLine, Pixels) {
+    let style = window.text_style();
+    let font_size = style.font_size.to_pixels(window.rem_size());
+    let line_height = style
+        .line_height
+        .to_pixels(font_size.into(), window.rem_size());
+    // GPUI's measured text reuses runs after truncating them. Measuring a Japanese value
+    // first narrowly and then widely can leave a run ending inside a UTF-8 character. Each
+    // canvas layout starts from the complete value and fresh runs instead.
+    let mut runs = vec![style.to_run(value.len())];
+    let shown = window
+        .text_system()
+        .line_wrapper(style.font(), font_size)
+        .truncate_line(value, width.max(px(0.0)), "…", &mut runs);
+    let run = style.to_run(shown.len());
+    let line = window
+        .text_system()
+        .shape_line(shown, font_size, &[run], None);
+    (line, line_height)
+}
+
 /// A labelled row whose value is a button: this is what it is, press to choose another.
 ///
 /// Every picker in the application, from a plugin's discrete parameters to the song sheet's key.
@@ -315,6 +397,7 @@ pub enum RowColumn {
 ///
 /// `label` and `value` arrive already translated, as [`button`]'s do. `active` fills the button
 /// with the accent, for the rows that are a switch rather than a menu.
+/// Long values are ellipsized within their column, with the full value available on hover.
 pub fn picker_row<I, L, V, F>(
     id: I,
     label: L,
@@ -337,15 +420,19 @@ where
         .text_color(theme.text_muted)
         .truncate()
         .child(label.into());
-    let control = button(
+    let value = value.into();
+    let control = button_with_content(
         id,
-        value.into(),
+        bounded_picker_label(value.clone()),
         ButtonStyle::Normal,
         active,
         theme.accent,
         theme,
         on_click,
-    );
+    )
+    .w_full()
+    .min_w_0()
+    .tooltip(keyed_tip(value, "", theme));
 
     let row = div()
         .flex()
@@ -354,11 +441,11 @@ where
         .h(Metrics::CONTROL_HEIGHT);
     match column {
         RowColumn::Label(width) => row
-            .child(caption.w(width))
+            .child(caption.w(width).flex_shrink_0())
             .child(div().flex_1().min_w_0().child(control)),
         RowColumn::Value(width) => row
             .child(caption.flex_1().min_w_0())
-            .child(div().w(width).child(control)),
+            .child(div().w(width).flex_shrink_0().child(control)),
     }
 }
 
@@ -886,6 +973,26 @@ pub fn db_to_meter_position(db: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn japanese_picker_labels_restore_the_complete_text_after_a_narrow_layout(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_, cx) = crate::harness::open(cx);
+        cx.update(|window, _| {
+            for value in ["1番 Aメロ", "雨上がりの街を歩きながら聴く曲"] {
+                let value = SharedString::from(value);
+                for _ in 0..3 {
+                    let (narrow, _) = shape_picker_label(value.clone(), px(1.0), window);
+                    assert_eq!(narrow.text.as_ref(), "…");
+                    assert_eq!(narrow.len(), narrow.text.len());
+                    let (wide, _) = shape_picker_label(value.clone(), px(10000.0), window);
+                    assert_eq!(wide.text, value);
+                    assert_eq!(wide.len(), value.len());
+                }
+            }
+        });
+    }
 
     #[test]
     fn meter_scale_matches_its_documented_breakpoints() {

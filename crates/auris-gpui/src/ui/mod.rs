@@ -9,6 +9,8 @@ pub mod analyser;
 pub mod arrangement;
 pub mod automation;
 pub mod commands;
+mod compose_job;
+pub(crate) mod compose_progress;
 pub mod compose_sheet;
 pub mod context_menu;
 mod convert;
