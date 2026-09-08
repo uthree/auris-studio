@@ -672,6 +672,18 @@ strings! {
     // The dials on any clip's performance: the transform stack, which changes what is heard
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }
+    PerformGhostSettings { en: "Ghost note settings", ja: "ゴーストノートの詳細" }
+    PerformGhostDensity { en: "Ghost density", ja: "ゴーストの密度" }
+    PerformGhostLength { en: "Ghost length", ja: "ゴーストの長さ" }
+    PerformGhostVariation { en: "Pattern variation", ja: "パターンの変化" }
+    PerformGhostPattern { en: "Placement", ja: "配置パターン" }
+    PerformGhostSixteenths { en: "Sixteenth-note gaps", ja: "16分音符の空き" }
+    PerformGhostOffbeats { en: "Eighth-note offbeats", ja: "8分音符の裏拍" }
+    PerformGhostPickup { en: "Before the next attack", ja: "次の音の直前" }
+    PerformGhostRepeating { en: "Repeating bar pattern", ja: "1小節パターン" }
+    PerformGhostTarget { en: "Ghost source", ja: "ゴーストの対象" }
+    PerformGhostChord { en: "Previous chord", ja: "直前の和音" }
+    PerformGhostRests { en: "Preserve long rests and phrase endings", ja: "長い休符とフレーズ末尾を残す" }
     PerformFreeze { en: "Keep the Performance", ja: "演奏を確定" }
     PerformStroke { en: "Stroke spread", ja: "ストローク幅" }
     PerformMute { en: "Mute strength", ja: "ミュートの強さ" }

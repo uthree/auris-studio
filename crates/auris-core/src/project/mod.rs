@@ -36,8 +36,10 @@ mod clip;
 mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
+mod ghost;
 mod ornament;
 mod performance;
+pub use ghost::{GhostNotes, GhostPattern};
 mod recipe;
 mod routing;
 mod track;
@@ -269,8 +271,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 22 adds stroke, mute, brush and slide variants to the stored transform stack.
-    pub const FORMAT_VERSION: u32 = 22;
+    /// Version 23 adds configurable ghost-note placement to the stored transform stack.
+    pub const FORMAT_VERSION: u32 = 23;
 
     /// An empty project.
     ///

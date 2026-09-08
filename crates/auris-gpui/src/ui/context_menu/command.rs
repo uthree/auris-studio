@@ -21,6 +21,8 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Updates one clip's non-destructive ghost-note settings.
+    SetGhostSettings { clip: ClipId, settings: GhostNotes },
     /// Voice model for the song sheet's vocal part.
     SongSinger(Option<String>),
     /// Speaker within the song sheet's selected voice file.
@@ -813,6 +815,12 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::SetGhostSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::performance::with_ghost_settings(stack, settings);
+                    let _ = self.session.set_clip_transforms(clip, next);
+                }
+            }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio { clip, transcribe } => {
                 self.begin_audio_analysis(clip, transcribe, cx)

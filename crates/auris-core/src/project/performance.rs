@@ -33,6 +33,9 @@ pub fn performed_notes(
     let written_count = notes.len();
     for transform in transforms {
         match transform {
+            NoteTransform::Ghost { settings } => {
+                super::ghost::ghost_notes(&mut notes, settings, context)
+            }
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 let selected = notes
                     .iter()
@@ -100,7 +103,7 @@ pub fn performed_notes(
     notes
 }
 
-fn milliseconds(value: f32, bpm: f64) -> Ticks {
+pub(super) fn milliseconds(value: f32, bpm: f64) -> Ticks {
     Ticks(
         (f64::from(value) * Ticks::QUARTER.raw() as f64 * bpm.max(0.0) / 60_000.0)
             .round()
@@ -109,7 +112,7 @@ fn milliseconds(value: f32, bpm: f64) -> Ticks {
 }
 
 /// Index groups in time and pitch order, independent of the vector's insertion order.
-fn chords(notes: &[Note]) -> Vec<Vec<usize>> {
+pub(super) fn chords(notes: &[Note]) -> Vec<Vec<usize>> {
     let mut indices: Vec<_> = (0..notes.len()).collect();
     indices.sort_by_key(|&i| (notes[i].start, notes[i].pitch));
     let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -171,7 +174,7 @@ fn stroke(
     }
 }
 
-fn ornament(source: &Note, pitch: u8, start: Ticks, length: Ticks, gain: f32) -> Note {
+pub(super) fn ornament(source: &Note, pitch: u8, start: Ticks, length: Ticks, gain: f32) -> Note {
     Note {
         velocity: (source.velocity * gain).clamp(0.0, 1.0),
         drum_voice: source.drum_voice.clone(),
@@ -179,7 +182,7 @@ fn ornament(source: &Note, pitch: u8, start: Ticks, length: Ticks, gain: f32) ->
     }
 }
 
-fn overlaps(note: &Note, start: Ticks, end: Ticks) -> bool {
+pub(super) fn overlaps(note: &Note, start: Ticks, end: Ticks) -> bool {
     note.start < end && note.end() > start
 }
 
@@ -217,50 +220,18 @@ fn mute(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
 }
 
 fn brush(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
-    if amount <= 0.0 || notes.is_empty() {
-        return;
-    }
-    let groups = chords(notes);
-    let mut added = Vec::new();
-    let mut previous = None;
-    let mut next_group = 0;
-    let mut absolute = context.signatures.bar_floor(context.start);
-    while absolute < context.start + context.length {
-        let start = absolute - context.start;
-        if start >= Ticks::ZERO {
-            while next_group < groups.len() && notes[groups[next_group][0]].start < start {
-                previous = Some(next_group);
-                next_group += 1;
-            }
-            let length = milliseconds(20.0, context.bpm).min(context.length - start);
-            if let Some(group) = previous
-                && !notes
-                    .iter()
-                    .any(|note| overlaps(note, start, start + length))
-            {
-                for &index in &groups[group] {
-                    let note = &notes[index];
-                    if !added
-                        .iter()
-                        .any(|other: &Note| other.start == start && other.pitch == note.pitch)
-                    {
-                        added.push(ornament(
-                            note,
-                            note.pitch,
-                            start,
-                            length,
-                            0.30 * amount.clamp(0.0, 1.0),
-                        ));
-                    }
-                }
-            }
-        }
-        // Every supported bar length is a whole number of sixteenths, including compound time.
-        absolute += Ticks(Ticks::QUARTER.raw() / 4);
-    }
-    notes.extend(added);
+    super::ghost::ghost_notes(
+        notes,
+        &super::GhostNotes {
+            density: 1.0,
+            velocity: 0.30 * amount.clamp(0.0, 1.0),
+            pattern: super::GhostPattern::Sixteenths,
+            preserve_rests: false,
+            ..super::GhostNotes::default()
+        },
+        context,
+    );
 }
-
 fn slide(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
     if amount <= 0.0 {
         return;

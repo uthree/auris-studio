@@ -1757,6 +1757,10 @@ pub mod harmony {
     //! positions, and slide connects unambiguous single-note
     //! attacks with an intermediate pitch. Inserted notes carry no copied lyrics. These are
     //! note events, so their timbre still comes from the selected instrument.
+    //! [`GhostNotes`](auris_core::GhostNotes) separates placement, probability, velocity and
+    //! duration. Its seed addresses positions, so changing loudness does not reroll placement.
+    //! A target pitch scopes the source and collision checks; rest protection preserves
+    //! phrase endings and long gaps. Older brushes use this same engine.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,

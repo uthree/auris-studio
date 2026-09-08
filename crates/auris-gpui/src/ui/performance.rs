@@ -32,6 +32,12 @@ pub enum PerformDial {
     Mute,
     /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
     Brush,
+    /// Probability of adding a ghost at an eligible grid position.
+    GhostDensity,
+    /// Length of each inserted ghost note.
+    GhostLength,
+    /// Variation between repetitions of a ghost pattern.
+    GhostVariation,
     /// Strength of intermediate notes connecting a single-note line.
     Slide,
     /// How far timing and velocity wander. Zero is the text as written, and is stored as no
@@ -66,6 +72,9 @@ impl PerformDial {
     /// the phrase was written or played.
     pub fn label(self) -> Key {
         match self {
+            PerformDial::GhostDensity => Key::PerformGhostDensity,
+            PerformDial::GhostLength => Key::PerformGhostLength,
+            PerformDial::GhostVariation => Key::PerformGhostVariation,
             PerformDial::Stroke => Key::PerformStroke,
             PerformDial::Mute => Key::PerformMute,
             PerformDial::Brush => Key::PerformBrush,
@@ -93,7 +102,7 @@ fn rank(transform: &NoteTransform) -> usize {
         NoteTransform::Humanize { .. } => 8,
         NoteTransform::Transpose { .. } => 1,
         NoteTransform::Gate { .. } => 2,
-        NoteTransform::Brush { .. } => 3,
+        NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 3,
         NoteTransform::Slide { .. } => 4,
         NoteTransform::Mute { .. } => 5,
         NoteTransform::Stroke { .. } => 6,
@@ -108,6 +117,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
             | (NoteTransform::Stroke { .. }, PerformDial::Stroke)
             | (NoteTransform::Mute { .. }, PerformDial::Mute)
             | (NoteTransform::Brush { .. }, PerformDial::Brush)
+            | (NoteTransform::Ghost { .. }, PerformDial::Brush)
             | (NoteTransform::Slide { .. }, PerformDial::Slide)
             | (NoteTransform::Swing { .. }, PerformDial::Swing)
             | (NoteTransform::Gate { .. }, PerformDial::Gate)
@@ -121,11 +131,17 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::GhostDensity => ghost_settings(stack, 0).density.clamp(0.0, 1.0),
+        PerformDial::GhostLength => {
+            (ghost_settings(stack, 0).length_ms.clamp(1.0, 100.0) - 1.0) / 99.0
+        }
+        PerformDial::GhostVariation => ghost_settings(stack, 0).variation.clamp(0.0, 1.0),
         PerformDial::Stroke | PerformDial::Mute | PerformDial::Brush | PerformDial::Slide => stack
             .iter()
             .find(|transform| answers_to(transform, dial))
             .map(|transform| match transform {
                 NoteTransform::Stroke { spread_ms, .. } => spread_ms.clamp(0.0, 100.0) / 100.0,
+                NoteTransform::Ghost { settings } => (settings.velocity / 0.3).clamp(0.0, 1.0),
                 NoteTransform::Mute { amount }
                 | NoteTransform::Brush { amount }
                 | NoteTransform::Slide { amount } => amount.clamp(0.0, 1.0),
@@ -190,15 +206,35 @@ pub fn with_dial(
     seed: u64,
 ) -> Vec<NoteTransform> {
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+    if matches!(
+        dial,
+        PerformDial::Brush
+            | PerformDial::GhostDensity
+            | PerformDial::GhostLength
+            | PerformDial::GhostVariation
+    ) {
+        let mut settings = ghost_settings(stack, seed);
+        match dial {
+            PerformDial::Brush => settings.velocity = 0.3 * fraction,
+            PerformDial::GhostDensity => settings.density = fraction,
+            PerformDial::GhostLength => settings.length_ms = (1.0 + 99.0 * fraction).round(),
+            PerformDial::GhostVariation => settings.variation = fraction,
+            _ => unreachable!(),
+        }
+        return with_ghost_settings(stack, settings);
+    }
     let replacement = match dial {
+        PerformDial::Brush
+        | PerformDial::GhostDensity
+        | PerformDial::GhostLength
+        | PerformDial::GhostVariation => {
+            unreachable!()
+        }
         PerformDial::Stroke => (fraction > 0.0).then(|| NoteTransform::Stroke {
             spread_ms: (fraction * 100.0).round(),
             direction: stroke_direction(stack),
         }),
         PerformDial::Mute => (fraction > 0.0).then_some(NoteTransform::Mute {
-            amount: (fraction * 100.0).round() / 100.0,
-        }),
-        PerformDial::Brush => (fraction > 0.0).then_some(NoteTransform::Brush {
             amount: (fraction * 100.0).round() / 100.0,
         }),
         PerformDial::Slide => (fraction > 0.0).then_some(NoteTransform::Slide {
@@ -289,6 +325,10 @@ fn direction_label(direction: StrokeDirection) -> Key {
 /// What a dial's value button reads, with the swing's straight end in words.
 pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> String {
     match dial {
+        PerformDial::GhostLength => format!("{:.0} ms", ghost_settings(stack, 0).length_ms),
+        PerformDial::GhostDensity | PerformDial::GhostVariation => {
+            format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
+        }
         PerformDial::Stroke => format!("{:.0} ms", dial_fraction(stack, dial) * 100.0),
         PerformDial::Mute | PerformDial::Brush | PerformDial::Slide => {
             format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
@@ -305,6 +345,9 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
 /// A stable element key per dial, so gpui tells the sliders apart.
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
+        PerformDial::GhostDensity => 7,
+        PerformDial::GhostLength => 8,
+        PerformDial::GhostVariation => 9,
         PerformDial::Stroke => 3,
         PerformDial::Mute => 4,
         PerformDial::Brush => 5,
@@ -316,6 +359,162 @@ fn dial_element_key(dial: PerformDial) -> usize {
 }
 
 impl AurisApp {
+    fn ghost_detail_rows(
+        &self,
+        clip: ClipId,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = &self.theme;
+        let mut rows = vec![
+            button(
+                "perform-ghost-details",
+                self.t(Key::PerformGhostSettings),
+                ButtonStyle::Ghost,
+                self.performance_details[0],
+                theme.accent_soft,
+                theme,
+                cx.listener(|this, _, _, cx| {
+                    this.performance_details[0] = !this.performance_details[0];
+                    cx.notify();
+                }),
+            )
+            .min_w_0()
+            .overflow_hidden()
+            .into_any_element(),
+        ];
+        if !self.performance_details[0] {
+            return rows;
+        }
+        let settings = ghost_settings(stack, clip.0);
+        for dial in [
+            PerformDial::GhostDensity,
+            PerformDial::GhostLength,
+            PerformDial::GhostVariation,
+        ] {
+            let fraction = dial_fraction(stack, dial);
+            rows.push(
+                value_slider(
+                    ("perform-dial", dial_element_key(dial)),
+                    self.t(dial.label()),
+                    dial_text(stack, dial, self.t(Key::PartStraight)),
+                    fraction,
+                    theme.accent,
+                    SliderFill::FromStart,
+                    theme,
+                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                        this.begin_drag(Drag::PerformDial {
+                            clip,
+                            dial,
+                            start_fraction: fraction,
+                            start_x: event.position.x,
+                        })
+                    }),
+                )
+                .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
+                .into_any_element(),
+            );
+        }
+        rows.push(
+            self.picker_row(
+                "perform-ghost-pattern",
+                Key::PerformGhostPattern,
+                self.t(ghost_pattern_key(settings.pattern)).to_string(),
+                Self::opens_menu(cx, move |this, at| {
+                    let settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    let mut menu = ContextMenu::new(at, this.t(Key::PerformGhostPattern));
+                    for pattern in [
+                        GhostPattern::Sixteenths,
+                        GhostPattern::Offbeats,
+                        GhostPattern::Pickup,
+                        GhostPattern::Repeating,
+                    ] {
+                        menu = menu.toggle(
+                            this.t(ghost_pattern_key(pattern)),
+                            MenuCommand::SetGhostSettings {
+                                clip,
+                                settings: GhostNotes {
+                                    pattern,
+                                    ..settings.clone()
+                                },
+                            },
+                            pattern == settings.pattern,
+                        );
+                    }
+                    menu
+                }),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            self.picker_row(
+                "perform-ghost-target",
+                Key::PerformGhostTarget,
+                settings.target_pitch.map_or_else(
+                    || self.t(Key::PerformGhostChord).to_string(),
+                    |pitch| format!("MIDI {pitch}"),
+                ),
+                Self::opens_menu(cx, move |this, at| {
+                    let settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    let mut menu = ContextMenu::new(at, this.t(Key::PerformGhostTarget)).toggle(
+                        this.t(Key::PerformGhostChord),
+                        MenuCommand::SetGhostSettings {
+                            clip,
+                            settings: GhostNotes {
+                                target_pitch: None,
+                                ..settings.clone()
+                            },
+                        },
+                        settings.target_pitch.is_none(),
+                    );
+                    let pitches: std::collections::BTreeSet<_> = this
+                        .session
+                        .midi_clip(clip)
+                        .into_iter()
+                        .flat_map(|c| c.notes.iter().map(|n| n.pitch))
+                        .collect();
+                    for pitch in pitches {
+                        menu = menu.toggle(
+                            format!("MIDI {pitch}"),
+                            MenuCommand::SetGhostSettings {
+                                clip,
+                                settings: GhostNotes {
+                                    target_pitch: Some(pitch),
+                                    ..settings.clone()
+                                },
+                            },
+                            settings.target_pitch == Some(pitch),
+                        );
+                    }
+                    menu
+                }),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            button(
+                "perform-ghost-rests",
+                self.t(Key::PerformGhostRests),
+                ButtonStyle::Ghost,
+                settings.preserve_rests,
+                theme.accent_soft,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    let mut settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    settings.preserve_rests = !settings.preserve_rests;
+                    this.run_menu_command(MenuCommand::SetGhostSettings { clip, settings }, cx);
+                }),
+            )
+            .min_w_0()
+            .overflow_hidden()
+            .into_any_element(),
+        );
+        rows
+    }
+
     /// The selected clip's performance section, or nothing when no MIDI clip is selected.
     ///
     /// Returns rows rather than a panel, the way [`Self::part_rows`] does and for the same
@@ -414,6 +613,7 @@ impl AurisApp {
         }
 
         rows.push(divider(&theme).into_any_element());
+        rows.extend(self.ghost_detail_rows(clip, &stack, cx));
         rows
     }
 
@@ -521,11 +721,124 @@ impl AurisApp {
     }
 }
 
+fn ghost_pattern_key(pattern: GhostPattern) -> Key {
+    match pattern {
+        GhostPattern::Sixteenths => Key::PerformGhostSixteenths,
+        GhostPattern::Offbeats => Key::PerformGhostOffbeats,
+        GhostPattern::Pickup => Key::PerformGhostPickup,
+        GhostPattern::Repeating => Key::PerformGhostRepeating,
+    }
+}
+
+/// Reads configurable ghosts or the equivalent settings of an older brush.
+pub fn ghost_settings(stack: &[NoteTransform], seed: u64) -> GhostNotes {
+    stack
+        .iter()
+        .find_map(|transform| match transform {
+            NoteTransform::Ghost { settings } => Some(settings.clone()),
+            NoteTransform::Brush { amount } => Some(GhostNotes {
+                density: 1.0,
+                velocity: 0.3 * amount,
+                pattern: GhostPattern::Sixteenths,
+                preserve_rests: false,
+                seed,
+                ..GhostNotes::default()
+            }),
+            _ => None,
+        })
+        .unwrap_or(GhostNotes {
+            seed,
+            ..GhostNotes::default()
+        })
+}
+
+/// Replaces the ghost stage in place, preserving every unrelated transform.
+pub fn with_ghost_settings(stack: &[NoteTransform], settings: GhostNotes) -> Vec<NoteTransform> {
+    let mut out = stack.to_vec();
+    let stage = NoteTransform::Ghost { settings };
+    if let Some(at) = out
+        .iter()
+        .position(|t| matches!(t, NoteTransform::Ghost { .. } | NoteTransform::Brush { .. }))
+    {
+        out[at] = stage;
+    } else {
+        let at = out
+            .iter()
+            .position(|t| rank(t) > rank(&stage))
+            .unwrap_or(out.len());
+        out.insert(at, stage);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::harness::{choose, click, drag, paint, with_a_clip};
     use gpui::{TestAppContext, point, px};
+
+    #[gpui::test]
+    fn ghost_detail_controls_update_preview_without_changing_the_source(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            for start in [0, 960, 1920, 2880] {
+                this.session
+                    .add_note(clip, Note::new(60, Ticks(start), Ticks(120)))
+                    .unwrap();
+            }
+            this.open_clip_in_editor(clip);
+            this.set_perform_dial(clip, PerformDial::Brush, 0.5);
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1920.0), px(1800.0)));
+        click("score-performed", cx);
+        click("perform-ghost-details", cx);
+        paint(&app, cx);
+        let before = app.read_with(cx, |this, _| {
+            this.session.midi_clip(clip).unwrap().notes.clone()
+        });
+        let at = cx.debug_bounds("perform-dial-7").unwrap().center();
+        crate::harness::press(cx, at);
+        crate::harness::drag_to(cx, point(at.x + px(120.0), at.y));
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                ghost_settings(this.session.clip_transforms(clip).unwrap(), 0).density,
+                1.0
+            );
+            assert_eq!(this.score_preview_notes().unwrap().len(), 7);
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, before);
+        });
+        crate::harness::release(cx, point(at.x + px(120.0), at.y));
+        app.update(cx, |this, _| this.undo());
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                ghost_settings(this.session.clip_transforms(clip).unwrap(), 0).density,
+                0.5
+            )
+        });
+    }
+
+    #[test]
+    fn ghost_controls_preserve_the_take_when_silenced_and_keep_custom_order() {
+        let settings = GhostNotes {
+            seed: 99,
+            density: 0.23,
+            target_pitch: Some(38),
+            ..GhostNotes::default()
+        };
+        let stack = vec![
+            NoteTransform::Lean { ticks: 10 },
+            NoteTransform::Ghost {
+                settings: settings.clone(),
+            },
+        ];
+        let silent = with_dial(&stack, PerformDial::Brush, 0.0, 456);
+        let restored = with_dial(&silent, PerformDial::Brush, 1.0, 456);
+        assert_eq!(ghost_settings(&restored, 0), settings);
+        assert!(matches!(restored[0], NoteTransform::Lean { ticks: 10 }));
+    }
 
     #[gpui::test]
     fn articulation_controls_edit_the_stack_and_freeze_is_undoable(cx: &mut TestAppContext) {

@@ -46,6 +46,11 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Seeded ghost notes with independent placement, density, duration and velocity.
+    Ghost {
+        /// The performance settings, including the stored random seed.
+        settings: super::GhostNotes,
+    },
     /// Spreads each simultaneous chord across a bounded time, preserving its release times.
     Stroke {
         /// Total time from first to last string, clamped to 0..=100 milliseconds.
@@ -152,6 +157,7 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
     for transform in transforms {
         note = match transform {
             NoteTransform::Stroke { .. }
+            | NoteTransform::Ghost { .. }
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }
             | NoteTransform::Slide { .. } => note,

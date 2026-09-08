@@ -12,6 +12,16 @@ inspector control, and after undo or redo. It is read-only: switch to Source to 
 Both tabs share the same scroll and zoom so you can compare them in place. Singer pitch
 contours and editable expression lanes remain in Source.
 
+Open **Ghost note settings** below the main controls for independent density, duration,
+and placement: sixteenth-note gaps, eighth-note offbeats, pickups before an attack,
+or a repeating bar pattern. Variation changes how often the repeating pattern takes a
+fresh draw in a bar or loop pass. Density changes select more or fewer positions from the
+same seeded take; changing loudness does not reroll it. New ghosts default to pickups.
+**Preserve long rests and phrase endings** leaves the final tail and gaps over two quarter
+notes silent. **Ghost source** can restrict generation to one MIDI pitch (for example the
+snare); other kit voices can continue playing underneath it. Existing brush settings use
+the same placement engine with their original full-density sixteenth grid.
+
 | Control | What it does |
 | --- | --- |
 | Swing | Delays offbeats on an eighth- or sixteenth-note grid. |
@@ -47,5 +57,5 @@ nominal velocity scale is 6% of the written velocity.
 the score and clears all performance stages. It is undoable. A frozen loop repeats that take.
 Generated-clip recipe freezing is a separate control.
 
-Saved projects use format version 22 for the new articulation variants. Current builds read
+Saved projects use format version 23 for configurable ghost-note placement. Current builds read
 older clips with their existing defaults; older builds must reject this newer format.
