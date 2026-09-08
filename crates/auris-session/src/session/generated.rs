@@ -468,6 +468,9 @@ fn retake_performance(
             {
                 settings.seed = next.seed;
             }
+            auris_core::NoteTransform::Ghost { settings } if settings.seed == previous.seed => {
+                settings.seed = next.seed;
+            }
             auris_core::NoteTransform::ForDrumVoice { voice, transforms } => {
                 let old = previous
                     .drum_voices

@@ -51,8 +51,8 @@ pub struct ClipDraft {
     pub recipe: Option<ClipRecipe>,
     /// How the clip's text is played: the transform stack it arrives carrying.
     ///
-    /// The notes are the score and this is the feel — the specification's `humanize` dial,
-    /// delivered as the per-part lean and wander [`crate::perform`] tables rather than baked
+    /// The notes are the score and this is the feel — the specification's `humanize` dial and
+    /// optional [`crate::PerformanceStyle`], delivered as editable stages rather than baked
     /// into the notes. It is the clip's from the moment it lands: turning it is the performance
     /// panel's business, and writing the clip's text again leaves it alone.
     pub performance: Vec<NoteTransform>,
@@ -299,6 +299,7 @@ pub fn compose(spec: &SongSpec) -> Composition {
 fn clips_of(
     settings: &ScoreSettings,
     looseness: f32,
+    style: Option<crate::PerformanceStyle>,
     part: Option<&PartSpec>,
     draft: &PartDraft,
     frame: &Frame,
@@ -355,11 +356,17 @@ fn clips_of(
             // The same seed the recipe carries, computed rather than read off it so that the
             // ending — which carries no recipe on purpose — is still played loose.
             performance: part.map_or_else(Vec::new, |part| {
-                part_performance(
-                    part.role,
-                    looseness,
-                    clip_seed(frame.seed, &part.name, &section.name, section.instance),
-                )
+                let seed = clip_seed(frame.seed, &part.name, &section.name, section.instance);
+                match style {
+                    Some(style) => crate::performance_style::styled_performance(
+                        &section.played(part),
+                        style,
+                        looseness,
+                        seed,
+                        clip_seed(frame.seed, "ensemble", "performance", 0),
+                    ),
+                    None => part_performance(part.role, looseness, seed),
+                }
             }),
         });
     }
@@ -389,6 +396,11 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
             let clips = clips_of(
                 &settings,
                 spec.humanize,
+                spec.performance.filter(|_| {
+                    // Singing uses the voice model's own ornaments and pitch controls.
+                    !(spec.singer.is_some()
+                        && part_of(&draft.name).is_some_and(|part| part.role == Role::Melody))
+                }),
                 part_of(&draft.name),
                 &draft,
                 frame,
@@ -1131,7 +1143,14 @@ mod tests {
             if !part.role.is_drum() {
                 continue;
             }
-            for original in clips_of(&settings, spec.humanize, Some(part), &draft, &frame) {
+            for original in clips_of(
+                &settings,
+                spec.humanize,
+                spec.performance,
+                Some(part),
+                &draft,
+                &frame,
+            ) {
                 let merged = kit
                     .clips
                     .iter()

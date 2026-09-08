@@ -115,3 +115,31 @@ the deeper control range is audible with instruments that accept it.
 
 Saved projects use format version 26 for generated pitch gestures. Current builds read
 older clips with their existing defaults; older builds must reject this newer format.
+
+## Starting from automatic composition
+
+All eight song presets install a genre-specific performance stack on their clips. The source
+score and generation recipe are unchanged. Open a generated clip's Performance tab to adjust
+the same controls used on hand-written clips; regeneration keeps those adjustments. Another
+Take updates inherited ghost/expression seeds and preserves their settings and ensemble group.
+
+| Preset | Initial performance |
+| --- | --- |
+| Chiptune | Tight shared expression and small lead bends/vibrato |
+| Pop Band | Lead scoops/connections, light keyboard attack spread, bass and snare pickups |
+| City Pop | Sax scoops, vibrato and falls; offbeat bass ghosts, slides and muted tails |
+| Rock | Alternating partial guitar strums, sparse sixteenth brushes, muted tails and lead bends |
+| Jazz Trio | Piano attack spread and offbeat phrasing, quiet snare pickups; piano pitch stays fixed |
+| Orchestral | Shared phrase dynamics, restrained flute/cello vibrato and cello connections |
+| Synthwave | Tight rhythm, connected saw lead, delayed vibrato and subtle falls |
+| Ambient | Slow shared phrase dynamics and subtle cello motion; bells stay at their written pitch |
+
+Instrument changes in the song sheet are respected: bend, strum and mute choices depend on
+the instrument and role, not the part's name. Ghosts preserve long rests and final tails;
+drum ghosts stay scoped to their named kit voice. Singing melodies use the voice pipeline's
+own ornaments.
+
+The `.asong` root field `performance = "city-pop"` selects the palette; the accepted names
+are the eight preset names. Omitting the field keeps the plain lean/wander behavior. The
+`humanize` dial controls random timing/velocity and lean; intentional articulations remain
+independent. Existing saved clips are never upgraded or rewritten when a preset changes.

@@ -435,6 +435,9 @@ pub struct SongSpec {
     /// sound exactly where they are written; what they keep is their constant lean — the hat a
     /// little early, the snare a little late, by the same amount in every bar.
     pub humanize: f32,
+    /// Optional genre palette for non-destructive articulations and phrase expression.
+    /// Absent preserves the plain lean/wander behavior of existing song specifications.
+    pub performance: Option<crate::PerformanceStyle>,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///
     /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
@@ -506,6 +509,7 @@ impl Default for SongSpec {
             seed: 0,
             swing: 50,
             humanize: 0.35,
+            performance: None,
             dynamics: 1.0,
             fill: 0.5,
             variation: 0.25,

@@ -184,8 +184,8 @@ pub mod prelude {
     /// takes one refuses exactly what the file would refuse.
     pub use auris_compose::spec::parse_motif;
     pub use auris_compose::{
-        Composition, Ending, Mood, PRESETS, PartSpec, Role, SectionSpec, SongPreset, SongSpec,
-        SpecError, compose, default_instrument, motif_of, preset,
+        Composition, Ending, Mood, PRESETS, PartSpec, PerformanceStyle, Role, SectionSpec,
+        SongPreset, SongSpec, SpecError, compose, default_instrument, motif_of, preset,
     };
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,

@@ -511,6 +511,67 @@ mod tests {
     use auris_core::{ClipId, ClipPreset, ClipRecipe};
 
     #[test]
+    fn composed_arrangement_survives_save_regeneration_retake_and_undo() {
+        use auris_core::NoteTransform;
+        let mut session = session();
+        let spec = auris_compose::preset("city-pop").unwrap().spec();
+        let draft = auris_compose::compose(&spec);
+        session.compose(&draft).unwrap();
+        let clip = session
+            .project()
+            .tracks
+            .iter()
+            .find(|t| t.name == "bass")
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .clips[0]
+            .id;
+        let original = session.midi_clip(clip).unwrap().clone();
+        assert!(
+            original
+                .transforms
+                .iter()
+                .any(|t| matches!(t, NoteTransform::Ghost { .. }))
+        );
+        let scratch = crate::session::fixtures::Scratch::new("composed-performance");
+        let document = session
+            .save_as(&scratch.join("Song.auris"))
+            .unwrap()
+            .document;
+        session.open(&document).unwrap();
+        assert_eq!(
+            session.midi_clip(clip).unwrap().transforms,
+            original.transforms
+        );
+        assert_eq!(session.midi_clip(clip).unwrap().notes, original.notes);
+        session.regenerate_clip(clip).unwrap();
+        assert_eq!(
+            session.midi_clip(clip).unwrap().transforms,
+            original.transforms
+        );
+        session.reroll_clip(clip).unwrap();
+        let changed = session.midi_clip(clip).unwrap();
+        let seed = changed.recipe.as_ref().unwrap().seed;
+        assert_ne!(seed, original.recipe.as_ref().unwrap().seed);
+        for (before, after) in original.transforms.iter().zip(&changed.transforms) {
+            let mut expected = before.clone();
+            match &mut expected {
+                NoteTransform::Expression { settings } => settings.seed = seed,
+                NoteTransform::Ghost { settings } => settings.seed = seed,
+                _ => {}
+            }
+            assert_eq!(&expected, after);
+        }
+        session.undo();
+        assert_eq!(
+            session.midi_clip(clip).unwrap().transforms,
+            original.transforms
+        );
+    }
+
+    #[test]
     fn composing_replaces_the_document_in_one_undo_step() {
         let mut session = session();
         session.add_default_instrument_track("Old").unwrap();

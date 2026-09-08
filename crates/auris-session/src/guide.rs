@@ -1802,6 +1802,15 @@ pub mod harmony {
     //! recipe — leaves the stack alone save for the wander's seed, which follows the take so
     //! one number keeps naming both.
     //!
+    //! Song presets additionally select an `auris_compose::PerformanceStyle`. The composer
+    //! chooses articulations by role and requested instrument, replaces combined humanisation
+    //! with independent expression, and gives the band one shared ensemble group. Guitar
+    //! strokes, quiet ghost pickups and solo pitch gestures remain clip transforms; they never
+    //! enter the writers or their note digests. The optional `performance` field survives the
+    //! song sheet and `.asong` round trips. Omitting it retains plain lean/wander behavior.
+    //! Retaking updates inherited ghost/expression seeds without replacing edited controls or
+    //! ensemble groups. Singing melody parts keep the singer's separate ornament pipeline.
+    //!
     //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
     //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's
     //! trade again: the performance is written into the text and stops being derived from
