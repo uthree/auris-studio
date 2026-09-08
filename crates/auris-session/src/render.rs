@@ -157,8 +157,8 @@ impl RenderJob {
         &self.project
     }
 
-    /// Restricts `options` to the project's cycle region, converted to frames at the rate the
-    /// render will run at.
+    /// Captures one repetition of the project's cycle region at the requested render rate.
+    /// Instruments and effects are warmed up first; the file has exactly the cycle's length.
     ///
     /// `None` when the project has no region, or the region is empty. Whether cycling is
     /// *enabled* is deliberately not consulted: the region is a marked span of the song, and
@@ -173,7 +173,11 @@ impl RenderJob {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let start_frames = self.project.tempo_map.ticks_to_samples(start, rate).raw();
         let end_frames = self.project.tempo_map.ticks_to_samples(end, rate).raw();
-        Some(options.with_range(start_frames, end_frames))
+        Some(OfflineOptions {
+            looping: true,
+            include_tail: false,
+            ..options.with_range(start_frames, end_frames)
+        })
     }
 
     /// Renders to a buffer, reporting progress and taking a cancellation through `progress`.
@@ -530,6 +534,8 @@ mod tests {
             .expect("a region exists");
         assert_eq!(options.start_frames, 0);
         assert_eq!(options.end_frames, Some(96_000));
+        assert!(options.looping);
+        assert!(!options.include_tail);
 
         // An overridden rate measures the same two seconds in its own frames.
         let doubled = job

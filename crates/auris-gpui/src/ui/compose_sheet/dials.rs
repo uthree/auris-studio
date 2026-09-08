@@ -138,15 +138,11 @@ pub struct SongDials {
     pub fill: f32,
     /// How much a repeat departs from what came before it.
     pub variation: f32,
-    /// How the piece closes: a held tonic bar after the last section, or nothing at all.
-    ///
-    /// Carried even though the sheet draws no control for it yet, so a specification that says
-    /// `ending = "none"` survives the round trip through the dialog instead of silently gaining
-    /// its ending back.
+    /// How the piece closes or returns to its opening, selected in the basic controls.
     pub ending: Ending,
     /// The tune's contour, when one was given: scale steps around the figure's anchor.
     ///
-    /// Carried for the same reason as `ending` — the sheet draws no control for it yet, and a
+    /// Carried even though the sheet draws no control for it yet, so a
     /// specification that gave the piece a tune must not come back having forgotten it.
     pub motif: Vec<i32>,
     /// The progressions the song carries, [`MAIN_CHART`] first.

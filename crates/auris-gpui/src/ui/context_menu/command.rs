@@ -238,6 +238,8 @@ pub enum MenuCommand {
     /// These eight turn the *sheet* rather than the document: nothing they set has been written
     /// until Write is pressed, so none of them records an undo step.
     SongMeter(u32, u32),
+    /// Closing gesture for the generated song.
+    SongEnding(Ending),
     /// Type a meter the song sheet's list does not offer.
     SongTypeMeter,
     /// Set the song sheet's mood from a named feeling.
@@ -894,6 +896,11 @@ impl AurisApp {
                 }
             }
             MenuCommand::SongTypeMeter => self.prompt_for_song_meter(),
+            MenuCommand::SongEnding(ending) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    dials.ending = ending;
+                }
+            }
             MenuCommand::SongMood(name) => {
                 if let (Some(dials), Some(mood)) = (self.song_sheet.as_mut(), Mood::named(name)) {
                     dials.mood = mood;

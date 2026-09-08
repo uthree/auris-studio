@@ -109,12 +109,14 @@ pub struct Frame {
     /// Whether the end of the last section joins something rather than being the end.
     ///
     /// A single clip does: whatever the arrangement puts after it, most often another playing of
-    /// itself, which is the bar a drum loop wants its fill in. A piece does not — it stops, and
-    /// a fill running into silence is a drummer who did not know the song had finished.
+    /// itself, which is the bar a drum loop wants its fill in. A looping piece does too;
+    /// a piece that stops must not run a fill into silence.
     ///
     /// A property of what is being written rather than of how many sections it has: a song with
     /// one section in it is still a song.
     pub joins_on: bool,
+    /// Whether the last section's successor is the first section of this frame.
+    pub looping: bool,
 }
 
 /// Builds the frame for a spec.
@@ -150,6 +152,11 @@ pub fn plan(spec: &SongSpec) -> Frame {
         let instance = *instance;
 
         let key = spec.key.transposed(section.transpose);
+        let next = played.get(place + 1).or_else(|| {
+            (spec.ending == Ending::Loop)
+                .then(|| played.first())
+                .flatten()
+        });
         // Read against the key before it is fitted to the bars: a progression quoted by name is
         // written in a mode, and asked for in the other one it names its chords from the
         // relative key rather than reading its degrees literally. 丸サ進行 in C minor is the loop
@@ -169,7 +176,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         // Fills deliberately mark every join, including a drop, while harmony and crashes reserve
         // this comparison for arrivals that hold or raise the intensity.
         if chart.origin == ChartOrigin::Generated
-            && let Some(next) = played.get(place + 1)
+            && let Some(next) = next
             && spec.key.transposed(next.transpose) == key
             && next.intensity >= section.intensity
         {
@@ -197,7 +204,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
         // Before the skeleton, because the melody hangs on these chords: a line written against
         // the chord that was there and then played over the dominant that replaced it would be
         // the one part in the band not in on the modulation.
-        if let Some(next) = played.get(place + 1) {
+        if let Some(next) = next {
             let arriving = spec.key.transposed(next.transpose);
             if next.lead_in == LeadIn::Dominant {
                 lead_into(&mut events, key, arriving);
@@ -281,7 +288,8 @@ pub fn plan(spec: &SongSpec) -> Frame {
         length: start,
         seed: spec.seed,
         mood: spec.mood,
-        joins_on: false,
+        joins_on: spec.ending == Ending::Loop,
+        looping: spec.ending == Ending::Loop,
     }
 }
 
@@ -625,6 +633,36 @@ mod tests {
         assert_eq!(frame.sections[3].start, frame.grid.bar_ticks() * 20);
         assert!(frame.sections[3].coda);
         assert_eq!(frame.length, frame.grid.bar_ticks() * 21);
+    }
+
+    #[test]
+    fn a_loop_prepares_the_return_modulation_without_an_ending_bar() {
+        let text = r#"
+            ending = "loop"
+            form = "verse chorus"
+            chords = "@axis"
+            [section.verse]
+            bars = 4
+            [section.chorus]
+            bars = 4
+            transpose = 2
+        "#;
+        let frame = plan(&spec(text));
+        assert_eq!(frame.sections.len(), 2);
+        assert_eq!(frame.length, frame.grid.bar_ticks() * 8);
+        assert!(frame.joins_on && frame.looping);
+        assert!(frame.sections.iter().all(|section| !section.coda));
+        let last = frame.sections[1].events.last().unwrap();
+        assert_eq!(last.chord.root, PitchClass::new(7), "G7 returns to C");
+        assert_eq!(last.chord.quality, Quality::Dominant7);
+        assert!(
+            last.chord
+                .contains_midi(*frame.sections[1].skeleton.last().unwrap())
+        );
+        let plain = plan(&spec(
+            &text.replace("[section.verse]", "[section.verse]\nlead_in = \"none\""),
+        ));
+        assert_ne!(last.chord, plain.sections[1].events.last().unwrap().chord);
     }
 
     #[test]

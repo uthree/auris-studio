@@ -71,6 +71,11 @@ pub const PRESETS: &[SongPreset] = &[
         source: CHIPTUNE,
     },
     SongPreset {
+        name: "game-loop",
+        description: "A sixteen-bar chiptune loop for game background music",
+        source: include_str!("../../../examples/game-loop.asong"),
+    },
+    SongPreset {
         name: "pop-band",
         description: "Drums, bass, keys and a lead — the 王道進行",
         source: POP_BAND,
@@ -719,6 +724,9 @@ mod tests {
     fn presets_offer_separate_later_lyrics_with_shared_melodies() {
         for preset in super::PRESETS {
             let spec = preset.spec();
+            if spec.ending == crate::spec::Ending::Loop {
+                continue;
+            }
             let later = &spec.sections["verse2"];
             assert!(spec.form.contains(&later.name), "{}", preset.name);
             assert_eq!(later.melody_from.as_deref(), Some("verse"));
@@ -887,8 +895,18 @@ mod tests {
         for part in PRESETS[0].spec().parts {
             assert_eq!(part.program, None, "{} asks for a font", part.name);
         }
-        // And every other one does use it, or it would not be worth a line in the menu.
+        // Both chiptune arrangements work without a library; the other styles use GM sounds.
         for preset in &PRESETS[1..] {
+            if preset.name == "game-loop" {
+                assert!(
+                    preset
+                        .spec()
+                        .parts
+                        .iter()
+                        .all(|part| part.program.is_none())
+                );
+                continue;
+            }
             assert!(
                 preset
                     .spec()

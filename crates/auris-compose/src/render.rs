@@ -164,6 +164,8 @@ pub struct EffectDraft {
 /// A finished piece, ready to become a project.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Composition {
+    /// Whether the form returns to its opening during playback.
+    pub looping: bool,
     /// What the piece is called.
     pub title: String,
     /// The tempo, on the song's own timeline.
@@ -450,6 +452,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let tracks = shared_drum_kits(tracks, frame.seed);
 
     Composition {
+        looping: spec.ending == Ending::Loop,
         title: spec.title.clone(),
         tempo_map: tempo_of(frame, spec.tempo),
         meter: spec.meter,
@@ -816,6 +819,21 @@ mod tests {
 
     fn compose_text(text: &str) -> Composition {
         compose(&SongSpec::parse(text).expect("the fixture parses"))
+    }
+
+    #[test]
+    fn the_game_loop_is_a_repeatable_sixteen_bar_score_without_a_fade() {
+        let spec = crate::preset::preset("game-loop").unwrap().spec();
+        let piece = compose(&spec);
+        assert!(piece.looping);
+        assert_eq!(piece.length, spec.meter.ticks_per_bar() * 16);
+        assert!(piece.master_gain.is_empty());
+        assert_eq!(compose(&spec), piece);
+        assert_eq!(SongSpec::parse(&piece.spec), Ok(spec));
+        for clip in piece.tracks.iter().flat_map(|track| &track.clips) {
+            assert!(clip.start + clip.length <= piece.length);
+            assert!(!clip.name.starts_with("ending"));
+        }
     }
 
     const BASE: &str = r#"

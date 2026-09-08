@@ -528,6 +528,11 @@ mod tests {
             hits_in_last_verse_bar(&spec("held")) > hits_in_last_verse_bar(&spec("none")),
             "the verse did not fill into the ending"
         );
+        assert_eq!(
+            hits_in_last_verse_bar(&spec("loop")),
+            hits_in_last_verse_bar(&spec("held")),
+            "a cycle fills into its opening"
+        );
     }
 
     #[test]

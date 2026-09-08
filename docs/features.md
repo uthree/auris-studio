@@ -1228,9 +1228,10 @@ An export can be written at any sample rate; the sources are converted to it fir
 exported at 96 kHz is the same piece rather than the same samples played faster.
 
 The cycle region exports on its own through *File → Export Cycle…*, or `auris render --loop`
-from the command line. The range ends the way pressing Stop there sounds: the voices are
-released at the boundary and the tail holds the ring-out of what was inside the range, never a
-performance of the material beyond it.
+from the command line. It writes exactly one repetition after warming up the instruments and
+effects for at least one cycle and their reported tail duration. Reverb and delay carry into
+the opening; no tail is appended, so the file can repeat at the marked boundary. Ordinary
+whole-project and explicit frame-range exports continue to include their release tails.
 
 ### Stems
 

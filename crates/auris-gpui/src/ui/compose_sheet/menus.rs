@@ -15,6 +15,25 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use super::dials::*;
 
 impl AurisApp {
+    /// The closing gesture, including a return to the opening for background music.
+    pub(super) fn song_ending_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let current = self.song_sheet.as_ref().map(|dials| dials.ending);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongEnding));
+        for (ending, label) in [
+            (Ending::Held, Key::SongEndingHeld),
+            (Ending::Fade, Key::SongEndingFade),
+            (Ending::Loop, Key::SongEndingLoop),
+            (Ending::None, Key::SongEndingNone),
+        ] {
+            menu = menu.toggle(
+                self.t(label),
+                MenuCommand::SongEnding(ending),
+                current == Some(ending),
+            );
+        }
+        menu
+    }
+
     /// One kit source for all of the composer's independent drum writers.
     pub(super) fn song_drum_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::PresetDrums));

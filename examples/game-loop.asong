@@ -1,0 +1,44 @@
+# A complete sixteen-bar cycle. Both sections play on every repetition.
+title = "Pixel Journey"
+key = "C major"
+tempo = 120
+ending = "loop"
+chords = "@axis"
+groove = "four-on-the-floor"
+mood = "bright"
+seed = 53
+fill = 0.35
+form = ["verse", "chorus"]
+
+[section.verse]
+bars = 8
+intensity = 0.65
+
+[section.chorus]
+bars = 8
+intensity = 0.75
+
+[[part]]
+name = "lead"
+role = "melody"
+density = 0.45
+
+[[part]]
+name = "chords"
+role = "chords"
+
+[[part]]
+name = "bass"
+role = "bass"
+
+[[part]]
+name = "kick"
+role = "kick"
+
+[[part]]
+name = "snare"
+role = "snare"
+
+[[part]]
+name = "hat"
+role = "hat"

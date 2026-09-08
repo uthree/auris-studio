@@ -1144,6 +1144,14 @@ pub mod composition {
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
     //!
+    //! `ending = "loop"` makes the form circular: the final section prepares the first section's
+    //! key and the writers treat their boundary as another join. No coda or fade is added.
+    //! The composition carries this intent to the session, which enables the cycle over the
+    //! complete form. The specification and the existing project cycle fields preserve it.
+    //! Cycle export warms up the same render graph for at least one cycle and its reported
+    //! effect-tail duration, then captures exactly one cycle with delay compensation. The tail
+    //! is already present at the opening instead of being appended after the last bar.
+    //!
     //! # Every clip knows what it is
     //!
     //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by

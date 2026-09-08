@@ -705,6 +705,11 @@ strings! {
     // The form: which sections play, in what order, and what each of them is.
     SongStyle { en: "Style", ja: "スタイル" }
     SongStyleChoose { en: "Choose…", ja: "選ぶ…" }
+    SongEnding { en: "Ending", ja: "終わり方" }
+    SongEndingHeld { en: "Held chord", ja: "終止音" }
+    SongEndingFade { en: "Fade out", ja: "フェードアウト" }
+    SongEndingLoop { en: "Loop (BGM)", ja: "ループ（BGM）" }
+    SongEndingNone { en: "Stop", ja: "そのまま停止" }
     SongFormHeading { en: "Form", ja: "構成" }
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }

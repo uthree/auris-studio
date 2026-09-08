@@ -299,6 +299,10 @@ const THEORY_NAMES: &[(&str, &str, &str)] = &[
 /// The song presets, whose descriptions are what a style picker shows.
 const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
     (
+        "A sixteen-bar chiptune loop for game background music",
+        "ゲームBGM向けの16小節チップチューンループ",
+    ),
+    (
         "The built-in voices, four to the floor",
         "内蔵音源のみ・四つ打ち",
     ),

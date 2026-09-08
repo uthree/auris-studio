@@ -1,7 +1,8 @@
 //! Faster-than-realtime rendering of a whole project into one buffer.
 //!
 //! Export runs the *same* [`render_block`] the audio callback does, block by block, with the
-//! transport rolling and looping switched off. That is what makes an exported file match what
+//! transport rolling. Cycle exports warm up the graph before capturing one repetition.
+//! That is what makes an exported file match what
 //! was heard: there is no second code path that could drift from the first.
 
 use auris_core::AudioBuffer;
@@ -34,6 +35,9 @@ pub struct OfflineOptions {
     pub block_frames: usize,
     /// Whether to keep rendering past the end for the longest effect tail in the graph.
     pub include_tail: bool,
+    /// Capture one cycle after warming up instruments and effects for at least one cycle
+    /// and the graph's reported tail duration. No tail is appended to the output.
+    pub looping: bool,
     /// Rate to render at. `None` uses the project's own rate.
     pub sample_rate: Option<f64>,
 }
@@ -45,6 +49,7 @@ impl Default for OfflineOptions {
             end_frames: None,
             block_frames: 1_024,
             include_tail: true,
+            looping: false,
             sample_rate: None,
         }
     }
@@ -224,12 +229,14 @@ pub struct OfflineRender {
     total: usize,
     /// Frames to render, which is [`Self::total`] plus the compensation lead-in.
     end: usize,
-    /// Frames of plugin delay compensation to throw away off the front.
+    /// Frames of cycle warm-up and plugin delay compensation to discard.
     latency: usize,
     /// Whether the render has an explicit end to stop the transport at.
     ranged: bool,
     /// Frames of the output the transport is rolling for; the rest is tail.
     performed: usize,
+    /// Render this range repeatedly while warming up and capturing the cycle.
+    looping: bool,
 }
 
 impl OfflineRender {
@@ -277,7 +284,7 @@ impl OfflineRender {
             });
         }
 
-        let tail = if options.include_tail {
+        let tail = if options.include_tail && !options.looping {
             graph.tail_frames()
         } else {
             0
@@ -302,8 +309,25 @@ impl OfflineRender {
         // of the graph are the lead-in of empty delay lines rather than anything on the timeline.
         // The render runs that much longer and the file starts where the lead-in ends, which is
         // what keeps an export lined up with what the arrangement shows.
-        let latency = graph.latency_frames();
+        let warmup = if options.looping && span > 0 {
+            let span = usize::try_from(span).map_err(|_| too_long())?;
+            graph
+                .tail_frames()
+                .max(span)
+                .div_ceil(span)
+                .checked_mul(span)
+                .ok_or_else(too_long)?
+        } else {
+            0
+        };
+        let latency = graph
+            .latency_frames()
+            .checked_add(warmup)
+            .ok_or_else(too_long)?;
         let end = total.checked_add(latency).ok_or_else(too_long)?;
+        if end as u64 > MAX_RENDER_FRAMES {
+            return Err(too_long());
+        }
 
         Ok(Self {
             graph,
@@ -316,8 +340,9 @@ impl OfflineRender {
             // Only an explicit range can have material lying beyond its end; a whole-project
             // render ends where the material does, and stopping it there would cut the natural
             // releases out of its own tail.
-            ranged: options.end_frames.is_some(),
+            ranged: options.end_frames.is_some() && !options.looping,
             performed: total - tail,
+            looping: options.looping,
         })
     }
 
@@ -364,6 +389,13 @@ impl OfflineRender {
         }
 
         let mut transport = Transport::playing_from(self.start_frames);
+        if self.looping {
+            transport.set_loop(
+                true,
+                self.start_frames,
+                self.start_frames + self.performed as u64,
+            );
+        }
         let mut scratch = AudioBuffer::new(RENDER_CHANNELS, self.block_frames, self.sample_rate);
         let mut rendered = 0;
         while rendered < self.end {
@@ -406,6 +438,101 @@ impl OfflineRender {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cycle_exports_keep_the_warm_tail_and_exact_length_at_any_block_size() {
+        let mut project = four_beat_project();
+        project.add_effect(None, testkit::TAIL_ID);
+        for delayed in [false, true] {
+            if delayed {
+                project.add_effect(None, testkit::LOOKAHEAD_ID);
+            }
+            for block_frames in [1, 64, 3_000] {
+                // A cycle shorter than the tail also exercises multiple warm-up passes.
+                let rendered = render_project(
+                    &project,
+                    &AudioSourceBank::new(),
+                    &testkit::registry(),
+                    &OfflineOptions {
+                        start_frames: 24_000,
+                        end_frames: Some(24_100),
+                        looping: true,
+                        block_frames,
+                        ..OfflineOptions::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(rendered.frame_count(), 100);
+                // y[n] = x[n] + 0.5*y[n-1] reaches twice the input amplitude.
+                // The first sample must already contain the preceding cycle's tail.
+                for sample in rendered.channel(0) {
+                    assert!(
+                        (sample - 2.0 * TONE_AMPLITUDE).abs() < 1e-5,
+                        "cold or interrupted cycle: {sample}, block {block_frames}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_empty_cycle_exports_no_tail() {
+        let mut project = four_beat_project();
+        project.add_effect(None, testkit::TAIL_ID);
+        let rendered = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions {
+                end_frames: Some(0),
+                looping: true,
+                ..OfflineOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rendered.frame_count(), 0);
+    }
+
+    #[test]
+    fn a_cycle_keeps_sample_positions_with_latency_and_a_tail() {
+        let mut project = Project::new("Pulse", SAMPLE_RATE);
+        let track = project.add_audio_track("Sample");
+        let source = project.add_audio_source(
+            "pulse",
+            auris_core::AssetPath::inside("Audio/pulse.wav"),
+            100,
+            SAMPLE_RATE,
+            2,
+        );
+        project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        let mut pulse = vec![0.0; 100];
+        pulse[99] = 0.5;
+        let mut bank = AudioSourceBank::new();
+        bank.insert(
+            source,
+            Arc::new(AudioBuffer::from_planar(vec![pulse.clone(), pulse], SAMPLE_RATE).unwrap()),
+        );
+        project.add_effect(None, testkit::TAIL_ID);
+        project.add_effect(None, testkit::LOOKAHEAD_ID);
+        for block_frames in [7, 1024] {
+            let rendered = render_project(
+                &project,
+                &bank,
+                &testkit::registry(),
+                &OfflineOptions {
+                    end_frames: Some(100),
+                    looping: true,
+                    block_frames,
+                    ..OfflineOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(rendered.frame_count(), 100);
+            assert!((rendered.channel(0)[0] - 0.25).abs() < 1e-5);
+            assert!((rendered.channel(0)[1] - 0.125).abs() < 1e-5);
+            assert!((rendered.channel(0)[99] - 0.5).abs() < 1e-5);
+        }
+    }
 
     #[test]
     fn oversized_blocks_are_clamped_before_event_offsets_are_narrowed() {
