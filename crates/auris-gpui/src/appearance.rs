@@ -10,7 +10,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::{
-    DEFAULT_SCHEME, Scheme, Theme, contrast_ratio, scheme, scheme_or_default, ui_font_for,
+    DEFAULT_SCHEME, GradientStop, Scheme, Theme, contrast_ratio, scheme, scheme_or_default,
+    ui_font_for,
 };
 
 /// A user-created palette, stored as the same parameters used by the built-in schemes.
@@ -28,6 +29,21 @@ pub struct CustomScheme {
     pub base: f32,
     /// Opaque accent colour packed as `0xRRGGBB`.
     pub accent: u32,
+    /// Optional RGB colours for track, clip and library palette slots.
+    #[serde(default)]
+    pub track_palette: [Option<u32>; 8],
+    /// Optional soft/loud endpoints of the piano-roll velocity gradient.
+    #[serde(default)]
+    pub velocity_palette: [Option<u32>; 2],
+    /// Interior velocity-gradient control points in increasing position order.
+    #[serde(default)]
+    pub velocity_stops: Vec<GradientStop>,
+    /// Optional RGB colours for active, warning, danger and mute indicators.
+    #[serde(default)]
+    pub signal_palette: [Option<u32>; 4],
+    /// Optional I–VII colours, falling back to this theme's track palette.
+    #[serde(default)]
+    pub chord_palette: [Option<u32>; 7],
 }
 
 impl CustomScheme {
@@ -42,6 +58,11 @@ impl CustomScheme {
             chroma: base.chroma,
             base: base.base,
             accent: (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b),
+            track_palette: base.track_palette,
+            velocity_palette: base.velocity_palette,
+            velocity_stops: base.velocity_stops.to_vec(),
+            signal_palette: base.signal_palette,
+            chord_palette: base.chord_palette,
         }
     }
 
@@ -54,6 +75,11 @@ impl CustomScheme {
             chroma: self.chroma,
             base: self.base,
             accent: gpui::rgb(self.accent).into(),
+            track_palette: self.track_palette,
+            velocity_palette: self.velocity_palette,
+            velocity_stops: &self.velocity_stops,
+            signal_palette: self.signal_palette,
+            chord_palette: self.chord_palette,
         }
     }
 
@@ -76,8 +102,29 @@ impl CustomScheme {
             .into_iter()
             .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
             || self.accent > 0xff_ffff
+            || self
+                .track_palette
+                .iter()
+                .chain(self.velocity_palette.iter())
+                .chain(self.signal_palette.iter())
+                .chain(self.chord_palette.iter())
+                .flatten()
+                .any(|color| *color > 0xff_ffff)
         {
             return Err("the theme contains an invalid colour");
+        }
+        let mut previous = 0.0;
+        for stop in &self.velocity_stops {
+            if !stop.position.is_finite()
+                || stop.position <= previous
+                || stop.position >= 1.0
+                || stop.color > 0xff_ffff
+            {
+                return Err(
+                    "gradient stops require unique increasing positions between zero and one and valid RGB colours",
+                );
+            }
+            previous = stop.position;
         }
         // Mid-tone backgrounds leave too little contrast for the fixed hierarchy of surfaces.
         // Keeping both ranges clear of the extremes also preserves the recessed surface.
@@ -288,7 +335,103 @@ mod tests {
                 base,
             );
             assert_eq!(custom.validate(), Ok(()), "{}", base.name);
+            assert_eq!(
+                Theme::from_scheme(&custom.definition()).track_palette,
+                Theme::from_scheme(base).track_palette,
+                "copying {} retains its palette",
+                base.name
+            );
         }
+    }
+
+    #[test]
+    fn palette_overrides_round_trip_and_old_preferences_keep_the_defaults() {
+        let mut palette = custom();
+        palette.track_palette[0] = Some(0x123456);
+        palette.track_palette[7] = Some(0xfedcba);
+        palette.velocity_palette = [Some(0x245678), Some(0xde4567)];
+        palette.velocity_stops = vec![GradientStop {
+            position: 0.3,
+            color: 0xaabbcc,
+        }];
+        palette.signal_palette = [Some(0x123456), None, Some(0xaabbcc), Some(0xff8800)];
+        palette.chord_palette[4] = Some(0x9988cc);
+        let json = serde_json::to_string(&palette).unwrap();
+        let loaded: CustomScheme = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, palette);
+        let theme = Theme::from_scheme(&loaded.definition());
+        assert_eq!(
+            theme.track_palette[0],
+            gpui::Hsla::from(gpui::rgb(0x123456))
+        );
+        assert_eq!(
+            theme.track_palette[7],
+            gpui::Hsla::from(gpui::rgb(0xfedcba))
+        );
+        let copy = CustomScheme::from_scheme("copy".into(), "Copy".into(), &loaded.definition());
+        assert_eq!(copy.track_palette, loaded.track_palette);
+        assert_eq!(copy.velocity_palette, loaded.velocity_palette);
+        assert_eq!(copy.velocity_stops, loaded.velocity_stops);
+        assert_eq!(copy.signal_palette, loaded.signal_palette);
+        assert_eq!(copy.chord_palette, loaded.chord_palette);
+        assert_eq!(theme.velocity_soft, gpui::Hsla::from(gpui::rgb(0x245678)));
+        assert_eq!(theme.velocity_loud, gpui::Hsla::from(gpui::rgb(0xde4567)));
+
+        let mut old = serde_json::to_value(&palette).unwrap();
+        old.as_object_mut().unwrap().remove("track_palette");
+        old.as_object_mut().unwrap().remove("velocity_palette");
+        old.as_object_mut().unwrap().remove("velocity_stops");
+        old.as_object_mut().unwrap().remove("signal_palette");
+        old.as_object_mut().unwrap().remove("chord_palette");
+        let loaded: CustomScheme = serde_json::from_value(old).unwrap();
+        assert_eq!(loaded.track_palette, [None; 8]);
+        assert_eq!(loaded.velocity_palette, [None; 2]);
+        assert!(loaded.velocity_stops.is_empty());
+        assert_eq!(loaded.signal_palette, [None; 4]);
+        assert_eq!(loaded.chord_palette, [None; 7]);
+        let fallback = Theme::from_scheme(&loaded.definition());
+        assert_eq!(fallback.velocity_soft, fallback.track_palette[0]);
+        assert_eq!(fallback.velocity_loud, fallback.track_palette[2]);
+        assert!(loaded.validate().is_ok());
+        palette.track_palette[1] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.track_palette[1] = None;
+        palette.velocity_palette[0] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.velocity_palette[0] = None;
+        palette.signal_palette[0] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.signal_palette[0] = None;
+        palette.chord_palette[0] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+    }
+
+    #[test]
+    fn malformed_gradient_stops_are_rejected_before_theme_construction() {
+        let mut palette = custom();
+        for position in [f32::NAN, f32::INFINITY, -0.1, 0.0, 1.0, 1.1] {
+            palette.velocity_stops = vec![GradientStop {
+                position,
+                color: 0xffffff,
+            }];
+            assert!(palette.validate().is_err());
+        }
+        for positions in [[0.5, 0.5], [0.7, 0.3]] {
+            palette.velocity_stops = positions
+                .map(|position| GradientStop {
+                    position,
+                    color: 0xffffff,
+                })
+                .to_vec();
+            assert!(palette.validate().is_err());
+        }
+        palette.velocity_stops = vec![GradientStop {
+            position: 0.5,
+            color: 0x1000000,
+        }];
+        assert!(palette.validate().is_err());
+        palette.velocity_stops.clear();
+        assert!(palette.validate().is_ok());
     }
 
     #[test]

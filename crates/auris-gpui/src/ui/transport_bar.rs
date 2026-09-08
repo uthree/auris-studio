@@ -414,11 +414,11 @@ impl AurisApp {
         // editing either turns the stretch being listened to.
         let bpm = self.project().tempo_map.bpm_at(playhead);
         let signature = self.project().signatures.signature_at(playhead);
-        let chord = self
-            .project()
-            .harmony
-            .chords
-            .numeral_at(playhead)
+        let numeral = self.project().harmony.chords.numeral_at(playhead);
+        let chord_color = numeral.map_or(theme.text_faint, |numeral| {
+            theme.chord_color(numeral.degree)
+        });
+        let chord = numeral
             .map(|numeral| numeral.name_in(self.project().harmony.keys.key_at(playhead)))
             .unwrap_or_else(|| "—".to_string());
         let grid_label = self.grid_label();
@@ -562,6 +562,7 @@ impl AurisApp {
                                 self.t(Key::CurrentChord),
                                 chord,
                                 px(82.0),
+                                chord_color,
                             )),
                     ),
             )
@@ -639,6 +640,7 @@ impl AurisApp {
         caption: &'static str,
         value: String,
         width: Pixels,
+        color: gpui::Hsla,
     ) -> gpui::Stateful<gpui::Div> {
         let theme = &self.theme;
         div()
@@ -662,7 +664,7 @@ impl AurisApp {
                     .text_color(theme.text_faint)
                     .child(caption),
             )
-            .child(div().text_sm().text_color(theme.text).child(value))
+            .child(div().text_sm().text_color(color).child(value))
     }
 
     /// A drag-and-scroll tempo readout.
@@ -671,35 +673,41 @@ impl AurisApp {
         bpm: f64,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
-        self.lcd_field("tempo", self.t(Key::Tempo), format!("{bpm:.2}"), px(84.0))
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
-                    if event.click_count >= 2 {
-                        // The first click of the pair already began a drag. It has not moved, so
-                        // it has changed nothing, but leaving it live would have the sheet's own
-                        // pointer dragging the tempo behind it.
-                        this.end_drag(window, cx);
-                        this.prompt_for_tempo();
-                        cx.notify();
-                        return;
-                    }
-                    let at = this.playhead_ticks();
-                    let start_bpm = this.project().tempo_map.bpm_at(at);
-                    this.begin_drag(Drag::Tempo {
-                        at,
-                        start_bpm,
-                        start_x: event.position.x,
-                    });
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
-                let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
+        self.lcd_field(
+            "tempo",
+            self.t(Key::Tempo),
+            format!("{bpm:.2}"),
+            px(84.0),
+            self.theme.text,
+        )
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, window, cx| {
+                if event.click_count >= 2 {
+                    // The first click of the pair already began a drag. It has not moved, so
+                    // it has changed nothing, but leaving it live would have the sheet's own
+                    // pointer dragging the tempo behind it.
+                    this.end_drag(window, cx);
+                    this.prompt_for_tempo();
+                    cx.notify();
+                    return;
+                }
                 let at = this.playhead_ticks();
-                let bpm = this.project().tempo_map.bpm_at(at) + f64::from(notches);
-                this.session.set_tempo_at(at, bpm);
-                cx.notify();
-            }))
+                let start_bpm = this.project().tempo_map.bpm_at(at);
+                this.begin_drag(Drag::Tempo {
+                    at,
+                    start_bpm,
+                    start_x: event.position.x,
+                });
+            }),
+        )
+        .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
+            let notches = f32::from(event.delta.pixel_delta(px(16.0)).y) / 16.0;
+            let at = this.playhead_ticks();
+            let bpm = this.project().tempo_map.bpm_at(at) + f64::from(notches);
+            this.session.set_tempo_at(at, bpm);
+            cx.notify();
+        }))
     }
 
     /// The time signature readout, beside the tempo it belongs next to.
@@ -721,6 +729,7 @@ impl AurisApp {
             self.t(Key::Signature),
             signature.to_string(),
             px(84.0),
+            self.theme.text,
         )
         // Either button, because either is a way somebody might ask a control for its list, and
         // there is nothing else here for the right one to mean.

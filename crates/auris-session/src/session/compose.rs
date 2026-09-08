@@ -190,7 +190,6 @@ impl Session {
         for bus in &composition.buses {
             let id = project.add_bus_track(&bus.name);
             if let Some(entry) = project.track_mut(id) {
-                entry.color = bus.color;
                 entry.mixer.gain_db = bus.gain_db;
             }
             for effect in &bus.effects {
@@ -302,10 +301,6 @@ impl Session {
                 map.store(&mut inner.instrument_state);
             }
             if let Some(entry) = project.track_mut(track_id) {
-                // The composer's colour, not the palette's. `add_instrument_track` takes the next
-                // palette entry by position, so which colour a part got depended on how many
-                // parts were declared before it.
-                entry.color = track.color;
                 // The composer's level, and — where the part landed on a General MIDI kit — the
                 // trim that kit needs to sit where the others do. This is the one place that knows
                 // both, because it is the one place a part's `program` has been resolved against
@@ -540,6 +535,9 @@ mod tests {
             .filter(|track| track.kind.is_bus())
             .count();
         assert_eq!(session.project().tracks.len(), report.tracks + buses);
+        for track in &session.project().tracks {
+            assert_eq!(track.color, track.kind.default_color());
+        }
 
         // One step takes the whole piece back, not one note.
         assert_eq!(session.undo(), Some(Edit::Compose));

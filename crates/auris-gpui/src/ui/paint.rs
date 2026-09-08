@@ -616,6 +616,9 @@ pub fn harmony_lane(
             continue;
         }
         let lit = harmony.held == Some(event.start);
+        let degree = event.numeral.degree;
+        let color = theme.chord_color(degree);
+        let fill = theme.chord_fill(degree, lit);
         let block = Bounds {
             origin: point(x + CHORD_BLOCK_INSET, chord_row.origin.y + px(2.0)),
             size: size(
@@ -623,12 +626,7 @@ pub fn harmony_lane(
                 chord_row.size.height - px(4.0),
             ),
         };
-        rounded_rect(
-            window,
-            block,
-            px(3.0),
-            Theme::translucent(theme.accent, if lit { 0.42 } else { 0.22 }),
-        );
+        rounded_rect(window, block, px(3.0), fill);
         // The handle is the visible half of the gesture: without something drawn at the edge,
         // being able to drag a chord there is a fact only the manual knows. Only where the
         // numeral is actually written — a chord split in two by a key change has one position,
@@ -642,7 +640,11 @@ pub fn harmony_lane(
                     size: size(CHORD_HANDLE.min(block.size.width), block.size.height),
                 },
                 px(3.0),
-                if lit { theme.selection } else { theme.accent },
+                if lit {
+                    theme.hovered(color, 0.12)
+                } else {
+                    color
+                },
             );
         }
 
@@ -663,7 +665,7 @@ pub fn harmony_lane(
                 ),
                 text,
                 px(10.0),
-                theme.text,
+                theme.text_on(fill),
             );
         });
     }

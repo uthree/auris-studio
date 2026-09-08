@@ -806,6 +806,28 @@ strings! {
     ThemeName { en: "Theme name", ja: "テーマ名" }
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
+    ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemeChordPalette { en: "Chord degrees (I–VII)", ja: "コードの度数 (I〜VII)" }
+    ThemeChordNote { en: "Enter #RRGGBB, or leave blank to follow this theme's first seven track palette colours. Accidentals, chord quality and slash suffixes keep the primary numeral's colour.", ja: "#RRGGBB で指定します。空欄はテーマのトラックパレットの先頭7色に連動します。変化記号・コードの種類・スラッシュの後ろの指定にかかわらず、主となる度数で色分けします。" }
+    ThemeSignalPalette { en: "Transport and indicator palette", ja: "再生操作・インジケーターのパレット" }
+    ThemeSignalActive { en: "Playback / meter: normal", ja: "再生中・メーター通常域" }
+    ThemeSignalWarning { en: "Warning / solo / meter: high", ja: "警告・ソロ・メーター高レベル域" }
+    ThemeSignalDanger { en: "Recording / clipping / errors", ja: "録音・クリッピング・エラー" }
+    ThemeSignalMute { en: "Mute", ja: "ミュート" }
+    ThemeSignalNote { en: "Enter #RRGGBB. Blank playback follows the accent; warning/mute follow the bus palette and recording follows drums. Lightness adjusts for readability.", ja: "#RRGGBB で指定します。空欄は再生がアクセント、警告・ミュートがバス、録音がドラムの色に連動します。読みやすさのため明るさを調整します。" }
+    ThemeVelocityPalette { en: "Piano-roll velocity gradient", ja: "ピアノロールのベロシティグラデーション" }
+    ThemeVelocitySoft { en: "Soft notes (#RRGGBB)", ja: "弱いノート (#RRGGBB)" }
+    ThemeVelocityLoud { en: "Loud notes (#RRGGBB)", ja: "強いノート (#RRGGBB)" }
+    ThemeVelocityAdd { en: "Add intermediate point", ja: "中間点を追加" }
+    ThemeVelocityRemove { en: "Remove point", ja: "中間点を削除" }
+    ThemeVelocityPosition { en: "Position (%)", ja: "位置 (%)" }
+    ThemeVelocityColor { en: "Colour (#RRGGBB)", ja: "色 (#RRGGBB)" }
+    ThemeVelocityInvalid { en: "Intermediate points need distinct positions between 0 and 100% and a #RRGGBB colour.", ja: "中間点は 0% より大きく 100% より小さい異なる位置と、#RRGGBB の色を指定してください。" }
+    ThemeVelocityPaletteNote { en: "Blank endpoints use the instrument (soft) and drum (loud) palette colours.", ja: "空欄はソフト音源（弱）・ドラム（強）のパレット色に連動します。" }
+    ThemePaletteUnassigned1 { en: "Unassigned 1", ja: "未割り当て1" }
+    ThemePaletteUnassigned2 { en: "Unassigned 2", ja: "未割り当て2" }
+    ThemePaletteUnassigned3 { en: "Unassigned 3", ja: "未割り当て3" }
+    ThemeTrackPaletteNote { en: "Enter #RRGGBB, or leave blank to follow the accent. Clips use their track's colour. Buses share the effects colour.", ja: "#RRGGBB で指定します。空欄はアクセントに連動します。クリップはトラックの色、バスはエフェクトと同じ色を使います。" }
     ThemePreview { en: "Preview", ja: "プレビュー" }
     ThemePreviewText { en: "Track · Piano · Settings", ja: "トラック・ピアノ・設定" }
     ThemeSave { en: "Save and apply", ja: "保存して適用" }

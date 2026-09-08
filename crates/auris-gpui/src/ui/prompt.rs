@@ -1577,18 +1577,28 @@ impl AurisApp {
                 .flex_wrap()
                 .gap_1()
                 .children(offered.into_iter().enumerate().map(|(index, entry)| {
+                    let degree_color = matches!(
+                        target.notation(),
+                        Some(Notation::Chord | Notation::Progression)
+                    )
+                    .then(|| Numeral::parse(entry))
+                    .flatten()
+                    .map(|numeral| theme.chord_color(numeral.degree));
                     button(
                         SharedString::from(format!("complete:{entry}")),
                         entry,
                         ButtonStyle::Normal,
                         walking == Some(index),
-                        theme.accent,
+                        degree_color.unwrap_or(theme.accent),
                         &theme,
                         cx.listener(move |this, _, window, cx| {
                             this.complete_prompt(entry, window, cx);
                             cx.notify();
                         }),
                     )
+                    .when(walking != Some(index), |chip| {
+                        chip.text_color(degree_color.unwrap_or(theme.text))
+                    })
                 })),
         )
     }

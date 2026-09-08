@@ -146,11 +146,7 @@ impl AurisApp {
             false => menu,
         };
 
-        // The palette, as swatches. The colours carry the meaning and the rows are numbered
-        // rather than named: the set holds two entries a reasonable person would call orange, and
-        // naming those twice over in two languages is an argument nobody needs to have. The word
-        // is on every row because this menu has no section headings and one row saying what the
-        // run below it is would have to be a disabled item pretending to be a heading.
+        // Stable document slots, shown using the current theme's editable palette.
         let colour = self.t(Key::MenuTrackColor);
         let menu =
             Color::PALETTE
@@ -158,7 +154,10 @@ impl AurisApp {
                 .enumerate()
                 .fold(menu.separator(), |menu, (index, color)| {
                     menu.colour(
-                        format!("{colour} {}", index + 1),
+                        format!(
+                            "{colour}: {}",
+                            crate::theme::palette_label(self.language(), index)
+                        ),
                         MenuCommand::SetTrackColor(track, *color),
                         self.theme.track_color(color.0),
                         *color == current_color,
@@ -771,6 +770,33 @@ mod tests {
                         if item.enabled && item.command == MenuCommand::AnalyzeChords(Some(track)))
                 });
                 assert_eq!(chords, track == instrument || track == singer);
+            }
+        });
+    }
+
+    #[gpui::test]
+    fn track_colour_choices_display_the_theme_and_store_the_slot(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let track = this.session.add_singer_track("Voice");
+            this.theme.track_palette[4] = gpui::rgb(0x123456).into();
+            let menu = this.track_menu(point(px(120.), px(80.)), track);
+            let choices: Vec<_> = menu
+                .entries
+                .iter()
+                .filter_map(|entry| match entry {
+                    MenuEntry::Item(item) if item.swatch.is_some() => Some(item),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(choices.len(), Color::PALETTE.len());
+            for (index, item) in choices.iter().enumerate() {
+                assert_eq!(item.swatch, Some(this.theme.track_palette[index]));
+                assert_eq!(
+                    item.command,
+                    MenuCommand::SetTrackColor(track, Color::PALETTE[index])
+                );
+                assert_eq!(item.checked, index == 4);
             }
         });
     }

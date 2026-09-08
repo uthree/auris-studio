@@ -1169,6 +1169,37 @@ with fallback fonts retained for Japanese and other scripts. Create a theme from
 palette, give it a name, and enter its accent colour as `#RRGGBB`. The preview leaves the applied
 theme alone until **Save and apply**. Saved custom themes can be selected and edited here.
 
+Every preset has its own eight track, clip and library palette colours, which the editor
+copies when creating a theme. Changing the base updates inherited colours and keeps colours
+already edited in the draft. Enter `#RRGGBB` for a
+slot, or leave it blank to derive its colour from the accent. New tracks choose a slot by kind:
+instrument, drums, singer, audio or bus. The library uses the corresponding colours, with effects
+sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
+colour. Changing the theme updates their appearance without changing the saved project.
+
+Chord blocks, the current-chord readout and chord completion chips share seven I–VII colours.
+The primary written numeral selects the colour: quality, accidentals, inversions and secondary
+targets do not change it (`V`, `V7` and `V7/V` share V; `VII` and `bVII` share VII).
+The theme editor provides an override for each degree; blank entries follow the first seven
+track palette slots. Theme changes recolour the progression without editing its chords or keys.
+Dragged blocks keep their degree colour with a stronger tint, and labels retain readable contrast.
+
+Transport and indicator colours have their own editable palette: playback and normal meter
+levels, warnings/solo and high levels, recording/clipping/errors, and mute. Every preset uses
+colours from its own colour scheme. Blank entries follow the accent (playback), bus colour
+(warning and mute) or drum colour (recording and clipping). Indicators adjust lightness for
+readability, including on hovered controls. All track and master meters share these colours.
+
+Piano-roll note colours use each theme's velocity gradient. The theme editor offers both
+endpoints, intermediate points with editable positions (%) and colours, and a live preview.
+Points can be added and removed; positions must be distinct and strictly between 0 and 100%.
+Colours interpolate along the shortest hue arc between adjacent points. GitHub presets use
+blue, purple and red, with no green in their track palettes, playback indicators or meters.
+Blank endpoints follow the instrument and drum palette slots; explicit colours survive a base
+theme change. Inherited intermediate points follow the base until edited.
+Changing these colours only changes the display, not note velocities.
+The displayed gradient adjusts lightness to stay visible against both piano-roll lane shades.
+
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
 rather than `~/Library/Application Support` and `%APPDATA%`:
 

@@ -313,9 +313,8 @@ impl Session {
 
     /// Tints a track, and the clips on it.
     ///
-    /// A new track picks a palette entry by its position, which is a sensible start and a poor
-    /// finish: the order tracks were made in has nothing to do with which of them are drums. This
-    /// is what makes the colour a choice. Nothing is heard, so the graph is left alone.
+    /// New tracks use their kind's palette slot; this command overrides that choice.
+    /// Nothing is heard, so the graph is left alone.
     pub fn set_track_color(&mut self, id: TrackId, color: Color) -> Result<(), SessionError> {
         self.require_track(id)?;
         if self
