@@ -88,9 +88,7 @@ impl AurisApp {
                             false,
                             theme.accent,
                             &theme,
-                            Self::opens_menu(cx, move |this, at| {
-                                this.song_instrument_menu(at, index)
-                            }),
+                            cx.listener(move |this, _, _, cx| this.open_song_library(index, cx)),
                         )
                         .w_full()
                         .min_w_0()
@@ -282,6 +280,9 @@ impl AurisApp {
 
     /// The sound the part will use, including a GM program rather than only its fallback plugin.
     pub(super) fn song_part_source_label(&self, part: &auris_session::prelude::PartSpec) -> String {
+        if let Some(source) = &part.source {
+            return self.song_library_source_label(source);
+        }
         match part.program {
             Some(program) => program.label(part.role.is_drum()).to_string(),
             None => self

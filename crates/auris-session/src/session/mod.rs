@@ -1007,7 +1007,16 @@ impl Session {
             return None;
         }
         let edit = self.history.undo_edit()?;
+        if edit == Edit::Compose {
+            self.collect_hosted_state();
+        }
         let project = self.history.undo(&self.project)?;
+        if edit == Edit::Compose {
+            // The two songs can reuse a track id and plugin id while holding different native
+            // presets. Fresh slots restore the history snapshot rather than the outgoing sound.
+            self.hosted.clear();
+            self.vst3.clear();
+        }
         if edit == Edit::ExternalChanges {
             self.replace_external_project(project);
         } else {
@@ -1025,7 +1034,14 @@ impl Session {
             return None;
         }
         let edit = self.history.redo_edit()?;
+        if edit == Edit::Compose {
+            self.collect_hosted_state();
+        }
         let project = self.history.redo(&self.project)?;
+        if edit == Edit::Compose {
+            self.hosted.clear();
+            self.vst3.clear();
+        }
         if edit == Edit::ExternalChanges {
             self.replace_external_project(project);
         } else {

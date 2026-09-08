@@ -58,6 +58,7 @@
 mod doc;
 mod mood;
 mod role;
+mod source;
 
 use std::collections::BTreeMap;
 
@@ -74,6 +75,7 @@ use crate::theory::key::Key;
 pub use self::doc::{SpecError, parse_motif};
 pub use self::mood::Mood;
 pub use self::role::Role;
+pub use self::source::PartSource;
 
 /// One part of the arrangement.
 #[derive(Clone, Debug, PartialEq)]
@@ -82,7 +84,7 @@ pub struct PartSpec {
     pub name: String,
     /// What it plays.
     pub role: Role,
-    /// The plugin that plays it, when no [`Self::program`] names a SoundFont sound.
+    /// The plugin that plays it, when neither [`Self::source`] nor [`Self::program`] is set.
     pub instrument: String,
     /// The General MIDI sound it asks for: a program on a pitched part, a kit on a drum one.
     ///
@@ -94,6 +96,12 @@ pub struct PartSpec {
     /// SoundFont installed falls back to the plugin the part also names, so a specification asking
     /// for a violin comes out as an oscillator rather than as silence.
     pub program: Option<gm::Program>,
+    /// An explicitly selected SoundFont preset or external instrument.
+    ///
+    /// This takes precedence over the legacy instrument and General MIDI choices. A document
+    /// cannot set both this and [`Self::program`]; a source picker clears the program when used.
+    /// Unlike a General MIDI request, this names the exact asset to resolve at playback.
+    pub source: Option<PartSource>,
     /// Which octave it sits in, as an **absolute** MIDI octave rather than an offset.
     ///
     /// A melody's default is 5, so 6 moves it up one and 1 moves it down four. Worth saying
@@ -135,6 +143,7 @@ impl PartSpec {
             role,
             instrument: role.default_instrument().to_string(),
             program: None,
+            source: None,
             octave: role.default_octave(),
             density: None,
             subdivision: Subdivision::default(),
@@ -151,6 +160,9 @@ impl PartSpec {
     /// Which of General MIDI's two readings the number gets is decided here, by the role, and
     /// nowhere else: a kit on a drum part, a program on everything else.
     pub fn sound(&self) -> Option<gm::Sound> {
+        if self.source.is_some() {
+            return None;
+        }
         self.program
             .map(|program| program.sound(self.role.is_drum()))
     }
@@ -182,8 +194,8 @@ impl PartSpec {
 ///
 /// # What is not here, and cannot be
 ///
-/// The name, the role, the instrument, the program, the level and the pan. Those are not how a
-/// part *plays*, they identify the instrument used throughout the song. Compatible drum parts
+/// The name, the role, the instrument, the program, the source, the level and the pan. Those are
+/// not how a part *plays*, they identify the instrument used throughout the song. Compatible drum parts
 /// share that instrument's track. A chorus on strings where the verse was on a piano uses two
 /// parts, and [`SectionSpec::parts`] brings each of them in.
 ///
@@ -637,6 +649,27 @@ mod tests {
         // And a part that named none stays on its plugin, which is what keeps a piece written on
         // the built-in voices written on them.
         assert_eq!(PartSpec::of_role("lead", Role::Melody).sound(), None);
+    }
+
+    #[test]
+    fn an_explicit_source_wins_over_programmatic_legacy_values_and_survives_section_tweaks() {
+        let part = PartSpec {
+            source: Some(PartSource::SoundFont {
+                path: "library/my-kit.sf2".into(),
+                bank: 32768,
+                patch: 256,
+            }),
+            program: Some(gm::Program(40)),
+            ..PartSpec::of_role("snare", Role::Snare)
+        };
+        assert_eq!(part.sound(), None);
+        let played = PartTweak {
+            density: Some(0.8),
+            ..PartTweak::default()
+        }
+        .applied_to(&part);
+        assert_eq!(played.source, part.source);
+        assert_eq!(played.sound(), None);
     }
 
     #[test]

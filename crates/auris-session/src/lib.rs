@@ -183,7 +183,7 @@ pub mod prelude {
     pub use auris_compose::rhythm::Pattern;
     /// Reads a motif field — `"0 2 4 2"` — the way a specification does, so a prompt that
     /// takes one refuses exactly what the file would refuse.
-    pub use auris_compose::spec::parse_motif;
+    pub use auris_compose::spec::{PartSource, parse_motif};
     pub use auris_compose::{
         Composition, Ending, Mood, PRESETS, PartSpec, PerformanceStyle, Role, SectionSpec,
         SongPreset, SongSpec, SpecError, compose, default_instrument, motif_of, preset,

@@ -44,13 +44,6 @@ pub enum MenuCommand {
     ChooseSongSinger,
     /// Add or remove the song's shared kit.
     SongDrums(bool),
-    /// One sound source applied to every drum writer in the song.
-    SongDrumSource {
-        /// Built-in kit instrument, also used as the SoundFont fallback.
-        instrument: String,
-        /// General MIDI kit program, or the instrument on its own.
-        program: Option<u8>,
-    },
     /// Share an original section's sung note slots with another lyric.
     SongMelodySource {
         /// Position in the sheet's section list.
@@ -294,33 +287,6 @@ pub enum MenuCommand {
         part: usize,
         /// What it plays.
         role: Role,
-    },
-    /// Set the instrument of one part on the song sheet.
-    SongPartInstrument {
-        /// Which part, by position in the roster.
-        part: usize,
-        /// The plugin's registry id.
-        id: String,
-    },
-    /// Open the General MIDI programs of one family, for one part on the song sheet.
-    ///
-    /// The anchor travels with the command because the menu that offered it is already closed by
-    /// the time this runs, and the second menu has to open where the first one was rather than
-    /// wherever the pointer has wandered since.
-    SongPartFamily {
-        /// Which part, by position in the roster.
-        part: usize,
-        /// Which family, by position in [`gm::FAMILIES`].
-        family: usize,
-        /// Where to put the menu.
-        anchor: gpui::Point<gpui::Pixels>,
-    },
-    /// Set which General MIDI sound one part on the song sheet plays.
-    SongPartProgram {
-        /// Which part, by position in the roster.
-        part: usize,
-        /// The program, or the kit on a drum part.
-        program: u8,
     },
     /// Replace everything on the song sheet with one of the composer's whole-song presets.
     SongPreset(&'static str),
@@ -1052,17 +1018,6 @@ impl AurisApp {
                     crate::ui::compose_sheet::set_song_drums(dials, enabled);
                 }
             }
-            MenuCommand::SongDrumSource {
-                instrument,
-                program,
-            } => {
-                if let Some(dials) = self.song_sheet.as_mut() {
-                    for part in dials.parts.iter_mut().filter(|p| p.role.is_drum()) {
-                        part.instrument = instrument.clone();
-                        part.program = program.map(gm::Program);
-                    }
-                }
-            }
             MenuCommand::SongMelodySource { section, source } => {
                 if let Some(section) = self
                     .song_sheet
@@ -1090,24 +1045,6 @@ impl AurisApp {
             MenuCommand::SongPartRole { part, role } => {
                 if let Some(dials) = self.song_sheet.as_mut() {
                     crate::ui::compose_sheet::set_part_role(dials, part, role);
-                }
-            }
-            MenuCommand::SongPartInstrument { part, id } => {
-                if let Some(dials) = self.song_sheet.as_mut() {
-                    crate::ui::compose_sheet::set_part_instrument(dials, part, &id);
-                }
-            }
-            MenuCommand::SongPartFamily {
-                part,
-                family,
-                anchor,
-            } => {
-                let menu = self.song_program_menu(anchor, part, family);
-                self.open_menu(menu);
-            }
-            MenuCommand::SongPartProgram { part, program } => {
-                if let Some(dials) = self.song_sheet.as_mut() {
-                    crate::ui::compose_sheet::set_part_program(dials, part, gm::Program(program));
                 }
             }
             MenuCommand::SongPreset(name) => {

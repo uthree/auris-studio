@@ -2,7 +2,7 @@
 //!
 //! Its own file because it is a different job in a different vocabulary. Nothing here builds an
 //! element or reads the theme; every function walks a list the composer publishes — the moods,
-//! the grooves, the progressions, General MIDI — and turns it into items carrying a
+//! the grooves and the progressions — and turns it into items carrying a
 //! [`MenuCommand`]. The panel in `view` opens them, and `context_menu` carries out what was
 //! chosen, so a menu that gained an entry needs a command over there to answer it.
 
@@ -30,36 +30,6 @@ impl AurisApp {
                 self.t(label),
                 MenuCommand::SongEnding(ending),
                 current == Some(ending),
-            );
-        }
-        menu
-    }
-
-    /// One kit source for all of the composer's independent drum writers.
-    pub(super) fn song_drum_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::PresetDrums));
-        let fallback = PartSpec::of_role("drums", Role::Kick).instrument;
-        for (program, name) in gm::KITS {
-            menu = menu.item(
-                name,
-                MenuCommand::SongDrumSource {
-                    instrument: fallback.clone(),
-                    program: Some(program),
-                },
-            );
-        }
-        menu = menu.separator();
-        for descriptor in self
-            .registry()
-            .instruments()
-            .filter(|d| d.category == PluginCategory::Drum)
-        {
-            menu = menu.item(
-                auris_i18n::audio::plugin_name(&descriptor.name, self.language()).to_string(),
-                MenuCommand::SongDrumSource {
-                    instrument: descriptor.id.to_string(),
-                    program: None,
-                },
             );
         }
         menu
@@ -410,7 +380,6 @@ impl AurisApp {
         menu
     }
 
-    /// Every instrument this build can play.
     /// The whole songs the sheet can be filled from.
     pub(super) fn song_preset_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongStyle));
@@ -426,85 +395,6 @@ impl AurisApp {
                     auris_i18n::audio::preset_description(entry.description, language)
                 ),
                 MenuCommand::SongPreset(entry.name),
-            );
-        }
-        menu
-    }
-
-    /// What one part plays: a General MIDI sound, or one of the built-in plugins.
-    ///
-    /// The programs go in by family rather than all hundred and twenty-eight at once — a menu
-    /// that tall does not fit on a screen, and General MIDI already grouped them in eights.
-    pub(super) fn song_instrument_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        part: usize,
-    ) -> ContextMenu {
-        let mut menu = ContextMenu::new(anchor, self.t(Key::SongPartInstrument));
-        let language = self.language();
-        let drums = self
-            .song_sheet
-            .as_ref()
-            .and_then(|dials| dials.parts.get(part))
-            .is_some_and(|part| part.role.is_drum());
-        if drums {
-            // A drum part's number is a whole kit, so there is nothing to group: the eight kits
-            // are the list.
-            for (patch, name) in gm::KITS {
-                menu = menu.item(
-                    name,
-                    MenuCommand::SongPartProgram {
-                        part,
-                        program: patch,
-                    },
-                );
-            }
-        } else {
-            for (family, name) in gm::FAMILIES.iter().enumerate() {
-                menu = menu.item(
-                    format!("{name}…"),
-                    MenuCommand::SongPartFamily {
-                        part,
-                        family,
-                        anchor,
-                    },
-                );
-            }
-        }
-        menu = menu.separator();
-        let mut instruments: Vec<(String, String)> = self
-            .registry()
-            .instruments()
-            .map(|descriptor| {
-                (
-                    descriptor.id.to_string(),
-                    auris_i18n::audio::plugin_name(&descriptor.name, language).to_string(),
-                )
-            })
-            .collect();
-        instruments.sort_by(|one, other| one.1.cmp(&other.1));
-        for (id, name) in instruments {
-            menu = menu.item(name, MenuCommand::SongPartInstrument { part, id });
-        }
-        menu
-    }
-
-    /// The eight sounds of one General MIDI family.
-    pub(crate) fn song_program_menu(
-        &self,
-        anchor: gpui::Point<gpui::Pixels>,
-        part: usize,
-        family: usize,
-    ) -> ContextMenu {
-        let title = gm::FAMILIES.get(family).copied().unwrap_or_default();
-        let mut menu = ContextMenu::new(anchor, title);
-        for program in gm::Program::family_programs(family) {
-            menu = menu.item(
-                program.name(),
-                MenuCommand::SongPartProgram {
-                    part,
-                    program: program.0,
-                },
             );
         }
         menu

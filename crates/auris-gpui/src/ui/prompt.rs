@@ -1755,6 +1755,9 @@ impl AurisApp {
         if let Some(prompt) = self.prompt.as_mut() {
             return prompt.field_mut();
         }
+        if let Some(browser) = self.song_library.as_mut() {
+            return browser.focused.then_some(&mut browser.search);
+        }
         // The lyrics box on the song sheet, while one holds the keyboard.
         if let Some(edit) = self.lyrics_edit.as_mut() {
             return Some(&mut edit.field);
@@ -1786,6 +1789,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         if let Some(prompt) = self.prompt.as_ref() {
             return prompt.field();
         }
+        if let Some(browser) = self.song_library.as_ref() {
+            return browser.focused.then_some(&browser.search);
+        }
         if let Some(edit) = self.lyrics_edit.as_ref() {
             return Some(&edit.field);
         }
@@ -1809,7 +1815,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
         }
         // The lyrics box writes through to the song sheet's dials on every change; typing
         // arrives here, so this is where the copy has to happen.
-        self.sync_section_lyrics();
+        if self.song_library.is_none() {
+            self.sync_section_lyrics();
+        }
     }
 }
 

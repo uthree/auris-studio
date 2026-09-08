@@ -2325,6 +2325,10 @@ impl AurisApp {
         // native binary at the same index, and stale disclosure state must never load it without
         // a new click from the user.
         self.library.forget_plugin_files();
+        if let Some(browser) = self.song_library.as_mut() {
+            browser.tree.forget_plugin_files();
+            browser.reveal = None;
+        }
         if let Err(error) = self.settings.save() {
             log::warn!("could not save settings: {error}");
         }

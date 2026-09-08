@@ -153,6 +153,7 @@ impl Render for AurisApp {
         let status = self.render_status_bar(window.viewport_size().width, cx);
         let export_overlay = self.render_export_overlay(cx);
         let song_sheet = self.render_song_sheet(window, cx);
+        let song_library = self.render_song_library_overlay(window, cx);
         let prompt = self.render_prompt(cx);
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
@@ -354,6 +355,7 @@ impl Render for AurisApp {
             .children(timbre_map)
             .children(export_overlay)
             .children(song_sheet)
+            .children(song_library)
             .child(drop_ring)
             // These come last so they paint — and are hit-tested — above the panels. The plugin
             // editor sits below the menu because a right-click inside it opens one.
@@ -1293,6 +1295,8 @@ impl AurisApp {
             self.palette_key(event, window, cx)
         } else if self.prompt.is_some() {
             self.prompt_key(event, window, cx)
+        } else if self.song_library.is_some() {
+            self.song_library_key(event, cx)
         } else if self.song_sheet.is_some() {
             self.reconcile_section_lyrics();
             if self.lyrics_edit.is_some() {

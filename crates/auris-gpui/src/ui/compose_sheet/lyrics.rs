@@ -1104,9 +1104,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn choosing_one_drum_source_unifies_every_writer_and_keeps_the_band(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn choosing_one_drum_source_keeps_other_kits_and_the_band(cx: &mut gpui::TestAppContext) {
         use crate::ui::context_menu::MenuCommand;
         use auris_session::prelude::*;
         let (app, cx) = crate::harness::open(cx);
@@ -1121,23 +1119,28 @@ mod tests {
                 .collect();
             let mut other = PartSpec::of_role("other-kit", Role::Kick);
             other.program = Some(gm::Program(8));
-            dials.parts.push(other);
-            let instrument = PartSpec::of_role("kit", Role::Kick).instrument;
-            this.run_menu_command(
-                MenuCommand::SongDrumSource {
-                    instrument: instrument.clone(),
-                    program: Some(16),
-                },
-                cx,
-            );
+            dials.parts.push(other.clone());
+            let target = dials
+                .parts
+                .iter()
+                .position(|part| part.role.is_drum())
+                .unwrap();
+            let source = PartSource::SoundFont {
+                path: std::env::temp_dir().join("song-kit.sf2"),
+                bank: 128,
+                patch: 16,
+            };
+            this.open_song_library(target, cx);
+            this.choose_song_library_source(source.clone());
             let dials = this.song_sheet.as_ref().unwrap();
             assert!(
                 dials
                     .parts
                     .iter()
-                    .filter(|p| p.role.is_drum())
-                    .all(|p| p.instrument == instrument && p.program == Some(gm::Program(16)))
+                    .filter(|p| p.role.is_drum() && p.name != "other-kit")
+                    .all(|p| p.source == Some(source.clone()) && p.program.is_none())
             );
+            assert_eq!(dials.parts.last(), Some(&other));
             assert_eq!(
                 dials
                     .parts
@@ -1154,7 +1157,7 @@ mod tests {
                     .iter()
                     .filter(|t| !t.drum_parts.is_empty())
                     .count(),
-                1
+                2
             );
             this.run_menu_command(
                 MenuCommand::SongSinger(Some("C:/Voices/Test.onnx".into())),

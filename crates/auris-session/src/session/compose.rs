@@ -22,6 +22,9 @@ use crate::history::Edit;
 
 use super::{ComposeReport, Session};
 
+#[path = "compose_sources.rs"]
+mod sources;
+
 /// The effect a composed piece gets across its master.
 const MASTER_LIMITER: &str = "auris.fx.limiter";
 
@@ -120,7 +123,8 @@ impl Session {
     /// per note.
     ///
     /// A part naming an instrument the registry does not have falls back to the first registered
-    /// one and is reported, because a missing plugin should cost a timbre, not a whole piece.
+    /// one and is reported. Explicit SoundFont and hosted sources are validated first and never
+    /// substituted; an unavailable source leaves the previous document and undo history intact.
     pub fn compose(
         &mut self,
         composition: &auris_compose::Composition,
@@ -128,6 +132,11 @@ impl Session {
         let spec = auris_compose::SongSpec::parse(&composition.spec)
             .map_err(|errors| SessionError::SongLyrics(format!("{errors:?}")))?;
         self.validate_song_lyrics(&spec)?;
+        let sources = composition
+            .tracks
+            .iter()
+            .map(|track| self.prepare_composed_source(track.source.as_ref()))
+            .collect::<Result<Vec<_>, _>>()?;
         let voice = spec
             .singer
             .as_ref()
@@ -169,7 +178,7 @@ impl Session {
         // What it was asked for, kept with what it produced. A song sheet reopened after a save
         // and a reload refills itself from this, and Another Take goes on working on a piece
         // nobody has the original `.asong` for.
-        project.song_spec = Some(composition.spec.clone());
+        project.song_spec = Some(self.composed_spec_with_sources(&spec));
 
         let mut report = ComposeReport {
             tracks: 0,
@@ -218,28 +227,39 @@ impl Session {
         let general_midi = composition
             .tracks
             .iter()
-            .any(|track| track.sound.is_some())
+            .any(|track| track.source.is_none() && track.sound.is_some())
             .then(|| self.adopt_general_midi(&mut project))
             .flatten();
-        if general_midi.is_none() && composition.tracks.iter().any(|t| t.sound.is_some()) {
+        if general_midi.is_none()
+            && composition
+                .tracks
+                .iter()
+                .any(|track| track.source.is_none() && track.sound.is_some())
+        {
             // Named the way a missing plugin is, because it is the same thing happening: the
             // piece plays, on the instruments the parts also name, and the report is where
             // somebody finds out why it sounds like an oscillator.
             report.substituted.push("General MIDI".to_string());
         }
 
-        for track in &composition.tracks {
-            let sound = general_midi.and(track.sound);
+        let mut hosted_sources = Vec::new();
+        for (track, source) in composition.tracks.iter().zip(sources) {
+            let sound = source
+                .is_none()
+                .then_some(general_midi.and(track.sound))
+                .flatten();
             // A registered sampler without a preset is not a playable fallback.
-            let kept_instrument = sound.is_none()
+            let kept_instrument = source.is_none()
+                && sound.is_none()
                 && track.instrument != SAMPLER_ID
                 && self.registry.has_instrument(&track.instrument);
-            let instrument = match &sound {
+            let instrument = match (&source, &sound) {
+                (Some(source), _) => source.instrument_id(),
                 // Choosing a sound is choosing the instrument that makes it, exactly as it is in
                 // `set_track_preset`.
-                Some(_) => SAMPLER_ID.to_string(),
-                None if kept_instrument => track.instrument.clone(),
-                None => {
+                (None, Some(_)) => SAMPLER_ID.to_string(),
+                (None, None) if kept_instrument => track.instrument.clone(),
+                (None, None) => {
                     report.substituted.push(track.instrument.clone());
                     fallback.clone()
                 }
@@ -262,7 +282,11 @@ impl Session {
             } else {
                 project.add_instrument_track(&track.name, instrument)
             };
-            if let Some((sound, font)) = sound.zip(general_midi) {
+            if let Some(source) = source {
+                if let Some(source) = self.install_composed_source(&mut project, track_id, source) {
+                    hosted_sources.push((track_id, source));
+                }
+            } else if let Some((sound, font)) = sound.zip(general_midi) {
                 if let Some(inner) = project
                     .track_mut(track_id)
                     .and_then(|entry| entry.kind.as_instrument_mut())
@@ -470,7 +494,13 @@ impl Session {
         project.loop_region = Some((Ticks::ZERO, composition.length));
         project.loop_enabled = composition.looping;
 
+        // Native preset changes live inside the hosted instance until collected. Capture them
+        // before replacing slots so Undo restores the sound that was heard, not the last save.
+        self.collect_hosted_state();
         self.record(Edit::Compose);
+        for (track, source) in hosted_sources {
+            self.install_composed_hosted_source(track, source);
+        }
         self.replace_project(project);
         self.install_shipped_fonts();
         // After the fonts and not before: the levels are set by listening to the piece, and what

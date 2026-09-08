@@ -831,6 +831,10 @@ strings! {
     SongPartName { en: "Name", ja: "名前" }
     SongPartRole { en: "Role", ja: "役割" }
     SongPartInstrument { en: "Instrument", ja: "音源" }
+    SongLibraryTitle { en: "Choose an instrument", ja: "音源を選択" }
+    SongLibraryHint { en: "Use the selected instrument for “{part}”.", ja: "選択した音源を「{part}」に使います。" }
+    SongLibraryNoInstruments { en: "This file contains no instrument plugins.", ja: "このファイルに楽器プラグインはありません。" }
+    SongSourceUnavailable { en: "The selected song instrument could not be loaded", ja: "選択した曲の音源を読み込めませんでした" }
     // Which MIDI note a drum part strikes. It stands where a pitched part shows its octave,
     // because a kit has no octave and does need this.
     // The strip under the piano roll, named by what is in it rather than by the word "lane".

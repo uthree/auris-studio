@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// A composed part explicitly selected an unavailable or incompatible instrument source.
+    #[error("song instrument: {0}")]
+    SongSource(String),
     /// A groove reference has no playable MIDI notes.
     #[error("the groove reference has no playable notes")]
     EmptyGroove,

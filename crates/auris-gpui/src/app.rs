@@ -1321,6 +1321,10 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    /// The library browser currently choosing a song part's source.
+    pub(crate) song_library: Option<crate::ui::library::SongLibrary>,
+    /// Fonts browsed while composing, without adding assets to the current document.
+    pub(crate) song_library_fonts: Vec<crate::ui::library::SongLibraryFont>,
     /// Whether the song sheet shows its individual technical controls.
     pub(crate) song_advanced: bool,
     /// The lyrics box on that sheet holding the keyboard, when one does.
@@ -1661,6 +1665,8 @@ impl AurisApp {
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
+            song_library: None,
+            song_library_fonts: Vec::new(),
             song_advanced: false,
             lyrics_edit: None,
             song_lyrics_reveal: None,
@@ -1775,6 +1781,7 @@ impl AurisApp {
         self.prompt.is_some()
             || self.palette.is_some()
             || self.lyrics_edit.is_some()
+            || self.song_library.is_some()
             || self.library_search_focused
             || self.agent_chat.typing()
     }

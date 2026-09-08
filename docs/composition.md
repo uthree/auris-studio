@@ -90,14 +90,17 @@ Each is a `.asong` document embedded in the build rather than a structure assemb
 preset is meant to be *read*, the format was designed to be the readable one, and it means the
 presets are parser tests that fail loudly rather than silently.
 
-A part's instrument cell offers the General MIDI sounds first, grouped into the sixteen families
-the standard already divides them into — a hundred and twenty-eight names in one menu is a menu
-nobody can read — and the built-in plugins under a rule below them. A drum part is offered the
-eight kits instead, because on a drum part that number is a whole kit. Choosing a plugin clears the
-program, so the row never says one thing while the piece plays another.
+A part's instrument name opens the library inside the song sheet. Its search and category tree
+are shared with the main Library panel: choose a built-in instrument, an exact SoundFont preset,
+or an installed CLAP/VST3 instrument. **Import SoundFont…** adds another font to this browser;
+**Add plugin folder…** includes plugins stored outside the usual locations. Expand a plugin file
+to see the instruments it exports. Selecting a sound returns to the same matrix position.
+Closing the browser preserves the current draft and the main library's query and tree.
+Fonts imported here do not change the open project until **Create Song**.
 
-The song sheet has one **Drums** source selector. Choosing a kit applies it to all of the
-drum writers; adding or removing drums changes the kit as a whole. Each section becomes one
+The song sheet has a **Drums** source selector. Choosing a kit applies it to the drum writers
+sharing that source; separately configured kits retain their choices. Adding or removing drums
+changes the kit as a whole. Each section becomes one
 clip containing the independent voices. The track fader, pan, inserts and sends belong to the
 whole kit. A clip's **Drums** context submenu can rewrite or reroll one voice while preserving
 the other voices' notes and performance settings.
@@ -222,6 +225,23 @@ own listing. A part may carry both, and that is the point rather than a redundan
 is played when there is a font to play it from, and the plugin is what the part falls back to when
 there is not, so a specification asking for a string section on a build with no library comes out
 as an oscillator rather than as silence.
+
+An explicit `source` instead records the selected library asset. SoundFont banks and patches use
+the file's own identifiers (0–65535), including non-General-MIDI fonts:
+
+```toml
+[[part]]
+name = "keys"
+role = "chords"
+source = { type = "sound_font", path = 'C:\Sounds\Keys.sf2', bank = 257, patch = 301 }
+```
+
+For CLAP, use `source = { type = "clap", path = 'C:\Plugins\Instrument.clap', plugin_id = "vendor.instrument" }`;
+for VST3, use `type = "vst3"` and `class_id` with the bundle's class identifier. The library writes
+these identifiers automatically. `source` and `program` cannot be specified together. An explicit
+source must load successfully before the current document is replaced; unavailable files and
+effect-only plugins report an error. Saved projects and specifications retain the choice, and
+**Collect Assets** updates collected SoundFont paths for reopening and composing another take.
 
 On a **drum** part the same field means something else entirely, because in General MIDI it does:
 percussion patches select a whole *kit* — `"Standard Kit"`, `"TR-808 Kit"`, `"Brush Kit"` — and it

@@ -16,7 +16,7 @@
 //! Headings and item icons share these colours in both the tree and search results;
 //! names, indentation and check marks carry the same information without relying on colour.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use auris_i18n::Key;
 use gpui::MouseButton;
@@ -30,7 +30,9 @@ use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::inspector::{audio_name, panel_header};
 use crate::ui::scrollbars::ScrollPanel;
+use crate::ui::text_field::TextField;
 use crate::ui::widgets::divider;
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 /// How far one level of the tree is indented.
 const INDENT: Pixels = px(11.0);
@@ -91,6 +93,106 @@ impl Branch {
 pub(crate) struct LibraryTree {
     /// Branches whose state has been chosen, and what was chosen.
     chosen: HashMap<Branch, bool>,
+}
+
+/// An imported font offered while choosing a song part, without editing the document.
+#[derive(Clone)]
+pub(crate) struct SongLibraryFont {
+    /// Identity for tree disclosures, distinct from every session font.
+    pub(crate) id: SoundFontId,
+    /// The font's display name.
+    pub(crate) name: String,
+    /// The persistent file selected by the user.
+    pub(crate) path: std::path::PathBuf,
+    /// Every sound declared by that file.
+    pub(crate) presets: Vec<SoundFontPreset>,
+}
+
+/// A song part's library browser, independent of the document library's navigation.
+pub(crate) struct SongLibrary {
+    /// Stable part name, so a delayed choice cannot target a different row.
+    pub(crate) part: String,
+    /// Search editing state.
+    pub(crate) search: TextField,
+    /// Whether the search field holds the keyboard.
+    pub(crate) focused: bool,
+    /// Disclosures in this browser only.
+    pub(crate) tree: LibraryTree,
+    /// File branch to reveal after leaving search.
+    pub(crate) reveal: Option<Branch>,
+    /// Scroll position in this browser only.
+    pub(crate) scroll: gpui::ScrollHandle,
+    /// A failed import, shown beside the chooser's import action.
+    pub(crate) error: Option<String>,
+}
+
+impl SongLibrary {
+    /// Starts a browser for a stable song part name.
+    pub(crate) fn new(part: String) -> Self {
+        Self {
+            part,
+            search: TextField::new(String::new()),
+            focused: false,
+            tree: LibraryTree::default(),
+            reveal: None,
+            scroll: gpui::ScrollHandle::new(),
+            error: None,
+        }
+    }
+}
+
+/// The destination captured by every shared library row and its event listener.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibraryTarget {
+    Track,
+    SongPart,
+}
+
+impl LibraryTarget {
+    fn selector(self, id: &str) -> String {
+        match self {
+            Self::Track => id.to_string(),
+            Self::SongPart => format!("song-{id}"),
+        }
+    }
+
+    fn element_id(self, id: &str) -> gpui::SharedString {
+        self.selector(id).into()
+    }
+}
+
+/// A font imported while composing becomes a document font when the song is adopted.
+/// Keep one shelf entry per resolved file, preferring a loaded document font and retaining
+/// detached metadata when a document reference is unavailable.
+fn song_font_catalog(
+    session: Vec<(SoundFontId, String, Option<std::path::PathBuf>, bool)>,
+    detached: &[SongLibraryFont],
+) -> Vec<(SoundFontId, String)> {
+    let loaded: HashSet<_> = session
+        .iter()
+        .filter(|(_, _, _, loaded)| *loaded)
+        .filter_map(|(_, _, path, _)| path.as_ref())
+        .collect();
+    let detached_paths: HashSet<_> = detached.iter().map(|font| &font.path).collect();
+    let mut seen = HashSet::new();
+    let mut fonts = Vec::new();
+    for (id, name, path, available) in &session {
+        if let Some(path) = path {
+            if !available && (loaded.contains(path) || detached_paths.contains(path)) {
+                continue;
+            }
+            if !seen.insert(path.clone()) {
+                continue;
+            }
+        }
+        fonts.push((*id, name.clone()));
+    }
+    for font in detached {
+        if seen.insert(font.path.clone()) {
+            fonts.push((font.id, font.name.clone()));
+        }
+    }
+    fonts
 }
 
 impl LibraryTree {
@@ -313,7 +415,7 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let rows = self.library_rows(cx);
+        let rows = self.library_rows(LibraryTarget::Track, cx);
         div()
             .flex()
             .flex_col()
@@ -335,7 +437,7 @@ impl AurisApp {
                     cx.notify();
                 }),
             ))
-            .child(self.library_search_field(cx))
+            .child(self.library_search_field(LibraryTarget::Track, cx))
             .child(
                 self.scrolling(
                     ScrollPanel::Library,
@@ -350,6 +452,289 @@ impl AurisApp {
                     cx,
                 ),
             )
+    }
+
+    /// The ordinary library's search and tree, directed at a song part in the open sheet.
+    pub(crate) fn render_song_library(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let Some(browser) = self.song_library.as_ref() else {
+            return div().into_any_element();
+        };
+        let scroll = browser.scroll.clone();
+        let error = browser.error.clone();
+        let hint = self
+            .t(Key::SongLibraryHint)
+            .replace("{part}", &browser.part);
+        let theme = self.theme.clone();
+        let rows = self.library_rows(LibraryTarget::SongPart, cx);
+        div()
+            .id("song-library")
+            .debug_selector(|| "song-library".to_string())
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .bg(theme.surface)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .p_2()
+                    .child(
+                        div()
+                            .text_color(theme.text)
+                            .child(self.t(Key::SongLibraryTitle)),
+                    )
+                    .child(crate::ui::widgets::button(
+                        "song-library-close",
+                        self.t(Key::Close),
+                        crate::ui::widgets::ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| this.close_song_library(cx)),
+                    )),
+            )
+            .child(
+                div()
+                    .px_2()
+                    .pb_2()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(hint),
+            )
+            .child(self.library_search_field(LibraryTarget::SongPart, cx))
+            .child(div().px_2().pb_1().child(crate::ui::widgets::button(
+                "song-library-import-font",
+                self.t(Key::MenuImportSoundFontItem),
+                crate::ui::widgets::ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, window, cx| this.import_song_soundfont(window, cx)),
+            )))
+            .when_some(error, |panel, error| {
+                panel.child(
+                    div()
+                        .debug_selector(|| "song-library-error".to_string())
+                        .px_2()
+                        .pb_2()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(error),
+                )
+            })
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .id("song-library-body")
+                            .debug_selector(|| "song-library-body".to_string())
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .p_1()
+                            .pr_3()
+                            .flex()
+                            .flex_col()
+                            .children(rows),
+                    )
+                    .child(
+                        div().absolute().inset_0().child(
+                            Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always),
+                        ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn library_tree(&self, target: LibraryTarget) -> &LibraryTree {
+        match target {
+            LibraryTarget::Track => &self.library,
+            LibraryTarget::SongPart => {
+                &self
+                    .song_library
+                    .as_ref()
+                    .expect("song browser is open")
+                    .tree
+            }
+        }
+    }
+
+    fn set_library_branch(&mut self, target: LibraryTarget, branch: Branch, open: bool) {
+        match target {
+            LibraryTarget::Track => self.library.set_open(branch, open),
+            LibraryTarget::SongPart => {
+                if let Some(browser) = self.song_library.as_mut() {
+                    browser.tree.set_open(branch, open);
+                }
+            }
+        }
+    }
+
+    fn library_query(&self, target: LibraryTarget) -> &TextField {
+        match target {
+            LibraryTarget::Track => &self.library_search,
+            LibraryTarget::SongPart => {
+                &self
+                    .song_library
+                    .as_ref()
+                    .expect("song browser is open")
+                    .search
+            }
+        }
+    }
+
+    fn clear_library_query(&mut self, target: LibraryTarget) {
+        match target {
+            LibraryTarget::Track => self.leave_library_search(),
+            LibraryTarget::SongPart => {
+                if let Some(browser) = self.song_library.as_mut() {
+                    browser.search = TextField::new(String::new());
+                    browser.focused = false;
+                }
+            }
+        }
+    }
+
+    fn reveal_library_branch(&mut self, target: LibraryTarget, branch: Branch) {
+        self.clear_library_query(target);
+        self.set_library_branch(target, Branch::Plugins, true);
+        self.set_library_branch(target, branch, true);
+        match target {
+            LibraryTarget::Track => self.library_reveal = Some(branch),
+            LibraryTarget::SongPart => {
+                if let Some(browser) = self.song_library.as_mut() {
+                    browser.reveal = Some(branch);
+                }
+            }
+        }
+    }
+
+    fn scroll_library_branch(&mut self, target: LibraryTarget, branch: Branch, row: usize) {
+        match target {
+            LibraryTarget::Track if self.library_reveal == Some(branch) => {
+                self.library_scroll.scroll_to_item(row);
+                self.library_reveal = None;
+            }
+            LibraryTarget::SongPart => {
+                if let Some(browser) = self
+                    .song_library
+                    .as_mut()
+                    .filter(|browser| browser.reveal == Some(branch))
+                {
+                    browser.scroll.scroll_to_item(row);
+                    browser.reveal = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn library_song_part(&self) -> Option<&PartSpec> {
+        let name = &self.song_library.as_ref()?.part;
+        self.song_sheet
+            .as_ref()?
+            .parts
+            .iter()
+            .find(|part| &part.name == name)
+    }
+
+    fn library_song_source(&self) -> Option<PartSource> {
+        self.library_song_part()?
+            .source
+            .as_ref()
+            .and_then(|source| self.session.resolve_song_source(source).ok())
+    }
+
+    fn library_takes_instrument(&self, target: LibraryTarget) -> bool {
+        match target {
+            LibraryTarget::Track => self.selected_track_takes_an_instrument(),
+            LibraryTarget::SongPart => self.library_song_part().is_some(),
+        }
+    }
+
+    fn choose_library_instrument(&mut self, target: LibraryTarget, instrument: &str) {
+        match target {
+            LibraryTarget::Track => self.set_track_instrument(instrument),
+            LibraryTarget::SongPart => self.choose_song_library_instrument(instrument),
+        }
+    }
+
+    fn library_fonts(&self, target: LibraryTarget) -> Vec<(SoundFontId, String)> {
+        if target == LibraryTarget::Track {
+            return self
+                .session
+                .soundfonts()
+                .map(|font| (font.id, font.name.clone()))
+                .collect();
+        }
+        let session = self
+            .session
+            .soundfonts()
+            .map(|font| {
+                (
+                    font.id,
+                    font.name.clone(),
+                    font.path.resolve(self.session.project_folder()),
+                    self.session.soundfont_is_loaded(font.id),
+                )
+            })
+            .collect();
+        song_font_catalog(session, &self.song_library_fonts)
+    }
+
+    fn library_presets(&self, target: LibraryTarget, font: SoundFontId) -> Vec<SoundFontPreset> {
+        if target == LibraryTarget::SongPart
+            && let Some(font) = self
+                .song_library_fonts
+                .iter()
+                .find(|entry| entry.id == font)
+        {
+            return font.presets.clone();
+        }
+        self.session.soundfont_presets(font)
+    }
+
+    fn library_font_loaded(&self, target: LibraryTarget, font: SoundFontId) -> bool {
+        (target == LibraryTarget::SongPart
+            && self.song_library_fonts.iter().any(|entry| entry.id == font))
+            || self.session.soundfont_is_loaded(font)
+    }
+
+    fn library_preset_source(&self, choice: PresetRef) -> Option<PartSource> {
+        if let Some(font) = self
+            .song_library_fonts
+            .iter()
+            .find(|font| font.id == choice.font)
+        {
+            return Some(PartSource::SoundFont {
+                path: font.path.clone(),
+                bank: choice.bank,
+                patch: choice.patch,
+            });
+        }
+        self.session.song_source_for_preset(choice).ok()
+    }
+
+    fn choose_library_preset(&mut self, target: LibraryTarget, choice: PresetRef) {
+        match target {
+            LibraryTarget::Track => self.set_track_preset(choice),
+            LibraryTarget::SongPart => {
+                if let Some(source) = self.library_preset_source(choice) {
+                    self.choose_song_library_source(source);
+                }
+            }
+        }
     }
 
     /// Gives the keyboard back to the application and clears the query.
@@ -372,13 +757,23 @@ impl AurisApp {
     /// and a field that did not claim them could not be typed `i` into without the inspector
     /// opening. It says so while it holds them — the accent ring is not decoration — and gives
     /// them back on Escape, on Enter, and as soon as a result is chosen.
-    fn library_search_field(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    fn library_search_field(
+        &mut self,
+        target: LibraryTarget,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         let theme = self.theme.clone();
-        let focused = self.library_search_focused;
-        let text = self.library_search.content().to_string();
+        let focused = match target {
+            LibraryTarget::Track => self.library_search_focused,
+            LibraryTarget::SongPart => self
+                .song_library
+                .as_ref()
+                .is_some_and(|browser| browser.focused),
+        };
+        let text = self.library_query(target).content().to_string();
         let empty = text.is_empty();
-        let selection = self.library_search.selection();
-        let marked = self.library_search.marked();
+        let selection = self.library_query(target).selection();
+        let marked = self.library_query(target).marked();
         let view = cx.entity();
         // The window's own handle, the one the palette and the prompt type through: the input
         // handler is registered against whatever holds the keyboard, and while this field has it
@@ -386,8 +781,8 @@ impl AurisApp {
         let handle = self.focus.clone();
 
         div()
-            .id("library-search")
-            .debug_selector(|| "library-search".to_string())
+            .id(target.element_id("library-search"))
+            .debug_selector(move || target.selector("library-search"))
             .flex()
             .items_center()
             // No gap after the icon: the text carries its own left inset, because the field
@@ -445,8 +840,8 @@ impl AurisApp {
             .when(!empty, |this| {
                 this.child(
                     div()
-                        .id("library-search-clear")
-                        .debug_selector(|| "library-search-clear".to_string())
+                        .id(target.element_id("library-search-clear"))
+                        .debug_selector(move || target.selector("library-search-clear"))
                         .size(px(18.0))
                         .flex_shrink_0()
                         .flex()
@@ -456,8 +851,8 @@ impl AurisApp {
                         .child(icon(Icon::Cross, px(10.0), theme.text_muted))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                                this.leave_library_search();
+                            cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                                this.clear_library_query(target);
                                 cx.stop_propagation();
                                 cx.notify();
                             }),
@@ -466,11 +861,18 @@ impl AurisApp {
             })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
                     // One field in the window types at a time; the agent panel's is the other
                     // one that lives in a panel rather than a sheet.
                     this.agent_chat.focused = None;
-                    this.library_search_focused = true;
+                    match target {
+                        LibraryTarget::Track => this.library_search_focused = true,
+                        LibraryTarget::SongPart => {
+                            if let Some(browser) = this.song_library.as_mut() {
+                                browser.focused = true;
+                            }
+                        }
+                    }
                     cx.notify();
                 }),
             )
@@ -481,22 +883,29 @@ impl AurisApp {
     ///
     /// A shut branch contributes its own row and nothing else, so the cost of a font with a
     /// hundred and twenty-eight sounds is not paid until somebody opens it.
-    fn library_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
-        let query = self.library_search.content().trim().to_string();
+    fn library_rows(
+        &mut self,
+        target: LibraryTarget,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let query = self.library_query(target).content().trim().to_string();
         if !query.is_empty() {
-            return self.search_rows(&query, cx);
+            return self.search_rows(target, &query, cx);
         }
         let theme = self.theme.clone();
-        let mut rows = self.instrument_rows(cx);
+        let mut rows = self.instrument_rows(target, cx);
         rows.push(divider(&theme).into_any_element());
-        rows.extend(self.soundfont_rows(cx));
+        let font_row_offset = rows.len();
+        rows.extend(self.soundfont_rows(target, font_row_offset, cx));
         rows.push(divider(&theme).into_any_element());
-        rows.extend(self.voice_rows(cx));
-        rows.push(divider(&theme).into_any_element());
-        rows.extend(self.effect_rows(cx));
-        rows.push(divider(&theme).into_any_element());
+        if target == LibraryTarget::Track {
+            rows.extend(self.voice_rows(cx));
+            rows.push(divider(&theme).into_any_element());
+            rows.extend(self.effect_rows(target, cx));
+            rows.push(divider(&theme).into_any_element());
+        }
         let plugin_row_offset = rows.len();
-        rows.extend(self.installed_plugin_rows(plugin_row_offset, cx));
+        rows.extend(self.installed_plugin_rows(target, plugin_row_offset, cx));
         rows
     }
 
@@ -510,9 +919,18 @@ impl AurisApp {
     /// A hosted plugin is matched by its *file*, which is the only thing known about it before it
     /// is loaded. Searching the names inside would mean opening every `.clap` on the machine to
     /// answer one keystroke.
-    fn search_rows(&mut self, query: &str, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+    fn search_rows(
+        &mut self,
+        target: LibraryTarget,
+        query: &str,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
         let mut entries: Vec<(String, Found)> = Vec::new();
-        for descriptor in self.registry().instruments() {
+        for descriptor in self
+            .registry()
+            .instruments()
+            .filter(|descriptor| target == LibraryTarget::Track || descriptor.id != SAMPLER_ID)
+        {
             entries.push((
                 plugin_search_name(&descriptor.name, self.language()),
                 Found::Instrument(
@@ -525,7 +943,11 @@ impl AurisApp {
                 ),
             ));
         }
-        for descriptor in self.registry().effects() {
+        for descriptor in self
+            .registry()
+            .effects()
+            .filter(|_| target == LibraryTarget::Track)
+        {
             entries.push((
                 plugin_search_name(&descriptor.name, self.language()),
                 Found::Effect(
@@ -538,9 +960,8 @@ impl AurisApp {
                 ),
             ));
         }
-        let fonts: Vec<SoundFontId> = self.session.soundfonts().map(|font| font.id).collect();
-        for font in fonts {
-            for preset in self.session.soundfont_presets(font) {
+        for (font, _) in self.library_fonts(target) {
+            for preset in self.library_presets(target, font) {
                 entries.push((preset.name.clone(), Found::Preset(font, preset)));
             }
         }
@@ -562,8 +983,10 @@ impl AurisApp {
                 Found::Vst3File(vst_offset + index, name, file),
             ));
         }
-        for (name, path) in self.voice_list() {
-            entries.push((name.clone(), Found::Voice(name, path)));
+        if target == LibraryTarget::Track {
+            for (name, path) in self.voice_list() {
+                entries.push((name.clone(), Found::Voice(name, path)));
+            }
         }
 
         let mut found = best_matches(entries, query, SEARCH_LIMIT + 1);
@@ -578,12 +1001,13 @@ impl AurisApp {
                 Found::Instrument(plugin, category) => {
                     let id = plugin.id.clone();
                     self.plugin_row(
+                        target,
                         &plugin,
                         LibraryRole::Instrument,
                         category,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.set_track_instrument(&id);
-                            this.leave_library_search();
+                            this.choose_library_instrument(target, &id);
+                            this.clear_library_query(target);
                             cx.notify();
                         }),
                     )
@@ -591,6 +1015,7 @@ impl AurisApp {
                 Found::Effect(plugin, category) => {
                     let id = plugin.id.clone();
                     self.plugin_row(
+                        target,
                         &plugin,
                         LibraryRole::Effect,
                         category,
@@ -608,11 +1033,12 @@ impl AurisApp {
                         patch: preset.patch,
                     };
                     self.preset_row(
+                        target,
                         &preset,
                         choice,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.set_track_preset(choice);
-                            this.leave_library_search();
+                            this.choose_library_preset(target, choice);
+                            this.clear_library_query(target);
                             cx.notify();
                         }),
                     )
@@ -624,6 +1050,7 @@ impl AurisApp {
                 Found::ClapFile(index, name, file) => {
                     let branch = Branch::PluginFile(index);
                     self.plugin_row(
+                        target,
                         &LibraryPlugin {
                             id: file.display().to_string(),
                             name,
@@ -632,10 +1059,7 @@ impl AurisApp {
                         LibraryRole::File,
                         PluginCategory::Utility,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.leave_library_search();
-                            this.library.set_open(Branch::Plugins, true);
-                            this.library.set_open(branch, true);
-                            this.library_reveal = Some(branch);
+                            this.reveal_library_branch(target, branch);
                             cx.notify();
                         }),
                     )
@@ -643,6 +1067,7 @@ impl AurisApp {
                 Found::Vst3File(index, name, file) => {
                     let branch = Branch::PluginFile(index);
                     self.plugin_row(
+                        target,
                         &LibraryPlugin {
                             id: file.display().to_string(),
                             name,
@@ -651,10 +1076,7 @@ impl AurisApp {
                         LibraryRole::File,
                         PluginCategory::Utility,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.leave_library_search();
-                            this.library.set_open(Branch::Plugins, true);
-                            this.library.set_open(branch, true);
-                            this.library_reveal = Some(branch);
+                            this.reveal_library_branch(target, branch);
                             cx.notify();
                         }),
                     )
@@ -683,8 +1105,10 @@ impl AurisApp {
     /// VOICEVOX connections, and LeapSinger manifests in a `Voices` folder or in a folder
     /// registered below.
     fn voice_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+        let target = LibraryTarget::Track;
         let voices = self.voice_list();
         let mut rows = vec![self.section_row(
+            target,
             Branch::Voices,
             Key::BrowserVoices,
             Icon::Microphone,
@@ -961,6 +1385,7 @@ impl AurisApp {
     /// project to open, and the only thing known about a plugin before it is loaded.
     fn installed_plugin_rows(
         &mut self,
+        target: LibraryTarget,
         row_offset: usize,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
@@ -968,13 +1393,14 @@ impl AurisApp {
         let vst3_files = self.vst3_files().to_vec();
 
         let mut rows = vec![self.section_row(
+            target,
             Branch::Plugins,
             Key::BrowserPlugins,
             Icon::Knob,
             files.len() + vst3_files.len(),
             cx,
         )];
-        if !self.library.is_open(Branch::Plugins) {
+        if !self.library_tree(target).is_open(Branch::Plugins) {
             return rows;
         }
         rows.push(self.note_row(
@@ -991,23 +1417,27 @@ impl AurisApp {
 
         for (index, file) in files.iter().enumerate() {
             let branch = Branch::PluginFile(index);
-            if self.library_reveal == Some(branch) {
-                self.library_scroll.scroll_to_item(row_offset + rows.len());
-                self.library_reveal = None;
-            }
-            let open = self.library.is_open(branch);
+            let open = self.library_tree(target).is_open(branch);
+            // A search opens the file to choose a plugin, so reveal the first child along
+            // with its file instead of stopping with only the file heading at the bottom.
+            self.scroll_library_branch(target, branch, row_offset + rows.len() + usize::from(open));
             let name = file
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| file.to_string_lossy().into_owned());
 
-            let listed = match open {
+            let mut listed = match open {
                 true => self.clap_plugins_in(file),
                 false => Vec::new(),
             };
+            let readable = !listed.is_empty();
+            if target == LibraryTarget::SongPart {
+                listed.retain(|plugin| plugin.kind == PluginKind::Instrument);
+            }
             let theme = self.theme.clone();
             rows.push(
                 self.branch_row(
+                    target,
                     ("lib-clap-file", 1_000 + index),
                     1,
                     open,
@@ -1020,7 +1450,7 @@ impl AurisApp {
                     },
                     self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.library.set_open(branch, !open);
+                        this.set_library_branch(target, branch, !open);
                         cx.notify();
                     }),
                 )
@@ -1030,7 +1460,14 @@ impl AurisApp {
                 continue;
             }
             if listed.is_empty() {
-                rows.push(self.note_row(2, self.t(Key::BrowserPluginUnreadable)));
+                rows.push(self.note_row(
+                    2,
+                    self.t(if readable {
+                        Key::SongLibraryNoInstruments
+                    } else {
+                        Key::BrowserPluginUnreadable
+                    }),
+                ));
                 continue;
             }
 
@@ -1038,7 +1475,8 @@ impl AurisApp {
                 let file = file.clone();
                 let clap_id = info.clap_id.clone();
                 let kind = info.kind;
-                rows.push(self.plugin_row(
+                rows.push(self.plugin_source_row(
+                    target,
                     &LibraryPlugin {
                         id: info.auris_id(),
                         name: info.name.clone(),
@@ -1054,7 +1492,19 @@ impl AurisApp {
                         PluginKind::Effect => LibraryRole::Effect,
                     },
                     info.category,
+                    Some(PartSource::Clap {
+                        path: file.clone(),
+                        plugin_id: clap_id.clone(),
+                    }),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if target == LibraryTarget::SongPart {
+                            this.choose_song_library_source(PartSource::Clap {
+                                path: file.clone(),
+                                plugin_id: clap_id.clone(),
+                            });
+                            cx.notify();
+                            return;
+                        }
                         match kind {
                             PluginKind::Instrument => {
                                 this.set_hosted_instrument_on_selection(&file, &clap_id)
@@ -1072,23 +1522,25 @@ impl AurisApp {
         for (vst_index, file) in vst3_files.iter().enumerate() {
             let index = offset + vst_index;
             let branch = Branch::PluginFile(index);
-            if self.library_reveal == Some(branch) {
-                self.library_scroll.scroll_to_item(row_offset + rows.len());
-                self.library_reveal = None;
-            }
-            let open = self.library.is_open(branch);
+            let open = self.library_tree(target).is_open(branch);
+            self.scroll_library_branch(target, branch, row_offset + rows.len() + usize::from(open));
             let name = file
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| file.to_string_lossy().into_owned());
-            let listed = if open {
+            let mut listed = if open {
                 self.vst3_plugins_in(file)
             } else {
                 Vec::new()
             };
+            let readable = !listed.is_empty();
+            if target == LibraryTarget::SongPart {
+                listed.retain(|plugin| plugin.kind == PluginKind::Instrument);
+            }
             let theme = self.theme.clone();
             rows.push(
                 self.branch_row(
+                    target,
                     ("lib-vst3-file", 10_000 + index),
                     1,
                     open,
@@ -1102,7 +1554,7 @@ impl AurisApp {
                     },
                     self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.library.set_open(branch, !open);
+                        this.set_library_branch(target, branch, !open);
                         cx.notify();
                     }),
                 )
@@ -1112,14 +1564,22 @@ impl AurisApp {
                 continue;
             }
             if listed.is_empty() {
-                rows.push(self.note_row(2, self.t(Key::BrowserPluginUnreadable)));
+                rows.push(self.note_row(
+                    2,
+                    self.t(if readable {
+                        Key::SongLibraryNoInstruments
+                    } else {
+                        Key::BrowserPluginUnreadable
+                    }),
+                ));
                 continue;
             }
             for info in listed {
                 let file = file.clone();
                 let class_id = info.class_id.clone();
                 let kind = info.kind;
-                rows.push(self.plugin_row(
+                rows.push(self.plugin_source_row(
+                    target,
                     &LibraryPlugin {
                         id: info.auris_id(),
                         name: info.name.clone(),
@@ -1130,7 +1590,19 @@ impl AurisApp {
                         PluginKind::Effect => LibraryRole::Effect,
                     },
                     info.category,
+                    Some(PartSource::Vst3 {
+                        path: file.clone(),
+                        class_id: class_id.clone(),
+                    }),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if target == LibraryTarget::SongPart {
+                            this.choose_song_library_source(PartSource::Vst3 {
+                                path: file.clone(),
+                                class_id: class_id.clone(),
+                            });
+                            cx.notify();
+                            return;
+                        }
                         match kind {
                             PluginKind::Instrument => {
                                 this.set_vst3_instrument_on_selection(&file, &class_id)
@@ -1199,10 +1671,15 @@ impl AurisApp {
     }
 
     /// The instruments section: every registered instrument, under its category.
-    fn instrument_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+    fn instrument_rows(
+        &mut self,
+        target: LibraryTarget,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
         let plugins: Vec<(PluginCategory, LibraryPlugin)> = self
             .registry()
             .instruments()
+            .filter(|descriptor| target == LibraryTarget::Track || descriptor.id != SAMPLER_ID)
             .map(|d| {
                 (
                     d.category,
@@ -1217,40 +1694,44 @@ impl AurisApp {
         let groups = by_category(plugins);
 
         let mut rows = vec![self.section_row(
+            target,
             Branch::Instruments,
             Key::BrowserInstruments,
             Icon::Keyboard,
             groups.iter().map(|(_, members)| members.len()).sum(),
             cx,
         )];
-        if !self.library.is_open(Branch::Instruments) {
+        if !self.library_tree(target).is_open(Branch::Instruments) {
             return rows;
         }
         // What a click on a *plugin* does, said under the heading rather than on it. And when
         // there is no instrument track to put one on, why the clicks are about to do nothing —
         // this string has existed since the panel was written and was referenced nowhere.
-        rows.push(self.note_row(
-            1,
-            self.t(if self.selected_track_takes_an_instrument() {
-                Key::BrowserInstrumentsHint
-            } else {
-                Key::LibraryNeedsInstrumentTrack
-            }),
-        ));
+        if target == LibraryTarget::Track {
+            rows.push(self.note_row(
+                1,
+                self.t(if self.selected_track_takes_an_instrument() {
+                    Key::BrowserInstrumentsHint
+                } else {
+                    Key::LibraryNeedsInstrumentTrack
+                }),
+            ));
+        }
         for (category, members) in groups {
             let branch = Branch::InstrumentCategory(category);
-            rows.push(self.category_row(branch, category, members.len(), cx));
-            if !self.library.is_open(branch) {
+            rows.push(self.category_row(target, branch, category, members.len(), cx));
+            if !self.library_tree(target).is_open(branch) {
                 continue;
             }
             for plugin in members {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
+                    target,
                     &plugin,
                     LibraryRole::Instrument,
                     category,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.set_track_instrument(&id);
+                        this.choose_library_instrument(target, &id);
                         cx.notify();
                     }),
                 ));
@@ -1260,7 +1741,11 @@ impl AurisApp {
     }
 
     /// The effects section: every registered effect, under its category.
-    fn effect_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+    fn effect_rows(
+        &mut self,
+        target: LibraryTarget,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
         let plugins: Vec<(PluginCategory, LibraryPlugin)> = self
             .registry()
             .effects()
@@ -1278,13 +1763,14 @@ impl AurisApp {
         let groups = by_category(plugins);
 
         let mut rows = vec![self.section_row(
+            target,
             Branch::Effects,
             Key::BrowserEffects,
             Icon::Knob,
             groups.iter().map(|(_, members)| members.len()).sum(),
             cx,
         )];
-        if !self.library.is_open(Branch::Effects) {
+        if !self.library_tree(target).is_open(Branch::Effects) {
             return rows;
         }
         // An effect with no track selected lands on the master bus, which is a reasonable
@@ -1299,13 +1785,14 @@ impl AurisApp {
         ));
         for (category, members) in groups {
             let branch = Branch::EffectCategory(category);
-            rows.push(self.category_row(branch, category, members.len(), cx));
-            if !self.library.is_open(branch) {
+            rows.push(self.category_row(target, branch, category, members.len(), cx));
+            if !self.library_tree(target).is_open(branch) {
                 continue;
             }
             for plugin in members {
                 let id = plugin.id.clone();
                 rows.push(self.plugin_row(
+                    target,
                     &plugin,
                     LibraryRole::Effect,
                     category,
@@ -1323,22 +1810,24 @@ impl AurisApp {
     ///
     /// A font is a shelf rather than a plugin — importing one adds nothing to the arrangement, so
     /// this is where its contents become reachable.
-    fn soundfont_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
+    fn soundfont_rows(
+        &mut self,
+        target: LibraryTarget,
+        row_offset: usize,
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
         let theme = self.theme.clone();
-        let fonts: Vec<(SoundFontId, String)> = self
-            .session
-            .soundfonts()
-            .map(|font| (font.id, font.name.clone()))
-            .collect();
+        let fonts = self.library_fonts(target);
 
         let mut rows = vec![self.section_row(
+            target,
             Branch::SoundFonts,
             Key::BrowserSoundFonts,
             Icon::Wave,
             fonts.len(),
             cx,
         )];
-        if !self.library.is_open(Branch::SoundFonts) {
+        if !self.library_tree(target).is_open(Branch::SoundFonts) {
             return rows;
         }
         if fonts.is_empty() {
@@ -1347,20 +1836,28 @@ impl AurisApp {
         }
 
         for (id, name) in fonts {
-            let loaded = self.session.soundfont_is_loaded(id);
+            let loaded = self.library_font_loaded(target, id);
             let branch = Branch::Font(id);
-            let open = loaded && self.library.is_open(branch);
+            self.scroll_library_branch(target, branch, row_offset + rows.len());
+            let open = loaded && self.library_tree(target).is_open(branch);
             // A font whose file has gone keeps its row — that is how somebody finds out it has
             // gone — but it is drawn muted and has nothing to open.
             let detail = if loaded {
                 // Counted rather than listed. Building every font's presets each frame would
                 // sort a few hundred strings to show a number.
-                self.session.soundfont_preset_count(id).to_string()
+                if target == LibraryTarget::SongPart
+                    && let Some(font) = self.song_library_fonts.iter().find(|font| font.id == id)
+                {
+                    font.presets.len().to_string()
+                } else {
+                    self.session.soundfont_preset_count(id).to_string()
+                }
             } else {
                 self.t(Key::BrowserFontFileMissing).to_string()
             };
             rows.push(
                 self.branch_row(
+                    target,
                     ("lib-font", id.0 as usize),
                     1,
                     open,
@@ -1370,7 +1867,7 @@ impl AurisApp {
                     detail,
                     self.row_style(if loaded { theme.text } else { theme.text_muted }, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.library.set_open(branch, !open);
+                        this.set_library_branch(target, branch, !open);
                         cx.notify();
                     }),
                 )
@@ -1380,7 +1877,7 @@ impl AurisApp {
                 continue;
             }
 
-            let banks = by_bank(self.session.soundfont_presets(id));
+            let banks = by_bank(self.library_presets(target, id));
             if banks.is_empty() {
                 rows.push(self.note_row(2, self.t(Key::BrowserFontHasNoSounds)));
                 continue;
@@ -1390,9 +1887,10 @@ impl AurisApp {
             let solitary = banks.len() == 1;
             for (bank, presets) in banks {
                 let branch = Branch::Bank(id, bank);
-                let open = self.library.is_open_or(branch, solitary);
+                let open = self.library_tree(target).is_open_or(branch, solitary);
                 rows.push(
                     self.branch_row(
+                        target,
                         gpui::SharedString::from(format!("lib-bank-{}-{bank}", id.0)),
                         2,
                         open,
@@ -1402,7 +1900,7 @@ impl AurisApp {
                         presets.len().to_string(),
                         self.row_style(theme.text, None),
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.library.set_open(branch, !open);
+                            this.set_library_branch(target, branch, !open);
                             cx.notify();
                         }),
                     )
@@ -1418,10 +1916,11 @@ impl AurisApp {
                         patch: preset.patch,
                     };
                     rows.push(self.preset_row(
+                        target,
                         &preset,
                         choice,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            this.set_track_preset(choice);
+                            this.choose_library_preset(target, choice);
                             cx.notify();
                         }),
                     ));
@@ -1443,6 +1942,7 @@ impl AurisApp {
     /// One of the top-level sections.
     fn section_row(
         &self,
+        target: LibraryTarget,
         branch: Branch,
         label: Key,
         kind: Icon,
@@ -1450,8 +1950,9 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let open = self.library.is_open(branch);
+        let open = self.library_tree(target).is_open(branch);
         self.branch_row(
+            target,
             ("lib-section", branch_key(branch)),
             0,
             open,
@@ -1470,7 +1971,7 @@ impl AurisApp {
                 }),
             ),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                this.library.set_open(branch, !open);
+                this.set_library_branch(target, branch, !open);
                 cx.notify();
             }),
         )
@@ -1480,14 +1981,16 @@ impl AurisApp {
     /// One category of plugin.
     fn category_row(
         &self,
+        target: LibraryTarget,
         branch: Branch,
         category: PluginCategory,
         count: usize,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
         let theme = self.theme.clone();
-        let open = self.library.is_open(branch);
+        let open = self.library_tree(target).is_open(branch);
         self.branch_row(
+            target,
             ("lib-category", branch_key(branch)),
             1,
             open,
@@ -1508,7 +2011,7 @@ impl AurisApp {
                 }),
             ),
             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                this.library.set_open(branch, !open);
+                this.set_library_branch(target, branch, !open);
                 cx.notify();
             }),
         )
@@ -1530,6 +2033,7 @@ impl AurisApp {
     #[allow(clippy::too_many_arguments)]
     fn branch_row<I, F>(
         &self,
+        target: LibraryTarget,
         id: I,
         depth: usize,
         open: bool,
@@ -1551,7 +2055,7 @@ impl AurisApp {
             .id(id.into())
             .debug_selector({
                 let label = label.clone();
-                move || format!("lib-branch-{label}")
+                move || target.selector(&format!("lib-branch-{label}"))
             })
             .flex()
             .flex_shrink_0()
@@ -1636,6 +2140,7 @@ impl AurisApp {
     /// their full text when either line is truncated.
     fn plugin_row<F>(
         &self,
+        target: LibraryTarget,
         plugin: &LibraryPlugin,
         role: LibraryRole,
         category: PluginCategory,
@@ -1644,6 +2149,24 @@ impl AurisApp {
     where
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
+        self.plugin_source_row(target, plugin, role, category, None, on_click)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn plugin_source_row<F>(
+        &self,
+        target: LibraryTarget,
+        plugin: &LibraryPlugin,
+        role: LibraryRole,
+        category: PluginCategory,
+        source: Option<PartSource>,
+        on_click: F,
+    ) -> AnyElement
+    where
+        F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        let source =
+            source.map(|source| self.session.resolve_song_source(&source).unwrap_or(source));
         let theme = self.theme.clone();
         let accent = if role == LibraryRole::Instrument && category == PluginCategory::Drum {
             LibraryRole::Drum
@@ -1651,14 +2174,23 @@ impl AurisApp {
             role
         }
         .color(&theme);
-        let searching = !self.library_search.content().trim().is_empty();
-        let enabled = role != LibraryRole::Instrument || self.selected_track_takes_an_instrument();
+        let searching = !self.library_query(target).content().trim().is_empty();
+        let enabled = role != LibraryRole::Instrument || self.library_takes_instrument(target);
         let selected = role == LibraryRole::Instrument
-            && self
-                .selected_track
-                .and_then(|id| self.project().track(id))
-                .and_then(|track| track.kind.as_instrument())
-                .is_some_and(|track| track.instrument_id == plugin.id);
+            && match target {
+                LibraryTarget::Track => self
+                    .selected_track
+                    .and_then(|id| self.project().track(id))
+                    .and_then(|track| track.kind.as_instrument())
+                    .is_some_and(|track| track.instrument_id == plugin.id),
+                LibraryTarget::SongPart => self.library_song_part().is_some_and(|part| {
+                    self.library_song_source() == source
+                        && (source.is_some()
+                            || (part.source.is_none()
+                                && part.program.is_none()
+                                && part.instrument == plugin.id))
+                }),
+            };
         let name = audio_name(self, &plugin.name);
         let description = self.plugin_description(&plugin.description);
         let description = if searching && role != LibraryRole::File {
@@ -1677,10 +2209,10 @@ impl AurisApp {
             &theme,
         );
         div()
-            .id(gpui::SharedString::from(format!("lib-{}", plugin.id)))
+            .id(target.element_id(&format!("lib-{}", plugin.id)))
             .debug_selector({
                 let id = plugin.id.clone();
-                move || format!("lib-{id}")
+                move || target.selector(&format!("lib-{id}"))
             })
             .flex()
             .flex_shrink_0()
@@ -1743,7 +2275,13 @@ impl AurisApp {
     }
 
     /// One sound of an open bank, named as the font names it and numbered as MIDI does.
-    fn preset_row<F>(&self, preset: &SoundFontPreset, choice: PresetRef, on_click: F) -> AnyElement
+    fn preset_row<F>(
+        &self,
+        target: LibraryTarget,
+        preset: &SoundFontPreset,
+        choice: PresetRef,
+        on_click: F,
+    ) -> AnyElement
     where
         F: Fn(&MouseDownEvent, &mut Window, &mut gpui::App) + 'static,
     {
@@ -1754,17 +2292,25 @@ impl AurisApp {
             LibraryRole::Instrument
         }
         .color(&theme);
-        let searching = !self.library_search.content().trim().is_empty();
-        let enabled = self.selected_track_takes_an_instrument();
-        let selected = self
-            .selected_track
-            .and_then(|id| self.session.track_preset(id))
-            == Some(choice);
+        let searching = !self.library_query(target).content().trim().is_empty();
+        let enabled = self.library_takes_instrument(target);
+        let selected = match target {
+            LibraryTarget::Track => {
+                self.selected_track
+                    .and_then(|id| self.session.track_preset(id))
+                    == Some(choice)
+            }
+            LibraryTarget::SongPart => self.library_song_part().is_some_and(|part| {
+                matches!(&part.source, Some(PartSource::SoundFont { bank, patch, .. })
+                    if *bank == choice.bank && *patch == choice.patch)
+                    && self.library_song_source() == self.library_preset_source(choice)
+            }),
+        };
         let source = self
-            .session
-            .soundfonts()
-            .find(|font| font.id == choice.font)
-            .map(|font| font.name.as_str())
+            .library_fonts(target)
+            .into_iter()
+            .find(|(id, _)| *id == choice.font)
+            .map(|(_, name)| name)
             .unwrap_or_default();
         let detail = format!(
             "{source} · {} · {}",
@@ -1782,15 +2328,15 @@ impl AurisApp {
             &theme,
         );
         div()
-            .id(gpui::SharedString::from(format!(
+            .id(target.element_id(&format!(
                 "lib-preset-{}-{}-{}",
                 choice.font.0, choice.bank, choice.patch
             )))
             .debug_selector(move || {
-                format!(
+                target.selector(&format!(
                     "lib-preset-{}-{}-{}",
                     choice.font.0, choice.bank, choice.patch
-                )
+                ))
             })
             .flex()
             .flex_shrink_0()

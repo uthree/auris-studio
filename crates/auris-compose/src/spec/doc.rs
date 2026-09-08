@@ -23,7 +23,7 @@ use crate::theory::chart::{Chart, ChartOrigin};
 use crate::theory::key::Key;
 use crate::theory::scale::ScaleId;
 
-use super::{Ending, LeadIn, Mood, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
+use super::{Ending, LeadIn, Mood, PartSource, PartSpec, PartTweak, Role, SectionSpec, SongSpec};
 
 /// Something wrong with a document.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -439,6 +439,8 @@ struct PartDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     program: Option<ProgramField>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<PartSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     octave: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     density: Option<f32>,
@@ -833,6 +835,15 @@ impl PartDoc {
         // Nothing to check: `Program` refuses anything outside 0..127 as it is read, which is the
         // one thing that could be wrong about it.
         part.program = self.program.map(|field| field.program);
+        if let Some(source) = self.source {
+            if part.program.is_some() {
+                errors.push(SpecError::about(format!(
+                    "part `{name}`: choose either source or program, not both"
+                )));
+            }
+            validate_source(&source, &name, errors);
+            part.source = Some(source);
+        }
         if let Some(octave) = self.octave {
             if (-1..=9).contains(&octave) {
                 part.octave = octave;
@@ -923,6 +934,43 @@ impl PartDoc {
             }
         }
         part
+    }
+}
+
+/// Checks asset descriptions without opening any files or loading plugin code.
+fn validate_source(source: &PartSource, name: &str, errors: &mut Vec<SpecError>) {
+    let path = match source {
+        PartSource::SoundFont { path, bank, patch } => {
+            for (field, value) in [("bank", bank), ("patch", patch)] {
+                if !(0..=65535).contains(value) {
+                    errors.push(SpecError::about(format!(
+                        "part `{name}`: source {field} {value} is outside the SoundFont range 0..65535"
+                    )));
+                }
+            }
+            path
+        }
+        PartSource::Clap { path, plugin_id } => {
+            if plugin_id.trim().is_empty() {
+                errors.push(SpecError::about(format!(
+                    "part `{name}`: source plugin_id must not be empty"
+                )));
+            }
+            path
+        }
+        PartSource::Vst3 { path, class_id } => {
+            if class_id.trim().is_empty() {
+                errors.push(SpecError::about(format!(
+                    "part `{name}`: source class_id must not be empty"
+                )));
+            }
+            path
+        }
+    };
+    if path.as_os_str().to_string_lossy().trim().is_empty() {
+        errors.push(SpecError::about(format!(
+            "part `{name}`: source path must not be empty"
+        )));
     }
 }
 
@@ -1130,6 +1178,7 @@ impl PartDoc {
                 program,
                 drums: part.role.is_drum(),
             }),
+            source: part.source.clone(),
             octave: (part.octave != plain.octave).then_some(part.octave),
             density: part.density,
             subdivision: (part.subdivision != plain.subdivision)
@@ -1145,6 +1194,109 @@ impl PartDoc {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn explicit_instrument_sources_round_trip_without_becoming_general_midi() {
+        for source in [
+            PartSource::SoundFont {
+                path: "C:/Sounds/私のピアノ.sf2".into(),
+                bank: 65535,
+                patch: 65535,
+            },
+            PartSource::Clap {
+                path: "C:/Plugins/Keys.clap".into(),
+                plugin_id: "org.example.keys".into(),
+            },
+            PartSource::Vst3 {
+                path: "C:/Plugins/Keys.vst3".into(),
+                class_id: "0123456789ABCDEF0123456789ABCDEF".into(),
+            },
+        ] {
+            let mut spec = SongSpec::parse("form = 'verse'\n[[part]]\nname = 'lead'")
+                .expect("a legacy part needs no source");
+            assert_eq!(spec.parts[0].source, None);
+            spec.parts[0].source = Some(source.clone());
+            let written = spec.to_toml();
+            assert!(written.contains("[part.source]"), "{written}");
+            assert!(!written.contains("program ="), "{written}");
+            let restored = SongSpec::parse(&written).expect("explicit source is valid TOML");
+            assert_eq!(restored, spec);
+            assert_eq!(restored.parts[0].source, Some(source.clone()));
+            assert_eq!(restored.parts[0].sound(), None);
+
+            let encoded = serde_json::to_string(&source).unwrap();
+            assert_eq!(
+                serde_json::from_str::<PartSource>(&encoded).unwrap(),
+                source
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_source_fields_name_the_part_and_the_field() {
+        for (fields, field) in [
+            (
+                "type = 'sound_font', path = '', bank = 0, patch = 0",
+                "path",
+            ),
+            (
+                "type = 'sound_font', path = 'kit.sf2', bank = -1, patch = 0",
+                "bank",
+            ),
+            (
+                "type = 'sound_font', path = 'kit.sf2', bank = 65536, patch = 0",
+                "bank",
+            ),
+            (
+                "type = 'sound_font', path = 'kit.sf2', bank = 0, patch = -1",
+                "patch",
+            ),
+            (
+                "type = 'sound_font', path = 'kit.sf2', bank = 0, patch = 65536",
+                "patch",
+            ),
+            ("type = 'clap', path = '  ', plugin_id = 'keys'", "path"),
+            (
+                "type = 'clap', path = 'keys.clap', plugin_id = '  '",
+                "plugin_id",
+            ),
+            ("type = 'vst3', path = '', class_id = 'keys'", "path"),
+            (
+                "type = 'vst3', path = 'keys.vst3', class_id = ''",
+                "class_id",
+            ),
+        ] {
+            let text = format!("form = 'verse'\n[[part]]\nname = 'lead'\nsource = {{ {fields} }}");
+            let errors = SongSpec::parse(&text).expect_err("invalid assets must be reported");
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.message.contains("part `lead`")
+                        && error.message.contains(field)),
+                "{fields}: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_source_and_general_midi_program_are_mutually_exclusive_in_documents() {
+        let text = "form = 'verse'\n[[part]]\nname = 'lead'\nprogram = 0\n\
+            source = { type = 'clap', path = 'keys.clap', plugin_id = 'keys' }";
+        let errors = SongSpec::parse(text).expect_err("a source must have one interpretation");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("either source or program"))
+        );
+    }
+
+    #[test]
+    fn source_tables_reject_unknown_fields() {
+        let text = "form = 'verse'\n[[part]]\nname = 'lead'\n\
+            source = { type = 'clap', path = 'keys.clap', plugin_id = 'keys', program = 0 }";
+        let errors = SongSpec::parse(text).expect_err("misspelt source fields must not disappear");
+        assert!(errors[0].message.contains("unknown field"), "{errors:?}");
+    }
+
     #[test]
     fn voice_and_shared_melody_round_trip_and_invalid_links_refuse() {
         let text = r#"

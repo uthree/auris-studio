@@ -15,7 +15,7 @@ use crate::perform::part_performance;
 use crate::phrase::SEED_RANGE;
 use crate::phrase::clip_seed;
 use crate::phrase::recipe_for;
-use crate::spec::{Ending, PartSpec, Role, SongSpec};
+use crate::spec::{Ending, PartSource, PartSpec, Role, SongSpec};
 
 /// The room the pitched parts share, fed by sends.
 const ROOM_BUS: &str = "Room";
@@ -65,7 +65,7 @@ pub struct TrackDraft {
     pub drum_parts: Vec<DrumPartDraft>,
     /// The track's name.
     pub name: String,
-    /// The plugin that plays it, when no [`Self::sound`] names a SoundFont one.
+    /// The plugin that plays it, when neither [`Self::source`] nor [`Self::sound`] is set.
     pub instrument: String,
     /// The General MIDI sound the part asked for, if it asked for one.
     ///
@@ -73,6 +73,8 @@ pub struct TrackDraft {
     /// The session resolves it against whichever General MIDI font is installed — and falls back
     /// to [`Self::instrument`] when there is none, which is why both are here.
     pub sound: Option<crate::gm::Sound>,
+    /// An exact SoundFont preset or external instrument, taking precedence over legacy choices.
+    pub source: Option<PartSource>,
     /// The colour the track is drawn in, chosen by the part's role.
     pub color: Color,
     /// The initial state of the instrument shared by this track's clips.
@@ -254,11 +256,16 @@ impl Composition {
         for track in &self.tracks {
             // What the track will actually play. Printing the plugin id under a part that asked
             // for a violin would name the fallback and never the sound.
-            let voice = match track.sound {
-                Some(sound) => crate::gm::Program(sound.patch)
+            let voice = match (&track.source, track.sound) {
+                (Some(PartSource::SoundFont { path, bank, patch }), _) => {
+                    format!("{} ({bank}:{patch})", path.display())
+                }
+                (Some(PartSource::Clap { plugin_id, .. }), _) => format!("CLAP {plugin_id}"),
+                (Some(PartSource::Vst3 { class_id, .. }), _) => format!("VST3 {class_id}"),
+                (None, Some(sound)) => crate::gm::Program(sound.patch)
                     .label(sound.bank == crate::gm::DRUM_BANK)
                     .to_string(),
-                None => track.instrument.clone(),
+                (None, None) => track.instrument.clone(),
             };
             out.push_str(&format!(
                 "  {:<12} {:<24} {} clips, {} notes\n",
@@ -401,7 +408,8 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
                 spec.performance.filter(|_| {
                     // Singing uses the voice model's own ornaments and pitch controls.
                     !(spec.singer.is_some()
-                        && part_of(&draft.name).is_some_and(|part| part.role == Role::Melody))
+                        && part_of(&draft.name)
+                            .is_some_and(|part| part.role == Role::Melody && part.source.is_none()))
                 }),
                 part_of(&draft.name),
                 &draft,
@@ -438,6 +446,7 @@ fn render(spec: &SongSpec, frame: &Frame) -> Composition {
                 })
                 .into_iter()
                 .collect(),
+            source: part_of(&draft.name).and_then(|part| part.source.clone()),
             name: draft.name,
             instrument: draft.instrument,
             sound: draft.sound,
@@ -533,8 +542,13 @@ fn shared_drum_kits(tracks: Vec<TrackDraft>, seed: u64) -> Vec<TrackDraft> {
         }
         let compatible = result.iter_mut().find(|other| {
             !other.drum_parts.is_empty()
-                && other.instrument == track.instrument
-                && other.sound == track.sound
+                && match (&other.source, &track.source) {
+                    (Some(left), Some(right)) => left == right,
+                    (None, None) => {
+                        other.instrument == track.instrument && other.sound == track.sound
+                    }
+                    _ => false,
+                }
         });
         if let Some(kit) = compatible {
             // Preserve the old level budget as the sum of the independent parts' energy. The
@@ -1227,6 +1241,111 @@ mod tests {
         assert_eq!(piece.tracks.len(), 3);
         assert!(piece.tracks.iter().all(|track| track.drum_parts.len() == 1));
         assert!(piece.buses.is_empty());
+    }
+
+    #[test]
+    fn explicit_sources_survive_composition_and_the_saved_specification() {
+        for source in [
+            PartSource::SoundFont {
+                path: "library/keys.sf2".into(),
+                bank: 200,
+                patch: 300,
+            },
+            PartSource::Clap {
+                path: "plugins/keys.clap".into(),
+                plugin_id: "example.keys".into(),
+            },
+            PartSource::Vst3 {
+                path: "plugins/keys.vst3".into(),
+                class_id: "0123456789ABCDEF0123456789ABCDEF".into(),
+            },
+        ] {
+            let mut spec = SongSpec::parse(BASE).unwrap();
+            spec.parts.retain(|part| part.role == Role::Melody);
+            spec.parts[0].source = Some(source.clone());
+            let piece = compose(&spec);
+            assert_eq!(piece.tracks.len(), 1);
+            assert_eq!(piece.tracks[0].source, Some(source.clone()));
+            assert_eq!(piece.tracks[0].sound, None);
+            assert_eq!(
+                SongSpec::parse(&piece.spec).unwrap().parts[0].source,
+                Some(source)
+            );
+            assert!(!piece.summary().contains(&spec.parts[0].instrument));
+        }
+    }
+
+    #[test]
+    fn only_identical_explicit_kit_sources_share_an_instrument() {
+        let font = |path: &str, bank, patch| PartSource::SoundFont {
+            path: path.into(),
+            bank,
+            patch,
+        };
+        let clap = |path: &str, id: &str| PartSource::Clap {
+            path: path.into(),
+            plugin_id: id.into(),
+        };
+        let vst3 = |path: &str, id: &str| PartSource::Vst3 {
+            path: path.into(),
+            class_id: id.into(),
+        };
+        for (shared, different) in [
+            (font("kit.sf2", 128, 0), font("another.sf2", 128, 0)),
+            (font("kit.sf2", 128, 0), font("kit.sf2", 129, 0)),
+            (font("kit.sf2", 128, 0), font("kit.sf2", 128, 1)),
+            (clap("kit.clap", "drums"), clap("another.clap", "drums")),
+            (clap("kit.clap", "drums"), clap("kit.clap", "percussion")),
+            (vst3("kit.vst3", "drums"), vst3("another.vst3", "drums")),
+            (vst3("kit.vst3", "drums"), vst3("kit.vst3", "percussion")),
+            (clap("kit.plugin", "drums"), vst3("kit.plugin", "drums")),
+        ] {
+            let mut spec = SongSpec::parse(BASE).unwrap();
+            spec.parts.retain(|part| part.role.is_drum());
+            for (index, part) in spec.parts.iter_mut().enumerate() {
+                // The exact source wins even when the legacy fallbacks were different.
+                part.instrument = format!("fallback.{index}");
+                part.source = Some(if index < 2 { &shared } else { &different }.clone());
+            }
+            let piece = compose(&spec);
+            assert_eq!(piece.tracks.len(), 2, "{shared:?} versus {different:?}");
+            assert_eq!(piece.tracks[0].source.as_ref(), Some(&shared));
+            assert_eq!(piece.tracks[0].drum_parts.len(), 2);
+            assert_eq!(piece.tracks[1].source.as_ref(), Some(&different));
+            assert_eq!(piece.tracks[1].drum_parts.len(), 1);
+        }
+    }
+
+    #[test]
+    fn an_explicit_kit_does_not_merge_with_a_legacy_instrument() {
+        let mut spec = SongSpec::parse(BASE).unwrap();
+        spec.parts.retain(|part| part.role.is_drum());
+        spec.parts[0].source = Some(PartSource::SoundFont {
+            path: "kit.sf2".into(),
+            bank: 128,
+            patch: 0,
+        });
+        let piece = compose(&spec);
+        assert_eq!(piece.tracks.len(), 2);
+        assert!(piece.tracks[0].source.is_some());
+        assert_eq!(piece.tracks[0].drum_parts.len(), 1);
+        assert!(piece.tracks[1].source.is_none());
+        assert_eq!(piece.tracks[1].drum_parts.len(), 2);
+    }
+
+    #[test]
+    fn a_singer_does_not_change_an_explicit_instruments_performance() {
+        let mut spec = SongSpec::parse(BASE).unwrap();
+        spec.parts.retain(|part| part.role == Role::Melody);
+        spec.parts[0].source = Some(PartSource::Clap {
+            path: "keys.clap".into(),
+            plugin_id: "keys".into(),
+        });
+        spec.performance = Some(crate::PerformanceStyle::CityPop);
+        let instrumental = compose(&spec);
+        spec.singer = Some("singer.onnx".into());
+        let with_singer = compose(&spec);
+        assert_eq!(with_singer.tracks, instrumental.tracks);
     }
 
     #[test]

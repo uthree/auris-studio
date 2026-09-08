@@ -889,18 +889,7 @@ impl AurisApp {
         let mut rows = vec![self.group_heading(Key::PresetDrums).into_any_element()];
         if let Some(index) = dials.parts.iter().position(|part| part.role.is_drum()) {
             let part = &dials.parts[index];
-            let sound = part
-                .program
-                .map(|p| p.kit_name().to_string())
-                .unwrap_or_else(|| {
-                    self.registry()
-                        .instruments()
-                        .find(|d| d.id == part.instrument)
-                        .map(|d| {
-                            auris_i18n::audio::plugin_name(&d.name, self.language()).to_string()
-                        })
-                        .unwrap_or_else(|| part.instrument.clone())
-                });
+            let sound = self.song_part_source_label(part);
             let mut kit_row =
                 div()
                     .flex()
@@ -910,7 +899,7 @@ impl AurisApp {
                         "song-drum-kit",
                         Key::SongPartInstrument,
                         sound,
-                        Self::opens_menu(cx, |this, at| this.song_drum_menu(at)),
+                        cx.listener(move |this, _, _, cx| this.open_song_library(index, cx)),
                     )));
             if dials.parts.iter().any(|part| !part.role.is_drum()) {
                 kit_row = kit_row.child(button(
@@ -1083,8 +1072,8 @@ impl AurisApp {
                                     ("song-part-instrument", index),
                                     Key::SongPartInstrument,
                                     instrument,
-                                    Self::opens_menu(cx, move |this, at| {
-                                        this.song_instrument_menu(at, index)
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.open_song_library(index, cx)
                                     }),
                                 )))
                             })

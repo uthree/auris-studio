@@ -6,8 +6,7 @@ use gpui::{
 };
 
 use crate::app::AurisApp;
-use crate::harness::{choose, click, open, paint, resize};
-use crate::ui::context_menu::{MenuCommand, MenuEntry};
+use crate::harness::{click, open, paint, resize};
 
 use super::super::dials::{SongDials, part_plays_in, song_dials, song_spec};
 
@@ -224,44 +223,29 @@ fn the_row_source_picker_targets_its_part_without_changing_the_document(cx: &mut
     let document = app.read_with(cx, |this, _| this.project().clone());
     click("song-matrix-instrument-1", cx);
     paint(&app, cx);
-    let command = app.read_with(cx, |this, _| {
+    app.read_with(cx, |this, _| {
         assert_eq!(this.project(), &document);
-        let menu = this.menu.as_ref().expect("the row opens its sound picker");
-        for entry in &menu.entries {
-            if let MenuEntry::Item(item) = entry {
-                match &item.command {
-                    MenuCommand::SongPartInstrument { part, .. }
-                    | MenuCommand::SongPartProgram { part, .. }
-                    | MenuCommand::SongPartFamily { part, .. } => assert_eq!(*part, 1),
-                    _ => {}
-                }
-            }
-        }
-        menu.entries
-            .iter()
-            .find_map(|entry| match entry {
-                MenuEntry::Item(item) => match &item.command {
-                    MenuCommand::SongPartInstrument { id, .. }
-                        if *id != before.parts[1].instrument =>
-                    {
-                        Some(item.command.clone())
-                    }
-                    _ => None,
-                },
-                _ => None,
-            })
-            .expect("the built-in catalog offers another instrument")
+        let chooser = this
+            .song_library
+            .as_ref()
+            .expect("the row opens its library");
+        assert_eq!(chooser.part, "echo");
+        assert!(chooser.focused);
+        assert!(this.menu.is_none());
     });
-    choose(&app, cx, &command);
+    // Search and click the shared library's actual result; two pitched rows using the
+    // same old instrument remain separate destinations.
+    cx.simulate_input("FM");
+    paint(&app, cx);
+    click("song-lib-auris.synth.fm2", cx);
     app.read_with(cx, |this, _| {
         let dials = this.song_sheet.as_ref().unwrap();
-        let MenuCommand::SongPartInstrument { id, .. } = command else {
-            unreachable!()
-        };
         let mut expected = before.clone();
-        expected.parts[1].instrument = id;
+        expected.parts[1].instrument = "auris.synth.fm2".into();
         expected.parts[1].program = None;
+        expected.parts[1].source = None;
         assert_eq!(dials, &expected);
+        assert!(this.song_library.is_none());
         assert_eq!(this.project(), &document);
     });
 }

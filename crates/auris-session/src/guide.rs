@@ -958,6 +958,14 @@ pub mod composition {
     //! Detailed performance controls can be expanded, and section tempo accepts any BPM in the
     //! specification's range, with an empty field following the song tempo.
     //!
+    //! A part's optional `source` names an exact SoundFont file, bank and patch, or a CLAP/VST3
+    //! instrument and its stable plugin id. The session validates these sources before replacing
+    //! the document, including hosted instrument activation, and never substitutes another sound.
+    //! Imported picker fonts are cached without changing the open document until composition.
+    //! Chosen sources use the existing sampler and hosted track representation for playback and
+    //! saving. Collect Assets and asset recovery also update the stored song specification, so
+    //! reopening the sheet and composing again follow the same file as the saved arrangement.
+    //!
     //! [`auris_compose`] turns a text document into notes on a timeline. The whole crate is one
     //! function — [`compose`](auris_compose::compose) — and everything it does is a pure function
     //! of the specification and its seed, so the same document always writes the same piece.

@@ -505,13 +505,15 @@ pub fn set_part_instrument(dials: &mut SongDials, index: usize, instrument: &str
     for index in part_source_group(dials, index) {
         dials.parts[index].instrument = instrument.to_string();
         dials.parts[index].program = None;
+        dials.parts[index].source = None;
     }
 }
 
-/// Changes the SoundFont program for a pitched part or every writer of its current drum kit.
-pub fn set_part_program(dials: &mut SongDials, index: usize, program: gm::Program) {
+/// Chooses an exact library source for a pitched part or every writer of its drum kit.
+pub fn set_part_source(dials: &mut SongDials, index: usize, source: PartSource) {
     for index in part_source_group(dials, index) {
-        dials.parts[index].program = Some(program);
+        dials.parts[index].source = Some(source.clone());
+        dials.parts[index].program = None;
     }
 }
 
@@ -560,10 +562,14 @@ fn part_source_group(dials: &SongDials, index: usize) -> Vec<usize> {
         .iter()
         .enumerate()
         .filter_map(|(index, part)| {
-            (part.role.is_drum()
-                && part.instrument == selected.instrument
-                && part.program == selected.program)
-                .then_some(index)
+            let same_source = match (&part.source, &selected.source) {
+                (Some(left), Some(right)) => left == right,
+                (None, None) => {
+                    part.instrument == selected.instrument && part.program == selected.program
+                }
+                _ => false,
+            };
+            (part.role.is_drum() && same_source).then_some(index)
         })
         .collect()
 }
@@ -1157,14 +1163,73 @@ mod tests {
                 .collect::<Vec<_>>(),
             melodic
         );
-        set_part_program(&mut dials, owner, gm::Program(8));
+        let source = PartSource::SoundFont {
+            path: "kit.sf2".into(),
+            bank: 128,
+            patch: 8,
+        };
+        set_part_source(&mut dials, owner, source.clone());
         assert!(
             drums
                 .iter()
-                .all(|index| dials.parts[*index].program == Some(gm::Program(8)))
+                .all(|index| dials.parts[*index].source.as_ref() == Some(&source))
         );
         assert_eq!(dials.parts.last(), Some(&separate));
         assert_eq!(part_source_owner(&dials, usize::MAX), None);
+    }
+
+    #[test]
+    fn explicit_sources_group_kit_writers_and_survive_role_and_spec_changes() {
+        let source = PartSource::SoundFont {
+            path: "custom.sf2".into(),
+            bank: 200,
+            patch: 300,
+        };
+        let mut dials = SongDials::default();
+        let kick = dials
+            .parts
+            .iter()
+            .position(|part| part.role == Role::Kick)
+            .unwrap();
+        set_part_source(&mut dials, kick, source.clone());
+        assert!(
+            dials
+                .parts
+                .iter()
+                .filter(|part| part.role.is_drum())
+                .all(|part| part.source.as_ref() == Some(&source) && part.program.is_none())
+        );
+        let hat = dials
+            .parts
+            .iter()
+            .position(|part| part.role == Role::Hat)
+            .unwrap();
+        dials.parts[hat].instrument = "obsolete.fallback".into();
+        assert_eq!(part_source_owner(&dials, hat), Some(kick));
+        let separate = PartSpec {
+            source: Some(PartSource::SoundFont {
+                path: "other.sf2".into(),
+                bank: 200,
+                patch: 300,
+            }),
+            ..PartSpec::of_role("other kit", Role::Kick)
+        };
+        dials.parts.push(separate.clone());
+        set_part_instrument(&mut dials, hat, "auris.synth.noise");
+        assert!(
+            dials.parts[..dials.parts.len() - 1]
+                .iter()
+                .filter(|part| part.role.is_drum())
+                .all(|part| part.source.is_none() && part.instrument == "auris.synth.noise")
+        );
+        assert_eq!(dials.parts.last(), Some(&separate));
+        set_part_source(&mut dials, 0, source.clone());
+        set_part_role(&mut dials, 0, Role::Bass);
+        let spec = song_spec(&dials);
+        assert_eq!(
+            SongSpec::parse(&spec.to_toml()).unwrap().parts[0].source,
+            Some(source)
+        );
     }
 
     #[test]

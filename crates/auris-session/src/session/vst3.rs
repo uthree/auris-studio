@@ -37,6 +37,29 @@ struct Request<'a> {
 }
 
 impl Vst3Plugins {
+    /// Commits a source that was loaded before the composed document replaced its predecessor.
+    pub(super) fn install_composed_instrument(
+        &mut self,
+        track: TrackId,
+        file: PathBuf,
+        class_id: String,
+        plugin: Vst3Plugin,
+    ) {
+        if let Some(old) = self.instruments.remove(&track) {
+            self.retiring.push(old.plugin);
+        }
+        self.instruments.insert(
+            track,
+            Vst3Slot {
+                file,
+                class_id,
+                plugin,
+                needs_state_restore: true,
+                source_revision: 0,
+            },
+        );
+    }
+
     pub(super) fn drum_source_revision(&self, track: TrackId) -> Option<u64> {
         Some(self.instruments.get(&track)?.source_revision)
     }
