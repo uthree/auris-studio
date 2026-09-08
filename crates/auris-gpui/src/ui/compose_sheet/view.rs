@@ -34,6 +34,7 @@ impl AurisApp {
         if self.song_sheet.is_some() {
             return;
         }
+        self.composition_search.dismiss();
         // A document written by a build that spelled something differently is not an error worth
         // a dialog: the sheet opens on its defaults, which is where it opened before any of this.
         let remembered = self
@@ -72,6 +73,7 @@ impl AurisApp {
             .read(cx)
             .clone();
         let spec = song_spec(&dials);
+        let search_status = self.song_search_view_status();
         let length = format!(
             "{} · {} {}",
             self.t(Key::SongLength),
@@ -122,6 +124,15 @@ impl AurisApp {
                                         .child(self.t(Key::SongSheetTitle)),
                                 )
                                 .child(button(
+                                    "song-search-toggle",
+                                    self.t(Key::SongSearchToggle),
+                                    ButtonStyle::Normal,
+                                    self.composition_search.open,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| this.toggle_song_search(cx)),
+                                ))
+                                .child(button(
                                     "song-advanced",
                                     self.t(if self.song_advanced {
                                         Key::SongBasic
@@ -167,6 +178,9 @@ impl AurisApp {
                                                         .text_color(theme.text_muted)
                                                         .child(self.t(Key::SongStartHint)),
                                                 )
+                                                .when(self.composition_search.open, |body| {
+                                                    body.child(self.render_song_search(&dials, search_status, cx))
+                                                })
                                                 .child(
                                                     div()
                                                         .grid()
@@ -292,6 +306,7 @@ impl AurisApp {
                                     theme.accent,
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
+                                        this.composition_search.dismiss();
                                         this.song_sheet = None;
                                         // The lyrics box edits the song sheet's sections;
                                         // it cannot outlive them.
@@ -1267,6 +1282,7 @@ impl AurisApp {
         if self.compose_progress.is_some() {
             return false;
         }
+        self.composition_search.dismiss();
         let Some(dials) = self.song_sheet.as_ref() else {
             return false;
         };

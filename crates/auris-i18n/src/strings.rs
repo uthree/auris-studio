@@ -40,6 +40,35 @@ macro_rules! strings {
 }
 
 strings! {
+    SongSearchToggle { en: "Search", ja: "探索" }
+    SongSearchHint { en: "Find settings close to a target note density. Counts all written notes and drum hits across tracks; this does not rate musical quality or rendered vocals.", ja: "目標の音符密度に近い設定を探します。全トラックの音符とドラム打音を数えます。音楽的な良さや、音声合成された歌唱は評価しません。" }
+    SongSearchMethod { en: "Method", ja: "探索方法" }
+    SongSearchRandom { en: "Random", ja: "ランダム探索" }
+    SongSearchHill { en: "Hill climbing", ja: "山登り法" }
+    SongSearchAttempts { en: "Attempt limit", ja: "試行回数の上限" }
+    SongSearchTarget { en: "Target notes / bar", ja: "目標音符数 / 小節" }
+    SongSearchSeed { en: "Search seed", ja: "探索シード" }
+    SongSearchCompositionSeed { en: "Composition seed", ja: "作曲シード" }
+    SongSearchPart { en: "Vary part density", ja: "密度を探索するパート" }
+    SongSearchSection { en: "Vary section intensity", ja: "強度を探索するセクション" }
+    SongSearchFixed { en: "Keep fixed", ja: "固定する" }
+    SongSearchBounds { en: "Range: 0–100% · hill step: 10%. Automatic density starts at its current value. All other song settings stay fixed.", ja: "探索範囲：0～100% · 山登り法の変化幅：10%。自動密度は現在の値から開始します。他の作曲設定は固定されます。" }
+    SongSearchChooseParameter { en: "Choose a part or section to vary.", ja: "探索するパートかセクションを選んでください。" }
+    SongSearchStart { en: "Start Search", ja: "探索を開始" }
+    SongSearchRunning { en: "Searching", ja: "探索中" }
+    SongSearchCancel { en: "Cancel Search", ja: "探索を中止" }
+    SongSearchCancelling { en: "Finishing current attempt…", ja: "現在の試行が終わるのを待っています…" }
+    SongSearchCancelled { en: "Search cancelled", ja: "探索を中止しました" }
+    SongSearchComplete { en: "Search complete", ja: "探索が完了しました" }
+    SongSearchFailed { en: "Search failed", ja: "探索に失敗しました" }
+    SongSearchChanged { en: "The song, document, or search settings changed. Run Search again to apply a result.", ja: "曲・プロジェクト・探索設定が変更されました。適用するには探索をやり直してください。" }
+    SongSearchBest { en: "Best notes / bar", ja: "最良候補の音符数 / 小節" }
+    SongSearchDistance { en: "Distance from target", ja: "目標との差" }
+    SongSearchCandidate { en: "Candidate", ja: "候補" }
+    SongSearchProgress { en: "Attempts", ja: "試行数" }
+    SongSearchNoCandidate { en: "No successful candidate. Adjust the song or search settings and try again.", ja: "有効な候補がありません。曲や探索設定を調整して、再度お試しください。" }
+    SongSearchApply { en: "Apply Best & Play", ja: "最良候補を適用して再生" }
+    SongSearchApplyHint { en: "Replaces the project with the best score and starts playback. Undo restores the previous project.", ja: "最良候補でプロジェクトを置き換えて再生します。元に戻す操作で、適用前のプロジェクトに戻せます。" }
     TimbreMap { en: "Timbre Map", ja: "音色マップ" }
     TimbreMapHint { en: "Melodic built-ins and loaded SoundFonts · click a point to audition", ja: "内蔵楽器と読み込み済みSoundFontのメロディ音色 · 点をクリックして試聴" }
     TimbreMapGeometry { en: "Color: acoustic group · axes: PCA · nearest sounds use full features", ja: "色：音響クラスタ · 軸：PCA · 類似音は元の特徴量で検索" }

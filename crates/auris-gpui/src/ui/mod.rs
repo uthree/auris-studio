@@ -43,6 +43,7 @@ pub mod scrollbars;
 pub mod selection;
 pub mod singer;
 pub(crate) mod singer_portrait;
+pub(crate) mod song_search;
 pub(crate) mod spectrogram;
 pub mod status_bar;
 pub(crate) mod strum;

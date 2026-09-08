@@ -1079,6 +1079,15 @@ pub mod composition {
     //! composing it again. The runnable `compose_search` example and `docs/composition-search.md`
     //! show the request and report format.
     //!
+    //! The desktop song sheet captures its inputs and session revision, then runs
+    //! [`search_composition_with_progress`](crate::composition_search::search_composition_with_progress)
+    //! on a worker. Its observer publishes attempt counts and the best density. Changing the
+    //! sheet or document invalidates the run; cancellation keeps the worker busy until the
+    //! current composition finishes. A generation guard prevents a closed sheet's late result
+    //! from reaching a newly opened sheet. Explicit adoption uses the retained score in the
+    //! ordinary source-preparation and balance pipeline, as one undoable composition command;
+    //! playback begins only after successful completion.
+    //!
     //! # Two stages
     //!
     //! **The frame is planned first and then frozen.** Harmony, form and a melodic skeleton are

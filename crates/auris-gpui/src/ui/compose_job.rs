@@ -13,6 +13,12 @@ use crate::app::AurisApp;
 use crate::ui::compose_progress::ComposeProgressState;
 use crate::ui::prompt::Prompt;
 
+/// A request to write new notes or adopt the exact notes already evaluated by search.
+enum ComposeInput {
+    Spec(SongSpec),
+    Score(Composition),
+}
+
 impl AurisApp {
     /// Starts writing a specification, returning whether the request was accepted.
     ///
@@ -23,6 +29,30 @@ impl AurisApp {
         &mut self,
         spec: &SongSpec,
         close_sheet: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.start_composition(ComposeInput::Spec(spec.clone()), close_sheet, false, cx)
+    }
+
+    /// Adopts an already generated score through the normal source and balance pipeline.
+    ///
+    /// The owned score is used directly, preserving the notes that were evaluated. Requested
+    /// playback begins at the start only after successful adoption and balance completion.
+    pub(crate) fn compose_generated_score(
+        &mut self,
+        piece: Composition,
+        close_sheet: bool,
+        play_after: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        self.start_composition(ComposeInput::Score(piece), close_sheet, play_after, cx)
+    }
+
+    fn start_composition(
+        &mut self,
+        input: ComposeInput,
+        close_sheet: bool,
+        play_after: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         if self.compose_progress.is_some() {
@@ -43,9 +73,11 @@ impl AurisApp {
         self.menu = None;
         self.close_menu_bar();
         let revision = self.session.revision();
-        let spec = spec.clone();
         self.compose_progress = Some(ComposeProgressState {
-            stage: Key::ComposeProgressWriting,
+            stage: match &input {
+                ComposeInput::Spec(_) => Key::ComposeProgressWriting,
+                ComposeInput::Score(_) => Key::ComposeProgressPreparing,
+            },
             detail: None,
             progress: None,
             started_at: Instant::now(),
@@ -55,7 +87,12 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let piece = cx
                 .background_executor()
-                .spawn(async move { compose(&spec) })
+                .spawn(async move {
+                    match input {
+                        ComposeInput::Spec(spec) => compose(&spec),
+                        ComposeInput::Score(piece) => piece,
+                    }
+                })
                 .await;
             let seed = piece.seed;
             if this
@@ -149,7 +186,7 @@ impl AurisApp {
                     }
                     Ok(Err(error)) => {
                         let _ = this.update(cx, |this, cx| {
-                            this.finish_composition(report, seed, close_sheet, cx);
+                            this.finish_composition(report, seed, close_sheet, false, cx);
                             let message = format!(
                                 "{}\n{}",
                                 this.t(Key::ComposeProgressBalanceFailed),
@@ -168,7 +205,7 @@ impl AurisApp {
                 }
             }
             let _ = this.update(cx, |this, cx| {
-                this.finish_composition(report, seed, close_sheet, cx);
+                this.finish_composition(report, seed, close_sheet, play_after, cx);
             });
         })
         .detach();
@@ -192,6 +229,7 @@ impl AurisApp {
         report: ComposeReport,
         seed: u64,
         close_sheet: bool,
+        play_after: bool,
         cx: &mut Context<Self>,
     ) {
         self.compose_progress = None;
@@ -216,6 +254,10 @@ impl AurisApp {
             Some(lufs) => format!("{written} · {}", messages::mixed_to(language, lufs)),
             None => written,
         });
+        if play_after {
+            self.session.seek(Ticks::ZERO);
+            self.session.play();
+        }
         cx.notify();
     }
 }

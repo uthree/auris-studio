@@ -5,6 +5,32 @@ best generated score. It is a sequential, headless command exposed through
 `auris_session::composition_search::search_composition`. Running it needs no audio device,
 SoundFont, model, Python environment or UI.
 
+## Search from the desktop app
+
+Open **Compose → Compose a Song…**, then expand **Search** in the song sheet. Choose a song
+preset or edit its settings first. The search panel offers random search or hill climbing,
+an attempt budget, a target number of written notes per bar, and an independent search seed.
+Select a part whose density will vary, a played section whose intensity will vary, or both.
+Choosing **Keep fixed** leaves that parameter unchanged; at least one parameter must be selected.
+The GUI uses bounds `[0, 1]` and hill steps of `0.1`. An automatic part density starts at its
+current mood default, or `0.5` for drums. The composition seed stays fixed during the run.
+
+**Start Search** runs on a worker while the panel reports completed attempts and the best
+measured density. **Cancel** stops between attempts and retains any valid partial winner.
+The project stays untouched until **Apply Best & Play** adopts the exact evaluated score,
+prepares its sources, balances it, and starts playback. This is one undoable composition
+command. Source or preparation errors are reported by the ordinary composition workflow.
+
+Changing the song, search settings or project makes a result unavailable for adoption.
+Changing them during a run cancels that run. Closing the song sheet also cancels its task;
+late results cannot replace the results of a newly opened sheet. Collapsing only the search
+panel leaves its task running. A new search waits until a cancelled worker has finished its
+current attempt. If editing the song removes a selected part or section from the search choices,
+that selection returns to **Keep fixed**; choose another parameter before restarting.
+
+The target is a density preference, not a musical-quality rating. Start with a short song and
+a small budget, compare the measured result with the target, then listen after applying it.
+
 ## Run the example
 
 ```sh
@@ -97,6 +123,9 @@ scores, `Evaluator` measures them, and `SearchAlgorithm` proposes parameters thr
 and receives each outcome through `tell`. The ordinary `run_search` function owns iteration,
 budget accounting, cancellation, history and best-score retention. A custom composer or
 evaluator can use that same runner without depending on a concrete song search algorithm.
+`run_search_with_progress` and `search_composition_with_progress` additionally call a
+synchronous observer after each recorded attempt. Frontends can publish lightweight progress
+from that worker callback without changing cancellation, ranking or retention semantics.
 
 Random search samples independent bounded parameters on each attempt. Hill climbing proposes
 the base first, then changes one allowed parameter at a time around its incumbent. Successful

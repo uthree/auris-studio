@@ -26,6 +26,8 @@ mod menus;
 mod pad;
 #[cfg(test)]
 mod part_role_tests;
+mod search_settings;
+mod search_view;
 mod singers;
 #[cfg(test)]
 mod tempo_tests;
@@ -33,3 +35,5 @@ mod view;
 
 pub use dials::*;
 pub use lyrics::LyricsEdit;
+pub(crate) use search_settings::SearchSettings;
+pub(crate) use search_view::SearchViewStatus;

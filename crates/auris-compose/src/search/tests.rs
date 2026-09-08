@@ -143,6 +143,7 @@ struct ScriptedSearch {
     pending: Option<usize>,
     asks: usize,
     feedback: Vec<(usize, CandidateOutcome)>,
+    feedback_count: Rc<Cell<usize>>,
 }
 
 impl ScriptedSearch {
@@ -160,6 +161,7 @@ impl ScriptedSearch {
             pending: None,
             asks: 0,
             feedback: Vec::new(),
+            feedback_count: Rc::default(),
         }
     }
 
@@ -185,6 +187,7 @@ impl SearchAlgorithm<Params> for ScriptedSearch {
     fn tell(&mut self, candidate: &Candidate<Params>, outcome: &CandidateOutcome) {
         assert_eq!(self.pending.take(), Some(candidate.id), "tell exactly once");
         self.feedback.push((candidate.id, outcome.clone()));
+        self.feedback_count.set(self.feedback.len());
     }
 }
 
@@ -252,6 +255,74 @@ fn every_proposal_consumes_budget_and_receives_typed_feedback_before_next_ask() 
         )))
     );
     search.assert_feedback_matches(&result.history);
+}
+
+#[test]
+fn progress_observes_each_attempt_in_order_after_feedback_including_failures() {
+    let (composer, evaluator, calls) = mocks();
+    let mut search = ScriptedSearch::new([
+        Params::successful(2.0),
+        Params::failing(FailureStage::Validation),
+        Params::failing(FailureStage::Composition),
+        Params::failing(FailureStage::Evaluation),
+        Params::successful(9.0),
+    ]);
+    let feedback_count = Rc::clone(&search.feedback_count);
+    let mut observed = Vec::new();
+    let result = run_search_with_progress(
+        &composer,
+        &evaluator,
+        &mut search,
+        5,
+        || false,
+        |attempt| {
+            assert_eq!(attempt.candidate.id, observed.len());
+            assert_eq!(feedback_count.get(), observed.len() + 1);
+            observed.push(attempt.clone());
+        },
+    )
+    .unwrap();
+
+    assert_eq!(observed, result.history);
+    assert_eq!(observed.len(), 5);
+    assert_eq!(calls.composition.get(), 4);
+    assert_eq!(calls.evaluation.get(), 3);
+    search.assert_feedback_matches(&result.history);
+}
+
+#[test]
+fn progress_can_cancel_before_the_next_attempt_and_keep_the_exact_best_artifact() {
+    let (composer, evaluator, calls) = mocks();
+    let mut search = ScriptedSearch::new([3.0, 1.0, 9.0].map(Params::successful));
+    let mut observed = Vec::new();
+    let result = run_search_with_progress(
+        &composer,
+        &evaluator,
+        &mut search,
+        5,
+        || calls.cancelled.get(),
+        |attempt| {
+            observed.push(attempt.clone());
+            if observed.len() == 2 {
+                calls.cancelled.set(true);
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(result.termination, TerminationReason::Cancelled);
+    assert_eq!(observed, result.history);
+    assert_eq!(search.asks, 2);
+    assert_eq!(calls.composition.get(), 2);
+    assert_eq!(calls.evaluation.get(), 2);
+    search.assert_feedback_matches(&result.history);
+    let best = result.best.unwrap();
+    assert_eq!(best.candidate.id, 0);
+    assert_eq!(best.score.generation, 1);
+    assert_eq!(
+        std::ptr::from_ref(best.score.identity.as_ref()) as usize,
+        calls.generated_addresses.borrow()[0]
+    );
 }
 
 #[test]

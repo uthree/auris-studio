@@ -5,8 +5,8 @@ use crate::{Composition, SongSpec};
 
 use super::algorithms::{HillClimber, RandomSearch};
 use super::{
-    ComposeError, Composer, Evaluation, EvaluationError, Evaluator, Metric, SearchError,
-    SearchResult, ValidationError, run_search,
+    Attempt, ComposeError, Composer, Evaluation, EvaluationError, Evaluator, Metric, SearchError,
+    SearchResult, ValidationError, run_search_with_progress,
 };
 
 /// Inclusive bounds and the largest step of a hill-climbing proposal.
@@ -350,6 +350,19 @@ pub fn search_composition(
     request: &SongSearchRequest,
     cancelled: impl FnMut() -> bool,
 ) -> Result<SearchResult<SongSpec, Composition>, SearchError> {
+    search_composition_with_progress(request, cancelled, |_| {})
+}
+
+/// Search a song while observing each completed attempt, including failed candidates.
+///
+/// Like [`search_composition`], this retains the exact best score without recomposition.
+/// `progress` runs synchronously after feedback and history recording, before the next
+/// cancellation check, so a frontend can publish progress or request cancellation there.
+pub fn search_composition_with_progress(
+    request: &SongSearchRequest,
+    cancelled: impl FnMut() -> bool,
+    progress: impl FnMut(&Attempt<SongSpec>),
+) -> Result<SearchResult<SongSpec, Composition>, SearchError> {
     request.validate()?;
     match request.algorithm {
         SearchMethod::Random => {
@@ -359,12 +372,13 @@ pub fn search_composition(
                 request.search_seed,
                 request.composition_seed,
             )?;
-            run_search(
+            run_search_with_progress(
                 &AurisComposer,
                 &request.evaluator,
                 &mut search,
                 request.attempt_budget,
                 cancelled,
+                progress,
             )
         }
         SearchMethod::HillClimb => {
@@ -374,12 +388,13 @@ pub fn search_composition(
                 request.search_seed,
                 request.composition_seed,
             )?;
-            run_search(
+            run_search_with_progress(
                 &AurisComposer,
                 &request.evaluator,
                 &mut search,
                 request.attempt_budget,
                 cancelled,
+                progress,
             )
         }
     }
@@ -451,8 +466,15 @@ mod tests {
         for method in [SearchMethod::Random, SearchMethod::HillClimb] {
             let request = request(method);
             let first = search_composition(&request, || false).unwrap();
-            let second = search_composition(&request, || false).unwrap();
+            let mut observed = Vec::new();
+            let second = search_composition_with_progress(
+                &request,
+                || false,
+                |attempt| observed.push(attempt.clone()),
+            )
+            .unwrap();
             assert_eq!(first.history, second.history);
+            assert_eq!(observed, second.history);
             assert_eq!(first.best, second.best);
             assert_eq!(first.history.len(), request.attempt_budget);
             assert_eq!(first.termination, TerminationReason::BudgetExhausted);

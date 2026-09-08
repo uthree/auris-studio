@@ -10,7 +10,7 @@ mod song;
 pub use algorithms::{HillClimber, RandomSearch};
 pub use song::{
     AurisComposer, DensityTarget, ParameterBounds, PartDensity, SearchMethod, SearchSpace,
-    SectionIntensity, SongSearchRequest, search_composition,
+    SectionIntensity, SongSearchRequest, search_composition, search_composition_with_progress,
 };
 
 /// One proposed configuration and the independent seed used to compose it.
@@ -253,7 +253,36 @@ pub fn run_search<C, E, A>(
     evaluator: &E,
     search: &mut A,
     attempt_budget: usize,
+    cancelled: impl FnMut() -> bool,
+) -> Result<SearchResult<C::Params, C::Score>, SearchError>
+where
+    C: Composer,
+    C::Params: Clone,
+    E: Evaluator<C::Score>,
+    A: SearchAlgorithm<C::Params>,
+{
+    run_search_with_progress(
+        composer,
+        evaluator,
+        search,
+        attempt_budget,
+        cancelled,
+        |_| {},
+    )
+}
+
+/// Run [`run_search`] with an observer for every completed attempt, including failures.
+///
+/// `progress` runs synchronously after algorithm feedback and history recording, before the
+/// next cancellation check. Keep the callback brief when forwarding progress to a frontend.
+/// It observes the existing attempt and never triggers extra composition or evaluation.
+pub fn run_search_with_progress<C, E, A>(
+    composer: &C,
+    evaluator: &E,
+    search: &mut A,
+    attempt_budget: usize,
     mut cancelled: impl FnMut() -> bool,
+    mut progress: impl FnMut(&Attempt<C::Params>),
 ) -> Result<SearchResult<C::Params, C::Score>, SearchError>
 where
     C: Composer,
@@ -326,6 +355,7 @@ where
             };
         search.tell(&candidate, &outcome);
         result.history.push(Attempt { candidate, outcome });
+        progress(&result.history[result.history.len() - 1]);
     }
     Ok(result)
 }

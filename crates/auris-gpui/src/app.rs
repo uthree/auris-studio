@@ -1323,6 +1323,8 @@ pub struct AurisApp {
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
     /// Modal progress while a song is written, prepared and balanced.
     pub(crate) compose_progress: Option<crate::ui::compose_progress::ComposeProgressState>,
+    /// Independent composition-search settings, worker control, and exact retained result.
+    pub(crate) composition_search: crate::ui::song_search::CompositionSearchState,
     /// The library browser currently choosing a song part's source.
     pub(crate) song_library: Option<crate::ui::library::SongLibrary>,
     /// Fonts browsed while composing, without adding assets to the current document.
@@ -1527,6 +1529,7 @@ impl Drop for AurisApp {
         self.drum_analysis.reset();
         self.music_analysis.cancel();
         self.timbre_map.cancel();
+        self.composition_search.dismiss();
     }
 }
 
@@ -1573,6 +1576,7 @@ impl AurisApp {
                 if this
                     .update(cx, |this, cx| {
                         this.session.poll();
+                        this.poll_song_search();
                         // Here rather than while drawing, and here rather than in `poll`: the
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
@@ -1664,6 +1668,7 @@ impl AurisApp {
             sung_geometry_revision: 0,
             song_sheet: None,
             compose_progress: None,
+            composition_search: Default::default(),
             song_library: None,
             song_library_fonts: Vec::new(),
             song_advanced: false,
