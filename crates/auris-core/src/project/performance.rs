@@ -26,30 +26,62 @@ pub struct PerformanceContext<'a> {
 /// carry no copied lyrics or singer ornaments. This function allocates and must run while
 /// preparing a graph, never in an instrument's audio callback.
 pub fn performed_notes(
-    mut notes: Vec<Note>,
+    notes: Vec<Note>,
     transforms: &[NoteTransform],
     context: PerformanceContext<'_>,
 ) -> Vec<Note> {
+    performed_note_slots(notes, transforms, context)
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Like [`performed_notes`], preserving one optional slot per source note before additions.
+/// `None` means a skipped string; zero velocity retains its ordinary soft-note semantics.
+/// Freezing uses these slots to preserve source mapping and hidden notes.
+pub fn performed_note_slots(
+    mut notes: Vec<Note>,
+    transforms: &[NoteTransform],
+    context: PerformanceContext<'_>,
+) -> Vec<Option<Note>> {
     let written_count = notes.len();
+    let mut suppressed = std::collections::BTreeSet::new();
     for transform in transforms {
+        let scope = match transform {
+            NoteTransform::ForDrumVoice { voice, transforms } => {
+                Some((voice.as_str(), transforms.as_slice()))
+            }
+            _ => None,
+        };
+        if scope.is_some() || !suppressed.is_empty() {
+            let indices: Vec<_> = (0..notes.len())
+                .filter(|i| {
+                    !suppressed.contains(i)
+                        && scope.is_none_or(|(voice, _)| notes[*i].drum_voice == voice)
+                })
+                .collect();
+            let active = indices.iter().map(|&i| notes[i].clone()).collect();
+            let stack = scope.map_or(std::slice::from_ref(transform), |(_, stack)| stack);
+            let mut changed = performed_note_slots(active, stack, context).into_iter();
+            for i in indices {
+                match changed.next().expect("every source has a slot") {
+                    Some(note) => notes[i] = note,
+                    None => {
+                        suppressed.insert(i);
+                    }
+                }
+            }
+            notes.extend(changed.flatten());
+            continue;
+        }
         match transform {
+            NoteTransform::Strum { settings } => {
+                suppressed.extend(super::strum::strum(&mut notes, settings, context))
+            }
             NoteTransform::Ghost { settings } => {
                 super::ghost::ghost_notes(&mut notes, settings, context)
             }
-            NoteTransform::ForDrumVoice { voice, transforms } => {
-                let selected = notes
-                    .iter()
-                    .filter(|note| note.drum_voice == *voice)
-                    .cloned()
-                    .collect();
-                let mut changed = performed_notes(selected, transforms, context).into_iter();
-                for note in notes.iter_mut().filter(|note| note.drum_voice == *voice) {
-                    if let Some(replacement) = changed.next() {
-                        *note = replacement;
-                    }
-                }
-                notes.extend(changed);
-            }
+            NoteTransform::ForDrumVoice { .. } => unreachable!(),
             NoteTransform::Stroke {
                 spread_ms,
                 direction,
@@ -72,10 +104,17 @@ pub fn performed_notes(
     // A later timing stage can move an ornament into its source or next attack. Give written
     // notes priority so an ornament's NoteOff cannot silence a still-held written note.
     let additions = notes.split_off(written_count);
-    for mut addition in additions {
+    for (offset, mut addition) in additions.into_iter().enumerate() {
+        if suppressed.contains(&(written_count + offset)) {
+            continue;
+        }
         let mut occupied: Vec<_> = notes
             .iter()
-            .filter(|note| note.pitch == addition.pitch)
+            .enumerate()
+            .filter(|(i, note)| {
+                (*i >= written_count || !suppressed.contains(i)) && note.pitch == addition.pitch
+            })
+            .map(|(_, note)| note)
             .collect();
         occupied.sort_by_key(|note| note.start);
         let mut start = addition.start;
@@ -101,6 +140,10 @@ pub fn performed_notes(
         }
     }
     notes
+        .into_iter()
+        .enumerate()
+        .map(|(i, note)| (i >= written_count || !suppressed.contains(&i)).then_some(note))
+        .collect()
 }
 
 pub(super) fn milliseconds(value: f32, bpm: f64) -> Ticks {
@@ -137,43 +180,17 @@ fn stroke(
     if spread_ms <= 0.0 {
         return;
     }
-    let groups = chords(notes);
-    for (index, group) in groups.iter().enumerate() {
-        if group.len() < 2 {
-            continue;
-        }
-        let start = notes[group[0]].start;
-        let next = groups
-            .get(index + 1)
-            .map_or(context.length, |g| notes[g[0]].start);
-        let shortest = group
-            .iter()
-            .map(|&i| notes[i].length.raw())
-            .min()
-            .unwrap_or(1);
-        let spread = milliseconds(spread_ms.clamp(0.0, 100.0), context.bpm)
-            .raw()
-            .min(shortest - 1)
-            .min((next - start).raw() - 1)
-            .max(0);
-        let reverse = match direction {
-            StrokeDirection::LowToHigh => false,
-            StrokeDirection::HighToLow => true,
-            StrokeDirection::Alternate => index % 2 == 1,
-        };
-        for (rank, &i) in group.iter().enumerate() {
-            let rank = if reverse {
-                group.len() - 1 - rank
-            } else {
-                rank
-            };
-            let offset = Ticks(spread * rank as i64 / (group.len() - 1) as i64);
-            notes[i].start += offset;
-            notes[i].length -= offset;
-        }
-    }
+    let _ = super::strum::strum(
+        notes,
+        &super::Strum {
+            spread_ms,
+            direction,
+            clock: super::StrumClock::Attacks,
+            ..super::Strum::default()
+        },
+        context,
+    );
 }
-
 pub(super) fn ornament(source: &Note, pitch: u8, start: Ticks, length: Ticks, gain: f32) -> Note {
     Note {
         velocity: (source.velocity * gain).clamp(0.0, 1.0),

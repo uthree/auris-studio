@@ -37,6 +37,8 @@ mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
 mod ghost;
+mod strum;
+pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
 pub use ghost::{GhostNotes, GhostPattern};
@@ -58,7 +60,7 @@ pub use curve::{
 };
 pub use drum::{DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
-pub use performance::{PerformanceContext, performed_notes};
+pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
 pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
@@ -271,8 +273,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 23 adds configurable ghost-note placement to the stored transform stack.
-    pub const FORMAT_VERSION: u32 = 23;
+    /// Version 24 adds metrical strumming and partial upstrokes to the transform stack.
+    pub const FORMAT_VERSION: u32 = 24;
 
     /// An empty project.
     ///

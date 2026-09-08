@@ -46,6 +46,11 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Metrical strumming, including air strokes, partial upstrokes and accents.
+    Strum {
+        /// Right-hand performance settings.
+        settings: super::Strum,
+    },
     /// Seeded ghost notes with independent placement, density, duration and velocity.
     Ghost {
         /// The performance settings, including the stored random seed.
@@ -157,6 +162,7 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
     for transform in transforms {
         note = match transform {
             NoteTransform::Stroke { .. }
+            | NoteTransform::Strum { .. }
             | NoteTransform::Ghost { .. }
             | NoteTransform::Mute { .. }
             | NoteTransform::Brush { .. }

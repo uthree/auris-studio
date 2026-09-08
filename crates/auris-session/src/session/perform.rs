@@ -70,7 +70,7 @@ impl Session {
         }
         let bpm = self.project.tempo_map.bpm_at(target.start);
         let transforms = target.transforms.clone();
-        let performed = auris_core::performed_notes(
+        let performed = auris_core::performed_note_slots(
             target.playable_notes().collect(),
             &transforms,
             auris_core::PerformanceContext {
@@ -81,28 +81,30 @@ impl Session {
                 signatures: &self.project.signatures,
             },
         );
-        let mut performed = performed.into_iter().map(|mut note| {
-            if note.start < target.length {
-                note.length = note.length.min(target.length - note.start);
-            }
-            note
+        let mut performed = performed.into_iter().map(|slot| {
+            slot.map(|mut note| {
+                if note.start < target.length {
+                    note.length = note.length.min(target.length - note.start);
+                }
+                note
+            })
         });
         // Keep original indices and hidden text; phrase stages preserve original-note order
         // and append their additions, which are appended here after the visible originals.
         let mut notes: Vec<_> = target
             .notes
             .iter()
-            .map(|note| {
+            .filter_map(|note| {
                 if note.start >= auris_core::Ticks::ZERO && note.start < target.length {
                     performed
                         .next()
-                        .expect("performance retains every source note")
+                        .expect("performance retains every source slot")
                 } else {
-                    note.clone()
+                    Some(note.clone())
                 }
             })
             .collect();
-        notes.extend(performed);
+        notes.extend(performed.flatten());
         let count = notes.len();
         self.record(Edit::FreezeClipTransforms);
         if let Some(target) = self.project.midi_clip_mut(clip) {
@@ -127,6 +129,43 @@ mod tests {
             percent: 67,
             subdivision: Subdivision::Eighth,
         }
+    }
+
+    #[test]
+    fn freezing_partial_upstrokes_removes_skipped_notes_but_preserves_hidden_text() {
+        let (mut session, _, clip) = session_with_clip();
+        let held = session.project.midi_clip_mut(clip).unwrap();
+        held.notes = [48, 60, 64, 67]
+            .map(|pitch| auris_core::Note::new(pitch, Ticks(240), Ticks(240)))
+            .to_vec();
+        held.notes
+            .push(auris_core::Note::new(90, Ticks(-240), Ticks(120)));
+        let original = held.notes.clone();
+        session
+            .set_clip_transforms(
+                clip,
+                vec![NoteTransform::Strum {
+                    settings: auris_core::Strum {
+                        up_notes: 2,
+                        ..auris_core::Strum::default()
+                    },
+                }],
+            )
+            .unwrap();
+        let expected: Vec<_> = session
+            .midi_clip(clip)
+            .unwrap()
+            .sounding_notes(120.0)
+            .collect();
+        assert_eq!(expected.len(), 2);
+        session.freeze_clip_transforms(clip).unwrap();
+        let held = session.midi_clip(clip).unwrap();
+        assert_eq!(held.notes.len(), 3);
+        assert_eq!(held.notes[2], original[4]);
+        assert_eq!(held.sounding_notes(120.0).collect::<Vec<_>>(), expected);
+        session.undo();
+        assert_eq!(session.midi_clip(clip).unwrap().notes, original);
+        assert!(!session.clip_transforms(clip).unwrap().is_empty());
     }
 
     #[test]

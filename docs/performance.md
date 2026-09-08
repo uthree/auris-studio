@@ -22,6 +22,15 @@ notes silent. **Ghost source** can restrict generation to one MIDI pitch (for ex
 snare); other kit voices can continue playing underneath it. Existing brush settings use
 the same placement engine with their original full-density sixteenth grid.
 
+**Strum settings** adds a continuous eighth- or sixteenth-note hand clock. With alternating
+direction, rests advance the hand too; inserting another chord does not flip all later
+strokes. The clock follows the project bar lines, including when a clip starts mid-bar.
+New strokes use the sixteenth-note clock; existing strokes retain their attack clock until
+changed. Upstrokes can strike only the highest one to four pitches and have their own
+velocity scale. Downstrokes can emphasize lower pitches. This uses pitch order, not a
+guitar fingering model. Skipped pitches remain in Source; freezing explicitly removes
+those attacks from the visible phrase while preserving hidden notes outside the clip.
+
 | Control | What it does |
 | --- | --- |
 | Swing | Delays offbeats on an eighth- or sixteenth-note grid. |
@@ -57,5 +66,5 @@ nominal velocity scale is 6% of the written velocity.
 the score and clears all performance stages. It is undoable. A frozen loop repeats that take.
 Generated-clip recipe freezing is a separate control.
 
-Saved projects use format version 23 for configurable ghost-note placement. Current builds read
+Saved projects use format version 24 for configurable ghost notes and strumming. Current builds read
 older clips with their existing defaults; older builds must reject this newer format.

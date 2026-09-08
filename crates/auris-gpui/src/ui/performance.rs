@@ -21,6 +21,7 @@ use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Point, div, prelude:
 use crate::app::{AurisApp, Drag};
 use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
 use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
+use crate::ui::strum::{strum_settings, with_strum_settings};
 use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
 
 /// One slider of the performance section.
@@ -28,6 +29,10 @@ use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider}
 pub enum PerformDial {
     /// Time between the first and last notes in a chord stroke.
     Stroke,
+    /// Velocity scale of upstrokes.
+    StrumUpVelocity,
+    /// Extra emphasis on the lower pitches of downstrokes.
+    StrumLowAccent,
     /// Strength of short release retriggers on notes held for at least an eighth note.
     Mute,
     /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
@@ -72,6 +77,8 @@ impl PerformDial {
     /// the phrase was written or played.
     pub fn label(self) -> Key {
         match self {
+            PerformDial::StrumUpVelocity => Key::PerformStrumUpVelocity,
+            PerformDial::StrumLowAccent => Key::PerformStrumLowAccent,
             PerformDial::GhostDensity => Key::PerformGhostDensity,
             PerformDial::GhostLength => Key::PerformGhostLength,
             PerformDial::GhostVariation => Key::PerformGhostVariation,
@@ -92,7 +99,7 @@ impl PerformDial {
 /// wander moves them — and the rest simply keeps insertion deterministic. A stack somebody
 /// arranged another way is honoured as it stands; the rank only places a transform that is
 /// *joining* the stack.
-fn rank(transform: &NoteTransform) -> usize {
+pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
         NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
@@ -105,7 +112,7 @@ fn rank(transform: &NoteTransform) -> usize {
         NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 3,
         NoteTransform::Slide { .. } => 4,
         NoteTransform::Mute { .. } => 5,
-        NoteTransform::Stroke { .. } => 6,
+        NoteTransform::Stroke { .. } | NoteTransform::Strum { .. } => 6,
     }
 }
 
@@ -115,6 +122,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
         (transform, dial),
         (NoteTransform::Humanize { .. }, PerformDial::Humanize)
             | (NoteTransform::Stroke { .. }, PerformDial::Stroke)
+            | (NoteTransform::Strum { .. }, PerformDial::Stroke)
             | (NoteTransform::Mute { .. }, PerformDial::Mute)
             | (NoteTransform::Brush { .. }, PerformDial::Brush)
             | (NoteTransform::Ghost { .. }, PerformDial::Brush)
@@ -131,6 +139,8 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::StrumUpVelocity => strum_settings(stack).up_velocity.clamp(0.0, 1.0),
+        PerformDial::StrumLowAccent => strum_settings(stack).low_accent.clamp(0.0, 1.0),
         PerformDial::GhostDensity => ghost_settings(stack, 0).density.clamp(0.0, 1.0),
         PerformDial::GhostLength => {
             (ghost_settings(stack, 0).length_ms.clamp(1.0, 100.0) - 1.0) / 99.0
@@ -141,6 +151,7 @@ pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
             .find(|transform| answers_to(transform, dial))
             .map(|transform| match transform {
                 NoteTransform::Stroke { spread_ms, .. } => spread_ms.clamp(0.0, 100.0) / 100.0,
+                NoteTransform::Strum { settings } => settings.spread_ms.clamp(0.0, 100.0) / 100.0,
                 NoteTransform::Ghost { settings } => (settings.velocity / 0.3).clamp(0.0, 1.0),
                 NoteTransform::Mute { amount }
                 | NoteTransform::Brush { amount }
@@ -208,6 +219,19 @@ pub fn with_dial(
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
     if matches!(
         dial,
+        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent
+    ) {
+        let mut settings = strum_settings(stack);
+        match dial {
+            PerformDial::Stroke => settings.spread_ms = (fraction * 100.0).round(),
+            PerformDial::StrumUpVelocity => settings.up_velocity = fraction,
+            PerformDial::StrumLowAccent => settings.low_accent = fraction,
+            _ => unreachable!(),
+        }
+        return with_strum_settings(stack, settings);
+    }
+    if matches!(
+        dial,
         PerformDial::Brush
             | PerformDial::GhostDensity
             | PerformDial::GhostLength
@@ -224,16 +248,15 @@ pub fn with_dial(
         return with_ghost_settings(stack, settings);
     }
     let replacement = match dial {
+        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+            unreachable!()
+        }
         PerformDial::Brush
         | PerformDial::GhostDensity
         | PerformDial::GhostLength
         | PerformDial::GhostVariation => {
             unreachable!()
         }
-        PerformDial::Stroke => (fraction > 0.0).then(|| NoteTransform::Stroke {
-            spread_ms: (fraction * 100.0).round(),
-            direction: stroke_direction(stack),
-        }),
         PerformDial::Mute => (fraction > 0.0).then_some(NoteTransform::Mute {
             amount: (fraction * 100.0).round() / 100.0,
         }),
@@ -305,13 +328,7 @@ pub fn with_swing_grid(stack: &[NoteTransform], subdivision: Subdivision) -> Vec
 
 /// Direction held by the stroke, defaulting to the lowest string first.
 pub fn stroke_direction(stack: &[NoteTransform]) -> StrokeDirection {
-    stack
-        .iter()
-        .find_map(|transform| match transform {
-            NoteTransform::Stroke { direction, .. } => Some(*direction),
-            _ => None,
-        })
-        .unwrap_or(StrokeDirection::LowToHigh)
+    strum_settings(stack).direction
 }
 
 fn direction_label(direction: StrokeDirection) -> Key {
@@ -325,6 +342,9 @@ fn direction_label(direction: StrokeDirection) -> Key {
 /// What a dial's value button reads, with the swing's straight end in words.
 pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> String {
     match dial {
+        PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+            format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
+        }
         PerformDial::GhostLength => format!("{:.0} ms", ghost_settings(stack, 0).length_ms),
         PerformDial::GhostDensity | PerformDial::GhostVariation => {
             format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
@@ -345,6 +365,8 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
 /// A stable element key per dial, so gpui tells the sliders apart.
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
+        PerformDial::StrumUpVelocity => 10,
+        PerformDial::StrumLowAccent => 11,
         PerformDial::GhostDensity => 7,
         PerformDial::GhostLength => 8,
         PerformDial::GhostVariation => 9,
@@ -359,6 +381,34 @@ fn dial_element_key(dial: PerformDial) -> usize {
 }
 
 impl AurisApp {
+    pub(crate) fn performance_slider(
+        &self,
+        clip: ClipId,
+        dial: PerformDial,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let fraction = dial_fraction(stack, dial);
+        value_slider(
+            ("perform-dial", dial_element_key(dial)),
+            self.t(dial.label()),
+            dial_text(stack, dial, self.t(Key::PartStraight)),
+            fraction,
+            self.theme.accent,
+            SliderFill::FromStart,
+            &self.theme,
+            cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                this.begin_drag(Drag::PerformDial {
+                    clip,
+                    dial,
+                    start_fraction: fraction,
+                    start_x: event.position.x,
+                })
+            }),
+        )
+        .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
+        .into_any_element()
+    }
     fn ghost_detail_rows(
         &self,
         clip: ClipId,
@@ -614,6 +664,7 @@ impl AurisApp {
 
         rows.push(divider(&theme).into_any_element());
         rows.extend(self.ghost_detail_rows(clip, &stack, cx));
+        rows.extend(self.strum_detail_rows(clip, &stack, cx));
         rows
     }
 
@@ -708,15 +759,9 @@ impl AurisApp {
         let Ok(stack) = self.session.clip_transforms(clip) else {
             return;
         };
-        let mut next = stack.to_vec();
-        for transform in &mut next {
-            if let NoteTransform::Stroke {
-                direction: held, ..
-            } = transform
-            {
-                *held = direction;
-            }
-        }
+        let mut settings = strum_settings(stack);
+        settings.direction = direction;
+        let next = with_strum_settings(stack, settings);
         let _ = self.session.set_clip_transforms(clip, next);
     }
 }

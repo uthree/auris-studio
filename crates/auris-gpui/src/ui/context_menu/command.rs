@@ -21,6 +21,8 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Updates right-hand clock, pitch coverage and stroke dynamics.
+    SetStrumSettings { clip: ClipId, settings: Strum },
     /// Updates one clip's non-destructive ghost-note settings.
     SetGhostSettings { clip: ClipId, settings: GhostNotes },
     /// Voice model for the song sheet's vocal part.
@@ -815,10 +817,22 @@ impl AurisApp {
             return;
         }
         match command {
+            MenuCommand::SetStrumSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::strum::with_strum_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                    let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
+                }
+            }
             MenuCommand::SetGhostSettings { clip, settings } => {
                 if let Ok(stack) = self.session.clip_transforms(clip) {
                     let next = crate::ui::performance::with_ghost_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
                     let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
                 }
             }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),

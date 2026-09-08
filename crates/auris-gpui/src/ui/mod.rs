@@ -41,6 +41,7 @@ pub mod singer;
 pub(crate) mod singer_portrait;
 pub(crate) mod spectrogram;
 pub mod status_bar;
+pub(crate) mod strum;
 pub mod text_area;
 pub mod text_field;
 pub mod timeline;

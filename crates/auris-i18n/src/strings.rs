@@ -672,6 +672,15 @@ strings! {
     // The dials on any clip's performance: the transform stack, which changes what is heard
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }
+    PerformStrumSettings { en: "Strum settings", ja: "ストロークの詳細" }
+    PerformStrumUpVelocity { en: "Upstroke velocity", ja: "アップの強さ" }
+    PerformStrumLowAccent { en: "Downstroke bass accent", ja: "ダウンの低音アクセント" }
+    PerformStrumClock { en: "Alternation clock", ja: "上下運動の基準" }
+    PerformStrumAttacks { en: "Played attacks", ja: "発音ごと" }
+    PerformStrumEighths { en: "Continuous eighth notes", ja: "8分音符・空振りあり" }
+    PerformStrumSixteenths { en: "Continuous sixteenth notes", ja: "16分音符・空振りあり" }
+    PerformStrumUpNotes { en: "Highest pitches on upstrokes", ja: "アップで鳴らす高音側の音数" }
+    PerformStrumAllNotes { en: "All pitches", ja: "すべての音" }
     PerformGhostSettings { en: "Ghost note settings", ja: "ゴーストノートの詳細" }
     PerformGhostDensity { en: "Ghost density", ja: "ゴーストの密度" }
     PerformGhostLength { en: "Ghost length", ja: "ゴーストの長さ" }

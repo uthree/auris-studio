@@ -1761,6 +1761,11 @@ pub mod harmony {
     //! duration. Its seed addresses positions, so changing loudness does not reroll placement.
     //! A target pitch scopes the source and collision checks; rest protection preserves
     //! phrase endings and long gaps. Older brushes use this same engine.
+    //! [`Strum`](auris_core::Strum) can advance its alternating hand on a continuous eighth-
+    //! or sixteenth-note clock, including rests. It supports partial upper-pitch upstrokes
+    //! and lower-pitch downstroke accents. Skipped strings retain optional source slots
+    //! through scoped stages; playback flattens them and freezing uses their positions to
+    //! preserve hidden text and source mapping. Zero velocity still means the softest note.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,
