@@ -34,6 +34,7 @@ pub mod plugin_window;
 mod portrait_image;
 pub mod prompt;
 pub mod root;
+pub(crate) mod score_layer;
 pub mod scrollbars;
 pub mod selection;
 pub mod singer;

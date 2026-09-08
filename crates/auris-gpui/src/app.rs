@@ -36,6 +36,7 @@ use crate::ui::context_menu::ContextMenu;
 use crate::ui::menu_bar::OpenMenu;
 use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
+use crate::ui::score_layer::{ScoreLayer, ScorePreview};
 use crate::ui::timeline::{PitchView, TimelineView};
 use crate::ui::typing_panel::TypingPanel;
 use crate::voice_setup_window::VoiceSetupWindow;
@@ -1246,6 +1247,8 @@ pub struct AurisApp {
     /// mode the user comes back to having forgotten. The roll opens holding the pointer every
     /// time, and the strip in its header says which one is in hand.
     pub(crate) tool: RollTool,
+    pub(crate) score_layer: ScoreLayer,
+    pub(crate) score_preview: Option<ScorePreview>,
     pub(crate) drag: Option<Drag>,
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
@@ -1625,6 +1628,8 @@ impl AurisApp {
             selected_clips: selected_clip.into_iter().collect(),
             selected_notes: BTreeSet::new(),
             tool: RollTool::default(),
+            score_layer: ScoreLayer::default(),
+            score_preview: None,
             drag: None,
             panels: PanelLayout::load(),
             status,

@@ -784,6 +784,34 @@ impl AurisApp {
 
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
+        if !self.source_score()
+            && matches!(
+                command,
+                MenuCommand::DuplicateNotes
+                    | MenuCommand::CutNotes
+                    | MenuCommand::CopyNotes
+                    | MenuCommand::PasteNotes
+                    | MenuCommand::DeleteNotes
+                    | MenuCommand::TransposeNotes(_)
+                    | MenuCommand::SetNoteVelocity(_)
+                    | MenuCommand::QuantizeNotes(_)
+                    | MenuCommand::SelectAllNotes
+                    | MenuCommand::NewNote { .. }
+                    | MenuCommand::EditLyric { .. }
+                    | MenuCommand::EditPhonemes { .. }
+                    | MenuCommand::ResetPhonemeTiming { .. }
+                    | MenuCommand::SetScoop { .. }
+                    | MenuCommand::SetFall { .. }
+                    | MenuCommand::SetVibrato { .. }
+                    | MenuCommand::ResetOrnaments { .. }
+                    | MenuCommand::WriteLyrics { .. }
+                    | MenuCommand::ClearCurve { .. }
+            )
+        {
+            self.set_status(self.t(Key::ScorePerformedHint));
+            cx.notify();
+            return;
+        }
         match command {
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio { clip, transcribe } => {

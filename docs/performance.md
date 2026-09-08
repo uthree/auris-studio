@@ -1,9 +1,16 @@
 # Shaping a clip's performance
 
 Select a MIDI clip and use **Performance** in the inspector. These controls work on authored
-and generated clips. They change playback and MIDI export while the piano roll keeps the
+and generated clips. They change playback and MIDI export while preserving the
 original score. Save stores the controls and seeds; disabling a control restores the score's
 behaviour for that stage. Dragging a control is one undoable edit.
+
+The piano roll and drum editor have two tabs: **Source** edits the stored notes;
+**Performance** previews the notes sent to playback, including inserted articulations,
+timing and velocity changes, and each loop pass. The preview updates while you drag an
+inspector control, and after undo or redo. It is read-only: switch to Source to edit notes.
+Both tabs share the same scroll and zoom so you can compare them in place. Singer pitch
+contours and editable expression lanes remain in Source.
 
 | Control | What it does |
 | --- | --- |

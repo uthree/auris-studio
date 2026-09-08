@@ -49,6 +49,9 @@ strings! {
     Tempo { en: "Tempo", ja: "テンポ" }
     Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
+    ScoreSource { en: "Source", ja: "元の楽譜" }
+    ScorePerformed { en: "Performance", ja: "演奏結果" }
+    ScorePerformedHint { en: "Adjust Performance in the inspector. Edit notes in Source.", ja: "インスペクターの演奏パラメータで調整。音符の編集は「元の楽譜」で。" }
     PromptLyric { en: "Lyric", ja: "歌詞" }
     PromptPhonemes { en: "Phonemes (space-separated IPA)", ja: "音素(スペース区切りの IPA)" }
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }

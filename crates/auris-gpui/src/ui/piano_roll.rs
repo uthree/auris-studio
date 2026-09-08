@@ -562,28 +562,50 @@ impl AurisApp {
         };
 
         let clip_start = clip.start;
-        let clip_length = clip.length;
-        let notes = clip.notes.clone();
+        let source = self.source_score();
+        let clip_length = if source {
+            clip.length
+        } else {
+            clip.sounding_length()
+        };
+        let clip_name = clip.name.clone();
+        let notes = self.score_notes();
         let singing = self.editing_a_singer_clip();
         let manual_phonemes = self
             .selected_clip
             .is_some_and(|clip| self.clip_accepts_phonemes(clip));
-        let ghosts = self.neighbouring_notes();
-        let mut note_ends = self.note_end_zones(clip_start, &notes);
+        let ghosts = if source {
+            self.neighbouring_notes()
+        } else {
+            Vec::new()
+        };
+        let mut note_ends = if source {
+            self.note_end_zones(clip_start, &notes)
+        } else {
+            Vec::new()
+        };
         // The phoneme boundaries wear the same arrow: both zones drag a vertical edge.
-        note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
-        let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
-        let clip_name = clip.name.clone();
+        if source {
+            note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
+        }
+        let selected: Vec<usize> = self
+            .selected_notes
+            .iter()
+            .copied()
+            .filter(|_| source)
+            .collect();
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
         // consonant takes is sixty milliseconds on screen.
-        let geometry = match singing {
+        let geometry = match singing && source {
             true => self.singer_sung_geometry(),
             false => None,
         };
-        let band = self.rubber_band(crate::app::BandSurface::Roll);
-        let velocity_tag = self.velocity_tag();
+        let band = source
+            .then(|| self.rubber_band(crate::app::BandSurface::Roll))
+            .flatten();
+        let velocity_tag = source.then(|| self.velocity_tag()).flatten();
         let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
@@ -591,6 +613,7 @@ impl AurisApp {
             .panels
             .curve_lanes()
             .into_iter()
+            .filter(|_| source)
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
 
@@ -607,6 +630,7 @@ impl AurisApp {
             // the controls were simply gone.
             .min_w_0()
             .bg(theme.surface_sunken)
+            .child(self.score_layer_tabs(cx))
             .child(
                 div()
                     .flex()
@@ -634,7 +658,7 @@ impl AurisApp {
                             .truncate()
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
                     )
-                    .child(self.tool_strip(cx))
+                    .when(source, |row| row.child(self.tool_strip(cx)))
                     .when(
                         geometry
                             .as_ref()
@@ -664,31 +688,31 @@ impl AurisApp {
                     // The first thing to be given up, and the right one: it is a reminder of a
                     // gesture rather than a way of making one, so a hand that cannot see all of
                     // it has lost nothing it needs.
-                    .child(
-                        div()
-                            .flex_shrink()
-                            .min_w_0()
-                            .truncate()
-                            .child(match self.tool {
-                                RollTool::Pointer => messages::piano_roll_hint(
-                                    self.language(),
-                                    self.t(self.pointer.create.label()),
-                                    self.t(self.pointer.delete.label()),
-                                ),
-                                RollTool::Velocity => {
-                                    messages::piano_roll_velocity_hint(self.language())
-                                }
-                            }),
-                    )
-                    .child(button(
-                        "roll-lanes",
-                        self.t(Key::CurveLanes),
-                        ButtonStyle::Ghost,
-                        !self.panels.curve_lanes().is_empty(),
-                        theme.accent_soft,
-                        &theme,
-                        Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
-                    ))
+                    .child(div().flex_shrink().min_w_0().truncate().child(if !source {
+                        self.t(Key::ScorePerformedHint).to_string()
+                    } else {
+                        match self.tool {
+                            RollTool::Pointer => messages::piano_roll_hint(
+                                self.language(),
+                                self.t(self.pointer.create.label()),
+                                self.t(self.pointer.delete.label()),
+                            ),
+                            RollTool::Velocity => {
+                                messages::piano_roll_velocity_hint(self.language())
+                            }
+                        }
+                    }))
+                    .when(source, |row| {
+                        row.child(button(
+                            "roll-lanes",
+                            self.t(Key::CurveLanes),
+                            ButtonStyle::Ghost,
+                            !self.panels.curve_lanes().is_empty(),
+                            theme.accent_soft,
+                            &theme,
+                            Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
+                        ))
+                    })
                     .child(self.zoom_slider("roll-zoom", cx)),
             )
             .child(
@@ -750,7 +774,7 @@ impl AurisApp {
                             // The grid says which tool is in hand under the pointer as well as in
                             // the header. A mode is only dangerous while it is invisible, and the
                             // header is the one place the eye is not while editing notes.
-                            .when(self.tool == RollTool::Velocity, |this| {
+                            .when(source && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
                             .child({
@@ -1137,6 +1161,9 @@ impl AurisApp {
 
     /// Starts a note drag, creating a note when alt is held on empty space.
     fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        if !self.source_score() {
+            return;
+        }
         let Some(clip_id) = self.selected_clip else {
             return;
         };
@@ -1697,6 +1724,9 @@ impl AurisApp {
 
     /// Opens the menu for whatever is under the pointer in the note grid.
     fn open_roll_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        if !self.source_score() {
+            return;
+        }
         let origin = self.roll_origin();
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
@@ -2367,6 +2397,9 @@ impl AurisApp {
         event: &MouseDownEvent,
         cx: &mut gpui::Context<Self>,
     ) {
+        if !self.source_score() {
+            return;
+        }
         let (Some(bounds), Some(clip)) = (self.canvas.curve(which).get(), self.selected_clip)
         else {
             return;
