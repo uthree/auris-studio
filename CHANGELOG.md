@@ -7,6 +7,62 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.7.0 — 2026-09-08
+
+### Composition and performance
+
+* **Shape the performance while keeping the written notes.** New articulation, ghost-note,
+  strumming, expression and groove controls change playback and MIDI export. Source and
+  Performance tabs compare the editable score with its performed result. **Keep the
+  Performance** makes that result editable in one undoable step.
+* **Add automatic pitch gestures.** Scoops, falls, vibrato and melodic connections follow
+  eligible solo notes while preserving hand-drawn bends. MIDI export carries the generated
+  curves and their bend sensitivity, including tracks that share a MIDI channel. Song presets
+  supply performance settings suited to their instruments, adjustable after generation.
+* **Compose looping background music.** The new game-loop preset creates a sixteen-bar
+  chiptune cycle. Loop endings work across styles, and **Export Cycle** warms instruments and
+  effects before writing exactly one repetition.
+* **Compose songs with clearer lyric controls.** Basic and detailed views separate everyday
+  controls from the full arrangement. Voice and speaker selection, lyric-capacity feedback,
+  repeated-verse matching and fixed-length vocal rhythms help lyrics fit the chosen form.
+  Generated chord progressions follow section lengths and can connect half-bar changes.
+
+### Analysis and sound selection
+
+* **Review music analysis before applying it.** The Analysis menu and results panel collect
+  written-chord estimation, audio tempo/chord analysis and isolated-melody transcription.
+  Accepted drafts become editable chords or notes; the original audio remains intact.
+  Optional local ONNX models add instrument tagging and mixture transcription. These model
+  weights are separate downloads; see `docs/music-analysis-models.md` for their requirements,
+  including MuScriptor's noncommercial terms and per-use acknowledgement.
+* **Find related sounds on the Timbre Map.** Browse, audition and compare built-in instruments
+  and loaded SoundFont presets by their measured acoustic features, then adopt a sound on
+  the selected track with Undo. The map requires no pretrained model or network service.
+* **Render tracks to audio and inspect the mix.** Instrument, drum and singer tracks can be
+  converted to audio in one undoable operation. Spectrograms now include rendered instrument,
+  drum and singer tracks and a project-wide mix overview.
+
+### Singing and the desktop
+
+* **Keep VOICEVOX articulation when editing expression.** Relative pitch and energy changes
+  preserve the Engine's contour, unvoiced frames and phoneme balance. Japanese prolonged
+  vowels, small-tsu closures and short timing edge cases are handled more consistently.
+  The piano roll can show backend pitch alongside the host contour, restricted to written
+  note spans.
+* **Find settings and customize the workspace.** Search settings in Japanese or English,
+  choose panel positions, and edit theme palettes for tracks, library categories, chord
+  degrees, transport indicators and note-velocity gradients.
+* **Overlapping SoundFont notes release correctly.** Releasing one occurrence of a pitch
+  no longer prematurely cuts another held occurrence.
+
+### Compatibility
+
+* **Projects use format 26, and this release opens format 26 only.** Projects saved by
+  v0.6.0 use format 21 and cannot be opened here; projects saved by v0.7.0 cannot be opened
+  in v0.6.0. No automatic migration is provided.
+* Model tools consolidate regeneration in `regenerate_clips`, with an explicit `take`
+  policy, and send-level edits in `routing`. `set_effect` requires a slot.
+
 ## 0.6.0 — 2026-09-07
 
 ### Drums and generated parts
