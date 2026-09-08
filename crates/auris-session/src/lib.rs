@@ -212,8 +212,8 @@ pub mod prelude {
         ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip,
         MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop,
         SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId,
-        SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
-        default_loop_end, loop_passes, sounding_length,
+        SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId, TrackKind, Vibrato,
+        default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;

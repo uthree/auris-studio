@@ -359,7 +359,13 @@ impl RenderGraph {
                             instrument.load_state(instrument_state);
                             let mut events = Vec::new();
                             for clip in clips {
-                                schedule_clip(clip, &project.tempo_map, sample_rate, &mut events);
+                                schedule_clip(
+                                    clip,
+                                    &project.tempo_map,
+                                    &project.signatures,
+                                    sample_rate,
+                                    &mut events,
+                                );
                             }
                             sort_events(&mut events);
                             // Scheduled before the instrument is prepared rather than after, so

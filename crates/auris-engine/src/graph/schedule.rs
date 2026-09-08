@@ -12,7 +12,7 @@ use auris_core::AudioBuffer;
 use auris_core::param::db_to_gain;
 use auris_core::plugin::NoteEvent;
 use auris_core::project::{AudioClip, AudioSourceBank, FadeCurve, MidiClip};
-use auris_core::time::{TempoMap, Ticks};
+use auris_core::time::{SignatureMap, TempoMap, Ticks};
 
 /// A note event pinned to an absolute position on the timeline.
 ///
@@ -84,6 +84,7 @@ impl RenderAudioClip {
 pub(super) fn schedule_clip(
     clip: &MidiClip,
     tempo_map: &TempoMap,
+    signatures: &SignatureMap,
     sample_rate: f64,
     out: &mut Vec<ScheduledEvent>,
 ) {
@@ -95,7 +96,7 @@ pub(super) fn schedule_clip(
     // renderer would write a file that is not the piece you can hear. The tempo is the one in
     // force at the clip — the transforms' humanisation is milliseconds, and this is where
     // milliseconds meet ticks.
-    for note in clip.sounding_notes(tempo_map.bpm_at(clip.start)) {
+    for note in clip.sounding_notes_with_meter(tempo_map.bpm_at(clip.start), signatures.clone()) {
         let start_tick = clip.start + note.start;
         let end_tick = clip.start + note.end();
         let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
@@ -338,6 +339,58 @@ mod tests {
     use crate::testkit;
     use auris_core::project::{CurvePoint, Note, Project};
     use auris_core::time::TICKS_PER_QUARTER;
+
+    #[test]
+    fn articulated_events_follow_the_project_meter_and_the_shared_note_stream() {
+        use auris_core::{ClipId, NoteTransform, StrokeDirection, TimeSignature};
+        let mut clip = MidiClip::new(ClipId(1), "Guitar", Ticks(240), Ticks(2880));
+        clip.notes = vec![
+            Note::new(60, Ticks::ZERO, Ticks(480)),
+            Note::new(64, Ticks::ZERO, Ticks(480)),
+        ];
+        clip.transforms = vec![
+            NoteTransform::Brush { amount: 0.5 },
+            NoteTransform::Mute { amount: 0.5 },
+            NoteTransform::Stroke {
+                spread_ms: 30.0,
+                direction: StrokeDirection::HighToLow,
+            },
+            NoteTransform::Humanize {
+                amount: 0.5,
+                seed: 33,
+            },
+        ];
+        clip.loop_end = Ticks(4500);
+        let meter = SignatureMap::constant(TimeSignature::new(6, 8));
+        let tempo = TempoMap::default();
+        let mut events = Vec::new();
+        schedule_clip(&clip, &tempo, &meter, 48_000.0, &mut events);
+        let notes: Vec<_> = clip.sounding_notes_with_meter(120.0, meter).collect();
+        assert_eq!(events.len(), notes.len() * 2);
+        assert!(notes.len() > clip.notes.len() * 2);
+        for (pair, note) in events.as_chunks::<2>().0.iter().zip(notes) {
+            assert_eq!(
+                pair[0].frame,
+                tempo
+                    .ticks_to_samples(clip.start + note.start, 48_000.0)
+                    .raw()
+            );
+            assert_eq!(
+                pair[1].frame,
+                tempo
+                    .ticks_to_samples(clip.start + note.end(), 48_000.0)
+                    .raw()
+            );
+            assert_eq!(
+                pair[0].event,
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: note.pitch,
+                    velocity: note.velocity
+                }
+            );
+        }
+    }
 
     #[test]
     fn a_clip_that_follows_the_tempo_is_played_out_of_the_stretched_copy() {

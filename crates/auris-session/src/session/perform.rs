@@ -55,9 +55,9 @@ impl Session {
     /// What "keep this performance" means, and the same trade freezing a recipe makes: the
     /// result stops being derived from anything, so nothing can move it afterwards — and it
     /// stops being *performed*, so a looped clip's every repeat now rehearses the first pass
-    /// instead of wobbling afresh. Every stored note is written through the stack, the ones the
-    /// clip's window currently hides included: dragging the edge back out must reveal the same
-    /// performance it hid.
+    /// instead of wobbling afresh. The visible phrase uses exactly the same clipping as playback.
+    /// Notes outside the clip's window retain their stored text; they cannot influence the
+    /// frozen performance or be lost merely because an edge currently hides them.
     ///
     /// A clip with no transforms is left untouched and records no step — there is nothing to
     /// keep.
@@ -70,11 +70,39 @@ impl Session {
         }
         let bpm = self.project.tempo_map.bpm_at(target.start);
         let transforms = target.transforms.clone();
-        let notes: Vec<_> = target
+        let performed = auris_core::performed_notes(
+            target.playable_notes().collect(),
+            &transforms,
+            auris_core::PerformanceContext {
+                bpm,
+                pass: 0,
+                start: target.start,
+                length: target.length,
+                signatures: &self.project.signatures,
+            },
+        );
+        let mut performed = performed.into_iter().map(|mut note| {
+            if note.start < target.length {
+                note.length = note.length.min(target.length - note.start);
+            }
+            note
+        });
+        // Keep original indices and hidden text; phrase stages preserve original-note order
+        // and append their additions, which are appended here after the visible originals.
+        let mut notes: Vec<_> = target
             .notes
             .iter()
-            .map(|note| auris_core::performed(note.clone(), &transforms, 0, bpm))
+            .map(|note| {
+                if note.start >= auris_core::Ticks::ZERO && note.start < target.length {
+                    performed
+                        .next()
+                        .expect("performance retains every source note")
+                } else {
+                    note.clone()
+                }
+            })
             .collect();
+        notes.extend(performed);
         let count = notes.len();
         self.record(Edit::FreezeClipTransforms);
         if let Some(target) = self.project.midi_clip_mut(clip) {
@@ -157,6 +185,39 @@ mod tests {
     }
 
     #[test]
+    fn freezing_articulations_keeps_the_heard_notes_and_undo_restores_the_stack() {
+        let (mut session, _, clip) = session_with_clip();
+        let original = session.midi_clip(clip).unwrap().notes.clone();
+        let stack = vec![
+            NoteTransform::Gate { amount: 0.5 },
+            NoteTransform::Brush { amount: 0.5 },
+            NoteTransform::Mute { amount: 0.5 },
+            NoteTransform::Stroke {
+                spread_ms: 30.0,
+                direction: auris_core::StrokeDirection::HighToLow,
+            },
+            NoteTransform::Humanize {
+                amount: 0.5,
+                seed: 19,
+            },
+        ];
+        session.set_clip_transforms(clip, stack.clone()).unwrap();
+        let expected: Vec<_> = session
+            .midi_clip(clip)
+            .unwrap()
+            .sounding_notes(session.project().tempo_map.bpm_at(Ticks::ZERO))
+            .collect();
+        assert!(expected.len() > original.len());
+        session.freeze_clip_transforms(clip).unwrap();
+        let frozen = session.midi_clip(clip).unwrap();
+        assert!(frozen.transforms.is_empty());
+        assert_eq!(frozen.sounding_notes(120.0).collect::<Vec<_>>(), expected);
+        assert_eq!(session.undo(), Some(Edit::FreezeClipTransforms));
+        assert_eq!(session.midi_clip(clip).unwrap().notes, original);
+        assert_eq!(session.clip_transforms(clip).unwrap(), stack);
+    }
+
+    #[test]
     fn an_unknown_clip_is_named_in_the_refusal() {
         let (mut session, _, _) = session_with_clip();
         assert!(matches!(
@@ -168,5 +229,36 @@ mod tests {
             Err(SessionError::UnknownClip(9_999))
         ));
         assert!(session.clip_transforms(ClipId(9_999)).is_err());
+    }
+
+    #[test]
+    fn freezing_a_trimmed_phrase_uses_playback_lengths_and_preserves_hidden_notes() {
+        let (mut session, _, clip) = session_with_clip();
+        let target = session.project.midi_clip_mut(clip).unwrap();
+        target.length = Ticks::QUARTER;
+        target.notes = vec![
+            auris_core::Note::new(60, Ticks::ZERO, Ticks::QUARTER * 2),
+            auris_core::Note::new(64, Ticks(1440), Ticks(240)),
+        ];
+        let hidden = target.notes[1].clone();
+        session
+            .set_clip_transforms(
+                clip,
+                vec![
+                    NoteTransform::Gate { amount: 0.5 },
+                    NoteTransform::Brush { amount: 1.0 },
+                ],
+            )
+            .unwrap();
+        let heard: Vec<_> = session
+            .midi_clip(clip)
+            .unwrap()
+            .sounding_notes(120.0)
+            .collect();
+        session.freeze_clip_transforms(clip).unwrap();
+        let frozen = session.midi_clip(clip).unwrap();
+        assert_eq!(frozen.sounding_notes(120.0).collect::<Vec<_>>(), heard);
+        assert_eq!(frozen.notes[1], hidden);
+        assert_eq!(frozen.notes[0].length, Ticks(480));
     }
 }

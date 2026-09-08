@@ -670,6 +670,14 @@ strings! {
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }
     PerformFreeze { en: "Keep the Performance", ja: "演奏を確定" }
+    PerformStroke { en: "Stroke spread", ja: "ストローク幅" }
+    PerformMute { en: "Mute strength", ja: "ミュートの強さ" }
+    PerformBrush { en: "Brush strength", ja: "ブラシの強さ" }
+    PerformSlide { en: "Slide strength", ja: "スライドの強さ" }
+    PerformDirection { en: "Stroke direction", ja: "ストローク方向" }
+    PerformLowToHigh { en: "Low to high", ja: "低音から高音" }
+    PerformHighToLow { en: "High to low", ja: "高音から低音" }
+    PerformAlternate { en: "Alternating", ja: "交互" }
     // Note values. Written as the fraction in both languages, because that is what is printed on
     // every other DAW's grid menu and the words for them are longer than the row is wide.
     SubdivisionEighth { en: "1/8", ja: "1/8" }

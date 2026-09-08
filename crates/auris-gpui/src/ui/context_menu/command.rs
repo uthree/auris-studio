@@ -698,6 +698,13 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Set the pitch order of a chord stroke.
+    SetPerformStrokeDirection {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// Order in which its chord pitches sound.
+        direction: StrokeDirection,
+    },
 
     /// Move a panel to one of the window's edges.
     DockPanel {
@@ -1466,6 +1473,9 @@ impl AurisApp {
             }
             MenuCommand::SetPerformSwingGrid { clip, subdivision } => {
                 self.set_perform_swing_grid(clip, subdivision)
+            }
+            MenuCommand::SetPerformStrokeDirection { clip, direction } => {
+                self.set_perform_stroke_direction(clip, direction)
             }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),

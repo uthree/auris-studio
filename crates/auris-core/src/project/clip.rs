@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::asset::AssetPath;
 use crate::buffer::AudioBuffer;
-use crate::time::{TempoMap, Ticks};
+use crate::time::{SignatureMap, TempoMap, Ticks};
 
 use super::curve::{ClipCurve, CurvePoint, curve_at, curve_events};
 use super::ornament::{Fall, Scoop, Vibrato};
@@ -321,17 +321,39 @@ impl MidiClip {
     /// A pass the loop cuts through keeps the notes that have begun by then and cuts them at the
     /// end, exactly as the clip's own length cuts the pass before it.
     pub fn sounding_notes(&self, bpm: f64) -> impl Iterator<Item = Note> + '_ {
+        self.sounding_notes_with_meter(bpm, SignatureMap::default())
+    }
+
+    /// The performed notes using the project's meter for brush placement.
+    ///
+    /// Playback and export use this entry point; [`Self::sounding_notes`] assumes 4/4.
+    /// A meter is owned by the iterator so callers need not extend a temporary's lifetime.
+    pub fn sounding_notes_with_meter(
+        &self,
+        bpm: f64,
+        signatures: SignatureMap,
+    ) -> impl Iterator<Item = Note> + '_ {
         loop_passes(self.length, self.loop_end)
             .enumerate()
             .flat_map(move |(pass, (offset, span))| {
-                self.playable_notes()
-                    .map(move |note| super::performed(note, &self.transforms, pass as u64, bpm))
-                    .filter(move |note| note.start < span)
-                    .map(move |note| Note {
-                        start: note.start + offset,
-                        length: note.length.min(span - note.start),
-                        ..note
-                    })
+                super::performed_notes(
+                    self.playable_notes().collect(),
+                    &self.transforms,
+                    super::PerformanceContext {
+                        bpm,
+                        pass: pass as u64,
+                        start: self.start + offset,
+                        length: self.length,
+                        signatures: &signatures,
+                    },
+                )
+                .into_iter()
+                .filter(move |note| note.start < span)
+                .map(move |note| Note {
+                    start: note.start + offset,
+                    length: note.length.min(span - note.start),
+                    ..note
+                })
             })
     }
 

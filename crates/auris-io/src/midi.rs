@@ -404,7 +404,10 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             // reading that matches what the renderer does with the same clip. The tempo handed
             // over is the one the renderer reads for the same clip, so a humanised wobble lands
             // on the same ticks in the file as in the mix.
-            for note in clip.sounding_notes(project.tempo_map.bpm_at(clip.start)) {
+            for note in clip.sounding_notes_with_meter(
+                project.tempo_map.bpm_at(clip.start),
+                project.signatures.clone(),
+            ) {
                 count += 1;
                 let start = clip.start + note.start;
                 events.push((start, message(channel, note.pitch, velocity(note.velocity))));
@@ -1027,6 +1030,68 @@ mod tests {
     fn round_trip(project: &Project) -> MidiImport {
         let bytes = write_midi_bytes(project).expect("writable");
         read_midi_bytes(&bytes).expect("readable")
+    }
+
+    #[test]
+    fn articulated_midi_exports_the_same_notes_as_playback_in_compound_time() {
+        let mut project = project_with(
+            vec![
+                Note::new(60, Ticks::ZERO, Ticks(480)),
+                Note::new(64, Ticks::ZERO, Ticks(480)),
+                Note::new(67, Ticks(1920), Ticks(480)),
+            ],
+            Ticks(2880),
+        );
+        project.signatures = auris_core::SignatureMap::constant(TimeSignature::new(6, 8));
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .clips
+            .first_mut()
+            .unwrap();
+        clip.start = Ticks(240);
+        clip.loop_end = Ticks(4500);
+        clip.transforms = vec![
+            auris_core::NoteTransform::Brush { amount: 0.5 },
+            auris_core::NoteTransform::Slide { amount: 0.5 },
+            auris_core::NoteTransform::Mute { amount: 0.5 },
+            auris_core::NoteTransform::Stroke {
+                spread_ms: 40.0,
+                direction: auris_core::StrokeDirection::LowToHigh,
+            },
+            auris_core::NoteTransform::Humanize {
+                amount: 0.5,
+                seed: 23,
+            },
+        ];
+        let mut expected: Vec<_> = clip
+            .sounding_notes_with_meter(120.0, project.signatures.clone())
+            .map(|note| {
+                (
+                    note.start + clip.start,
+                    note.pitch,
+                    note.length,
+                    velocity(note.velocity).as_int(),
+                )
+            })
+            .collect();
+        expected.sort();
+        let imported = round_trip(&project);
+        let mut actual: Vec<_> = imported.tracks[0]
+            .notes
+            .iter()
+            .map(|note| {
+                (
+                    note.start,
+                    note.pitch,
+                    note.length,
+                    velocity(note.velocity).as_int(),
+                )
+            })
+            .collect();
+        actual.sort();
+        assert_eq!(actual, expected);
     }
 
     #[test]

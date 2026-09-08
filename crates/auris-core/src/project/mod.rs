@@ -37,6 +37,7 @@ mod curve;
 /// Stored drum sound assignments, separate from acoustic measurements.
 pub mod drum;
 mod ornament;
+mod performance;
 mod recipe;
 mod routing;
 mod track;
@@ -55,13 +56,14 @@ pub use curve::{
 };
 pub use drum::{DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
+pub use performance::{PerformanceContext, performed_notes};
 pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, Subdivision};
 pub use routing::{AuxSend, EffectSlot, MixerStrip, Output};
 pub use track::{
     AudioTrack, Color, ConsonantLevels, ConsonantWidths, InstrumentTrack, SingerPitch, SingerTake,
     SingerTrack, SingerVoice, Track, TrackKind, default_frame_hop,
 };
-pub use transform::{NoteTransform, performed};
+pub use transform::{NoteTransform, StrokeDirection, performed};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -267,7 +269,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    pub const FORMAT_VERSION: u32 = 21;
+    /// Version 22 adds stroke, mute, brush and slide variants to the stored transform stack.
+    pub const FORMAT_VERSION: u32 = 22;
 
     /// An empty project.
     ///

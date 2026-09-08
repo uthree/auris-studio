@@ -1747,6 +1747,20 @@ pub mod harmony {
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
     //! each time around, which is the one thing baking the wobble into the notes could never do.
     //!
+    //! Articulation is phrase-aware: [`performed_notes`](auris_core::performed_notes) sees
+    //! simultaneous chords and the spaces between them. Stroke spreads a chord in pitch order
+    //! (ascending, descending or alternating), mute adds a short release retrigger, brush recalls
+    //! the last chord on silent metrical beats, and slide connects unambiguous single-note
+    //! attacks with an intermediate pitch. Inserted notes carry no copied lyrics. These are
+    //! note events, so their timbre still comes from the selected instrument.
+    //!
+    //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
+    //! with the project signature map: brushes follow compound beats, bar boundaries and meter
+    //! changes even when a clip starts off the beat. Preparation allocates the performed phrase
+    //! off the audio thread. Humanisation mixes smooth four-beat and one-beat random gestures
+    //! with a smaller independent residual; timing and velocity have separate named streams.
+    //! Nearby notes therefore share a tendency, while seed and loop pass retain reproducibility.
+    //!
     //! The composer performs through the same stack. It writes its text on the grid — swing
     //! excepted, which the groove decides and the writers keep — and installs the feel as
     //! transforms on the clips it delivers: the wander per pitched part, the lean its role
