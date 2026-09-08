@@ -1496,7 +1496,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_vocal_clip_still_counts_as_the_track_that_was_created() {
+    fn a_vocal_fits_even_a_one_beat_section_and_counts_its_track() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
             r#"
@@ -1518,14 +1518,17 @@ mod tests {
             .filter(|track| !track.kind.is_bus())
             .count();
 
-        assert_eq!(report.sung, 0);
+        assert_eq!(report.sung, 1);
         assert_eq!(report.tracks, musical_tracks);
-        assert!(
-            session
-                .project()
-                .tracks
-                .iter()
-                .any(|track| track.kind.is_singer())
-        );
+        let singer = session
+            .project()
+            .tracks
+            .iter()
+            .find_map(|track| track.kind.as_singer())
+            .unwrap();
+        let clip = &singer.clips[0];
+        assert_eq!(clip.length, Ticks::QUARTER);
+        assert_eq!(clip.notes[0].lyric, "あ");
+        assert!(clip.notes[0].end() <= clip.length);
     }
 }

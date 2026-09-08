@@ -203,11 +203,8 @@ impl AurisApp {
     /// One section's box: its name over its words, a live editor where it holds the keyboard
     /// and standing text everywhere else.
     ///
-    /// The margin shows what the words would cost as they are typed: a note count per line —
-    /// one note per mora — and, in the heading, the bars the sung rhythm needs against the
-    /// bars the section has. Measured by the same reading and the same rhythm Write will
-    /// use, so the numbers cannot drift from what happens; words that would outrun the
-    /// section turn the tally the colour of a problem *before* Write quietly cuts them.
+    /// The margin counts moras and checks whether the fixed section can hold the words,
+    /// using the same rhythm allocator as Write.
     fn lyrics_box(&self, dials: &SongDials, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         let Some(spec) = dials.sections.get(index) else {
@@ -240,7 +237,8 @@ impl AurisApp {
                     || expected.lines.contains(&None)
                     || measure.lines.contains(&None)
             });
-        let over = measure.bars > spec.bars || mismatch;
+        let fits = measure.fits_in_bars(dials.meter, spec.bars);
+        let over = fits == Some(false) || mismatch;
         let readable = !measure.lines.contains(&None);
         let show_counts = !words_now.trim().is_empty();
         let counts: Vec<gpui::SharedString> = measure
@@ -260,30 +258,15 @@ impl AurisApp {
             }
             self.t(Key::SongLyricsEstimate)
                 .replace("{notes}", &measure.notes.to_string())
-                .replace("{needed}", &measure.bars.to_string())
                 .replace("{bars}", &spec.bars.to_string())
         });
         let capacity = if readable && measure.notes > 0 {
-            let (key, difference) = match measure.bars.cmp(&spec.bars) {
-                std::cmp::Ordering::Less => (Key::SongLyricsSpare, spec.bars - measure.bars),
-                std::cmp::Ordering::Equal => (Key::SongLyricsFits, 0),
-                std::cmp::Ordering::Greater => (Key::SongLyricsOverflow, measure.bars - spec.bars),
+            let key = if fits == Some(true) {
+                Key::SongLyricsFits
+            } else {
+                Key::SongLyricsOverflow
             };
-            Some(
-                self.t(key)
-                    .replace("{bars}", &difference.to_string())
-                    .replace(
-                        "{notes}",
-                        &measure
-                            .notes
-                            .saturating_sub(
-                                measure
-                                    .notes_within_bars(dials.meter, spec.bars)
-                                    .unwrap_or(0),
-                            )
-                            .to_string(),
-                    ),
-            )
+            Some(self.t(key).to_string())
         } else {
             None
         };
@@ -435,40 +418,13 @@ impl AurisApp {
                 div()
                     .debug_selector(move || format!("song-lyrics-capacity-{index}"))
                     .text_xs()
-                    .text_color(if measure.bars > spec.bars {
+                    .text_color(if fits == Some(false) {
                         theme.danger
                     } else {
                         theme.text_muted
                     })
                     .child(capacity)
             }))
-            .when(
-                readable && measure.notes > 0 && measure.bars != spec.bars,
-                |this| {
-                    this.child(crate::ui::widgets::button(
-                        ("song-fit-lyrics", index),
-                        self.t(Key::SongFitLyrics),
-                        crate::ui::widgets::ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(move |this, _, _, cx| {
-                            let Some(dials) = this.song_sheet.as_ref() else {
-                                return;
-                            };
-                            let Some(section) = dials.sections.get(index) else {
-                                return;
-                            };
-                            let measure = this.session.measure_lyrics(&section.lyrics, dials.meter);
-                            if measure.notes > 0 && !measure.lines.contains(&None) {
-                                this.song_sheet.as_mut().unwrap().sections[index].bars =
-                                    measure.bars;
-                                cx.notify();
-                            }
-                        }),
-                    ))
-                },
-            )
             .when(self.song_advanced, |this| {
                 this.child(crate::ui::widgets::button(
                     ("song-melody-source", index),
@@ -693,7 +649,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn fitting_bars_from_basic_mode_keeps_lyrics_and_other_sections(cx: &mut gpui::TestAppContext) {
+    fn lyrics_in_basic_mode_keep_the_preset_bars(cx: &mut gpui::TestAppContext) {
         for bars in [1, 8] {
             let (app, cx) = crate::harness::open(cx);
             crate::harness::resize(&app, cx, gpui::size(px(1500.0), px(1800.0)));
@@ -719,11 +675,9 @@ mod tests {
                 "the estimate is shown even when it fits"
             );
             let fit: &'static str = Box::leak(format!("song-fit-lyrics-{index}").into_boxed_str());
-            crate::harness::click(fit, cx);
+            assert!(cx.debug_bounds(fit).is_none());
             app.read_with(cx, |this, _| {
-                let mut expected = before.clone();
-                expected.sections[index].bars = 3;
-                assert_eq!(this.song_sheet.as_ref().unwrap(), &expected);
+                assert_eq!(this.song_sheet.as_ref().unwrap(), &before);
             });
         }
     }

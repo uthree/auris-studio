@@ -110,6 +110,94 @@ pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
     VocalRhythm { phrases, length }
 }
 
+/// Fits every syllable into a fixed number of bars, preserving phrase order and breaths.
+///
+/// Phrases receive time in proportion to their syllables, with extra weight for a held
+/// ending and a breath. Boundaries use beats when possible, otherwise sixteenths. Notes
+/// use quarters or eighths where space permits, and sixteenths for denser phrases. Within
+/// each phrase the final syllable is held longer; sparse lyrics leave space between notes
+/// rather than requiring a single syllable to be sustained for several bars.
+/// Returns `None` when even sixteenth notes plus phrase endings and breaths will not fit.
+pub fn vocal_rhythm_in_bars(
+    counts: &[usize],
+    meter: TimeSignature,
+    bars: usize,
+) -> Option<VocalRhythm> {
+    let length = Ticks(
+        meter
+            .ticks_per_bar()
+            .raw()
+            .checked_mul(i64::try_from(bars).ok()?)?,
+    );
+    let sixteenth = TICKS_PER_QUARTER / 4;
+    let total = usize::try_from(length.raw() / sixteenth).ok()?;
+    let counts: Vec<_> = counts.iter().copied().filter(|&count| count > 0).collect();
+    let weights: Vec<_> = counts
+        .iter()
+        .map(|count| count.checked_add(2))
+        .collect::<Option<_>>()?;
+    let needed = weights
+        .iter()
+        .try_fold(0usize, |sum, weight| sum.checked_add(*weight))?;
+    if total == 0 || needed > total {
+        return None;
+    }
+    if counts.is_empty() {
+        return Some(VocalRhythm {
+            phrases: Vec::new(),
+            length,
+        });
+    }
+
+    // Prefer phrase boundaries on the meter's beats, including compound-meter eighths.
+    let beat = (meter.ticks_per_beat().raw() / sixteenth).max(1) as usize;
+    let boundary = if weights.iter().map(|w| w.div_ceil(beat)).sum::<usize>() <= total / beat {
+        beat
+    } else {
+        1
+    };
+    let minimum: Vec<_> = weights.iter().map(|w| w.div_ceil(boundary)).collect();
+    let spare = total / boundary - minimum.iter().sum::<usize>();
+    let mut cumulative = 0;
+    let mut assigned = 0;
+    let mut at = 0;
+    let mut phrases = Vec::with_capacity(counts.len());
+    for ((count, weight), minimum) in counts.iter().zip(&weights).zip(minimum) {
+        cumulative += weight;
+        let share = spare * cumulative / needed;
+        let span = (minimum + share - assigned) * boundary;
+        assigned = share;
+        let step = if span / weight >= 4 {
+            4
+        } else if span / weight >= 2 {
+            2
+        } else {
+            1
+        };
+        let available = span / step;
+        let breath = (available / weight).clamp(1, (beat / step).max(1));
+        let sung = available - breath;
+        let mut slots = Vec::with_capacity(*count);
+        for syllable in 0..*count {
+            let onset = sung * syllable / (count + 1);
+            let end = if syllable + 1 == *count {
+                sung
+            } else {
+                sung * (syllable + 1) / (count + 1)
+            };
+            let duration =
+                ((end - onset) as i64 * step as i64 * sixteenth).min(meter.ticks_per_bar().raw());
+            slots.push((
+                Ticks((at + onset * step) as i64 * sixteenth),
+                Ticks(duration),
+            ));
+        }
+        phrases.push(slots);
+        at += span;
+    }
+    Some(VocalRhythm { phrases, length })
+}
+
 /// The shortest note the vibrato rule sways, in seconds.
 ///
 /// Under half a second there is no room for the sway to grow before the note is over, and a
@@ -397,6 +485,77 @@ mod tests {
     use auris_core::theory::numeral::Numeral;
     use auris_core::theory::pitch::PitchClass;
     use auris_core::theory::scale::ScaleId;
+
+    #[test]
+    fn fitted_rhythm_uses_fixed_bars_and_preserves_every_syllable() {
+        for meter in [
+            TimeSignature::new(4, 4),
+            TimeSignature::new(3, 4),
+            TimeSignature::new(6, 8),
+            TimeSignature::new(7, 8),
+        ] {
+            for counts in [
+                &[3][..],
+                &[6, 5],
+                &[24, 36, 9],
+                &[1, 1, 1, 1, 1, 1, 1, 1, 1],
+            ] {
+                let rhythm = vocal_rhythm_in_bars(counts, meter, 8).unwrap();
+                assert_eq!(rhythm.length, meter.ticks_per_bar() * 8);
+                assert_eq!(rhythm.phrases.len(), counts.len());
+                for (phrase, &count) in rhythm.phrases.iter().zip(counts) {
+                    assert_eq!(phrase.len(), count);
+                    assert!(
+                        phrase
+                            .iter()
+                            .all(|&(at, length)| length >= Ticks(TICKS_PER_QUARTER / 4)
+                                && at + length <= rhythm.length)
+                    );
+                    assert!(
+                        phrase
+                            .windows(2)
+                            .all(|pair| pair[0].0 + pair[0].1 <= pair[1].0)
+                    );
+                }
+                assert!(rhythm.phrases.windows(2).all(|pair| {
+                    let &(at, length) = pair[0].last().unwrap();
+                    pair[1][0].0 - (at + length) >= Ticks(TICKS_PER_QUARTER / 4)
+                }));
+                let &(at, length) = rhythm.phrases.last().unwrap().last().unwrap();
+                assert!((at + length).raw() > rhythm.length.raw() / 2);
+                assert_eq!(rhythm, vocal_rhythm_in_bars(counts, meter, 8).unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn fitted_rhythm_holds_endings_and_compresses_dense_phrases() {
+        let meter = TimeSignature::default();
+        let short = vocal_rhythm_in_bars(&[6, 5], meter, 4).unwrap();
+        let dense = vocal_rhythm_in_bars(&[24, 24], meter, 4).unwrap();
+        assert_eq!(short.length, dense.length);
+        assert!(short.phrases[0][0].1 > dense.phrases[0][0].1);
+        assert!(
+            short
+                .phrases
+                .iter()
+                .flatten()
+                .all(|(at, length)| at.raw() % TICKS_PER_QUARTER == 0
+                    && length.raw() % TICKS_PER_QUARTER == 0)
+        );
+        for phrase in &dense.phrases {
+            assert!(phrase.last().unwrap().1 > phrase[0].1);
+        }
+        assert!(vocal_rhythm_in_bars(&[15], meter, 1).is_none());
+        assert!(vocal_rhythm_in_bars(&[1], meter, 0).is_none());
+        assert!(vocal_rhythm_in_bars(&[usize::MAX], meter, 8).is_none());
+        assert!(
+            vocal_rhythm_in_bars(&[0, 0], meter, 4)
+                .unwrap()
+                .phrases
+                .is_empty()
+        );
+    }
 
     /// C major, tonic chords throughout — the flattest ground to measure on.
     fn c_major() -> Harmony {
