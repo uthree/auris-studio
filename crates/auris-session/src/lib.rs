@@ -43,6 +43,14 @@
 #![warn(missing_docs)]
 
 pub mod audio_review;
+/// Headless composition search and its request/result types.
+///
+/// This function-based command needs no session, audio device or UI. Frontends can prepare a
+/// bounded request and retain the exact generated score through the session boundary.
+pub mod composition_search {
+    pub use auris_compose::search::*;
+}
+
 mod drum_worker;
 pub mod error;
 pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};

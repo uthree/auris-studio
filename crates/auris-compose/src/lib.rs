@@ -15,6 +15,7 @@ pub mod preset;
 pub mod progression;
 pub mod render;
 pub mod rhythm;
+pub mod search;
 pub mod spec;
 pub mod vocal;
 
