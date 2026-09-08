@@ -70,6 +70,29 @@ impl Session {
         }
         let bpm = self.project.tempo_map.bpm_at(target.start);
         let transforms = target.transforms.clone();
+        let bend = target.has_pitch_performance().then(|| {
+            let mut points: Vec<_> = target
+                .bend
+                .iter()
+                .filter(|point| point.at < auris_core::Ticks::ZERO)
+                .copied()
+                .collect();
+            points.extend(target.performed_bend_points(
+                &self.project.tempo_map,
+                &self.project.signatures,
+                0,
+                auris_core::Ticks::ZERO,
+                target.length,
+            ));
+            points.extend(
+                target
+                    .bend
+                    .iter()
+                    .filter(|point| point.at > target.length)
+                    .copied(),
+            );
+            points
+        });
         let performed = auris_core::performed_note_slots(
             target.playable_notes().collect(),
             &transforms,
@@ -109,6 +132,9 @@ impl Session {
         self.record(Edit::FreezeClipTransforms);
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.notes = notes;
+            if let Some(bend) = bend {
+                target.bend = bend;
+            }
             target.transforms.clear();
         }
         self.invalidate_graph();
@@ -221,6 +247,66 @@ mod tests {
         let before = undo_depth(&mut session);
         assert_eq!(session.freeze_clip_transforms(clip).unwrap(), 0);
         assert_eq!(undo_depth(&mut session), before);
+    }
+
+    #[test]
+    fn freezing_pitch_performance_keeps_the_heard_bend_and_undo_restores_authored_points() {
+        let (mut session, _, clip) = session_with_clip();
+        let source = session.midi_clip(clip).unwrap().notes.clone();
+        session.project.midi_clip_mut(clip).unwrap().bend = vec![
+            auris_core::project::CurvePoint {
+                at: Ticks(-960),
+                value: -0.5,
+            },
+            auris_core::project::CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.25,
+            },
+            auris_core::project::CurvePoint {
+                at: Ticks(5000),
+                value: 0.5,
+            },
+        ];
+        let authored = session.midi_clip(clip).unwrap().bend.clone();
+        session
+            .set_clip_transforms(
+                clip,
+                vec![NoteTransform::Pitch {
+                    settings: auris_core::PitchPerformance {
+                        scoop: 1.0,
+                        vibrato: 0.3,
+                        fall: 4.0,
+                        glide_ms: 100.0,
+                        ..auris_core::PitchPerformance::default()
+                    },
+                }],
+            )
+            .unwrap();
+        let heard = session
+            .midi_clip(clip)
+            .unwrap()
+            .sounding_performance_curve_events(
+                auris_core::project::ClipCurve::Bend,
+                auris_core::project::CURVE_STEP,
+                &session.project.tempo_map,
+                &session.project.signatures,
+            );
+        session.freeze_clip_transforms(clip).unwrap();
+        let frozen = session.midi_clip(clip).unwrap();
+        assert!(frozen.transforms.is_empty());
+        assert_eq!(frozen.notes, source);
+        assert_eq!(frozen.bend.first(), authored.first());
+        assert_eq!(frozen.bend.last(), authored.last());
+        assert_eq!(
+            frozen.sounding_curve_events(
+                auris_core::project::ClipCurve::Bend,
+                auris_core::project::CURVE_STEP
+            ),
+            heard
+        );
+        session.undo();
+        assert_eq!(session.midi_clip(clip).unwrap().bend, authored);
+        assert!(session.midi_clip(clip).unwrap().has_pitch_performance());
     }
 
     #[test]

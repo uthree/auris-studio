@@ -28,6 +28,8 @@ use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider}
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PerformDial {
+    /// One parameter of automatic instrument pitch bend.
+    Pitch(crate::ui::pitch_performance::PitchDial),
     /// Independent timing wander.
     ExpressionTiming,
     /// Independent velocity wander.
@@ -94,6 +96,7 @@ impl PerformDial {
     /// the phrase was written or played.
     pub fn label(self) -> Key {
         match self {
+            PerformDial::Pitch(dial) => dial.label(),
             PerformDial::ExpressionTiming => Key::PerformTiming,
             PerformDial::ExpressionVelocity => Key::PerformVelocity,
             PerformDial::PhraseSwell => Key::PerformSwell,
@@ -126,6 +129,7 @@ impl PerformDial {
 /// *joining* the stack.
 pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
+        NoteTransform::Pitch { .. } => 9,
         NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for
@@ -166,6 +170,7 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::Pitch(dial) => dial.fraction(stack),
         PerformDial::ExpressionTiming => expression_settings(stack, 0).timing.clamp(0.0, 1.0),
         PerformDial::ExpressionVelocity => expression_settings(stack, 0).velocity.clamp(0.0, 1.0),
         PerformDial::PhraseSwell => expression_settings(stack, 0).swell.clamp(0.0, 1.0),
@@ -273,6 +278,9 @@ pub fn with_dial(
     seed: u64,
 ) -> Vec<NoteTransform> {
     let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+    if let PerformDial::Pitch(dial) = dial {
+        return dial.change(stack, fraction);
+    }
     if matches!(
         dial,
         PerformDial::GrooveTiming | PerformDial::GrooveVelocity
@@ -358,6 +366,7 @@ pub fn with_dial(
         return with_ghost_settings(stack, settings);
     }
     let replacement = match dial {
+        PerformDial::Pitch(_) => unreachable!(),
         PerformDial::ExpressionTiming
         | PerformDial::ExpressionVelocity
         | PerformDial::PhraseSwell
@@ -460,6 +469,7 @@ fn direction_label(direction: StrokeDirection) -> Key {
 /// What a dial's value button reads, with the swing's straight end in words.
 pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> String {
     match dial {
+        PerformDial::Pitch(dial) => dial.text(stack),
         PerformDial::BeatAccent => format!("{:+.0}%", expression_settings(stack, 0).accent * 100.0),
         PerformDial::PerformanceDelay => {
             format!("{:+.0} ms", expression_settings(stack, 0).delay_ms)
@@ -493,6 +503,7 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
 /// A stable element key per dial, so gpui tells the sliders apart.
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
+        PerformDial::Pitch(dial) => 20 + dial as usize,
         PerformDial::ExpressionTiming => 12,
         PerformDial::ExpressionVelocity => 13,
         PerformDial::PhraseSwell => 14,
@@ -809,6 +820,7 @@ impl AurisApp {
         rows.extend(self.ghost_detail_rows(clip, &stack, cx));
         rows.extend(self.strum_detail_rows(clip, &stack, cx));
         rows.extend(self.expression_detail_rows(clip, &stack, cx));
+        rows.extend(self.pitch_detail_rows(clip, &stack, cx));
         rows
     }
 

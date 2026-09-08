@@ -125,8 +125,13 @@ pub(super) fn schedule_clip(
     // The curves the clip actually carries, sampled the same way and by the same rule — asked of
     // the clip rather than worked out here, so the roll drawing a curve and the renderer playing
     // it read one answer.
-    for which in clip.curves() {
-        for (at, value) in clip.sounding_curve_events(which, auris_core::project::CURVE_STEP) {
+    for which in clip.performance_curves() {
+        for (at, value) in clip.sounding_performance_curve_events(
+            which,
+            auris_core::project::CURVE_STEP,
+            tempo_map,
+            signatures,
+        ) {
             let frame = tempo_map
                 .ticks_to_samples(clip.start + at, sample_rate)
                 .raw();
@@ -456,6 +461,43 @@ mod tests {
             &mut out,
         );
         assert_eq!(out.first().expect("one pass").length, 48_000);
+    }
+
+    #[test]
+    fn generated_pitch_is_scheduled_before_the_attack_and_resets_at_the_end() {
+        let mut project = quarter_note_project();
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        project.midi_clip_mut(clip).unwrap().transforms = vec![auris_core::NoteTransform::Pitch {
+            settings: auris_core::PitchPerformance {
+                scoop: 1.0,
+                fall: 4.0,
+                ..auris_core::PitchPerformance::default()
+            },
+        }];
+        let graph =
+            RenderGraph::build(&project, &AudioSourceBank::new(), &testkit::registry(), 512);
+        let RenderSource::Instrument { events, .. } = &graph.tracks()[0].source else {
+            panic!("instrument")
+        };
+        let on = events
+            .iter()
+            .position(|e| matches!(e.event, NoteEvent::NoteOn { .. }))
+            .unwrap();
+        assert!(events[..on].iter().any(
+            |e| matches!(e.event, NoteEvent::PitchBend { semitones, .. } if semitones == -1.0)
+        ));
+        let bends: Vec<_> = events
+            .iter()
+            .filter_map(|e| {
+                if let NoteEvent::PitchBend { semitones, .. } = e.event {
+                    Some(semitones)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(bends.iter().any(|value| *value < -3.9));
+        assert_eq!(bends.last(), Some(&0.0));
     }
 
     #[test]

@@ -500,6 +500,52 @@ fn paint_f0_curve(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn paint_performed_pitch(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    notes: &[Note],
+    bend: &[CurvePoint],
+    clip_start: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    color: gpui::Hsla,
+) {
+    if bend.is_empty() {
+        return;
+    }
+    for note in notes {
+        let start = note.start;
+        let end = note.end() - Ticks(1);
+        if clip_start + end < view.scroll_ticks
+            || clip_start + start > view.x_to_tick(bounds.size.width)
+        {
+            continue;
+        }
+        let mut points = vec![(start, auris_session::prelude::curve_at(bend, start))];
+        points.extend(
+            bend.iter()
+                .filter(|p| p.at > start && p.at < end)
+                .map(|p| (p.at, p.value)),
+        );
+        points.push((end, auris_session::prelude::curve_at(bend, end)));
+        let drawn: Vec<_> = points
+            .into_iter()
+            .map(|(at, value)| {
+                point(
+                    bounds.origin.x + view.tick_to_x(clip_start + at),
+                    bounds.origin.y
+                        + px(
+                            (pitch_view.top_pitch as f32 - (f32::from(note.pitch) + value) + 0.5)
+                                * pitch_view.row_height,
+                        ),
+                )
+            })
+            .collect();
+        paint::polyline(window, &drawn, px(1.5), color);
+    }
+}
+
 impl AurisApp {
     /// The selected clip's track's sung geometry — pitch contour and phoneme cuts — cached
     /// against the revision.
@@ -570,6 +616,7 @@ impl AurisApp {
         };
         let clip_name = clip.name.clone();
         let notes = self.score_notes();
+        let performed_bend = self.score_preview_bend();
         let singing = self.editing_a_singer_clip();
         let manual_phonemes = self
             .selected_clip
@@ -609,11 +656,15 @@ impl AurisApp {
         let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let lanes: Vec<gpui::AnyElement> = self
-            .panels
-            .curve_lanes()
+        let curve_lanes = if source {
+            self.panels.curve_lanes()
+        } else if !performed_bend.is_empty() {
+            vec![ClipCurve::Bend]
+        } else {
+            Vec::new()
+        };
+        let lanes: Vec<gpui::AnyElement> = curve_lanes
             .into_iter()
-            .filter(|_| source)
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
 
@@ -851,6 +902,18 @@ impl AurisApp {
                                                 singing,
                                                 geometry.is_some() || !manual_phonemes,
                                             );
+                                            if !source && !singing {
+                                                paint_performed_pitch(
+                                                    window,
+                                                    bounds,
+                                                    &notes,
+                                                    &performed_bend,
+                                                    clip_start,
+                                                    &view,
+                                                    &pitch_view,
+                                                    theme.accent,
+                                                );
+                                            }
                                             if let Some(geometry) = &geometry {
                                                 let pitch_spans = note_pitch_spans(
                                                     &notes,
@@ -971,8 +1034,19 @@ impl AurisApp {
         let Some(clip) = self.selected_midi_clip() else {
             return div().into_any_element();
         };
-        let (start, length) = (clip.start, clip.length);
-        let points = clip.curve(which).to_vec();
+        let (start, length) = (
+            clip.start,
+            if self.source_score() {
+                clip.length
+            } else {
+                clip.sounding_length()
+            },
+        );
+        let points = if self.source_score() {
+            clip.curve(which).to_vec()
+        } else {
+            self.score_preview_bend().as_ref().clone()
+        };
         let recorded = self.canvas.curve(which).clone();
 
         div()

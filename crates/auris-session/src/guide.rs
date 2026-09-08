@@ -1776,6 +1776,14 @@ pub mod harmony {
     //! pass. It averages offsets and relative dynamics on a sixteenth-note grid and inserts
     //! the stage before articulation. It neither copies pitches nor retains a live dependency
     //! on the reference. Recapture is explicit and undoable; empty references change nothing.
+    //! [`PitchPerformance`](auris_core::PitchPerformance) is a derived channel bend for
+    //! monophonic instrument clips. It is sampled after the note stages in elapsed seconds,
+    //! added to the authored bend, and reset at gaps and pass ends. Connections meet at the
+    //! two notes' midpoint, replacing conflicting scoop/fall gestures on connected ends.
+    //! Overlapping and short notes are excluded because channel bend cannot distinguish voices.
+    //! `MidiClip::performance_curves` and `sounding_performance_curve_events` are shared by
+    //! the scheduler, MIDI writer and read-only preview. Freezing materialises the first
+    //! pass's combined bend along with its notes; source curves remain untouched otherwise.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,

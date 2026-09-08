@@ -25,9 +25,21 @@ pub(crate) struct ScorePreview {
     revision: u64,
     clip: ClipId,
     notes: Arc<Vec<Note>>,
+    bend: Arc<Vec<CurvePoint>>,
 }
 
 impl AurisApp {
+    /// The cached playback bend, including every loop pass.
+    pub(crate) fn score_preview_bend(&self) -> Arc<Vec<CurvePoint>> {
+        self.score_preview
+            .as_ref()
+            .filter(|preview| {
+                Some(preview.clip) == self.selected_clip
+                    && preview.revision == self.session.revision()
+            })
+            .map(|preview| preview.bend.clone())
+            .unwrap_or_default()
+    }
     pub(crate) fn source_score(&self) -> bool {
         self.score_layer == ScoreLayer::Source
     }
@@ -65,10 +77,24 @@ impl AurisApp {
             )
             .collect(),
         );
+        let bend = Arc::new(
+            clip.sounding_performance_curve_events(
+                ClipCurve::Bend,
+                auris_session::prelude::CURVE_STEP,
+                &self.project().tempo_map,
+                &self.project().signatures,
+            )
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>()
+            .into_iter()
+            .map(|(at, value)| CurvePoint { at, value })
+            .collect(),
+        );
         self.score_preview = Some(ScorePreview {
             revision,
             clip: clip.id,
             notes: notes.clone(),
+            bend,
         });
         notes
     }

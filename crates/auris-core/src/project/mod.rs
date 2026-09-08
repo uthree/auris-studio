@@ -45,7 +45,9 @@ mod strum;
 pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
+mod pitch_performance;
 pub use ghost::{GhostNotes, GhostPattern};
+pub use pitch_performance::PitchPerformance;
 mod recipe;
 mod routing;
 mod track;
@@ -277,8 +279,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 25 adds independent expression and stored MIDI groove templates.
-    pub const FORMAT_VERSION: u32 = 25;
+    /// Version 26 adds non-destructive pitch-bend performance gestures.
+    pub const FORMAT_VERSION: u32 = 26;
 
     /// An empty project.
     ///

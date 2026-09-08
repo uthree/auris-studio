@@ -46,6 +46,11 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Derived channel pitch gestures, evaluated after the note stages.
+    Pitch {
+        /// Scoop, vibrato, fall and bidirectional melodic connections.
+        settings: super::PitchPerformance,
+    },
     /// Independent wander, phrase dynamics and ensemble motion.
     Expression {
         /// The performance settings; the score stays unchanged.
@@ -178,6 +183,7 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
     for transform in transforms {
         note = match transform {
             NoteTransform::Stroke { .. }
+            | NoteTransform::Pitch { .. }
             | NoteTransform::Expression { .. }
             | NoteTransform::Strum { .. }
             | NoteTransform::Ghost { .. }

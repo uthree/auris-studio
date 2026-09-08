@@ -215,7 +215,9 @@ pub mod prelude {
         SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
         TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
     };
-    pub use auris_core::{Expression, GroovePoint, GrooveTemplate, Strum, StrumClock};
+    pub use auris_core::{
+        Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
+    };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
     /// The equalizer's band table, the settings a display reads out of one, and the curve those
@@ -238,7 +240,9 @@ pub mod prelude {
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::plugin::{CC_MODULATION, CONTROLLER_MAX};
-    pub use auris_core::project::{BEND_LIMIT, CONTROLLER_LIMIT, ClipCurve, CurvePoint};
+    pub use auris_core::project::{
+        BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at,
+    };
 
     /// Every chord progression the composer knows by name.
     pub fn progression_catalog() -> &'static [CatalogEntry] {

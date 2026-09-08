@@ -1249,7 +1249,7 @@ pub struct AurisApp {
     pub(crate) tool: RollTool,
     pub(crate) score_layer: ScoreLayer,
     pub(crate) score_preview: Option<ScorePreview>,
-    pub(crate) performance_details: [bool; 3],
+    pub(crate) performance_details: [bool; 4],
     pub(crate) drag: Option<Drag>,
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
@@ -1631,7 +1631,7 @@ impl AurisApp {
             tool: RollTool::default(),
             score_layer: ScoreLayer::default(),
             score_preview: None,
-            performance_details: [false; 3],
+            performance_details: [false; 4],
             drag: None,
             panels: PanelLayout::load(),
             status,

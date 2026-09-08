@@ -674,6 +674,15 @@ strings! {
     PerformHeading { en: "Performance", ja: "演奏" }
     PerformStrumSettings { en: "Strum settings", ja: "ストロークの詳細" }
     PerformExpressionSettings { en: "Expression & groove", ja: "表情・グルーヴの詳細" }
+    PerformPitchSettings { en: "Pitch gestures", ja: "ピッチの表情" }
+    PerformPitchScoop { en: "Scoop depth", ja: "しゃくりの深さ" }
+    PerformPitchScoopTime { en: "Scoop duration", ja: "しゃくりの長さ" }
+    PerformPitchVibrato { en: "Vibrato depth", ja: "ビブラートの深さ" }
+    PerformPitchRate { en: "Vibrato rate", ja: "ビブラートの速さ" }
+    PerformPitchDelay { en: "Vibrato delay", ja: "ビブラート開始まで" }
+    PerformPitchFall { en: "Fall depth", ja: "フォールの深さ" }
+    PerformPitchFallTime { en: "Fall duration", ja: "フォールの長さ" }
+    PerformPitchGlide { en: "Melodic connection", ja: "音程の滑らかなつなぎ" }
     PerformTiming { en: "Timing variation", ja: "タイミングの揺らぎ" }
     PerformVelocity { en: "Velocity variation", ja: "ベロシティの揺らぎ" }
     PerformSwell { en: "Phrase swell", ja: "フレーズの抑揚" }

@@ -87,5 +87,31 @@ nominal velocity scale is 6% of the written velocity.
 the score and clears all performance stages. It is undoable. A frozen loop repeats that take.
 Generated-clip recipe freezing is a separate control.
 
-Saved projects use format version 25 for expression and groove templates. Current builds read
+## Automatic pitch gestures
+
+On an instrument clip, open **Pitch gestures** in Performance. Scoop and fall have separate
+depth and duration controls. Vibrato has depth, rate in Hz, and onset delay; it fades in over
+100 ms and fades out toward the release. Melodic connection controls the duration on each
+side of a note change: the outgoing note bends toward the midpoint of the two pitches, and
+the incoming note starts at that same pitch and settles onto its own. Ascending and descending
+lines use the same rule. Connected ends use this transition instead of a scoop or fall.
+
+Use a monophonic instrument track: channel pitch bend affects every sounding voice on it.
+Overlapping notes, chords and notes shorter than 80 ms receive no generated gesture. Connections
+stop at gaps over 60 ms or intervals over two octaves. Each attack/release gesture is capped
+at half the note's duration. Duration and vibrato rate follow actual elapsed time, including
+tempo changes. The generated bend follows the final performed notes, including humanisation,
+and is added to the authored bend within the existing +/-12-semitone range.
+
+The **Performance** tab shows the resulting pitch line and a read-only bend lane, including
+loop repeats. Controls update both immediately. Source notes and hand-drawn curves remain
+unchanged until **Keep the Performance** writes the first pass's bend as editable points.
+Undo restores the original notes, points and controls. Gaps and clip/loop ends reset generated
+bend; written bend values still apply in gaps. MIDI export includes these curves and selects
+a +/-12-semitone range with RPN 0 when needed, so deep falls survive export and reimport.
+Built-in instruments and CLAP note-expression instruments receive bends in semitones.
+Live VST3 and MIDI-only CLAP playback retain the host's existing +/-2-semitone range;
+the deeper control range is audible with instruments that accept it.
+
+Saved projects use format version 26 for generated pitch gestures. Current builds read
 older clips with their existing defaults; older builds must reject this newer format.
