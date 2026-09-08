@@ -62,6 +62,8 @@ impl Section {
                 Key::ThemeVelocityPalette,
                 Key::ThemeVelocitySoft,
                 Key::ThemeVelocityLoud,
+                Key::ThemeVelocityAdd,
+                Key::ThemeVelocityPosition,
             ],
             Self::Language => &[
                 Key::LanguageHeading,

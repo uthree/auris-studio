@@ -1177,10 +1177,14 @@ instrument, drums, singer, audio or bus. The library uses the corresponding colo
 sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
 colour. Changing the theme updates their appearance without changing the saved project.
 
-Piano-roll note colours use each theme's velocity gradient, from cool soft notes through green
-and yellow to warm loud notes. The theme editor offers both endpoints and a gradient preview.
+Piano-roll note colours use each theme's velocity gradient. The theme editor offers both
+endpoints, intermediate points with editable positions (%) and colours, and a live preview.
+Points can be added and removed; positions must be distinct and strictly between 0 and 100%.
+Colours interpolate along the shortest hue arc between adjacent points. GitHub presets use
+blue, purple and red, with no green in their track palettes, playback indicators or meters.
 Blank endpoints follow the instrument and drum palette slots; explicit colours survive a base
-theme change. Changing these colours only changes the display, not note velocities.
+theme change. Inherited intermediate points follow the base until edited.
+Changing these colours only changes the display, not note velocities.
 The displayed gradient adjusts lightness to stay visible against both piano-roll lane shades.
 
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,

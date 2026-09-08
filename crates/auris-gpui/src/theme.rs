@@ -8,6 +8,20 @@
 
 use gpui::{Font, FontFallbacks, Hsla, Pixels, hsla, px, rgb};
 
+/// An interior velocity-gradient control point, stored independently of the UI toolkit.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct GradientStop {
+    /// Position between the soft (zero) and loud (one) endpoints, exclusive.
+    pub position: f32,
+    /// Opaque colour packed as `0xRRGGBB`.
+    pub color: u32,
+}
+
+/// Default hue for playback and meter headroom in older custom themes.
+pub const fn default_positive_hue() -> f32 {
+    0.38
+}
+
 /// The font every panel draws in, with fallbacks for scripts the base family has no glyphs for.
 ///
 /// The base family is each platform's own interface font, named rather than left to a
@@ -77,6 +91,10 @@ pub struct Scheme<'a> {
     pub track_palette: [Option<u32>; 8],
     /// Piano-roll gradient endpoints: soft then loud; blank entries use instrument/drum slots.
     pub velocity_palette: [Option<u32>; 2],
+    /// Interior control points, ordered by increasing position.
+    pub velocity_stops: &'a [GradientStop],
+    /// Hue used by playback and meter headroom indicators.
+    pub positive_hue: f32,
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
@@ -90,6 +108,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x5fc9a3,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0xe0b452,
+            },
+        ],
         velocity_palette: [Some(0x4f9dde), Some(0xd97b6c)],
         track_palette: [
             Some(0x4f9dde),
@@ -115,6 +144,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
         id: "graphite",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0xa8b78b,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0xb6ad79,
+            },
+        ],
         velocity_palette: [Some(0x8eafa0), Some(0xce8176)],
         track_palette: [
             Some(0xdd9f60),
@@ -141,6 +181,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // taken downwards.
     Scheme {
         id: "daylight",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x267e70,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0x946c20,
+            },
+        ],
         velocity_palette: [Some(0x246caa), Some(0xb4474e)],
         track_palette: [
             Some(0x246caa),
@@ -167,6 +218,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // yellow the greys sit on.
     Scheme {
         id: "parchment",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x647849,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0x8a651c,
+            },
+        ],
         velocity_palette: [Some(0x416d87), Some(0xa24b3e)],
         track_palette: [
             Some(0x26766d),
@@ -195,6 +257,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
         id: "one-dark",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x98c379,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0xe5c07b,
+            },
+        ],
         velocity_palette: [Some(0x61afef), Some(0xe06c75)],
         track_palette: [
             Some(0x61afef),
@@ -222,6 +295,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // one recognisable as itself.
     Scheme {
         id: "one-light",
+        positive_hue: 0.38,
+        velocity_stops: &[
+            GradientStop {
+                position: 0.4,
+                color: 0x438742,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0x986801,
+            },
+        ],
         velocity_palette: [Some(0x3671f1), Some(0xe03d2e)],
         track_palette: [
             Some(0x3671f1),
@@ -248,10 +332,15 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // link blue #58a6ff at full saturation.
     Scheme {
         id: "github-dark",
+        positive_hue: 0.60,
+        velocity_stops: &[GradientStop {
+            position: 0.5,
+            color: 0xa371f7,
+        }],
         velocity_palette: [Some(0x58a6ff), Some(0xff7b72)],
         track_palette: [
             Some(0x58a6ff),
-            Some(0x7ee787),
+            Some(0xd2a8ff),
             Some(0xff7b72),
             Some(0xd29922),
             Some(0xa371f7),
@@ -275,10 +364,15 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // cut into the window at exactly the window's colour.
     Scheme {
         id: "github-light",
+        positive_hue: 0.60,
+        velocity_stops: &[GradientStop {
+            position: 0.5,
+            color: 0x8250df,
+        }],
         velocity_palette: [Some(0x0969da), Some(0xcf222e)],
         track_palette: [
             Some(0x0969da),
-            Some(0x1a7f37),
+            Some(0x6639ba),
             Some(0xcf222e),
             Some(0x9a6700),
             Some(0x8250df),
@@ -336,8 +430,8 @@ impl Scheme<'_> {
     /// One of the colours that mean something — a meter, the playhead — at a lightness that
     /// shows against this scheme's background.
     ///
-    /// Their hues are fixed across every scheme, because they are not decoration: green means
-    /// headroom and red means clipping wherever you are.
+    /// Warning and clipping hues keep their meanings across schemes. Playback and meter
+    /// headroom can use a scheme's positive hue, including blue in the GitHub presets.
     fn signal(&self, hue: f32, saturation: f32) -> Hsla {
         let lightness = if self.direction() > 0.0 { 0.60 } else { 0.44 };
         hsla(hue, saturation, lightness, 1.0)
@@ -543,6 +637,8 @@ pub struct Theme {
     pub velocity_soft: Hsla,
     /// Loud endpoint before lane-contrast adjustment.
     pub velocity_loud: Hsla,
+    /// Resolved interior gradient control points, ordered by position.
+    pub velocity_stops: Vec<(f32, Hsla)>,
     /// Resolved track, clip and library colours, indexed by the document palette.
     pub track_palette: [Hsla; 8],
 }
@@ -608,7 +704,7 @@ impl Theme {
                 s: accent.s * 0.6,
                 ..accent
             },
-            playing: scheme.signal(0.38, 0.52),
+            playing: scheme.signal(scheme.positive_hue, 0.52),
             playhead: scheme.signal(0.02, 0.85),
             // A signal rather than a shade, so it lands at the lightness this scheme reserves for
             // colours that have to be read against its background — which is what a status line
@@ -617,7 +713,7 @@ impl Theme {
             // Amber, a third of the way round from the red: far enough that the two are told
             // apart at a glance in a list where they sit one line above the other.
             warning: scheme.signal(0.11, 0.78),
-            meter_low: scheme.signal(0.38, 0.52),
+            meter_low: scheme.signal(scheme.positive_hue, 0.52),
             meter_mid: scheme.signal(0.14, 0.62),
             meter_high: scheme.signal(0.01, 0.68),
             solo: scheme.signal(0.12, 0.72),
@@ -633,6 +729,11 @@ impl Theme {
             // Resolved below, once the palette is available for blank custom endpoints.
             velocity_soft: accent,
             velocity_loud: accent,
+            velocity_stops: scheme
+                .velocity_stops
+                .iter()
+                .map(|stop| (stop.position, rgb(stop.color).into()))
+                .collect(),
         };
         theme.track_palette = std::array::from_fn(|index| {
             scheme.track_palette[index].map_or_else(
@@ -677,16 +778,32 @@ impl Theme {
     /// was tried here first and is not enough: velocity 0.8 and velocity 1.0 differ by a few per
     /// cent of lightness, which is invisible next to a note an octave away on a different row.
     ///
-    /// Hues descend through green and yellow from the presets' cool end to their warm end.
-    /// Wrapping across red's zero boundary keeps a rose-red endpoint from reversing the ramp
-    /// through purple. Saturation and lightness interpolate between the theme's endpoints.
+    /// Adjacent control points interpolate along the shortest hue arc, with linear saturation
+    /// and lightness. Presets choose their intermediate colours explicitly.
     /// Lightness is then adjusted to keep the fill visible against both piano-roll lane shades.
     pub fn velocity_color(&self, velocity: f32) -> Hsla {
-        let amount = velocity.clamp(0.0, 1.0);
-        let (soft, loud) = (self.velocity_soft, self.velocity_loud);
+        let position = velocity.clamp(0.0, 1.0);
+        let mut left = (0.0, self.velocity_soft);
+        let mut right = (1.0, self.velocity_loud);
+        for &(at, color) in &self.velocity_stops {
+            if at >= position {
+                right = (at, color);
+                break;
+            }
+            left = (at, color);
+        }
+        let amount = (position - left.0) / (right.0 - left.0);
+        let (mut soft, mut loud) = (left.1, right.1);
+        // Achromatic stops borrow their neighbour's hue instead of introducing a red detour.
+        if soft.s < 1e-5 {
+            soft.h = loud.h;
+        }
+        if loud.s < 1e-5 {
+            loud.h = soft.h;
+        }
         let between = |from: f32, to: f32| from + (to - from) * amount;
         let mut color = Hsla {
-            h: (soft.h - (soft.h - loud.h).rem_euclid(1.0) * amount).rem_euclid(1.0),
+            h: (soft.h + ((loud.h - soft.h + 0.5).rem_euclid(1.0) - 0.5) * amount).rem_euclid(1.0),
             s: between(soft.s, loud.s),
             l: between(soft.l, loud.l),
             a: between(soft.a, loud.a),
@@ -1008,26 +1125,22 @@ mod tests {
             assert!(same(theme.velocity_color(-1.0), theme.velocity_soft));
             assert!(same(theme.velocity_color(9.0), theme.velocity_loud));
 
-            // The hue has to move, and move steadily: this is the whole difference from the
-            // brightness ramp it replaced, where velocity 0.8 and 1.0 were the same rectangle.
+            // The ramp must visit its declared intermediate hues without discontinuities.
+            for stop in scheme.velocity_stops {
+                let expected: Hsla = rgb(stop.color).into();
+                assert!((theme.velocity_color(stop.position).h - expected.h).abs() < 1e-4);
+            }
             let hues: Vec<f32> = (0..=10)
                 .map(|step| theme.velocity_color(step as f32 / 10.0).h)
                 .collect();
             for pair in hues.windows(2) {
-                let step = (pair[0] - pair[1]).rem_euclid(1.0);
+                let step = ((pair[0] - pair[1] + 0.5).rem_euclid(1.0) - 0.5).abs();
                 assert!(
-                    step > 0.0 && step < 0.1,
-                    "{}: the ramp doubles back: {hues:?}",
+                    step > 0.0 && step < 0.15,
+                    "{}: the ramp jumps or stops changing: {hues:?}",
                     scheme.id
                 );
             }
-            // Down through green and yellow, not up through purple. Both connect blue to red; only
-            // one of them says "louder".
-            let middle = theme.velocity_color(0.5).h;
-            assert!(
-                (0.15..0.45).contains(&middle),
-                "half velocity came out at hue {middle}, which is not on the warm side of green"
-            );
             let ramp =
                 std::array::from_fn::<_, 11, _>(|step| theme.velocity_color(step as f32 / 10.0));
             assert!(
@@ -1036,6 +1149,78 @@ mod tests {
                 scheme.id
             );
             ramps.push(ramp);
+        }
+    }
+
+    #[test]
+    fn gradient_segments_follow_positions_and_take_the_short_hue_arc() {
+        let mut custom = crate::appearance::CustomScheme::from_scheme(
+            "test-gradient".into(),
+            "Test gradient".into(),
+            &SCHEMES[0],
+        );
+        custom.velocity_palette = [Some(0xff0000), Some(0xff00ff)];
+        custom.velocity_stops = vec![
+            GradientStop {
+                position: 0.25,
+                color: 0xffff00,
+            },
+            GradientStop {
+                position: 0.75,
+                color: 0x00ffff,
+            },
+        ];
+        let theme = Theme::from_scheme(&custom.definition());
+        for (position, hue) in [
+            (0.125, 1.0 / 12.0),
+            (0.25, 1.0 / 6.0),
+            (0.5, 1.0 / 3.0),
+            (0.75, 0.5),
+        ] {
+            assert!((theme.velocity_color(position).h - hue).abs() < 1e-4);
+        }
+        custom.velocity_stops.clear();
+        let theme = Theme::from_scheme(&custom.definition());
+        assert!((theme.velocity_color(0.5).h - 11.0 / 12.0).abs() < 1e-4);
+        // A grey endpoint must not force an otherwise blue gradient through red.
+        custom.velocity_palette = [Some(0xaaaaaa), Some(0x0000ff)];
+        let theme = Theme::from_scheme(&custom.definition());
+        assert!((theme.velocity_color(0.5).h - 2.0 / 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn github_presets_and_their_custom_copies_do_not_use_green() {
+        for scheme in SCHEMES
+            .iter()
+            .filter(|scheme| scheme.id.starts_with("github-"))
+        {
+            let custom = crate::appearance::CustomScheme::from_scheme(
+                "test-copy".into(),
+                "Test copy".into(),
+                scheme,
+            );
+            for theme in [
+                Theme::from_scheme(scheme),
+                Theme::from_scheme(&custom.definition()),
+            ] {
+                for color in theme
+                    .track_palette
+                    .into_iter()
+                    .chain([
+                        theme.playing,
+                        theme.meter_low,
+                        theme.meter_mid,
+                        theme.meter_high,
+                    ])
+                    .chain((0..=127).map(|velocity| theme.velocity_color(velocity as f32 / 127.0)))
+                {
+                    assert!(
+                        !(0.18..0.49).contains(&color.h),
+                        "{} contains green: {color:?}",
+                        scheme.id
+                    );
+                }
+            }
         }
     }
 

@@ -351,6 +351,92 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
         Appearance::load().custom_schemes[0].velocity_palette,
         SCHEMES[1].velocity_palette
     );
+    assert_eq!(
+        Appearance::load().custom_schemes[0].velocity_stops,
+        SCHEMES[1].velocity_stops
+    );
+}
+
+#[gpui::test]
+fn intermediate_gradient_points_edit_validate_persist_and_delete(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
+    let (app, handle, mut cx) = open_appearance_settings(cx);
+    let _restore = RestoreAppearance(Appearance::load());
+    let cx = &mut cx;
+    let project = app.read_with(cx, |this, _| this.project().clone());
+    let before = app.read_with(cx, |this, _| this.theme.velocity_color(0.6));
+    crate::harness::click("create-theme", cx);
+    cx.simulate_input("Intermediate points");
+    crate::harness::click("add-velocity-stop", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("60");
+    // Tab must switch the input handler as well as the visible focus.
+    cx.simulate_keystrokes("tab secondary-a");
+    cx.simulate_input("#ABCDEF");
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.theme.velocity_color(0.6), before)
+    });
+    crate::harness::click("theme-base", cx);
+    cx.simulate_keystrokes("home down down down down down down enter");
+    crate::harness::click("save-theme", cx);
+    let saved = Appearance::load();
+    let stops = &saved.custom_schemes[0].velocity_stops;
+    assert_eq!(
+        stops.iter().map(|stop| stop.position).collect::<Vec<_>>(),
+        vec![0.4, 0.6, 0.75]
+    );
+    assert_eq!(stops[1].color, 0xabcdef);
+    app.read_with(cx, |this, _| {
+        let expected: gpui::Hsla = gpui::rgb(0xabcdef).into();
+        assert!((this.theme.velocity_color(0.6).h - expected.h).abs() < 1e-4);
+        assert_eq!(this.project(), &project);
+    });
+
+    crate::harness::click("edit-theme", cx);
+    for invalid in ["60", "0", "100", "NaN"] {
+        crate::harness::click("theme-velocity-stop-0-0", cx);
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input(invalid);
+        crate::harness::click("save-theme", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert!(this.appearance_editor.is_some());
+                assert_eq!(this.appearance, saved);
+            })
+            .unwrap();
+    }
+    crate::harness::click("theme-velocity-stop-0-0", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("20");
+    crate::harness::click("theme-velocity-stop-0-1", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#12");
+    crate::harness::click("save-theme", cx);
+    assert_eq!(Appearance::load(), saved);
+    crate::harness::click("theme-velocity-stop-0-1", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#D2A8FF");
+    crate::harness::click("remove-velocity-stop-1", cx);
+    crate::harness::click("save-theme", cx);
+    assert_eq!(
+        Appearance::load().custom_schemes[0]
+            .velocity_stops
+            .iter()
+            .map(|stop| stop.position)
+            .collect::<Vec<_>>(),
+        vec![0.2, 0.75]
+    );
+
+    crate::harness::click("edit-theme", cx);
+    crate::harness::click("remove-velocity-stop-0", cx);
+    crate::harness::click("remove-velocity-stop-0", cx);
+    crate::harness::click("save-theme", cx);
+    assert!(
+        Appearance::load().custom_schemes[0]
+            .velocity_stops
+            .is_empty()
+    );
+    app.read_with(cx, |this, _| assert_eq!(this.project(), &project));
 }
 
 #[gpui::test]

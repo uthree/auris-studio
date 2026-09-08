@@ -2,6 +2,25 @@
 
 use super::*;
 use crate::appearance::{Appearance, CustomScheme};
+use crate::theme::GradientStop;
+use gpui::SharedString;
+
+struct GradientFields {
+    fields: [TextField; 2],
+    focus: [Option<FocusHandle>; 3],
+}
+
+impl GradientFields {
+    fn new(stop: &GradientStop) -> Self {
+        Self {
+            fields: [
+                TextField::new((stop.position * 100.0).to_string()),
+                palette_field(Some(stop.color)),
+            ],
+            focus: [None, None, None],
+        }
+    }
+}
 
 /// The editable part of a theme, kept separate from the applied preferences.
 pub(super) struct AppearanceEditor {
@@ -11,6 +30,7 @@ pub(super) struct AppearanceEditor {
     accent: TextField,
     palette: [TextField; 8],
     velocity: [TextField; 2],
+    stops: Vec<GradientFields>,
     active: ThemeField,
 }
 
@@ -20,6 +40,7 @@ enum ThemeField {
     Accent,
     Palette(usize),
     Velocity(usize),
+    Stop(usize, usize),
 }
 
 const PALETTE_FIELDS: [&str; 8] = [
@@ -67,6 +88,19 @@ impl AppearanceEditor {
                 *field = palette_field(next.velocity_palette[index]);
             }
         }
+        if self
+            .parsed_stops()
+            .is_ok_and(|stops| stops == previous.velocity_stops)
+        {
+            self.stops = next
+                .velocity_stops
+                .iter()
+                .map(GradientFields::new)
+                .collect();
+            if matches!(self.active, ThemeField::Stop(..)) {
+                self.active = ThemeField::Name;
+            }
+        }
         self.base = id;
     }
 
@@ -76,6 +110,7 @@ impl AppearanceEditor {
             ThemeField::Accent => &mut self.accent,
             ThemeField::Palette(index) => &mut self.palette[index],
             ThemeField::Velocity(index) => &mut self.velocity[index],
+            ThemeField::Stop(index, component) => &mut self.stops[index].fields[component],
         }
     }
 
@@ -85,7 +120,39 @@ impl AppearanceEditor {
             ThemeField::Accent => &self.accent,
             ThemeField::Palette(index) => &self.palette[index],
             ThemeField::Velocity(index) => &self.velocity[index],
+            ThemeField::Stop(index, component) => &self.stops[index].fields[component],
         }
+    }
+
+    fn parsed_stops(&self) -> Result<Vec<GradientStop>, Key> {
+        let mut stops = self
+            .stops
+            .iter()
+            .map(|row| {
+                let position = row.fields[0]
+                    .content()
+                    .trim()
+                    .parse::<f32>()
+                    .map_err(|_| Key::ThemeVelocityInvalid)?
+                    / 100.0;
+                if !position.is_finite() || position <= 0.0 || position >= 1.0 {
+                    return Err(Key::ThemeVelocityInvalid);
+                }
+                Ok(GradientStop {
+                    position,
+                    color: parse_colour(row.fields[1].content())
+                        .ok_or(Key::ThemeVelocityInvalid)?,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        stops.sort_by(|left, right| left.position.total_cmp(&right.position));
+        if stops
+            .windows(2)
+            .any(|pair| pair[0].position == pair[1].position)
+        {
+            return Err(Key::ThemeVelocityInvalid);
+        }
+        Ok(stops)
     }
 
     fn draft(&self, appearance: &Appearance) -> Result<CustomScheme, Key> {
@@ -103,7 +170,6 @@ impl AppearanceEditor {
         if duplicate {
             return Err(Key::ThemeNameExists);
         }
-        let accent = parse_colour(self.accent.content()).ok_or(Key::ThemeAccentInvalid)?;
         let base = appearance
             .scheme_definition(&self.base)
             .ok_or(Key::ThemeInvalid)?;
@@ -112,7 +178,22 @@ impl AppearanceEditor {
             .clone()
             .unwrap_or_else(|| next_theme_id(appearance));
         let mut draft = CustomScheme::from_scheme(id, name.to_owned(), &base);
-        draft.accent = accent;
+        self.apply_colors(&mut draft)?;
+        draft.validate().map_err(|_| Key::ThemeInvalid)?;
+        Ok(draft)
+    }
+
+    fn preview(&self, appearance: &Appearance) -> Result<Theme, Key> {
+        let base = appearance
+            .scheme_definition(&self.base)
+            .ok_or(Key::ThemeInvalid)?;
+        let mut draft = CustomScheme::from_scheme(String::new(), String::new(), &base);
+        self.apply_colors(&mut draft)?;
+        Ok(Theme::from_scheme(&draft.definition()))
+    }
+
+    fn apply_colors(&self, draft: &mut CustomScheme) -> Result<(), Key> {
+        draft.accent = parse_colour(self.accent.content()).ok_or(Key::ThemeAccentInvalid)?;
         for (index, field) in self.palette.iter().enumerate() {
             draft.track_palette[index] = if field.content().trim().is_empty() {
                 None
@@ -127,8 +208,8 @@ impl AppearanceEditor {
                 Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
             };
         }
-        draft.validate().map_err(|_| Key::ThemeInvalid)?;
-        Ok(draft)
+        draft.velocity_stops = self.parsed_stops()?;
+        Ok(())
     }
 }
 
@@ -266,6 +347,11 @@ impl SettingsWindow {
             accent: TextField::new(format!("#{:06X}", copy.accent)),
             palette: copy.track_palette.map(palette_field),
             velocity: copy.velocity_palette.map(palette_field),
+            stops: copy
+                .velocity_stops
+                .iter()
+                .map(GradientFields::new)
+                .collect(),
             active: ThemeField::Name,
         });
         let focus = self
@@ -334,10 +420,8 @@ impl SettingsWindow {
         let editor = self.appearance_editor.as_ref().expect("the editor is open");
         let base = editor.base.clone();
         let draft = editor.draft(&self.appearance);
-        let preview = draft
-            .as_ref()
-            .map(|s| Theme::from_scheme(&s.definition()))
-            .unwrap_or(theme.clone());
+        let preview = editor.preview(&self.appearance).unwrap_or(theme.clone());
+        let stop_count = editor.stops.len();
         let base_picker = self.dropdown(
             "theme-base",
             self.scheme_choices(),
@@ -415,6 +499,19 @@ impl SettingsWindow {
                         }),
                 ),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .children((0..stop_count).map(|index| self.gradient_stop_row(index, cx))),
+            )
+            .child(self.appearance_button(
+                "add-velocity-stop",
+                Key::ThemeVelocityAdd,
+                |this, window, cx| this.add_gradient_stop(window, cx),
+                cx,
+            ))
             .child(
                 div()
                     .flex()
@@ -506,24 +603,133 @@ impl SettingsWindow {
         .into_any_element()
     }
 
-    fn theme_text_field(&mut self, field: ThemeField, cx: &mut Context<Self>) -> AnyElement {
-        let id = match field {
-            ThemeField::Name => "theme-name",
-            ThemeField::Accent => "theme-accent",
-            ThemeField::Palette(index) => PALETTE_FIELDS[index],
-            ThemeField::Velocity(index) => VELOCITY_FIELDS[index],
+    fn add_gradient_stop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = &mut self.appearance_editor else {
+            return;
         };
-        let focus = self
-            .dropdown_focus
-            .entry(id)
-            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+        let stops = match editor.parsed_stops() {
+            Ok(stops) => stops,
+            Err(key) => {
+                self.status = self.t(key).to_owned();
+                cx.notify();
+                return;
+            }
+        };
+        let positions: Vec<_> = std::iter::once(0.0)
+            .chain(stops.iter().map(|stop| stop.position))
+            .chain(std::iter::once(1.0))
+            .collect();
+        let gap = positions
+            .windows(2)
+            .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
+            .expect("the endpoints always enclose a gap");
+        let position = (gap[0] + gap[1]) * 0.5;
+        let preview = editor
+            .preview(&self.appearance)
+            .unwrap_or_else(|_| self.theme.clone());
+        let color: gpui::Rgba = preview.velocity_color(position).into();
+        let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
+        let mut row = GradientFields::new(&GradientStop {
+            position,
+            color: (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b),
+        });
+        let focus = cx.focus_handle().tab_stop(true);
+        row.focus[0] = Some(focus.clone());
+        editor.active = ThemeField::Stop(editor.stops.len(), 0);
+        editor.stops.push(row);
+        window.focus(&focus);
+        cx.notify();
+    }
+
+    fn gradient_stop_row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+        let editor = self.appearance_editor.as_mut().expect("the editor is open");
+        let focus = editor.stops[index].focus[2]
+            .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
+        div()
+            .flex()
+            .items_end()
+            .gap_2()
+            .child(
+                div()
+                    .w(px(110.0))
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_xs().child(self.t(Key::ThemeVelocityPosition)))
+                    .child(self.theme_text_field(ThemeField::Stop(index, 0), cx)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(div().text_xs().child(self.t(Key::ThemeVelocityColor)))
+                    .child(self.theme_text_field(ThemeField::Stop(index, 1), cx)),
+            )
+            .child(
+                button(
+                    SharedString::from(format!("remove-velocity-stop-{index}")),
+                    self.t(Key::ThemeVelocityRemove),
+                    ButtonStyle::Normal,
+                    false,
+                    self.theme.accent,
+                    &self.theme,
+                    cx.listener(move |this, _, window, cx| {
+                        if let Some(editor) = &mut this.appearance_editor {
+                            editor.stops.remove(index);
+                            editor.active = ThemeField::Name;
+                        }
+                        if let Some(focus) = this.dropdown_focus.get("theme-name") {
+                            window.focus(focus);
+                        }
+                        cx.notify();
+                    }),
+                )
+                .track_focus(&focus)
+                .tab_index(0)
+                .focus(|el| el.border_color(self.theme.accent)),
+            )
+            .into_any_element()
+    }
+
+    fn theme_text_field(&mut self, field: ThemeField, cx: &mut Context<Self>) -> AnyElement {
+        let static_id = match field {
+            ThemeField::Name => Some("theme-name"),
+            ThemeField::Accent => Some("theme-accent"),
+            ThemeField::Palette(index) => Some(PALETTE_FIELDS[index]),
+            ThemeField::Velocity(index) => Some(VELOCITY_FIELDS[index]),
+            ThemeField::Stop(..) => None,
+        };
+        let (id, focus): (SharedString, FocusHandle) = if let Some(id) = static_id {
+            (
+                id.into(),
+                self.dropdown_focus
+                    .entry(id)
+                    .or_insert_with(|| cx.focus_handle().tab_stop(true))
+                    .clone(),
+            )
+        } else if let ThemeField::Stop(index, component) = field {
+            let editor = self.appearance_editor.as_mut().expect("the editor is open");
+            (
+                format!("theme-velocity-stop-{index}-{component}").into(),
+                editor.stops[index].focus[component]
+                    .get_or_insert_with(|| cx.focus_handle().tab_stop(true))
+                    .clone(),
+            )
+        } else {
+            unreachable!()
+        };
         let editor = self.appearance_editor.as_ref().expect("the editor is open");
         let text = match field {
             ThemeField::Name => &editor.name,
             ThemeField::Accent => &editor.accent,
             ThemeField::Palette(index) => &editor.palette[index],
             ThemeField::Velocity(index) => &editor.velocity[index],
+            ThemeField::Stop(index, component) => &editor.stops[index].fields[component],
         };
         let active = editor.active == field;
         let contents = if active {
@@ -541,8 +747,8 @@ impl SettingsWindow {
                 .into_any_element()
         };
         div()
-            .id(id)
-            .debug_selector(move || id.into())
+            .id(id.clone())
+            .debug_selector(move || id.to_string())
             .track_focus(&focus)
             .tab_index(0)
             .h(px(30.0))
@@ -577,6 +783,17 @@ impl SettingsWindow {
         let Some(editor) = &mut self.appearance_editor else {
             return false;
         };
+        for (index, row) in editor.stops.iter().enumerate() {
+            for component in 0..2 {
+                if row.focus[component]
+                    .as_ref()
+                    .is_some_and(|focus| focus.is_focused(window))
+                {
+                    editor.active = ThemeField::Stop(index, component);
+                    return true;
+                }
+            }
+        }
         for (id, field) in [
             ("theme-name", ThemeField::Name),
             ("theme-accent", ThemeField::Accent),
@@ -662,6 +879,7 @@ mod tests {
             accent: TextField::new("#60A5FA"),
             palette: std::array::from_fn(|_| TextField::new("")),
             velocity: std::array::from_fn(|_| TextField::new("")),
+            stops: Vec::new(),
             active: ThemeField::Name,
         };
         assert_eq!(

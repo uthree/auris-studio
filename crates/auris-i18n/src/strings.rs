@@ -812,6 +812,11 @@ strings! {
     ThemeVelocityPalette { en: "Piano-roll velocity gradient", ja: "ピアノロールのベロシティグラデーション" }
     ThemeVelocitySoft { en: "Soft notes (#RRGGBB)", ja: "弱いノート (#RRGGBB)" }
     ThemeVelocityLoud { en: "Loud notes (#RRGGBB)", ja: "強いノート (#RRGGBB)" }
+    ThemeVelocityAdd { en: "Add intermediate point", ja: "中間点を追加" }
+    ThemeVelocityRemove { en: "Remove point", ja: "中間点を削除" }
+    ThemeVelocityPosition { en: "Position (%)", ja: "位置 (%)" }
+    ThemeVelocityColor { en: "Colour (#RRGGBB)", ja: "色 (#RRGGBB)" }
+    ThemeVelocityInvalid { en: "Intermediate points need distinct positions between 0 and 100% and a #RRGGBB colour.", ja: "中間点は 0% より大きく 100% より小さい異なる位置と、#RRGGBB の色を指定してください。" }
     ThemeVelocityPaletteNote { en: "Blank endpoints use the instrument (soft) and drum (loud) palette colours.", ja: "空欄はソフト音源（弱）・ドラム（強）のパレット色に連動します。" }
     ThemePaletteUnassigned1 { en: "Unassigned 1", ja: "未割り当て1" }
     ThemePaletteUnassigned2 { en: "Unassigned 2", ja: "未割り当て2" }
