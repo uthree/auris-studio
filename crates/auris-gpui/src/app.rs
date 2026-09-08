@@ -1328,6 +1328,8 @@ pub struct AurisApp {
     /// Also sheet state: it edits `song_sheet`'s sections in place, keystroke by keystroke,
     /// and putting the keyboard down commits nothing because nothing is left uncommitted.
     pub(crate) lyrics_edit: Option<crate::ui::compose_sheet::LyricsEdit>,
+    /// A newly focused lyrics editor to reveal after its expanded bounds are measured.
+    pub(crate) song_lyrics_reveal: Option<String>,
     /// The progressions this installation has been taught, beside the ones it shipped with.
     ///
     /// Loaded once and held, because every chart picker lists it and reading a file per frame to
@@ -1661,6 +1663,7 @@ impl AurisApp {
             song_sheet: None,
             song_advanced: false,
             lyrics_edit: None,
+            song_lyrics_reveal: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
             auditioning: None,
             focus: cx.focus_handle(),

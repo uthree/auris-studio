@@ -12,7 +12,9 @@
 //! Nothing sings until Write, exactly like every other dial.
 
 use auris_i18n::Key;
-use gpui::{AnyElement, Context, MouseButton, MouseDownEvent, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, MouseButton, MouseDownEvent, ScrollHandle, canvas, div, prelude::*, px,
+};
 
 use crate::app::AurisApp;
 use crate::theme::Metrics;
@@ -96,6 +98,7 @@ impl AurisApp {
         // half written, and a rename's select-all would put the whole of it one keystroke from
         // gone.
         field.caret_to_end();
+        self.song_lyrics_reveal = Some(section.clone());
         self.lyrics_edit = Some(LyricsEdit { section, field });
     }
 
@@ -206,14 +209,22 @@ impl AurisApp {
     pub(crate) fn song_lyrics_rows(
         &mut self,
         dials: &SongDials,
+        scroll: &ScrollHandle,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
+        let reveal_section = self.song_lyrics_reveal.take();
         let mut rows: Vec<AnyElement> = vec![
             self.group_heading(Key::PromptSectionLyrics)
                 .into_any_element(),
         ];
         for index in sections_in_form_order(dials) {
-            rows.push(self.lyrics_box(dials, index, cx));
+            rows.push(self.lyrics_box(
+                dials,
+                index,
+                reveal_section.as_deref() == Some(&dials.sections[index].name),
+                scroll,
+                cx,
+            ));
         }
         rows.push(
             div()
@@ -230,7 +241,14 @@ impl AurisApp {
     ///
     /// The margin counts moras and checks whether the fixed section can hold the words,
     /// using the same rhythm allocator as Write.
-    fn lyrics_box(&self, dials: &SongDials, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    fn lyrics_box(
+        &self,
+        dials: &SongDials,
+        index: usize,
+        reveal: bool,
+        scroll: &ScrollHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = self.theme.clone();
         let Some(spec) = dials.sections.get(index) else {
             return div().into_any_element();
@@ -322,6 +340,8 @@ impl AurisApp {
         let words: AnyElement = if let Some(edit) = edit {
             let field = &edit.field;
             div()
+                .debug_selector(move || format!("song-lyrics-editor-{index}"))
+                .relative()
                 .h(area_height(field.content(), MIN_ROWS, MAX_ROWS))
                 .flex_shrink_0()
                 .w_full()
@@ -356,6 +376,63 @@ impl AurisApp {
                     cx.entity(),
                     theme.clone(),
                 ))
+                .when(reveal, |this| {
+                    let scroll = scroll.clone();
+                    let section = spec.name.clone();
+                    let app = cx.entity().downgrade();
+                    this.child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                // Measure after the display has expanded into an editor. The
+                                // previous frame's bounds can be shorter or off screen entirely.
+                                let viewport = scroll.bounds();
+                                let offset = scroll.offset();
+                                let margin = px(8.0);
+                                let dy = if bounds.bottom() > viewport.bottom() - margin
+                                    || bounds.size.height > viewport.size.height - margin * 2.0
+                                {
+                                    viewport.bottom() - margin - bounds.bottom()
+                                } else if bounds.top() < viewport.top() + margin {
+                                    viewport.top() + margin - bounds.top()
+                                } else {
+                                    px(0.0)
+                                };
+                                if dy != px(0.0) {
+                                    let scroll = scroll.clone();
+                                    let section = section.clone();
+                                    let app = app.clone();
+                                    // Finish the current render before mutating its entity. A
+                                    // deferred effect also works without a platform frame tick.
+                                    cx.defer(move |cx| {
+                                        let Some(app) = app.upgrade() else {
+                                            return;
+                                        };
+                                        app.update(cx, |this, cx| {
+                                            if this
+                                                .lyrics_edit
+                                                .as_ref()
+                                                .is_some_and(|edit| edit.section == section)
+                                                && scroll.offset() == offset
+                                            {
+                                                scroll.set_offset(gpui::point(
+                                                    offset.x,
+                                                    (offset.y + dy).clamp(
+                                                        -scroll.max_offset().height,
+                                                        px(0.0),
+                                                    ),
+                                                ));
+                                                cx.notify();
+                                            }
+                                        });
+                                    });
+                                }
+                            },
+                            |_, _, _, _| (),
+                        )
+                        .absolute()
+                        .inset_0(),
+                    )
+                })
                 .into_any_element()
         } else {
             let empty = spec.lyrics.is_empty();
@@ -450,23 +527,6 @@ impl AurisApp {
                     })
                     .child(capacity)
             }))
-            .when(self.song_advanced, |this| {
-                this.child(crate::ui::widgets::button(
-                    ("song-melody-source", index),
-                    format!(
-                        "{} · {}",
-                        self.t(Key::SongMelodyFrom),
-                        spec.melody_from
-                            .as_deref()
-                            .unwrap_or(self.t(Key::SongChordsOwn))
-                    ),
-                    crate::ui::widgets::ButtonStyle::Normal,
-                    false,
-                    theme.accent,
-                    &theme,
-                    Self::opens_menu(cx, move |this, at| this.song_melody_menu(at, index)),
-                ))
-            })
             .children(shared_status.map(|(key, status)| {
                 div()
                     .debug_selector(move || format!("song-lyrics-match-{index}"))
@@ -523,7 +583,50 @@ fn phrase_counts(app: &AurisApp, counts: &[usize]) -> String {
 }
 
 /// Give preset section names human labels while preserving custom names and stored identifiers.
-fn section_label(app: &AurisApp, name: &str) -> String {
+pub(super) fn section_label(app: &AurisApp, name: &str) -> String {
+    let mut labels: Vec<_> = app.song_sheet.as_ref().map_or_else(Vec::new, |dials| {
+        dials
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    section.name.as_str(),
+                    translated_section_label(app, &section.name),
+                )
+            })
+            .collect()
+    });
+    let target = labels
+        .iter()
+        .position(|(identifier, _)| *identifier == name)
+        .unwrap_or_else(|| {
+            labels.push((name, translated_section_label(app, name)));
+            labels.len() - 1
+        });
+    loop {
+        let collisions: Vec<_> = labels
+            .iter()
+            .map(|(identifier, label)| {
+                labels
+                    .iter()
+                    .any(|(other, candidate)| other != identifier && candidate == label)
+            })
+            .collect();
+        if !collisions.iter().any(|collides| *collides) {
+            return labels.swap_remove(target).1;
+        }
+        // An identifier added for clarity can itself match a custom section's literal name.
+        // Resolve those collisions too, using the same simultaneous updates at every call site.
+        for ((identifier, label), collides) in labels.iter_mut().zip(collisions) {
+            if collides {
+                *label = format!("{label} ({identifier})");
+            }
+        }
+    }
+}
+
+/// Translate without disambiguation so every occurrence can compare the same base labels.
+fn translated_section_label(app: &AurisApp, name: &str) -> String {
     for (prefix, key) in [
         ("verse", Key::SongVerseLabel),
         ("chorus", Key::SongChorusLabel),
@@ -547,6 +650,10 @@ fn section_label(app: &AurisApp, name: &str) -> String {
         _ => name.to_string(),
     }
 }
+
+#[cfg(test)]
+#[path = "lyrics_scroll_tests.rs"]
+mod scroll_tests;
 
 #[cfg(test)]
 mod tests {

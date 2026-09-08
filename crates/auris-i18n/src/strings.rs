@@ -776,6 +776,8 @@ strings! {
     SongEndingLoop { en: "Loop (BGM)", ja: "ループ（BGM）" }
     SongEndingNone { en: "Stop", ja: "そのまま停止" }
     SongFormHeading { en: "Form", ja: "構成" }
+    SongHarmonyHeading { en: "Harmony and rhythm", ja: "調・拍子・リズム" }
+    SongPerformanceHeading { en: "Performance", ja: "演奏の表情" }
     SongAddSection { en: "Add Section", ja: "セクションを追加" }
     SongSectionName { en: "Section", ja: "セクション" }
     SongTranspose { en: "Transpose", ja: "移調" }

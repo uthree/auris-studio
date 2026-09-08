@@ -644,13 +644,12 @@ pub fn remove_part(dials: &mut SongDials, index: usize) -> bool {
 
 /// How a section's tempo is written on its button.
 ///
-/// An em dash for a section that has not pinned one. Printing the song's tempo there instead would
-/// be four sections all reading `120` with no way to see which of them would follow the song if it
-/// changed — which is the one thing this control is about.
-pub fn section_tempo_label(section: &SectionSpec) -> String {
+/// A section without an override names the policy explicitly; showing the current song tempo
+/// would hide which sections follow later changes to the song.
+pub fn section_tempo_label(section: &SectionSpec, language: auris_i18n::Language) -> String {
     match section.tempo {
-        Some(bpm) => bpm.to_string(),
-        None => "—".to_string(),
+        Some(bpm) => format!("{bpm} BPM"),
+        None => Key::SongSectionTempoFollows.get(language).to_string(),
     }
 }
 
@@ -1419,9 +1418,19 @@ mod tests {
         // one would be four rows all reading `120` with no way to see which of them would move if
         // the song did, which is the one thing the control is about.
         let mut dials = SongDials::default();
-        assert_eq!(section_tempo_label(&dials.sections[0]), "—");
+        assert_eq!(
+            section_tempo_label(&dials.sections[0], auris_i18n::Language::English),
+            "Follow the Song"
+        );
+        assert_eq!(
+            section_tempo_label(&dials.sections[0], auris_i18n::Language::Japanese),
+            "曲に合わせる"
+        );
         dials.sections[0].tempo = Some(132.0);
-        assert_eq!(section_tempo_label(&dials.sections[0]), "132");
+        assert_eq!(
+            section_tempo_label(&dials.sections[0], auris_i18n::Language::Japanese),
+            "132 BPM"
+        );
     }
 
     #[test]

@@ -13,9 +13,12 @@ Click the tempo's BPM value to enter an exact number between 20 and 400, includi
 The −1 and +1 buttons adjust it one BPM at a time; hold Shift while dragging a song dial for
 fine adjustment.
 
-**Detailed settings** reveals key, meter, groove, seed, the tension/syncopation pad, performance
-dials, section structure, melody sharing and the drum/instrument roster. The toggle stays above
+**Detailed settings** keeps the basic controls and lyrics in place and adds groups below them:
+harmony and rhythm, performance, section structure and the drum/instrument roster. Section cards
+name their transposition, participating parts, tempo and shared melody. The toggle stays above
 the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
+Tab and Shift+Tab reveal the next or previous lyrics editor automatically. Long picker values
+are shortened to fit their columns; hovering shows the full value, and editing retains it all.
 The basic lyrics view shows note counts and estimated bars for every nonempty lyric. Estimates
 use the same mora reading and phrase rhythm as composition. Each section reports an exact fit,
 spare bars for accompaniment, or missing bars and notes that cannot fit. **Fit bars to lyrics**
