@@ -40,6 +40,17 @@ macro_rules! strings {
 }
 
 strings! {
+    TimbreMap { en: "Timbre Map", ja: "音色マップ" }
+    TimbreMapHint { en: "Melodic built-ins and loaded SoundFonts · click a point to audition", ja: "内蔵楽器と読み込み済みSoundFontのメロディ音色 · 点をクリックして試聴" }
+    TimbreMapGeometry { en: "Color: acoustic group · axes: PCA · nearest sounds use full features", ja: "色：音響クラスタ · 軸：PCA · 類似音は元の特徴量で検索" }
+    TimbreMapRescan { en: "Rescan Library", ja: "ライブラリを再解析" }
+    TimbreMapNearest { en: "Similar Sounds", ja: "似ている音色" }
+    TimbreMapAll { en: "All Sounds", ja: "すべての音色" }
+    TimbreMapUse { en: "Use on Selected Track", ja: "選択トラックに適用" }
+    TimbreMapVariance { en: "Variance shown", ja: "平面に保持した情報量" }
+    TimbreMapSkipped { en: "Silent references skipped", ja: "基準音が無音のため除外" }
+    TimbreMapAudition { en: "Audition through track (including its mixer settings)", ja: "試聴先トラック（ミキサー設定も反映）" }
+    TimbreMapEmpty { en: "No audible sounds. Load a SoundFont and rescan.", ja: "測定できる音色がありません。SoundFontを読み込んで再解析してください。" }
     // ------------------------------------------------------------------ transport bar
     ExportWav { en: "Export WAV", ja: "WAV 書き出し" }
     Grid { en: "Grid", ja: "グリッド" }

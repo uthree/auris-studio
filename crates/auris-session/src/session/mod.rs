@@ -60,6 +60,7 @@ mod recognition;
 mod record;
 mod singer;
 mod spectrogram;
+mod timbre;
 mod tracks;
 mod transport;
 mod typing;
@@ -105,6 +106,7 @@ pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 pub use record::{
     Arm, InputChannels, RecordingReport, RecordingStatus, TakeReport, input_level_of,
 };
+pub use timbre::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use tracks::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 pub use typing::{
     DEFAULT_OCTAVE, DEFAULT_VELOCITY, LAYOUT, MusicalTyping, OCTAVE_RANGE, Played, Release, Struck,

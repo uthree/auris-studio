@@ -701,6 +701,8 @@ impl AurisApp {
         self.spectrogram_tracks.clear();
         self.music_analysis.cancel();
         self.music_analysis.report = None;
+        self.close_timbre_map();
+        self.timbre_map.map = None;
         self.spectrograms.clear();
         self.cancel_auto_sing();
         self.invalidate_sung_previews();

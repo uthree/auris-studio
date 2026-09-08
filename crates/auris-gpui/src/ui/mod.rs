@@ -42,6 +42,7 @@ pub(crate) mod spectrogram;
 pub mod status_bar;
 pub mod text_area;
 pub mod text_field;
+pub(crate) mod timbre_map;
 pub mod timeline;
 pub mod title_bar;
 pub mod tooltip;

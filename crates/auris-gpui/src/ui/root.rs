@@ -116,6 +116,7 @@ impl Render for AurisApp {
         let theme = self.theme.clone();
         let title_bar = self.render_title_bar(window, cx);
         let analysis_panel = self.render_analysis_panel(cx);
+        let timbre_map = self.render_timbre_map(cx);
         let menu_bar = self.render_menu_bar(window, cx);
         let menu_bar_dismissal = self.menu_bar.is_some().then(|| {
             div().absolute().inset_0().occlude().on_mouse_down(
@@ -350,6 +351,7 @@ impl Render for AurisApp {
             )
             .child(status)
             .children(analysis_panel)
+            .children(timbre_map)
             .children(export_overlay)
             .children(song_sheet)
             .child(drop_ring)
@@ -2378,6 +2380,11 @@ impl AurisApp {
         // leave the session's transaction open, and every edit after that inaudible.
         if self.abort_drag() {
             self.stop_audition();
+            cx.notify();
+            return;
+        }
+        if self.timbre_map.open {
+            self.close_timbre_map();
             cx.notify();
             return;
         }

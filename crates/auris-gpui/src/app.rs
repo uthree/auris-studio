@@ -1309,6 +1309,7 @@ pub struct AurisApp {
     pub(crate) analysis_panel: bool,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
+    pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
     /// The song sheet's dials while it is open, and nothing when it is not.
@@ -1513,6 +1514,7 @@ impl Drop for AurisApp {
     fn drop(&mut self) {
         self.drum_analysis.reset();
         self.music_analysis.cancel();
+        self.timbre_map.cancel();
     }
 }
 
@@ -1645,6 +1647,7 @@ impl AurisApp {
             drum_analysis: Default::default(),
             analysis_panel: false,
             music_analysis: Default::default(),
+            timbre_map: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,

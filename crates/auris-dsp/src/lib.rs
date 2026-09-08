@@ -69,6 +69,7 @@ pub mod smooth;
 pub mod spectrogram;
 pub mod spectrum;
 pub mod stretch;
+pub mod timbre;
 
 pub use adsr::{Adsr, EnvelopeStage};
 pub use biquad::{Biquad, BiquadCoefficients};
