@@ -201,6 +201,7 @@ fn palette_edits_apply_only_on_save_and_can_return_to_theme_defaults(cx: &mut Te
     cx.simulate_input("Palette test");
     for (id, color) in [("theme-color-1", "#123456"), ("theme-color-5", "#ABCDEF")] {
         crate::harness::click(id, cx);
+        cx.simulate_keystrokes("secondary-a");
         cx.simulate_input(color);
     }
     app.read_with(cx, |this, _| assert_eq!(this.theme.track_palette, before));
@@ -296,4 +297,48 @@ fn invalid_theme_input_stays_open_for_correction(cx: &mut TestAppContext) {
         })
         .unwrap();
     app.read_with(cx, |this, _| assert_eq!(this.appearance, before));
+}
+
+#[gpui::test]
+fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
+    let (app, handle, mut cx) = open_appearance_settings(cx);
+    let _restore = RestoreAppearance(Appearance::load());
+    let cx = &mut cx;
+    let project = app.read_with(cx, |this, _| this.project().clone());
+    for (index, scheme) in SCHEMES.iter().enumerate() {
+        crate::harness::click("scheme", cx);
+        cx.simulate_keystrokes("home");
+        for _ in 0..index {
+            cx.simulate_keystrokes("down");
+        }
+        cx.simulate_keystrokes("enter");
+        let expected = Theme::from_scheme(scheme).track_palette;
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.theme.scheme, scheme.id);
+            assert_eq!(this.theme.track_palette, expected);
+            assert_eq!(this.project(), &project);
+        });
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.theme.track_palette, expected);
+            })
+            .unwrap();
+    }
+
+    crate::harness::click("create-theme", cx);
+    cx.simulate_input("Preset palette test");
+    crate::harness::click("theme-color-1", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#123456");
+    crate::harness::click("theme-base", cx);
+    cx.simulate_keystrokes("home down enter");
+    crate::harness::click("save-theme", cx);
+    let mut expected = SCHEMES[1].track_palette;
+    expected[0] = Some(0x123456);
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.appearance.custom_schemes[0].track_palette, expected);
+        assert_eq!(this.project(), &project);
+    });
+    assert_eq!(Appearance::load().custom_schemes[0].track_palette, expected);
 }

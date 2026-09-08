@@ -32,6 +32,31 @@ const PALETTE_FIELDS: [&str; 8] = [
 ];
 
 impl AppearanceEditor {
+    /// Replaces inherited colours when the base changes, keeping explicit draft edits.
+    fn set_base(&mut self, id: String, appearance: &Appearance) {
+        let (Some(previous), Some(next)) = (
+            appearance.scheme_definition(&self.base),
+            appearance.scheme_definition(&id),
+        ) else {
+            return;
+        };
+        let previous = CustomScheme::from_scheme(String::new(), String::new(), &previous);
+        let next = CustomScheme::from_scheme(String::new(), String::new(), &next);
+        if parse_colour(self.accent.content()) == Some(previous.accent) {
+            self.accent = palette_field(Some(next.accent));
+        }
+        for (index, field) in self.palette.iter_mut().enumerate() {
+            let inherited = match previous.track_palette[index] {
+                Some(color) => parse_colour(field.content()) == Some(color),
+                None => field.content().trim().is_empty(),
+            };
+            if inherited {
+                *field = palette_field(next.track_palette[index]);
+            }
+        }
+        self.base = id;
+    }
+
     pub(super) fn field(&mut self) -> &mut TextField {
         match self.active {
             ThemeField::Name => &mut self.name,
@@ -90,6 +115,14 @@ fn parse_colour(text: &str) -> Option<u32> {
     (text.len() == 6 && text.bytes().all(|b| b.is_ascii_hexdigit()))
         .then(|| u32::from_str_radix(text, 16).ok())
         .flatten()
+}
+
+fn palette_field(color: Option<u32>) -> TextField {
+    TextField::new(
+        color
+            .map(|color| format!("#{color:06X}"))
+            .unwrap_or_default(),
+    )
 }
 
 fn next_theme_id(appearance: &Appearance) -> String {
@@ -209,13 +242,7 @@ impl SettingsWindow {
                 String::new()
             }),
             accent: TextField::new(format!("#{:06X}", copy.accent)),
-            palette: copy.track_palette.map(|color| {
-                TextField::new(
-                    color
-                        .map(|color| format!("#{color:06X}"))
-                        .unwrap_or_default(),
-                )
-            }),
+            palette: copy.track_palette.map(palette_field),
             active: ThemeField::Name,
         });
         let focus = self
@@ -294,7 +321,7 @@ impl SettingsWindow {
             &base,
             |this, id, cx| {
                 if let Some(editor) = &mut this.appearance_editor {
-                    editor.base = id;
+                    editor.set_base(id, &this.appearance);
                 }
                 cx.notify();
             },

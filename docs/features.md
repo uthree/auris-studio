@@ -1169,7 +1169,9 @@ with fallback fonts retained for Japanese and other scripts. Create a theme from
 palette, give it a name, and enter its accent colour as `#RRGGBB`. The preview leaves the applied
 theme alone until **Save and apply**. Saved custom themes can be selected and edited here.
 
-The editor also exposes eight track, clip and library palette colours. Enter `#RRGGBB` for a
+Every preset has its own eight track, clip and library palette colours, which the editor
+copies when creating a theme. Changing the base updates inherited colours and keeps colours
+already edited in the draft. Enter `#RRGGBB` for a
 slot, or leave it blank to derive its colour from the accent. New tracks choose a slot by kind:
 instrument, drums, singer, audio or bus. The library uses the corresponding colours, with effects
 sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen

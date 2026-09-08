@@ -298,6 +298,12 @@ mod tests {
                 base,
             );
             assert_eq!(custom.validate(), Ok(()), "{}", base.name);
+            assert_eq!(
+                Theme::from_scheme(&custom.definition()).track_palette,
+                Theme::from_scheme(base).track_palette,
+                "copying {} retains its palette",
+                base.name
+            );
         }
     }
 

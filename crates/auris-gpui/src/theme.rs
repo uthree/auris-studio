@@ -78,11 +78,26 @@ pub struct Scheme<'a> {
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
+///
+/// Each categorical palette is authored for its scheme, in document slot order:
+/// instrument, audio, drums, bus/effects, singer, then three unassigned colours.
+/// One uses Atom's syntax hues; GitHub uses Primer's colour scales. The light palettes
+/// deepen colours where needed to clear 3:1 against every surface, including hover.
+/// Surface ramps remain derived independently from these categorical colours.
 pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
-        track_palette: [None; 8],
         id: "midnight",
+        track_palette: [
+            Some(0x4f9dde),
+            Some(0x5fc9a3),
+            Some(0xd97b6c),
+            Some(0xe0b452),
+            Some(0xb07cc6),
+            Some(0x7fb069),
+            Some(0xe0a458),
+            Some(0xd16b8a),
+        ],
         name: "Midnight",
         hue: 0.625,
         chroma: 0.15,
@@ -96,8 +111,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     },
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
-        track_palette: [None; 8],
         id: "graphite",
+        track_palette: [
+            Some(0xdd9f60),
+            Some(0x8eafa0),
+            Some(0xce8176),
+            Some(0xb6ad79),
+            Some(0xad98b8),
+            Some(0xa8b78b),
+            Some(0xcaa889),
+            Some(0xb38f9c),
+        ],
         name: "Graphite",
         hue: 0.08,
         chroma: 0.02,
@@ -112,8 +136,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The same architecture read the other way up: a near-white window, and every step from it
     // taken downwards.
     Scheme {
-        track_palette: [None; 8],
         id: "daylight",
+        track_palette: [
+            Some(0x246caa),
+            Some(0x267e70),
+            Some(0xb4474e),
+            Some(0x946c20),
+            Some(0x8151a4),
+            Some(0x4a7c3a),
+            Some(0xa95b28),
+            Some(0x9b4776),
+        ],
         name: "Daylight",
         hue: 0.60,
         chroma: 0.12,
@@ -128,8 +161,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // A warm light scheme: paper rather than screen, with a deep teal accent to stay off the
     // yellow the greys sit on.
     Scheme {
-        track_palette: [None; 8],
         id: "parchment",
+        track_palette: [
+            Some(0x26766d),
+            Some(0x647849),
+            Some(0xa24b3e),
+            Some(0x8a651c),
+            Some(0x805d88),
+            Some(0x416d87),
+            Some(0xa05e32),
+            Some(0x925b70),
+        ],
         name: "Parchment",
         hue: 0.11,
         chroma: 0.24,
@@ -146,8 +188,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // own 0.18, because the signals sit at one lightness for the whole ramp and a failure in the
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
-        track_palette: [None; 8],
         id: "one-dark",
+        track_palette: [
+            Some(0x61afef),
+            Some(0x56b6c2),
+            Some(0xe06c75),
+            Some(0xd19a66),
+            Some(0xc678dd),
+            Some(0x98c379),
+            Some(0xe5c07b),
+            Some(0xabb2bf),
+        ],
         name: "One Dark",
         hue: 0.611,
         chroma: 0.13,
@@ -163,8 +214,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // — a brighter accent than the light schemes above carry, which is most of what makes this
     // one recognisable as itself.
     Scheme {
-        track_palette: [None; 8],
         id: "one-light",
+        track_palette: [
+            Some(0x3671f1),
+            Some(0x0182b9),
+            Some(0xe03d2e),
+            Some(0x986801),
+            Some(0xa626a4),
+            Some(0x438742),
+            Some(0xa36f01),
+            Some(0xca1243),
+        ],
         name: "One Light",
         hue: 0.633,
         chroma: 0.06,
@@ -179,8 +239,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // GitHub's dark canvas, #0d1117: the deepest background here and the bluest greys, under the
     // link blue #58a6ff at full saturation.
     Scheme {
-        track_palette: [None; 8],
         id: "github-dark",
+        track_palette: [
+            Some(0x58a6ff),
+            Some(0x7ee787),
+            Some(0xff7b72),
+            Some(0xd29922),
+            Some(0xa371f7),
+            Some(0x79c0ff),
+            Some(0xffa657),
+            Some(0xdb61a2),
+        ],
         name: "GitHub Dark",
         hue: 0.597,
         chroma: 0.28,
@@ -196,8 +265,17 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // *away* from the background, so at 1.0 there is nowhere for it to go: the timeline would be
     // cut into the window at exactly the window's colour.
     Scheme {
-        track_palette: [None; 8],
         id: "github-light",
+        track_palette: [
+            Some(0x0969da),
+            Some(0x1a7f37),
+            Some(0xcf222e),
+            Some(0x9a6700),
+            Some(0x8250df),
+            Some(0x0550ae),
+            Some(0xbc4c00),
+            Some(0xbf3989),
+        ],
         name: "GitHub Light",
         hue: 0.583,
         chroma: 0.10,
@@ -1047,7 +1125,11 @@ mod tests {
 
     #[test]
     fn categorical_tints_follow_custom_accents_without_changing_their_spacing() {
-        let base = *scheme_or_default(DEFAULT_SCHEME);
+        // Only blank custom slots follow the accent. Presets declare their own colours.
+        let base = Scheme {
+            track_palette: [None; 8],
+            ..*scheme_or_default(DEFAULT_SCHEME)
+        };
         let before = Theme::from_scheme(&base);
         let after = Theme::from_scheme(&Scheme {
             accent: hsla((base.accent.h + 0.25).rem_euclid(1.0), 0.40, 0.70, 1.0),
@@ -1064,6 +1146,29 @@ mod tests {
         assert_ne!(old.h, new.h);
         assert_ne!(old.s, new.s);
         assert_ne!(old.l, new.l);
+    }
+
+    #[test]
+    fn each_preset_declares_its_own_palette_independently_of_the_accent() {
+        for (index, scheme) in SCHEMES.iter().enumerate() {
+            assert!(
+                scheme.track_palette.iter().all(Option::is_some),
+                "{}",
+                scheme.id
+            );
+            let theme = Theme::from_scheme(scheme);
+            for other in &SCHEMES[..index] {
+                assert_ne!(theme.track_palette, Theme::from_scheme(other).track_palette);
+            }
+            let changed_accent = Theme::from_scheme(&Scheme {
+                accent: rgb(0xff00ff).into(),
+                ..*scheme
+            });
+            assert_eq!(theme.track_palette, changed_accent.track_palette);
+            for (actual, stored) in theme.track_palette.iter().zip(scheme.track_palette) {
+                assert_eq!(*actual, Hsla::from(rgb(stored.unwrap())));
+            }
+        }
     }
 
     #[test]
