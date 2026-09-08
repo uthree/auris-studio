@@ -809,6 +809,8 @@ strings! {
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
     ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemeChordPalette { en: "Chord degrees (I–VII)", ja: "コードの度数 (I〜VII)" }
+    ThemeChordNote { en: "Enter #RRGGBB, or leave blank to follow this theme's first seven track palette colours. Accidentals, chord quality and slash suffixes keep the primary numeral's colour.", ja: "#RRGGBB で指定します。空欄はテーマのトラックパレットの先頭7色に連動します。変化記号・コードの種類・スラッシュの後ろの指定にかかわらず、主となる度数で色分けします。" }
     ThemeSignalPalette { en: "Transport and indicator palette", ja: "再生操作・インジケーターのパレット" }
     ThemeSignalActive { en: "Playback / meter: normal", ja: "再生中・メーター通常域" }
     ThemeSignalWarning { en: "Warning / solo / meter: high", ja: "警告・ソロ・メーター高レベル域" }

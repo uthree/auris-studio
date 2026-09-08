@@ -59,6 +59,8 @@ impl Section {
                 Key::ThemeAccent,
                 Key::ThemeTrackPalette,
                 Key::ThemeTrackPaletteNote,
+                Key::ThemeChordPalette,
+                Key::ThemeChordNote,
                 Key::ThemeSignalPalette,
                 Key::ThemeSignalActive,
                 Key::ThemeSignalWarning,

@@ -40,7 +40,7 @@ fn open_appearance_settings(
     let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
     let cx = VisualTestContext::from_window(handle.into(), cx);
     // Keep the draft and its actions in view; text metrics on the test platform are synthetic.
-    cx.simulate_resize(size(px(760.0), px(1480.0)));
+    cx.simulate_resize(size(px(760.0), px(1800.0)));
     cx.run_until_parked();
     (app, handle, cx)
 }
@@ -315,12 +315,14 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
         cx.simulate_keystrokes("enter");
         let expected = Theme::from_scheme(scheme).track_palette;
         let expected_signals = Theme::from_scheme(scheme).signal_palette;
+        let expected_chords = Theme::from_scheme(scheme).chord_palette;
         let expected_gradient =
             [0.0, 0.5, 1.0].map(|velocity| Theme::from_scheme(scheme).velocity_color(velocity));
         app.read_with(cx, |this, _| {
             assert_eq!(this.theme.scheme, scheme.id);
             assert_eq!(this.theme.track_palette, expected);
             assert_eq!(this.theme.signal_palette, expected_signals);
+            assert_eq!(this.theme.chord_palette, expected_chords);
             assert_eq!(
                 [0.0, 0.5, 1.0].map(|velocity| this.theme.velocity_color(velocity)),
                 expected_gradient
@@ -331,6 +333,7 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
             .update(cx, |this, _, _| {
                 assert_eq!(this.theme.track_palette, expected);
                 assert_eq!(this.theme.signal_palette, expected_signals);
+                assert_eq!(this.theme.chord_palette, expected_chords);
             })
             .unwrap();
     }
@@ -362,6 +365,59 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
         Appearance::load().custom_schemes[0].signal_palette,
         SCHEMES[1].signal_palette
     );
+}
+
+#[gpui::test]
+fn chord_palette_editing_saves_degrees_without_changing_the_progression(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
+    let (app, handle, mut cx) = open_appearance_settings(cx);
+    let _restore = RestoreAppearance(Appearance::load());
+    let cx = &mut cx;
+    let project = app.read_with(cx, |this, _| this.project().clone());
+    let before = app.read_with(cx, |this, _| this.theme.chord_palette);
+    crate::harness::click("create-theme", cx);
+    cx.simulate_input("Degree colours");
+    crate::harness::click("theme-chord-5", cx);
+    cx.simulate_input("#AA33CC");
+    app.read_with(cx, |this, _| assert_eq!(this.theme.chord_palette, before));
+    crate::harness::click("theme-base", cx);
+    cx.simulate_keystrokes("home down enter");
+    crate::harness::click("save-theme", cx);
+    let saved = Appearance::load();
+    assert_eq!(saved.custom_schemes[0].chord_palette[4], Some(0xaa33cc));
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.theme.chord_palette, saved.theme().chord_palette);
+        assert_eq!(
+            this.theme.chord_color(1),
+            Theme::from_scheme(&SCHEMES[1]).chord_color(1)
+        );
+        assert_eq!(this.project(), &project);
+    });
+    crate::harness::click("edit-theme", cx);
+    crate::harness::click("theme-chord-5", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#12");
+    crate::harness::click("save-theme", cx);
+    handle
+        .update(cx, |this, _, _| {
+            assert!(this.appearance_editor.is_some());
+            assert_eq!(this.appearance, saved);
+        })
+        .unwrap();
+    crate::harness::click("theme-chord-5", cx);
+    cx.simulate_keystrokes("secondary-a backspace tab");
+    cx.simulate_input("#CC3377");
+    crate::harness::click("save-theme", cx);
+    let saved = Appearance::load();
+    assert_eq!(saved.custom_schemes[0].chord_palette[4], None);
+    assert_eq!(saved.custom_schemes[0].chord_palette[5], Some(0xcc3377));
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.theme.chord_color(5),
+            Theme::from_scheme(&SCHEMES[1]).chord_color(5)
+        );
+        assert_eq!(this.project(), &project);
+    });
 }
 
 #[gpui::test]

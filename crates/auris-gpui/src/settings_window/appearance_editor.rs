@@ -30,6 +30,7 @@ pub(super) struct AppearanceEditor {
     accent: TextField,
     palette: [TextField; 8],
     signals: [TextField; 4],
+    chords: [TextField; 7],
     velocity: [TextField; 2],
     stops: Vec<GradientFields>,
     active: ThemeField,
@@ -41,6 +42,7 @@ enum ThemeField {
     Accent,
     Palette(usize),
     Signal(usize),
+    Chord(usize),
     Velocity(usize),
     Stop(usize, usize),
 }
@@ -57,6 +59,16 @@ const PALETTE_FIELDS: [&str; 8] = [
 ];
 
 const VELOCITY_FIELDS: [&str; 2] = ["theme-velocity-soft", "theme-velocity-loud"];
+const CHORD_FIELDS: [&str; 7] = [
+    "theme-chord-1",
+    "theme-chord-2",
+    "theme-chord-3",
+    "theme-chord-4",
+    "theme-chord-5",
+    "theme-chord-6",
+    "theme-chord-7",
+];
+const CHORD_LABELS: [&str; 7] = ["I", "II", "III", "IV", "V", "VI", "VII"];
 const SIGNAL_FIELDS: [&str; 4] = [
     "theme-signal-active",
     "theme-signal-warning",
@@ -102,6 +114,15 @@ impl AppearanceEditor {
                 *field = palette_field(next.velocity_palette[index]);
             }
         }
+        for (index, field) in self.chords.iter_mut().enumerate() {
+            let inherited = match previous.chord_palette[index] {
+                Some(color) => parse_colour(field.content()) == Some(color),
+                None => field.content().trim().is_empty(),
+            };
+            if inherited {
+                *field = palette_field(next.chord_palette[index]);
+            }
+        }
         for (index, field) in self.signals.iter_mut().enumerate() {
             let inherited = match previous.signal_palette[index] {
                 Some(color) => parse_colour(field.content()) == Some(color),
@@ -133,6 +154,7 @@ impl AppearanceEditor {
             ThemeField::Accent => &mut self.accent,
             ThemeField::Palette(index) => &mut self.palette[index],
             ThemeField::Signal(index) => &mut self.signals[index],
+            ThemeField::Chord(index) => &mut self.chords[index],
             ThemeField::Velocity(index) => &mut self.velocity[index],
             ThemeField::Stop(index, component) => &mut self.stops[index].fields[component],
         }
@@ -144,6 +166,7 @@ impl AppearanceEditor {
             ThemeField::Accent => &self.accent,
             ThemeField::Palette(index) => &self.palette[index],
             ThemeField::Signal(index) => &self.signals[index],
+            ThemeField::Chord(index) => &self.chords[index],
             ThemeField::Velocity(index) => &self.velocity[index],
             ThemeField::Stop(index, component) => &self.stops[index].fields[component],
         }
@@ -234,6 +257,13 @@ impl AppearanceEditor {
             };
         }
         draft.velocity_stops = self.parsed_stops()?;
+        for (index, field) in self.chords.iter().enumerate() {
+            draft.chord_palette[index] = if field.content().trim().is_empty() {
+                None
+            } else {
+                Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
+            };
+        }
         for (index, field) in self.signals.iter().enumerate() {
             draft.signal_palette[index] = if field.content().trim().is_empty() {
                 None
@@ -379,6 +409,7 @@ impl SettingsWindow {
             accent: TextField::new(format!("#{:06X}", copy.accent)),
             palette: copy.track_palette.map(palette_field),
             signals: copy.signal_palette.map(palette_field),
+            chords: copy.chord_palette.map(palette_field),
             velocity: copy.velocity_palette.map(palette_field),
             stops: copy
                 .velocity_stops
@@ -514,6 +545,30 @@ impl SettingsWindow {
                             .child(self.theme_text_field(ThemeField::Palette(index), cx))
                     })),
             )
+            .child(section_title(self.t(Key::ThemeChordPalette), &theme))
+            .child(note(self.t(Key::ThemeChordNote), &theme))
+            .child(div().flex().flex_wrap().gap_2().children(
+                CHORD_LABELS.into_iter().enumerate().map(|(index, label)| {
+                    let fill = preview.chord_fill(index as u8 + 1, false);
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w(px(250.0))
+                        .child(
+                            div()
+                                .w(px(42.0))
+                                .flex_shrink_0()
+                                .text_xs()
+                                .rounded_sm()
+                                .p_1()
+                                .bg(fill)
+                                .text_color(preview.text_on(fill))
+                                .child(label),
+                        )
+                        .child(self.theme_text_field(ThemeField::Chord(index), cx))
+                }),
+            ))
             .child(section_title(self.t(Key::ThemeSignalPalette), &theme))
             .child(note(self.t(Key::ThemeSignalNote), &theme))
             .child(div().flex().flex_wrap().gap_2().children(
@@ -762,6 +817,7 @@ impl SettingsWindow {
             ThemeField::Accent => Some("theme-accent"),
             ThemeField::Palette(index) => Some(PALETTE_FIELDS[index]),
             ThemeField::Signal(index) => Some(SIGNAL_FIELDS[index]),
+            ThemeField::Chord(index) => Some(CHORD_FIELDS[index]),
             ThemeField::Velocity(index) => Some(VELOCITY_FIELDS[index]),
             ThemeField::Stop(..) => None,
         };
@@ -790,6 +846,7 @@ impl SettingsWindow {
             ThemeField::Accent => &editor.accent,
             ThemeField::Palette(index) => &editor.palette[index],
             ThemeField::Signal(index) => &editor.signals[index],
+            ThemeField::Chord(index) => &editor.chords[index],
             ThemeField::Velocity(index) => &editor.velocity[index],
             ThemeField::Stop(index, component) => &editor.stops[index].fields[component],
         };
@@ -866,6 +923,12 @@ impl SettingsWindow {
                 .into_iter()
                 .enumerate()
                 .map(|(index, id)| (id, ThemeField::Palette(index))),
+        )
+        .chain(
+            CHORD_FIELDS
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| (id, ThemeField::Chord(index))),
         )
         .chain(
             SIGNAL_FIELDS
@@ -947,6 +1010,7 @@ mod tests {
             accent: TextField::new("#60A5FA"),
             palette: std::array::from_fn(|_| TextField::new("")),
             signals: std::array::from_fn(|_| TextField::new("")),
+            chords: std::array::from_fn(|_| TextField::new("")),
             velocity: std::array::from_fn(|_| TextField::new("")),
             stops: Vec::new(),
             active: ThemeField::Name,

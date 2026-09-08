@@ -41,6 +41,9 @@ pub struct CustomScheme {
     /// Optional RGB colours for active, warning, danger and mute indicators.
     #[serde(default)]
     pub signal_palette: [Option<u32>; 4],
+    /// Optional I–VII colours, falling back to this theme's track palette.
+    #[serde(default)]
+    pub chord_palette: [Option<u32>; 7],
 }
 
 impl CustomScheme {
@@ -59,6 +62,7 @@ impl CustomScheme {
             velocity_palette: base.velocity_palette,
             velocity_stops: base.velocity_stops.to_vec(),
             signal_palette: base.signal_palette,
+            chord_palette: base.chord_palette,
         }
     }
 
@@ -75,6 +79,7 @@ impl CustomScheme {
             velocity_palette: self.velocity_palette,
             velocity_stops: &self.velocity_stops,
             signal_palette: self.signal_palette,
+            chord_palette: self.chord_palette,
         }
     }
 
@@ -102,6 +107,7 @@ impl CustomScheme {
                 .iter()
                 .chain(self.velocity_palette.iter())
                 .chain(self.signal_palette.iter())
+                .chain(self.chord_palette.iter())
                 .flatten()
                 .any(|color| *color > 0xff_ffff)
         {
@@ -349,6 +355,7 @@ mod tests {
             color: 0xaabbcc,
         }];
         palette.signal_palette = [Some(0x123456), None, Some(0xaabbcc), Some(0xff8800)];
+        palette.chord_palette[4] = Some(0x9988cc);
         let json = serde_json::to_string(&palette).unwrap();
         let loaded: CustomScheme = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, palette);
@@ -366,6 +373,7 @@ mod tests {
         assert_eq!(copy.velocity_palette, loaded.velocity_palette);
         assert_eq!(copy.velocity_stops, loaded.velocity_stops);
         assert_eq!(copy.signal_palette, loaded.signal_palette);
+        assert_eq!(copy.chord_palette, loaded.chord_palette);
         assert_eq!(theme.velocity_soft, gpui::Hsla::from(gpui::rgb(0x245678)));
         assert_eq!(theme.velocity_loud, gpui::Hsla::from(gpui::rgb(0xde4567)));
 
@@ -374,11 +382,13 @@ mod tests {
         old.as_object_mut().unwrap().remove("velocity_palette");
         old.as_object_mut().unwrap().remove("velocity_stops");
         old.as_object_mut().unwrap().remove("signal_palette");
+        old.as_object_mut().unwrap().remove("chord_palette");
         let loaded: CustomScheme = serde_json::from_value(old).unwrap();
         assert_eq!(loaded.track_palette, [None; 8]);
         assert_eq!(loaded.velocity_palette, [None; 2]);
         assert!(loaded.velocity_stops.is_empty());
         assert_eq!(loaded.signal_palette, [None; 4]);
+        assert_eq!(loaded.chord_palette, [None; 7]);
         let fallback = Theme::from_scheme(&loaded.definition());
         assert_eq!(fallback.velocity_soft, fallback.track_palette[0]);
         assert_eq!(fallback.velocity_loud, fallback.track_palette[2]);
@@ -390,6 +400,9 @@ mod tests {
         assert!(palette.validate().is_err());
         palette.velocity_palette[0] = None;
         palette.signal_palette[0] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.signal_palette[0] = None;
+        palette.chord_palette[0] = Some(0x1000000);
         assert!(palette.validate().is_err());
     }
 

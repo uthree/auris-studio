@@ -90,6 +90,8 @@ pub struct Scheme<'a> {
     pub velocity_stops: &'a [GradientStop],
     /// Optional RGB colours for active, warning, danger and mute indicators.
     pub signal_palette: [Option<u32>; 4],
+    /// Optional I–VII chord colours; blank entries follow the first seven track palette slots.
+    pub chord_palette: [Option<u32>; 7],
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
@@ -103,6 +105,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x5fc9a3),
             Some(0xe0b452),
@@ -144,6 +147,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
         id: "graphite",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x8eafa0),
             Some(0xb6ad79),
@@ -186,6 +190,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // taken downwards.
     Scheme {
         id: "daylight",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x267e70),
             Some(0x946c20),
@@ -228,6 +233,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // yellow the greys sit on.
     Scheme {
         id: "parchment",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x26766d),
             Some(0x8a651c),
@@ -272,6 +278,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
         id: "one-dark",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x98c379),
             Some(0xe5c07b),
@@ -315,6 +322,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // one recognisable as itself.
     Scheme {
         id: "one-light",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x438742),
             Some(0x986801),
@@ -357,6 +365,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // link blue #58a6ff at full saturation.
     Scheme {
         id: "github-dark",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x58a6ff),
             Some(0xd29922),
@@ -394,6 +403,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // cut into the window at exactly the window's colour.
     Scheme {
         id: "github-light",
+        chord_palette: [None; 7],
         signal_palette: [
             Some(0x0969da),
             Some(0x9a6700),
@@ -666,9 +676,27 @@ pub struct Theme {
     pub track_palette: [Hsla; 8],
     /// Resolved active, warning, danger and mute colours used throughout the interface.
     pub signal_palette: [Hsla; 4],
+    /// Resolved chord-degree colours in I–VII order, readable on panel surfaces.
+    pub chord_palette: [Hsla; 7],
 }
 
 impl gpui::Global for Theme {}
+
+/// Preserves a palette hue while making text and indicators readable on hovered controls.
+fn readable_indicator(mut color: Hsla, theme: &Theme) -> Hsla {
+    let step = if theme.background.l < 0.5 {
+        0.01
+    } else {
+        -0.01
+    };
+    for _ in 0..=100 {
+        if contrast_ratio(color, theme.surface_hover) >= 4.5 {
+            break;
+        }
+        color.l = (color.l + step).clamp(0.0, 1.0);
+    }
+    color
+}
 
 impl Default for Theme {
     fn default() -> Self {
@@ -688,6 +716,7 @@ impl Theme {
             scheme: scheme.id.to_owned(),
             track_palette: [accent; 8],
             signal_palette: [accent; 4],
+            chord_palette: [accent; 7],
             font: ui_font(),
             surface_sunken: scheme.shade(-0.020),
             background: scheme.shade(0.0),
@@ -761,6 +790,12 @@ impl Theme {
                 |packed| rgb(packed).into(),
             )
         });
+        theme.chord_palette = std::array::from_fn(|index| {
+            let color = scheme.chord_palette[index]
+                .map(|packed| rgb(packed).into())
+                .unwrap_or(theme.track_palette[index]);
+            readable_indicator(color, &theme)
+        });
         let fallbacks = [
             accent,
             theme.track_palette[3],
@@ -768,18 +803,10 @@ impl Theme {
             theme.track_palette[3],
         ];
         theme.signal_palette = std::array::from_fn(|index| {
-            let mut color = scheme.signal_palette[index]
+            let color = scheme.signal_palette[index]
                 .map(|packed| rgb(packed).into())
                 .unwrap_or(fallbacks[index]);
-            // Indicators also appear as small text and outlines on hovered controls.
-            let step = 0.01 * scheme.direction();
-            for _ in 0..=100 {
-                if contrast_ratio(color, theme.surface_hover) >= 4.5 {
-                    break;
-                }
-                color.l = (color.l + step).clamp(0.0, 1.0);
-            }
-            color
+            readable_indicator(color, &theme)
         });
         [theme.playing, theme.warning, theme.danger, theme.mute] = theme.signal_palette;
         theme.meter_low = theme.playing;
@@ -816,6 +843,25 @@ impl Theme {
     /// fills over their backdrop before asking, since their RGB values alone are not the fill.
     pub fn text_on(&self, color: Hsla) -> Hsla {
         readable_on(color, self.background)
+    }
+
+    /// Colour of the primary written degree (one-based), independent of key and chord quality.
+    pub fn chord_color(&self, degree: u8) -> Hsla {
+        self.chord_palette[(degree.clamp(1, 7) - 1) as usize]
+    }
+
+    /// Opaque chord-block tint, composited on the harmony lane for readable label selection.
+    pub fn chord_fill(&self, degree: u8, held: bool) -> Hsla {
+        let color: gpui::Rgba = self.chord_color(degree).into();
+        let background: gpui::Rgba = self.surface.into();
+        let amount = if held { 0.42 } else { 0.22 };
+        gpui::Rgba {
+            r: background.r + (color.r - background.r) * amount,
+            g: background.g + (color.g - background.g) * amount,
+            b: background.b + (color.b - background.b) * amount,
+            a: 1.0,
+        }
+        .into()
     }
 
     /// Colour of a note struck at `velocity`, from softest to hardest.
@@ -1306,6 +1352,58 @@ mod tests {
     }
 
     #[test]
+    fn chord_degrees_have_distinct_theme_colours_and_readable_labels() {
+        use auris_session::prelude::Numeral;
+        let mut palettes = Vec::new();
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            assert!(!palettes.contains(&theme.chord_palette));
+            palettes.push(theme.chord_palette);
+            for degree in 1..=7 {
+                let color = theme.chord_color(degree);
+                assert!(!theme.chord_palette[..(degree - 1) as usize].contains(&color));
+                for surface in [theme.surface_sunken, theme.surface, theme.surface_hover] {
+                    assert!(contrast_ratio(color, surface) >= 4.5);
+                }
+                for held in [false, true] {
+                    let fill = theme.chord_fill(degree, held);
+                    assert_eq!(fill.a, 1.0);
+                    assert!(contrast_ratio(theme.text_on(fill), fill) >= 4.5);
+                }
+                assert_ne!(
+                    theme.chord_fill(degree, false),
+                    theme.chord_fill(degree, true)
+                );
+            }
+            for (text, degree) in [
+                ("Imaj7", 1),
+                ("ii7", 2),
+                ("bIII", 3),
+                ("iv", 4),
+                ("V7/V", 5),
+                ("vi/3", 6),
+                ("bVII7", 7),
+            ] {
+                let numeral = Numeral::parse(text).unwrap();
+                assert_eq!(theme.chord_color(numeral.degree), theme.chord_color(degree));
+            }
+            let mut custom = crate::appearance::CustomScheme::from_scheme(
+                "chords".into(),
+                "Chords".into(),
+                scheme,
+            );
+            custom.chord_palette[4] = Some(0xaa33cc);
+            custom.track_palette[0] = Some(0xcc3377);
+            let edited = Theme::from_scheme(&custom.definition());
+            assert_ne!(edited.chord_color(5), theme.chord_color(5));
+            assert_ne!(edited.chord_color(1), theme.chord_color(1));
+            let expected: Hsla = rgb(0xaa33cc).into();
+            assert!((edited.chord_color(5).h - expected.h).abs() < 1e-4);
+            assert_eq!(edited.chord_color(2), theme.chord_color(2));
+        }
+    }
+
+    #[test]
     fn github_presets_and_their_custom_copies_do_not_use_green() {
         for scheme in SCHEMES
             .iter()
@@ -1323,6 +1421,7 @@ mod tests {
                 for color in theme
                     .track_palette
                     .into_iter()
+                    .chain(theme.chord_palette)
                     .chain([
                         theme.playing,
                         theme.meter_low,

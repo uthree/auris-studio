@@ -1177,6 +1177,13 @@ instrument, drums, singer, audio or bus. The library uses the corresponding colo
 sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
 colour. Changing the theme updates their appearance without changing the saved project.
 
+Chord blocks, the current-chord readout and chord completion chips share seven I–VII colours.
+The primary written numeral selects the colour: quality, accidentals, inversions and secondary
+targets do not change it (`V`, `V7` and `V7/V` share V; `VII` and `bVII` share VII).
+The theme editor provides an override for each degree; blank entries follow the first seven
+track palette slots. Theme changes recolour the progression without editing its chords or keys.
+Dragged blocks keep their degree colour with a stronger tint, and labels retain readable contrast.
+
 Transport and indicator colours have their own editable palette: playback and normal meter
 levels, warnings/solo and high levels, recording/clipping/errors, and mute. Every preset uses
 colours from its own colour scheme. Blank entries follow the accent (playback), bus colour
