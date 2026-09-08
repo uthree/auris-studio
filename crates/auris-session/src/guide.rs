@@ -1749,14 +1749,15 @@ pub mod harmony {
     //!
     //! Articulation is phrase-aware: [`performed_notes`](auris_core::performed_notes) sees
     //! simultaneous chords and the spaces between them. Stroke spreads a chord in pitch order
-    //! (ascending, descending or alternating), mute adds a short release retrigger, brush recalls
-    //! the last chord on silent metrical beats, and slide connects unambiguous single-note
+    //! (ascending, descending or alternating), mute adds a short release retrigger to notes held
+    //! for at least an eighth note, brush recalls the last chord on silent sixteenth-note grid
+    //! positions, and slide connects unambiguous single-note
     //! attacks with an intermediate pitch. Inserted notes carry no copied lyrics. These are
     //! note events, so their timbre still comes from the selected instrument.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
-    //! with the project signature map: brushes follow compound beats, bar boundaries and meter
-    //! changes even when a clip starts off the beat. Preparation allocates the performed phrase
+    //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,
+    //! even across meter changes or when a clip starts off the grid. Preparation allocates the performed phrase
     //! off the audio thread. Humanisation mixes smooth four-beat and one-beat random gestures
     //! with a smaller independent residual; timing and velocity have separate named streams.
     //! Nearby notes therefore share a tendency, while seed and loop pass retain reproducibility.

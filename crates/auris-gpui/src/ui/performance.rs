@@ -28,9 +28,9 @@ use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider}
 pub enum PerformDial {
     /// Time between the first and last notes in a chord stroke.
     Stroke,
-    /// Strength of short release retriggers.
+    /// Strength of short release retriggers on notes held for at least an eighth note.
     Mute,
-    /// Strength of quiet chords inserted on silent beats.
+    /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
     Brush,
     /// Strength of intermediate notes connecting a single-note line.
     Slide,

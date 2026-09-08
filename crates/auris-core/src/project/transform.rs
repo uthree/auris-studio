@@ -53,12 +53,13 @@ pub enum NoteTransform {
         /// Pitch order in which the strings are struck.
         direction: StrokeDirection,
     },
-    /// Adds a quiet, 12 ms retrigger at note releases where that pitch is free.
+    /// Adds a quiet, 12 ms retrigger where that pitch is free after a note held for at least
+    /// an eighth note. The length is read after the preceding stages in the stack.
     Mute {
         /// Strength from 0 (off) to 1 (35% of the preceding note's velocity).
         amount: f32,
     },
-    /// Repeats the previous chord for 20 ms on silent metrical beats.
+    /// Repeats the previous chord for 20 ms on a silent sixteenth-note grid anchored at bar lines.
     Brush {
         /// Strength from 0 (off) to 1 (30% of the chord's velocity).
         amount: f32,

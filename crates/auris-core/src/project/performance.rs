@@ -189,6 +189,10 @@ fn mute(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
     }
     let mut added = Vec::new();
     for note in notes.iter() {
+        // Read the held length at this stage, after gate or other earlier articulation.
+        if note.length < Ticks(Ticks::QUARTER.raw() / 2) {
+            continue;
+        }
         let start = note.end();
         if start < Ticks::ZERO || start >= context.length {
             continue;
@@ -251,8 +255,8 @@ fn brush(notes: &mut Vec<Note>, amount: f32, context: PerformanceContext<'_>) {
                 }
             }
         }
-        // Compound time follows dotted beats, and every bar re-reads its meter.
-        absolute += context.signatures.signature_at(absolute).beat_ticks();
+        // Every supported bar length is a whole number of sixteenths, including compound time.
+        absolute += Ticks(Ticks::QUARTER.raw() / 4);
     }
     notes.extend(added);
 }
@@ -391,23 +395,28 @@ mod tests {
 
     #[test]
     fn brush_uses_only_silent_intervals_and_the_latest_chord() {
-        let clip = clip(
-            vec![
-                n(60, 0, 100),
-                n(64, 0, 100),
-                n(62, 1900, 40),
-                n(65, 1900, 40),
-            ],
+        let mut clip = clip(
+            vec![n(60, 0, 100), n(64, 0, 100), n(62, 730, 40), n(65, 730, 40)],
             vec![NoteTransform::Brush { amount: 1.0 }],
         );
+        clip.length = Ticks(1440);
         let heard: Vec<_> = clip.sounding_notes(120.0).collect();
-        assert_eq!(heard.len(), 8);
+        assert_eq!(heard.len(), 12);
         assert_eq!(
             heard[4..]
                 .iter()
                 .map(|n| (n.pitch, n.start.raw()))
                 .collect::<Vec<_>>(),
-            vec![(60, 960), (64, 960), (62, 2880), (65, 2880)]
+            vec![
+                (60, 240),
+                (64, 240),
+                (60, 480),
+                (64, 480),
+                (62, 960),
+                (65, 960),
+                (62, 1200),
+                (65, 1200)
+            ]
         );
         assert!(
             heard[4..]
@@ -417,7 +426,41 @@ mod tests {
     }
 
     #[test]
-    fn brush_tracks_compound_meter_changes_and_offbeat_clip_origins() {
+    fn mute_requires_at_least_an_eighth_note_at_every_tempo() {
+        let original = vec![n(60, 0, 479), n(64, 0, 480), n(67, 0, 481)];
+        let clip = clip(original.clone(), vec![NoteTransform::Mute { amount: 1.0 }]);
+        for (bpm, duration) in [(60.0, 12), (120.0, 23), (240.0, 46)] {
+            let heard: Vec<_> = clip.sounding_notes(bpm).collect();
+            assert_eq!(&heard[..3], original);
+            assert_eq!(heard.len(), 5);
+            assert_eq!(
+                heard[3..]
+                    .iter()
+                    .map(|note| (note.pitch, note.start.raw(), note.length.raw()))
+                    .collect::<Vec<_>>(),
+                vec![(64, 480, duration), (67, 481, duration)]
+            );
+        }
+        assert_eq!(clip.notes, original);
+    }
+
+    #[test]
+    fn mute_measures_the_held_length_after_gate() {
+        let clip = clip(
+            vec![n(60, 0, 480), n(64, 0, 960)],
+            vec![
+                NoteTransform::Gate { amount: 0.5 },
+                NoteTransform::Mute { amount: 1.0 },
+            ],
+        );
+        let heard: Vec<_> = clip.sounding_notes(120.0).collect();
+        assert_eq!(heard.len(), 3);
+        assert_eq!((heard[2].pitch, heard[2].start), (64, Ticks(480)));
+        assert_eq!(clip.notes[0].length, Ticks(480));
+    }
+
+    #[test]
+    fn brush_uses_sixteenths_through_meter_changes_and_offgrid_clip_origins() {
         let signatures = SignatureMap::from_points(vec![
             SignaturePoint {
                 tick: Ticks::ZERO,
@@ -432,11 +475,14 @@ mod tests {
             vec![n(60, 0, 100)],
             vec![NoteTransform::Brush { amount: 1.0 }],
         );
-        clip.start = Ticks(240);
+        clip.start = Ticks(60);
+        clip.length = Ticks(3120);
         let heard: Vec<_> = clip.sounding_notes_with_meter(120.0, signatures).collect();
         assert_eq!(
             heard[1..].iter().map(|n| n.start.raw()).collect::<Vec<_>>(),
-            vec![1200, 2640, 3600]
+            vec![
+                180, 420, 660, 900, 1140, 1380, 1620, 1860, 2100, 2340, 2580, 2820, 3060
+            ]
         );
     }
 
@@ -504,7 +550,7 @@ mod tests {
 
     #[test]
     fn scoped_articulations_keep_other_drum_voices_untouched() {
-        let mut first = n(60, 0, 100);
+        let mut first = n(60, 0, 480);
         first.drum_voice = "first".into();
         let mut second = n(62, 0, 200);
         second.drum_voice = "second".into();

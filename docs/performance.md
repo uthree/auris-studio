@@ -9,9 +9,9 @@ behaviour for that stage. Dragging a control is one undoable edit.
 | --- | --- |
 | Swing | Delays offbeats on an eighth- or sixteenth-note grid. |
 | Gate | Shortens held notes, opening space for subsequent articulations. |
-| Brush strength | Repeats the most recent simultaneous chord on silent beats, for 20 ms, at up to 30% of its velocity. Compound meters use dotted beats. A brush is skipped if any written note occupies its interval. |
+| Brush strength | Repeats the most recent simultaneous chord on silent sixteenth-note grid positions, for 20 ms, at up to 30% of its velocity. The grid starts at each bar line in every meter. A brush is skipped if any written note occupies its interval. |
 | Slide strength | Inserts one intermediate MIDI pitch just before the next attack, at up to 65% of the previous note's velocity. The note lasts at most 60 ms or a quarter of the previous note's duration. Legato gives up that much of the previous note's tail; a short rest can hold it instead. |
-| Mute strength | Retriggers the same pitch at its release for 12 ms, at up to 35% of its velocity. It skips releases where that pitch is still occupied or the clip has ended. |
+| Mute strength | Retriggers the same pitch at its release for 12 ms, at up to 35% of its velocity, only when the held note is at least an eighth note long after earlier stages such as gate. It skips releases where that pitch is still occupied or the clip has ended. |
 | Stroke spread | Spreads simultaneous notes from first to last across 0–100 ms. Choose low-to-high, high-to-low, or alternating directions. Release times are preserved, and a stroke is bounded by the next attack and its shortest note. |
 | Humanize | Adds related timing and velocity variation: a smooth four-beat gesture, a one-beat gesture, and a smaller individual difference. |
 
