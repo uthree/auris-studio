@@ -40,7 +40,7 @@ fn open_appearance_settings(
     let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
     let cx = VisualTestContext::from_window(handle.into(), cx);
     // Keep the draft and its actions in view; text metrics on the test platform are synthetic.
-    cx.simulate_resize(size(px(760.0), px(1320.0)));
+    cx.simulate_resize(size(px(760.0), px(1480.0)));
     cx.run_until_parked();
     (app, handle, cx)
 }
@@ -314,9 +314,15 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
         }
         cx.simulate_keystrokes("enter");
         let expected = Theme::from_scheme(scheme).track_palette;
+        let expected_gradient =
+            [0.0, 0.5, 1.0].map(|velocity| Theme::from_scheme(scheme).velocity_color(velocity));
         app.read_with(cx, |this, _| {
             assert_eq!(this.theme.scheme, scheme.id);
             assert_eq!(this.theme.track_palette, expected);
+            assert_eq!(
+                [0.0, 0.5, 1.0].map(|velocity| this.theme.velocity_color(velocity)),
+                expected_gradient
+            );
             assert_eq!(this.project(), &project);
         });
         handle
@@ -341,4 +347,52 @@ fn preset_selection_and_theme_base_changes_use_each_schemes_palette(cx: &mut Tes
         assert_eq!(this.project(), &project);
     });
     assert_eq!(Appearance::load().custom_schemes[0].track_palette, expected);
+    assert_eq!(
+        Appearance::load().custom_schemes[0].velocity_palette,
+        SCHEMES[1].velocity_palette
+    );
+}
+
+#[gpui::test]
+fn velocity_gradient_edits_save_and_override_only_the_edited_endpoint(cx: &mut TestAppContext) {
+    let _writer = APPEARANCE_WRITER.lock().unwrap();
+    let (app, handle, mut cx) = open_appearance_settings(cx);
+    let _restore = RestoreAppearance(Appearance::load());
+    let cx = &mut cx;
+    let before = app.read_with(cx, |this, _| this.theme.velocity_soft);
+    crate::harness::click("create-theme", cx);
+    cx.simulate_input("Velocity gradient test");
+    crate::harness::click("theme-velocity-soft", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#123456");
+    app.read_with(cx, |this, _| assert_eq!(this.theme.velocity_soft, before));
+    crate::harness::click("theme-base", cx);
+    cx.simulate_keystrokes("home down enter");
+    crate::harness::click("save-theme", cx);
+    let saved = Appearance::load();
+    assert_eq!(
+        saved.custom_schemes[0].velocity_palette,
+        [Some(0x123456), SCHEMES[1].velocity_palette[1]]
+    );
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.theme.velocity_soft, gpui::rgb(0x123456).into())
+    });
+    crate::harness::click("edit-theme", cx);
+    crate::harness::click("theme-velocity-loud", cx);
+    cx.simulate_keystrokes("secondary-a");
+    cx.simulate_input("#12");
+    crate::harness::click("save-theme", cx);
+    handle
+        .update(cx, |this, _, _| {
+            assert!(this.appearance_editor.is_some());
+            assert_eq!(this.appearance, saved);
+        })
+        .unwrap();
+    crate::harness::click("theme-velocity-loud", cx);
+    cx.simulate_keystrokes("secondary-a backspace");
+    crate::harness::click("save-theme", cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(this.theme.velocity_loud, this.theme.track_palette[2]);
+        assert_eq!(this.appearance.custom_schemes[0].velocity_palette[1], None);
+    });
 }

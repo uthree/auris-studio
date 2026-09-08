@@ -10,6 +10,7 @@ pub(super) struct AppearanceEditor {
     name: TextField,
     accent: TextField,
     palette: [TextField; 8],
+    velocity: [TextField; 2],
     active: ThemeField,
 }
 
@@ -18,6 +19,7 @@ enum ThemeField {
     Name,
     Accent,
     Palette(usize),
+    Velocity(usize),
 }
 
 const PALETTE_FIELDS: [&str; 8] = [
@@ -30,6 +32,8 @@ const PALETTE_FIELDS: [&str; 8] = [
     "theme-color-7",
     "theme-color-8",
 ];
+
+const VELOCITY_FIELDS: [&str; 2] = ["theme-velocity-soft", "theme-velocity-loud"];
 
 impl AppearanceEditor {
     /// Replaces inherited colours when the base changes, keeping explicit draft edits.
@@ -54,6 +58,15 @@ impl AppearanceEditor {
                 *field = palette_field(next.track_palette[index]);
             }
         }
+        for (index, field) in self.velocity.iter_mut().enumerate() {
+            let inherited = match previous.velocity_palette[index] {
+                Some(color) => parse_colour(field.content()) == Some(color),
+                None => field.content().trim().is_empty(),
+            };
+            if inherited {
+                *field = palette_field(next.velocity_palette[index]);
+            }
+        }
         self.base = id;
     }
 
@@ -62,6 +75,7 @@ impl AppearanceEditor {
             ThemeField::Name => &mut self.name,
             ThemeField::Accent => &mut self.accent,
             ThemeField::Palette(index) => &mut self.palette[index],
+            ThemeField::Velocity(index) => &mut self.velocity[index],
         }
     }
 
@@ -70,6 +84,7 @@ impl AppearanceEditor {
             ThemeField::Name => &self.name,
             ThemeField::Accent => &self.accent,
             ThemeField::Palette(index) => &self.palette[index],
+            ThemeField::Velocity(index) => &self.velocity[index],
         }
     }
 
@@ -100,6 +115,13 @@ impl AppearanceEditor {
         draft.accent = accent;
         for (index, field) in self.palette.iter().enumerate() {
             draft.track_palette[index] = if field.content().trim().is_empty() {
+                None
+            } else {
+                Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
+            };
+        }
+        for (index, field) in self.velocity.iter().enumerate() {
+            draft.velocity_palette[index] = if field.content().trim().is_empty() {
                 None
             } else {
                 Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
@@ -243,6 +265,7 @@ impl SettingsWindow {
             }),
             accent: TextField::new(format!("#{:06X}", copy.accent)),
             palette: copy.track_palette.map(palette_field),
+            velocity: copy.velocity_palette.map(palette_field),
             active: ThemeField::Name,
         });
         let focus = self
@@ -374,6 +397,36 @@ impl SettingsWindow {
                             .child(self.theme_text_field(ThemeField::Palette(index), cx))
                     })),
             )
+            .child(section_title(self.t(Key::ThemeVelocityPalette), &theme))
+            .child(note(self.t(Key::ThemeVelocityPaletteNote), &theme))
+            .child(
+                div().flex().flex_wrap().gap_2().children(
+                    [Key::ThemeVelocitySoft, Key::ThemeVelocityLoud]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, label)| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .w(px(250.0))
+                                .child(div().text_xs().child(self.t(label)))
+                                .child(self.theme_text_field(ThemeField::Velocity(index), cx))
+                        }),
+                ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .h(px(20.0))
+                    .children((0..32).map(|step| {
+                        div()
+                            .flex_1()
+                            .h_full()
+                            .bg(preview.velocity_color(step as f32 / 31.0))
+                    })),
+            )
             .child(
                 div()
                     .flex()
@@ -458,6 +511,7 @@ impl SettingsWindow {
             ThemeField::Name => "theme-name",
             ThemeField::Accent => "theme-accent",
             ThemeField::Palette(index) => PALETTE_FIELDS[index],
+            ThemeField::Velocity(index) => VELOCITY_FIELDS[index],
         };
         let focus = self
             .dropdown_focus
@@ -469,6 +523,7 @@ impl SettingsWindow {
             ThemeField::Name => &editor.name,
             ThemeField::Accent => &editor.accent,
             ThemeField::Palette(index) => &editor.palette[index],
+            ThemeField::Velocity(index) => &editor.velocity[index],
         };
         let active = editor.active == field;
         let contents = if active {
@@ -532,6 +587,12 @@ impl SettingsWindow {
                 .into_iter()
                 .enumerate()
                 .map(|(index, id)| (id, ThemeField::Palette(index))),
+        )
+        .chain(
+            VELOCITY_FIELDS
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| (id, ThemeField::Velocity(index))),
         ) {
             if self
                 .dropdown_focus
@@ -600,6 +661,7 @@ mod tests {
             name: TextField::new(""),
             accent: TextField::new("#60A5FA"),
             palette: std::array::from_fn(|_| TextField::new("")),
+            velocity: std::array::from_fn(|_| TextField::new("")),
             active: ThemeField::Name,
         };
         assert_eq!(

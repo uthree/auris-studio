@@ -1177,6 +1177,12 @@ instrument, drums, singer, audio or bus. The library uses the corresponding colo
 sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
 colour. Changing the theme updates their appearance without changing the saved project.
 
+Piano-roll note colours use each theme's velocity gradient, from cool soft notes through green
+and yellow to warm loud notes. The theme editor offers both endpoints and a gradient preview.
+Blank endpoints follow the instrument and drum palette slots; explicit colours survive a base
+theme change. Changing these colours only changes the display, not note velocities.
+The displayed gradient adjusts lightness to stay visible against both piano-roll lane shades.
+
 Preferences live in `~/.config/auris-studio/` on every platform — macOS and Windows included,
 rather than `~/Library/Application Support` and `%APPDATA%`:
 

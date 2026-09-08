@@ -59,6 +59,9 @@ impl Section {
                 Key::ThemeAccent,
                 Key::ThemeTrackPalette,
                 Key::ThemeTrackPaletteNote,
+                Key::ThemeVelocityPalette,
+                Key::ThemeVelocitySoft,
+                Key::ThemeVelocityLoud,
             ],
             Self::Language => &[
                 Key::LanguageHeading,

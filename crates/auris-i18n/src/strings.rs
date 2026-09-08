@@ -809,6 +809,10 @@ strings! {
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
     ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemeVelocityPalette { en: "Piano-roll velocity gradient", ja: "ピアノロールのベロシティグラデーション" }
+    ThemeVelocitySoft { en: "Soft notes (#RRGGBB)", ja: "弱いノート (#RRGGBB)" }
+    ThemeVelocityLoud { en: "Loud notes (#RRGGBB)", ja: "強いノート (#RRGGBB)" }
+    ThemeVelocityPaletteNote { en: "Blank endpoints use the instrument (soft) and drum (loud) palette colours.", ja: "空欄はソフト音源（弱）・ドラム（強）のパレット色に連動します。" }
     ThemePaletteUnassigned1 { en: "Unassigned 1", ja: "未割り当て1" }
     ThemePaletteUnassigned2 { en: "Unassigned 2", ja: "未割り当て2" }
     ThemePaletteUnassigned3 { en: "Unassigned 3", ja: "未割り当て3" }

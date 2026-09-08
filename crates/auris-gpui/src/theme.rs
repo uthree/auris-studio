@@ -75,6 +75,8 @@ pub struct Scheme<'a> {
     pub accent: Hsla,
     /// Optional RGB overrides for the document's eight stable palette slots.
     pub track_palette: [Option<u32>; 8],
+    /// Piano-roll gradient endpoints: soft then loud; blank entries use instrument/drum slots.
+    pub velocity_palette: [Option<u32>; 2],
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
@@ -88,6 +90,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
+        velocity_palette: [Some(0x4f9dde), Some(0xd97b6c)],
         track_palette: [
             Some(0x4f9dde),
             Some(0x5fc9a3),
@@ -112,6 +115,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
         id: "graphite",
+        velocity_palette: [Some(0x8eafa0), Some(0xce8176)],
         track_palette: [
             Some(0xdd9f60),
             Some(0x8eafa0),
@@ -137,6 +141,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // taken downwards.
     Scheme {
         id: "daylight",
+        velocity_palette: [Some(0x246caa), Some(0xb4474e)],
         track_palette: [
             Some(0x246caa),
             Some(0x267e70),
@@ -162,6 +167,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // yellow the greys sit on.
     Scheme {
         id: "parchment",
+        velocity_palette: [Some(0x416d87), Some(0xa24b3e)],
         track_palette: [
             Some(0x26766d),
             Some(0x647849),
@@ -189,6 +195,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
         id: "one-dark",
+        velocity_palette: [Some(0x61afef), Some(0xe06c75)],
         track_palette: [
             Some(0x61afef),
             Some(0x56b6c2),
@@ -215,6 +222,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // one recognisable as itself.
     Scheme {
         id: "one-light",
+        velocity_palette: [Some(0x3671f1), Some(0xe03d2e)],
         track_palette: [
             Some(0x3671f1),
             Some(0x0182b9),
@@ -240,6 +248,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // link blue #58a6ff at full saturation.
     Scheme {
         id: "github-dark",
+        velocity_palette: [Some(0x58a6ff), Some(0xff7b72)],
         track_palette: [
             Some(0x58a6ff),
             Some(0x7ee787),
@@ -266,6 +275,7 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // cut into the window at exactly the window's colour.
     Scheme {
         id: "github-light",
+        velocity_palette: [Some(0x0969da), Some(0xcf222e)],
         track_palette: [
             Some(0x0969da),
             Some(0x1a7f37),
@@ -529,9 +539,9 @@ pub struct Theme {
     pub key_black: Hsla,
     /// Lane background behind a black key's row.
     pub key_row_black: Hsla,
-    /// Colour of the softest note in the piano roll. See [`Theme::velocity_color`].
+    /// Soft endpoint before lane-contrast adjustment. See [`Theme::velocity_color`].
     pub velocity_soft: Hsla,
-    /// Colour of the hardest-struck note in the piano roll.
+    /// Loud endpoint before lane-contrast adjustment.
     pub velocity_loud: Hsla,
     /// Resolved track, clip and library colours, indexed by the document palette.
     pub track_palette: [Hsla; 8],
@@ -620,20 +630,9 @@ impl Theme {
             // piano nobody can read.
             key_white: hsla(scheme.hue, scheme.chroma * 0.4, 0.86, 1.0),
             key_black: hsla(scheme.hue, scheme.chroma, 0.18, 1.0),
-            // The two ends of the velocity ramp. What matters is the path between them, which is
-            // a statement about hue — see [`Theme::velocity_color`].
-            velocity_soft: hsla(
-                0.58,
-                0.52,
-                if scheme.direction() > 0.0 { 0.55 } else { 0.46 },
-                1.0,
-            ),
-            velocity_loud: hsla(
-                0.02,
-                0.68,
-                if scheme.direction() > 0.0 { 0.58 } else { 0.50 },
-                1.0,
-            ),
+            // Resolved below, once the palette is available for blank custom endpoints.
+            velocity_soft: accent,
+            velocity_loud: accent,
         };
         theme.track_palette = std::array::from_fn(|index| {
             scheme.track_palette[index].map_or_else(
@@ -641,6 +640,12 @@ impl Theme {
                 |packed| rgb(packed).into(),
             )
         });
+        theme.velocity_soft = scheme.velocity_palette[0]
+            .map(|packed| rgb(packed).into())
+            .unwrap_or(theme.track_palette[0]);
+        theme.velocity_loud = scheme.velocity_palette[1]
+            .map(|packed| rgb(packed).into())
+            .unwrap_or(theme.track_palette[2]);
         theme
     }
 
@@ -672,20 +677,31 @@ impl Theme {
     /// was tried here first and is not enough: velocity 0.8 and velocity 1.0 differ by a few per
     /// cent of lightness, which is invisible next to a note an octave away on a different row.
     ///
-    /// The two ends are walked in a straight line rather than the short way round the colour
-    /// wheel, so a palette chooses which way the ramp runs by which hues it names. Blue above red
-    /// walks *down* through green and yellow, which is the heat map everybody already reads;
-    /// taking the short way would have gone up through purple instead, which reads as nothing.
+    /// Hues descend through green and yellow from the presets' cool end to their warm end.
+    /// Wrapping across red's zero boundary keeps a rose-red endpoint from reversing the ramp
+    /// through purple. Saturation and lightness interpolate between the theme's endpoints.
+    /// Lightness is then adjusted to keep the fill visible against both piano-roll lane shades.
     pub fn velocity_color(&self, velocity: f32) -> Hsla {
         let amount = velocity.clamp(0.0, 1.0);
         let (soft, loud) = (self.velocity_soft, self.velocity_loud);
         let between = |from: f32, to: f32| from + (to - from) * amount;
-        Hsla {
-            h: between(soft.h, loud.h),
+        let mut color = Hsla {
+            h: (soft.h - (soft.h - loud.h).rem_euclid(1.0) * amount).rem_euclid(1.0),
             s: between(soft.s, loud.s),
             l: between(soft.l, loud.l),
             a: between(soft.a, loud.a),
+        };
+        let step = if self.background.l < 0.5 { 0.01 } else { -0.01 };
+        for _ in 0..=100 {
+            if [self.surface_sunken, self.key_row_black]
+                .into_iter()
+                .all(|lane| contrast_ratio(color, lane) >= 3.0)
+            {
+                break;
+            }
+            color.l = (color.l + step).clamp(0.0, 1.0);
         }
+        color
     }
 
     /// A group marker, with its hue offset from the current theme's accent.
@@ -977,34 +993,50 @@ mod tests {
 
     #[test]
     fn velocity_reads_as_a_heat_map_rather_than_as_two_shades() {
-        let theme = Theme::dark();
         let same = |left: Hsla, right: Hsla| {
             (left.h - right.h).abs() < 1e-4
                 && (left.s - right.s).abs() < 1e-4
                 && (left.l - right.l).abs() < 1e-4
                 && (left.a - right.a).abs() < 1e-4
         };
-        assert!(same(theme.velocity_color(0.0), theme.velocity_soft));
-        assert!(same(theme.velocity_color(1.0), theme.velocity_loud));
-        // Out of range is clamped rather than extrapolated off the end of the ramp.
-        assert!(same(theme.velocity_color(-1.0), theme.velocity_soft));
-        assert!(same(theme.velocity_color(9.0), theme.velocity_loud));
+        let mut ramps = Vec::new();
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            assert!(same(theme.velocity_color(0.0), theme.velocity_soft));
+            assert!(same(theme.velocity_color(1.0), theme.velocity_loud));
+            // Out of range is clamped rather than extrapolated off the end of the ramp.
+            assert!(same(theme.velocity_color(-1.0), theme.velocity_soft));
+            assert!(same(theme.velocity_color(9.0), theme.velocity_loud));
 
-        // The hue has to move, and move steadily: this is the whole difference from the
-        // brightness ramp it replaced, where velocity 0.8 and 1.0 were the same rectangle.
-        let hues: Vec<f32> = (0..=10)
-            .map(|step| theme.velocity_color(step as f32 / 10.0).h)
-            .collect();
-        for pair in hues.windows(2) {
-            assert!(pair[0] > pair[1], "the ramp doubles back: {hues:?}");
+            // The hue has to move, and move steadily: this is the whole difference from the
+            // brightness ramp it replaced, where velocity 0.8 and 1.0 were the same rectangle.
+            let hues: Vec<f32> = (0..=10)
+                .map(|step| theme.velocity_color(step as f32 / 10.0).h)
+                .collect();
+            for pair in hues.windows(2) {
+                let step = (pair[0] - pair[1]).rem_euclid(1.0);
+                assert!(
+                    step > 0.0 && step < 0.1,
+                    "{}: the ramp doubles back: {hues:?}",
+                    scheme.id
+                );
+            }
+            // Down through green and yellow, not up through purple. Both connect blue to red; only
+            // one of them says "louder".
+            let middle = theme.velocity_color(0.5).h;
+            assert!(
+                (0.15..0.45).contains(&middle),
+                "half velocity came out at hue {middle}, which is not on the warm side of green"
+            );
+            let ramp =
+                std::array::from_fn::<_, 11, _>(|step| theme.velocity_color(step as f32 / 10.0));
+            assert!(
+                !ramps.contains(&ramp),
+                "{} shares another theme's gradient",
+                scheme.id
+            );
+            ramps.push(ramp);
         }
-        // Down through green and yellow, not up through purple. Both connect blue to red; only
-        // one of them says "louder".
-        let middle = theme.velocity_color(0.5).h;
-        assert!(
-            (0.15..0.45).contains(&middle),
-            "half velocity came out at hue {middle}, which is not on the warm side of green"
-        );
     }
 
     #[test]
@@ -1013,6 +1045,13 @@ mod tests {
             let theme = Theme::from_scheme(entry);
             for velocity in 0..=127 {
                 let fill = theme.velocity_color(velocity as f32 / 127.0);
+                for lane in [theme.surface_sunken, theme.key_row_black] {
+                    assert!(
+                        contrast_ratio(fill, lane) >= 3.0,
+                        "{}: velocity {velocity}",
+                        entry.name
+                    );
+                }
                 let ratio = contrast_ratio(theme.text_on(fill), fill);
                 assert!(
                     ratio >= 4.5,
@@ -1156,6 +1195,7 @@ mod tests {
                 "{}",
                 scheme.id
             );
+            assert!(scheme.velocity_palette.iter().all(Option::is_some));
             let theme = Theme::from_scheme(scheme);
             for other in &SCHEMES[..index] {
                 assert_ne!(theme.track_palette, Theme::from_scheme(other).track_palette);
@@ -1165,6 +1205,8 @@ mod tests {
                 ..*scheme
             });
             assert_eq!(theme.track_palette, changed_accent.track_palette);
+            assert_eq!(theme.velocity_soft, changed_accent.velocity_soft);
+            assert_eq!(theme.velocity_loud, changed_accent.velocity_loud);
             for (actual, stored) in theme.track_palette.iter().zip(scheme.track_palette) {
                 assert_eq!(*actual, Hsla::from(rgb(stored.unwrap())));
             }

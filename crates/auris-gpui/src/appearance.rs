@@ -31,6 +31,9 @@ pub struct CustomScheme {
     /// Optional RGB colours for track, clip and library palette slots.
     #[serde(default)]
     pub track_palette: [Option<u32>; 8],
+    /// Optional soft/loud endpoints of the piano-roll velocity gradient.
+    #[serde(default)]
+    pub velocity_palette: [Option<u32>; 2],
 }
 
 impl CustomScheme {
@@ -46,6 +49,7 @@ impl CustomScheme {
             base: base.base,
             accent: (channel(color.r) << 16) | (channel(color.g) << 8) | channel(color.b),
             track_palette: base.track_palette,
+            velocity_palette: base.velocity_palette,
         }
     }
 
@@ -59,6 +63,7 @@ impl CustomScheme {
             base: self.base,
             accent: gpui::rgb(self.accent).into(),
             track_palette: self.track_palette,
+            velocity_palette: self.velocity_palette,
         }
     }
 
@@ -84,6 +89,7 @@ impl CustomScheme {
             || self
                 .track_palette
                 .iter()
+                .chain(self.velocity_palette.iter())
                 .flatten()
                 .any(|color| *color > 0xff_ffff)
         {
@@ -312,6 +318,7 @@ mod tests {
         let mut palette = custom();
         palette.track_palette[0] = Some(0x123456);
         palette.track_palette[7] = Some(0xfedcba);
+        palette.velocity_palette = [Some(0x245678), Some(0xde4567)];
         let json = serde_json::to_string(&palette).unwrap();
         let loaded: CustomScheme = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, palette);
@@ -326,13 +333,24 @@ mod tests {
         );
         let copy = CustomScheme::from_scheme("copy".into(), "Copy".into(), &loaded.definition());
         assert_eq!(copy.track_palette, loaded.track_palette);
+        assert_eq!(copy.velocity_palette, loaded.velocity_palette);
+        assert_eq!(theme.velocity_soft, gpui::Hsla::from(gpui::rgb(0x245678)));
+        assert_eq!(theme.velocity_loud, gpui::Hsla::from(gpui::rgb(0xde4567)));
 
         let mut old = serde_json::to_value(&palette).unwrap();
         old.as_object_mut().unwrap().remove("track_palette");
+        old.as_object_mut().unwrap().remove("velocity_palette");
         let loaded: CustomScheme = serde_json::from_value(old).unwrap();
         assert_eq!(loaded.track_palette, [None; 8]);
+        assert_eq!(loaded.velocity_palette, [None; 2]);
+        let fallback = Theme::from_scheme(&loaded.definition());
+        assert_eq!(fallback.velocity_soft, fallback.track_palette[0]);
+        assert_eq!(fallback.velocity_loud, fallback.track_palette[2]);
         assert!(loaded.validate().is_ok());
         palette.track_palette[1] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.track_palette[1] = None;
+        palette.velocity_palette[0] = Some(0x1000000);
         assert!(palette.validate().is_err());
     }
 
