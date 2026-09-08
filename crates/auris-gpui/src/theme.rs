@@ -362,7 +362,9 @@ pub(crate) fn palette_label(language: auris_i18n::Language, index: usize) -> Str
         2 => Key::TrackKindDrum,
         3 => Key::TrackKindBus,
         4 => Key::TrackKindSinger,
-        _ => return format!("{} {}", t(Key::MenuTrackColor, language), index + 1),
+        5 => Key::ThemePaletteUnassigned1,
+        6 => Key::ThemePaletteUnassigned2,
+        _ => Key::ThemePaletteUnassigned3,
     };
     t(key, language).to_owned()
 }

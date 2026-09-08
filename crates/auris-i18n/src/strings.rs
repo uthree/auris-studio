@@ -809,6 +809,9 @@ strings! {
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
     ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemePaletteUnassigned1 { en: "Unassigned 1", ja: "未割り当て1" }
+    ThemePaletteUnassigned2 { en: "Unassigned 2", ja: "未割り当て2" }
+    ThemePaletteUnassigned3 { en: "Unassigned 3", ja: "未割り当て3" }
     ThemeTrackPaletteNote { en: "Enter #RRGGBB, or leave blank to follow the accent. Clips use their track's colour. Buses share the effects colour.", ja: "#RRGGBB で指定します。空欄はアクセントに連動します。クリップはトラックの色、バスはエフェクトと同じ色を使います。" }
     ThemePreview { en: "Preview", ja: "プレビュー" }
     ThemePreviewText { en: "Track · Piano · Settings", ja: "トラック・ピアノ・設定" }
