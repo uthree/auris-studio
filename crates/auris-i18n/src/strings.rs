@@ -747,6 +747,28 @@ strings! {
     // where one is already named above — density, gate, swing — the same string is reused and
     // only what the sheet adds appears here.
     SongSheetTitle { en: "Compose a Song", ja: "曲を作る" }
+    ComposeProgressTitle { en: "Creating your song", ja: "自動作曲中" }
+    ComposeProgressWriting { en: "Writing the music…", ja: "メロディーと編曲を作成しています…" }
+    ComposeProgressPreparing { en: "Preparing instruments…", ja: "音源を準備しています…" }
+    ComposeProgressBalancing { en: "Adjusting the mix…", ja: "音量バランスを調整しています…" }
+    ComposeProgressMix { en: "Measuring the full mix", ja: "曲全体の音量を測定" }
+    ComposeProgressVerification { en: "Checking the final levels", ja: "最終的な音量を確認" }
+    ComposeProgressHint {
+        en: "Longer songs and larger instruments can take more time.",
+        ja: "曲の長さや音源によって、時間がかかることがあります。"
+    }
+    ComposeProgressChanged {
+        en: "The project changed while the song was being created. The result was not applied.",
+        ja: "作曲中にプロジェクトが変更されたため、作成結果を適用しませんでした。"
+    }
+    ComposeProgressBalanceFailed {
+        en: "The song was created, but its levels could not be adjusted automatically.",
+        ja: "曲を作成しましたが、音量バランスの自動調整に失敗しました。"
+    }
+    BalanceChanged {
+        en: "The project changed while its levels were being measured. The adjustment was not applied.",
+        ja: "音量の測定中にプロジェクトが変更されたため、調整結果を適用しませんでした。"
+    }
     SongHeading { en: "Song", ja: "曲" }
     SongTitleField { en: "Title", ja: "タイトル" }
     SongKey { en: "Key", ja: "調" }

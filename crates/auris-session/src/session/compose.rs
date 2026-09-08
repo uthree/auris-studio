@@ -129,6 +129,32 @@ impl Session {
         &mut self,
         composition: &auris_compose::Composition,
     ) -> Result<ComposeReport, SessionError> {
+        let mut report = self.compose_without_balance(composition)?;
+        // The same staged pass drives synchronous callers and a frontend's worker jobs. A
+        // measurement failure keeps the written levels without losing the new composition.
+        report.balance = match self.balance_composed.then(|| self.balance_now()) {
+            Some(Ok(balance)) => Some(balance),
+            Some(Err(error)) => {
+                log::warn!(
+                    "the composed mix could not be measured ({error}); levels are as written"
+                );
+                None
+            }
+            None => None,
+        };
+        Ok(report)
+    }
+
+    /// Replaces the document with a composed piece, leaving its balance for a worker job.
+    ///
+    /// Source validation, plugin preparation and adoption remain on the session thread. This
+    /// records the same single undo step as [`Self::compose`]; [`Self::begin_composed_balance`]
+    /// and [`Self::continue_composed_balance`] can then measure the piece without blocking a UI
+    /// or adding another history entry. If measurement fails, the written levels remain intact.
+    pub fn compose_without_balance(
+        &mut self,
+        composition: &auris_compose::Composition,
+    ) -> Result<ComposeReport, SessionError> {
         let spec = auris_compose::SongSpec::parse(&composition.spec)
             .map_err(|errors| SessionError::SongLyrics(format!("{errors:?}")))?;
         self.validate_song_lyrics(&spec)?;
@@ -503,25 +529,8 @@ impl Session {
         }
         self.replace_project(project);
         self.install_shipped_fonts();
-        // After the fonts and not before: the levels are set by listening to the piece, and what
-        // it sounds like is decided by which font answered the call for a sound. Before them, this
-        // would be measuring the fallback oscillators and writing down a mix of a piece nobody is
-        // about to hear.
-        //
-        // Part of composing rather than a step after it, so Undo takes back the piece and not the
-        // mix of it. A piece that could not be rendered keeps the levels the composer guessed,
-        // which is what every piece had before this existed — worth a line in the log and not
-        // worth failing over.
-        report.balance = match self.balance_composed.then(|| self.balance_now()) {
-            Some(Ok(balance)) => Some(balance),
-            Some(Err(error)) => {
-                log::warn!(
-                    "the composed mix could not be measured ({error}); levels are as written"
-                );
-                None
-            }
-            None => None,
-        };
+        // A balance job must be captured after the fonts are installed, so it measures the
+        // instruments the new piece will actually play.
         self.dirty = true;
         Ok(report)
     }

@@ -1736,6 +1736,60 @@ mod tests {
         }
     }
 
+    #[test]
+    fn composed_balance_settles_native_setup_notifications_before_capture() {
+        let (mut session, track) = session_with_instrument_score();
+        session.balance_composed = true;
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .pretend_the_state_changed();
+        let before = session.revision();
+        let job = session.begin_composed_balance().unwrap();
+        assert_ne!(
+            session.revision(),
+            before,
+            "setup requests were not consumed"
+        );
+        let settled = session.revision();
+        session.poll();
+        assert_eq!(session.revision(), settled);
+        let result = job
+            .run(&mut auris_engine::RenderProgress::default())
+            .unwrap();
+        assert!(matches!(
+            session.continue_composed_balance(result),
+            Ok(crate::ComposeBalanceStep::Pending(_))
+        ));
+    }
+
+    #[test]
+    fn composed_balance_rejects_unpolled_native_edits_after_rendering() {
+        let (mut session, track) = session_with_instrument_score();
+        session.balance_composed = true;
+        let result = session
+            .begin_composed_balance()
+            .unwrap()
+            .run(&mut auris_engine::RenderProgress::default())
+            .unwrap();
+        let before = session.project().clone();
+        let revision = session.revision();
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .pretend_the_state_changed();
+        assert_eq!(session.revision(), revision, "no window tick has run yet");
+        assert!(matches!(
+            session.continue_composed_balance(result),
+            Err(SessionError::StaleBalance)
+        ));
+        assert_eq!(session.project(), &before);
+    }
+
     fn session_with_instrument_score() -> (super::Session, TrackId) {
         let (mut session, file) = session_with_instrument();
         let track = session.add_default_instrument_track("Lead").unwrap();

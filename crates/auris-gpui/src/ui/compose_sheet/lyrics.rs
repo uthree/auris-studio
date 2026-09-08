@@ -1014,13 +1014,13 @@ mod tests {
     #[gpui::test]
     fn mismatched_later_words_leave_the_sheet_and_document_intact(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
-        app.update(cx, |this, _| {
+        app.update(cx, |this, cx| {
             let mut spec = auris_session::prelude::preset("pop-band").unwrap().spec();
             spec.sections.get_mut("verse").unwrap().lyrics = "さくら".into();
             spec.sections.get_mut("verse2").unwrap().lyrics = "はる".into();
             this.song_sheet = Some(super::super::song_dials(&spec));
             let before = this.project().clone();
-            assert!(!this.write_song_from_sheet());
+            assert!(!this.write_song_from_sheet(true, cx));
             assert!(this.song_sheet.is_some());
             assert!(this.prompt.is_some());
             assert_eq!(this.project(), &before);

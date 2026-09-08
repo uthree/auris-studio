@@ -60,6 +60,12 @@ and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
 
+Song creation shows its current stage above the settings: writing the score, preparing the sounds,
+then balancing the mix. During balancing, the progress bar follows each track render and the two
+full-mix passes, naming the current measurement. The window keeps updating while the score and
+audio are calculated. Editing resumes when the job finishes; a rejected source leaves the draft
+open for correction. **Another Take** keeps the settings open after success as well.
+
 Every style also installs [non-destructive performance settings](performance.md#starting-from-automatic-composition)
 suited to its instruments: guitar strokes and muted tails, quiet pickups, shared phrasing,
 and pitch gestures on appropriate solo parts. Adjust them in each clip's Performance tab.

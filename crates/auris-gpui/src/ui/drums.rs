@@ -519,7 +519,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (app, cx) = open(cx);
-        app.update(cx, |this, _| {
+        let (track, old, report) = app.update(cx, |this, cx| {
             let track = this
                 .session
                 .add_drum_track("Old Kit", "auris.synth.drumkit")
@@ -539,9 +539,14 @@ mod tests {
             "#,
             )
             .unwrap();
-            this.compose_spec(&spec);
+            assert!(this.compose_spec(&spec, true, cx));
             assert!(old.load(Ordering::Relaxed));
             assert!(this.drum_analysis.report(track).is_none());
+            (track, old, report)
+        });
+        cx.run_until_parked();
+        app.update(cx, |this, _| {
+            assert!(this.compose_progress.is_none());
             let composed = this.project().clone();
             this.finish_drum_analysis(&old, Ok(report.clone()));
             assert!(this.drum_analysis.report(track).is_none());

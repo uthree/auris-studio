@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// A balance measurement no longer describes the document that is open.
+    #[error("the project changed while its levels were being measured")]
+    StaleBalance,
     /// A composed part explicitly selected an unavailable or incompatible instrument source.
     #[error("song instrument: {0}")]
     SongSource(String),

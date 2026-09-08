@@ -1741,6 +1741,9 @@ impl AurisApp {
     /// The palette first: opening it closes the rename sheet, so the two are never both open, and
     /// asking in this order means the answer does not depend on that staying true.
     fn writable_field(&mut self) -> Option<&mut TextField> {
+        if self.compose_progress.is_some() {
+            return None;
+        }
         self.reconcile_section_lyrics();
         // Menus sit above every field and accept choices rather than text. Keep both ordinary
         // input and IME updates away from the editor they cover.
@@ -1780,6 +1783,9 @@ impl crate::ui::text_field::HasTextField for AurisApp {
     }
 
     fn readable_field(&self) -> Option<&TextField> {
+        if self.compose_progress.is_some() {
+            return None;
+        }
         if self.menu.is_some() || self.menu_bar.is_some() {
             return None;
         }

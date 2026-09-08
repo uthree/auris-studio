@@ -1157,6 +1157,17 @@ pub mod composition {
     //! the registry does not have falls back to the first registered one and is reported, because
     //! a missing plugin should cost a timbre rather than a whole piece.
     //!
+    //! A responsive frontend uses
+    //! [`Session::compose_without_balance`](crate::Session::compose_without_balance), followed by
+    //! [`Session::begin_composed_balance`](crate::Session::begin_composed_balance). Each
+    //! [`ComposeBalanceJob`](crate::ComposeBalanceJob) renders and measures one track or mix on a
+    //! worker; [`Session::continue_composed_balance`](crate::Session::continue_composed_balance)
+    //! captures the next job on the session thread, where hosted plugin factories must remain.
+    //! Progress covers every track render and both mix renders. Faders are calculated in a
+    //! detached document and applied together after the last measurement, within the composition's
+    //! existing undo step. An intervening edit or Undo rejects the stale result; a failed render
+    //! leaves the written levels intact. Synchronous callers use the same measurements and math.
+    //!
     //! `ending = "loop"` makes the form circular: the final section prepares the first section's
     //! key and the writers treat their boundary as another join. No coda or fade is added.
     //! The composition carries this intent to the session, which enables the cycle over the

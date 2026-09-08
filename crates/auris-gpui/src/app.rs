@@ -1321,6 +1321,8 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    /// Modal progress while a song is written, prepared and balanced.
+    pub(crate) compose_progress: Option<crate::ui::compose_progress::ComposeProgressState>,
     /// The library browser currently choosing a song part's source.
     pub(crate) song_library: Option<crate::ui::library::SongLibrary>,
     /// Fonts browsed while composing, without adding assets to the current document.
@@ -1579,13 +1581,19 @@ impl AurisApp {
                         // to disk. A success says nothing: it is a private recovery snapshot, and
                         // announcing one every half minute would drown out useful status. A
                         // failure is worth the interruption.
-                        if let Some(Err(error)) = this.session.autosave() {
-                            let line = this.failure(Key::CmdSave, &error);
-                            this.set_failed_status(line);
+                        if this.compose_progress.is_none() {
+                            if let Some(Err(error)) = this.session.autosave() {
+                                let line = this.failure(Key::CmdSave, &error);
+                                this.set_failed_status(line);
+                            }
+                            // Composing adopts the score and its measured faders as one edit.
+                            // Other document writers wait until both halves have finished.
+                            this.watch_disk(cx);
+                            this.drain_agent(cx);
+                            this.poll_auto_sing(cx);
+                            this.poll_drum_analysis(cx);
+                            this.poll_sung_preview(cx);
                         }
-                        // Beside autosave on purpose: this notices another writer at the real
-                        // file. The recovery snapshot is separate and never overwrites it.
-                        this.watch_disk(cx);
                         // Also here rather than in a command, because a monitor breaking up
                         // happens *between* commands: without this the only evidence is a noise
                         // the person playing is left to interpret.
@@ -1593,16 +1601,6 @@ impl AurisApp {
                         // The punch-out is a position the playhead crosses rather than a thing
                         // anybody does, so this is the only place that could notice it.
                         this.finish_punch();
-                        // The agent's wire is another thread writing and this one reading, so
-                        // it is drained where everything with that shape is.
-                        this.drain_agent(cx);
-                        // Edits to a voiced singer track re-render its take without being
-                        // asked; the debounce and the one-at-a-time rule live in the poll.
-                        this.poll_auto_sing(cx);
-                        this.poll_drum_analysis(cx);
-                        // And a grabbed note's preview is sung here too, because the
-                        // pointer handler that wished for it had no executor in hand.
-                        this.poll_sung_preview(cx);
                         this.poll_singer_portrait(cx);
                         this.poll_spectrograms(cx);
                         cx.notify();
@@ -1665,6 +1663,7 @@ impl AurisApp {
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
+            compose_progress: None,
             song_library: None,
             song_library_fonts: Vec::new(),
             song_advanced: false,
@@ -1757,7 +1756,8 @@ impl AurisApp {
     /// Escape itself, since the binding that used to close them is one of the ones now out of
     /// reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
-        self.taking_text_input()
+        self.compose_progress.is_some()
+            || self.taking_text_input()
             || self.menu.is_some()
             || self.menu_bar.is_some()
             // The song sheet is a form, and every letter typed into one of its fields has to
@@ -1883,6 +1883,14 @@ impl AurisApp {
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
     pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
+        // A busy modal owns the root even when there was no editable sheet underneath it.
+        // Keeping focus here also removes pane action handlers from native menu dispatch.
+        if self.compose_progress.is_some() {
+            if !self.focus.is_focused(window) {
+                window.focus(&self.focus);
+            }
+            return;
+        }
         // A dock switch can hide a field without clicking another pane. Hidden fields must not
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {

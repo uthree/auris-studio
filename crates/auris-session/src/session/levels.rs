@@ -33,6 +33,13 @@ use crate::history::Edit;
 
 use super::Session;
 
+#[path = "levels_job.rs"]
+mod job;
+pub use job::{
+    ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult,
+    ComposeBalanceStep,
+};
+
 /// Where a finished piece is aimed, in LUFS.
 ///
 /// Fourteen under full scale, which is where every streaming service normalises to and therefore
@@ -215,90 +222,14 @@ impl Session {
     /// they had before it, not the same piece with the faders where the composer first guessed
     /// them.
     pub(super) fn balance_now(&mut self) -> Result<BalanceReport, SessionError> {
-        let levelled: Vec<TrackId> = self
-            .project
-            .tracks
-            .iter()
-            .filter(|track| !track.kind.is_bus())
-            .map(|track| track.id)
-            .collect();
-
-        let mut tracks: Vec<TrackLevel> = Vec::new();
-        for &id in &levelled {
-            let measured = self.measure_alone(id)?;
-            let entry = self
-                .project
-                .track(id)
-                .expect("a track that was just listed");
-            let was_db = entry.mixer.gain_db;
-            let name = entry.name.clone();
-            let target_lufs = entry.mixer.target_lufs;
-            let now_db = match (target_lufs, measured) {
-                (Some(target), Some(measured)) => fader_for(target, measured, was_db),
-                // A track nothing identifies, and a track that made no sound, are both left where
-                // they are. There is nothing to aim the first one at, and turning the second one
-                // up would be setting a level from a measurement that does not exist.
-                _ => was_db,
-            };
-            self.write_fader(id, now_db);
-            tracks.push(TrackLevel {
-                name,
-                target_lufs,
-                measured_lufs: measured,
-                was_db,
-                now_db,
-            });
+        let mut job = self.begin_balance_job();
+        loop {
+            let result = job.run(&mut auris_engine::RenderProgress::default())?;
+            match self.continue_composed_balance(result)? {
+                ComposeBalanceStep::Pending(next) => job = next,
+                ComposeBalanceStep::Complete(report) => return Ok(report),
+            }
         }
-
-        // The whole piece, once the parts sit where they should — and then the two ways there are
-        // of making it louder, in the order that spends the cheaper one first.
-        //
-        // Raising every fader together drives the master's own limiter, which is what a master is
-        // for and where the last few decibels of a dense mix come from. Raising the master fader
-        // does not: it is *after* the chain, so nothing catches what it adds and it has to stop at
-        // the ceiling. So the faders go up as far as the limiter's allowance and their own travel
-        // permit, and the master picks up whatever is left in the headroom.
-        let mix = self.render_snapshot(self.project.clone())?;
-        let balanced_lufs = integrated_lufs(&mix);
-        let headroom = tracks
-            .iter()
-            .map(|level| FADER_RANGE_DB.1 - level.now_db)
-            .fold(f32::INFINITY, f32::min);
-        let lift = balanced_lufs.map_or(0.0, |lufs| {
-            faders_lift_db(
-                lufs,
-                analyze_loudness(self.gpu.as_deref(), &mix).true_peak_db(),
-                headroom,
-            )
-        });
-        for (level, &id) in tracks.iter_mut().zip(&levelled) {
-            level.now_db += lift;
-            self.write_fader(id, level.now_db);
-        }
-
-        // Rendered again rather than predicted, because the limiter has just been given something
-        // to do and only a render knows how much of the lift it kept.
-        let lifted = self.render_snapshot(self.project.clone())?;
-        let lifted_lufs = integrated_lufs(&lifted);
-        let master_db = lifted_lufs.map_or(0.0, |lufs| {
-            master_gain_db(
-                lufs,
-                analyze_loudness(self.gpu.as_deref(), &lifted).true_peak_db(),
-            )
-        });
-        self.project.master.gain_db = master_db;
-        self.send(EngineCommand::SetMasterGain(master_db));
-
-        Ok(BalanceReport {
-            tracks,
-            lift_db: lift,
-            master_db,
-            balanced_lufs,
-            // The master fader is a gain and the last thing in the signal path, so where the piece
-            // ends up is where it measured plus where the fader went. This is the one number here
-            // that is arithmetic rather than measurement, and it is exact.
-            now_lufs: lifted_lufs.map(|lufs| lufs + master_db),
-        })
     }
 
     /// Moves a fader without recording a step of its own.

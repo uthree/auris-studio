@@ -319,10 +319,13 @@ impl AurisApp {
                                         theme.accent,
                                         &theme,
                                         cx.listener(|this, _, _, cx| {
+                                            if this.compose_progress.is_some() {
+                                                return;
+                                            }
                                             if let Some(dials) = this.song_sheet.as_mut() {
                                                 another_take(dials);
                                             }
-                                            this.write_song_from_sheet();
+                                            this.write_song_from_sheet(false, cx);
                                             cx.notify();
                                         }),
                                     ))
@@ -337,10 +340,7 @@ impl AurisApp {
                                     // Write closes the sheet and Another Take does not: one is
                                     // "this is the song", the other is "not that one, again".
                                     cx.listener(|this, _, _, cx| {
-                                        if this.write_song_from_sheet() {
-                                            this.song_sheet = None;
-                                            this.lyrics_edit = None;
-                                        }
+                                        this.write_song_from_sheet(true, cx);
                                         cx.notify();
                                     }),
                                 )),
@@ -1259,7 +1259,14 @@ impl AurisApp {
     }
 
     /// Writes the piece the sheet describes, replacing the document.
-    pub(crate) fn write_song_from_sheet(&mut self) -> bool {
+    pub(crate) fn write_song_from_sheet(
+        &mut self,
+        close_sheet: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.compose_progress.is_some() {
+            return false;
+        }
         let Some(dials) = self.song_sheet.as_ref() else {
             return false;
         };
@@ -1272,7 +1279,7 @@ impl AurisApp {
             ));
             return false;
         }
-        self.compose_spec(&spec)
+        self.compose_spec(&spec, close_sheet, cx)
     }
 
     /// Saves the sheet as a specification file.
