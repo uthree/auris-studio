@@ -12,7 +12,12 @@
 //! # Offline music recognition
 //!
 //! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events
-//! on the CPU. It also runs an explicitly prepared YAMNet ONNX model for instrument-presence
+//! on the CPU. Library timbre exploration uses [`crate::Session::timbre_map_job`]: a read-only
+//! snapshot shares immutable SoundFonts with independent background instruments, measures matched
+//! reference notes through [`auris_dsp::timbre`], and retains previews and a feature-space index.
+//! The desktop displays PCA coordinates and clusters, while similarity queries use the complete
+//! standardized features. Only adopting a sound edits a track; audition uses a cached one-shot.
+//! It also runs an explicitly prepared YAMNet ONNX model for instrument-presence
 //! tagging, using ONNX Runtime's CPU provider. The optional weights are external runtime data,
 //! and inference never downloads them. The session collects written notes or shares source audio with
 //! a worker job. Analysis returns a draft; applying harmony or placing transcribed notes is an

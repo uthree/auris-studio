@@ -107,6 +107,7 @@ pub use session::{
     MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
 pub use session::{MusicalClipAnalysis, RenderedSpectrogramJob, SpectrogramJob};
+pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,

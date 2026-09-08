@@ -320,6 +320,21 @@ impl AurisApp {
             .size_full()
             .bg(theme.surface)
             .child(panel_header(self.t(Key::Library), &theme))
+            .child(crate::ui::widgets::button(
+                "open-timbre-map",
+                self.t(Key::TimbreMap),
+                crate::ui::widgets::ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.timbre_map.open = true;
+                    if this.timbre_map.map.is_none() && this.timbre_map.control.is_none() {
+                        this.scan_timbre_map(cx);
+                    }
+                    cx.notify();
+                }),
+            ))
             .child(self.library_search_field(cx))
             .child(
                 self.scrolling(
