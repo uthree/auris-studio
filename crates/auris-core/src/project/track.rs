@@ -233,6 +233,18 @@ pub struct SingerTake {
     pub fingerprint: u64,
     /// The seed the take's random choices were pinned by.
     pub seed: u64,
+    /// Backend pitch used for this performance, on the unpadded project timeline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_pitch: Option<SingerPitch>,
+}
+
+/// A rendered singer's acoustic pitch, starting at timeline second zero.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SingerPitch {
+    /// Seconds between consecutive frames.
+    pub hop_seconds: f64,
+    /// Frequency in Hz for each frame; zero denotes an unvoiced frame.
+    pub hz: Vec<f64>,
 }
 
 /// The frame hop a new singer track starts with, in seconds.

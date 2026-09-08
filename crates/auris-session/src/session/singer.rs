@@ -539,6 +539,22 @@ impl Session {
         Ok(self.render_singer_frames(singer))
     }
 
+    /// The current take's backend pitch, hidden when its synthesis inputs have changed.
+    /// Compare on edits and cache for painting: freshness checks sample the track's frames.
+    pub fn singer_backend_pitch(&self, track: TrackId) -> Option<&auris_core::SingerPitch> {
+        let pitch = self
+            .require_singer(track)
+            .ok()?
+            .take
+            .as_ref()?
+            .backend_pitch
+            .as_ref()?;
+        (pitch.hop_seconds.is_finite()
+            && pitch.hop_seconds > 0.0
+            && self.singer_take_state(track).ok()? == SingerTakeState::Current)
+            .then_some(pitch)
+    }
+
     /// Writes a singer track's frames to `path` as JSON, and says how many frames there were.
     ///
     /// Compact JSON rather than the pretty form the project file uses: three arrays with an
@@ -979,17 +995,23 @@ impl Session {
     /// The whole pipeline in one synchronous call — frames, inference, the file, the document —
     /// which is what a CLI or a test wants; a window that must keep painting takes
     /// [`Session::sing_plan`], renders on its own thread, and lands the result through
-    /// [`Session::land_singer_take`]. `seed` pins the render's random choices; `None` keeps the
+    /// [`Session::land_singer_render`]. `seed` pins the render's random choices; `None` keeps the
     /// current take's seed (or 0 for a first take), so singing again after an edit is the same
     /// performance of the new text. Answers with the seconds of audio the take now holds.
     pub fn sing(&mut self, track: TrackId, seed: Option<u64>) -> Result<f64, SessionError> {
         let plan = self.sing_plan(track, seed)?;
         let model = self.voice_model_at(&plan.voice)?;
-        let samples = {
+        let render = {
             let mut model = model.lock().expect("no thread panics holding a voice");
-            model.sing_score(&plan.frames, &plan.score, plan.speaker, plan.seed)?
+            model.sing_render_with(
+                &plan.frames,
+                &plan.score,
+                plan.speaker,
+                plan.seed,
+                |_, _| true,
+            )?
         };
-        self.land_singer_take(&plan, &samples)
+        self.land_singer_render(&plan, &render)
     }
 
     /// Everything a background render needs, gathered and checked before any work is spent.
@@ -1246,6 +1268,37 @@ impl Session {
         plan: &SingPlan,
         samples: &[f32],
     ) -> Result<f64, SessionError> {
+        self.land_singer_performance(plan, samples, None)
+    }
+
+    /// Saves the audio and backend pitch together as one undoable singer take.
+    pub fn land_singer_render(
+        &mut self,
+        plan: &SingPlan,
+        render: &auris_singer::SingingRender,
+    ) -> Result<f64, SessionError> {
+        let pitch = render.backend_pitch.as_ref();
+        if pitch.is_some_and(|pitch| {
+            !pitch.hop_seconds.is_finite()
+                || pitch.hop_seconds <= 0.0
+                || pitch.hop_seconds != plan.frames.hop_seconds
+                || pitch.hz.len() != plan.frames.len()
+                || pitch.hz.iter().any(|hz| !hz.is_finite() || *hz < 0.0)
+        }) {
+            return Err(auris_singer::SingError::Inference(
+                "invalid rendered pitch frame grid".into(),
+            )
+            .into());
+        }
+        self.land_singer_performance(plan, &render.samples, pitch.cloned())
+    }
+
+    fn land_singer_performance(
+        &mut self,
+        plan: &SingPlan,
+        samples: &[f32],
+        backend_pitch: Option<auris_core::SingerPitch>,
+    ) -> Result<f64, SessionError> {
         self.require_singer(plan.track)?;
         let folder = self
             .project_folder()
@@ -1307,6 +1360,7 @@ impl Session {
                 source,
                 fingerprint: plan.fingerprint,
                 seed: plan.seed,
+                backend_pitch,
             });
         }
         self.install_source(source, std::sync::Arc::new(buffer));
@@ -1661,6 +1715,64 @@ mod tests {
     }
 
     #[test]
+    fn backend_pitch_follows_the_take_through_edits_undo_and_reopening() {
+        let scratch = Scratch::new("backend-pitch");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, clip) = sung(2);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        let plan = session.sing_plan(track, Some(7)).unwrap();
+        let pitch = auris_core::SingerPitch {
+            hop_seconds: plan.frames.hop_seconds,
+            hz: (0..plan.frames.len())
+                .map(|i| if i % 3 == 0 { 0.0 } else { 443.0 })
+                .collect(),
+        };
+        let render = auris_singer::SingingRender {
+            samples: vec![0.0; plan.frames.len() * 256],
+            backend_pitch: Some(pitch.clone()),
+        };
+        session.land_singer_render(&plan, &render).unwrap();
+        assert_eq!(session.singer_backend_pitch(track), Some(&pitch));
+        session.undo();
+        assert!(session.singer_backend_pitch(track).is_none());
+        session.redo();
+        assert_eq!(session.singer_backend_pitch(track), Some(&pitch));
+        session.transpose_notes(clip, &[0], 2).unwrap();
+        assert!(session.singer_backend_pitch(track).is_none());
+        session.undo();
+        assert_eq!(session.singer_backend_pitch(track), Some(&pitch));
+        session.set_singer_speaker(track, Some("Second")).unwrap();
+        assert!(session.singer_backend_pitch(track).is_none());
+        session.undo();
+        let saved = session.save_as(&scratch.join("Pitch.auris")).unwrap();
+        session.open(&saved.document).unwrap();
+        assert_eq!(session.singer_backend_pitch(track), Some(&pitch));
+
+        let take = session
+            .require_singer(track)
+            .unwrap()
+            .take
+            .as_ref()
+            .unwrap();
+        let mut legacy = serde_json::to_value(take).unwrap();
+        legacy.as_object_mut().unwrap().remove("backend_pitch");
+        let legacy: SingerTake = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.backend_pitch.is_none(), "old projects still load");
+
+        let mut invalid = render;
+        invalid.backend_pitch.as_mut().unwrap().hz.pop();
+        let revision = session.revision();
+        assert!(session.land_singer_render(&plan, &invalid).is_err());
+        assert_eq!(session.revision(), revision);
+        assert_eq!(session.singer_backend_pitch(track), Some(&pitch));
+        session.land_singer_take(&plan, &[0.0; 256]).unwrap();
+        assert!(
+            session.singer_backend_pitch(track).is_none(),
+            "waveform-only takes clear old pitch"
+        );
+    }
+
+    #[test]
     fn loaded_curve_capabilities_override_format_defaults_without_locking_inference() {
         let scratch = Scratch::new("model-curve-sources");
         let path = voicevox_fixture(&scratch);
@@ -1748,6 +1860,7 @@ mod tests {
             .as_singer_mut()
             .unwrap()
             .take = Some(SingerTake {
+            backend_pitch: None,
             source: auris_core::SourceId(999),
             fingerprint: original.fingerprint,
             seed: original.seed,
@@ -2736,6 +2849,7 @@ mod tests {
             .and_then(|track| track.kind.as_singer_mut())
         {
             singer.take = Some(SingerTake {
+                backend_pitch: None,
                 source: auris_core::SourceId(999),
                 fingerprint,
                 seed: 0,

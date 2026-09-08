@@ -1107,14 +1107,15 @@ pub struct PhonemeSpan {
     pub symbol: String,
 }
 
-/// What a singer track's frames say, folded for drawing: the pitch line and the cuts.
+/// A singer track's host pitch, rendered backend pitch and phoneme cuts, folded for drawing.
 ///
-/// Both halves come out of one [`Session::singer_frames`](auris_session::session::Session::singer_frames)
-/// call, so they are cached together — the frames walk the whole track, and the roll asks
-/// thirty times a second.
+/// Geometry and take freshness are cached together against the session revision: sampling
+/// frames and comparing a take walk the whole track, and the roll asks thirty times a second.
 pub struct SungGeometry {
     /// The pitch contour, one run per voiced span.
     pub contour: PitchContour,
+    /// The current rendered take's backend pitch, on the same timeline as the host contour.
+    pub backend_contour: PitchContour,
     /// The phoneme segmentation, silence dropped.
     pub phonemes: Vec<PhonemeSpan>,
 }

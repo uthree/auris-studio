@@ -929,6 +929,8 @@ strings! {
     SingerTakeBehind { en: "Needs rendering", ja: "再レンダリング待ち" }
     SingerRetry { en: "Retry", ja: "再試行" }
     SingerQueued { en: "Waiting to render", ja: "レンダリング開始待ち" }
+    SingerHostPitch { en: "Auris pitch", ja: "Aurisのピッチ" }
+    SingerBackendPitch { en: "Backend pitch", ja: "バックエンドのピッチ" }
     VoicevoxPhonemesHint {
         en: "VOICEVOX sets pronunciation and phoneme timing. Change pronunciation through lyrics; pitch and volume remain editable.",
         ja: "VOICEVOXでは発音と音素の長さをエンジンが決めます。発音は歌詞で変更してください。音程・音量は編集できます。"

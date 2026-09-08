@@ -6,6 +6,15 @@ use auris_vocal::{SingerFrames, SingerScore};
 
 use crate::{Acceleration, CurveGenerator, CurveSources, SingError, VoiceInfo};
 
+/// The waveform and optional backend pitch produced by one synthesis call.
+#[derive(Clone, Debug, Default)]
+pub struct SingingRender {
+    /// Mono waveform at the voice's sample rate.
+    pub samples: Vec<f32>,
+    /// Pitch after musical edits, with decoder context removed just like the audio.
+    pub backend_pitch: Option<auris_core::SingerPitch>,
+}
+
 /// A singing engine understood by Auris Studio.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BackendKind {
@@ -75,6 +84,23 @@ pub struct VoiceCapabilities {
 /// realtime audio thread. The trait is public so another engine can be added without teaching
 /// the session or its frontends about that engine's files and tensors.
 pub trait SingingBackend: Send {
+    /// Sings with optional acoustic pitch for display alongside the host's contour.
+    /// Backends with pitch prediction override this and return the decoded performance's
+    /// pitch on the input frame clock. Waveform-only backends use the default.
+    fn sing_render_with(
+        &mut self,
+        frames: &SingerFrames,
+        score: Option<&SingerScore>,
+        speaker: u32,
+        seed: u64,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<SingingRender, SingError> {
+        self.sing_with(frames, score, speaker, seed, progress)
+            .map(|samples| SingingRender {
+                samples,
+                backend_pitch: None,
+            })
+    }
     /// Which file format and inference pipeline this backend implements.
     fn kind(&self) -> BackendKind;
     /// Capabilities of this loaded model, overriding format defaults when needed.
@@ -113,6 +139,18 @@ pub struct VoiceModel {
 }
 
 impl VoiceModel {
+    /// Renders a score, retaining any backend pitch alongside its mono audio.
+    pub fn sing_render_with(
+        &mut self,
+        frames: &SingerFrames,
+        score: &SingerScore,
+        speaker: u32,
+        seed: u64,
+        mut progress: impl FnMut(usize, usize) -> bool,
+    ) -> Result<SingingRender, SingError> {
+        self.backend
+            .sing_render_with(frames, Some(score), speaker, seed, &mut progress)
+    }
     /// Wraps an engine implementation, including its model-specific capabilities.
     pub fn from_backend(backend: impl SingingBackend + 'static) -> Self {
         Self {
