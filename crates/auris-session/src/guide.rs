@@ -915,6 +915,11 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! Section lengths belong to the preset or song specification. Vocal rhythms distribute
+    //! the lyrics across those fixed bars, weighting phrases by mora count and leaving time
+    //! for held endings and breaths. Dense phrases use shorter notes, down to sixteenths;
+    //! words that cannot fit at that density are rejected before the document changes.
+    //!
     //! A sokuon keeps its own lyric-bearing closure slot, capped at an eighth note. It is
     //! excluded from pitch search and ornaments; its pitch follows a neighbouring sung note.
     //! Shared melodies require closures in the same positions as well as matching mora counts.
@@ -923,7 +928,8 @@ pub mod composition {
     //! `melody_from = "verse"` shares the original vocal's pitches, onsets, durations and
     //! ornaments. The session validates mora counts phrase by phrase before replacing a
     //! document: line breaks and sentence punctuation delimit the phrases, and both sections
-    //! must have enough bars for every note. New words replace only the lyrics and phonemes.
+    //! share a rhythm fitted to the shortest participating section. New words replace only
+    //! the lyrics and phonemes.
     //! An empty later lyric leaves that section instrumental. A shared melody names an original
     //! section in the form; it cannot refer to itself or another shared melody.
     //!

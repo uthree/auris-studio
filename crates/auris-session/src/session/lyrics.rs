@@ -14,7 +14,9 @@
 //! is free: the Orpheus constraint — sing the words the way they are spoken — only has teeth
 //! where something actually analysed the accent. The report says which of the two happened.
 
-use auris_compose::vocal::{VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, write_vocal};
+use auris_compose::vocal::{
+    VocalRange, VocalRhythm, ornament_vocal, vocal_rhythm, vocal_rhythm_in_bars, write_vocal,
+};
 use auris_core::theory::contour::Contour;
 use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
 use auris_core::{ClipId, ClipPreset, Note, PresetRef, TrackId};
@@ -77,6 +79,38 @@ fn rhythm_with_closures(
 fn lyric_rhythm(phrases: &[LyricPhrase], meter: TimeSignature) -> VocalRhythm {
     let counts: Vec<_> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
     rhythm_with_closures(&counts, &closure_positions(phrases), meter)
+}
+
+fn fitted_lyric_rhythm(
+    phrases: &[LyricPhrase],
+    meter: TimeSignature,
+    bars: usize,
+) -> Option<VocalRhythm> {
+    let counts: Vec<_> = phrases.iter().map(|phrase| phrase.moras.len()).collect();
+    let mut rhythm = vocal_rhythm_in_bars(&counts, meter, bars)?;
+    for (slots, phrase) in rhythm.phrases.iter_mut().zip(phrases) {
+        for ((_, length), mora) in slots.iter_mut().zip(&phrase.moras) {
+            if is_closure(mora) {
+                *length = (*length).min(Ticks(TICKS_PER_QUARTER / 2));
+            }
+        }
+    }
+    Some(rhythm)
+}
+
+/// A shared melody must fit the shortest section that sings it.
+fn vocal_bars(spec: &auris_compose::SongSpec, source: &str) -> usize {
+    spec.form
+        .iter()
+        .filter_map(|name| spec.sections.get(name))
+        .filter(|section| {
+            section.name == source
+                || (section.melody_from.as_deref() == Some(source)
+                    && !section.lyrics.trim().is_empty())
+        })
+        .map(|section| section.bars)
+        .min()
+        .unwrap_or(0)
 }
 
 /// Search only the voiced melody, then restore the unvoiced, lyric-bearing closure slots.
@@ -164,7 +198,7 @@ pub struct LyricSongReport {
 }
 
 impl Session {
-    /// Checks shared vocal phrases before composing can replace the document.
+    /// Checks vocal density and shared phrases before composing can replace the document.
     /// Different verses must fit the same note slots, including phrase boundaries.
     pub fn validate_song_lyrics(&self, spec: &auris_compose::SongSpec) -> Result<(), SessionError> {
         for name in &spec.form {
@@ -172,6 +206,14 @@ impl Session {
                 continue;
             };
             let Some(source) = &section.melody_from else {
+                if !section.lyrics.trim().is_empty()
+                    && let Ok(phrases) = read_lyrics(&section.lyrics, self.japanese.as_ref())
+                    && fitted_lyric_rhythm(&phrases, spec.meter, vocal_bars(spec, name)).is_none()
+                {
+                    return Err(SessionError::SongLyrics(format!(
+                        "{name}: too many syllables for the fixed section length; shorten the lyrics or reduce phrase breaks"
+                    )));
+                }
                 continue;
             };
             if section.lyrics.trim().is_empty() {
@@ -202,15 +244,6 @@ impl Session {
                 return Err(SessionError::SongLyrics(format!(
                     "{name} → {source}: closure positions per phrase must match"
                 )));
-            }
-            let length = lyric_rhythm(&original_phrases, spec.meter).length;
-            for section in [original, section] {
-                if length > spec.meter.ticks_per_bar() * section.bars as i64 {
-                    return Err(SessionError::SongLyrics(format!(
-                        "{}: lyrics need more than {} bars",
-                        section.name, section.bars
-                    )));
-                }
             }
         }
         Ok(())
@@ -353,8 +386,7 @@ impl Session {
     /// part of the same single edit. Each original melody is written once over its first
     /// playing's harmony. A section with `melody_from` reuses those notes with its own words,
     /// after validation has proved that every mora fits. There is one clip per playing.
-    /// Unlinked words that outrun their section are dropped with a
-    /// warning rather than spilling into the next one, and a lyric that cannot be read at
+    /// Words are fitted to the section's fixed bars. A lyric that cannot be read at
     /// all (kanji with no dictionary anywhere) costs its sections, never the piece: their
     /// names come back for the report. Answers `(sung notes, clips, unsung sections)`.
     pub(super) fn write_spec_vocal(
@@ -380,7 +412,11 @@ impl Session {
         // empty vocal track for its trouble.
         let mut unsung: Vec<String> = Vec::new();
         let mut prepared = Vec::new();
-        for span in project.sections.spans_in(Ticks::ZERO, composition.length) {
+        // The automatic held coda can share the name "ending" with a written section,
+        // but only occurrences in the explicit form carry that section's lyrics.
+        let form_end =
+            (composition.meter.ticks_per_bar() * spec.total_bars() as i64).min(composition.length);
+        for span in project.sections.spans_in(Ticks::ZERO, form_end) {
             let Some(section) = spec.sections.get(&span.label) else {
                 continue;
             };
@@ -412,18 +448,20 @@ impl Session {
             {
                 continue;
             }
-            let rhythm = lyric_rhythm(phrases, meter);
+            let Some(rhythm) = fitted_lyric_rhythm(phrases, meter, vocal_bars(&spec, &span.label))
+            else {
+                continue;
+            };
             let notes = write_lyric_vocal(project, span.start, &rhythm, phrases, spec.seed);
-            melodies.insert(span.label.clone(), notes);
+            melodies.insert(span.label.clone(), (rhythm, notes));
         }
         let (mut sung, mut clips) = (0usize, 0usize);
         for (span, phrases) in prepared {
-            let rhythm = lyric_rhythm(&phrases, meter);
             let source = spec.sections[&span.label]
                 .melody_from
                 .as_ref()
                 .unwrap_or(&span.label);
-            let Some(notes) = melodies.get(source).cloned() else {
+            let Some((rhythm, notes)) = melodies.get(source) else {
                 continue;
             };
 
@@ -438,43 +476,31 @@ impl Session {
             let Some(clip) = project.add_midi_clip(track, &span.label, span.start, length) else {
                 continue;
             };
-            let mut cut = 0usize;
             if let Some(target) = project.midi_clip_mut(clip) {
                 // The length is the section's, exactly as a band clip's is.
                 target.length_is_explicit = true;
                 for note in notes {
-                    if note.end() > length {
-                        cut += 1;
-                        continue;
-                    }
                     let Some(mora) = moras.get(&note.start) else {
                         continue;
                     };
                     target.notes.push(Note {
                         lyric: mora.text.clone(),
                         phonemes: mora.phonemes.clone(),
-                        ..note
+                        ..note.clone()
                     });
                     sung += 1;
                 }
             }
             clips += 1;
-            if cut > 0 {
-                log::warn!(
-                    "section `{}`: {cut} syllables outran its bars and were dropped",
-                    span.label
-                );
-            }
         }
         (sung, clips, unsung)
     }
 }
 
-/// What a lyric would cost in notes and bars, line by line — the writer's tape measure.
+/// Mora counts and an unconstrained rhythm estimate for a lyric, line by line.
 ///
-/// Computed by the same splitting, mora reading and closure-aware rhythm that
-/// composing uses, so the numbers a lyrics editor shows are the numbers Write will act on:
-/// a display that ran its own arithmetic would drift the day either side changed.
+/// `bars` describes the standalone lyric command. For preset sections, `fits_in_bars`
+/// checks the fixed-length rhythm allocator that song composition uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LyricsMeasure {
     /// Mora counts of readable musical phrases, including punctuation boundaries.
@@ -486,11 +512,18 @@ pub struct LyricsMeasure {
     pub lines: Vec<Option<usize>>,
     /// Notes the whole lyric would sing, counting only the readable lines.
     pub notes: usize,
-    /// Bars the sung rhythm would cover, with phrase-final closures kept short.
+    /// Bars the standalone lyric rhythm would cover, with phrase-final closures kept short.
     pub bars: usize,
 }
 
 impl LyricsMeasure {
+    /// Whether all readable words fit a fixed section with sixteenth notes and breaths.
+    /// Returns no estimate if any line cannot be read.
+    pub fn fits_in_bars(&self, meter: TimeSignature, bars: usize) -> Option<bool> {
+        (!self.lines.contains(&None))
+            .then(|| vocal_rhythm_in_bars(&self.phrases, meter, bars).is_some())
+    }
+
     /// Counts complete notes that fit the section, using the composer's phrase rhythm.
     /// An unreadable lyric has no reliable capacity estimate and returns no count.
     pub fn notes_within_bars(&self, meter: TimeSignature, bars: usize) -> Option<usize> {
@@ -670,7 +703,7 @@ mod tests {
             .find_map(|track| track.kind.as_singer())
             .unwrap()
             .clips[0];
-        assert_eq!(clip.notes.last().unwrap().end(), Ticks::QUARTER * 3);
+        assert!(clip.notes.last().unwrap().length <= Ticks(TICKS_PER_QUARTER / 2));
         assert!(clip.notes.iter().all(|note| note.end() <= clip.length));
 
         let measured = session.measure_lyrics(lyrics, meter);
@@ -794,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn mismatched_phrases_and_short_sections_refuse_before_editing() {
+    fn mismatched_phrases_refuse_before_editing() {
         let mut session = session();
         let before = session.project().clone();
         for lyrics in [
@@ -813,11 +846,143 @@ mod tests {
         }
         let mut spec = two_verses();
         spec.sections.get_mut("verse2").unwrap().bars = 1;
-        assert!(session.validate_song_lyrics(&spec).is_err());
+        assert!(session.validate_song_lyrics(&spec).is_ok());
+        session.compose(&auris_compose::compose(&spec)).unwrap();
+        let singer = session
+            .project()
+            .tracks
+            .iter()
+            .find_map(|track| track.kind.as_singer())
+            .unwrap();
+        for clip in &singer.clips {
+            assert_eq!(clip.notes.len(), 6);
+            assert!(
+                clip.notes
+                    .iter()
+                    .all(|note| note.end() <= Ticks::QUARTER * 4)
+            );
+        }
+        assert_eq!(
+            singer.clips[0]
+                .notes
+                .iter()
+                .map(|note| (note.start, note.length, note.pitch))
+                .collect::<Vec<_>>(),
+            singer.clips[1]
+                .notes
+                .iter()
+                .map(|note| (note.start, note.length, note.pitch))
+                .collect::<Vec<_>>()
+        );
         spec.sections.get_mut("verse2").unwrap().lyrics.clear();
         assert!(session.validate_song_lyrics(&spec).is_ok());
         spec.sections.get_mut("verse").unwrap().lyrics.clear();
         assert!(session.validate_song_lyrics(&spec).is_err());
+    }
+
+    #[test]
+    fn preset_sections_fit_short_and_long_lyrics_without_moving_the_band() {
+        for lyrics in [
+            "さくら",
+            "さくらさいた\nはるがきた",
+            &"あいうえお".repeat(18),
+        ] {
+            let mut session = session();
+            let mut spec = auris_compose::preset("pop-band").unwrap().spec();
+            let before = spec.total_bars();
+            spec.sections.get_mut("verse").unwrap().lyrics = lyrics.into();
+            let composition = auris_compose::compose(&spec);
+            let report = session.compose(&composition).unwrap();
+            let expected = session.measure_lyrics(lyrics, spec.meter).notes;
+            let singer = session
+                .project()
+                .tracks
+                .iter()
+                .find_map(|track| track.kind.as_singer())
+                .unwrap();
+            assert!(!singer.clips.is_empty());
+            assert_eq!(report.sung, expected * singer.clips.len());
+            for clip in &singer.clips {
+                assert_eq!(
+                    clip.length,
+                    spec.meter.ticks_per_bar() * spec.sections["verse"].bars as i64
+                );
+                assert_eq!(clip.notes.len(), expected);
+                assert!(
+                    clip.notes
+                        .iter()
+                        .all(|note| !note.lyric.is_empty() && note.end() <= clip.length)
+                );
+                assert!(
+                    clip.notes
+                        .windows(2)
+                        .all(|pair| pair[0].end() <= pair[1].start)
+                );
+                assert!(clip.notes.last().unwrap().end().raw() > clip.length.raw() / 2);
+            }
+            let saved =
+                auris_compose::SongSpec::parse(session.project().song_spec.as_ref().unwrap())
+                    .unwrap();
+            assert_eq!(saved.total_bars(), before);
+            for (name, section) in &spec.sections {
+                assert_eq!(saved.sections[name].bars, section.bars);
+            }
+        }
+    }
+
+    #[test]
+    fn vocals_follow_the_explicit_form_even_when_a_section_is_named_ending() {
+        for form in ["ending", "ending ending"] {
+            let mut session = session();
+            let spec = auris_compose::SongSpec::parse(&format!(
+                "form = '{form}'\n[section.ending]\nbars = 4\nlyrics = 'さくらさいた'"
+            ))
+            .unwrap();
+            let composition = auris_compose::compose(&spec);
+            let bar = spec.meter.ticks_per_bar();
+            assert_eq!(composition.length, bar * (spec.total_bars() as i64 + 1));
+            let report = session.compose(&composition).unwrap();
+            let singer = session
+                .project()
+                .tracks
+                .iter()
+                .find_map(|track| track.kind.as_singer())
+                .unwrap();
+            assert!(
+                singer
+                    .clips
+                    .iter()
+                    .all(|clip| clip.notes.iter().all(|note| note.end() <= clip.length)),
+                "a four-bar melody must not spill out of the automatic one-bar coda"
+            );
+            assert_eq!(
+                singer.clips.len(),
+                spec.form.len(),
+                "the automatic coda has no lyrics of its own"
+            );
+            assert_eq!(report.sung, 6 * spec.form.len());
+            for (index, clip) in singer.clips.iter().enumerate() {
+                assert_eq!(clip.start, bar * (index as i64 * 4));
+                assert_eq!(clip.length, bar * 4);
+                assert_eq!(clip.notes.len(), 6);
+            }
+        }
+    }
+
+    #[test]
+    fn impossible_density_is_reported_without_dropping_words_or_replacing_the_document() {
+        let mut session = session();
+        let before = session.project().clone();
+        let mut spec =
+            auris_compose::SongSpec::parse("form = 'verse'\n[section.verse]\nbars = 1").unwrap();
+        spec.sections.get_mut("verse").unwrap().lyrics = "あ".repeat(100);
+        let measure = session.measure_lyrics(&spec.sections["verse"].lyrics, spec.meter);
+        assert_eq!(measure.fits_in_bars(spec.meter, 1), Some(false));
+        assert!(matches!(
+            session.compose(&auris_compose::compose(&spec)),
+            Err(SessionError::SongLyrics(_))
+        ));
+        assert_eq!(session.project(), &before);
     }
 
     #[test]

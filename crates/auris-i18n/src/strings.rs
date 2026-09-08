@@ -724,12 +724,10 @@ strings! {
     SongSharedLyricsHint { en: "Uses the melody from {section}. You can enter different lyrics.", ja: "{section}と同じメロディです。別の歌詞を入力できます。" }
     SongMelodyFrom { en: "Shared melody", ja: "メロディ共有" }
     SongLyricsMatch { en: "Match the notes in each phrase to the original lyrics", ja: "元の歌詞と、フレーズごとの音数を合わせてください" }
-    SongLyricsEstimate { en: "{notes} notes · Needs {needed} bars / Section: {bars} bars", ja: "{notes}音 ・ 必要 {needed}小節 / 設定 {bars}小節" }
-    SongLyricsFits { en: "The lyrics fit the section exactly.", ja: "歌詞が過不足なく収まります。" }
-    SongLyricsSpare { en: "{bars} bars remain for accompaniment or a pause.", ja: "{bars}小節余ります（伴奏や余韻に使えます）。" }
-    SongLyricsOverflow { en: "{bars} more bars needed; {notes} notes do not fit.", ja: "{bars}小節足りず、{notes}音が収まりません。" }
+    SongLyricsEstimate { en: "{notes} notes · Section: {bars} bars", ja: "{notes}音 ・ {bars}小節に配置" }
+    SongLyricsFits { en: "The melody adapts to fit these bars.", ja: "この小節数に収まるようメロディを生成します。" }
+    SongLyricsOverflow { en: "Too many syllables; shorten the lyrics or reduce phrase breaks.", ja: "音数が多すぎます。歌詞を短くするか、フレーズの区切りを減らしてください。" }
     SongLyricsUnreadable { en: "Cannot estimate all lyrics. Use kana or check the Japanese dictionary.", ja: "一部の歌詞を読めないため推定できません。かなで入力するか、日本語辞書の設定を確認してください。" }
-    SongFitLyrics { en: "Fit bars to lyrics", ja: "歌詞に小節数を合わせる" }
     SongLyricsMatched { en: "Matches {section}: {actual} notes, including every phrase.", ja: "{section}と一致：{actual}音。フレーズごとの音数も合っています。" }
     SongLyricsNoteMismatch { en: "Does not match {section}: {actual} notes / expected {expected}.", ja: "{section}と不一致：今の歌詞 {actual}音 / 元の歌詞 {expected}音。" }
     SongLyricsPhraseMismatch { en: "Total matches {section} ({actual} notes), but phrase lengths differ.", ja: "{section}と合計は同じ{actual}音ですが、フレーズごとの音数が違います。" }
