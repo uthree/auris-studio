@@ -276,12 +276,14 @@ impl LeadIn {
 /// two is one bar, and this is the word for whether that bar is written.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum Ending {
+    /// Repeat the form, preparing the final section to return to its opening.
+    /// No coda or fade is written; the session enables playback of the complete cycle.
+    Loop,
     /// One extra bar after the last section: the final key's tonic, held by the band, the kick
     /// and the cymbal striking it once. The bar every performance of anything ends on.
     #[default]
     Held,
-    /// No extra bar. The last section plays out and the piece simply stops — what a loop being
-    /// exported wants, and nothing else does.
+    /// No extra bar. The last section plays out and the piece simply stops.
     None,
     /// The last section plays on while the master fader rides down to nothing.
     ///
@@ -300,6 +302,7 @@ impl Ending {
         match self {
             Ending::Held => "held",
             Ending::None => "none",
+            Ending::Loop => "loop",
             Ending::Fade => "fade",
         }
     }
@@ -309,6 +312,7 @@ impl Ending {
         Some(match text.trim().to_ascii_lowercase().as_str() {
             "held" | "hold" | "tonic" => Ending::Held,
             "none" | "stop" | "off" => Ending::None,
+            "loop" => Ending::Loop,
             "fade" | "fadeout" | "fade-out" => Ending::Fade,
             _ => return None,
         })
@@ -465,7 +469,7 @@ pub struct SongSpec {
     /// piece takes from a motif is which way it moves, and the rhythm a section says it in
     /// remains the section's business (a part's `rhythm` pattern pins that half by hand).
     pub motif: Vec<i32>,
-    /// How the piece closes: a held tonic bar after the last section, or nothing at all.
+    /// How the piece closes or returns to its opening.
     pub ending: Ending,
     /// The charts, by name. `main` is the one a section gets when it does not say.
     pub charts: BTreeMap<String, Chart>,

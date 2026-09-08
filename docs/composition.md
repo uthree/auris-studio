@@ -48,6 +48,7 @@ are writing* — so the shelf answers all of them at once:
 | | |
 | --- | --- |
 | `chiptune` | The built-in voices, four to the floor |
+| `game-loop` | A sixteen-bar chiptune loop for game background music |
 | `pop-band` | Drums, bass, keys and a lead — the 王道進行 |
 | `city-pop` | Electric piano and slap bass over 丸サ進行 |
 | `rock` | Overdriven guitar, organ and a hard kit |
@@ -272,6 +273,33 @@ addressed by name rather than by call order, so changing the drum density does n
 rewrite the melody. `auris progressions` lists the catalogue; `--set "field: value"` overrides any
 field from the command line, with the value written the way you would say it rather than the way
 TOML quotes it — `--set "key: D minor"`.
+
+## Looping background music
+
+Choose **game-loop** in **Style** for a sixteen-bar instrumental chiptune BGM, then press
+**Create Song**. It uses two eight-bar sections at 120 BPM, making a 32-second cycle.
+The basic **Ending** selector offers **Loop (BGM)** for any style. The complete form repeats;
+use **Detailed settings** to choose its sections and bar counts. Keep only the sections that
+should play on every repetition, or start from `game-loop`, whose form is already a cycle.
+
+Loop mode adds no final held chord or fade-out. Fills lead back into the opening, and a final
+section in a different key prepares the return according to the opening section's `lead_in`.
+Quoted chords remain unchanged except for that explicitly requested modulation.
+The generated project enables cycle playback over the complete form and remembers the setting
+when saved or reopened. **Another Take** retains the loop mode.
+
+**File → Export Cycle…** writes exactly one cycle. It warms up instruments and effects before
+recording, so reverb and delay carry into the opening without extending the file with a tail.
+This prepares the boundary for repetition; free-running or random plugin modulation can still
+differ between passes.
+
+```bash
+auris compose --preset game-loop -o GameBGM.auris
+auris render GameBGM/GameBGM.auris --loop -o GameBGM.wav
+```
+
+In an `.asong`, set `ending = "loop"`; CLI and model tools also accept the override
+`ending: loop`. [game-loop.asong](../examples/game-loop.asong) is a complete example.
 
 ## Clips that write themselves
 

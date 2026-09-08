@@ -125,7 +125,10 @@ pub(super) fn joins(
 
     if !marks_an_arrival(
         section,
-        index.checked_sub(1).and_then(|i| frame.sections.get(i)),
+        index
+            .checked_sub(1)
+            .and_then(|i| frame.sections.get(i))
+            .or_else(|| frame.looping.then(|| frame.sections.last()).flatten()),
     ) {
         return Vec::new();
     }
@@ -160,7 +163,11 @@ pub(super) fn riser(
     index: usize,
     part: &PartSpec,
 ) -> Vec<Draft> {
-    let Some(next) = frame.sections.get(index + 1) else {
+    let Some(next) = frame
+        .sections
+        .get(index + 1)
+        .or_else(|| frame.looping.then(|| frame.sections.first()).flatten())
+    else {
         return Vec::new();
     };
     if !marks_an_arrival(next, Some(section)) {
@@ -336,6 +343,35 @@ mod tests {
         let note = &part(&parts, "riser").notes[0];
         assert_eq!(note.start, frame.sections[1].start - Ticks(960));
         assert_eq!(note.length, Ticks(960));
+    }
+
+    #[test]
+    fn a_loop_announces_the_opening_from_the_last_section() {
+        let (_, frame, parts) = draft(
+            r#"
+            form = "verse chorus"
+            ending = "loop"
+            chords = "@axis"
+            [section.verse]
+            bars = 4
+            intensity = 0.6
+            [section.chorus]
+            bars = 4
+            intensity = 0.4
+            [[part]]
+            name = "riser"
+            role = "riser"
+            [[part]]
+            name = "crash"
+            role = "crash"
+        "#,
+        );
+        let riser = part(&parts, "riser");
+        assert_eq!(riser.notes.len(), 1);
+        assert_eq!(riser.notes[0].start + riser.notes[0].length, frame.length);
+        let crash = part(&parts, "crash");
+        assert_eq!(crash.notes.len(), 1);
+        assert_eq!(crash.notes[0].start, Ticks::ZERO);
     }
 
     #[test]

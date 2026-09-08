@@ -369,6 +369,21 @@ impl AurisApp {
             )
             .into_any_element(),
         );
+        rows.push(
+            self.sheet_picker(
+                "song-ending",
+                Key::SongEnding,
+                self.t(match dials.ending {
+                    Ending::Held => Key::SongEndingHeld,
+                    Ending::Fade => Key::SongEndingFade,
+                    Ending::Loop => Key::SongEndingLoop,
+                    Ending::None => Key::SongEndingNone,
+                })
+                .to_string(),
+                Self::opens_menu(cx, |this, at| this.song_ending_menu(at)),
+            )
+            .into_any_element(),
+        );
         let singer = dials
             .singer
             .as_ref()
@@ -1192,7 +1207,34 @@ mod window_tests {
 
     use auris_session::prelude::*;
 
-    use crate::harness::{click, open, paint, resize};
+    use crate::harness::{choose, click, open, paint, resize};
+    use crate::ui::context_menu::MenuCommand;
+
+    #[gpui::test]
+    fn basic_ending_picker_creates_and_reopens_a_loop(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_mut().unwrap();
+            dials.sections.truncate(1);
+            dials.sections[0].bars = 2;
+            dials.form = vec![dials.sections[0].name.clone()];
+        });
+        paint(&app, cx);
+        click("song-ending", cx);
+        paint(&app, cx);
+        choose(&app, cx, &MenuCommand::SongEnding(Ending::Loop));
+        paint(&app, cx);
+        click("song-sheet-write", cx);
+        app.update(cx, |this, _| {
+            assert!(this.song_sheet.is_none());
+            assert!(this.project().loop_enabled);
+            this.open_song_sheet();
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert_eq!(dials.ending, Ending::Loop);
+            assert_eq!(dials.form.len(), 1);
+        });
+    }
 
     #[gpui::test]
     fn basic_song_controls_reflow_and_disclosure_preserves_the_song_and_lyrics(

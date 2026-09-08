@@ -322,6 +322,7 @@ impl AurisMcp {
     }
 
     /// Composes a song from a specification and saves it as a project. The answer reports what was written — tracks, notes, seed, where the mix was measured to — and the seed is what to pin in the spec to ask for this exact take again.
+    /// For repeating game BGM, use preset game-loop or set ending: loop; the complete form becomes the enabled cycle region.
     #[tool(input_schema = tool_schema("compose"))]
     async fn compose(
         &self,

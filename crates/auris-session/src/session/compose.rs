@@ -473,7 +473,7 @@ impl Session {
 
         // Loop over the whole piece, so pressing play and leaving it running plays the song.
         project.loop_region = Some((Ticks::ZERO, composition.length));
-        project.loop_enabled = false;
+        project.loop_enabled = composition.looping;
 
         self.record(Edit::Compose);
         self.replace_project(project);
@@ -545,6 +545,34 @@ mod tests {
         assert_eq!(session.undo(), Some(Edit::Compose));
         assert_eq!(session.project().tracks.len(), 1);
         assert_eq!(session.project().tracks[0].name, "Old");
+    }
+
+    #[test]
+    fn a_loop_composition_carries_its_cycle_through_save_and_undo() {
+        let mut session = session();
+        let spec = auris_compose::SongSpec::parse(
+            "ending = \"loop\"\nform = \"verse\"\n[section.verse]\nbars = 2",
+        )
+        .unwrap();
+        let piece = auris_compose::compose(&spec);
+        session.compose(&piece).unwrap();
+        assert!(session.project().loop_enabled);
+        assert_eq!(
+            session.project().loop_region,
+            Some((Ticks::ZERO, piece.length))
+        );
+        let saved = serde_json::to_string(session.project()).unwrap();
+        let restored: Project = serde_json::from_str(&saved).unwrap();
+        assert!(restored.loop_enabled);
+        assert_eq!(restored.loop_region, session.project().loop_region);
+        assert_eq!(
+            auris_compose::SongSpec::parse(restored.song_spec.as_deref().unwrap()),
+            Ok(spec)
+        );
+        assert_eq!(session.undo(), Some(Edit::Compose));
+        assert!(!session.project().loop_enabled);
+        assert_eq!(session.redo(), Some(Edit::Compose));
+        assert!(session.project().loop_enabled);
     }
 
     #[test]

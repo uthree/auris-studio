@@ -309,6 +309,7 @@ pub fn write_phrase(
         // A clip is one bar of an arrangement rather than the end of a piece: whatever follows
         // it, including another playing of itself, is something for the last bar to lead into.
         joins_on: true,
+        looping: false,
     };
 
     let settings = ScoreSettings {
