@@ -782,6 +782,12 @@ strings! {
     SongSectionName { en: "Section", ja: "セクション" }
     SongTranspose { en: "Transpose", ja: "移調" }
     SongSectionParts { en: "Who Plays", ja: "演奏するパート" }
+    SongMatrixHeading { en: "Instruments across the song", ja: "セクションごとの演奏" }
+    SongMatrixHint { en: "Click a cell to switch a part on or off. Columns follow the song from left to right.", ja: "マスを押して演奏・休みを切り替えます。左から右へ曲が進みます。" }
+    SongMatrixRepeated { en: "Repeated sections share their participation settings.", ja: "同じセクションを繰り返す列は、演奏設定が連動します。" }
+    SongMatrixPlaying { en: "Play", ja: "演奏" }
+    SongMatrixRest { en: "Rest", ja: "休み" }
+    SongMatrixLastPart { en: "Keep at least one part playing in each section.", ja: "各セクションで少なくとも1つのパートを演奏します。" }
     SongSectionTempo { en: "Section Tempo", ja: "セクションのテンポ" }
     SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
     SongAdvanced { en: "Detailed settings", ja: "詳細設定" }

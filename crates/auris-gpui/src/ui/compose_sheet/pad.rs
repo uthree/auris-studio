@@ -135,6 +135,7 @@ impl AurisApp {
 mod tests {
     use super::*;
     use crate::harness::{click, drag, open, paint};
+    use gpui::{ScrollDelta, ScrollWheelEvent};
 
     #[gpui::test]
     fn song_pads_follow_a_gesture_on_both_axes_and_preserve_the_seed(
@@ -152,7 +153,31 @@ mod tests {
                 paint(&app, cx);
             }
             let before = app.read_with(cx, |this, _| this.song_sheet.clone().unwrap());
-            let bounds = cx.debug_bounds(id).expect("song pad is visible");
+            // Layout also reports offscreen pads; reveal the whole gesture before pressing.
+            for _ in 0..4 {
+                let body = cx.debug_bounds("song-sheet-body").unwrap();
+                let bounds = cx.debug_bounds(id).expect("song pad is laid out");
+                if bounds.top() >= body.top() && bounds.bottom() <= body.bottom() {
+                    break;
+                }
+                let delta = if bounds.top() < body.top() {
+                    body.top() + px(8.0) - bounds.top()
+                } else {
+                    body.bottom() - px(8.0) - bounds.bottom()
+                };
+                cx.simulate_event(ScrollWheelEvent {
+                    position: body.center(),
+                    delta: ScrollDelta::Pixels(point(px(0.0), delta)),
+                    ..Default::default()
+                });
+                paint(&app, cx);
+            }
+            let body = cx.debug_bounds("song-sheet-body").unwrap();
+            let bounds = cx.debug_bounds(id).unwrap();
+            assert!(
+                bounds.top() >= body.top() && bounds.bottom() <= body.bottom(),
+                "the pad must be inside the scrolling body before dragging: pad={bounds:?}, body={body:?}"
+            );
             drag(
                 cx,
                 bounds.center(),

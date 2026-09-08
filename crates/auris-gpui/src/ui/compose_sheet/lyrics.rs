@@ -1032,6 +1032,7 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         use crate::harness::{click, open, paint, resize};
+        use gpui::{ScrollDelta, ScrollWheelEvent};
         let (app, cx) = open(cx);
         resize(&app, cx, gpui::size(gpui::px(1600.0), gpui::px(2000.0)));
         let band = app.update(cx, |this, _| {
@@ -1053,11 +1054,39 @@ mod tests {
             drums.bottom() < instruments.top(),
             "the kit occupies its own area above the instrument grid"
         );
+        let reveal = |selector: &'static str, cx: &mut gpui::VisualTestContext| {
+            for _ in 0..4 {
+                let body = cx.debug_bounds("song-sheet-body").unwrap();
+                let target = cx.debug_bounds(selector).unwrap();
+                if target.top() >= body.top() && target.bottom() <= body.bottom() {
+                    break;
+                }
+                let delta = if target.top() < body.top() {
+                    body.top() + px(8.0) - target.top()
+                } else {
+                    body.bottom() - px(8.0) - target.bottom()
+                };
+                cx.simulate_event(ScrollWheelEvent {
+                    position: body.center(),
+                    delta: ScrollDelta::Pixels(gpui::point(px(0.0), delta)),
+                    ..Default::default()
+                });
+                paint(&app, cx);
+            }
+            let body = cx.debug_bounds("song-sheet-body").unwrap();
+            let target = cx.debug_bounds(selector).unwrap();
+            assert!(
+                target.top() >= body.top() && target.bottom() <= body.bottom(),
+                "{selector} must be inside the scrolling body before clicking: target={target:?}, body={body:?}"
+            );
+        };
+        reveal("song-remove-drums", cx);
         click("song-remove-drums", cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             assert_eq!(this.song_sheet.as_ref().unwrap().parts, band)
         });
+        reveal("song-add-drums", cx);
         click("song-add-drums", cx);
         paint(&app, cx);
         app.read_with(cx, |this, _| {

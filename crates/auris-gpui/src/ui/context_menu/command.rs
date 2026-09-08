@@ -272,13 +272,6 @@ pub enum MenuCommand {
         /// How far, in semitones.
         steps: i32,
     },
-    /// Turn one part of the roster on or off for one section of the song sheet.
-    SongSectionPart {
-        /// Which section, by position in the sheet's list.
-        section: usize,
-        /// The part, by name — which is what a section stores rather than a position.
-        part: String,
-    },
     /// Point one place in the song sheet's form at a section.
     SongFormName {
         /// Which place in the order.
@@ -1077,11 +1070,6 @@ impl AurisApp {
                     .and_then(|d| d.sections.get_mut(section))
                 {
                     section.melody_from = source;
-                }
-            }
-            MenuCommand::SongSectionPart { section, part } => {
-                if let Some(dials) = self.song_sheet.as_mut() {
-                    crate::ui::compose_sheet::toggle_part_in_section(dials, section, &part);
                 }
             }
             MenuCommand::SongFormName { place, name } => {

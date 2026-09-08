@@ -660,20 +660,6 @@ pub fn part_plays_in(section: &SectionSpec, part: &str) -> bool {
     section.parts.is_empty() || section.parts.iter().any(|name| name == part)
 }
 
-/// What the button that opens a section's roster says.
-///
-/// A count and not a list of names: the row it sits in is already a name, a progression and a
-/// transposition wide, and seven names would not fit in any of what is left. `7/7` is the section
-/// that plays everything, which is also how a section that has never been touched reads.
-pub fn section_parts_label(section: &SectionSpec, roster: usize) -> String {
-    let playing = if section.parts.is_empty() {
-        roster
-    } else {
-        section.parts.len()
-    };
-    format!("{playing}/{roster}")
-}
-
 /// Turns one part on or off for one section.
 ///
 /// Three things make this more than adding a name to a list or taking one out of it, and every
@@ -1456,22 +1442,6 @@ mod tests {
         assert_eq!(back.sections[1].tempo, Some(132.0));
         assert_eq!(back.sections[0].tempo, None, "\n{written}");
         assert_eq!(back, dials);
-    }
-
-    #[test]
-    fn the_label_counts_the_parts_that_play() {
-        let mut dials = SongDials::default();
-        let roster = dials.parts.len();
-        assert_eq!(
-            section_parts_label(&dials.sections[0], roster),
-            format!("{roster}/{roster}"),
-            "a section nobody has touched plays everything"
-        );
-        toggle_part_in_section(&mut dials, 0, "hat");
-        assert_eq!(
-            section_parts_label(&dials.sections[0], roster),
-            format!("{}/{roster}", roster - 1)
-        );
     }
 
     #[test]

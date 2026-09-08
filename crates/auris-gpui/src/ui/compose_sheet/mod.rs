@@ -10,6 +10,7 @@
 //!   composer publishes, in the shape a context menu takes.
 //! * `lyrics` — every section's words beside the basic controls, one a live multi-line editor.
 //!   Shared melodies show the phrase counts each later verse must match.
+//! * `matrix` — part participation against the song's section order, with fixed sound pickers.
 //! * `pad` — paired controls for the song's mood and harmonic/rhythmic character.
 //!
 //! Everything `dials` makes public is re-exported here, so the rest of the crate goes on writing
@@ -19,6 +20,7 @@
 mod density_tests;
 mod dials;
 mod lyrics;
+mod matrix;
 mod menus;
 mod pad;
 #[cfg(test)]

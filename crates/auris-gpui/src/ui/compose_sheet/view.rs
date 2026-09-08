@@ -151,6 +151,10 @@ impl AurisApp {
                                         .size_full()
                                         .pr_3()
                                         .overflow_y_scroll()
+                                        .map(|mut body| {
+                                            body.style().restrict_scroll_to_axis = Some(true);
+                                            body
+                                        })
                                         .track_scroll(&scroll)
                                         .child(
                                             div()
@@ -198,6 +202,8 @@ impl AurisApp {
                                                                 ),
                                                         ),
                                                 )
+                                                .child(divider(&theme))
+                                                .child(self.song_participation_matrix(&dials, width, window, cx))
                                                 .when(self.song_advanced, |this| {
                                                     this.child(divider(&theme))
                                                         .child(
@@ -638,7 +644,6 @@ impl AurisApp {
     ) -> Vec<AnyElement> {
         let theme = self.theme.clone();
         let removable = dials.form.len() > 1;
-        let roster = dials.parts.len();
         let mut rows: Vec<AnyElement> = vec![
             div()
                 .col_span_full()
@@ -807,14 +812,6 @@ impl AurisApp {
                                 }),
                             )))
                             .child(div().flex_1().min_w_0().child(self.song_card_picker(
-                                ("song-section-parts", place),
-                                Key::SongSectionParts,
-                                section_parts_label(section, roster),
-                                Self::opens_menu(cx, move |this, at| {
-                                    this.song_section_parts_menu(at, index)
-                                }),
-                            )))
-                            .child(div().flex_1().min_w_0().child(self.song_card_picker(
                                 ("song-section-tempo", place),
                                 Key::Tempo,
                                 section_tempo_label(section, self.language()),
@@ -975,18 +972,7 @@ impl AurisApp {
             // What the part will be *heard* as: the General MIDI sound where it names one, and
             // otherwise the plugin. Showing the plugin under a part that asked for a violin would
             // name the fallback and never the sound.
-            let instrument = match part.program {
-                Some(program) => program.label(part.role.is_drum()).to_string(),
-                None => self
-                    .registry()
-                    .instruments()
-                    .find(|descriptor| descriptor.id == part.instrument)
-                    .map(|descriptor| {
-                        auris_i18n::audio::plugin_name(&descriptor.name, self.language())
-                            .to_string()
-                    })
-                    .unwrap_or_else(|| part.instrument.clone()),
-            };
+            let instrument = self.song_part_source_label(part);
 
             let mut dial_row = div().flex().gap_2();
             for dial in PART_DIALS {
@@ -1504,7 +1490,12 @@ mod window_tests {
             app.update(cx, |this, _| this.language = language);
             for width in [1280.0, 900.0, 640.0] {
                 resize(&app, cx, size(px(width), px(650.0)));
-                let selectors = ["song-title", "song-tempo-value", "song-sheet-lyrics"];
+                let selectors = [
+                    "song-title",
+                    "song-tempo-value",
+                    "song-sheet-lyrics",
+                    "song-participation-matrix",
+                ];
                 let before = selectors.map(|selector| cx.debug_bounds(selector).unwrap());
                 click("song-advanced", cx);
                 paint(&app, cx);

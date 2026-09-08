@@ -13,9 +13,16 @@ Click the tempo's BPM value to enter an exact number between 20 and 400, includi
 The −1 and +1 buttons adjust it one BPM at a time; hold Shift while dragging a song dial for
 fine adjustment.
 
+The participation matrix places parts and their instruments down the left and sections in song
+order across the top, with bar ranges under their names. Click a cell to switch between **Play**
+and **Rest**. Instrument names open the sound picker for that part. The labels stay in place while
+the timeline scrolls horizontally. Parts using the same sound, including individual drum writers,
+can enter separately; repeated occurrences of the same section share their participation settings.
+Every section keeps at least one playing part. The matrix is available in basic mode too.
+
 **Detailed settings** keeps the basic controls and lyrics in place and adds groups below them:
 harmony and rhythm, performance, section structure and the drum/instrument roster. Section cards
-name their transposition, participating parts, tempo and shared melody. The toggle stays above
+name their transposition, tempo and shared melody. The toggle stays above
 the scrolling fields. **Back to basics** retains every setting and any lyrics being edited.
 Tab and Shift+Tab reveal the next or previous lyrics editor automatically. Long picker values
 are shortened to fit their columns; hovering shows the full value, and editing retains it all.
