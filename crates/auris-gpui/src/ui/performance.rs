@@ -1,4 +1,4 @@
-//! The dials on any clip's performance: the transform stack, read and written as three sliders.
+//! The dials on any clip's performance: a non-destructive transform stack.
 //!
 //! The section sits under the part dials in the inspector and is offered for *every* MIDI clip,
 //! because the stack is not the composer's: a phrase played by hand takes a humanise or a swing
@@ -20,12 +20,50 @@ use gpui::{AnyElement, IntoElement, MouseDownEvent, Pixels, Point, div, prelude:
 
 use crate::app::{AurisApp, Drag};
 use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
+use crate::ui::expression::{expression_settings, with_expression_settings};
 use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
+use crate::ui::strum::{strum_settings, with_strum_settings};
 use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
 
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PerformDial {
+    /// One parameter of automatic instrument pitch bend.
+    Pitch(crate::ui::pitch_performance::PitchDial),
+    /// Independent timing wander.
+    ExpressionTiming,
+    /// Independent velocity wander.
+    ExpressionVelocity,
+    /// Crescendo and decrescendo within a phrase.
+    PhraseSwell,
+    /// Signed beat versus offbeat emphasis.
+    BeatAccent,
+    /// Blend with other clips in the ensemble group.
+    EnsembleShared,
+    /// Deliberate timing push or delay.
+    PerformanceDelay,
+    /// Reference groove timing strength.
+    GrooveTiming,
+    /// Reference groove dynamic strength.
+    GrooveVelocity,
+    /// Time between the first and last notes in a chord stroke.
+    Stroke,
+    /// Velocity scale of upstrokes.
+    StrumUpVelocity,
+    /// Extra emphasis on the lower pitches of downstrokes.
+    StrumLowAccent,
+    /// Strength of short retriggers replacing the tail of notes held for at least an eighth note.
+    Mute,
+    /// Strength of quiet chords inserted on silent sixteenth-note grid positions.
+    Brush,
+    /// Probability of adding a ghost at an eligible grid position.
+    GhostDensity,
+    /// Length of each inserted ghost note.
+    GhostLength,
+    /// Variation between repetitions of a ghost pattern.
+    GhostVariation,
+    /// Strength of intermediate notes connecting a single-note line.
+    Slide,
     /// How far timing and velocity wander. Zero is the text as written, and is stored as no
     /// transform at all.
     Humanize,
@@ -37,8 +75,15 @@ pub enum PerformDial {
 }
 
 /// The sliders in the order the panel shows them — which is also the order the stack plays them.
-pub const PERFORM_DIALS: &[PerformDial] =
-    &[PerformDial::Swing, PerformDial::Humanize, PerformDial::Gate];
+pub const PERFORM_DIALS: &[PerformDial] = &[
+    PerformDial::Swing,
+    PerformDial::Gate,
+    PerformDial::Brush,
+    PerformDial::Slide,
+    PerformDial::Mute,
+    PerformDial::Stroke,
+    PerformDial::Humanize,
+];
 
 /// The grid a swing added by the panel delays, until its picker says otherwise.
 ///
@@ -51,6 +96,24 @@ impl PerformDial {
     /// the phrase was written or played.
     pub fn label(self) -> Key {
         match self {
+            PerformDial::Pitch(dial) => dial.label(),
+            PerformDial::ExpressionTiming => Key::PerformTiming,
+            PerformDial::ExpressionVelocity => Key::PerformVelocity,
+            PerformDial::PhraseSwell => Key::PerformSwell,
+            PerformDial::BeatAccent => Key::PerformAccent,
+            PerformDial::EnsembleShared => Key::PerformShared,
+            PerformDial::PerformanceDelay => Key::PerformDelay,
+            PerformDial::GrooveTiming => Key::PerformGrooveTiming,
+            PerformDial::GrooveVelocity => Key::PerformGrooveVelocity,
+            PerformDial::StrumUpVelocity => Key::PerformStrumUpVelocity,
+            PerformDial::StrumLowAccent => Key::PerformStrumLowAccent,
+            PerformDial::GhostDensity => Key::PerformGhostDensity,
+            PerformDial::GhostLength => Key::PerformGhostLength,
+            PerformDial::GhostVariation => Key::PerformGhostVariation,
+            PerformDial::Stroke => Key::PerformStroke,
+            PerformDial::Mute => Key::PerformMute,
+            PerformDial::Brush => Key::PerformBrush,
+            PerformDial::Slide => Key::PerformSlide,
             PerformDial::Humanize => Key::PartHumanize,
             PerformDial::Swing => Key::PartSwing,
             PerformDial::Gate => Key::PartGate,
@@ -64,16 +127,22 @@ impl PerformDial {
 /// wander moves them — and the rest simply keeps insertion deterministic. A stack somebody
 /// arranged another way is honoured as it stands; the rank only places a transform that is
 /// *joining* the stack.
-fn rank(transform: &NoteTransform) -> usize {
+pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
-        NoteTransform::ForDrumVoice { .. } => 1,
+        NoteTransform::Pitch { .. } => 9,
+        NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for
         // the same reason the humanise is — a leaned note is off the grid the swing reads.
-        NoteTransform::Lean { .. } => 1,
-        NoteTransform::Humanize { .. } => 2,
-        NoteTransform::Transpose { .. } => 3,
-        NoteTransform::Gate { .. } => 4,
+        NoteTransform::Lean { .. } => 7,
+        NoteTransform::Humanize { .. } | NoteTransform::Expression { .. } => 8,
+        NoteTransform::Groove { .. } => 0,
+        NoteTransform::Transpose { .. } => 1,
+        NoteTransform::Gate { .. } => 2,
+        NoteTransform::Brush { .. } | NoteTransform::Ghost { .. } => 3,
+        NoteTransform::Slide { .. } => 4,
+        NoteTransform::Mute { .. } => 5,
+        NoteTransform::Stroke { .. } | NoteTransform::Strum { .. } => 6,
     }
 }
 
@@ -82,6 +151,13 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
     matches!(
         (transform, dial),
         (NoteTransform::Humanize { .. }, PerformDial::Humanize)
+            | (NoteTransform::Expression { .. }, PerformDial::Humanize)
+            | (NoteTransform::Stroke { .. }, PerformDial::Stroke)
+            | (NoteTransform::Strum { .. }, PerformDial::Stroke)
+            | (NoteTransform::Mute { .. }, PerformDial::Mute)
+            | (NoteTransform::Brush { .. }, PerformDial::Brush)
+            | (NoteTransform::Ghost { .. }, PerformDial::Brush)
+            | (NoteTransform::Slide { .. }, PerformDial::Slide)
             | (NoteTransform::Swing { .. }, PerformDial::Swing)
             | (NoteTransform::Gate { .. }, PerformDial::Gate)
     )
@@ -94,10 +170,60 @@ fn answers_to(transform: &NoteTransform, dial: PerformDial) -> bool {
 /// first paint.
 pub fn dial_fraction(stack: &[NoteTransform], dial: PerformDial) -> f32 {
     match dial {
+        PerformDial::Pitch(dial) => dial.fraction(stack),
+        PerformDial::ExpressionTiming => expression_settings(stack, 0).timing.clamp(0.0, 1.0),
+        PerformDial::ExpressionVelocity => expression_settings(stack, 0).velocity.clamp(0.0, 1.0),
+        PerformDial::PhraseSwell => expression_settings(stack, 0).swell.clamp(0.0, 1.0),
+        PerformDial::BeatAccent => {
+            (expression_settings(stack, 0).accent.clamp(-1.0, 1.0) + 1.0) / 2.0
+        }
+        PerformDial::EnsembleShared => expression_settings(stack, 0).shared.clamp(0.0, 1.0),
+        PerformDial::PerformanceDelay => {
+            (expression_settings(stack, 0).delay_ms.clamp(-50.0, 50.0) + 50.0) / 100.0
+        }
+        PerformDial::GrooveTiming | PerformDial::GrooveVelocity => stack
+            .iter()
+            .find_map(|t| match t {
+                NoteTransform::Groove {
+                    timing, velocity, ..
+                } => Some(
+                    if dial == PerformDial::GrooveTiming {
+                        *timing
+                    } else {
+                        *velocity
+                    }
+                    .clamp(0.0, 1.0),
+                ),
+                _ => None,
+            })
+            .unwrap_or(0.0),
+        PerformDial::StrumUpVelocity => strum_settings(stack).up_velocity.clamp(0.0, 1.0),
+        PerformDial::StrumLowAccent => strum_settings(stack).low_accent.clamp(0.0, 1.0),
+        PerformDial::GhostDensity => ghost_settings(stack, 0).density.clamp(0.0, 1.0),
+        PerformDial::GhostLength => {
+            (ghost_settings(stack, 0).length_ms.clamp(1.0, 100.0) - 1.0) / 99.0
+        }
+        PerformDial::GhostVariation => ghost_settings(stack, 0).variation.clamp(0.0, 1.0),
+        PerformDial::Stroke | PerformDial::Mute | PerformDial::Brush | PerformDial::Slide => stack
+            .iter()
+            .find(|transform| answers_to(transform, dial))
+            .map(|transform| match transform {
+                NoteTransform::Stroke { spread_ms, .. } => spread_ms.clamp(0.0, 100.0) / 100.0,
+                NoteTransform::Strum { settings } => settings.spread_ms.clamp(0.0, 100.0) / 100.0,
+                NoteTransform::Ghost { settings } => (settings.velocity / 0.3).clamp(0.0, 1.0),
+                NoteTransform::Mute { amount }
+                | NoteTransform::Brush { amount }
+                | NoteTransform::Slide { amount } => amount.clamp(0.0, 1.0),
+                _ => 0.0,
+            })
+            .unwrap_or(0.0),
         PerformDial::Humanize => stack
             .iter()
             .find_map(|transform| match transform {
                 NoteTransform::Humanize { amount, .. } => Some(amount.clamp(0.0, 1.0)),
+                NoteTransform::Expression { settings } => {
+                    Some(settings.timing.max(settings.velocity).clamp(0.0, 1.0))
+                }
                 _ => None,
             })
             .unwrap_or(0.0),
@@ -151,8 +277,119 @@ pub fn with_dial(
     fraction: f32,
     seed: u64,
 ) -> Vec<NoteTransform> {
-    let fraction = fraction.clamp(0.0, 1.0);
+    let fraction = (fraction.clamp(0.0, 1.0) * 100.0).round() / 100.0;
+    if let PerformDial::Pitch(dial) = dial {
+        return dial.change(stack, fraction);
+    }
+    if matches!(
+        dial,
+        PerformDial::GrooveTiming | PerformDial::GrooveVelocity
+    ) {
+        let mut out = stack.to_vec();
+        if let Some(NoteTransform::Groove {
+            timing, velocity, ..
+        }) = out
+            .iter_mut()
+            .find(|t| matches!(t, NoteTransform::Groove { .. }))
+        {
+            if dial == PerformDial::GrooveTiming {
+                *timing = fraction;
+            } else {
+                *velocity = fraction;
+            }
+        }
+        return out;
+    }
+    if matches!(
+        dial,
+        PerformDial::ExpressionTiming
+            | PerformDial::ExpressionVelocity
+            | PerformDial::PhraseSwell
+            | PerformDial::BeatAccent
+            | PerformDial::EnsembleShared
+            | PerformDial::PerformanceDelay
+    ) || (dial == PerformDial::Humanize
+        && stack
+            .iter()
+            .any(|t| matches!(t, NoteTransform::Expression { .. })))
+    {
+        let mut settings = expression_settings(stack, seed);
+        match dial {
+            PerformDial::ExpressionTiming => settings.timing = fraction,
+            PerformDial::ExpressionVelocity => settings.velocity = fraction,
+            PerformDial::PhraseSwell => settings.swell = fraction,
+            PerformDial::BeatAccent => settings.accent = fraction * 2.0 - 1.0,
+            PerformDial::EnsembleShared => settings.shared = fraction,
+            PerformDial::PerformanceDelay => settings.delay_ms = fraction * 100.0 - 50.0,
+            PerformDial::Humanize => {
+                let peak = settings.timing.max(settings.velocity);
+                if peak > 0.0 {
+                    settings.timing *= fraction / peak;
+                    settings.velocity *= fraction / peak;
+                } else {
+                    settings.timing = fraction;
+                    settings.velocity = fraction;
+                }
+            }
+            _ => unreachable!(),
+        }
+        return with_expression_settings(stack, settings);
+    }
+    if matches!(
+        dial,
+        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent
+    ) {
+        let mut settings = strum_settings(stack);
+        match dial {
+            PerformDial::Stroke => settings.spread_ms = (fraction * 100.0).round(),
+            PerformDial::StrumUpVelocity => settings.up_velocity = fraction,
+            PerformDial::StrumLowAccent => settings.low_accent = fraction,
+            _ => unreachable!(),
+        }
+        return with_strum_settings(stack, settings);
+    }
+    if matches!(
+        dial,
+        PerformDial::Brush
+            | PerformDial::GhostDensity
+            | PerformDial::GhostLength
+            | PerformDial::GhostVariation
+    ) {
+        let mut settings = ghost_settings(stack, seed);
+        match dial {
+            PerformDial::Brush => settings.velocity = 0.3 * fraction,
+            PerformDial::GhostDensity => settings.density = fraction,
+            PerformDial::GhostLength => settings.length_ms = (1.0 + 99.0 * fraction).round(),
+            PerformDial::GhostVariation => settings.variation = fraction,
+            _ => unreachable!(),
+        }
+        return with_ghost_settings(stack, settings);
+    }
     let replacement = match dial {
+        PerformDial::Pitch(_) => unreachable!(),
+        PerformDial::ExpressionTiming
+        | PerformDial::ExpressionVelocity
+        | PerformDial::PhraseSwell
+        | PerformDial::BeatAccent
+        | PerformDial::EnsembleShared
+        | PerformDial::PerformanceDelay
+        | PerformDial::GrooveTiming
+        | PerformDial::GrooveVelocity => unreachable!(),
+        PerformDial::Stroke | PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+            unreachable!()
+        }
+        PerformDial::Brush
+        | PerformDial::GhostDensity
+        | PerformDial::GhostLength
+        | PerformDial::GhostVariation => {
+            unreachable!()
+        }
+        PerformDial::Mute => (fraction > 0.0).then_some(NoteTransform::Mute {
+            amount: (fraction * 100.0).round() / 100.0,
+        }),
+        PerformDial::Slide => (fraction > 0.0).then_some(NoteTransform::Slide {
+            amount: (fraction * 100.0).round() / 100.0,
+        }),
         PerformDial::Humanize => {
             let amount = (fraction * 100.0).round() / 100.0;
             (amount > 0.0).then(|| NoteTransform::Humanize {
@@ -216,9 +453,44 @@ pub fn with_swing_grid(stack: &[NoteTransform], subdivision: Subdivision) -> Vec
     out
 }
 
+/// Direction held by the stroke, defaulting to the lowest string first.
+pub fn stroke_direction(stack: &[NoteTransform]) -> StrokeDirection {
+    strum_settings(stack).direction
+}
+
+fn direction_label(direction: StrokeDirection) -> Key {
+    match direction {
+        StrokeDirection::LowToHigh => Key::PerformLowToHigh,
+        StrokeDirection::HighToLow => Key::PerformHighToLow,
+        StrokeDirection::Alternate => Key::PerformAlternate,
+    }
+}
+
 /// What a dial's value button reads, with the swing's straight end in words.
 pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> String {
     match dial {
+        PerformDial::Pitch(dial) => dial.text(stack),
+        PerformDial::BeatAccent => format!("{:+.0}%", expression_settings(stack, 0).accent * 100.0),
+        PerformDial::PerformanceDelay => {
+            format!("{:+.0} ms", expression_settings(stack, 0).delay_ms)
+        }
+        PerformDial::ExpressionTiming
+        | PerformDial::ExpressionVelocity
+        | PerformDial::PhraseSwell
+        | PerformDial::EnsembleShared
+        | PerformDial::GrooveTiming
+        | PerformDial::GrooveVelocity => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
+        PerformDial::StrumUpVelocity | PerformDial::StrumLowAccent => {
+            format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
+        }
+        PerformDial::GhostLength => format!("{:.0} ms", ghost_settings(stack, 0).length_ms),
+        PerformDial::GhostDensity | PerformDial::GhostVariation => {
+            format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
+        }
+        PerformDial::Stroke => format!("{:.0} ms", dial_fraction(stack, dial) * 100.0),
+        PerformDial::Mute | PerformDial::Brush | PerformDial::Slide => {
+            format!("{:.0}%", dial_fraction(stack, dial) * 100.0)
+        }
         PerformDial::Humanize => format!("{:.0}%", dial_fraction(stack, dial) * 100.0),
         PerformDial::Swing => match swing_percent(stack) {
             SWING_MIN => straight.to_string(),
@@ -231,6 +503,24 @@ pub fn dial_text(stack: &[NoteTransform], dial: PerformDial, straight: &str) -> 
 /// A stable element key per dial, so gpui tells the sliders apart.
 fn dial_element_key(dial: PerformDial) -> usize {
     match dial {
+        PerformDial::Pitch(dial) => 20 + dial as usize,
+        PerformDial::ExpressionTiming => 12,
+        PerformDial::ExpressionVelocity => 13,
+        PerformDial::PhraseSwell => 14,
+        PerformDial::BeatAccent => 15,
+        PerformDial::EnsembleShared => 16,
+        PerformDial::PerformanceDelay => 17,
+        PerformDial::GrooveTiming => 18,
+        PerformDial::GrooveVelocity => 19,
+        PerformDial::StrumUpVelocity => 10,
+        PerformDial::StrumLowAccent => 11,
+        PerformDial::GhostDensity => 7,
+        PerformDial::GhostLength => 8,
+        PerformDial::GhostVariation => 9,
+        PerformDial::Stroke => 3,
+        PerformDial::Mute => 4,
+        PerformDial::Brush => 5,
+        PerformDial::Slide => 6,
         PerformDial::Swing => 0,
         PerformDial::Humanize => 1,
         PerformDial::Gate => 2,
@@ -238,6 +528,197 @@ fn dial_element_key(dial: PerformDial) -> usize {
 }
 
 impl AurisApp {
+    pub(crate) fn performance_slider(
+        &self,
+        clip: ClipId,
+        dial: PerformDial,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
+        let fraction = dial_fraction(stack, dial);
+        value_slider(
+            ("perform-dial", dial_element_key(dial)),
+            self.t(dial.label()),
+            dial_text(stack, dial, self.t(Key::PartStraight)),
+            fraction,
+            self.theme.accent,
+            if matches!(
+                dial,
+                PerformDial::BeatAccent | PerformDial::PerformanceDelay
+            ) {
+                SliderFill::FromCentre
+            } else {
+                SliderFill::FromStart
+            },
+            &self.theme,
+            cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                this.begin_drag(Drag::PerformDial {
+                    clip,
+                    dial,
+                    start_fraction: fraction,
+                    start_x: event.position.x,
+                })
+            }),
+        )
+        .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
+        .into_any_element()
+    }
+    fn ghost_detail_rows(
+        &self,
+        clip: ClipId,
+        stack: &[NoteTransform],
+        cx: &mut gpui::Context<Self>,
+    ) -> Vec<AnyElement> {
+        let theme = &self.theme;
+        let mut rows = vec![
+            button(
+                "perform-ghost-details",
+                self.t(Key::PerformGhostSettings),
+                ButtonStyle::Ghost,
+                self.performance_details[0],
+                theme.accent_soft,
+                theme,
+                cx.listener(|this, _, _, cx| {
+                    this.performance_details[0] = !this.performance_details[0];
+                    cx.notify();
+                }),
+            )
+            .min_w_0()
+            .overflow_hidden()
+            .into_any_element(),
+        ];
+        if !self.performance_details[0] {
+            return rows;
+        }
+        let settings = ghost_settings(stack, clip.0);
+        for dial in [
+            PerformDial::GhostDensity,
+            PerformDial::GhostLength,
+            PerformDial::GhostVariation,
+        ] {
+            let fraction = dial_fraction(stack, dial);
+            rows.push(
+                value_slider(
+                    ("perform-dial", dial_element_key(dial)),
+                    self.t(dial.label()),
+                    dial_text(stack, dial, self.t(Key::PartStraight)),
+                    fraction,
+                    theme.accent,
+                    SliderFill::FromStart,
+                    theme,
+                    cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                        this.begin_drag(Drag::PerformDial {
+                            clip,
+                            dial,
+                            start_fraction: fraction,
+                            start_x: event.position.x,
+                        })
+                    }),
+                )
+                .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
+                .into_any_element(),
+            );
+        }
+        rows.push(
+            self.picker_row(
+                "perform-ghost-pattern",
+                Key::PerformGhostPattern,
+                self.t(ghost_pattern_key(settings.pattern)).to_string(),
+                Self::opens_menu(cx, move |this, at| {
+                    let settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    let mut menu = ContextMenu::new(at, this.t(Key::PerformGhostPattern));
+                    for pattern in [
+                        GhostPattern::Sixteenths,
+                        GhostPattern::Offbeats,
+                        GhostPattern::Pickup,
+                        GhostPattern::Repeating,
+                    ] {
+                        menu = menu.toggle(
+                            this.t(ghost_pattern_key(pattern)),
+                            MenuCommand::SetGhostSettings {
+                                clip,
+                                settings: GhostNotes {
+                                    pattern,
+                                    ..settings.clone()
+                                },
+                            },
+                            pattern == settings.pattern,
+                        );
+                    }
+                    menu
+                }),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            self.picker_row(
+                "perform-ghost-target",
+                Key::PerformGhostTarget,
+                settings.target_pitch.map_or_else(
+                    || self.t(Key::PerformGhostChord).to_string(),
+                    |pitch| format!("MIDI {pitch}"),
+                ),
+                Self::opens_menu(cx, move |this, at| {
+                    let settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    let mut menu = ContextMenu::new(at, this.t(Key::PerformGhostTarget)).toggle(
+                        this.t(Key::PerformGhostChord),
+                        MenuCommand::SetGhostSettings {
+                            clip,
+                            settings: GhostNotes {
+                                target_pitch: None,
+                                ..settings.clone()
+                            },
+                        },
+                        settings.target_pitch.is_none(),
+                    );
+                    let pitches: std::collections::BTreeSet<_> = this
+                        .session
+                        .midi_clip(clip)
+                        .into_iter()
+                        .flat_map(|c| c.notes.iter().map(|n| n.pitch))
+                        .collect();
+                    for pitch in pitches {
+                        menu = menu.toggle(
+                            format!("MIDI {pitch}"),
+                            MenuCommand::SetGhostSettings {
+                                clip,
+                                settings: GhostNotes {
+                                    target_pitch: Some(pitch),
+                                    ..settings.clone()
+                                },
+                            },
+                            settings.target_pitch == Some(pitch),
+                        );
+                    }
+                    menu
+                }),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            button(
+                "perform-ghost-rests",
+                self.t(Key::PerformGhostRests),
+                ButtonStyle::Ghost,
+                settings.preserve_rests,
+                theme.accent_soft,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    let mut settings =
+                        ghost_settings(this.session.clip_transforms(clip).unwrap_or(&[]), clip.0);
+                    settings.preserve_rests = !settings.preserve_rests;
+                    this.run_menu_command(MenuCommand::SetGhostSettings { clip, settings }, cx);
+                }),
+            )
+            .min_w_0()
+            .overflow_hidden()
+            .into_any_element(),
+        );
+        rows
+    }
+
     /// The selected clip's performance section, or nothing when no MIDI clip is selected.
     ///
     /// Returns rows rather than a panel, the way [`Self::part_rows`] does and for the same
@@ -302,6 +783,19 @@ impl AurisApp {
             );
         }
 
+        if dial_fraction(&stack, PerformDial::Stroke) > 0.0 {
+            rows.push(
+                self.picker_row(
+                    "perform-stroke-direction",
+                    Key::PerformDirection,
+                    self.t(direction_label(stroke_direction(&stack)))
+                        .to_string(),
+                    Self::opens_menu(cx, move |this, at| this.perform_stroke_menu(at, clip)),
+                )
+                .into_any_element(),
+            );
+        }
+
         if !stack.is_empty() {
             rows.push(
                 div()
@@ -323,6 +817,10 @@ impl AurisApp {
         }
 
         rows.push(divider(&theme).into_any_element());
+        rows.extend(self.ghost_detail_rows(clip, &stack, cx));
+        rows.extend(self.strum_detail_rows(clip, &stack, cx));
+        rows.extend(self.expression_detail_rows(clip, &stack, cx));
+        rows.extend(self.pitch_detail_rows(clip, &stack, cx));
         rows
     }
 
@@ -386,11 +884,227 @@ impl AurisApp {
         let next = with_swing_grid(stack, subdivision);
         let _ = self.session.set_clip_transforms(clip, next);
     }
+
+    fn perform_stroke_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
+        let current = self
+            .session
+            .clip_transforms(clip)
+            .map(stroke_direction)
+            .unwrap_or(StrokeDirection::LowToHigh);
+        let mut menu = ContextMenu::new(anchor, self.t(Key::PerformDirection));
+        for direction in [
+            StrokeDirection::LowToHigh,
+            StrokeDirection::HighToLow,
+            StrokeDirection::Alternate,
+        ] {
+            menu = menu.toggle(
+                self.t(direction_label(direction)),
+                MenuCommand::SetPerformStrokeDirection { clip, direction },
+                current == direction,
+            );
+        }
+        menu
+    }
+
+    /// Updates a stroke's direction without changing its spread or any other stage.
+    pub(crate) fn set_perform_stroke_direction(
+        &mut self,
+        clip: ClipId,
+        direction: StrokeDirection,
+    ) {
+        let Ok(stack) = self.session.clip_transforms(clip) else {
+            return;
+        };
+        let mut settings = strum_settings(stack);
+        settings.direction = direction;
+        let next = with_strum_settings(stack, settings);
+        let _ = self.session.set_clip_transforms(clip, next);
+    }
+}
+
+fn ghost_pattern_key(pattern: GhostPattern) -> Key {
+    match pattern {
+        GhostPattern::Sixteenths => Key::PerformGhostSixteenths,
+        GhostPattern::Offbeats => Key::PerformGhostOffbeats,
+        GhostPattern::Pickup => Key::PerformGhostPickup,
+        GhostPattern::Repeating => Key::PerformGhostRepeating,
+    }
+}
+
+/// Reads configurable ghosts or the equivalent settings of an older brush.
+pub fn ghost_settings(stack: &[NoteTransform], seed: u64) -> GhostNotes {
+    stack
+        .iter()
+        .find_map(|transform| match transform {
+            NoteTransform::Ghost { settings } => Some(settings.clone()),
+            NoteTransform::Brush { amount } => Some(GhostNotes {
+                density: 1.0,
+                velocity: 0.3 * amount,
+                pattern: GhostPattern::Sixteenths,
+                preserve_rests: false,
+                seed,
+                ..GhostNotes::default()
+            }),
+            _ => None,
+        })
+        .unwrap_or(GhostNotes {
+            seed,
+            ..GhostNotes::default()
+        })
+}
+
+/// Replaces the ghost stage in place, preserving every unrelated transform.
+pub fn with_ghost_settings(stack: &[NoteTransform], settings: GhostNotes) -> Vec<NoteTransform> {
+    let mut out = stack.to_vec();
+    let stage = NoteTransform::Ghost { settings };
+    if let Some(at) = out
+        .iter()
+        .position(|t| matches!(t, NoteTransform::Ghost { .. } | NoteTransform::Brush { .. }))
+    {
+        out[at] = stage;
+    } else {
+        let at = out
+            .iter()
+            .position(|t| rank(t) > rank(&stage))
+            .unwrap_or(out.len());
+        out.insert(at, stage);
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::harness::{choose, click, drag, paint, with_a_clip};
+    use gpui::{TestAppContext, point, px};
+
+    #[gpui::test]
+    fn ghost_detail_controls_update_preview_without_changing_the_source(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            for start in [0, 960, 1920, 2880] {
+                this.session
+                    .add_note(clip, Note::new(60, Ticks(start), Ticks(120)))
+                    .unwrap();
+            }
+            this.open_clip_in_editor(clip);
+            this.set_perform_dial(clip, PerformDial::Brush, 0.5);
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1920.0), px(1800.0)));
+        click("score-performed", cx);
+        click("perform-ghost-details", cx);
+        paint(&app, cx);
+        let before = app.read_with(cx, |this, _| {
+            this.session.midi_clip(clip).unwrap().notes.clone()
+        });
+        let at = cx.debug_bounds("perform-dial-7").unwrap().center();
+        crate::harness::press(cx, at);
+        crate::harness::drag_to(cx, point(at.x + px(120.0), at.y));
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                ghost_settings(this.session.clip_transforms(clip).unwrap(), 0).density,
+                1.0
+            );
+            assert_eq!(this.score_preview_notes().unwrap().len(), 7);
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, before);
+        });
+        crate::harness::release(cx, point(at.x + px(120.0), at.y));
+        app.update(cx, |this, _| this.undo());
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                ghost_settings(this.session.clip_transforms(clip).unwrap(), 0).density,
+                0.5
+            )
+        });
+    }
+
+    #[test]
+    fn ghost_controls_preserve_the_take_when_silenced_and_keep_custom_order() {
+        let settings = GhostNotes {
+            seed: 99,
+            density: 0.23,
+            target_pitch: Some(38),
+            ..GhostNotes::default()
+        };
+        let stack = vec![
+            NoteTransform::Lean { ticks: 10 },
+            NoteTransform::Ghost {
+                settings: settings.clone(),
+            },
+        ];
+        let silent = with_dial(&stack, PerformDial::Brush, 0.0, 456);
+        let restored = with_dial(&silent, PerformDial::Brush, 1.0, 456);
+        assert_eq!(ghost_settings(&restored, 0), settings);
+        assert!(matches!(restored[0], NoteTransform::Lean { ticks: 10 }));
+    }
+
+    #[gpui::test]
+    fn articulation_controls_edit_the_stack_and_freeze_is_undoable(cx: &mut TestAppContext) {
+        let (app, cx, track, clip) = with_a_clip(cx);
+        let original = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            for pitch in [60, 64, 67] {
+                this.session
+                    .add_note(clip, Note::new(pitch, Ticks::ZERO, Ticks::QUARTER))
+                    .unwrap();
+            }
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            this.session.midi_clip(clip).unwrap().notes.clone()
+        });
+        paint(&app, cx);
+        for (selector, dial) in [
+            ("perform-dial-3", PerformDial::Stroke),
+            ("perform-dial-4", PerformDial::Mute),
+            ("perform-dial-5", PerformDial::Brush),
+            ("perform-dial-6", PerformDial::Slide),
+        ] {
+            let center = cx
+                .debug_bounds(selector)
+                .expect("articulation slider is drawn")
+                .center();
+            drag(cx, center, point(center.x + px(40.0), center.y));
+            app.update(cx, |this, _| {
+                assert!(dial_fraction(this.session.clip_transforms(clip).unwrap(), dial) > 0.0);
+                assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+                this.session.undo();
+                assert_eq!(
+                    dial_fraction(this.session.clip_transforms(clip).unwrap(), dial),
+                    0.0
+                );
+                this.session.redo();
+            });
+            paint(&app, cx);
+        }
+        click("perform-stroke-direction", cx);
+        paint(&app, cx);
+        choose(
+            &app,
+            cx,
+            &MenuCommand::SetPerformStrokeDirection {
+                clip,
+                direction: StrokeDirection::HighToLow,
+            },
+        );
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                stroke_direction(this.session.clip_transforms(clip).unwrap()),
+                StrokeDirection::HighToLow
+            );
+        });
+        click("perform-freeze", cx);
+        app.update(cx, |this, _| {
+            assert!(this.session.clip_transforms(clip).unwrap().is_empty());
+            assert!(this.session.midi_clip(clip).unwrap().notes.len() > original.len());
+            this.session.undo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            assert!(!this.session.clip_transforms(clip).unwrap().is_empty());
+        });
+    }
 
     #[test]
     fn a_dial_reads_back_what_it_was_set_to() {

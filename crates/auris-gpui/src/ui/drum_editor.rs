@@ -105,7 +105,12 @@ impl AurisApp {
             .and_then(|track| track.kind.as_instrument())
             .and_then(|instrument| DrumMap::load(&instrument.instrument_state))
             .unwrap_or_default();
-        let mut pitches: Vec<u8> = clip.notes.iter().map(|note| note.pitch).collect();
+        let notes = if self.source_score() {
+            clip.notes.as_slice()
+        } else {
+            self.score_preview_notes().unwrap_or(&clip.notes)
+        };
+        let mut pitches: Vec<u8> = notes.iter().map(|note| note.pitch).collect();
         // Keep an unmapped source row in place for the entire gesture, including after its
         // last note has moved to a different row. Otherwise every following move would be
         // interpreted against a different vertical axis.
@@ -130,8 +135,13 @@ impl AurisApp {
         };
         let name = clip.name.clone();
         let clip_start = clip.start;
-        let clip_length = clip.length;
-        let notes = clip.notes.clone();
+        let source = self.source_score();
+        let clip_length = if source {
+            clip.length
+        } else {
+            clip.sounding_length()
+        };
+        let notes = self.score_notes();
         let rows = self.drum_rows();
         if rows.len() == 128 && notes.is_empty() {
             self.drum_editor.all_notes = true;
@@ -168,8 +178,14 @@ impl AurisApp {
         let view = self.timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
-        let selected = self.selected_notes.clone();
-        let band = self.rubber_band(BandSurface::Roll);
+        let selected = if source {
+            self.selected_notes.clone()
+        } else {
+            BTreeSet::new()
+        };
+        let band = source
+            .then(|| self.rubber_band(BandSurface::Roll))
+            .flatten();
         let recorded = self.canvas.roll.clone();
 
         div()
@@ -179,6 +195,7 @@ impl AurisApp {
             .min_h(px(80.0))
             .min_w_0()
             .bg(theme.surface_sunken)
+            .child(self.score_layer_tabs(cx))
             .child(
                 div()
                     .flex()
@@ -198,11 +215,15 @@ impl AurisApp {
                             .truncate()
                             .child(format!("{} — {name}", self.t(Key::DrumEditor))),
                     )
-                    .child(self.tool_strip(cx))
-                    .child(div().flex_1().min_w_0().truncate().child(match self.tool {
-                        RollTool::Pointer => self.t(Key::DrumEditorHint).to_string(),
-                        RollTool::Velocity => {
-                            messages::piano_roll_velocity_hint(self.language()).to_string()
+                    .when(source, |row| row.child(self.tool_strip(cx)))
+                    .child(div().flex_1().min_w_0().truncate().child(if !source {
+                        self.t(Key::ScorePerformedHint).to_string()
+                    } else {
+                        match self.tool {
+                            RollTool::Pointer => self.t(Key::DrumEditorHint).to_string(),
+                            RollTool::Velocity => {
+                                messages::piano_roll_velocity_hint(self.language()).to_string()
+                            }
                         }
                     }))
                     .child(button(
@@ -287,7 +308,7 @@ impl AurisApp {
                             .min_w_0()
                             .h_full()
                             .overflow_hidden()
-                            .when(self.tool == RollTool::Velocity, |this| {
+                            .when(source && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
                             .child(
@@ -444,6 +465,9 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.source_score() {
+            return;
+        }
         let Some(clip) = self.selected_clip else {
             return;
         };
@@ -521,6 +545,9 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.source_score() {
+            return;
+        }
         let Some(pitch) = self.drum_pitch_at(event.position.y - self.roll_origin().y) else {
             return;
         };
@@ -738,6 +765,52 @@ mod window_tests {
                 origin.y + px(row as f32 * ROW_HEIGHT - this.drum_editor.scroll + ROW_HEIGHT / 2.0),
             )
         })
+    }
+
+    #[gpui::test]
+    fn performed_drum_rows_follow_transforms_and_reject_note_edits(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = fixture(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(36, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.session
+                .set_clip_transforms(
+                    clip,
+                    vec![
+                        NoteTransform::Transpose { semitones: 55 },
+                        NoteTransform::Brush { amount: 1.0 },
+                    ],
+                )
+                .unwrap();
+        });
+        paint(&app, cx);
+        harness::click("score-performed", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
+            assert!(this.score_preview_notes().unwrap().len() > 1);
+        });
+        let from = hit_point(&app, cx, Ticks::ZERO, 91);
+        let to = hit_point(&app, cx, Ticks::QUARTER * 2, 91);
+        drag(cx, from, to);
+        click_at(cx, to, Modifiers::none());
+        harness::right_press(cx, from);
+        cx.simulate_keystrokes("backspace");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            let notes = &this.session.midi_clip(clip).unwrap().notes;
+            assert_eq!(notes.len(), 1);
+            assert_eq!(notes[0].pitch, 36);
+            assert_eq!(notes[0].start, Ticks::ZERO);
+        });
+        harness::click("score-source", cx);
+        paint(&app, cx);
+        let at = hit_point(&app, cx, Ticks::QUARTER * 2, 36);
+        click_at(cx, at, Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 2)
+        });
     }
 
     #[gpui::test]

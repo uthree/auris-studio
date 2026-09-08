@@ -294,6 +294,8 @@ struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     humanize: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    performance: Option<crate::PerformanceStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     dynamics: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fill: Option<f32>,
@@ -460,6 +462,7 @@ impl SongDoc {
         let mut spec = SongSpec {
             singer: self.singer,
             singer_speaker: self.singer_speaker,
+            performance: self.performance,
             ..SongSpec::default()
         };
         let mut errors = Vec::new();
@@ -949,6 +952,7 @@ impl From<&SongSpec> for SongDoc {
             }),
             swing: (spec.swing != plain.swing).then_some(u32::from(spec.swing)),
             humanize: (spec.humanize != plain.humanize).then_some(spec.humanize),
+            performance: spec.performance,
             dynamics: (spec.dynamics != plain.dynamics).then_some(spec.dynamics),
             fill: (spec.fill != plain.fill).then_some(spec.fill),
             variation: (spec.variation != plain.variation).then_some(spec.variation),

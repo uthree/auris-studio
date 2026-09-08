@@ -246,7 +246,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                             if let Some(part) = parts.get_mut(&key) {
                                 part.bend.push(CurvePoint {
                                     at: scale(at, per_quarter),
-                                    value: bend.as_f32() * BEND_RANGE,
+                                    value: bend.as_f32() * part.bend_state.range(),
                                 });
                             }
                         }
@@ -261,6 +261,11 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                                         at: scale(at, per_quarter),
                                         value: f32::from(value.as_int()) / 127.0,
                                     });
+                            }
+                        }
+                        MidiMessage::Controller { controller, value } => {
+                            if let Some(part) = parts.get_mut(&key) {
+                                part.bend_state.receive(controller.as_int(), value.as_int());
                             }
                         }
                         _ => {}
@@ -381,20 +386,55 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
     let mut tracks = vec![conductor_track(project)?];
     let mut count = 0;
     let mut melodic_index = 0_u8;
-    for track in &project.tracks {
-        let Some(instrument) = track.kind.as_instrument() else {
-            continue;
-        };
-        // Reserve channel 10 for drums so a MIDI round trip preserves percussion identity.
-        // Melodic tracks wrap around the remaining fifteen channels.
-        let channel = u4::new(if track.kind.is_drum() {
-            9
-        } else {
-            let channel = melodic_index + u8::from(melodic_index >= 9);
-            melodic_index = (melodic_index + 1) % 15;
-            channel
-        });
+    let instruments: Vec<_> = project
+        .tracks
+        .iter()
+        .filter_map(|track| {
+            let instrument = track.kind.as_instrument()?;
+            // Reserve channel 10 for drums so a MIDI round trip preserves percussion identity.
+            // Melodic tracks wrap around the remaining fifteen channels.
+            let channel = u4::new(if track.kind.is_drum() {
+                9
+            } else {
+                let channel = melodic_index + u8::from(melodic_index >= 9);
+                melodic_index = (melodic_index + 1) % 15;
+                channel
+            });
+            Some((track, instrument, channel))
+        })
+        .collect();
+    // Pitch-bend sensitivity is channel state, shared even by separate SMF tracks.
+    // Resolve it before writing so a later track cannot change an earlier track's scale.
+    let mut bend_ranges = [BEND_RANGE; 16];
+    for (_, instrument, channel) in &instruments {
+        if instrument
+            .clips
+            .iter()
+            .filter(|c| !c.muted)
+            .any(|c| c.has_pitch_performance() || c.bend.iter().any(|p| p.value.abs() > BEND_RANGE))
+        {
+            bend_ranges[usize::from(channel.as_int())] = 12.0;
+        }
+    }
+    for (track, instrument, channel) in instruments {
         let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
+        let bend_range = bend_ranges[usize::from(channel.as_int())];
+        if bend_range > BEND_RANGE {
+            // RPN 0 is pitch-bend sensitivity, followed by a null RPN selection.
+            for (number, value) in [
+                (101_u8, 0_u8),
+                (100, 0),
+                (6, 12),
+                (38, 0),
+                (101, 127),
+                (100, 127),
+            ] {
+                events.push((
+                    Ticks::ZERO,
+                    controller_message(channel, number, f32::from(value) / 127.0),
+                ));
+            }
+        }
         for clip in &instrument.clips {
             if clip.muted {
                 continue;
@@ -404,7 +444,10 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             // reading that matches what the renderer does with the same clip. The tempo handed
             // over is the one the renderer reads for the same clip, so a humanised wobble lands
             // on the same ticks in the file as in the mix.
-            for note in clip.sounding_notes(project.tempo_map.bpm_at(clip.start)) {
+            for note in clip.sounding_notes_with_meter(
+                project.tempo_map.bpm_at(clip.start),
+                project.signatures.clone(),
+            ) {
                 count += 1;
                 let start = clip.start + note.start;
                 events.push((start, message(channel, note.pitch, velocity(note.velocity))));
@@ -416,10 +459,15 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             // The curves, sampled by the clip's own rule rather than by one of this file's. What
             // the wire carries — fourteen bits of bend, seven of controller — is this file's
             // business and stops here; the document works in semitones and in a fraction.
-            for which in clip.curves() {
-                for (at, value) in clip.sounding_curve_events(which, CURVE_STEP) {
+            for which in clip.performance_curves() {
+                for (at, value) in clip.sounding_performance_curve_events(
+                    which,
+                    CURVE_STEP,
+                    &project.tempo_map,
+                    &project.signatures,
+                ) {
                     let message = match which {
-                        ClipCurve::Bend => bend_message(channel, value),
+                        ClipCurve::Bend => bend_message(channel, value, bend_range),
                         ClipCurve::Controller(number) => controller_message(channel, number, value),
                     };
                     events.push((clip.start + at, message));
@@ -428,7 +476,24 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
         }
         // Sorted by position, and at one position the releases go first: a note struck again at
         // the instant the last one ended must not have its release land on the new one.
-        events.sort_by_key(|(at, kind)| (*at, !is_release(kind)));
+        events.sort_by_key(|(at, kind)| {
+            (
+                *at,
+                if is_release(kind) {
+                    0
+                } else if matches!(
+                    kind,
+                    TrackEventKind::Midi {
+                        message: MidiMessage::NoteOn { .. },
+                        ..
+                    }
+                ) {
+                    2
+                } else {
+                    1
+                },
+            )
+        });
         tracks.push(delta_encode(track.name.clone(), events)?);
     }
     Ok((tracks, count))
@@ -508,12 +573,10 @@ fn message(channel: u4, pitch: u8, vel: u7) -> TrackEventKind<'static> {
     }
 }
 
-/// How many semitones a bend at full deflection means, in and out.
+/// Default pitch-bend sensitivity when no RPN range was supplied.
 ///
 /// Two, which is MIDI's default and what a receiver assumes when nothing has told it otherwise.
-/// The document works in semitones and can hold an octave; a bend past this range is written to
-/// the file at its edge, because a file that said otherwise would play as something else
-/// everywhere but here.
+/// Larger exported bends explicitly select an octave through RPN 0.
 const BEND_RANGE: f32 = 2.0;
 
 /// Whether a controller shapes a performance, rather than addressing an instrument.
@@ -530,11 +593,11 @@ pub fn is_performance_controller(number: u8) -> bool {
 }
 
 /// A pitch bend message carrying `semitones`.
-fn bend_message(channel: u4, semitones: f32) -> TrackEventKind<'static> {
+fn bend_message(channel: u4, semitones: f32, range: f32) -> TrackEventKind<'static> {
     TrackEventKind::Midi {
         channel,
         message: MidiMessage::PitchBend {
-            bend: midly::PitchBend::from_f32((semitones / BEND_RANGE).clamp(-1.0, 1.0)),
+            bend: midly::PitchBend::from_f32((semitones / range).clamp(-1.0, 1.0)),
         },
     }
 }
@@ -592,12 +655,48 @@ const MAX_DENOMINATOR_POWER: u32 = 4;
 /// One track-and-channel's notes as they are gathered.
 #[derive(Default)]
 struct Part {
+    bend_state: BendState,
     name: Option<String>,
     notes: Vec<Note>,
     /// The bend, at absolute ticks. Rebased onto the clip once the clip's start is known.
     bend: Vec<CurvePoint>,
     /// The controllers, on the same terms.
     controllers: BTreeMap<u8, Vec<CurvePoint>>,
+}
+
+struct BendState {
+    msb: u8,
+    lsb: u8,
+    semitones: u8,
+    cents: u8,
+}
+impl Default for BendState {
+    fn default() -> Self {
+        Self {
+            msb: 127,
+            lsb: 127,
+            semitones: 2,
+            cents: 0,
+        }
+    }
+}
+impl BendState {
+    fn range(&self) -> f32 {
+        f32::from(self.semitones) + f32::from(self.cents.min(99)) / 100.0
+    }
+    fn receive(&mut self, number: u8, value: u8) {
+        match number {
+            101 => self.msb = value,
+            100 => self.lsb = value,
+            98 | 99 => {
+                self.msb = 127;
+                self.lsb = 127;
+            }
+            6 if self.msb == 0 && self.lsb == 0 => self.semitones = value,
+            38 if self.msb == 0 && self.lsb == 0 => self.cents = value,
+            _ => {}
+        }
+    }
 }
 
 /// The channel an event belongs to, or 0 for the ones that belong to the track as a whole.
@@ -1030,6 +1129,68 @@ mod tests {
     }
 
     #[test]
+    fn articulated_midi_exports_the_same_notes_as_playback_in_compound_time() {
+        let mut project = project_with(
+            vec![
+                Note::new(60, Ticks::ZERO, Ticks(480)),
+                Note::new(64, Ticks::ZERO, Ticks(480)),
+                Note::new(67, Ticks(1920), Ticks(480)),
+            ],
+            Ticks(2880),
+        );
+        project.signatures = auris_core::SignatureMap::constant(TimeSignature::new(6, 8));
+        let clip = project.tracks[0]
+            .kind
+            .as_instrument_mut()
+            .unwrap()
+            .clips
+            .first_mut()
+            .unwrap();
+        clip.start = Ticks(240);
+        clip.loop_end = Ticks(4500);
+        clip.transforms = vec![
+            auris_core::NoteTransform::Brush { amount: 0.5 },
+            auris_core::NoteTransform::Slide { amount: 0.5 },
+            auris_core::NoteTransform::Mute { amount: 0.5 },
+            auris_core::NoteTransform::Stroke {
+                spread_ms: 40.0,
+                direction: auris_core::StrokeDirection::LowToHigh,
+            },
+            auris_core::NoteTransform::Humanize {
+                amount: 0.5,
+                seed: 23,
+            },
+        ];
+        let mut expected: Vec<_> = clip
+            .sounding_notes_with_meter(120.0, project.signatures.clone())
+            .map(|note| {
+                (
+                    note.start + clip.start,
+                    note.pitch,
+                    note.length,
+                    velocity(note.velocity).as_int(),
+                )
+            })
+            .collect();
+        expected.sort();
+        let imported = round_trip(&project);
+        let mut actual: Vec<_> = imported.tracks[0]
+            .notes
+            .iter()
+            .map(|note| {
+                (
+                    note.start,
+                    note.pitch,
+                    note.length,
+                    velocity(note.velocity).as_int(),
+                )
+            })
+            .collect();
+        actual.sort();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn drum_tracks_export_on_channel_ten_and_melodic_tracks_skip_it() {
         let mut project = Project::new("Channels", 48_000.0);
         for index in 0..17 {
@@ -1163,6 +1324,126 @@ mod tests {
                 .bend
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn generated_pitch_round_trips_with_explicit_range_and_precedes_the_attack() {
+        let mut project = project_with(vec![Note::new(60, Ticks::ZERO, Ticks(1920))], Ticks(1920));
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        project.midi_clip_mut(clip).unwrap().transforms = vec![auris_core::NoteTransform::Pitch {
+            settings: auris_core::PitchPerformance {
+                scoop: 3.0,
+                fall: 6.0,
+                ..auris_core::PitchPerformance::default()
+            },
+        }];
+        let bytes = write_midi_bytes(&project).unwrap();
+        let smf = Smf::parse(&bytes).unwrap();
+        let events = &smf.tracks[1];
+        let first_on = events.iter().position(|e| matches!(e.kind, TrackEventKind::Midi { message: MidiMessage::NoteOn { vel, .. }, .. } if vel.as_int() > 0)).unwrap();
+        assert!(events[..first_on].iter().any(|e| matches!(
+            e.kind,
+            TrackEventKind::Midi {
+                message: MidiMessage::PitchBend { .. },
+                ..
+            }
+        )));
+        let imported = round_trip(&project);
+        assert_eq!(imported.tracks[0].notes.len(), 1);
+        assert!((imported.tracks[0].bend[0].value + 3.0).abs() < 0.002);
+        assert!(imported.tracks[0].bend.iter().any(|p| p.value < -5.9));
+        assert_eq!(imported.tracks[0].bend.last().unwrap().value, 0.0);
+        assert!(
+            imported.tracks[0].controllers.is_empty(),
+            "RPN setup is not an editable lane"
+        );
+    }
+
+    #[test]
+    fn tracks_sharing_a_midi_channel_use_the_same_bend_sensitivity() {
+        // Channel 0 is reused by the sixteenth melodic track. RPN sensitivity belongs to
+        // that channel, even when the two tracks never play at the same time.
+        for (wide, narrow) in [(0, 15), (15, 0)] {
+            let mut project = Project::new("Shared bend channel", 48_000.0);
+            for index in 0..16 {
+                let track = project.add_instrument_track(format!("Track {index}"), "synth");
+                let clip = project
+                    .add_midi_clip(
+                        track,
+                        "Note",
+                        Ticks::QUARTER * (index as i64 * 2),
+                        Ticks::QUARTER,
+                    )
+                    .unwrap();
+                let clip = project.midi_clip_mut(clip).unwrap();
+                clip.notes = vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
+                if index == wide {
+                    clip.transforms = vec![auris_core::NoteTransform::Pitch {
+                        settings: auris_core::PitchPerformance {
+                            scoop: 3.0,
+                            ..auris_core::PitchPerformance::default()
+                        },
+                    }];
+                } else if index == narrow {
+                    clip.bend = vec![CurvePoint {
+                        at: Ticks::ZERO,
+                        value: 2.0,
+                    }];
+                }
+            }
+            let bytes = write_midi_bytes(&project).unwrap();
+            let smf = Smf::parse(&bytes).unwrap();
+            let bend = smf.tracks[narrow + 1]
+                .iter()
+                .find_map(|event| match event.kind {
+                    TrackEventKind::Midi {
+                        channel,
+                        message: MidiMessage::PitchBend { bend },
+                    } => {
+                        assert_eq!(channel.as_int(), 0);
+                        Some(bend.as_f32())
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert!(
+                (bend * 12.0 - 2.0).abs() < 0.002,
+                "a shared-channel +2 bend played at {} semitones",
+                bend * 12.0
+            );
+            for index in [wide, narrow] {
+                assert!(smf.tracks[index + 1].iter().any(|event| matches!(
+                    event.kind,
+                    TrackEventKind::Midi {
+                        channel,
+                        message: MidiMessage::Controller { controller, value },
+                    } if channel.as_int() == 0 && controller.as_int() == 6 && value.as_int() == 12
+                )));
+            }
+            let imported = read_midi_bytes(&bytes).unwrap();
+            assert!((imported.tracks[narrow].bend[0].value - 2.0).abs() < 0.002);
+            assert!((imported.tracks[wide].bend[0].value + 3.0).abs() < 0.002);
+        }
+    }
+
+    #[test]
+    fn bend_sensitivity_respects_null_and_nrpn_selections() {
+        let mut state = BendState::default();
+        assert_eq!(state.range(), 2.0);
+        state.receive(101, 0);
+        state.receive(100, 0);
+        state.receive(6, 12);
+        state.receive(38, 50);
+        assert_eq!(state.range(), 12.5);
+        state.receive(101, 127);
+        state.receive(100, 127);
+        state.receive(6, 1);
+        assert_eq!(state.range(), 12.5);
+        state.receive(101, 0);
+        state.receive(100, 0);
+        state.receive(99, 0);
+        state.receive(6, 1);
+        assert_eq!(state.range(), 12.5);
     }
 
     #[test]

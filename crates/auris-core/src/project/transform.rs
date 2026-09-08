@@ -23,8 +23,8 @@ use crate::time::{TICKS_PER_QUARTER, Ticks};
 use super::clip::Note;
 use super::recipe::Subdivision;
 
-/// How far a note's timing wanders at full humanisation, as a standard deviation in
-/// milliseconds.
+/// Nominal timing scale at full humanisation, in milliseconds. Each independent layer uses
+/// this standard deviation; their weighted mixture is smoother and has lower variance.
 ///
 /// Calibrated when it was still the composer's own constant: six, because the presets' default
 /// of 0.35 lands at about 2 ms — where a band that is playing well sits — and the jitter's own
@@ -39,13 +39,66 @@ const VELOCITY_WANDER: f32 = 0.06;
 
 /// One non-destructive change to how a clip's notes are performed.
 ///
-/// Stored on the clip in a stack and applied in order, each one a pure function of a note. The
+/// Stored on the clip in a stack and applied in order to a private copy of the phrase. The
 /// stack changes what is *heard* — playback and export both — while the notes the piano roll
 /// shows stay exactly as written. Freezing the stack writes what is heard into the text and
 /// clears it, the same trade [`freezing a recipe`](super::ClipRecipe) makes.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Derived channel pitch gestures, evaluated after the note stages.
+    Pitch {
+        /// Scoop, vibrato, fall and bidirectional melodic connections.
+        settings: super::PitchPerformance,
+    },
+    /// Independent wander, phrase dynamics and ensemble motion.
+    Expression {
+        /// The performance settings; the score stays unchanged.
+        settings: super::Expression,
+    },
+    /// Timing and relative dynamics captured from a reference MIDI performance.
+    Groove {
+        /// Portable snapshot, independent of later edits to its reference.
+        template: super::GrooveTemplate,
+        /// Blend toward the reference timing, in 0..=1.
+        timing: f32,
+        /// Blend toward the reference relative velocity, in 0..=1.
+        velocity: f32,
+    },
+    /// Metrical strumming, including air strokes, partial upstrokes and accents.
+    Strum {
+        /// Right-hand performance settings.
+        settings: super::Strum,
+    },
+    /// Seeded ghost notes with independent placement, density, duration and velocity.
+    Ghost {
+        /// The performance settings, including the stored random seed.
+        settings: super::GhostNotes,
+    },
+    /// Spreads each simultaneous chord across a bounded time, preserving its release times.
+    Stroke {
+        /// Total time from first to last string, clamped to 0..=100 milliseconds.
+        spread_ms: f32,
+        /// Pitch order in which the strings are struck.
+        direction: StrokeDirection,
+    },
+    /// Replaces the last 12 ms of a note held for at least an eighth note with a quiet
+    /// retrigger, shortening the performed source to avoid overlap. The held length is
+    /// read after preceding stages and clipped to the content window.
+    Mute {
+        /// Strength from 0 (off) to 1 (35% of the preceding note's velocity).
+        amount: f32,
+    },
+    /// Repeats the previous chord for 20 ms on a silent sixteenth-note grid anchored at bar lines.
+    Brush {
+        /// Strength from 0 (off) to 1 (30% of the chord's velocity).
+        amount: f32,
+    },
+    /// Adds one intermediate pitch before the next note of an unambiguous single-note line.
+    Slide {
+        /// Strength from 0 (off) to 1 (65% of the preceding note's velocity).
+        amount: f32,
+    },
     /// Performs only notes belonging to one independent drum writer in a shared kit clip.
     ForDrumVoice {
         /// The part name recorded on [`Note::drum_voice`].
@@ -103,6 +156,18 @@ pub enum NoteTransform {
     },
 }
 
+/// The pitch order of a chord stroke.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrokeDirection {
+    /// Strike the lowest pitch first.
+    LowToHigh,
+    /// Strike the highest pitch first.
+    HighToLow,
+    /// Alternate low-to-high and high-to-low on successive chord attacks.
+    Alternate,
+}
+
 /// Performs one note through a transform stack.
 ///
 /// `pass` is which loop pass the note sounds in, and is what makes a looped clip's humanisation
@@ -111,10 +176,20 @@ pub enum NoteTransform {
 /// relative to the clip, exactly as [`playable_notes`](super::MidiClip::playable_notes) leaves
 /// them.
 ///
-/// An empty stack is the identity, bit for bit: a clip with no transforms performs its text.
+/// An empty stack is the identity, bit for bit. This single-note helper applies only local
+/// transforms; expression, strum, stroke, ghost, mute, brush and slide require
+/// [`super::performed_notes`] instead.
 pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f64) -> Note {
     for transform in transforms {
         note = match transform {
+            NoteTransform::Stroke { .. }
+            | NoteTransform::Pitch { .. }
+            | NoteTransform::Expression { .. }
+            | NoteTransform::Strum { .. }
+            | NoteTransform::Ghost { .. }
+            | NoteTransform::Mute { .. }
+            | NoteTransform::Brush { .. }
+            | NoteTransform::Slide { .. } => note,
             NoteTransform::ForDrumVoice { voice, transforms } => {
                 if note.drum_voice == *voice {
                     performed(note, transforms, pass, bpm)
@@ -123,6 +198,14 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
                 }
             }
             NoteTransform::Humanize { amount, seed } => humanized(note, *amount, *seed, pass, bpm),
+            NoteTransform::Groove {
+                template,
+                timing,
+                velocity,
+            } => {
+                template.apply(&mut note, *timing, *velocity);
+                note
+            }
             NoteTransform::Lean { ticks } => leaned(note, *ticks),
             NoteTransform::Swing {
                 percent,
@@ -141,9 +224,21 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
 /// does not re-time the whole clip — the composer's own rule, kept for the same reason. The
 /// velocity draw follows the timing draw out of the same stream whether either is used, which
 /// is the roll-anyway rule: turning the dial to zero and back must land on the same take.
-fn humanized(mut note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Note {
-    let amount = amount.clamp(0.0, 1.0);
-    if amount <= 0.0 {
+fn humanized(note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Note {
+    humanized_axes(note, amount, amount, seed, pass, bpm)
+}
+
+pub(super) fn humanized_axes(
+    mut note: Note,
+    timing_amount: f32,
+    velocity_amount: f32,
+    seed: u64,
+    pass: u64,
+    bpm: f64,
+) -> Note {
+    let timing_amount = timing_amount.clamp(0.0, 1.0);
+    let velocity_amount = velocity_amount.clamp(0.0, 1.0);
+    if timing_amount <= 0.0 && velocity_amount <= 0.0 {
         return note;
     }
     let mut rng = Rng::stream(
@@ -157,11 +252,42 @@ fn humanized(mut note: Note, amount: f32, seed: u64, pass: u64, bpm: f64) -> Not
     );
     // How many ticks go by in a millisecond at this tempo — the whole reason `bpm` is here.
     let ticks_per_ms = (TICKS_PER_QUARTER as f64 * bpm.max(0.0) / 60_000.0) as f32;
-    let wander = rng.jitter(WANDER_MS * amount * ticks_per_ms);
+    let position = note.start.raw().max(0) as f64 / TICKS_PER_QUARTER as f64;
+    let timing = layered_wander(seed, pass, position, "timing", rng.jitter(1.0));
+    let velocity = layered_wander(seed, pass, position, "velocity", rng.jitter(1.0));
+    let wander = timing * WANDER_MS * timing_amount * ticks_per_ms;
     note.start = (note.start + Ticks(wander.round() as i64)).max_zero();
-    let scale = 1.0 + rng.jitter(VELOCITY_WANDER * amount);
-    note.velocity = (note.velocity * scale).clamp(0.05, 1.0);
+    let scale = 1.0 + velocity * VELOCITY_WANDER * velocity_amount;
+    // Quiet inserted notes must stay quiet; a fixed velocity floor would amplify a brush.
+    note.velocity = (note.velocity * scale).clamp(0.0, 1.0);
     note
+}
+
+/// Smooth four-beat and one-beat gestures plus a smaller independent note residual.
+/// Each layer has its own named stream, so editing nearby notes cannot move the gesture.
+fn layered_wander(seed: u64, pass: u64, position: f64, channel: &'static str, local: f32) -> f32 {
+    let smooth = |width: u64| {
+        let at = position / width as f64;
+        let cell = at.floor() as u64;
+        let fraction = at.fract() as f32;
+        let weight = fraction * fraction * (3.0 - 2.0 * fraction);
+        let draw = |index| {
+            Rng::stream(
+                seed,
+                &[
+                    Key::Word("performance_gesture"),
+                    Key::Word(channel),
+                    Key::Index(pass),
+                    Key::Index(width),
+                    Key::Index(index),
+                ],
+            )
+            .jitter(1.0)
+        };
+        draw(cell) * (1.0 - weight) + draw(cell + 1) * weight
+    };
+    // A convex mixture retains the existing +/-3 sigma safety bound.
+    0.55 * smooth(4) + 0.30 * smooth(1) + 0.15 * local
 }
 
 /// The lean, clamped to a quarter note either way and held at the clip's own start.
@@ -207,6 +333,54 @@ mod tests {
         Note {
             velocity: 0.8,
             ..Note::new(pitch, Ticks(start), Ticks(length))
+        }
+    }
+
+    #[test]
+    fn nearby_notes_share_a_gesture_but_keep_independent_residuals() {
+        let mut near = 0.0;
+        let mut far = 0.0;
+        let mut pitch_difference = 0.0;
+        for seed in 0..512 {
+            let stack = [NoteTransform::Humanize { amount: 1.0, seed }];
+            let a = performed(note(60, 3840, 240), &stack, 0, 120.0);
+            let b = performed(note(62, 3900, 240), &stack, 0, 120.0);
+            let c = performed(note(62, 15360, 240), &stack, 0, 120.0);
+            let chord = performed(note(67, 3840, 240), &stack, 0, 120.0);
+            near += (a.velocity - b.velocity).powi(2);
+            far += (a.velocity - c.velocity).powi(2);
+            pitch_difference += (a.velocity - chord.velocity).abs();
+        }
+        assert!(near < far * 0.2, "near {near}, far {far}");
+        assert!(
+            pitch_difference > 0.1,
+            "chords lost all individual variation"
+        );
+    }
+
+    #[test]
+    fn the_shared_gesture_is_continuous_at_beat_and_phrase_boundaries() {
+        for seed in 0..32 {
+            for boundary in [1.0, 4.0, 8.0] {
+                let before = layered_wander(seed, 0, boundary - 0.0001, "timing", 0.0);
+                let after = layered_wander(seed, 0, boundary + 0.0001, "timing", 0.0);
+                assert!((before - after).abs() < 0.001);
+            }
+        }
+    }
+
+    #[test]
+    fn humanizing_a_quiet_ornament_does_not_raise_it_to_a_fixed_velocity_floor() {
+        let mut quiet = note(60, 960, 20);
+        quiet.velocity = 0.005;
+        for seed in 0..32 {
+            let heard = performed(
+                quiet.clone(),
+                &[NoteTransform::Humanize { amount: 1.0, seed }],
+                0,
+                120.0,
+            );
+            assert!((0.004..0.006).contains(&heard.velocity));
         }
     }
 

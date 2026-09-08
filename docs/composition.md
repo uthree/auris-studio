@@ -41,6 +41,11 @@ and the next seed — and **Save as Specification…**.
 The whole piece arrives as a single undo step, so a composition that is not what was wanted is one
 press away from the document that was there before it.
 
+Every style also installs [non-destructive performance settings](performance.md#starting-from-automatic-composition)
+suited to its instruments: guitar strokes and muted tails, quiet pickups, shared phrasing,
+and pitch gestures on appropriate solo parts. Adjust them in each clip's Performance tab.
+The `.asong` root field `performance` stores the palette independently of the song title.
+
 **Style** is the first row and the one to start at. Around thirty dials is a lot to be asked for
 before anything has made a sound, and the honest answer to what they should be is *depends what you
 are writing* — so the shelf answers all of them at once:

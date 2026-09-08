@@ -21,6 +21,14 @@ use super::timeline::progression_target;
 /// What choosing a menu item does.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MenuCommand {
+    /// Independent note expression, without rewriting the score.
+    SetExpressionSettings { clip: ClipId, settings: Expression },
+    /// Snapshot a reference MIDI clip's groove.
+    CaptureGroove { target: ClipId, source: ClipId },
+    /// Updates right-hand clock, pitch coverage and stroke dynamics.
+    SetStrumSettings { clip: ClipId, settings: Strum },
+    /// Updates one clip's non-destructive ghost-note settings.
+    SetGhostSettings { clip: ClipId, settings: GhostNotes },
     /// Voice model for the song sheet's vocal part.
     SongSinger(Option<String>),
     /// Speaker within the song sheet's selected voice file.
@@ -700,6 +708,13 @@ pub enum MenuCommand {
         /// The grid whose offbeats the swing delays.
         subdivision: Subdivision,
     },
+    /// Set the pitch order of a chord stroke.
+    SetPerformStrokeDirection {
+        /// Clip whose performance is being shaped.
+        clip: ClipId,
+        /// Order in which its chord pitches sound.
+        direction: StrokeDirection,
+    },
 
     /// Move a panel to one of the window's edges.
     DockPanel {
@@ -779,7 +794,67 @@ impl AurisApp {
 
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
+        if !self.source_score()
+            && matches!(
+                command,
+                MenuCommand::DuplicateNotes
+                    | MenuCommand::CutNotes
+                    | MenuCommand::CopyNotes
+                    | MenuCommand::PasteNotes
+                    | MenuCommand::DeleteNotes
+                    | MenuCommand::TransposeNotes(_)
+                    | MenuCommand::SetNoteVelocity(_)
+                    | MenuCommand::QuantizeNotes(_)
+                    | MenuCommand::SelectAllNotes
+                    | MenuCommand::NewNote { .. }
+                    | MenuCommand::EditLyric { .. }
+                    | MenuCommand::EditPhonemes { .. }
+                    | MenuCommand::ResetPhonemeTiming { .. }
+                    | MenuCommand::SetScoop { .. }
+                    | MenuCommand::SetFall { .. }
+                    | MenuCommand::SetVibrato { .. }
+                    | MenuCommand::ResetOrnaments { .. }
+                    | MenuCommand::WriteLyrics { .. }
+                    | MenuCommand::ClearCurve { .. }
+            )
+        {
+            self.set_status(self.t(Key::ScorePerformedHint));
+            cx.notify();
+            return;
+        }
         match command {
+            MenuCommand::SetExpressionSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::expression::with_expression_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                    let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
+                }
+            }
+            MenuCommand::CaptureGroove { target, source } => {
+                if let Err(error) = self.session.capture_clip_groove(target, source) {
+                    self.set_status(crate::i18n::error_text(&error, self.language()));
+                }
+            }
+            MenuCommand::SetStrumSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::strum::with_strum_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                    let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
+                }
+            }
+            MenuCommand::SetGhostSettings { clip, settings } => {
+                if let Ok(stack) = self.session.clip_transforms(clip) {
+                    let next = crate::ui::performance::with_ghost_settings(stack, settings);
+                    self.session
+                        .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                    let _ = self.session.set_clip_transforms(clip, next);
+                    self.session.end_transaction();
+                }
+            }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio { clip, transcribe } => {
                 self.begin_audio_analysis(clip, transcribe, cx)
@@ -1473,6 +1548,9 @@ impl AurisApp {
             }
             MenuCommand::SetPerformSwingGrid { clip, subdivision } => {
                 self.set_perform_swing_grid(clip, subdivision)
+            }
+            MenuCommand::SetPerformStrokeDirection { clip, direction } => {
+                self.set_perform_stroke_direction(clip, direction)
             }
             MenuCommand::SetParamChoice { target, value } => self.session.set_param(target, value),
             MenuCommand::ResetParam(target) => self.reset_param(target),

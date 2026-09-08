@@ -1,4 +1,5 @@
 # A complete sixteen-bar cycle. Both sections play on every repetition.
+performance = "chiptune"
 title = "Pixel Journey"
 key = "C major"
 tempo = 120

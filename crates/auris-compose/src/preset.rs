@@ -114,6 +114,7 @@ pub const PRESETS: &[SongPreset] = &[
 
 /// What the composer has always written: the built-in oscillators, no SoundFont needed.
 const CHIPTUNE: &str = r#"
+performance = "chiptune"
 title  = "Chiptune"
 key    = "C major"
 tempo  = 140
@@ -174,6 +175,7 @@ melody_from = "chorus"
 /// quietly downhill so the サビ has somewhere to arrive from. One progression for the whole form
 /// was the arrangement changing at every join over harmony that never did.
 const POP_BAND: &str = r#"
+performance = "pop-band"
 title  = "Pop Band"
 key    = "F major"
 tempo  = 124
@@ -263,6 +265,7 @@ melody_from = "chorus"
 /// chords in a bar was off limits until the melody learned to re-join its figure at a mid-bar
 /// change; see the third pass of [`crate::melodic`].
 const CITY_POP: &str = r#"
+performance = "city-pop"
 title       = "City Pop"
 key         = "A major"
 tempo       = 106
@@ -352,6 +355,7 @@ melody_from = "chorus"
 /// cheapest lift in rock and the one this form is built on, bought without a single chord the
 /// verse did not already own.
 const ROCK: &str = r#"
+performance = "rock"
 title    = "Rock"
 key      = "E minor"
 tempo    = 148
@@ -428,6 +432,7 @@ melody_from = "chorus"
 
 /// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
 const JAZZ_TRIO: &str = r#"
+performance = "jazz-trio"
 title    = "Jazz Trio"
 key      = "F major"
 tempo    = 132
@@ -495,6 +500,7 @@ melody_from = "chorus"
 /// Slow, in three, and with the drums replaced by a timpani and a cymbal that only mark the big
 /// moments.
 const ORCHESTRAL: &str = r#"
+performance = "orchestral"
 title      = "Orchestral"
 key        = "D minor"
 tempo      = 76
@@ -570,6 +576,7 @@ melody_from = "chorus"
 
 /// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
 const SYNTHWAVE: &str = r#"
+performance = "synthwave"
 title       = "Synthwave"
 key         = "A minor"
 tempo       = 112
@@ -656,6 +663,7 @@ melody_from = "chorus"
 /// that raised fourth is a chord tone rather than a clash, and two bars of the tonic answered by
 /// two of `II` is the floating that lydian was chosen for.
 const AMBIENT: &str = r#"
+performance = "ambient"
 title       = "Ambient"
 key         = "C lydian"
 tempo       = 64

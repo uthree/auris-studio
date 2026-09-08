@@ -60,6 +60,9 @@ strings! {
     Tempo { en: "Tempo", ja: "テンポ" }
     Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
+    ScoreSource { en: "Source", ja: "元の楽譜" }
+    ScorePerformed { en: "Performance", ja: "演奏結果" }
+    ScorePerformedHint { en: "Adjust Performance in the inspector. Edit notes in Source.", ja: "インスペクターの演奏パラメータで調整。音符の編集は「元の楽譜」で。" }
     PromptLyric { en: "Lyric", ja: "歌詞" }
     PromptPhonemes { en: "Phonemes (space-separated IPA)", ja: "音素(スペース区切りの IPA)" }
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
@@ -680,7 +683,58 @@ strings! {
     // The dials on any clip's performance: the transform stack, which changes what is heard
     // without moving a note the piano roll shows.
     PerformHeading { en: "Performance", ja: "演奏" }
+    PerformStrumSettings { en: "Strum settings", ja: "ストロークの詳細" }
+    PerformExpressionSettings { en: "Expression & groove", ja: "表情・グルーヴの詳細" }
+    PerformPitchSettings { en: "Pitch gestures", ja: "ピッチの表情" }
+    PerformPitchScoop { en: "Scoop depth", ja: "しゃくりの深さ" }
+    PerformPitchScoopTime { en: "Scoop duration", ja: "しゃくりの長さ" }
+    PerformPitchVibrato { en: "Vibrato depth", ja: "ビブラートの深さ" }
+    PerformPitchRate { en: "Vibrato rate", ja: "ビブラートの速さ" }
+    PerformPitchDelay { en: "Vibrato delay", ja: "ビブラート開始まで" }
+    PerformPitchFall { en: "Fall depth", ja: "フォールの深さ" }
+    PerformPitchFallTime { en: "Fall duration", ja: "フォールの長さ" }
+    PerformPitchGlide { en: "Melodic connection", ja: "音程の滑らかなつなぎ" }
+    PerformTiming { en: "Timing variation", ja: "タイミングの揺らぎ" }
+    PerformVelocity { en: "Velocity variation", ja: "ベロシティの揺らぎ" }
+    PerformSwell { en: "Phrase swell", ja: "フレーズの抑揚" }
+    PerformAccent { en: "Beat (+) / offbeat (−)", ja: "表拍（＋）／裏拍（−）" }
+    PerformShared { en: "Shared motion", ja: "合奏の連動" }
+    PerformDelay { en: "Push (−) / lay back (+)", ja: "前ノリ（−）／後ノリ（＋）" }
+    PerformEnsembleGroup { en: "Ensemble group", ja: "合奏グループ" }
+    PerformGrooveReference { en: "Groove reference", ja: "グルーヴ参照元" }
+    PerformGrooveChoose { en: "Choose a MIDI clip", ja: "MIDIクリップを選択" }
+    PerformGrooveTiming { en: "Groove timing", ja: "グルーヴのタイミング" }
+    PerformGrooveVelocity { en: "Groove dynamics", ja: "グルーヴの強弱" }
+    PerformGrooveEmpty { en: "The reference clip has no playable notes.", ja: "参照元クリップに再生可能な音符がありません。" }
+    PerformStrumUpVelocity { en: "Upstroke velocity", ja: "アップの強さ" }
+    PerformStrumLowAccent { en: "Downstroke bass accent", ja: "ダウンの低音アクセント" }
+    PerformStrumClock { en: "Alternation clock", ja: "上下運動の基準" }
+    PerformStrumAttacks { en: "Played attacks", ja: "発音ごと" }
+    PerformStrumEighths { en: "Continuous eighth notes", ja: "8分音符・空振りあり" }
+    PerformStrumSixteenths { en: "Continuous sixteenth notes", ja: "16分音符・空振りあり" }
+    PerformStrumUpNotes { en: "Highest pitches on upstrokes", ja: "アップで鳴らす高音側の音数" }
+    PerformStrumAllNotes { en: "All pitches", ja: "すべての音" }
+    PerformGhostSettings { en: "Ghost note settings", ja: "ゴーストノートの詳細" }
+    PerformGhostDensity { en: "Ghost density", ja: "ゴーストの密度" }
+    PerformGhostLength { en: "Ghost length", ja: "ゴーストの長さ" }
+    PerformGhostVariation { en: "Pattern variation", ja: "パターンの変化" }
+    PerformGhostPattern { en: "Placement", ja: "配置パターン" }
+    PerformGhostSixteenths { en: "Sixteenth-note gaps", ja: "16分音符の空き" }
+    PerformGhostOffbeats { en: "Eighth-note offbeats", ja: "8分音符の裏拍" }
+    PerformGhostPickup { en: "Before the next attack", ja: "次の音の直前" }
+    PerformGhostRepeating { en: "Repeating bar pattern", ja: "1小節パターン" }
+    PerformGhostTarget { en: "Ghost source", ja: "ゴーストの対象" }
+    PerformGhostChord { en: "Previous chord", ja: "直前の和音" }
+    PerformGhostRests { en: "Preserve long rests and phrase endings", ja: "長い休符とフレーズ末尾を残す" }
     PerformFreeze { en: "Keep the Performance", ja: "演奏を確定" }
+    PerformStroke { en: "Stroke spread", ja: "ストローク幅" }
+    PerformMute { en: "Mute strength", ja: "ミュートの強さ" }
+    PerformBrush { en: "Brush strength", ja: "ブラシの強さ" }
+    PerformSlide { en: "Slide strength", ja: "スライドの強さ" }
+    PerformDirection { en: "Stroke direction", ja: "ストローク方向" }
+    PerformLowToHigh { en: "Low to high", ja: "低音から高音" }
+    PerformHighToLow { en: "High to low", ja: "高音から低音" }
+    PerformAlternate { en: "Alternating", ja: "交互" }
     // Note values. Written as the fraction in both languages, because that is what is printed on
     // every other DAW's grid menu and the words for them are longer than the row is wide.
     SubdivisionEighth { en: "1/8", ja: "1/8" }

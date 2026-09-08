@@ -500,6 +500,52 @@ fn paint_f0_curve(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn paint_performed_pitch(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    notes: &[Note],
+    bend: &[CurvePoint],
+    clip_start: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    color: gpui::Hsla,
+) {
+    if bend.is_empty() {
+        return;
+    }
+    for note in notes {
+        let start = note.start;
+        let end = note.end() - Ticks(1);
+        if clip_start + end < view.scroll_ticks
+            || clip_start + start > view.x_to_tick(bounds.size.width)
+        {
+            continue;
+        }
+        let mut points = vec![(start, auris_session::prelude::curve_at(bend, start))];
+        points.extend(
+            bend.iter()
+                .filter(|p| p.at > start && p.at < end)
+                .map(|p| (p.at, p.value)),
+        );
+        points.push((end, auris_session::prelude::curve_at(bend, end)));
+        let drawn: Vec<_> = points
+            .into_iter()
+            .map(|(at, value)| {
+                point(
+                    bounds.origin.x + view.tick_to_x(clip_start + at),
+                    bounds.origin.y
+                        + px(
+                            (pitch_view.top_pitch as f32 - (f32::from(note.pitch) + value) + 0.5)
+                                * pitch_view.row_height,
+                        ),
+                )
+            })
+            .collect();
+        paint::polyline(window, &drawn, px(1.5), color);
+    }
+}
+
 impl AurisApp {
     /// The selected clip's track's sung geometry — pitch contour and phoneme cuts — cached
     /// against the revision.
@@ -562,34 +608,62 @@ impl AurisApp {
         };
 
         let clip_start = clip.start;
-        let clip_length = clip.length;
-        let notes = clip.notes.clone();
+        let source = self.source_score();
+        let clip_length = if source {
+            clip.length
+        } else {
+            clip.sounding_length()
+        };
+        let clip_name = clip.name.clone();
+        let notes = self.score_notes();
+        let performed_bend = self.score_preview_bend();
         let singing = self.editing_a_singer_clip();
         let manual_phonemes = self
             .selected_clip
             .is_some_and(|clip| self.clip_accepts_phonemes(clip));
-        let ghosts = self.neighbouring_notes();
-        let mut note_ends = self.note_end_zones(clip_start, &notes);
+        let ghosts = if source {
+            self.neighbouring_notes()
+        } else {
+            Vec::new()
+        };
+        let mut note_ends = if source {
+            self.note_end_zones(clip_start, &notes)
+        } else {
+            Vec::new()
+        };
         // The phoneme boundaries wear the same arrow: both zones drag a vertical edge.
-        note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
-        let selected: Vec<usize> = self.selected_notes.iter().copied().collect();
-        let clip_name = clip.name.clone();
+        if source {
+            note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
+        }
+        let selected: Vec<usize> = self
+            .selected_notes
+            .iter()
+            .copied()
+            .filter(|_| source)
+            .collect();
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
         // consonant takes is sixty milliseconds on screen.
-        let geometry = match singing {
+        let geometry = match singing && source {
             true => self.singer_sung_geometry(),
             false => None,
         };
-        let band = self.rubber_band(crate::app::BandSurface::Roll);
-        let velocity_tag = self.velocity_tag();
+        let band = source
+            .then(|| self.rubber_band(crate::app::BandSurface::Roll))
+            .flatten();
+        let velocity_tag = source.then(|| self.velocity_tag()).flatten();
         let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let lanes: Vec<gpui::AnyElement> = self
-            .panels
-            .curve_lanes()
+        let curve_lanes = if source {
+            self.panels.curve_lanes()
+        } else if !performed_bend.is_empty() {
+            vec![ClipCurve::Bend]
+        } else {
+            Vec::new()
+        };
+        let lanes: Vec<gpui::AnyElement> = curve_lanes
             .into_iter()
             .map(|which| self.render_curve_lane(which, cx))
             .collect();
@@ -607,6 +681,7 @@ impl AurisApp {
             // the controls were simply gone.
             .min_w_0()
             .bg(theme.surface_sunken)
+            .child(self.score_layer_tabs(cx))
             .child(
                 div()
                     .flex()
@@ -634,7 +709,7 @@ impl AurisApp {
                             .truncate()
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
                     )
-                    .child(self.tool_strip(cx))
+                    .when(source, |row| row.child(self.tool_strip(cx)))
                     .when(
                         geometry
                             .as_ref()
@@ -664,31 +739,31 @@ impl AurisApp {
                     // The first thing to be given up, and the right one: it is a reminder of a
                     // gesture rather than a way of making one, so a hand that cannot see all of
                     // it has lost nothing it needs.
-                    .child(
-                        div()
-                            .flex_shrink()
-                            .min_w_0()
-                            .truncate()
-                            .child(match self.tool {
-                                RollTool::Pointer => messages::piano_roll_hint(
-                                    self.language(),
-                                    self.t(self.pointer.create.label()),
-                                    self.t(self.pointer.delete.label()),
-                                ),
-                                RollTool::Velocity => {
-                                    messages::piano_roll_velocity_hint(self.language())
-                                }
-                            }),
-                    )
-                    .child(button(
-                        "roll-lanes",
-                        self.t(Key::CurveLanes),
-                        ButtonStyle::Ghost,
-                        !self.panels.curve_lanes().is_empty(),
-                        theme.accent_soft,
-                        &theme,
-                        Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
-                    ))
+                    .child(div().flex_shrink().min_w_0().truncate().child(if !source {
+                        self.t(Key::ScorePerformedHint).to_string()
+                    } else {
+                        match self.tool {
+                            RollTool::Pointer => messages::piano_roll_hint(
+                                self.language(),
+                                self.t(self.pointer.create.label()),
+                                self.t(self.pointer.delete.label()),
+                            ),
+                            RollTool::Velocity => {
+                                messages::piano_roll_velocity_hint(self.language())
+                            }
+                        }
+                    }))
+                    .when(source, |row| {
+                        row.child(button(
+                            "roll-lanes",
+                            self.t(Key::CurveLanes),
+                            ButtonStyle::Ghost,
+                            !self.panels.curve_lanes().is_empty(),
+                            theme.accent_soft,
+                            &theme,
+                            Self::opens_menu(cx, |this, at| this.curve_lane_menu(at)),
+                        ))
+                    })
                     .child(self.zoom_slider("roll-zoom", cx)),
             )
             .child(
@@ -750,7 +825,7 @@ impl AurisApp {
                             // The grid says which tool is in hand under the pointer as well as in
                             // the header. A mode is only dangerous while it is invisible, and the
                             // header is the one place the eye is not while editing notes.
-                            .when(self.tool == RollTool::Velocity, |this| {
+                            .when(source && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
                             .child({
@@ -827,6 +902,18 @@ impl AurisApp {
                                                 singing,
                                                 geometry.is_some() || !manual_phonemes,
                                             );
+                                            if !source && !singing {
+                                                paint_performed_pitch(
+                                                    window,
+                                                    bounds,
+                                                    &notes,
+                                                    &performed_bend,
+                                                    clip_start,
+                                                    &view,
+                                                    &pitch_view,
+                                                    theme.accent,
+                                                );
+                                            }
                                             if let Some(geometry) = &geometry {
                                                 let pitch_spans = note_pitch_spans(
                                                     &notes,
@@ -944,11 +1031,23 @@ impl AurisApp {
         let theme = self.theme.clone();
         let view = self.timeline.clone();
         let playhead = self.playhead_ticks();
+        let source = self.source_score();
         let Some(clip) = self.selected_midi_clip() else {
             return div().into_any_element();
         };
-        let (start, length) = (clip.start, clip.length);
-        let points = clip.curve(which).to_vec();
+        let (start, length) = (
+            clip.start,
+            if source {
+                clip.length
+            } else {
+                clip.sounding_length()
+            },
+        );
+        let points = if source {
+            clip.curve(which).to_vec()
+        } else {
+            self.score_preview_bend().as_ref().clone()
+        };
         let recorded = self.canvas.curve(which).clone();
 
         div()
@@ -977,19 +1076,21 @@ impl AurisApp {
                     // The way back out of a lane, beside the lane. The menu closes one too, but a
                     // strip somebody opened by accident should not have to be found in a menu to
                     // be put away again.
-                    .child(button(
-                        ("curve-lane-close", lane_id(which)),
-                        "×",
-                        ButtonStyle::Ghost,
-                        false,
-                        theme.accent_soft,
-                        &theme,
-                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
-                            this.panels.set_curve_lane(which, false);
-                            this.remember_layout();
-                            cx.notify();
-                        }),
-                    )),
+                    .when(source, |lane| {
+                        lane.child(button(
+                            ("curve-lane-close", lane_id(which)),
+                            "×",
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent_soft,
+                            &theme,
+                            cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                                this.panels.set_curve_lane(which, false);
+                                this.remember_layout();
+                                cx.notify();
+                            }),
+                        ))
+                    }),
             )
             .child(
                 div()
@@ -998,7 +1099,6 @@ impl AurisApp {
                     .min_w_0()
                     .h_full()
                     .overflow_hidden()
-                    .cursor_pointer()
                     .child({
                         let theme = theme.clone();
                         canvas(
@@ -1014,35 +1114,38 @@ impl AurisApp {
                         )
                         .size_full()
                     })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                            this.press_curve_lane(which, event, cx);
-                        }),
-                    )
-                    .on_mouse_down(
-                        MouseButton::Right,
-                        Self::opens_menu(cx, move |this, at| {
-                            // Taking points off one at a time is the ⌥-click; this is the way
-                            // back from a curve that got away from somebody. With nothing
-                            // selected there is nothing to straighten, and an empty menu is a
-                            // menu `open_menu` declines to show.
-                            let menu = crate::ui::context_menu::ContextMenu::new(
-                                at,
-                                curve_label(which, this.language()),
-                            );
-                            match this.selected_clip {
-                                Some(clip) => menu.item(
-                                    this.t(Key::StraightenCurve),
-                                    crate::ui::context_menu::MenuCommand::ClearCurve {
-                                        clip,
-                                        which,
-                                    },
-                                ),
-                                None => menu,
-                            }
-                        }),
-                    )
+                    .when(source, |lane| {
+                        lane.cursor_pointer()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    this.press_curve_lane(which, event, cx);
+                                }),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                Self::opens_menu(cx, move |this, at| {
+                                    // Taking points off one at a time is the ⌥-click; this is the
+                                    // way back from a curve that got away from somebody. With
+                                    // nothing selected there is nothing to straighten, and an
+                                    // empty menu is a menu `open_menu` declines to show.
+                                    let menu = crate::ui::context_menu::ContextMenu::new(
+                                        at,
+                                        curve_label(which, this.language()),
+                                    );
+                                    match this.selected_clip {
+                                        Some(clip) => menu.item(
+                                            this.t(Key::StraightenCurve),
+                                            crate::ui::context_menu::MenuCommand::ClearCurve {
+                                                clip,
+                                                which,
+                                            },
+                                        ),
+                                        None => menu,
+                                    }
+                                }),
+                            )
+                    })
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         this.scroll_roll(event, cx);
                     })),
@@ -1137,6 +1240,9 @@ impl AurisApp {
 
     /// Starts a note drag, creating a note when alt is held on empty space.
     fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        if !self.source_score() {
+            return;
+        }
         let Some(clip_id) = self.selected_clip else {
             return;
         };
@@ -1697,6 +1803,9 @@ impl AurisApp {
 
     /// Opens the menu for whatever is under the pointer in the note grid.
     fn open_roll_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
+        if !self.source_score() {
+            return;
+        }
         let origin = self.roll_origin();
         let tick = self.timeline.x_to_tick(event.position.x - origin.x);
         let Some(pitch) = self.pitch.pitch_at(event.position.y - origin.y) else {
@@ -2367,6 +2476,9 @@ impl AurisApp {
         event: &MouseDownEvent,
         cx: &mut gpui::Context<Self>,
     ) {
+        if !self.source_score() {
+            return;
+        }
         let (Some(bounds), Some(clip)) = (self.canvas.curve(which).get(), self.selected_clip)
         else {
             return;
@@ -3290,6 +3402,77 @@ mod window_tests {
     /// Half a beat, which is where a press lands on a one-beat note's body rather than on the
     /// resize handle at its end.
     const HALF_BEAT: Ticks = Ticks(TICKS_PER_QUARTER / 2);
+
+    #[gpui::test]
+    fn performed_bend_lane_does_not_offer_source_edit_or_visibility_controls(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        let original = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.panels.set_curve_lane(ClipCurve::Bend, true);
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, Ticks::ZERO, BEAT * 2))
+                .unwrap();
+            this.session
+                .set_curve_point(clip, ClipCurve::Bend, Ticks::ZERO, 0.2);
+            this.session
+                .set_clip_transforms(
+                    clip,
+                    vec![NoteTransform::Pitch {
+                        settings: PitchPerformance {
+                            scoop: 1.0,
+                            ..PitchPerformance::default()
+                        },
+                    }],
+                )
+                .unwrap();
+            this.open_clip_in_editor(clip);
+            this.session.midi_clip(clip).unwrap().clone()
+        });
+        paint(&app, cx);
+        let close_selector: &'static str = Box::leak(
+            gpui::ElementId::from(("curve-lane-close", super::lane_id(ClipCurve::Bend)))
+                .to_string()
+                .into_boxed_str(),
+        );
+        let source_close = cx.debug_bounds(close_selector).unwrap().center();
+
+        crate::harness::click("score-performed", cx);
+        paint(&app, cx);
+        // GPUI retains old debug bounds after an element disappears. Press the position where
+        // Source offered its close button and check the actual handler's effect instead.
+        click_at(cx, source_close, gpui::Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert!(!this.source_score());
+            assert!(
+                this.panels.curve_lane(ClipCurve::Bend),
+                "the performed lane must not close the source lane"
+            );
+        });
+        let at = app.read_with(cx, |this, _| {
+            assert!(!this.score_preview_bend().is_empty());
+            this.canvas.curve(ClipCurve::Bend).get().unwrap().center()
+        });
+        drag(cx, at, gpui::point(at.x + gpui::px(20.0), at.y));
+        crate::harness::right_press(cx, at);
+        cx.simulate_mouse_up(at, gpui::MouseButton::Right, gpui::Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none(), "a read-only curve has no edit menu");
+            assert!(this.drag.is_none());
+            assert!(this.panels.curve_lane(ClipCurve::Bend));
+            assert_eq!(this.session.midi_clip(clip).unwrap(), &original);
+        });
+
+        crate::harness::click("score-source", cx);
+        paint(&app, cx);
+        let close = cx.debug_bounds(close_selector).unwrap().center();
+        click_at(cx, close, gpui::Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert!(!this.panels.curve_lane(ClipCurve::Bend));
+            assert_eq!(this.session.midi_clip(clip).unwrap(), &original);
+        });
+    }
 
     /// The notes of the clip under test, in the order the document holds them.
     fn notes(app: &gpui::Entity<crate::app::AurisApp>, cx: &gpui::TestAppContext) -> Vec<Note> {

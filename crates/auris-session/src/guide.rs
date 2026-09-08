@@ -1762,11 +1762,56 @@ pub mod harmony {
     //! none — may carry [`NoteTransform`](auris_core::NoteTransform)s: humanise, lean, swing,
     //! transpose, gate, applied in order as
     //! [`sounding_notes`](auris_core::MidiClip::sounding_notes) answers. The renderer and the
-    //! MIDI writer both ask that one question, so what exports is what plays; the piano roll
-    //! reads the notes themselves, so what is shown is the text. Every wander draws from a seed
+    //! MIDI writer both ask that one question, so what exports is what plays. The MIDI editors'
+    //! Source tab edits the stored text; their read-only Performance tab uses the same performed
+    //! notes as playback, including each loop pass, and refreshes during parameter gestures.
+    //! A document revision invalidates the preview cache, including on undo and redo.
+    //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently
     //! each time around, which is the one thing baking the wobble into the notes could never do.
+    //!
+    //! Articulation is phrase-aware: [`performed_notes`](auris_core::performed_notes) sees
+    //! simultaneous chords and the spaces between them. Stroke spreads a chord in pitch order
+    //! (ascending, descending or alternating), mute replaces the tail with a short retrigger in notes held
+    //! for at least an eighth note, shortening the performed source and preserving its release.
+    //! Brush recalls the last chord on silent sixteenth-note grid
+    //! positions, and slide connects unambiguous single-note
+    //! attacks with an intermediate pitch. Inserted notes carry no copied lyrics. These are
+    //! note events, so their timbre still comes from the selected instrument.
+    //! [`GhostNotes`](auris_core::GhostNotes) separates placement, probability, velocity and
+    //! duration. Its seed addresses positions, so changing loudness does not reroll placement.
+    //! A target pitch scopes the source and collision checks; rest protection preserves
+    //! phrase endings and long gaps. Older brushes use this same engine.
+    //! [`Strum`](auris_core::Strum) can advance its alternating hand on a continuous eighth-
+    //! or sixteenth-note clock, including rests. It supports partial upper-pitch upstrokes
+    //! and lower-pitch downstroke accents. Skipped strings retain optional source slots
+    //! through scoped stages; playback flattens them and freezing uses their positions to
+    //! preserve hidden text and source mapping. Zero velocity still means the softest note.
+    //! [`Expression`](auris_core::Expression) separates timing and velocity wander, adds a
+    //! phrase arch and signed beat accents, and blends private motion with a group-addressed
+    //! absolute-timeline gesture. The shared gesture uses the 120 BPM beat scale so clips
+    //! starting under different tempo segments agree; private timing retains milliseconds.
+    //! [`capture_clip_groove`](crate::Session::capture_clip_groove) stores a
+    //! [`GrooveTemplate`](auris_core::GrooveTemplate) from the reference's first performed
+    //! pass. It averages offsets and relative dynamics on a sixteenth-note grid and inserts
+    //! the stage before articulation. It neither copies pitches nor retains a live dependency
+    //! on the reference. Recapture is explicit and undoable; empty references change nothing.
+    //! [`PitchPerformance`](auris_core::PitchPerformance) is a derived channel bend for
+    //! monophonic instrument clips. It is sampled after the note stages in elapsed seconds,
+    //! added to the authored bend, and reset at gaps and pass ends. Connections meet at the
+    //! two notes' midpoint, replacing conflicting scoop/fall gestures on connected ends.
+    //! Overlapping and short notes are excluded because channel bend cannot distinguish voices.
+    //! `MidiClip::performance_curves` and `sounding_performance_curve_events` are shared by
+    //! the scheduler, MIDI writer and read-only preview. Freezing materialises the first
+    //! pass's combined bend along with its notes; source curves remain untouched otherwise.
+    //!
+    //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
+    //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,
+    //! even across meter changes or when a clip starts off the grid. Preparation allocates the performed phrase
+    //! off the audio thread. Humanisation mixes smooth four-beat and one-beat random gestures
+    //! with a smaller independent residual; timing and velocity have separate named streams.
+    //! Nearby notes therefore share a tendency, while seed and loop pass retain reproducibility.
     //!
     //! The composer performs through the same stack. It writes its text on the grid — swing
     //! excepted, which the groove decides and the writers keep — and installs the feel as
@@ -1777,6 +1822,15 @@ pub mod harmony {
     //! panel edits it, and writing the text again — regenerate, another take, a dial on the
     //! recipe — leaves the stack alone save for the wander's seed, which follows the take so
     //! one number keeps naming both.
+    //!
+    //! Song presets additionally select an `auris_compose::PerformanceStyle`. The composer
+    //! chooses articulations by role and requested instrument, replaces combined humanisation
+    //! with independent expression, and gives the band one shared ensemble group. Guitar
+    //! strokes, quiet ghost pickups and solo pitch gestures remain clip transforms; they never
+    //! enter the writers or their note digests. The optional `performance` field survives the
+    //! song sheet and `.asong` round trips. Omitting it retains plain lean/wander behavior.
+    //! Retaking updates inherited ghost/expression seeds without replacing edited controls or
+    //! ensemble groups. Singing melody parts keep the singer's separate ornament pipeline.
     //!
     //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
     //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's

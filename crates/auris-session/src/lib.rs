@@ -185,8 +185,8 @@ pub mod prelude {
     /// takes one refuses exactly what the file would refuse.
     pub use auris_compose::spec::parse_motif;
     pub use auris_compose::{
-        Composition, Ending, Mood, PRESETS, PartSpec, Role, SectionSpec, SongPreset, SongSpec,
-        SpecError, compose, default_instrument, motif_of, preset,
+        Composition, Ending, Mood, PRESETS, PartSpec, PerformanceStyle, Role, SectionSpec,
+        SongPreset, SongSpec, SpecError, compose, default_instrument, motif_of, preset,
     };
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,
@@ -210,11 +210,14 @@ pub mod prelude {
     };
     pub use auris_core::{
         AudioBuffer, AudioClip, AudioSource, AuxSend, ClipId, ClipPreset, ClipRecipe, Color,
-        ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, MidiClip,
-        MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef, Project, Scoop,
-        SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack, SoundFontId,
-        SoundFontRef, SourceId, Subdivision, Track, TrackId, TrackKind, Vibrato, default_frame_hop,
-        default_loop_end, loop_passes, sounding_length,
+        ConsonantWidths, DrumMap, DrumRole, EffectSlot, EffectSlotId, FadeCurve, Fall, GhostNotes,
+        GhostPattern, MidiClip, MixerStrip, Note, NoteTransform, Output, PluginRegistry, PresetRef,
+        Project, Scoop, SectionMap, SectionPoint, SectionSpan, SendId, SingerPitch, SingerTrack,
+        SoundFontId, SoundFontRef, SourceId, StrokeDirection, Subdivision, Track, TrackId,
+        TrackKind, Vibrato, default_frame_hop, default_loop_end, loop_passes, sounding_length,
+    };
+    pub use auris_core::{
+        Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
@@ -238,7 +241,9 @@ pub mod prelude {
     // The curves a clip carries, and how far each may go. A frontend drawing one has to know the
     // range it is drawing against, and may not reach past this crate to find out.
     pub use auris_core::plugin::{CC_MODULATION, CONTROLLER_MAX};
-    pub use auris_core::project::{BEND_LIMIT, CONTROLLER_LIMIT, ClipCurve, CurvePoint};
+    pub use auris_core::project::{
+        BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at,
+    };
 
     /// Every chord progression the composer knows by name.
     pub fn progression_catalog() -> &'static [CatalogEntry] {

@@ -132,6 +132,8 @@ pub struct SongDials {
     pub swing: u8,
     /// How far timing and velocity wander.
     pub humanize: f32,
+    /// The preset's articulation palette, retained through edits and song-sheet round trips.
+    pub performance: Option<PerformanceStyle>,
     /// How far apart the hardest and softest notes are struck.
     pub dynamics: f32,
     /// How much of a section's last bar the snare runs as a fill.
@@ -188,6 +190,7 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         seed: dials.seed,
         swing: dials.swing,
         humanize: dials.humanize,
+        performance: dials.performance,
         dynamics: dials.dynamics,
         fill: dials.fill,
         variation: dials.variation,
@@ -277,6 +280,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         seed: spec.seed,
         swing: spec.swing,
         humanize: spec.humanize,
+        performance: spec.performance,
         dynamics: spec.dynamics,
         fill: spec.fill,
         variation: spec.variation,
@@ -1163,6 +1167,19 @@ mod tests {
         // Two lists of defaults would drift, and the one that drifted would be the one nobody
         // reads: a dialog that opens on a different song from `auris compose` with no file.
         assert_eq!(song_spec(&SongDials::default()), SongSpec::default());
+    }
+
+    #[test]
+    fn every_preset_keeps_its_performance_palette_through_sheet_edits() {
+        for preset in PRESETS {
+            let spec = preset.spec();
+            let mut dials = song_dials(&spec);
+            dials.title = "Renamed song".into();
+            dials.tempo += 1.0;
+            let restored = SongSpec::parse(&song_spec(&dials).to_toml()).unwrap();
+            assert_eq!(restored.performance, spec.performance);
+            assert!(restored.performance.is_some());
+        }
     }
 
     #[test]

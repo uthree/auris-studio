@@ -44,6 +44,7 @@ mod drum_analysis;
 mod drum_assignments;
 mod files;
 mod generated;
+mod groove;
 mod harmony;
 mod hosted;
 mod levels;
