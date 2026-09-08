@@ -809,6 +809,12 @@ strings! {
     ThemeBase { en: "Base theme", ja: "元にするテーマ" }
     ThemeAccent { en: "Accent colour (#RRGGBB)", ja: "アクセントカラー (#RRGGBB)" }
     ThemeTrackPalette { en: "Track, clip and library palette", ja: "トラック・クリップ・ライブラリのパレット" }
+    ThemeSignalPalette { en: "Transport and indicator palette", ja: "再生操作・インジケーターのパレット" }
+    ThemeSignalActive { en: "Playback / meter: normal", ja: "再生中・メーター通常域" }
+    ThemeSignalWarning { en: "Warning / solo / meter: high", ja: "警告・ソロ・メーター高レベル域" }
+    ThemeSignalDanger { en: "Recording / clipping / errors", ja: "録音・クリッピング・エラー" }
+    ThemeSignalMute { en: "Mute", ja: "ミュート" }
+    ThemeSignalNote { en: "Enter #RRGGBB. Blank playback follows the accent; warning/mute follow the bus palette and recording follows drums. Lightness adjusts for readability.", ja: "#RRGGBB で指定します。空欄は再生がアクセント、警告・ミュートがバス、録音がドラムの色に連動します。読みやすさのため明るさを調整します。" }
     ThemeVelocityPalette { en: "Piano-roll velocity gradient", ja: "ピアノロールのベロシティグラデーション" }
     ThemeVelocitySoft { en: "Soft notes (#RRGGBB)", ja: "弱いノート (#RRGGBB)" }
     ThemeVelocityLoud { en: "Loud notes (#RRGGBB)", ja: "強いノート (#RRGGBB)" }

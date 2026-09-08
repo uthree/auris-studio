@@ -10,8 +10,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::theme::{
-    DEFAULT_SCHEME, GradientStop, Scheme, Theme, contrast_ratio, default_positive_hue, scheme,
-    scheme_or_default, ui_font_for,
+    DEFAULT_SCHEME, GradientStop, Scheme, Theme, contrast_ratio, scheme, scheme_or_default,
+    ui_font_for,
 };
 
 /// A user-created palette, stored as the same parameters used by the built-in schemes.
@@ -38,9 +38,9 @@ pub struct CustomScheme {
     /// Interior velocity-gradient control points in increasing position order.
     #[serde(default)]
     pub velocity_stops: Vec<GradientStop>,
-    /// Hue of playback and meter headroom indicators.
-    #[serde(default = "default_positive_hue")]
-    pub positive_hue: f32,
+    /// Optional RGB colours for active, warning, danger and mute indicators.
+    #[serde(default)]
+    pub signal_palette: [Option<u32>; 4],
 }
 
 impl CustomScheme {
@@ -58,7 +58,7 @@ impl CustomScheme {
             track_palette: base.track_palette,
             velocity_palette: base.velocity_palette,
             velocity_stops: base.velocity_stops.to_vec(),
-            positive_hue: base.positive_hue,
+            signal_palette: base.signal_palette,
         }
     }
 
@@ -74,7 +74,7 @@ impl CustomScheme {
             track_palette: self.track_palette,
             velocity_palette: self.velocity_palette,
             velocity_stops: &self.velocity_stops,
-            positive_hue: self.positive_hue,
+            signal_palette: self.signal_palette,
         }
     }
 
@@ -93,7 +93,7 @@ impl CustomScheme {
         {
             return Err("the theme name must contain between one and eighty visible characters");
         }
-        if ![self.hue, self.chroma, self.base, self.positive_hue]
+        if ![self.hue, self.chroma, self.base]
             .into_iter()
             .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
             || self.accent > 0xff_ffff
@@ -101,6 +101,7 @@ impl CustomScheme {
                 .track_palette
                 .iter()
                 .chain(self.velocity_palette.iter())
+                .chain(self.signal_palette.iter())
                 .flatten()
                 .any(|color| *color > 0xff_ffff)
         {
@@ -347,7 +348,7 @@ mod tests {
             position: 0.3,
             color: 0xaabbcc,
         }];
-        palette.positive_hue = 0.6;
+        palette.signal_palette = [Some(0x123456), None, Some(0xaabbcc), Some(0xff8800)];
         let json = serde_json::to_string(&palette).unwrap();
         let loaded: CustomScheme = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, palette);
@@ -364,7 +365,7 @@ mod tests {
         assert_eq!(copy.track_palette, loaded.track_palette);
         assert_eq!(copy.velocity_palette, loaded.velocity_palette);
         assert_eq!(copy.velocity_stops, loaded.velocity_stops);
-        assert_eq!(copy.positive_hue, loaded.positive_hue);
+        assert_eq!(copy.signal_palette, loaded.signal_palette);
         assert_eq!(theme.velocity_soft, gpui::Hsla::from(gpui::rgb(0x245678)));
         assert_eq!(theme.velocity_loud, gpui::Hsla::from(gpui::rgb(0xde4567)));
 
@@ -372,12 +373,12 @@ mod tests {
         old.as_object_mut().unwrap().remove("track_palette");
         old.as_object_mut().unwrap().remove("velocity_palette");
         old.as_object_mut().unwrap().remove("velocity_stops");
-        old.as_object_mut().unwrap().remove("positive_hue");
+        old.as_object_mut().unwrap().remove("signal_palette");
         let loaded: CustomScheme = serde_json::from_value(old).unwrap();
         assert_eq!(loaded.track_palette, [None; 8]);
         assert_eq!(loaded.velocity_palette, [None; 2]);
         assert!(loaded.velocity_stops.is_empty());
-        assert_eq!(loaded.positive_hue, default_positive_hue());
+        assert_eq!(loaded.signal_palette, [None; 4]);
         let fallback = Theme::from_scheme(&loaded.definition());
         assert_eq!(fallback.velocity_soft, fallback.track_palette[0]);
         assert_eq!(fallback.velocity_loud, fallback.track_palette[2]);
@@ -386,6 +387,9 @@ mod tests {
         assert!(palette.validate().is_err());
         palette.track_palette[1] = None;
         palette.velocity_palette[0] = Some(0x1000000);
+        assert!(palette.validate().is_err());
+        palette.velocity_palette[0] = None;
+        palette.signal_palette[0] = Some(0x1000000);
         assert!(palette.validate().is_err());
     }
 

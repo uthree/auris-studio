@@ -29,6 +29,7 @@ pub(super) struct AppearanceEditor {
     name: TextField,
     accent: TextField,
     palette: [TextField; 8],
+    signals: [TextField; 4],
     velocity: [TextField; 2],
     stops: Vec<GradientFields>,
     active: ThemeField,
@@ -39,6 +40,7 @@ enum ThemeField {
     Name,
     Accent,
     Palette(usize),
+    Signal(usize),
     Velocity(usize),
     Stop(usize, usize),
 }
@@ -55,6 +57,18 @@ const PALETTE_FIELDS: [&str; 8] = [
 ];
 
 const VELOCITY_FIELDS: [&str; 2] = ["theme-velocity-soft", "theme-velocity-loud"];
+const SIGNAL_FIELDS: [&str; 4] = [
+    "theme-signal-active",
+    "theme-signal-warning",
+    "theme-signal-danger",
+    "theme-signal-mute",
+];
+const SIGNAL_LABELS: [Key; 4] = [
+    Key::ThemeSignalActive,
+    Key::ThemeSignalWarning,
+    Key::ThemeSignalDanger,
+    Key::ThemeSignalMute,
+];
 
 impl AppearanceEditor {
     /// Replaces inherited colours when the base changes, keeping explicit draft edits.
@@ -88,6 +102,15 @@ impl AppearanceEditor {
                 *field = palette_field(next.velocity_palette[index]);
             }
         }
+        for (index, field) in self.signals.iter_mut().enumerate() {
+            let inherited = match previous.signal_palette[index] {
+                Some(color) => parse_colour(field.content()) == Some(color),
+                None => field.content().trim().is_empty(),
+            };
+            if inherited {
+                *field = palette_field(next.signal_palette[index]);
+            }
+        }
         if self
             .parsed_stops()
             .is_ok_and(|stops| stops == previous.velocity_stops)
@@ -109,6 +132,7 @@ impl AppearanceEditor {
             ThemeField::Name => &mut self.name,
             ThemeField::Accent => &mut self.accent,
             ThemeField::Palette(index) => &mut self.palette[index],
+            ThemeField::Signal(index) => &mut self.signals[index],
             ThemeField::Velocity(index) => &mut self.velocity[index],
             ThemeField::Stop(index, component) => &mut self.stops[index].fields[component],
         }
@@ -119,6 +143,7 @@ impl AppearanceEditor {
             ThemeField::Name => &self.name,
             ThemeField::Accent => &self.accent,
             ThemeField::Palette(index) => &self.palette[index],
+            ThemeField::Signal(index) => &self.signals[index],
             ThemeField::Velocity(index) => &self.velocity[index],
             ThemeField::Stop(index, component) => &self.stops[index].fields[component],
         }
@@ -209,6 +234,13 @@ impl AppearanceEditor {
             };
         }
         draft.velocity_stops = self.parsed_stops()?;
+        for (index, field) in self.signals.iter().enumerate() {
+            draft.signal_palette[index] = if field.content().trim().is_empty() {
+                None
+            } else {
+                Some(parse_colour(field.content()).ok_or(Key::ThemeAccentInvalid)?)
+            };
+        }
         Ok(())
     }
 }
@@ -346,6 +378,7 @@ impl SettingsWindow {
             }),
             accent: TextField::new(format!("#{:06X}", copy.accent)),
             palette: copy.track_palette.map(palette_field),
+            signals: copy.signal_palette.map(palette_field),
             velocity: copy.velocity_palette.map(palette_field),
             stops: copy
                 .velocity_stops
@@ -481,6 +514,33 @@ impl SettingsWindow {
                             .child(self.theme_text_field(ThemeField::Palette(index), cx))
                     })),
             )
+            .child(section_title(self.t(Key::ThemeSignalPalette), &theme))
+            .child(note(self.t(Key::ThemeSignalNote), &theme))
+            .child(div().flex().flex_wrap().gap_2().children(
+                SIGNAL_LABELS.into_iter().enumerate().map(|(index, label)| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .w(px(250.0))
+                        .child(div().text_xs().child(self.t(label)))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .w(px(14.0))
+                                        .h(px(14.0))
+                                        .flex_shrink_0()
+                                        .rounded_sm()
+                                        .bg(preview.signal_palette[index]),
+                                )
+                                .child(self.theme_text_field(ThemeField::Signal(index), cx)),
+                        )
+                }),
+            ))
             .child(section_title(self.t(Key::ThemeVelocityPalette), &theme))
             .child(note(self.t(Key::ThemeVelocityPaletteNote), &theme))
             .child(
@@ -701,6 +761,7 @@ impl SettingsWindow {
             ThemeField::Name => Some("theme-name"),
             ThemeField::Accent => Some("theme-accent"),
             ThemeField::Palette(index) => Some(PALETTE_FIELDS[index]),
+            ThemeField::Signal(index) => Some(SIGNAL_FIELDS[index]),
             ThemeField::Velocity(index) => Some(VELOCITY_FIELDS[index]),
             ThemeField::Stop(..) => None,
         };
@@ -728,6 +789,7 @@ impl SettingsWindow {
             ThemeField::Name => &editor.name,
             ThemeField::Accent => &editor.accent,
             ThemeField::Palette(index) => &editor.palette[index],
+            ThemeField::Signal(index) => &editor.signals[index],
             ThemeField::Velocity(index) => &editor.velocity[index],
             ThemeField::Stop(index, component) => &editor.stops[index].fields[component],
         };
@@ -806,6 +868,12 @@ impl SettingsWindow {
                 .map(|(index, id)| (id, ThemeField::Palette(index))),
         )
         .chain(
+            SIGNAL_FIELDS
+                .into_iter()
+                .enumerate()
+                .map(|(index, id)| (id, ThemeField::Signal(index))),
+        )
+        .chain(
             VELOCITY_FIELDS
                 .into_iter()
                 .enumerate()
@@ -878,6 +946,7 @@ mod tests {
             name: TextField::new(""),
             accent: TextField::new("#60A5FA"),
             palette: std::array::from_fn(|_| TextField::new("")),
+            signals: std::array::from_fn(|_| TextField::new("")),
             velocity: std::array::from_fn(|_| TextField::new("")),
             stops: Vec::new(),
             active: ThemeField::Name,

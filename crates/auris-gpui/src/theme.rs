@@ -17,11 +17,6 @@ pub struct GradientStop {
     pub color: u32,
 }
 
-/// Default hue for playback and meter headroom in older custom themes.
-pub const fn default_positive_hue() -> f32 {
-    0.38
-}
-
 /// The font every panel draws in, with fallbacks for scripts the base family has no glyphs for.
 ///
 /// The base family is each platform's own interface font, named rather than left to a
@@ -93,8 +88,8 @@ pub struct Scheme<'a> {
     pub velocity_palette: [Option<u32>; 2],
     /// Interior control points, ordered by increasing position.
     pub velocity_stops: &'a [GradientStop],
-    /// Hue used by playback and meter headroom indicators.
-    pub positive_hue: f32,
+    /// Optional RGB colours for active, warning, danger and mute indicators.
+    pub signal_palette: [Option<u32>; 4],
 }
 
 /// Built-in colour schemes, in the order the settings window offers them.
@@ -108,7 +103,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // The palette the application shipped with: blue-grey, near-black, a mid blue accent.
     Scheme {
         id: "midnight",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x5fc9a3),
+            Some(0xe0b452),
+            Some(0xd97b6c),
+            Some(0xe0a458),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -144,7 +144,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // Neutral greys and a warm accent, for anyone who finds a blue interface cold.
     Scheme {
         id: "graphite",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x8eafa0),
+            Some(0xb6ad79),
+            Some(0xce8176),
+            Some(0xdd9f60),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -181,7 +186,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // taken downwards.
     Scheme {
         id: "daylight",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x267e70),
+            Some(0x946c20),
+            Some(0xb4474e),
+            Some(0xa95b28),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -218,7 +228,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // yellow the greys sit on.
     Scheme {
         id: "parchment",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x26766d),
+            Some(0x8a651c),
+            Some(0xa24b3e),
+            Some(0xa05e32),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -257,7 +272,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // status bar came out at 2.95:1 against the toolbar behind it there.
     Scheme {
         id: "one-dark",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x98c379),
+            Some(0xe5c07b),
+            Some(0xe06c75),
+            Some(0xd19a66),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -295,7 +315,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // one recognisable as itself.
     Scheme {
         id: "one-light",
-        positive_hue: 0.38,
+        signal_palette: [
+            Some(0x438742),
+            Some(0x986801),
+            Some(0xe03d2e),
+            Some(0xa36f01),
+        ],
         velocity_stops: &[
             GradientStop {
                 position: 0.4,
@@ -332,7 +357,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // link blue #58a6ff at full saturation.
     Scheme {
         id: "github-dark",
-        positive_hue: 0.60,
+        signal_palette: [
+            Some(0x58a6ff),
+            Some(0xd29922),
+            Some(0xff7b72),
+            Some(0xffa657),
+        ],
         velocity_stops: &[GradientStop {
             position: 0.5,
             color: 0xa371f7,
@@ -364,7 +394,12 @@ pub const SCHEMES: &[Scheme<'static>] = &[
     // cut into the window at exactly the window's colour.
     Scheme {
         id: "github-light",
-        positive_hue: 0.60,
+        signal_palette: [
+            Some(0x0969da),
+            Some(0x9a6700),
+            Some(0xcf222e),
+            Some(0xbc4c00),
+        ],
         velocity_stops: &[GradientStop {
             position: 0.5,
             color: 0x8250df,
@@ -425,16 +460,6 @@ impl Scheme<'_> {
             (self.base + step * self.direction()).clamp(0.0, 1.0),
             1.0,
         )
-    }
-
-    /// One of the colours that mean something — a meter, the playhead — at a lightness that
-    /// shows against this scheme's background.
-    ///
-    /// Warning and clipping hues keep their meanings across schemes. Playback and meter
-    /// headroom can use a scheme's positive hue, including blue in the GitHub presets.
-    fn signal(&self, hue: f32, saturation: f32) -> Hsla {
-        let lightness = if self.direction() > 0.0 { 0.60 } else { 0.44 };
-        hsla(hue, saturation, lightness, 1.0)
     }
 }
 
@@ -623,9 +648,7 @@ pub struct Theme {
     pub mute: Hsla,
     /// Record arm, and the transport's record button while a take is running.
     ///
-    /// Its own entry rather than [`Self::danger`], which is the same red: one of them says a
-    /// thing failed and the other says a microphone is live, and a scheme that wanted to tell
-    /// those apart should be able to without the failures changing colour too.
+    /// Shares the danger palette colour used for clipping and errors.
     pub record: Hsla,
     /// White keys in the piano roll keyboard.
     pub key_white: Hsla,
@@ -641,6 +664,8 @@ pub struct Theme {
     pub velocity_stops: Vec<(f32, Hsla)>,
     /// Resolved track, clip and library colours, indexed by the document palette.
     pub track_palette: [Hsla; 8],
+    /// Resolved active, warning, danger and mute colours used throughout the interface.
+    pub signal_palette: [Hsla; 4],
 }
 
 impl gpui::Global for Theme {}
@@ -662,6 +687,7 @@ impl Theme {
         let mut theme = Self {
             scheme: scheme.id.to_owned(),
             track_palette: [accent; 8],
+            signal_palette: [accent; 4],
             font: ui_font(),
             surface_sunken: scheme.shade(-0.020),
             background: scheme.shade(0.0),
@@ -704,23 +730,17 @@ impl Theme {
                 s: accent.s * 0.6,
                 ..accent
             },
-            playing: scheme.signal(scheme.positive_hue, 0.52),
-            playhead: scheme.signal(0.02, 0.85),
-            // A signal rather than a shade, so it lands at the lightness this scheme reserves for
-            // colours that have to be read against its background — which is what a status line
-            // reporting a failure in it needs.
-            danger: scheme.signal(0.01, 0.72),
-            // Amber, a third of the way round from the red: far enough that the two are told
-            // apart at a glance in a list where they sit one line above the other.
-            warning: scheme.signal(0.11, 0.78),
-            meter_low: scheme.signal(scheme.positive_hue, 0.52),
-            meter_mid: scheme.signal(0.14, 0.62),
-            meter_high: scheme.signal(0.01, 0.68),
-            solo: scheme.signal(0.12, 0.72),
-            mute: scheme.signal(0.06, 0.70),
-            // The reddest of the four signals, and further round from mute's orange than mute is
-            // from solo's amber: an armed track and a muted one sit in the same row of buttons.
-            record: scheme.signal(0.99, 0.78),
+            // Resolved from the signal palette below, after categorical fallbacks are available.
+            playing: accent,
+            playhead: accent,
+            danger: accent,
+            warning: accent,
+            meter_low: accent,
+            meter_mid: accent,
+            meter_high: accent,
+            solo: accent,
+            mute: accent,
+            record: accent,
             // The keyboard strip stays a keyboard in every scheme. Deriving these from the ramp
             // would give a light scheme white "black" keys, which is not a stylistic choice but a
             // piano nobody can read.
@@ -741,6 +761,33 @@ impl Theme {
                 |packed| rgb(packed).into(),
             )
         });
+        let fallbacks = [
+            accent,
+            theme.track_palette[3],
+            theme.track_palette[2],
+            theme.track_palette[3],
+        ];
+        theme.signal_palette = std::array::from_fn(|index| {
+            let mut color = scheme.signal_palette[index]
+                .map(|packed| rgb(packed).into())
+                .unwrap_or(fallbacks[index]);
+            // Indicators also appear as small text and outlines on hovered controls.
+            let step = 0.01 * scheme.direction();
+            for _ in 0..=100 {
+                if contrast_ratio(color, theme.surface_hover) >= 4.5 {
+                    break;
+                }
+                color.l = (color.l + step).clamp(0.0, 1.0);
+            }
+            color
+        });
+        [theme.playing, theme.warning, theme.danger, theme.mute] = theme.signal_palette;
+        theme.meter_low = theme.playing;
+        theme.meter_mid = theme.warning;
+        theme.meter_high = theme.danger;
+        theme.record = theme.danger;
+        theme.playhead = theme.danger;
+        theme.solo = theme.warning;
         theme.velocity_soft = scheme.velocity_palette[0]
             .map(|packed| rgb(packed).into())
             .unwrap_or(theme.track_palette[0]);
@@ -1186,6 +1233,76 @@ mod tests {
         custom.velocity_palette = [Some(0xaaaaaa), Some(0x0000ff)];
         let theme = Theme::from_scheme(&custom.definition());
         assert!((theme.velocity_color(0.5).h - 2.0 / 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn signal_palettes_follow_presets_and_stay_readable_on_every_surface() {
+        let mut palettes = Vec::new();
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            assert!(
+                !palettes.contains(&theme.signal_palette),
+                "{} shares another preset's indicators",
+                scheme.id
+            );
+            palettes.push(theme.signal_palette);
+            for (index, color) in theme.signal_palette.into_iter().enumerate() {
+                let declared: Hsla = rgb(scheme.signal_palette[index].unwrap()).into();
+                assert!((color.h - declared.h).abs() < 1e-4);
+                assert!((color.s - declared.s).abs() < 1e-4);
+                for background in [
+                    theme.background,
+                    theme.surface_sunken,
+                    theme.surface,
+                    theme.surface_raised,
+                    theme.surface_hover,
+                ] {
+                    assert!(contrast_ratio(color, background) >= 4.5);
+                }
+                assert!(contrast_ratio(theme.text_on(color), color) >= 4.5);
+            }
+            assert_eq!(theme.playing, theme.signal_palette[0]);
+            assert_eq!(theme.meter_color(-20.0), theme.playing);
+            assert_eq!(theme.meter_color(-6.0), theme.warning);
+            assert_eq!(theme.meter_color(-1.0), theme.danger);
+            assert_eq!(theme.record, theme.danger);
+            assert_eq!(theme.playhead, theme.danger);
+            assert_eq!(theme.solo, theme.warning);
+            assert_eq!(theme.mute, theme.signal_palette[3]);
+        }
+    }
+
+    #[test]
+    fn custom_signal_colours_and_blank_fallbacks_keep_their_hues() {
+        for base in SCHEMES {
+            let mut custom = crate::appearance::CustomScheme::from_scheme(
+                "signals".into(),
+                "Signals".into(),
+                base,
+            );
+            custom.signal_palette = [None; 4];
+            custom.accent = 0xcc3377;
+            custom.track_palette[3] = Some(0x663399);
+            custom.track_palette[2] = Some(0x3377cc);
+            let theme = Theme::from_scheme(&custom.definition());
+            for (color, packed) in
+                theme
+                    .signal_palette
+                    .into_iter()
+                    .zip([custom.accent, 0x663399, 0x3377cc, 0x663399])
+            {
+                let source: Hsla = rgb(packed).into();
+                assert!((color.h - source.h).abs() < 1e-4);
+            }
+            for packed in [0x000000, 0xffffff, 0xffff00, 0x0000ff] {
+                custom.signal_palette = [Some(packed); 4];
+                let theme = Theme::from_scheme(&custom.definition());
+                for color in theme.signal_palette {
+                    assert!(contrast_ratio(color, theme.surface_hover) >= 4.5);
+                    assert!(contrast_ratio(theme.text_on(color), color) >= 4.5);
+                }
+            }
+        }
     }
 
     #[test]

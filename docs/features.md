@@ -1177,6 +1177,12 @@ instrument, drums, singer, audio or bus. The library uses the corresponding colo
 sharing the bus slot. A track's colour menu offers all eight slots; its clips inherit the chosen
 colour. Changing the theme updates their appearance without changing the saved project.
 
+Transport and indicator colours have their own editable palette: playback and normal meter
+levels, warnings/solo and high levels, recording/clipping/errors, and mute. Every preset uses
+colours from its own colour scheme. Blank entries follow the accent (playback), bus colour
+(warning and mute) or drum colour (recording and clipping). Indicators adjust lightness for
+readability, including on hovered controls. All track and master meters share these colours.
+
 Piano-roll note colours use each theme's velocity gradient. The theme editor offers both
 endpoints, intermediate points with editable positions (%) and colours, and a live preview.
 Points can be added and removed; positions must be distinct and strictly between 0 and 100%.
