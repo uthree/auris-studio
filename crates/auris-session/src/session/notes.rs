@@ -340,23 +340,37 @@ impl Session {
         index: usize,
         end: Ticks,
     ) -> Result<(), SessionError> {
-        let Some(note_exists) = self
-            .project
-            .midi_clip(clip)
-            .map(|(_, clip)| clip.notes.get(index).is_some())
-        else {
+        self.resize_notes(clip, &[(index, end)])
+    }
+
+    /// Sets clip-relative ends for multiple notes in one undoable edit.
+    ///
+    /// Missing indices are skipped. Each note keeps at least one tick of duration, and the
+    /// clip grows to fit all changed notes. Unchanged ends do not add a history entry.
+    pub fn resize_notes(
+        &mut self,
+        clip: ClipId,
+        ends: &[(usize, Ticks)],
+    ) -> Result<(), SessionError> {
+        let Some(target) = self.project.midi_clip(clip).map(|(_, clip)| clip) else {
             return Err(SessionError::UnknownClip(clip.0));
         };
-        if !note_exists {
+        if ends.iter().all(|(index, end)| {
+            target
+                .notes
+                .get(*index)
+                .is_none_or(|note| note.length == (*end - note.start).max(Ticks(1)))
+        }) {
             return Ok(());
         }
         self.record(Edit::ResizeNote);
         let grid = Ticks(self.project.grid.raw().max(1));
         if let Some(target) = self.project.midi_clip_mut(clip) {
-            if let Some(note) = target.notes.get_mut(index) {
-                // Pointer snapping is a frontend preference. The session accepts the exact end
-                // it is given and enforces only the document's true lower bound: one tick.
-                note.length = (end - note.start).max(Ticks(1));
+            for (index, end) in ends {
+                if let Some(note) = target.notes.get_mut(*index) {
+                    // Snapping is a frontend preference; the document minimum is one tick.
+                    note.length = (*end - note.start).max(Ticks(1));
+                }
             }
             target.fit_length_to_notes(grid);
         }
@@ -425,6 +439,45 @@ impl Session {
 mod tests {
     use super::*;
     use crate::session::fixtures::{session, session_with_clip, undo_depth};
+
+    #[test]
+    fn resizing_a_group_is_one_edit_and_fits_the_furthest_note() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        for (pitch, start) in [
+            (60, Ticks::ZERO),
+            (64, Ticks::QUARTER * 3),
+            (67, Ticks::QUARTER),
+        ] {
+            session
+                .add_note(clip, Note::new(pitch, start, Ticks::QUARTER))
+                .unwrap();
+        }
+        let original = session.midi_clip(clip).unwrap().clone();
+        let ends = [
+            (0, Ticks(-20)),
+            (1, Ticks::QUARTER * 8),
+            (99, Ticks::QUARTER),
+        ];
+        session.resize_notes(clip, &ends).unwrap();
+        let changed = session.midi_clip(clip).unwrap().clone();
+        assert_eq!(changed.notes[0].length, Ticks(1));
+        assert_eq!(changed.notes[1].end(), Ticks::QUARTER * 8);
+        assert!(changed.length >= Ticks::QUARTER * 8);
+        assert_eq!(changed.notes[2], original.notes[2]);
+        // Applying identical ends or naming only missing notes must not consume Undo.
+        session.resize_notes(clip, &ends).unwrap();
+        session.resize_notes(clip, &[(99, Ticks::ZERO)]).unwrap();
+        session.resize_notes(clip, &[]).unwrap();
+        assert_eq!(session.undo(), Some(Edit::ResizeNote));
+        assert_eq!(session.midi_clip(clip).unwrap(), &original);
+        session.redo();
+        assert_eq!(session.midi_clip(clip).unwrap(), &changed);
+        assert!(session.resize_notes(ClipId(u64::MAX), &ends).is_err());
+    }
 
     #[test]
     fn how_hard_a_note_is_struck_can_be_changed() {

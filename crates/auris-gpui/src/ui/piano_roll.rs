@@ -1291,10 +1291,11 @@ impl AurisApp {
             return;
         }
 
-        // Delete first: it is the only gesture that acts on what is already there, so letting
-        // anything else claim the press would make it unreachable.
+        // Delete precedes ordinary pointer edits. Alt-Shift is reserved for matching note
+        // lengths, even when plain Alt-click is configured to delete.
         if let Some(index) = under_pointer
             && self.pointer.delete.matches(event)
+            && !(event.modifiers.alt && event.modifiers.shift)
         {
             let _ = self.session.remove_notes(clip_id, &[index]);
             self.selected_notes.clear();
@@ -1325,29 +1326,48 @@ impl AurisApp {
 
         match under_pointer {
             Some(index) => {
+                let Some(note) = self
+                    .session
+                    .midi_clip(clip_id)
+                    .and_then(|clip| clip.notes.get(index))
+                    .cloned()
+                else {
+                    return;
+                };
+                let start_x = self.timeline.tick_to_x(clip_start + note.start);
+                let end_x = self.timeline.tick_to_x(clip_start + note.end());
+                let resizing = f32::from(end_x - (event.position.x - origin.x)).abs()
+                    <= resize_grab(end_x - start_x);
                 if !event.modifiers.shift {
                     if !self.selected_notes.contains(&index) {
                         self.selected_notes.clear();
                     }
-                } else if self.selected_notes.contains(&index) {
+                } else if !resizing && self.selected_notes.contains(&index) {
                     self.selected_notes.remove(&index);
                     cx.notify();
                     return;
                 }
                 self.selected_notes.insert(index);
 
-                let note = self
-                    .project()
-                    .midi_clip(clip_id)
-                    .and_then(|(_, c)| c.notes.get(index).cloned());
-                let Some(note) = note else { return };
-                let start_x = self.timeline.tick_to_x(clip_start + note.start);
-                let end_x = self.timeline.tick_to_x(clip_start + note.end());
-                let grab = resize_grab(end_x - start_x);
-                if f32::from(end_x - (event.position.x - origin.x)).abs() <= grab {
+                if resizing {
+                    let origins = self
+                        .session
+                        .midi_clip(clip_id)
+                        .map(|clip| {
+                            self.selected_notes
+                                .iter()
+                                .filter_map(|index| {
+                                    clip.notes
+                                        .get(*index)
+                                        .map(|note| (*index, note.start, note.length))
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index,
+                        origins,
                         pressed_at: Some(event.position),
                     });
                 } else if let Some((phoneme, from_seconds, end_seconds)) =
@@ -1384,6 +1404,7 @@ impl AurisApp {
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index: 0,
+                        origins: Vec::new(),
                         pressed_at: None,
                     });
                     let Ok(index) = self
@@ -1396,6 +1417,7 @@ impl AurisApp {
                     self.drag = Some(Drag::NoteResize {
                         clip: clip_id,
                         index,
+                        origins: vec![(index, start, length)],
                         pressed_at: None,
                     });
                     self.selected_notes.clear();
@@ -1424,10 +1446,11 @@ impl AurisApp {
         y: Pixels,
         modifiers: gpui::Modifiers,
     ) {
-        if modifiers.shift {
-            if !self.selected_notes.remove(&index) {
-                self.selected_notes.insert(index);
+        if modifiers.shift && !modifiers.alt {
+            if self.selected_notes.remove(&index) {
+                return;
             }
+            self.selected_notes.insert(index);
         } else if !self.selected_notes.contains(&index) {
             self.selected_notes.clear();
             self.selected_notes.insert(index);
@@ -1473,12 +1496,27 @@ impl AurisApp {
         clip: ClipId,
         start_y: Pixels,
         origins: &[(usize, u8)],
+        grabbed: usize,
         y: Pixels,
+        modifiers: gpui::Modifiers,
     ) {
         let dy = y - start_y;
+        let uniform = (modifiers.alt && modifiers.shift)
+            .then(|| {
+                origins
+                    .iter()
+                    .find(|(index, _)| *index == grabbed)
+                    .map(|(_, origin)| dragged_velocity(*origin, dy))
+            })
+            .flatten();
         let changes: Vec<(usize, f32)> = origins
             .iter()
-            .map(|(index, origin)| (*index, f32::from(dragged_velocity(*origin, dy)) / 127.0))
+            .map(|(index, origin)| {
+                (
+                    *index,
+                    f32::from(uniform.unwrap_or_else(|| dragged_velocity(*origin, dy))) / 127.0,
+                )
+            })
             .collect();
         let _ = self.session.set_note_velocities(clip, &changes);
     }
@@ -3501,6 +3539,194 @@ mod window_tests {
         // below the grid until somebody scrolls to it, which is what a hand does too.
         show_pitch(&app, cx, MIDDLE_C);
         (app, cx, clip)
+    }
+
+    /// Selects two unequal notes by sweeping the grid, leaving a third outside the rectangle.
+    fn with_a_swept_phrase(
+        cx: &mut TestAppContext,
+    ) -> (
+        gpui::Entity<crate::app::AurisApp>,
+        &mut gpui::VisualTestContext,
+        ClipId,
+    ) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            for (pitch, start, length, velocity) in [
+                (MIDDLE_C, BEAT, BEAT * 2, 40),
+                (MIDDLE_C + 2, BEAT * 2, BEAT, 80),
+                (MIDDLE_C - 2, BEAT * 4, BEAT, 100),
+            ] {
+                let mut note = Note::new(pitch, start, length);
+                note.velocity = velocity as f32 / 127.0;
+                this.session.add_note(clip, note).unwrap();
+            }
+        });
+        paint(&app, cx);
+        let from = roll_point(&app, cx, HALF_BEAT, MIDDLE_C + 3);
+        let to = roll_point(&app, cx, BEAT * 3 + HALF_BEAT, MIDDLE_C - 1);
+        drag(cx, from, to);
+        app.read_with(cx, |this, _| assert_eq!(this.selected_notes, [0, 1].into()));
+        (app, cx, clip)
+    }
+
+    #[gpui::test]
+    fn swept_notes_resize_together_and_recover_after_the_minimum(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        let mut from = roll_point(&app, cx, BEAT * 3, MIDDLE_C);
+        from.x -= gpui::px(1.0);
+        let shorter = roll_point(&app, cx, BEAT, MIDDLE_C);
+        let longer = roll_point(&app, cx, BEAT * 4, MIDDLE_C);
+        press(cx, from);
+        crate::harness::drag_to(cx, shorter);
+        assert_eq!(notes(&app, cx)[1].length, Ticks(1));
+        crate::harness::drag_to(cx, longer);
+        release(cx, longer);
+        let changed = notes(&app, cx);
+        assert_eq!(changed[0].length, BEAT * 3);
+        assert_eq!(changed[1].length, BEAT * 2);
+        assert_eq!(changed[2], original[2]);
+        for (before, after) in original.iter().zip(&changed) {
+            assert_eq!(
+                (before.start, before.pitch, before.velocity),
+                (after.start, after.pitch, after.velocity)
+            );
+        }
+        app.update(cx, |this, _| {
+            assert_eq!(this.session.undo(), Some(auris_session::Edit::ResizeNote));
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            this.session.redo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, changed);
+            assert_eq!(this.selected_notes, [0, 1].into());
+        });
+    }
+
+    #[gpui::test]
+    fn swept_notes_support_matching_ends_and_lengths(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        for alt in [false, true] {
+            let mut from = roll_point(&app, cx, BEAT * 3, MIDDLE_C);
+            from.x -= gpui::px(1.0);
+            let to = roll_point(&app, cx, BEAT * 4, MIDDLE_C);
+            drag_with(
+                cx,
+                from,
+                to,
+                gpui::Modifiers {
+                    shift: true,
+                    alt,
+                    ..gpui::Modifiers::none()
+                },
+            );
+            let changed = notes(&app, cx);
+            assert_eq!(changed.len(), 3, "Alt-Shift must not invoke Alt-delete");
+            assert_eq!(changed[0].length, BEAT * 3);
+            assert_eq!(changed[1].length, if alt { BEAT * 3 } else { BEAT * 2 });
+            assert_eq!(changed[2].length, BEAT);
+            app.update(cx, |this, _| {
+                this.session.undo();
+            });
+            paint(&app, cx);
+        }
+    }
+
+    #[gpui::test]
+    fn swept_notes_share_velocity_drags_and_can_be_made_equal(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        app.update(cx, |this, _| this.tool = super::RollTool::Velocity);
+        paint(&app, cx);
+        let from = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        let to = gpui::point(from.x, from.y - gpui::px(15.0));
+        drag(cx, from, to);
+        let changed = notes(&app, cx);
+        assert_eq!(super::midi_velocity(changed[0].velocity), 50);
+        assert_eq!(super::midi_velocity(changed[1].velocity), 90);
+        assert_eq!(changed[2], original[2]);
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.session.undo(),
+                Some(auris_session::Edit::SetNoteVelocity)
+            );
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            this.session.redo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, changed);
+            this.session.undo();
+        });
+        paint(&app, cx);
+        drag_with(
+            cx,
+            from,
+            to,
+            gpui::Modifiers {
+                alt: true,
+                shift: true,
+                ..gpui::Modifiers::none()
+            },
+        );
+        let equal = notes(&app, cx);
+        assert_eq!(super::midi_velocity(equal[0].velocity), 50);
+        assert_eq!(super::midi_velocity(equal[1].velocity), 50);
+        assert_eq!(equal[2], original[2]);
+        app.read_with(cx, |this, _| assert_eq!(this.selected_notes, [0, 1].into()));
+    }
+
+    #[gpui::test]
+    fn velocity_shift_deselect_does_not_drag_the_remaining_notes(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        app.update(cx, |this, _| this.tool = super::RollTool::Velocity);
+        paint(&app, cx);
+        let from = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        let to = gpui::point(from.x, from.y - gpui::px(15.0));
+        drag_with(
+            cx,
+            from,
+            to,
+            gpui::Modifiers {
+                shift: true,
+                ..gpui::Modifiers::none()
+            },
+        );
+        assert_eq!(notes(&app, cx), original);
+        app.read_with(cx, |this, _| assert_eq!(this.selected_notes, [1].into()));
+    }
+
+    #[gpui::test]
+    fn swept_note_edits_cancel_and_grabbing_an_outsider_selects_only_it(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        for tool in [super::RollTool::Pointer, super::RollTool::Velocity] {
+            app.update(cx, |this, _| this.tool = tool);
+            paint(&app, cx);
+            let mut from = roll_point(&app, cx, BEAT * 3, MIDDLE_C);
+            from.x -= gpui::px(1.0);
+            let to = gpui::point(from.x + gpui::px(20.0), from.y - gpui::px(15.0));
+            press(cx, from);
+            crate::harness::drag_to(cx, to);
+            assert_ne!(notes(&app, cx), original);
+            cx.simulate_keystrokes("escape");
+            release(cx, to);
+            assert_eq!(notes(&app, cx), original);
+        }
+        for tool in [super::RollTool::Pointer, super::RollTool::Velocity] {
+            app.update(cx, |this, _| {
+                this.tool = tool;
+                this.selected_notes = [0, 1].into();
+            });
+            paint(&app, cx);
+            let mut from = roll_point(&app, cx, BEAT * 5, MIDDLE_C - 2);
+            from.x -= gpui::px(1.0);
+            let to = gpui::point(from.x + gpui::px(20.0), from.y - gpui::px(15.0));
+            drag(cx, from, to);
+            let changed = notes(&app, cx);
+            assert_eq!(&changed[..2], &original[..2]);
+            assert_ne!(changed[2], original[2]);
+            app.update(cx, |this, _| {
+                assert_eq!(this.selected_notes, [2].into());
+                this.session.undo();
+            });
+        }
     }
 
     /// The create gesture writes a note and hands it straight to the resize, so placing a note and
