@@ -424,6 +424,8 @@ pub enum Drag {
         clip: ClipId,
         /// Note being resized.
         index: usize,
+        /// Original start and length of every note affected by this gesture.
+        origins: Vec<(usize, Ticks, Ticks)>,
         /// Where the button went down, until the pointer has travelled far enough to mean it.
         ///
         /// Guards a grabbed *existing* note the way `ClipMove` guards a clip: a click wobble

@@ -139,6 +139,13 @@ step, and Escape during it puts the notes back. Every note also carries a bar in
 the same value, because the colour ramp can say roughly where in the range a note sits but not
 the difference between 96 and 100, which is the difference the drag is being made to find.
 
+After sweeping a note selection, drag the right edge of any selected note to resize the whole
+selection by the same amount, preserving its differences in length. Each note stops at one tick;
+dragging back restores its original difference. Hold **Shift** while resizing to align the
+selected notes' ends, or **Alt+Shift** (**Option+Shift** on Mac) to give them the same length.
+With the velocity tool, **Alt+Shift** gives the selected notes the same velocity. These modifiers
+can also be changed during the drag. Resizing a selection is one undo step, and Escape cancels it.
+
 Logic offers that gesture on ⌃⌥-drag as well as on the tool, and that half cannot be carried
 across: on macOS a ⌃-click becomes a right-click before the window sees it — ⌃ stripped off on
 the way — so it would arrive as a request for the context menu rather than as a drag.

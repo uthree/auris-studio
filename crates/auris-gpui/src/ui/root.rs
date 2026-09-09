@@ -1083,15 +1083,23 @@ impl AurisApp {
                 clip,
                 start_y,
                 ref origins,
-                ..
+                grabbed,
             } => {
                 // No origin to measure against and no snapping to do, so the roll's own y is not
                 // wanted here: the drag is a distance from where the button went down.
-                self.drag_velocity(clip, start_y, origins, event.position.y);
+                self.drag_velocity(
+                    clip,
+                    start_y,
+                    origins,
+                    grabbed,
+                    event.position.y,
+                    event.modifiers,
+                );
             }
             Drag::NoteResize {
                 clip,
                 index,
+                ref origins,
                 pressed_at,
             } => {
                 // Guarded only for a grabbed existing note — `pressed_at` is `None` while
@@ -1107,16 +1115,33 @@ impl AurisApp {
                 }
                 let origin = self.roll_origin();
                 let tick = self.timeline.x_to_tick(event.position.x - origin.x);
-                let Some((clip_start, note_start)) = self
-                    .session
-                    .midi_clip(clip)
-                    .and_then(|clip| clip.notes.get(index).map(|note| (clip.start, note.start)))
+                let Some(clip_start) = self.session.midi_clip(clip).map(|clip| clip.start) else {
+                    return;
+                };
+                let Some((_, note_start, original_length)) =
+                    origins.iter().find(|(i, _, _)| *i == index)
                 else {
                     return;
                 };
                 let snap = self.settings.snap_note_lengths && !event.modifiers.secondary();
-                let end = note_resize_end(tick - clip_start, note_start, self.project().grid, snap);
-                let _ = self.session.resize_note(clip, index, end);
+                let end =
+                    note_resize_end(tick - clip_start, *note_start, self.project().grid, snap);
+                let length = end - *note_start;
+                let delta = length - *original_length;
+                let ends: Vec<_> = origins
+                    .iter()
+                    .map(|(index, start, original)| {
+                        let end = if event.modifiers.shift && event.modifiers.alt {
+                            *start + length
+                        } else if event.modifiers.shift {
+                            end
+                        } else {
+                            *start + (*original + delta).max(Ticks(1))
+                        };
+                        (*index, end)
+                    })
+                    .collect();
+                let _ = self.session.resize_notes(clip, &ends);
             }
             Drag::Param {
                 target,
