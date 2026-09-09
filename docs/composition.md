@@ -118,6 +118,19 @@ the same chorus. The section picker offers the song's own names first — choosi
 repeat — and under a rule a fresh one of each: once there is a verse, `verse 2` is one click, which
 is how a song gets two verses that are not the same eight bars.
 
+The picker calls `pre` **Pre-Chorus** (Bメロ in Japanese) and `bridge` **Bridge** (Cメロ),
+with numbered labels for later sections just as for verses and choruses. These names appear
+consistently in the form, lyrics, participation matrix and shared-melody picker. The saved
+identifiers stay `pre` and `bridge`; custom section names keep their text.
+New section choices skip numbers already used by the song, including a preset's compact
+names such as `pre2`.
+
+The `pop-band` form places a four-bar pre-chorus before each of its first two choruses,
+then an eight-bar bridge and a final chorus. The pre-chorus rises from ii through V over
+a separate chart; the bridge starts on vi with keys, strings, bass and lead before the full
+band returns. Its second pre-chorus and final chorus have separate lyrics and share their
+original vocal melodies.
+
 Presets already include separate `verse2` and, where applicable, `chorus2` sections. Each has
 its own lyrics box and shares the original section's vocal melody through **Shared melody**.
 For a third verse, add a section and choose its original there. In a specification this is

@@ -316,12 +316,29 @@ pub fn section_at(dials: &SongDials, place: usize) -> Option<usize> {
 
 /// A section name nothing in the song is using yet.
 pub fn unused_section_name(dials: &SongDials, stem: &str) -> String {
-    if !dials.sections.iter().any(|section| section.name == stem) {
-        return stem.to_string();
-    }
-    (2..)
-        .map(|n| format!("{stem} {n}"))
-        .find(|name| !dials.sections.iter().any(|section| &section.name == name))
+    // Presets use `pre2` and the picker writes `pre 2`; both display the same number.
+    // Keep existing identifiers distinct, but offer a number whose label is still unused.
+    (1..=u32::MAX)
+        .find(|number| {
+            !dials.sections.iter().any(|section| {
+                section.name.strip_prefix(stem).is_some_and(|suffix| {
+                    let suffix = suffix.trim();
+                    let existing = if suffix.is_empty() {
+                        Some(1)
+                    } else {
+                        suffix.parse::<u32>().ok()
+                    };
+                    existing == Some(*number)
+                })
+            })
+        })
+        .map(|n| {
+            if n == 1 {
+                stem.to_string()
+            } else {
+                format!("{stem} {n}")
+            }
+        })
         .unwrap_or_else(|| stem.to_string())
 }
 
@@ -1689,6 +1706,23 @@ mod tests {
             .collect();
         assert_eq!(sections[0], sections[1]);
         assert!(sections[0].is_some());
+    }
+
+    #[test]
+    fn fresh_section_numbers_skip_compact_and_spaced_preset_identifiers() {
+        let mut dials = song_dials(&preset("pop-band").unwrap().spec());
+        assert_eq!(unused_section_name(&dials, "pre"), "pre 3");
+        assert_eq!(unused_section_name(&dials, "chorus"), "chorus 4");
+        add_to_form(&mut dials, 0, "pre 3");
+        assert_eq!(unused_section_name(&dials, "pre"), "pre 4");
+        add_to_form(&mut dials, 0, "bridge2");
+        assert_eq!(unused_section_name(&dials, "bridge"), "bridge 3");
+        assert!(dials.sections.iter().any(|s| s.name == "pre2"));
+        assert!(dials.sections.iter().any(|s| s.name == "pre 3"));
+        assert_eq!(
+            SongSpec::parse(&song_spec(&dials).to_toml()).unwrap(),
+            song_spec(&dials)
+        );
     }
 
     #[test]

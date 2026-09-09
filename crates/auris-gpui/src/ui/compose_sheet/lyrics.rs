@@ -629,7 +629,9 @@ pub(super) fn section_label(app: &AurisApp, name: &str) -> String {
 fn translated_section_label(app: &AurisApp, name: &str) -> String {
     for (prefix, key) in [
         ("verse", Key::SongVerseLabel),
+        ("pre", Key::SongPreChorusLabel),
         ("chorus", Key::SongChorusLabel),
+        ("bridge", Key::SongBridgeLabel),
     ] {
         if let Some(suffix) = name.strip_prefix(prefix) {
             let suffix = suffix.trim();
@@ -646,7 +648,6 @@ fn translated_section_label(app: &AurisApp, name: &str) -> String {
     match name {
         "intro" => app.t(Key::SongIntroLabel).to_string(),
         "outro" => app.t(Key::SongOutroLabel).to_string(),
-        "bridge" => app.t(Key::SongBridgeLabel).to_string(),
         _ => name.to_string(),
     }
 }

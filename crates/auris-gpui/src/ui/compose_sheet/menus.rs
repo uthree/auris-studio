@@ -451,6 +451,77 @@ mod tests {
     use crate::ui::context_menu::MenuEntry;
 
     #[gpui::test]
+    fn pre_choruses_and_bridges_can_be_added_repeated_and_saved(cx: &mut TestAppContext) {
+        use crate::harness::{choose, paint};
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.open_song_sheet();
+            this.language = Language::Japanese;
+        });
+        for (name, label) in [
+            ("pre", "1番 Bメロ"),
+            ("pre 2", "2番 Bメロ"),
+            ("bridge", "1番 Cメロ"),
+            ("bridge 2", "2番 Cメロ"),
+            ("pre", "1番 Bメロ"),
+        ] {
+            app.update(cx, |this, _| {
+                let menu = this.song_section_menu(point(px(100.0), px(100.0)), 0);
+                let command = MenuCommand::SongAddSection {
+                    place: 0,
+                    name: name.into(),
+                };
+                assert!(menu.entries.iter().any(|entry| matches!(entry,
+                    MenuEntry::Item(item) if item.command == command && item.label.as_ref() == label
+                )));
+                this.open_menu(menu);
+            });
+            paint(&app, cx);
+            choose(
+                &app,
+                cx,
+                &MenuCommand::SongAddSection {
+                    place: 0,
+                    name: name.into(),
+                },
+            );
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert!(this.menu.is_none());
+                let dials = this.song_sheet.as_ref().unwrap();
+                assert_eq!(dials.form[1], name);
+                assert_eq!(dials.sections.iter().filter(|s| s.name == name).count(), 1);
+                let spec = song_spec(dials);
+                assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
+            });
+        }
+        app.update(cx, |this, _| this.language = Language::English);
+        app.read_with(cx, |this, _| {
+            for (name, label) in [
+                ("pre", "Pre-Chorus 1"),
+                ("pre 2", "Pre-Chorus 2"),
+                ("bridge", "Bridge 1"),
+                ("bridge 2", "Bridge 2"),
+                ("prelude", "prelude"),
+                ("bridge reprise", "bridge reprise"),
+                ("pre3", "Pre-Chorus 3"),
+                ("bridge3", "Bridge 3"),
+            ] {
+                assert_eq!(section_label(this, name), label);
+            }
+            let menu = this.song_melody_menu(point(px(100.0), px(100.0)), 0);
+            for name in ["pre", "pre 2", "bridge", "bridge 2"] {
+                assert!(menu.entries.iter().any(|entry| matches!(entry,
+                    MenuEntry::Item(item) if item.command == MenuCommand::SongMelodySource {
+                        section: 0, source: Some(name.into())
+                    } && item.label.as_ref() == section_label(this, name)
+                )));
+            }
+        });
+    }
+
+    #[gpui::test]
     fn localized_section_choices_keep_the_original_identifiers(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         app.update(cx, |this, _| {

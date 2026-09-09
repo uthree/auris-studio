@@ -817,10 +817,11 @@ strings! {
     SongStartHint { en: "Choose a style, adjust the mood, then create your song. Lyrics are optional.", ja: "スタイルを選び、雰囲気を調整して曲を作りましょう。歌詞は空欄でも作れます。" }
     SongAdvancedHint { en: "Adjust the form, chords, rhythm and instruments. Returning to basics keeps every setting.", ja: "曲の構成・コード進行・リズム・楽器を調整できます。基本設定に戻っても、設定は保持されます。" }
     SongVerseLabel { en: "Verse {n}", ja: "{n}番 Aメロ" }
+    SongPreChorusLabel { en: "Pre-Chorus {n}", ja: "{n}番 Bメロ" }
     SongChorusLabel { en: "Chorus {n}", ja: "{n}番 サビ" }
     SongIntroLabel { en: "Intro", ja: "イントロ" }
     SongOutroLabel { en: "Outro", ja: "エンディング" }
-    SongBridgeLabel { en: "Bridge", ja: "ブリッジ" }
+    SongBridgeLabel { en: "Bridge {n}", ja: "{n}番 Cメロ" }
     SongSharedLyricsHint { en: "Uses the melody from {section}. You can enter different lyrics.", ja: "{section}と同じメロディです。別の歌詞を入力できます。" }
     SongMelodyFrom { en: "Shared melody", ja: "メロディ共有" }
     SongLyricsMatch { en: "Match the notes in each phrase to the original lyrics", ja: "元の歌詞と、フレーズごとの音数を合わせてください" }
