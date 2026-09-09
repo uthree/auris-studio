@@ -3,7 +3,7 @@
 use auris_i18n::Language;
 use auris_session::audio_evaluation::{AudioEvaluation, AudioEvaluator};
 use auris_session::prelude::{Note, Ticks};
-use gpui::{TestAppContext, px, size};
+use gpui::{ElementId, Modifiers, TestAppContext, px, size};
 
 use super::*;
 use crate::harness::{click, open, paint, resize, with_a_clip};
@@ -37,6 +37,87 @@ fn excerpts_are_exact_and_short_or_invalid_requests_are_refused() {
 }
 
 #[gpui::test]
+fn expanded_search_scopes_and_budget_are_selected_without_editing_the_project(
+    cx: &mut TestAppContext,
+) {
+    let (app, cx) = open(cx);
+    let before = app.update(cx, |this, cx| {
+        assert_eq!(this.reference_match.settings.attempts, 32);
+        configure(this, cx);
+        this.project().clone()
+    });
+    type ScopeSelection = (&'static str, fn(&ReferenceMatchSettings) -> bool);
+    let scopes: [ScopeSelection; 5] = [
+        ("reference-scope-mix", |settings| settings.mix),
+        ("reference-scope-performance", |settings| {
+            settings.performance
+        }),
+        ("reference-scope-generation-seeds", |settings| {
+            settings.generation_seeds
+        }),
+        ("reference-scope-instruments", |settings| {
+            settings.instruments
+        }),
+        ("reference-scope-arrangement", |settings| {
+            settings.arrangement
+        }),
+    ];
+    for &(selector, selected) in &scopes {
+        app.read_with(cx, |this, _| {
+            assert!(selected(&this.reference_match.settings))
+        });
+        paint(&app, cx);
+        click(selector, cx);
+        app.read_with(cx, |this, _| {
+            assert!(!selected(&this.reference_match.settings))
+        });
+    }
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.reference_match.input_problem(),
+            Some(Key::ReferenceMatchNeedScope)
+        );
+    });
+    paint(&app, cx);
+    click("reference-match-start", cx);
+    app.read_with(cx, |this, _| {
+        assert!(this.reference_match.running.is_none());
+        assert!(this.reference_match.comparison.is_none());
+    });
+    for &(selector, selected) in &scopes[2..] {
+        paint(&app, cx);
+        let generation = app.read_with(cx, |this, _| this.reference_match.generation);
+        click(selector, cx);
+        app.read_with(cx, |this, _| {
+            assert!(selected(&this.reference_match.settings));
+            assert!(this.reference_match.input_problem().is_none());
+            assert!(this.reference_match.generation > generation);
+            assert_eq!(this.project(), &before);
+            assert!(!this.session.can_undo());
+        });
+        paint(&app, cx);
+        click(selector, cx);
+    }
+    for attempts in [8usize, 16, 32, 64, 128, 256, 512] {
+        paint(&app, cx);
+        let selector: &'static str = Box::leak(
+            ElementId::from(("reference-attempts", attempts))
+                .to_string()
+                .into_boxed_str(),
+        );
+        let bounds = cx
+            .debug_bounds(selector)
+            .expect("the attempt choice is visible");
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.reference_match.settings.attempts, attempts);
+            assert_eq!(this.project(), &before);
+            assert!(!this.session.can_undo());
+        });
+    }
+}
+
+#[gpui::test]
 fn the_reference_modal_runs_on_pcm_without_editing_the_song(cx: &mut TestAppContext) {
     let (app, cx, _, clip) = with_a_clip(cx);
     let before = app.update(cx, |this, cx| {
@@ -63,6 +144,20 @@ fn the_reference_modal_runs_on_pcm_without_editing_the_song(cx: &mut TestAppCont
         assert_eq!(this.project(), &before);
         assert!(!this.session.can_undo());
     });
+    for selector in [
+        "reference-scope-generation-seeds",
+        "reference-scope-instruments",
+        "reference-scope-arrangement",
+    ] {
+        paint(&app, cx);
+        click(selector, cx);
+        app.read_with(cx, |this, _| {
+            let snapshot = &this.reference_match.comparison.as_ref().unwrap().snapshot;
+            assert!(!this.match_snapshot_is_current(snapshot));
+            assert_eq!(this.project(), &before);
+            assert!(!this.session.can_undo());
+        });
+    }
     app.update(cx, |this, cx| {
         this.change_reference_settings(|state| state.settings.seed += 1);
         assert!(!this.apply_reference_match(cx));
@@ -147,6 +242,9 @@ fn adopting_the_retained_project_is_one_undo(cx: &mut TestAppContext) {
             .unwrap();
         configure(this, cx);
         this.reference_match.settings.performance = false;
+        this.reference_match.settings.generation_seeds = false;
+        this.reference_match.settings.instruments = false;
+        this.reference_match.settings.arrangement = false;
         this.reference_match.settings.attempts = 8;
         let before = this.project().clone();
         let settings = this.reference_match.settings.clone();
@@ -430,13 +528,12 @@ fn audio_match_status_and_actions_stay_visible_in_short_windows(cx: &mut TestApp
                         4 => state.cancelled = true,
                         5 | 6 => {
                             let mut snapshot = snapshot.clone();
+                            let mut report = report.clone();
+                            report.failed_attempts = 2;
                             if case == 6 {
                                 snapshot.generation = snapshot.generation.wrapping_sub(1);
                             }
-                            state.comparison = Some(MatchComparison {
-                                snapshot,
-                                report: report.clone(),
-                            });
+                            state.comparison = Some(MatchComparison { snapshot, report });
                         }
                         7 => {
                             state.preview = Some(MatchPreview {

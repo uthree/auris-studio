@@ -111,10 +111,13 @@ impl Default for ReferenceMatchState {
             settings: ReferenceMatchSettings {
                 project_start_seconds: 0.0,
                 duration_seconds: 12.0,
-                attempts: 8,
+                attempts: 32,
                 seed: 42,
                 mix: true,
                 performance: true,
+                generation_seeds: true,
+                instruments: true,
+                arrangement: true,
             },
             reference_start: 0.0,
             objective: MatchObjective::default(),
@@ -152,7 +155,12 @@ impl ReferenceMatchState {
             Some(Key::AudioMatchPromptRequired)
         } else if self.objective.needs_reference() && self.source.is_none() {
             Some(Key::ReferenceMatchMissing)
-        } else if !self.settings.mix && !self.settings.performance {
+        } else if !self.settings.mix
+            && !self.settings.performance
+            && !self.settings.generation_seeds
+            && !self.settings.instruments
+            && !self.settings.arrangement
+        {
             Some(Key::ReferenceMatchNeedScope)
         } else {
             None

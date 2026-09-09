@@ -176,19 +176,23 @@ impl AurisApp {
                             )
                         }),
                     ))
-                    .child(reference_row(self, Key::SongSearchAttempts).children(
-                        [4usize, 8, 16, 32, 64, 128].into_iter().map(|attempts| {
-                            choice(
-                                self,
-                                cx,
-                                ("reference-attempts", attempts),
-                                attempts.to_string(),
-                                editable,
-                                state.settings.attempts == attempts,
-                                move |state| state.settings.attempts = attempts,
-                            )
-                        }),
-                    ))
+                    .child(
+                        reference_row(self, Key::SongSearchAttempts).children(
+                            [8usize, 16, 32, 64, 128, 256, 512]
+                                .into_iter()
+                                .map(|attempts| {
+                                    choice(
+                                        self,
+                                        cx,
+                                        ("reference-attempts", attempts),
+                                        attempts.to_string(),
+                                        editable,
+                                        state.settings.attempts == attempts,
+                                        move |state| state.settings.attempts = attempts,
+                                    )
+                                }),
+                        ),
+                    )
                     .child(
                         reference_row(self, Key::SongSearchSeed)
                             .child(choice(
@@ -239,6 +243,33 @@ impl AurisApp {
                         editable,
                         state.settings.performance,
                         |state| state.settings.performance = !state.settings.performance,
+                    ))
+                    .child(choice(
+                        self,
+                        cx,
+                        "reference-scope-generation-seeds",
+                        self.t(Key::ReferenceMatchGenerationSeeds),
+                        editable,
+                        state.settings.generation_seeds,
+                        |state| state.settings.generation_seeds = !state.settings.generation_seeds,
+                    ))
+                    .child(choice(
+                        self,
+                        cx,
+                        "reference-scope-instruments",
+                        self.t(Key::ReferenceMatchInstruments),
+                        editable,
+                        state.settings.instruments,
+                        |state| state.settings.instruments = !state.settings.instruments,
+                    ))
+                    .child(choice(
+                        self,
+                        cx,
+                        "reference-scope-arrangement",
+                        self.t(Key::ReferenceMatchArrangement),
+                        editable,
+                        state.settings.arrangement,
+                        |state| state.settings.arrangement = !state.settings.arrangement,
                     )),
             )
             .child(
@@ -627,17 +658,26 @@ impl AurisApp {
                 self.t(Key::ReferenceMatchChanged).into(),
             )
         } else if let Some(comparison) = &state.comparison {
+            let rejected = if comparison.report.failed_attempts > 0 {
+                format!(
+                    " · {}: {}",
+                    self.t(Key::ReferenceMatchRejected),
+                    comparison.report.failed_attempts,
+                )
+            } else {
+                String::new()
+            };
             message(
                 "reference-match-complete",
                 format!(
-                    "{} · {} {}",
+                    "{} · {}: {}{rejected}",
                     self.t(if comparison.report.cancelled {
                         Key::SongSearchCancelled
                     } else {
                         Key::SongSearchComplete
                     }),
-                    comparison.report.attempts,
-                    self.t(Key::SongSearchProgress)
+                    self.t(Key::SongSearchProgress),
+                    comparison.report.attempts
                 ),
             )
         } else if state.cancelled {

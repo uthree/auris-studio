@@ -3,7 +3,7 @@
 use std::error::Error;
 use std::path::Path;
 
-use auris_core::{Note, NoteTransform, ParamTarget, Ticks};
+use auris_core::{ClipPreset, ClipRecipe, Note, NoteTransform, ParamTarget, Ticks};
 use auris_engine::{OfflineOptions, RenderProgress};
 use auris_io::{WavBitDepth, WavExportSettings};
 use auris_session::{Session, SessionOptions};
@@ -46,6 +46,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         seed: 981,
     }];
     session.set_clip_transforms(clip, original_transforms.clone())?;
+
+    // Keep a live recipe alongside the authored melody so all five search families can be
+    // exercised, including take proposals that must never rewrite the authored phrase.
+    let drums = session.add_drum_track("Generated hats", "auris.synth.noisedrum")?;
+    let mut recipe = ClipRecipe::new(ClipPreset::Hat, 42);
+    recipe.drum_note = Some(42);
+    let hats = session.generate_clip(drums, Ticks::ZERO, Ticks::from_beats(24.0), recipe)?;
+    session.set_clip_transforms(
+        hats,
+        vec![NoteTransform::Humanize {
+            amount: 0.2,
+            seed: 42,
+        }],
+    )?;
+    session.set_param(ParamTarget::TrackGain(drums), -18.0);
 
     let options = OfflineOptions {
         sample_rate: Some(RATE),
@@ -99,7 +114,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("Reference audio: {}", reference_path.display());
     println!("Exact reference project: {}", target.document.display());
     println!(
-        "Use project/reference start 0 seconds, duration {SECONDS} seconds, 32 attempts, seed 0, and both adjustment types."
+        "Use project/reference start 0 seconds, duration {SECONDS} seconds, 32 attempts, seed 0, and all five adjustment types."
     );
     println!(
         "cargo run -p auris-session --example match_reference -- \"{}\" \"{}\" \"{}\" 32 12",

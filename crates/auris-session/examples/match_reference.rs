@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("output directory already exists; choose a new directory".into());
     }
     let settings = ReferenceMatchSettings {
-        attempts: args.get(3).map_or(Ok(16), |text| text.parse())?,
+        attempts: args.get(3).map_or(Ok(32), |text| text.parse())?,
         duration_seconds: args.get(4).map_or(Ok(12.0), |text| text.parse())?,
         ..Default::default()
     };
@@ -82,6 +82,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         serde_json::to_vec_pretty(&serde_json::json!({
             "package_version": env!("CARGO_PKG_VERSION"),
             "attempts": report.attempts,
+            "failed_attempts": report.failed_attempts,
+            "scopes": {
+                "mix": settings.mix,
+                "performance": settings.performance,
+                "generation_seeds": settings.generation_seeds,
+                "instruments": settings.instruments,
+                "arrangement": settings.arrangement,
+            },
             "cancelled": report.cancelled,
             "duration_seconds": settings.duration_seconds,
             "search_seed": settings.seed,

@@ -1,10 +1,10 @@
 # Match a reference recording
 
-**Compose → Adjust by Audio Evaluation…** searches small changes to the current project's mix and
-performance. Every candidate is rendered through the project's instruments, routing and effects,
-then compared with an excerpt from a reference recording. Written notes and instrument choices
-stay intact. The unchanged project is the first candidate and remains the result when no measured
-improvement is found.
+**Compose → Adjust by Audio Evaluation…** searches the current project's mix, performance,
+generated clip seeds, instrument choices, and non-destructive arrangement. Every candidate is
+rendered through the project's instruments, routing and effects, then compared with an excerpt
+from a reference recording. The unchanged project is the first candidate and remains the result
+when no measured improvement is found. Nothing edits the project until **Apply Best**.
 
 ## Use the desktop app
 
@@ -12,8 +12,11 @@ improvement is found.
 2. Select **Reference · audio features** and choose a reference audio file. Set its excerpt start and the project excerpt start separately;
    **Use Playhead** selects the current project position. Choose a length of 1–30 seconds that
    contains the sound you want to compare.
-3. Enable **Adjust Mix**, **Adjust Performance**, or both. Set the attempt limit and search seed.
-   The default run measures eight candidates, including the unchanged baseline.
+3. Select the search scopes: **Adjust Mix**, **Adjust Performance**, **Explore Generation Seeds**,
+   **Explore Instruments**, and **Adjust Arrangement**. Enable at least one. Set the attempt limit
+   and search seed. The default run measures 32 candidates, including the unchanged baseline;
+   the desktop offers budgets from 8 to 512 candidates. Broader scopes benefit from a larger
+   budget, at the cost of more rendering and evaluation time.
 4. Choose **Render & Search**. Progress reports the actual candidate render and completed
    evaluations. The project remains editable and unchanged by the search.
 5. Compare **Before** and **Best**, including the individual feature distances. Use **Play
@@ -30,6 +33,11 @@ leaves no comparison to adopt. Editing the project or changing the reference or 
 the old comparison stale. Search again before applying. Closing the panel cancels its task;
 another run waits for the old worker to return.
 
+The baseline must render and evaluate successfully. After that, an unusable candidate, such as
+a silent SoundFont selection, consumes one attempt and is rejected while the search keeps its
+best valid result. The completed comparison shows the number of rejected candidates when any
+occurred. Missing render dependencies and a changed project still stop the pass explicitly.
+
 ## What can change
 
 Mix proposals adjust unmuted non-bus tracks. A gain or pan parameter with an automation lane is
@@ -37,9 +45,31 @@ left to its automation. Performance proposals adjust the expression or gate of n
 unmuted instrument and drum clips. Recorded audio and already synthesized singing remain part
 of the rendered mix and can have their track balance adjusted.
 
-Each move changes one control on one track. The proposal order is seeded and alternates mix and
-performance controls when both are enabled. Bounds stay relative to the original project,
-including after several accepted improvements.
+Generation-seed proposals regenerate generated clips using their existing specifications with a
+different seed. Manually written and frozen clips retain their notes. Applying a seed winner
+adopts the exact generated notes that were evaluated, without rerunning composition at adoption.
+Instrument proposals consider unmuted registry instrument tracks with clips. Melodic alternatives
+include built-in Chiptune, FM2 and Vocal sounds, several Chiptune/FM2 patches, and every loaded
+SoundFont preset outside percussion bank 128. Supported drum tracks and percussion sources
+instead use loaded bank-128 presets; drum maps and recipe voice assignments are retained. Hosted
+instruments and NoiseDrum keep their current source. Each track's seeded alternative order visits
+all its options before repeating, and skips the baseline-equivalent selection.
+
+Scope enumeration respects track mute and solo. Generated-seed and arrangement proposals skip
+clips that start at or after the selected excerpt's end. Earlier clips and instrument sources
+remain eligible because release envelopes and routed effect tails can still contribute to the
+excerpt. Performance proposals also keep the captured clip selection. The excerpt limits what
+is measured; adopting track-wide mix or sound
+changes can also affect the rest of the song.
+
+Changing the SoundFont preset on an existing sampler retains its player parameters and
+automation. Replacing a built-in sound or instrument source removes that instrument's automation
+lanes, whose parameter meanings may differ on the new source; track mix automation is retained.
+Arrangement proposals use editable performance transforms and preserve written notes.
+
+The proposal order is seeded and covers the enabled scopes. Continuous-control bounds stay
+relative to the original project, including after several accepted improvements. The existing
+mix and expression adjustments use the following bounds:
 
 | Control | Maximum change from the original | Proposal step |
 | --- | ---: | ---: |
@@ -55,6 +85,31 @@ including after several accepted improvements.
 Controls also obey their normal parameter ranges. Expression and gate are stored as editable
 performance transforms; they do not rewrite the score. The exact winning project changes are
 applied without a subsequent automatic balance pass that would replace the searched gains.
+
+Arrangement controls are proposed per clip, with the same original-project bounds:
+
+| Control | Maximum change from the original or available choices |
+| --- | --- |
+| Swing | 12 percentage points, in 4-point steps within 50–75% |
+| Ghost-note density / velocity | 0.45 / 0.2 |
+| Ghost-note length / variation | 30 ms within 1–100 ms / 0.4 |
+| Ghost placement | Pickup, sixteenths, offbeats, or repeating |
+| Mute / slide amount | 0.45 each |
+| Chord strum spread | 24 ms within 0–100 ms |
+| Strum upstroke velocity / low accent | 0.3 each |
+| Strum upstroke pitches / direction | 0–4 / down, up, or alternating |
+| Ensemble shared motion | 0.4, where timing or velocity wander is already active |
+| Pitch scoop / vibrato depth / fall | 0.6 / 0.15 / 0.75 semitones |
+| Pitch connection | 45 ms |
+| Active scoop length / vibrato rate | 75 ms / 1.5 Hz |
+| Active vibrato delay / fall length | 150 ms / 90 ms |
+
+Slide and pitch gestures target monophonic material; chords and overlapping clips are excluded
+from pitch-gesture proposals. Strum controls target chords. Drum arrangements preserve drum
+voice identity and exclude pitch, slide and strum changes. A dormant ghost-note stage may be
+activated softly so that a placement or variation proposal can be heard; the comparison lists
+that activation with the other changes. Written notes, recipe settings, and existing bend and
+controller curves remain intact under arrangement proposals.
 
 ## What the distance measures
 
@@ -98,7 +153,8 @@ the playhead or editing the document.
 Preview preparation resamples to the current output device on a worker, then applies one uniform
 gain toward -20 dBFS RMS while holding sample peaks below -1 dBFS. A peak-limited excerpt may
 remain below that RMS target. This changes only the audition copy, not the stored render or
-project. Applying the winner keeps the evaluated mix and performance settings in one undo step.
+project. Applying the winner keeps the evaluated settings and any regenerated notes in one undo
+step.
 
 ## Replaceable audio objectives
 

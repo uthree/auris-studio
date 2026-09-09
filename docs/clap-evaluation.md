@@ -2,7 +2,8 @@
 
 The audio adjustment search can rank actual rendered candidates using learned CLAP embeddings.
 Choose a reference recording to search toward its semantic sound, or write a prompt describing
-the sound you want. The search adjusts the same mix and performance controls documented in
+the sound you want. The search explores the same mix, performance, generated clip seeds,
+instrument choices, and non-destructive arrangement controls documented in
 [reference audio matching](reference-audio.md), retains the exact winning render, and applies the
 retained settings in one undo step.
 
@@ -61,8 +62,12 @@ not checked into the repository.
    Prompts are limited to 77 tokenizer tokens including start/end tokens. Overlong prompts are
    rejected with an error rather than silently shortened. English descriptions are recommended
    for this model.
-4. Set the project excerpt, attempt limit, seed, and mix/performance controls, then start the
-   render search. Model loading and inference run on the background worker.
+4. Set the project excerpt, attempt limit, search seed, and enabled search scopes, then start the
+   render search. The default budget is 32 candidates; select up to 512 for a broader search.
+   Generation seeds affect generated clips only, instrument choices use built-in sounds and
+   loaded SoundFonts, and arrangement adjustments preserve written notes. Applying a seed
+   change adopts the evaluated generated notes. Model loading and inference run on the
+   background worker.
 5. Compare the baseline and best cosine similarities, listen to the retained renders, and use
    **Apply Best** to adopt the result.
 

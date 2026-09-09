@@ -453,7 +453,7 @@ impl Session {
 }
 
 /// A generated wander follows its take's seed while retaining any edited amount or custom seed.
-fn retake_performance(
+pub(super) fn retake_performance(
     transforms: &mut [auris_core::NoteTransform],
     previous: &ClipRecipe,
     next: &ClipRecipe,

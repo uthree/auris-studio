@@ -61,6 +61,9 @@ fn settings() -> ReferenceMatchSettings {
     ReferenceMatchSettings {
         duration_seconds: 1.0,
         attempts: 5,
+        generation_seeds: false,
+        instruments: false,
+        arrangement: false,
         ..ReferenceMatchSettings::default()
     }
 }
@@ -175,6 +178,180 @@ fn repeated_seed_retains_the_same_exact_audio_and_candidate() {
 }
 
 struct Constant;
+
+// A discontinuous objective makes every non-target choice lose. This exercises categorical
+// exploration across rejected alternatives, independently of the acoustic metric's shape.
+struct ExactRender(AudioBuffer);
+
+impl AudioEvaluator for ExactRender {
+    fn evaluate(&self, audio: &AudioBuffer) -> Result<AudioEvaluation, String> {
+        Ok(AudioEvaluation {
+            fitness: if audio == &self.0 { 1.0 } else { 0.0 },
+            metrics: Vec::new(),
+        })
+    }
+
+    fn description(&self) -> String {
+        "exact rendered target".into()
+    }
+}
+
+fn generated_session() -> Session {
+    let mut session = session();
+    let track = session
+        .add_drum_track("Hat", "auris.synth.noisedrum")
+        .unwrap();
+    let mut recipe = auris_core::ClipRecipe::new(auris_core::ClipPreset::Hat, 42);
+    recipe.drum_note = Some(42);
+    let clip = session
+        .generate_clip(track, Ticks::ZERO, Ticks::from_beats(8.0), recipe)
+        .unwrap();
+    assert!(!session.project.midi_clip(clip).unwrap().1.notes.is_empty());
+    session
+        .project
+        .midi_clip_mut(clip)
+        .unwrap()
+        .transforms
+        .push(NoteTransform::Humanize {
+            amount: 0.2,
+            seed: 42,
+        });
+    session.forget_history();
+    session
+}
+
+#[test]
+fn generated_take_search_retains_exact_notes_audio_and_one_step_undo() {
+    let mut session = generated_session();
+    let original = session.project.clone();
+    let settings = ReferenceMatchSettings {
+        mix: false,
+        performance: false,
+        generation_seeds: true,
+        attempts: 5,
+        ..settings()
+    };
+    let mut target = original.clone();
+    seeds::dials(&original, settings.seed)[0].adjust(&mut target, 0);
+    assert_ne!(target.tracks[1], original.tracks[1]);
+    assert_eq!(
+        target.tracks[0], original.tracks[0],
+        "authored clip changed"
+    );
+    let audio = render(&mut session, &target);
+    assert!(
+        audio != render(&mut session, &original),
+        "the retake must change rendered audio"
+    );
+    let evaluator = Arc::new(ExactRender(audio));
+    let job = session
+        .begin_reference_match(settings.clone(), evaluator.clone())
+        .unwrap();
+    let report = finish(&mut session, job);
+    assert_eq!(report.best.fitness, 1.0);
+    assert_eq!(report.adoption.project, target);
+    assert_eq!(session.project, original);
+    let repeated = session.begin_reference_match(settings, evaluator).unwrap();
+    let repeated = finish(&mut session, repeated);
+    assert_eq!(repeated.adoption.project, target);
+    assert_eq!(repeated.best_audio, report.best_audio);
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|change| change.contains("take seed"))
+    );
+    assert!(session.apply_reference_match(&report).unwrap());
+    assert_eq!(session.project, target);
+    assert_eq!(render(&mut session, &target), *report.best_audio);
+    assert_eq!(session.undo(), Some(Edit::MatchReference));
+    assert_eq!(session.project, original);
+    assert!(!session.can_undo());
+}
+
+#[test]
+fn instrument_search_reaches_a_third_choice_after_two_losses() {
+    let mut session = session();
+    let original = session.project.clone();
+    let settings = ReferenceMatchSettings {
+        mix: false,
+        performance: false,
+        instruments: true,
+        attempts: 5,
+        ..settings()
+    };
+    let families = search_families(&session, &settings);
+    let mut target = original.clone();
+    families[0][0].adjust(&mut target, &original, 2);
+    let target_audio = render(&mut session, &target);
+    for occurrence in 0..2 {
+        let mut prior = original.clone();
+        families[0][0].adjust(&mut prior, &original, occurrence);
+        assert_ne!(target_audio, render(&mut session, &prior));
+    }
+    assert_ne!(target_audio, render(&mut session, &original));
+    let evaluator = Arc::new(ExactRender(target_audio));
+    let job = session.begin_reference_match(settings, evaluator).unwrap();
+    let report = finish(&mut session, job);
+    assert_eq!(report.best.fitness, 1.0);
+    assert_eq!(report.adoption.project, target);
+    assert_eq!(session.project, original);
+    assert!(report.changes.iter().any(|change| change.contains("sound")));
+    assert!(session.apply_reference_match(&report).unwrap());
+    assert_eq!(session.project, target);
+    assert_eq!(render(&mut session, &target), *report.best_audio);
+    assert_eq!(session.undo(), Some(Edit::MatchReference));
+    assert_eq!(session.project, original);
+}
+
+#[test]
+fn broad_search_visits_all_families_before_revisiting_their_dimensions() {
+    let mut session = generated_session();
+    let original = session.project.clone();
+    let settings = ReferenceMatchSettings {
+        duration_seconds: 1.0,
+        attempts: 11,
+        ..ReferenceMatchSettings::default()
+    };
+    let mut job = session
+        .begin_reference_match(settings, Arc::new(Constant))
+        .unwrap();
+    let mut visited = [false; 5];
+    loop {
+        let candidate = &job.state.candidate;
+        visited[0] |= original
+            .tracks
+            .iter()
+            .zip(&candidate.tracks)
+            .any(|(a, b)| a.mixer != b.mixer);
+        visited[1] |= original.tracks.iter().zip(&candidate.tracks).any(|(a, b)| {
+            a.kind
+                .as_instrument()
+                .zip(b.kind.as_instrument())
+                .is_some_and(|(a, b)| {
+                    a.clips
+                        .iter()
+                        .zip(&b.clips)
+                        .any(|(a, b)| expression(a) != expression(b) || gate(a) != gate(b))
+                })
+        });
+        visited[2] |= !seeds::describe_changes(&original, candidate).is_empty();
+        visited[3] |= !instruments::describe_changes(&original, candidate).is_empty();
+        visited[4] |= !arrangement::describe_changes(&original, candidate).is_empty();
+        let result = job.run(&AtomicBool::new(false), &mut |_| {}).unwrap();
+        assert_eq!(session.project, original);
+        match session.continue_reference_match(result).unwrap() {
+            ReferenceMatchStep::Pending(next) => job = next,
+            ReferenceMatchStep::Complete(report) => {
+                assert_eq!(report.adoption.project, original);
+                assert_eq!(report.attempts, 11);
+                break;
+            }
+        }
+    }
+    assert_eq!(visited, [true; 5]);
+    assert!(!session.can_undo());
+}
 
 struct CancelDuringEvaluation {
     cancel: Arc<AtomicBool>,
@@ -525,6 +702,24 @@ fn rendered_reference_search_does_not_reward_shared_gain_roundoff() {
         .render_complete(&options, &mut RenderProgress::default())
         .unwrap();
     let evaluator = Arc::new(ReferenceAudioEvaluator::new(&reference).unwrap());
+    let baseline_audio = session
+        .job_for(original.clone())
+        .render_complete(&options, &mut RenderProgress::default())
+        .unwrap();
+    let baseline_fitness = evaluator.evaluate(&baseline_audio).unwrap().fitness;
+    for gain_db in [-15.0, -13.5, -10.5, -9.0] {
+        let mut louder = original.clone();
+        louder.tracks[0].mixer.gain_db = gain_db;
+        let audio = session
+            .job_for(louder)
+            .render_complete(&options, &mut RenderProgress::default())
+            .unwrap();
+        assert_eq!(
+            evaluator.evaluate(&audio).unwrap().fitness,
+            baseline_fitness,
+            "shared gain {gain_db} must not improve ranking through roundoff"
+        );
+    }
     let job = session
         .begin_reference_match(
             ReferenceMatchSettings {
@@ -539,9 +734,6 @@ fn rendered_reference_search_does_not_reward_shared_gain_roundoff() {
     let report = finish(&mut session, job);
     let winner = &report.adoption.project.tracks[0];
     assert!(report.best.fitness > report.baseline.fitness);
-    assert_eq!(report.best.fitness, 0.0);
-    assert_eq!(winner.mixer.pan, 0.15);
-    assert_eq!(gate(&winner.kind.as_instrument().unwrap().clips[0]), 0.95);
     assert_eq!(
         winner.mixer.gain_db, original.tracks[0].mixer.gain_db,
         "uniform gain must not win through floating-point feature differences"

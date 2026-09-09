@@ -58,7 +58,7 @@ strings! {
     AudioMatchCosine { en: "CLAP cosine similarity", ja: "CLAPのコサイン類似度" }
     AudioMatchClapMetricHint { en: "Similarity ranges from −1 to 1. It measures the model's match to the target, not a probability or a rating of musical quality.", ja: "類似度は−1～1の範囲です。モデルが捉える目標との近さを示します。確率や音楽的な良さの評価ではありません。" }
     ReferenceMatchPreviewHint { en: "Preview at a similar listening level (peak-limited). These playback gains are not applied to the project.", ja: "音量を揃えて試聴します（ピーク上限あり）。試聴用の音量補正はプロジェクトに適用されません。" }
-    ReferenceMatchHint { en: "Render the current project and evaluate small mix and performance adjustments against your target. Written notes stay unchanged.", ja: "現在のプロジェクトをレンダーし、目標に近づくミックスと演奏の微調整を音声で評価します。元の音符は保持されます。" }
+    ReferenceMatchHint { en: "Render candidates with the selected changes and compare their sound with your target. The project changes only when you apply the best candidate.", ja: "選択した範囲で候補を作り、レンダーした音を目標と比較します。プロジェクトが変わるのは最良候補を適用したときだけです。" }
     ReferenceMatchChoose { en: "Choose Reference Audio…", ja: "参考音源を選ぶ…" }
     ReferenceMatchMissing { en: "Choose a reference audio file first.", ja: "最初に参考音源ファイルを選んでください。" }
     ReferenceMatchLoading { en: "Reading reference audio…", ja: "参考音源を読み込み中…" }
@@ -69,8 +69,11 @@ strings! {
     ReferenceMatchPlayhead { en: "Use Playhead", ja: "再生位置を使う" }
     ReferenceMatchMix { en: "Adjust Mix", ja: "ミックスを調整" }
     ReferenceMatchPerformance { en: "Adjust Performance", ja: "演奏を調整" }
-    ReferenceMatchScope { en: "Mix changes affect track levels and pan. Performance changes affect instrument and drum clips. Audio and synthesized singing are mixed as rendered.", ja: "ミックス調整はトラック音量とパン、演奏調整は楽器・ドラムのクリップが対象です。録音音声と合成済み歌唱もミックスに含めて評価します。" }
-    ReferenceMatchNeedScope { en: "Enable Mix or Performance to search.", ja: "ミックスか演奏の調整を有効にしてください。" }
+    ReferenceMatchGenerationSeeds { en: "Explore Generation Seeds", ja: "自動生成シードを探索" }
+    ReferenceMatchInstruments { en: "Explore Instruments", ja: "音源を探索" }
+    ReferenceMatchArrangement { en: "Adjust Arrangement", ja: "非破壊アレンジを調整" }
+    ReferenceMatchScope { en: "Mix adjusts level and pan; Performance adjusts expression and gate. Seeds regenerate only generated clips. Instruments use built-in sounds and loaded SoundFonts. Arrangement preserves written notes. Applying a seed change keeps the newly generated notes.", ja: "ミックスは音量・パン、演奏は表情・ゲートを調整。シード探索は自動生成クリップのみを再生成し、音源探索は内蔵音源と読み込み済みSoundFontが対象です。非破壊アレンジは元の音符を保持します。シード変更を適用すると、再生成した音符が採用されます。" }
+    ReferenceMatchNeedScope { en: "Enable at least one search scope.", ja: "探索する範囲を1つ以上有効にしてください。" }
     ReferenceMatchStart { en: "Render & Search", ja: "レンダーして探索" }
     ReferenceMatchPreparing { en: "Preparing the reference excerpt…", ja: "参考音源の抜粋を準備中…" }
     ReferenceMatchRendering { en: "Rendering and evaluating candidate", ja: "候補をレンダー・評価中" }
@@ -95,6 +98,7 @@ strings! {
     ReferenceMatchApplyHint { en: "Apply keeps the selected adjustments in one undo step. Preview does not edit the project.", ja: "適用した調整は1回の元に戻す操作で戻せます。試聴ではプロジェクトを変更しません。" }
     ReferenceMatchApplied { en: "Audio adjustments applied", ja: "音声評価による調整を適用しました" }
     ReferenceMatchUnchanged { en: "The original remains the closest candidate.", ja: "元の設定が最も近い候補です。" }
+    ReferenceMatchRejected { en: "Rejected candidates", ja: "評価できず除外した候補" }
     ReferenceMatchFileDuration { en: "Source length", ja: "音源の長さ" }
     SongSearchToggle { en: "Density Search", ja: "音符密度の探索" }
     SongSearchHint { en: "Find settings close to a target note density. Counts all written notes and drum hits across tracks; this does not rate musical quality or rendered vocals.", ja: "目標の音符密度に近い設定を探します。全トラックの音符とドラム打音を数えます。音楽的な良さや、音声合成された歌唱は評価しません。" }

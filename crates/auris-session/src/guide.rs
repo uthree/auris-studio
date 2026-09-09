@@ -1091,17 +1091,23 @@ pub mod composition {
     //! # Rendered reference matching
     //!
     //! [`Session::begin_reference_match`](crate::Session::begin_reference_match) captures the
-    //! current project and a fixed excerpt. Each proposal adjusts bounded mixer gain/pan or
-    //! note-domain expression/gate, renders the complete mix, and evaluates its PCM through
+    //! current project and a fixed excerpt. Each proposal adjusts a selected family: mixer
+    //! gain/pan, expression/gate, generated clip seeds, instrument choices, or non-destructive
+    //! arrangement. It renders the complete mix and evaluates its PCM through
     //! [`AudioEvaluator`](crate::audio_evaluation::AudioEvaluator). The unchanged baseline is
-    //! measured first; ties keep the earlier candidate. Source audio and SoundFonts remain fixed
-    //! during the pass. Missing render dependencies fail explicitly before they become silence.
+    //! measured first; ties keep the earlier candidate. Families take turns independently of
+    //! their dimension counts. Seed proposals regenerate recipe-backed clips in detached copies;
+    //! frozen and authored clips have no recipe and retain their score. Instrument choices use
+    //! built-in voices and already loaded SoundFont presets; source assets stay fixed during the
+    //! pass. Missing render dependencies fail explicitly before they become silence.
     //!
     //! Native plugin factories stay on the session thread. A staged
     //! [`ReferenceMatchJob`](crate::ReferenceMatchJob) moves only their render halves to a worker;
     //! continuation checks the originating session, revision, document and project folder.
     //! Cancellation keeps any fully measured partial best. Explicit adoption restores that exact
-    //! retained project in one undo step, without rewriting notes or running another balance pass.
+    //! retained project in one undo step, without regenerating the winner or rebalancing it.
+    //! Instrument replacements discard incompatible instrument automation, while sampler preset
+    //! changes preserve player parameters and automation. The report lists these changes.
     //!
     //! [`ReferenceAudioEvaluator`](crate::audio_evaluation::ReferenceAudioEvaluator) compares fixed
     //! spectral, envelope, stereo and transient statistics. Its negative distance is an acoustic

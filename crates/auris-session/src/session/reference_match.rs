@@ -17,6 +17,11 @@ use crate::{Edit, RenderJob, SessionError};
 
 const SAMPLE_RATE: f64 = 44_100.0;
 
+mod arrangement;
+mod excerpt;
+mod instruments;
+mod seeds;
+
 /// The fixed project excerpt and bounded search controls.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReferenceMatchSettings {
@@ -24,7 +29,7 @@ pub struct ReferenceMatchSettings {
     pub project_start_seconds: f64,
     /// Excerpt duration, from one to thirty seconds.
     pub duration_seconds: f64,
-    /// Maximum evaluated renders, including the unchanged baseline, from two to 128.
+    /// Maximum render attempts, including the unchanged baseline, from two to 512.
     pub attempts: usize,
     /// Seed ordering the coordinate proposals within this build.
     pub seed: u64,
@@ -32,6 +37,12 @@ pub struct ReferenceMatchSettings {
     pub mix: bool,
     /// Adjust expression and gate on instrument and drum clips without rewriting notes.
     pub performance: bool,
+    /// Regenerate clips carrying a recipe with fresh deterministic take seeds.
+    pub generation_seeds: bool,
+    /// Explore built-in sounds and presets from already loaded SoundFonts.
+    pub instruments: bool,
+    /// Explore note-preserving articulation, groove and pitch-gesture settings.
+    pub arrangement: bool,
 }
 
 impl Default for ReferenceMatchSettings {
@@ -39,10 +50,13 @@ impl Default for ReferenceMatchSettings {
         Self {
             project_start_seconds: 0.0,
             duration_seconds: 12.0,
-            attempts: 8,
+            attempts: 32,
             seed: 0,
             mix: true,
             performance: true,
+            generation_seeds: true,
+            instruments: true,
+            arrangement: true,
         }
     }
 }
@@ -54,21 +68,25 @@ impl ReferenceMatchSettings {
             || self.project_start_seconds >= project.duration_seconds()
             || !self.duration_seconds.is_finite()
             || !(1.0..=30.0).contains(&self.duration_seconds)
-            || !(2..=128).contains(&self.attempts)
-            || (!self.mix && !self.performance)
+            || !(2..=512).contains(&self.attempts)
+            || (!self.mix
+                && !self.performance
+                && !self.generation_seeds
+                && !self.instruments
+                && !self.arrangement)
         {
             return Err(failure(
-                "choose a project excerpt, a duration of 1–30 seconds, 2–128 attempts, and at least one adjustment type",
+                "choose a project excerpt, a duration of 1–30 seconds, 2–512 attempts, and at least one adjustment type",
             ));
         }
         Ok(())
     }
 }
 
-/// Number of evaluations completed before the next render begins.
+/// Number of budgeted attempts completed before the next render begins.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReferenceMatchProgress {
-    /// Successfully rendered and evaluated candidates, including the baseline.
+    /// Completed attempts, including the baseline and rejected candidates.
     pub completed: usize,
     /// Requested evaluation budget, including the baseline.
     pub total: usize,
@@ -108,8 +126,10 @@ pub struct ReferenceMatchReport {
     pub baseline_audio: Arc<AudioBuffer>,
     /// Exact audio evaluated for the retained candidate.
     pub best_audio: Arc<AudioBuffer>,
-    /// Successfully evaluated renders, including the baseline.
+    /// Completed attempts, including the baseline and rejected candidates.
     pub attempts: usize,
+    /// Post-baseline candidates rejected because rendering or audio evaluation failed.
+    pub failed_attempts: usize,
     /// Whether cancellation ended the pass after a usable baseline was measured.
     pub cancelled: bool,
     /// Human-readable changes from the baseline to the retained candidate.
@@ -143,12 +163,13 @@ struct MatchState {
     settings: ReferenceMatchSettings,
     evaluator: Arc<dyn AudioEvaluator>,
     options: OfflineOptions,
-    dials: Vec<Dial>,
+    families: Vec<Vec<SearchDial>>,
     candidate: Project,
     best_project: Project,
     baseline: Option<Measurement>,
     best: Option<Measurement>,
     completed: usize,
+    failed_attempts: usize,
     cancelled: bool,
 }
 
@@ -165,6 +186,8 @@ impl ReferenceMatchJob {
     ///
     /// Cancellation before a complete baseline returns a cancellation error. Later cancellation
     /// returns the measured partial best through the ordinary continuation protocol.
+    /// A failed baseline is fatal; a later render or evaluation failure consumes one attempt
+    /// without displacing the retained best candidate.
     pub fn run(
         mut self,
         cancelled: &AtomicBool,
@@ -183,7 +206,7 @@ impl ReferenceMatchJob {
         let audio = match audio {
             Ok(audio) => audio,
             Err(error) if error.is_cancellation() => return self.cancel(),
-            Err(error) => return Err(error),
+            Err(error) => return self.reject(error, cancelled, progress),
         };
         if cancelled.load(Ordering::Relaxed) {
             return self.cancel();
@@ -194,14 +217,23 @@ impl ReferenceMatchJob {
             .flatten()
             .any(|sample| !sample.is_finite())
         {
-            return Err(failure("the renderer produced non-finite samples"));
+            return self.reject(
+                failure("the renderer produced non-finite samples"),
+                cancelled,
+                progress,
+            );
         }
         let evaluation = self.state.evaluator.evaluate(&audio);
         if cancelled.load(Ordering::Relaxed) {
             return self.cancel();
         }
-        let evaluation = evaluation.map_err(failure)?;
-        evaluation.validate().map_err(failure)?;
+        let evaluation = match evaluation {
+            Ok(evaluation) => evaluation,
+            Err(error) => return self.reject(failure(error), cancelled, progress),
+        };
+        if let Err(error) = evaluation.validate() {
+            return self.reject(failure(error), cancelled, progress);
+        }
         let audio = Arc::new(audio);
         if self.state.baseline.is_none() {
             self.state.baseline = Some(Measurement {
@@ -224,6 +256,25 @@ impl ReferenceMatchJob {
         Ok(ReferenceMatchResult { state: self.state })
     }
 
+    fn reject(
+        mut self,
+        error: SessionError,
+        cancelled: &AtomicBool,
+        progress: &mut dyn FnMut(f32),
+    ) -> Result<ReferenceMatchResult, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return self.cancel();
+        }
+        if self.state.baseline.is_none() {
+            return Err(error);
+        }
+        self.state.completed += 1;
+        self.state.failed_attempts += 1;
+        self.state.cancelled = cancelled.load(Ordering::Relaxed);
+        progress(self.state.completed as f32 / self.state.settings.attempts as f32);
+        Ok(ReferenceMatchResult { state: self.state })
+    }
+
     fn cancel(mut self) -> Result<ReferenceMatchResult, SessionError> {
         if self.state.baseline.is_none() {
             return Err(EngineError::RenderCancelled.into());
@@ -236,7 +287,9 @@ impl ReferenceMatchJob {
 impl Session {
     /// Capture an unchanged baseline and begin rendered matching on a fixed project excerpt.
     ///
-    /// Every proposal changes only bounded track gain/pan or existing note-domain performance.
+    /// Proposals alternate enabled families: mix, performance, generated takes, instruments,
+    /// and non-destructive arrangement. Generated takes explicitly rewrite recipe-backed notes;
+    /// the other families preserve the stored score. Every candidate stays detached until adoption.
     /// Automated faders are left alone. Source banks and SoundFonts are frozen for the pass;
     /// missing instruments, effects, audio, or current rendered vocals are refused explicitly.
     pub fn begin_reference_match(
@@ -261,10 +314,10 @@ impl Session {
                 )));
             }
         }
-        let dials = search_dials(&self.project, &settings);
-        if dials.is_empty() {
+        let families = search_families(self, &settings);
+        if families.is_empty() {
             return Err(failure(
-                "the project has no adjustable mix or performance controls",
+                "the project has no eligible controls in the selected search families",
             ));
         }
         let fonts = auris_sampler::SoundFontBank::shared();
@@ -297,12 +350,13 @@ impl Session {
             settings,
             evaluator,
             options,
-            dials,
+            families,
             candidate: original.clone(),
             best_project: original,
             baseline: None,
             best: None,
             completed: 0,
+            failed_attempts: 0,
             cancelled: false,
         });
         self.reference_job_for(state)
@@ -356,25 +410,36 @@ impl Session {
         self.check_reference_provenance(&state.provenance)?;
         if !state.cancelled && state.completed < state.settings.attempts {
             let proposal = state.completed - 1;
-            let dial = state.dials[(proposal / 2) % state.dials.len()];
-            let direction = if proposal.is_multiple_of(2) {
-                1.0
-            } else {
-                -1.0
-            };
+            let family = &state.families[(proposal / 2) % state.families.len()];
+            let visit = (proposal / 2) / state.families.len();
+            let dial = &family[visit % family.len()];
+            let occurrence = (visit / family.len()) * 2 + proposal % 2;
             state.candidate = state.best_project.clone();
-            dial.adjust(&mut state.candidate, &state.provenance.original, direction);
+            dial.adjust(&mut state.candidate, &state.provenance.original, occurrence);
             return Ok(ReferenceMatchStep::Pending(self.reference_job_for(state)?));
         }
         let baseline = state.baseline.expect("a completed pass has a baseline");
         let best = state.best.expect("a completed pass has a best candidate");
-        let changes = describe_changes(&state.provenance.original, &state.best_project);
+        let mut changes = describe_changes(&state.provenance.original, &state.best_project);
+        changes.extend(seeds::describe_changes(
+            &state.provenance.original,
+            &state.best_project,
+        ));
+        changes.extend(instruments::describe_changes(
+            &state.provenance.original,
+            &state.best_project,
+        ));
+        changes.extend(arrangement::describe_changes(
+            &state.provenance.original,
+            &state.best_project,
+        ));
         Ok(ReferenceMatchStep::Complete(ReferenceMatchReport {
             baseline: baseline.evaluation,
             best: best.evaluation,
             baseline_audio: baseline.audio,
             best_audio: best.audio,
             attempts: state.completed,
+            failed_attempts: state.failed_attempts,
             cancelled: state.cancelled,
             changes,
             adoption: Box::new(Adoption {
@@ -472,6 +537,78 @@ fn failure(message: impl Into<String>) -> SessionError {
     SessionError::ReferenceMatch(message.into())
 }
 
+enum SearchDial {
+    Continuous(Dial),
+    Generation(seeds::Dial),
+    Instrument(instruments::Dial),
+    Arrangement(arrangement::Dial),
+}
+
+impl SearchDial {
+    fn adjust(&self, project: &mut Project, original: &Project, occurrence: usize) {
+        let direction = if occurrence.is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        match self {
+            Self::Continuous(dial) => dial.adjust(project, original, direction),
+            Self::Generation(dial) => dial.adjust(project, occurrence),
+            Self::Instrument(dial) => dial.adjust(project, original, occurrence),
+            Self::Arrangement(dial) => dial.adjust(project, original, occurrence),
+        }
+    }
+}
+
+fn search_families(session: &Session, settings: &ReferenceMatchSettings) -> Vec<Vec<SearchDial>> {
+    let enumeration = excerpt::enumeration_project(&session.project, settings);
+    let mut mix = Vec::new();
+    let mut performance = Vec::new();
+    for dial in search_dials(&enumeration, settings) {
+        let family = if matches!(dial.control, Control::Gain | Control::Pan) {
+            &mut mix
+        } else {
+            &mut performance
+        };
+        family.push(SearchDial::Continuous(dial));
+    }
+    let mut families = vec![mix, performance];
+    if settings.generation_seeds {
+        families.push(
+            seeds::dials(&enumeration, settings.seed)
+                .into_iter()
+                .map(SearchDial::Generation)
+                .collect(),
+        );
+    }
+    if settings.instruments {
+        families.push(
+            instruments::dials(session, &enumeration, settings.seed)
+                .into_iter()
+                .map(SearchDial::Instrument)
+                .collect(),
+        );
+    }
+    if settings.arrangement {
+        families.push(
+            arrangement::dials(&enumeration)
+                .into_iter()
+                .map(SearchDial::Arrangement)
+                .collect(),
+        );
+    }
+    // Each active family receives two proposals per round regardless of its dimension count.
+    // Categorical visits enumerate new choices even when their previous choices did not win.
+    let mut rng = Rng::stream(settings.seed, &["render_search_dimensions".into()]);
+    for family in families.iter_mut().skip(2) {
+        for index in (1..family.len()).rev() {
+            family.swap(index, rng.below(index + 1));
+        }
+    }
+    families.retain(|family| !family.is_empty());
+    families
+}
+
 #[derive(Clone, Copy)]
 enum Control {
     Gain,
@@ -484,10 +621,11 @@ enum Control {
     Gate,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Dial {
     track: TrackId,
     control: Control,
+    clips: Vec<auris_core::ClipId>,
 }
 
 fn search_dials(project: &Project, settings: &ReferenceMatchSettings) -> Vec<Dial> {
@@ -507,6 +645,7 @@ fn search_dials(project: &Project, settings: &ReferenceMatchSettings) -> Vec<Dia
                 mix.push(Dial {
                     track: track.id,
                     control: Control::Gain,
+                    clips: Vec::new(),
                 });
             }
             if project
@@ -518,17 +657,23 @@ fn search_dials(project: &Project, settings: &ReferenceMatchSettings) -> Vec<Dia
                 mix.push(Dial {
                     track: track.id,
                     control: Control::Pan,
+                    clips: Vec::new(),
                 });
             }
         }
-        if settings.performance
-            && track.kind.as_instrument().is_some_and(|instrument| {
+        let clips: Vec<_> = track
+            .kind
+            .as_instrument()
+            .map(|instrument| {
                 instrument
                     .clips
                     .iter()
-                    .any(|clip| !clip.muted && !clip.notes.is_empty())
+                    .filter(|clip| !clip.muted && !clip.notes.is_empty())
+                    .map(|clip| clip.id)
+                    .collect()
             })
-        {
+            .unwrap_or_default();
+        if settings.performance && !clips.is_empty() {
             for control in [
                 Control::Timing,
                 Control::Velocity,
@@ -540,6 +685,7 @@ fn search_dials(project: &Project, settings: &ReferenceMatchSettings) -> Vec<Dia
                 performance.push(Dial {
                     track: track.id,
                     control,
+                    clips: clips.clone(),
                 });
             }
         }
@@ -554,17 +700,17 @@ fn search_dials(project: &Project, settings: &ReferenceMatchSettings) -> Vec<Dia
     let mut dials = Vec::with_capacity(mix.len() + performance.len());
     for i in 0..mix.len().max(performance.len()) {
         if let Some(dial) = mix.get(i) {
-            dials.push(*dial);
+            dials.push(dial.clone());
         }
         if let Some(dial) = performance.get(i) {
-            dials.push(*dial);
+            dials.push(dial.clone());
         }
     }
     dials
 }
 
 impl Dial {
-    fn adjust(self, project: &mut Project, original: &Project, direction: f32) {
+    fn adjust(&self, project: &mut Project, original: &Project, direction: f32) {
         let base = original.track(self.track).expect("captured track");
         let track = project.track_mut(self.track).expect("captured track");
         match self.control {
@@ -596,10 +742,16 @@ impl Dial {
                     .as_instrument_mut()
                     .expect("instrument performance");
                 let source = base.kind.as_instrument().expect("instrument performance");
-                for (clip, original) in instrument.clips.iter_mut().zip(&source.clips) {
-                    if !clip.muted && !clip.notes.is_empty() {
-                        adjust_performance(clip, original, control, direction);
-                    }
+                // The render retains the complete project. Only the clip identities captured
+                // during excerpt enumeration may receive this performance proposal.
+                for id in &self.clips {
+                    let Some(clip) = instrument.clips.iter_mut().find(|clip| clip.id == *id) else {
+                        continue;
+                    };
+                    let Some(original) = source.clips.iter().find(|clip| clip.id == *id) else {
+                        continue;
+                    };
+                    adjust_performance(clip, original, control, direction);
                 }
             }
         }
@@ -748,3 +900,6 @@ fn describe_changes(original: &Project, best: &Project) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod failure_tests;
