@@ -16,6 +16,39 @@ use super::dials::*;
 use super::lyrics::section_label;
 
 impl AurisApp {
+    pub(super) fn song_tonality_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongTonality));
+        for (choice, label) in [
+            (Tonality::Auto, Key::SongAutomatic),
+            (Tonality::Major, Key::SongMajor),
+            (Tonality::Minor, Key::SongMinor),
+        ] {
+            menu = menu.toggle(
+                self.t(label),
+                MenuCommand::SongTonality(choice),
+                self.song_sheet.as_ref().and_then(|d| d.tonality) == Some(choice),
+            );
+        }
+        menu
+    }
+
+    pub(super) fn song_pace_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongPace));
+        for (choice, label) in [
+            (Pace::Auto, Key::SongAutomatic),
+            (Pace::Slow, Key::SongSlow),
+            (Pace::Moderate, Key::SongModerate),
+            (Pace::Fast, Key::SongFast),
+        ] {
+            menu = menu.toggle(
+                self.t(label),
+                MenuCommand::SongPace(choice),
+                self.song_sheet.as_ref().and_then(|d| d.pace) == Some(choice),
+            );
+        }
+        menu
+    }
+
     /// The closing gesture, including a return to the opening for background music.
     pub(super) fn song_ending_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let current = self.song_sheet.as_ref().map(|dials| dials.ending);
@@ -383,17 +416,9 @@ impl AurisApp {
     /// The whole songs the sheet can be filled from.
     pub(super) fn song_preset_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongStyle));
-        let language = self.language();
         for entry in PRESETS {
-            // The description rather than the name: `city-pop` is what a command line takes, and
-            // "Electric piano and slap bass over 丸サ進行" is what tells somebody whether it is
-            // the one they want.
             menu = menu.item(
-                format!(
-                    "{} — {}",
-                    entry.name,
-                    auris_i18n::audio::preset_description(entry.description, language)
-                ),
+                self.t(style_key(entry.name)),
                 MenuCommand::SongPreset(entry.name),
             );
         }

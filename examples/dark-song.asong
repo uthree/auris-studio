@@ -1,0 +1,5 @@
+# Describe the song; the composer supplies the harmony and arrangement.
+style = "pop-band"
+mood = "dark"
+tonality = "minor"
+pace = "slow"

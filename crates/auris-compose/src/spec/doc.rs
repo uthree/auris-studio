@@ -268,6 +268,12 @@ where
 #[serde(deny_unknown_fields)]
 struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    style: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tonality: Option<crate::Tonality>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pace: Option<crate::Pace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     singer: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     singer_speaker: Option<String>,
@@ -461,13 +467,29 @@ struct PartDoc {
 impl SongDoc {
     /// What the document means, or every reason it means nothing.
     fn into_spec(self) -> Result<SongSpec, Vec<SpecError>> {
+        let mut errors = Vec::new();
+        let mut base = match self.style.as_deref() {
+            Some(name) => match crate::preset(name) {
+                Some(preset) => {
+                    let mut spec = preset.spec();
+                    spec.use_generated_harmony();
+                    spec
+                }
+                None => {
+                    errors.push(SpecError::about(format!("`{name}` is not a style")));
+                    SongSpec::default()
+                }
+            },
+            None => SongSpec::default(),
+        };
+        if self.performance.is_some() {
+            base.performance = self.performance;
+        }
         let mut spec = SongSpec {
             singer: self.singer,
             singer_speaker: self.singer_speaker,
-            performance: self.performance,
-            ..SongSpec::default()
+            ..base
         };
-        let mut errors = Vec::new();
 
         if let Some(title) = self.title {
             spec.title = title;
@@ -575,6 +597,18 @@ impl SongDoc {
             &mut errors,
         );
 
+        // Words supply defaults; an explicit key/scale or BPM is always authoritative.
+        let has_intent = self.mood.is_some() || self.style.is_some();
+        if self.key.is_none() && self.scale.is_none() && (has_intent || self.tonality.is_some()) {
+            spec.key = self
+                .tonality
+                .unwrap_or_default()
+                .key(spec.mood, spec.key.tonic);
+        }
+        if self.tempo.is_none() && (has_intent || self.pace.is_some()) {
+            spec.tempo = self.pace.unwrap_or_default().bpm(spec.mood);
+        }
+
         // `chords` is the shortest possible way to name a progression, and `[harmony]` the
         // general one. Both are merged into the defaults rather than replacing them, so a
         // document with one of each keeps both. A `?` is a progression deliberately left to the
@@ -590,6 +624,9 @@ impl SongDoc {
             match read_chart(text) {
                 Some(chart) => {
                     spec.charts.insert("main".to_string(), chart);
+                    for section in spec.sections.values_mut() {
+                        section.chords = "main".to_string();
+                    }
                 }
                 None => errors.push(SpecError::about(format!("`{text}` is not a chord chart"))),
             }
@@ -978,6 +1015,9 @@ impl From<&SongSpec> for SongDoc {
     fn from(spec: &SongSpec) -> Self {
         let plain = SongSpec::default();
         Self {
+            style: None,
+            tonality: None,
+            pace: None,
             singer: spec.singer.clone(),
             singer_speaker: spec.singer_speaker.clone(),
             title: (spec.title != plain.title).then(|| spec.title.clone()),
@@ -1026,6 +1066,7 @@ impl From<&SongSpec> for SongDoc {
                 // The *request* to invent is something the document said, and `?` is how it
                 // said it, so that one generated chart does survive the round trip.
                 .filter(|(_, chart)| chart.origin == ChartOrigin::Given || chart.is_unwritten())
+                .filter(|(name, chart)| plain.charts.get(*name) != Some(*chart))
                 // A quotation is written back as the quotation. Spelling its bars out would be
                 // longer to read and would lose the *mode* it was written in, which is what
                 // lets 丸サ進行 be asked for in a minor key and still be 丸サ進行.
@@ -1519,7 +1560,7 @@ mod tests {
                 let chart = spec.chart_for(section);
                 assert_eq!(chart.bar_count(), section.bars);
                 assert_eq!(chart, again.chart_for(&again.sections[name]));
-                assert!(chart.bars.iter().any(|bar| bar.len() == 2));
+                assert!(chart.bars.iter().all(|bar| (1..=2).contains(&bar.len())));
             }
             let frame = crate::frame::plan(&spec);
             let bar_ticks = crate::rhythm::Grid::new(spec.meter, 4).bar_ticks();

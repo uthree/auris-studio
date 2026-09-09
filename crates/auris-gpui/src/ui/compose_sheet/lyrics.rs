@@ -694,10 +694,15 @@ mod tests {
                 this.lyrics_edit.is_none(),
                 "the old editor is retired with its sheet"
             );
-            assert_eq!(
-                this.song_sheet.as_ref().unwrap(),
-                &super::super::song_dials(&preset("pop-band").unwrap().spec())
+            let dials = this.song_sheet.as_ref().unwrap();
+            assert_eq!(dials.parts, preset("pop-band").unwrap().spec().parts);
+            assert!(
+                dials
+                    .sections
+                    .iter()
+                    .all(|section| section.lyrics.is_empty())
             );
+            assert!(dials.charts.iter().all(|(_, chart)| chart.is_unwritten()));
             this.focus_section_lyrics(0);
         });
         paint(&app, cx);

@@ -508,12 +508,7 @@ pub struct SongSpec {
 impl Default for SongSpec {
     fn default() -> Self {
         let mut charts = BTreeMap::new();
-        // Marked generated, not quoted: a progression the user did not ask for is the composer's
-        // own, so the mood is free to colour it. A chart anyone typed or named is left alone.
-        let default_chart = Chart::parse("@axis")
-            .map(|chart| Chart::new(chart.bars, ChartOrigin::Generated))
-            .unwrap_or_else(|| Chart::new(Vec::new(), ChartOrigin::Generated));
-        charts.insert("main".to_string(), default_chart);
+        charts.insert("main".to_string(), Chart::unwritten());
         let mut sections = BTreeMap::new();
         for name in ["intro", "verse", "chorus", "outro"] {
             sections.insert(name.to_string(), SectionSpec::named(name));

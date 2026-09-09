@@ -202,10 +202,10 @@ impl AurisApp {
                                                                 ),
                                                         ),
                                                 )
-                                                .child(divider(&theme))
-                                                .child(self.song_participation_matrix(&dials, width, window, cx))
                                                 .when(self.song_advanced, |this| {
                                                     this.child(divider(&theme))
+                                                        .child(self.song_participation_matrix(&dials, width, window, cx))
+                                                        .child(divider(&theme))
                                                         .child(
                                                             div().text_xs().text_color(theme.text_muted)
                                                                 .child(self.t(Key::SongAdvancedHint)),
@@ -354,14 +354,23 @@ impl AurisApp {
         let mut rows: Vec<AnyElement> =
             vec![self.group_heading(Key::SongHeading).into_any_element()];
 
-        // First, because it is the row that sets every other one. Somebody opening this for the
-        // first time is looking at thirty dials and no idea which of them matter; a style is the
-        // answer to all of them at once, and what they came here to change is what happens next.
+        // A style supplies the band and form; the character choices below remain independent.
         rows.push(
             self.sheet_picker(
                 "song-style",
                 Key::SongStyle,
-                self.t(Key::SongStyleChoose).to_string(),
+                self.t(match dials.performance {
+                    Some(PerformanceStyle::Chiptune) => Key::SongStyleChiptune,
+                    Some(PerformanceStyle::PopBand) => Key::SongStylePopBand,
+                    Some(PerformanceStyle::CityPop) => Key::SongStyleCityPop,
+                    Some(PerformanceStyle::Rock) => Key::SongStyleRock,
+                    Some(PerformanceStyle::JazzTrio) => Key::SongStyleJazz,
+                    Some(PerformanceStyle::Orchestral) => Key::SongStyleOrchestral,
+                    Some(PerformanceStyle::Synthwave) => Key::SongStyleSynthwave,
+                    Some(PerformanceStyle::Ambient) => Key::SongStyleAmbient,
+                    None => Key::SongStyleChoose,
+                })
+                .to_string(),
                 Self::opens_menu(cx, |this, at| this.song_preset_menu(at)),
             )
             .into_any_element(),
@@ -444,7 +453,66 @@ impl AurisApp {
             )
             .into_any_element(),
         );
-        rows.push(self.song_pad(dials, false, cx));
+        rows.push(
+            self.sheet_picker(
+                "song-mood",
+                Key::SongMood,
+                mood_word(dials.mood)
+                    .map(|name| this_word(self, name))
+                    .unwrap_or_else(|| self.t(Key::SongMoodCustom).to_string()),
+                Self::opens_menu(cx, |this, at| this.song_mood_menu(at)),
+            )
+            .into_any_element(),
+        );
+        let tonality = match dials.tonality {
+            Some(Tonality::Auto) => Key::SongAutomatic,
+            Some(Tonality::Major) => Key::SongMajor,
+            Some(Tonality::Minor) => Key::SongMinor,
+            None if dials.key.scale == ScaleId::Major => Key::SongMajor,
+            None if dials.key.scale == ScaleId::Minor => Key::SongMinor,
+            None => Key::SongMoodCustom,
+        };
+        let tonality_text = if dials.tonality == Some(Tonality::Auto) {
+            format!(
+                "{} ({})",
+                self.t(tonality),
+                self.t(if dials.key.is_minor() {
+                    Key::SongMinor
+                } else {
+                    Key::SongMajor
+                })
+            )
+        } else {
+            self.t(tonality).to_string()
+        };
+        rows.push(
+            self.sheet_picker(
+                "song-tonality",
+                Key::SongTonality,
+                tonality_text,
+                Self::opens_menu(cx, |this, at| this.song_tonality_menu(at)),
+            )
+            .into_any_element(),
+        );
+        rows.push(
+            self.sheet_picker(
+                "song-pace",
+                Key::SongPace,
+                self.t(match dials.pace {
+                    Some(Pace::Auto) => Key::SongAutomatic,
+                    Some(Pace::Slow) => Key::SongSlow,
+                    Some(Pace::Moderate) => Key::SongModerate,
+                    Some(Pace::Fast) => Key::SongFast,
+                    None if dials.tempo == 80.0 => Key::SongSlow,
+                    None if dials.tempo == 120.0 => Key::SongModerate,
+                    None if dials.tempo == 160.0 => Key::SongFast,
+                    None => Key::SongMoodCustom,
+                })
+                .to_string(),
+                Self::opens_menu(cx, |this, at| this.song_pace_menu(at)),
+            )
+            .into_any_element(),
+        );
         rows.push(self.song_dial_row(dials, SongDial::Tempo, cx));
         rows
     }
@@ -481,18 +549,7 @@ impl AurisApp {
             )
             .into_any_element(),
         );
-        rows.push(
-            self.sheet_picker(
-                "song-mood",
-                Key::SongMood,
-                match mood_word(dials.mood) {
-                    Some(name) => this_word(self, name),
-                    None => self.t(Key::SongMoodCustom).to_string(),
-                },
-                Self::opens_menu(cx, |this, at| this.song_mood_menu(at)),
-            )
-            .into_any_element(),
-        );
+        rows.push(self.song_pad(dials, false, cx));
         rows.push(
             self.sheet_picker(
                 "song-groove",
@@ -622,6 +679,7 @@ impl AurisApp {
                     cx.listener(move |this, _, _, cx| {
                         if let Some(dials) = this.song_sheet.as_mut() {
                             dials.tempo = (dials.tempo + step).clamp(*TEMPO.start(), *TEMPO.end());
+                            dials.pace = None;
                         }
                         cx.notify();
                     }),
@@ -1490,8 +1548,11 @@ mod window_tests {
                     "song-title",
                     "song-tempo-value",
                     "song-sheet-lyrics",
-                    "song-participation-matrix",
+                    "song-mood",
+                    "song-tonality",
+                    "song-pace",
                 ];
+                app.read_with(cx, |this, _| assert!(!this.song_advanced));
                 let before = selectors.map(|selector| cx.debug_bounds(selector).unwrap());
                 click("song-advanced", cx);
                 paint(&app, cx);
@@ -1503,6 +1564,7 @@ mod window_tests {
                     );
                 }
                 let lyrics = cx.debug_bounds("song-sheet-lyrics").unwrap();
+                assert!(cx.debug_bounds("song-participation-matrix").is_some());
                 let harmony = cx.debug_bounds("song-sheet-harmony").unwrap();
                 assert!(harmony.top() >= lyrics.bottom());
                 click("song-advanced", cx);

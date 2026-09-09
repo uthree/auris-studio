@@ -29,6 +29,7 @@ fn song_tempo_accepts_exact_and_fractional_numbers_without_changing_the_document
         app.read_with(cx, |this, _| {
             let dials = this.song_sheet.as_ref().expect("the song sheet stays open");
             assert_eq!(dials.tempo, bpm);
+            assert_eq!(dials.pace, None, "an exact BPM is an explicit choice");
             assert_eq!(song_spec(dials).tempo, bpm);
             assert_eq!(SongDial::Tempo.text(dials), bpm.to_string());
             assert!(this.prompt.is_none());

@@ -147,11 +147,9 @@ mod tests {
             this.song_sheet.as_mut().unwrap().motif = vec![0, 2, 4];
         });
         paint(&app, cx);
+        click("song-advanced", cx);
+        paint(&app, cx);
         for (id, detail) in [("song-mood-pad", false), ("song-rhythm-pad", true)] {
-            if detail {
-                click("song-advanced", cx);
-                paint(&app, cx);
-            }
             let before = app.read_with(cx, |this, _| this.song_sheet.clone().unwrap());
             // Layout also reports offscreen pads; reveal the whole gesture before pressing.
             for _ in 0..4 {

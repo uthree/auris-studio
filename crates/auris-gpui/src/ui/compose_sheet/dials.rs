@@ -102,12 +102,27 @@ pub fn transpose_label(steps: i32) -> String {
 /// pointed at a name nothing answers to is a document its parser refuses.
 pub const MAIN_CHART: &str = "main";
 
+/// Plain style names for the beginner picker, without prescribing a chord progression.
+pub fn style_key(name: &str) -> Key {
+    match name {
+        "chiptune" => Key::SongStyleChiptune,
+        "game-loop" => Key::SongStyleGameLoop,
+        "pop-band" => Key::SongStylePopBand,
+        "city-pop" => Key::SongStyleCityPop,
+        "rock" => Key::SongStyleRock,
+        "jazz-trio" => Key::SongStyleJazz,
+        "orchestral" => Key::SongStyleOrchestral,
+        "synthwave" => Key::SongStyleSynthwave,
+        "ambient" => Key::SongStyleAmbient,
+        _ => Key::SongStyleChoose,
+    }
+}
+
 /// Everything the sheet is set to.
 ///
-/// The specification's own fields, held one for one, so that reading the sheet is reading the
-/// document — with two of them turned inside out. `sections` and `charts` are ordered lists here
-/// and maps there, because **a list is what a person edits**: renaming a section in a `BTreeMap`
-/// would slide its row somewhere else in the panel while the pointer was still on it.
+/// Resolved specification values, plus optional mood-driven choices for the current editing
+/// session. `sections` and `charts` are ordered lists here and maps in the specification:
+/// renaming a section must not move its row while the pointer is still on it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SongDials {
     /// Voice model selected for the sung part.
@@ -124,6 +139,10 @@ pub struct SongDials {
     pub meter: TimeSignature,
     /// How the piece should feel.
     pub mood: Mood,
+    /// An active beginner choice; `None` retains an imported or manually edited key.
+    pub tonality: Option<Tonality>,
+    /// An active beginner choice; `None` retains an imported or manually edited tempo.
+    pub pace: Option<Pace>,
     /// The drum groove.
     pub groove: String,
     /// The seed every random decision is drawn from.
@@ -171,6 +190,52 @@ impl Default for SongDials {
     fn default() -> Self {
         song_dials(&SongSpec::default())
     }
+}
+
+/// Applies a named mood, resolving only the choices still controlled by the beginner pickers.
+pub fn set_song_mood(dials: &mut SongDials, mood: Mood) {
+    dials.mood = mood;
+    if let Some(tonality) = dials.tonality {
+        set_song_tonality(dials, tonality);
+    }
+    if let Some(pace) = dials.pace {
+        dials.tempo = pace.bpm(mood);
+    }
+    dials.motif.clear();
+}
+
+/// Selects a mode without requiring a tonic or scale name.
+pub fn set_song_tonality(dials: &mut SongDials, tonality: Tonality) {
+    dials.tonality = Some(tonality);
+    dials.key = tonality.key(dials.mood, dials.key.tonic);
+}
+
+/// Selects a speed for the whole song.
+pub fn set_song_pace(dials: &mut SongDials, pace: Pace) {
+    dials.pace = Some(pace);
+    dials.tempo = pace.bpm(dials.mood);
+    for section in &mut dials.sections {
+        section.tempo = None;
+    }
+}
+
+/// Uses a style's instruments and form with generated harmony and the current character.
+pub fn style_dials(preset: &SongPreset, previous: Option<&SongDials>) -> SongDials {
+    let mut spec = preset.spec();
+    spec.use_generated_harmony();
+    let mut dials = song_dials(&spec);
+    dials.tonality = Some(Tonality::Auto);
+    dials.pace = Some(Pace::Auto);
+    if let Some(previous) = previous {
+        dials.key = previous.key;
+        dials.tempo = previous.tempo;
+        dials.tonality = previous.tonality;
+        dials.pace = previous.pace;
+        set_song_mood(&mut dials, previous.mood);
+    } else {
+        set_song_mood(&mut dials, spec.mood);
+    }
+    dials
 }
 
 /// The specification these dials describe.
@@ -229,6 +294,12 @@ pub fn opening_dials(
     meter: TimeSignature,
 ) -> SongDials {
     let mut dials = remembered.map_or_else(SongDials::default, song_dials);
+    if remembered.is_none() && key == dials.key {
+        dials.tonality = Some(Tonality::Auto);
+    }
+    if remembered.is_none() && tempo == dials.tempo {
+        dials.pace = Some(Pace::Auto);
+    }
     dials.key = key;
     dials.tempo = tempo;
     dials.meter = meter;
@@ -276,6 +347,8 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         tempo: spec.tempo,
         meter: spec.meter,
         mood: spec.mood,
+        tonality: None,
+        pace: None,
         groove: spec.groove.clone(),
         seed: spec.seed,
         swing: spec.swing,
@@ -875,6 +948,7 @@ impl SongDial {
                 // dial has more pixels than the range has useful values.
                 let bpm = lerp(fraction, *TEMPO.start() as f32, *TEMPO.end() as f32);
                 dials.tempo = f64::from(bpm.round());
+                dials.pace = None;
             }
             SongDial::Brightness => dials.mood.brightness = fraction,
             SongDial::Energy => dials.mood.energy = fraction,
@@ -888,6 +962,12 @@ impl SongDial {
             SongDial::Dynamics => dials.dynamics = fraction,
             SongDial::Fill => dials.fill = fraction,
             SongDial::Variation => dials.variation = fraction,
+        }
+        if matches!(
+            self,
+            SongDial::Brightness | SongDial::Energy | SongDial::Tension | SongDial::Syncopation
+        ) {
+            set_song_mood(dials, dials.mood);
         }
     }
 

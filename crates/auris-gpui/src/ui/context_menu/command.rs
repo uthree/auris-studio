@@ -13,7 +13,6 @@ use gpui::{Context, Pixels, Point};
 
 use crate::app::{AurisApp, FadeEdge};
 use crate::dock::{Dock, Panel};
-use crate::ui::compose_sheet::song_dials;
 use crate::ui::prompt::{Prompt, PromptTarget};
 
 use super::timeline::progression_target;
@@ -245,6 +244,10 @@ pub enum MenuCommand {
     SongTypeMeter,
     /// Set the song sheet's mood from a named feeling.
     SongMood(&'static str),
+    /// Set a major, minor, or mood-derived mode.
+    SongTonality(Tonality),
+    /// Set the song speed in ordinary words.
+    SongPace(Pace),
     /// Set what one section of the song sheet plays, by chart name or catalogue name.
     SongSectionChords {
         /// Which section, by position in the sheet's list.
@@ -937,7 +940,17 @@ impl AurisApp {
             }
             MenuCommand::SongMood(name) => {
                 if let (Some(dials), Some(mood)) = (self.song_sheet.as_mut(), Mood::named(name)) {
-                    dials.mood = mood;
+                    crate::ui::compose_sheet::set_song_mood(dials, mood);
+                }
+            }
+            MenuCommand::SongTonality(tonality) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_song_tonality(dials, tonality);
+                }
+            }
+            MenuCommand::SongPace(pace) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_song_pace(dials, pace);
                 }
             }
             MenuCommand::SongSectionChords { section, name } => {
@@ -1049,9 +1062,10 @@ impl AurisApp {
             }
             MenuCommand::SongPreset(name) => {
                 if let Some(preset) = preset(name) {
-                    // The whole sheet, title and all. Half a preset is the arrangement of one
-                    // style at the tempo of another, which is not a style at all.
-                    self.song_sheet = Some(song_dials(&preset.spec()));
+                    self.song_sheet = Some(crate::ui::compose_sheet::style_dials(
+                        preset,
+                        self.song_sheet.as_ref(),
+                    ));
                     self.lyrics_edit = None;
                 }
             }

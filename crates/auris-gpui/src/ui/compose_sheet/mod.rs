@@ -19,6 +19,8 @@
 #[cfg(test)]
 mod density_tests;
 mod dials;
+#[cfg(test)]
+mod intent_tests;
 mod library_picker;
 mod lyrics;
 mod matrix;

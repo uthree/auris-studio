@@ -777,6 +777,14 @@ strings! {
     // The named feeling, and the four numbers behind it. A mood the dials have been nudged away
     // from matches no word, and the picker says so rather than naming the one it started at.
     SongMood { en: "Mood", ja: "曲調" }
+    SongTonality { en: "Major or minor", ja: "長調・短調" }
+    SongAutomatic { en: "Follow the mood", ja: "雰囲気に合わせる" }
+    SongMajor { en: "Major", ja: "長調" }
+    SongMinor { en: "Minor", ja: "短調" }
+    SongPace { en: "Speed", ja: "速さ" }
+    SongSlow { en: "Slow", ja: "ゆったり" }
+    SongModerate { en: "Moderate", ja: "ほどほど" }
+    SongFast { en: "Fast", ja: "速い" }
     SongMoodCustom { en: "custom", ja: "カスタム" }
     SongBrightness { en: "Brightness", ja: "明るさ" }
     SongEnergy { en: "Energy", ja: "勢い" }
@@ -792,6 +800,15 @@ strings! {
     // The form: which sections play, in what order, and what each of them is.
     SongStyle { en: "Style", ja: "スタイル" }
     SongStyleChoose { en: "Choose…", ja: "選ぶ…" }
+    SongStyleChiptune { en: "Chiptune", ja: "チップチューン" }
+    SongStyleGameLoop { en: "Looping game music", ja: "ループするゲーム音楽" }
+    SongStylePopBand { en: "Pop band", ja: "ポップバンド" }
+    SongStyleCityPop { en: "City pop", ja: "シティポップ" }
+    SongStyleRock { en: "Rock band", ja: "ロックバンド" }
+    SongStyleJazz { en: "Jazz trio", ja: "ジャズトリオ" }
+    SongStyleOrchestral { en: "Orchestra", ja: "オーケストラ" }
+    SongStyleSynthwave { en: "Synthwave", ja: "シンセウェーブ" }
+    SongStyleAmbient { en: "Ambient", ja: "アンビエント" }
     SongEnding { en: "Ending", ja: "終わり方" }
     SongEndingHeld { en: "Held chord", ja: "終止音" }
     SongEndingFade { en: "Fade out", ja: "フェードアウト" }
@@ -814,7 +831,7 @@ strings! {
     SongTempoHint { en: "20–400 BPM; clear to follow the song", ja: "20〜400 BPM・空欄で曲に合わせる" }
     SongAdvanced { en: "Detailed settings", ja: "詳細設定" }
     SongBasic { en: "Back to basics", ja: "基本設定に戻る" }
-    SongStartHint { en: "Choose a style, adjust the mood, then create your song. Lyrics are optional.", ja: "スタイルを選び、雰囲気を調整して曲を作りましょう。歌詞は空欄でも作れます。" }
+    SongStartHint { en: "Choose a mood, major or minor, and a speed. Chords are composed for you. A style supplies the instruments; lyrics are optional.", ja: "雰囲気・長調か短調・速さを選ぶと、コード進行は自動で作ります。スタイルで楽器編成を選べます。歌詞は空欄でも作れます。" }
     SongAdvancedHint { en: "Adjust the form, chords, rhythm and instruments. Returning to basics keeps every setting.", ja: "曲の構成・コード進行・リズム・楽器を調整できます。基本設定に戻っても、設定は保持されます。" }
     SongVerseLabel { en: "Verse {n}", ja: "{n}番 Aメロ" }
     SongPreChorusLabel { en: "Pre-Chorus {n}", ja: "{n}番 Bメロ" }
