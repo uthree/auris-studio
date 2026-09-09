@@ -494,6 +494,22 @@ impl AurisApp {
             )
             .into_any_element(),
         );
+        let sound_text = match dials.sound {
+            Some(ScaleChoice::Auto) => {
+                format!("{} ({})", self.t(Key::SongSoundAuto), dials.key.to_text())
+            }
+            Some(sound) => self.t(super::menus::sound_label(sound)).to_string(),
+            None => dials.key.to_text(),
+        };
+        rows.push(
+            self.sheet_picker(
+                "song-sound",
+                Key::SongSound,
+                sound_text,
+                Self::opens_menu(cx, |this, at| this.song_sound_menu(at)),
+            )
+            .into_any_element(),
+        );
         rows.push(
             self.sheet_picker(
                 "song-pace",
@@ -1550,6 +1566,7 @@ mod window_tests {
                     "song-sheet-lyrics",
                     "song-mood",
                     "song-tonality",
+                    "song-sound",
                     "song-pace",
                 ];
                 app.read_with(cx, |this, _| assert!(!this.song_advanced));

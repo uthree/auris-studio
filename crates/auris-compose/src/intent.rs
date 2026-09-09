@@ -29,7 +29,7 @@ impl crate::SongSpec {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tonality {
-    /// Dark moods use minor; the other moods use major.
+    /// Choose a scale from the mood, including modal colours.
     #[default]
     Auto,
     /// A major scale.
@@ -41,15 +41,70 @@ pub enum Tonality {
 impl Tonality {
     /// Resolves the mode while retaining the chosen tonic.
     pub fn key(self, mood: Mood, tonic: PitchClass) -> Key {
-        let minor = self == Self::Minor || (self == Self::Auto && mood.brightness < 0.5);
-        Key::new(
-            tonic,
-            if minor {
-                ScaleId::Minor
-            } else {
-                ScaleId::Major
+        ScaleChoice::Auto.key(self, mood, tonic)
+    }
+}
+
+/// An optional harmonic character, independent of instrumentation and tempo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScaleChoice {
+    /// Follow an explicit tonality, or choose from the mood when both are automatic.
+    #[default]
+    Auto,
+    /// A straightforward bright sound.
+    Major,
+    /// A subdued dark sound.
+    Minor,
+    /// Minor with a brighter sixth.
+    Dorian,
+    /// Major with a floating raised fourth.
+    Lydian,
+    /// Major with a relaxed lowered seventh.
+    Mixolydian,
+    /// Minor with a tense lowered second.
+    Phrygian,
+}
+
+impl ScaleChoice {
+    /// All choices offered by the beginner sound picker.
+    pub const ALL: [Self; 7] = [
+        Self::Auto,
+        Self::Major,
+        Self::Minor,
+        Self::Dorian,
+        Self::Lydian,
+        Self::Mixolydian,
+        Self::Phrygian,
+    ];
+
+    /// Resolves sound, then tonality, then mood, retaining the tonic.
+    pub fn key(self, tonality: Tonality, mood: Mood, tonic: PitchClass) -> Key {
+        let scale = match self {
+            Self::Major => ScaleId::Major,
+            Self::Minor => ScaleId::Minor,
+            Self::Dorian => ScaleId::Dorian,
+            Self::Lydian => ScaleId::Lydian,
+            Self::Mixolydian => ScaleId::Mixolydian,
+            Self::Phrygian => ScaleId::Phrygian,
+            Self::Auto => match tonality {
+                Tonality::Major => ScaleId::Major,
+                Tonality::Minor => ScaleId::Minor,
+                Tonality::Auto if mood.brightness < 0.5 => {
+                    if mood.tension >= 0.75 {
+                        ScaleId::Phrygian
+                    } else if mood.brightness >= 0.3 && mood.energy >= 0.55 {
+                        ScaleId::Dorian
+                    } else {
+                        ScaleId::Minor
+                    }
+                }
+                Tonality::Auto if mood.energy < 0.5 && mood.tension >= 0.55 => ScaleId::Lydian,
+                Tonality::Auto if mood.syncopation >= 0.65 => ScaleId::Mixolydian,
+                Tonality::Auto => ScaleId::Major,
             },
-        )
+        };
+        Key::new(tonic, scale)
     }
 }
 
@@ -83,7 +138,47 @@ impl Pace {
 
 #[cfg(test)]
 mod tests {
+    use crate::theory::scale::ScaleId;
     use crate::{SongSpec, frame};
+
+    #[test]
+    fn mood_selects_modal_colours_and_explicit_settings_win() {
+        for (mood, expected) in [
+            ("bright", ScaleId::Major),
+            ("dark", ScaleId::Minor),
+            ("epic", ScaleId::Dorian),
+            ("dreamy", ScaleId::Lydian),
+            ("funky", ScaleId::Mixolydian),
+            ("tense", ScaleId::Phrygian),
+        ] {
+            let spec = SongSpec::parse(&format!("mood = '{mood}'")).unwrap();
+            assert_eq!(spec.key.scale, expected, "{mood}");
+            for mode in ["major", "minor"] {
+                let explicit =
+                    SongSpec::parse(&format!("mood = '{mood}'\ntonality = '{mode}'")).unwrap();
+                assert_eq!(explicit.key.scale, ScaleId::parse(mode).unwrap());
+            }
+        }
+        for mode in [
+            "major",
+            "minor",
+            "dorian",
+            "lydian",
+            "mixolydian",
+            "phrygian",
+        ] {
+            let text =
+                format!("style = 'pop-band'\nmood = 'dark'\ntonality = 'minor'\nsound = '{mode}'");
+            let spec = SongSpec::parse(&text).unwrap();
+            assert_eq!(spec.key.scale, ScaleId::parse(mode).unwrap());
+            assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
+            let explicit = SongSpec::parse(&format!("{text}\nkey = 'Eb harmonic-minor'")).unwrap();
+            assert_eq!(explicit.key.to_text(), "Eb harmonic-minor");
+            let explicit = SongSpec::parse(&format!("{text}\nscale = 'locrian'")).unwrap();
+            assert_eq!(explicit.key.scale, ScaleId::Locrian);
+        }
+        assert!(SongSpec::parse("sound = 'unknown'").is_err());
+    }
 
     #[test]
     fn a_dark_minor_song_needs_no_chord_or_tempo_knowledge() {

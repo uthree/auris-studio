@@ -448,7 +448,10 @@ pub mod spec_reference {
             "A specification is TOML; every field has a default, so start small and only say \
              what should differ. Start from an idea:\n\n{DARK_SONG}\n\n\
              tonality: auto, major, minor. pace: auto, slow, moderate, fast. \
-             Auto follows the mood. Explicit key/scale and tempo override these choices. \
+             sound: auto, major, minor, dorian, lydian, mixolydian, phrygian. \
+             Explicit sound overrides tonality; when both are auto, mood chooses the scale: \
+             bright=major, dark=minor, epic=dorian, dreamy=lydian, funky=mixolydian, tense=phrygian. \
+             Explicit key/scale and tempo override these choices. \
              style supplies instruments and form, with newly generated chords; use chords \
              to specify your own progression. Saved specs contain the resolved settings.\n\n\
              The smallest useful song:\n\n{HELLO}\n\nAnd most of the \

@@ -39,7 +39,7 @@ pub use auris_core::theory;
 pub use auris_core::rng;
 
 pub use analysis::{Reading, detect_key, harmonise, motif_of, read_melody};
-pub use intent::{Pace, Tonality};
+pub use intent::{Pace, ScaleChoice, Tonality};
 pub use metrics::{pitch_class_entropy, syncopation};
 pub use perform::{clip_performance, part_performance};
 pub use performance_style::PerformanceStyle;

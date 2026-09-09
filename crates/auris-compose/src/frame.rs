@@ -301,7 +301,8 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
         }
         // Which mode the degree is taken from. A borrow moves it into the parallel one, which is
         // where a minor iv in a major key comes from and the cheapest colour in the book.
-        let source = if borrow {
+        let modal = crate::progression::modal_approach(event.key).is_some();
+        let source = if borrow && !modal {
             event.key.parallel()
         } else {
             event.key
@@ -321,7 +322,16 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
             // Only over a seventh, which is what `Mood::ninth_rate` already says it is. On its
             // own it made an add9 of a major triad and nothing whatever of a minor one.
             if ninth {
-                chord.quality = chord.quality.with_ninth();
+                let extended = chord.quality.with_ninth();
+                if !modal
+                    || extended.intervals().iter().all(|&interval| {
+                        source
+                            .scale
+                            .contains(source.tonic, chord.root.transposed(interval))
+                    })
+                {
+                    chord.quality = extended;
+                }
             }
         }
         if chord == event.chord {
@@ -389,7 +399,7 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
     last.chord = dominant;
 }
 
-/// Turns the last chord of a section into the key's own dominant, so the join is a cadence.
+/// Prepares a section arrival with a tonal dominant or a characteristic modal chord.
 ///
 /// The turnaround, and the reachable half of what a cadence-aware composer means: a piece built
 /// on a four-bar loop ran that loop straight across every section join, so nothing in the
@@ -407,12 +417,20 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
 /// *relative* major, and a dominant prepared for a tonic that never comes is a question with the
 /// wrong answer.
 ///
-/// A final bar already on the tonic or the dominant is left alone — the first has its own kind
-/// of close and the second needs no help.
+/// A final bar already on the tonic or the chosen approach is left alone. Modal approaches
+/// preserve the scale's character: IV for Dorian, II for Lydian and Phrygian, VII for Mixolydian.
 fn turn_around(events: &mut [HarmonicEvent], key: Key) {
     let Some(last) = events.last_mut() else {
         return;
     };
+    if let Some(approach) = crate::progression::modal_approach(key) {
+        let chord = approach.chord_in(key);
+        if last.chord.root != key.tonic && last.chord.root != chord.root {
+            last.numeral = approach;
+            last.chord = chord;
+        }
+        return;
+    }
     // The same construction `lead_into` uses, for the same reason: what a dominant is does not
     // vary with the mode of the key it belongs to.
     let dominant = Chord::new(key.tonic.transposed(7), Quality::Dominant7);
@@ -649,6 +667,33 @@ mod tests {
         let frame = plan(&spec(r#"form = "verse chorus verse chorus""#));
         let instances: Vec<usize> = frame.sections.iter().map(|s| s.instance).collect();
         assert_eq!(instances, [1, 1, 2, 2, 1], "and the ending is played once");
+    }
+
+    #[test]
+    fn modal_colour_and_arrivals_retain_the_selected_scale() {
+        for mode in ["dorian", "lydian", "mixolydian", "phrygian"] {
+            for ending in ["held", "loop", "none"] {
+                for seed in 0..32 {
+                    let song = spec(&format!(
+                        "key = 'D {mode}'\nseed = {seed}\nmood = 'tense'\ntension = 1.0\nending = '{ending}'\nform = 'verse chorus verse chorus'\n[section.verse]\nbars = 4\n[section.chorus]\nbars = 7"
+                    ));
+                    let frame = plan(&song);
+                    for section in &frame.sections {
+                        for event in &section.events {
+                            assert_eq!(event.chord, event.numeral.chord_in(event.key));
+                            assert!(
+                                event.chord.quality.intervals().iter().all(|&i| event
+                                    .key
+                                    .scale
+                                    .contains(event.key.tonic, event.chord.root.transposed(i))),
+                                "{mode} {ending} seed {seed}: {}",
+                                event.chord
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

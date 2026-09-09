@@ -1686,6 +1686,8 @@ mod tests {
         );
 
         // Minor harmony keeps its dominant major while other chords follow the mood.
+        // The borrowed sixth now comes from parallel major, and its numeral reads back to
+        // the same pitch even though the natural sixth is outside the song's scale.
         assert_eq!(
             fingerprint(
                 r#"
@@ -1697,9 +1699,9 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | Am7 Fm9 Dm7 Dm E Am7 Fm7 Cmaj7 E7 |\n\
+            "verse·1 A minor | Am7 Gbm9 Dm7 Dm E Am7 Gbm7 Cmaj7 E7 |\n\
              ending·1 A minor | Am |\n\
-             253 notes, digest 9e021b6c0474b774\n"
+             253 notes, digest d36091242b7e9bed\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture

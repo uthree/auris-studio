@@ -1,0 +1,7 @@
+# Dark performance with a brighter minor sound; no chord notation is needed.
+title = "Light in the Shade"
+style = "pop-band"
+mood = "dark"
+sound = "dorian"
+pace = "moderate"
+seed = 42

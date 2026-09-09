@@ -988,7 +988,13 @@ pub mod composition {
     //!
     //! `style` supplies the instruments and form with generated harmony. `tonality` accepts
     //! `auto`, `major`, or `minor`; `pace` accepts `auto`, `slow`, `moderate`, or `fast`.
-    //! Automatic choices follow the mood. Explicit `key`/`scale` and `tempo` take precedence.
+    //! Optional `sound` accepts `auto`, `major`, `minor`, `dorian`, `lydian`, `mixolydian`, or
+    //! `phrygian`. An explicit sound takes precedence over tonality. With both automatic,
+    //! dreamy moods choose Lydian, epic moods Dorian, funky moods Mixolydian, and tense moods
+    //! Phrygian; ordinary bright and dark moods keep major and minor. These are expressive
+    //! defaults, not promises about how a scale must feel. The generator shares modal phrase
+    //! shapes, building chords from the selected scale and retaining its characteristic tones
+    //! through chord colouring and section arrivals. Explicit `key`/`scale` and `tempo` win.
     //! The song sheet uses these same choices, while the saved specification contains their
     //! resolved musical values. Exact key, rhythmic detail and arrangement live in its advanced view.
     //!

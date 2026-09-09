@@ -272,6 +272,8 @@ struct SongDoc {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tonality: Option<crate::Tonality>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    sound: Option<crate::ScaleChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pace: Option<crate::Pace>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     singer: Option<String>,
@@ -599,11 +601,15 @@ impl SongDoc {
 
         // Words supply defaults; an explicit key/scale or BPM is always authoritative.
         let has_intent = self.mood.is_some() || self.style.is_some();
-        if self.key.is_none() && self.scale.is_none() && (has_intent || self.tonality.is_some()) {
-            spec.key = self
-                .tonality
-                .unwrap_or_default()
-                .key(spec.mood, spec.key.tonic);
+        if self.key.is_none()
+            && self.scale.is_none()
+            && (has_intent || self.tonality.is_some() || self.sound.is_some())
+        {
+            spec.key = self.sound.unwrap_or_default().key(
+                self.tonality.unwrap_or_default(),
+                spec.mood,
+                spec.key.tonic,
+            );
         }
         if self.tempo.is_none() && (has_intent || self.pace.is_some()) {
             spec.tempo = self.pace.unwrap_or_default().bpm(spec.mood);
@@ -1017,6 +1023,7 @@ impl From<&SongSpec> for SongDoc {
         Self {
             style: None,
             tonality: None,
+            sound: None,
             pace: None,
             singer: spec.singer.clone(),
             singer_speaker: spec.singer_speaker.clone(),

@@ -781,6 +781,14 @@ strings! {
     SongAutomatic { en: "Follow the mood", ja: "雰囲気に合わせる" }
     SongMajor { en: "Major", ja: "長調" }
     SongMinor { en: "Minor", ja: "短調" }
+    SongSound { en: "Sound", ja: "響き" }
+    SongSoundAuto { en: "Automatic", ja: "おまかせ" }
+    SongSoundMajor { en: "Bright (Major)", ja: "素直で明るい（メジャー）" }
+    SongSoundMinor { en: "Subdued (Minor)", ja: "しっとり暗い（マイナー）" }
+    SongSoundDorian { en: "Dark with warmth (Dorian)", ja: "暗さの中に明るさ（ドリアン）" }
+    SongSoundLydian { en: "Floating (Lydian)", ja: "浮遊感（リディアン）" }
+    SongSoundMixolydian { en: "Bright and mellow (Mixolydian)", ja: "明るく少し渋い（ミクソリディアン）" }
+    SongSoundPhrygian { en: "Tense and dark (Phrygian)", ja: "張りつめた暗さ（フリジアン）" }
     SongPace { en: "Speed", ja: "速さ" }
     SongSlow { en: "Slow", ja: "ゆったり" }
     SongModerate { en: "Moderate", ja: "ほどほど" }

@@ -15,7 +15,31 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use super::dials::*;
 use super::lyrics::section_label;
 
+pub(super) fn sound_label(sound: ScaleChoice) -> Key {
+    match sound {
+        ScaleChoice::Auto => Key::SongSoundAuto,
+        ScaleChoice::Major => Key::SongSoundMajor,
+        ScaleChoice::Minor => Key::SongSoundMinor,
+        ScaleChoice::Dorian => Key::SongSoundDorian,
+        ScaleChoice::Lydian => Key::SongSoundLydian,
+        ScaleChoice::Mixolydian => Key::SongSoundMixolydian,
+        ScaleChoice::Phrygian => Key::SongSoundPhrygian,
+    }
+}
+
 impl AurisApp {
+    pub(super) fn song_sound_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
+        let mut menu = ContextMenu::new(anchor, self.t(Key::SongSound));
+        for sound in ScaleChoice::ALL {
+            menu = menu.toggle(
+                self.t(sound_label(sound)),
+                MenuCommand::SongSound(sound),
+                self.song_sheet.as_ref().and_then(|d| d.sound) == Some(sound),
+            );
+        }
+        menu
+    }
+
     pub(super) fn song_tonality_menu(&self, anchor: gpui::Point<gpui::Pixels>) -> ContextMenu {
         let mut menu = ContextMenu::new(anchor, self.t(Key::SongTonality));
         for (choice, label) in [

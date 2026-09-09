@@ -141,6 +141,8 @@ pub struct SongDials {
     pub mood: Mood,
     /// An active beginner choice; `None` retains an imported or manually edited key.
     pub tonality: Option<Tonality>,
+    /// An optional sound character; `None` retains a manually specified scale.
+    pub sound: Option<ScaleChoice>,
     /// An active beginner choice; `None` retains an imported or manually edited tempo.
     pub pace: Option<Pace>,
     /// The drum groove.
@@ -196,7 +198,10 @@ impl Default for SongDials {
 pub fn set_song_mood(dials: &mut SongDials, mood: Mood) {
     dials.mood = mood;
     if let Some(tonality) = dials.tonality {
-        set_song_tonality(dials, tonality);
+        dials.key = dials
+            .sound
+            .unwrap_or_default()
+            .key(tonality, mood, dials.key.tonic);
     }
     if let Some(pace) = dials.pace {
         dials.tempo = pace.bpm(mood);
@@ -207,7 +212,25 @@ pub fn set_song_mood(dials: &mut SongDials, mood: Mood) {
 /// Selects a mode without requiring a tonic or scale name.
 pub fn set_song_tonality(dials: &mut SongDials, tonality: Tonality) {
     dials.tonality = Some(tonality);
+    dials.sound = Some(ScaleChoice::Auto);
     dials.key = tonality.key(dials.mood, dials.key.tonic);
+}
+
+/// Selects a sound, keeping it explicit across mood and style changes.
+pub fn set_song_sound(dials: &mut SongDials, sound: ScaleChoice) {
+    dials.sound = Some(sound);
+    let tonality = if sound == ScaleChoice::Auto {
+        Tonality::Auto
+    } else if sound
+        .key(Tonality::Auto, dials.mood, dials.key.tonic)
+        .is_minor()
+    {
+        Tonality::Minor
+    } else {
+        Tonality::Major
+    };
+    dials.tonality = Some(tonality);
+    dials.key = sound.key(tonality, dials.mood, dials.key.tonic);
 }
 
 /// Selects a speed for the whole song.
@@ -225,11 +248,13 @@ pub fn style_dials(preset: &SongPreset, previous: Option<&SongDials>) -> SongDia
     spec.use_generated_harmony();
     let mut dials = song_dials(&spec);
     dials.tonality = Some(Tonality::Auto);
+    dials.sound = Some(ScaleChoice::Auto);
     dials.pace = Some(Pace::Auto);
     if let Some(previous) = previous {
         dials.key = previous.key;
         dials.tempo = previous.tempo;
         dials.tonality = previous.tonality;
+        dials.sound = previous.sound;
         dials.pace = previous.pace;
         set_song_mood(&mut dials, previous.mood);
     } else {
@@ -296,6 +321,7 @@ pub fn opening_dials(
     let mut dials = remembered.map_or_else(SongDials::default, song_dials);
     if remembered.is_none() && key == dials.key {
         dials.tonality = Some(Tonality::Auto);
+        dials.sound = Some(ScaleChoice::Auto);
     }
     if remembered.is_none() && tempo == dials.tempo {
         dials.pace = Some(Pace::Auto);
@@ -348,6 +374,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         meter: spec.meter,
         mood: spec.mood,
         tonality: None,
+        sound: None,
         pace: None,
         groove: spec.groove.clone(),
         seed: spec.seed,

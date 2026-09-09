@@ -246,6 +246,8 @@ pub enum MenuCommand {
     SongMood(&'static str),
     /// Set a major, minor, or mood-derived mode.
     SongTonality(Tonality),
+    /// Selects a harmonic character without requiring theory vocabulary.
+    SongSound(ScaleChoice),
     /// Set the song speed in ordinary words.
     SongPace(Pace),
     /// Set what one section of the song sheet plays, by chart name or catalogue name.
@@ -946,6 +948,11 @@ impl AurisApp {
             MenuCommand::SongTonality(tonality) => {
                 if let Some(dials) = self.song_sheet.as_mut() {
                     crate::ui::compose_sheet::set_song_tonality(dials, tonality);
+                }
+            }
+            MenuCommand::SongSound(sound) => {
+                if let Some(dials) = self.song_sheet.as_mut() {
+                    crate::ui::compose_sheet::set_song_sound(dials, sound);
                 }
             }
             MenuCommand::SongPace(pace) => {

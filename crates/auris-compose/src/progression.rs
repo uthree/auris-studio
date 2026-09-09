@@ -1,8 +1,8 @@
 //! Generated harmony is a sequence of short, complete phrases.
 //!
 //! Choose a phrase in the song's mode, fit it to two to four bars, and repeat the opening
-//! phrase every other time to give the section an identity. Busy moods may add a half-bar
-//! preparation before V. Chord colour and the arrival into the next section belong to `frame`.
+//! phrase every other time to give the section an identity. Busy tonal phrases may add a
+//! half-bar preparation before V. Chord colour and section arrivals belong to `frame`.
 
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::Mood;
@@ -10,26 +10,62 @@ use crate::theory::chart::{Chart, ChartMode, ChartOrigin};
 use crate::theory::chord::Quality;
 use crate::theory::key::Key;
 use crate::theory::numeral::Numeral;
+use crate::theory::scale::ScaleId;
 
 /// Complete phrases, so each choice already has an opening, motion and a destination.
-const MAJOR_PHRASES: [[&str; 4]; 6] = [
-    ["I", "vi", "IV", "V"],
-    ["I", "iii", "IV", "V"],
-    ["I", "IV", "ii", "V"],
-    ["vi", "IV", "I", "V"],
-    ["IV", "V", "iii", "vi"],
-    ["I", "V", "vi", "IV"],
+const MAJOR_PHRASES: [[u8; 4]; 6] = [
+    [1, 6, 4, 5],
+    [1, 3, 4, 5],
+    [1, 4, 2, 5],
+    [6, 4, 1, 5],
+    [4, 5, 3, 6],
+    [1, 5, 6, 4],
 ];
 
-/// Minor phrases spell the flat degrees explicitly and use the harmonic-minor dominant.
-const MINOR_PHRASES: [[&str; 4]; 6] = [
-    ["i", "bVI", "iv", "V"],
-    ["i", "iv", "bVII", "bVI"],
-    ["i", "bIII", "bVI", "V"],
-    ["i", "bVII", "bVI", "V"],
-    ["bVI", "bVII", "i", "V"],
-    ["i", "bVI", "bIII", "bVII"],
+/// Minor phrases read their degrees directly from the scale.
+const MINOR_PHRASES: [[u8; 4]; 6] = [
+    [1, 6, 4, 5],
+    [1, 4, 7, 6],
+    [1, 3, 6, 5],
+    [1, 7, 6, 5],
+    [6, 7, 1, 5],
+    [1, 6, 3, 7],
 ];
+
+/// A characteristic chord and a supporting chord are enough to adapt the shared modal phrases.
+fn modal_degrees(scale: ScaleId) -> Option<(u8, u8)> {
+    match scale {
+        ScaleId::Dorian => Some((4, 7)),
+        ScaleId::Lydian => Some((2, 6)),
+        ScaleId::Mixolydian => Some((7, 4)),
+        ScaleId::Phrygian => Some((2, 4)),
+        _ => None,
+    }
+}
+
+/// The modal approach to the tonic; these modes do not need a tonal dominant cadence.
+pub(crate) fn modal_approach(key: Key) -> Option<Numeral> {
+    modal_degrees(key.scale).map(|(colour, _)| degree_numeral(colour, key))
+}
+
+fn phrases(key: Key) -> [[u8; 4]; 6] {
+    if let Some((c, s)) = modal_degrees(key.scale) {
+        // Every phrase anchors the tonic and visits the characteristic chord. Reusing this
+        // shape keeps new modes a vocabulary change, not another progression algorithm.
+        [
+            [1, c, s, c],
+            [1, s, c, 1],
+            [1, c, 1, c],
+            [1, s, 1, c],
+            [1, c, s, 1],
+            [1, c, 1, s],
+        ]
+    } else if key.is_minor() {
+        MINOR_PHRASES
+    } else {
+        MAJOR_PHRASES
+    }
+}
 
 /// Generates a section's harmony from its seed, chart name, key, mood and length.
 ///
@@ -37,12 +73,8 @@ const MINOR_PHRASES: [[&str; 4]; 6] = [
 /// Rhythm has its own random stream, so changing energy or tension keeps the phrase chords.
 pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usize) -> Chart {
     let mode = ChartMode::of(key);
-    let minor = mode == ChartMode::Minor;
-    let phrases = if minor {
-        &MINOR_PHRASES
-    } else {
-        &MAJOR_PHRASES
-    };
+    let phrases = phrases(key);
+    let modal = modal_degrees(key.scale).is_some();
     let mut rng = Rng::stream(seed, &[RngKey::Word("progression"), RngKey::Word(name)]);
     let mut rhythm = Rng::stream(seed, &[RngKey::Word("harmonic-rhythm"), RngKey::Word(name)]);
     let opening = rng.below(phrases.len());
@@ -61,13 +93,17 @@ pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usiz
             } else {
                 (offset * 3).div_ceil(length - 1)
             };
-            let state = phrase[slot];
+            let state = if length < 4 && offset == 1 {
+                modal_degrees(key.scale).map_or(phrase[slot], |(colour, _)| colour)
+            } else {
+                phrase[slot]
+            };
             let mut bar = Vec::with_capacity(2);
             let split = rhythm.chance(split_rate);
-            if offset > 0 && state == "V" && split {
-                bar.push(state_numeral(if minor { "iv" } else { "ii" }, minor));
+            if offset > 0 && !modal && state == 5 && split {
+                bar.push(degree_numeral(if key.is_minor() { 4 } else { 2 }, key));
             }
-            bar.push(state_numeral(state, minor));
+            bar.push(degree_numeral(state, key));
             bars.push(bar);
         }
     }
@@ -82,10 +118,19 @@ fn phrase_lengths(bars: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Keep V major in minor, including when the planner adds chord colour.
-fn state_numeral(state: &str, minor: bool) -> Numeral {
-    let numeral = Numeral::parse(state).expect("the phrase vocabulary parses");
-    if minor && state == "V" {
+/// Stack the chosen scale's thirds; only tonal minor asks for a raised leading tone.
+fn degree_numeral(degree: u8, key: Key) -> Numeral {
+    let numeral = Numeral::new(degree, false).as_diatonic(key);
+    if degree == 5
+        && matches!(
+            key.scale,
+            ScaleId::Minor
+                | ScaleId::HarmonicMinor
+                | ScaleId::MelodicMinor
+                | ScaleId::MinorPentatonic
+                | ScaleId::Blues
+        )
+    {
         numeral.with_quality(Quality::Major)
     } else {
         numeral
@@ -96,6 +141,53 @@ fn state_numeral(state: &str, minor: bool) -> Numeral {
 mod tests {
     use super::*;
     use auris_core::time::{TICKS_PER_QUARTER, Ticks};
+
+    #[test]
+    fn modal_phrases_anchor_the_tonic_and_sound_the_characteristic_note() {
+        for (scale, character) in [
+            ("dorian", 9),
+            ("lydian", 6),
+            ("mixolydian", 10),
+            ("phrygian", 1),
+        ] {
+            for tonic in ["C", "D", "Eb", "F#"] {
+                let key = Key::parse(&format!("{tonic} {scale}")).unwrap();
+                for seed in 0..32 {
+                    for bars in [0, 1, 2, 3, 4, 5, 7, 8, 13] {
+                        let chart =
+                            invent_chart(seed, "verse", key, Mood::named("tense").unwrap(), bars);
+                        assert_eq!(chart.bar_count(), bars);
+                        assert_eq!(
+                            chart,
+                            invent_chart(seed, "verse", key, Mood::named("tense").unwrap(), bars)
+                        );
+                        let events = chart.resolve(key, Ticks(TICKS_PER_QUARTER * 4));
+                        for event in &events {
+                            assert!(event.chord.quality.intervals().iter().all(|&i| {
+                                key.scale
+                                    .contains(key.tonic, event.chord.root.transposed(i))
+                            }));
+                        }
+                        if bars > 0 {
+                            assert_eq!(events[0].chord.root, key.tonic);
+                        }
+                        if bars >= 4 {
+                            assert!(
+                                events.iter().any(|event| event
+                                    .chord
+                                    .quality
+                                    .intervals()
+                                    .iter()
+                                    .any(|&i| event.chord.root.transposed(i)
+                                        == key.tonic.transposed(character))),
+                                "{tonic} {scale}, seed {seed}, bars {bars}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn phrases_cover_every_length_and_stay_in_the_key() {
