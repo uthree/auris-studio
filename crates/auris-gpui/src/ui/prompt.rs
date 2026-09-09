@@ -1338,6 +1338,8 @@ impl AurisApp {
         let (body, buttons) = match &prompt.body {
             PromptBody::Text { target, field } => (
                 div()
+                    .w_full()
+                    .debug_selector(|| "prompt-text-body".into())
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -1472,6 +1474,12 @@ impl AurisApp {
                         .child(
                             div()
                                 .id("prompt-body")
+                                .debug_selector(|| "prompt-body".into())
+                                // Stretch the field through the scroll container. A block
+                                // wrapper can resolve its percentage width to just the border.
+                                .w_full()
+                                .flex()
+                                .flex_col()
                                 .min_h_0()
                                 .overflow_y_scroll()
                                 .child(body),
@@ -1492,6 +1500,7 @@ impl AurisApp {
         theme: &Theme,
     ) -> impl IntoElement + use<> {
         div()
+            .debug_selector(|| "prompt-text-field".into())
             .h(FIELD_HEIGHT)
             .w_full()
             .rounded(Metrics::RADIUS_SM)
@@ -2355,6 +2364,38 @@ mod window_tests {
     use crate::harness::{
         CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
     };
+
+    #[gpui::test]
+    fn the_audio_prompt_keeps_a_visible_field_above_its_wrapped_hint(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            this.open_reference_match(cx);
+            this.open_prompt(Prompt::new(
+                "Describe the target sound",
+                PromptTarget::AudioMatchText,
+                "Warm piano with soft drums and a relaxed groove.",
+            ));
+        });
+        for language in [
+            auris_i18n::Language::English,
+            auris_i18n::Language::Japanese,
+        ] {
+            app.update(cx, |this, _| this.language = language);
+            for (width, height) in [(1650.0, 915.0), (900.0, 650.0), (640.0, 480.0)] {
+                resize(&app, cx, gpui::size(gpui::px(width), gpui::px(height)));
+                let bounds = cx.debug_bounds("prompt-text-field").unwrap();
+                let body = cx.debug_bounds("prompt-text-body").unwrap();
+                let scroll = cx.debug_bounds("prompt-body").unwrap();
+                assert!(bounds.size.height >= super::FIELD_HEIGHT, "{bounds:?}");
+                assert!(
+                    bounds.size.width >= gpui::px(280.0),
+                    "field: {bounds:?}; body: {body:?}; scroll: {scroll:?}"
+                );
+                assert!(bounds.top() >= gpui::px(0.0));
+                assert!(bounds.bottom() <= gpui::px(height));
+            }
+        }
+    }
 
     #[gpui::test]
     fn a_prompt_opened_over_the_menu_bar_takes_text_and_return(cx: &mut TestAppContext) {

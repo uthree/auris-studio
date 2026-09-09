@@ -100,13 +100,22 @@ fn stop_invalidates_a_preview_that_is_still_being_prepared(cx: &mut TestAppConte
     app.update(cx, |this, cx| {
         configure(this, cx);
         this.preview_reference_match(0, cx);
+        assert_eq!(this.reference_match.preview.as_ref().unwrap().selection, 0);
+        assert!(
+            this.reference_match
+                .preview
+                .as_ref()
+                .unwrap()
+                .status
+                .is_none()
+        );
         let requested = this.reference_match.preview_generation;
         this.stop_reference_preview();
         assert!(this.reference_match.preview_generation > requested);
     });
     cx.run_until_parked();
     app.read_with(cx, |this, _| {
-        assert!(!this.reference_match.previewing);
+        assert!(this.reference_match.preview.is_none());
         assert!(!this.session.can_undo());
     });
 }
@@ -168,6 +177,8 @@ fn adopting_the_retained_project_is_one_undo(cx: &mut TestAppContext) {
         this.reference_match.comparison = Some(MatchComparison { snapshot, report });
         assert_eq!(this.project(), &before);
         assert!(this.apply_reference_match(cx));
+        assert!(!this.reference_match.open);
+        assert!(this.reference_match.comparison.is_none());
         let after = this.project().clone();
         assert_ne!(after, before);
         this.session.undo();
@@ -360,4 +371,149 @@ fn clap_reference_requires_audio_but_text_does_not() {
     assert!(state.input_problem().is_none());
     state.text_prompt.clear();
     assert_eq!(state.input_problem(), Some(Key::AudioMatchPromptRequired));
+}
+
+#[gpui::test]
+fn audio_match_status_and_actions_stay_visible_in_short_windows(cx: &mut TestAppContext) {
+    let (app, cx, _, clip) = with_a_clip(cx);
+    app.update(cx, |this, cx| {
+        this.session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        configure(this, cx);
+        assert!(this.start_reference_match(cx));
+    });
+    cx.run_until_parked();
+    let (snapshot, report) = app.read_with(cx, |this, _| {
+        let result = this.reference_match.comparison.as_ref().unwrap();
+        (result.snapshot.clone(), result.report.clone())
+    });
+    for language in [Language::English, Language::Japanese] {
+        app.update(cx, |this, _| this.language = language);
+        for (width, height) in [(900.0, 650.0), (640.0, 480.0)] {
+            for (case, selector) in [
+                "reference-match-input-problem",
+                "reference-match-progress",
+                "reference-match-progress",
+                "reference-match-error",
+                "reference-match-cancelled",
+                "reference-match-complete",
+                "reference-match-stale",
+                "reference-match-preview-status",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                app.update(cx, |this, _| {
+                    let state = &mut this.reference_match;
+                    state.objective = snapshot.objective;
+                    state.comparison = None;
+                    state.running = None;
+                    state.error = None;
+                    state.cancelled = false;
+                    state.preview = None;
+                    match case {
+                        0 => state.objective = MatchObjective::ClapText,
+                        1 | 2 => {
+                            state.objective = MatchObjective::ClapReference;
+                            let mut snapshot = snapshot.clone();
+                            snapshot.objective = state.objective;
+                            state.running = Some(MatchControl {
+                                snapshot,
+                                cancel: Arc::new(AtomicBool::new(case == 2)),
+                                completed: Arc::new(AtomicUsize::new(2)),
+                                fraction: Arc::new(AtomicU32::new(0.5_f32.to_bits())),
+                                prepared: Arc::new(AtomicBool::new(false)),
+                            });
+                        }
+                        3 => state.error = Some("Model loading failed. ".repeat(180)),
+                        4 => state.cancelled = true,
+                        5 | 6 => {
+                            let mut snapshot = snapshot.clone();
+                            if case == 6 {
+                                snapshot.generation = snapshot.generation.wrapping_sub(1);
+                            }
+                            state.comparison = Some(MatchComparison {
+                                snapshot,
+                                report: report.clone(),
+                            });
+                        }
+                        7 => {
+                            state.preview = Some(MatchPreview {
+                                selection: 1,
+                                status: None,
+                            });
+                        }
+                        _ => unreachable!(),
+                    }
+                });
+                resize(&app, cx, size(px(width), px(height)));
+                let panel = cx.debug_bounds("reference-match-panel").unwrap();
+                let footer = cx.debug_bounds("reference-match-footer").unwrap();
+                let status = cx.debug_bounds("reference-match-status").unwrap();
+                let message = cx.debug_bounds(selector).unwrap();
+                assert!(footer.top() >= panel.top());
+                assert!(footer.bottom() <= panel.bottom());
+                assert!(status.size.height <= px(80.0));
+                assert!(message.top() >= status.top());
+                assert!(message.top() < status.bottom());
+                for action in [
+                    if case == 1 || case == 2 {
+                        "reference-match-cancel"
+                    } else {
+                        "reference-match-start"
+                    },
+                    "reference-match-apply",
+                ] {
+                    let bounds = cx.debug_bounds(action).unwrap();
+                    assert!(bounds.top() >= status.bottom());
+                    assert!(bounds.bottom() <= panel.bottom());
+                }
+            }
+        }
+    }
+}
+
+#[gpui::test]
+fn text_matching_hides_an_old_reference_and_preview_status_clears_without_a_device(
+    cx: &mut TestAppContext,
+) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        configure(this, cx);
+        this.change_reference_settings(|state| state.objective = MatchObjective::ClapText);
+    });
+    // gpui retains debug bounds from earlier frames, so absence is checked before this
+    // modal has ever painted its retained reference source in an acoustic mode.
+    paint(&app, cx);
+    assert!(cx.debug_bounds("reference-preview-source").is_none());
+    app.update(cx, |this, cx| {
+        this.preview_reference_match(0, cx);
+        assert!(this.reference_match.preview.is_none());
+    });
+    click("audio-match-acoustic", cx);
+    app.update(cx, |this, cx| this.preview_reference_match(0, cx));
+    cx.run_until_parked();
+    app.update(cx, |this, _| {
+        this.poll_reference_match();
+        assert!(this.reference_match.preview.is_none());
+        assert!(!this.session.can_undo());
+    });
+}
+
+#[gpui::test]
+fn a_revision_change_during_preview_preparation_clears_the_pending_status(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        configure(this, cx);
+        this.preview_reference_match(0, cx);
+        assert!(this.reference_match.preview.is_some());
+        this.session
+            .add_default_instrument_track("New track")
+            .unwrap();
+    });
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.reference_match.preview.is_none())
+    });
 }

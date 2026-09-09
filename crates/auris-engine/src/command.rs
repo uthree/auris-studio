@@ -159,7 +159,7 @@ pub enum EngineCommand {
     ///
     /// Stops the transport and clears its tails. The buffer must already use the device's
     /// sample rate. Replaced buffers retire through the same off-thread channel as graphs.
-    PlayOutputPreview(std::sync::Arc<auris_core::AudioBuffer>),
+    PlayOutputPreview(crate::handle::OutputPreviewRequest),
     /// Stops output audition without freeing its retained buffer on the audio thread.
     StopOutputPreview,
     /// Turns the click on or off.
@@ -280,9 +280,9 @@ impl std::fmt::Debug for EngineCommand {
             Self::StopOneShot { track } => {
                 f.debug_struct("StopOneShot").field("track", track).finish()
             }
-            Self::PlayOutputPreview(buffer) => f
+            Self::PlayOutputPreview(request) => f
                 .debug_struct("PlayOutputPreview")
-                .field("frames", &buffer.frame_count())
+                .field("frames", &request.buffer.frame_count())
                 .finish(),
             Self::StopOutputPreview => f.write_str("StopOutputPreview"),
             Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),

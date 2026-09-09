@@ -89,6 +89,8 @@ strings! {
     ReferenceMatchPreviewBefore { en: "Play Before", ja: "調整前を試聴" }
     ReferenceMatchPreviewBest { en: "Play Best", ja: "最良候補を試聴" }
     ReferenceMatchStop { en: "Stop Preview", ja: "試聴を停止" }
+    AudioMatchPreviewPreparing { en: "Preparing preview", ja: "試聴を準備中" }
+    AudioMatchPreviewPlaying { en: "Playing", ja: "試聴中" }
     ReferenceMatchApply { en: "Apply Best", ja: "最良候補を適用" }
     ReferenceMatchApplyHint { en: "Apply keeps the selected adjustments in one undo step. Preview does not edit the project.", ja: "適用した調整は1回の元に戻す操作で戻せます。試聴ではプロジェクトを変更しません。" }
     ReferenceMatchApplied { en: "Audio adjustments applied", ja: "音声評価による調整を適用しました" }

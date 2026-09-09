@@ -78,6 +78,12 @@ struct MatchComparison {
     report: ReferenceMatchReport,
 }
 
+struct MatchPreview {
+    selection: usize,
+    // No ticket yet means the worker is preparing the selected excerpt.
+    status: Option<auris_session::OutputPreviewStatus>,
+}
+
 /// One window's reference file, controls and worker lifetime.
 pub(crate) struct ReferenceMatchState {
     /// Whether the reference-matching sheet claims the screen and keyboard.
@@ -94,7 +100,7 @@ pub(crate) struct ReferenceMatchState {
     comparison: Option<MatchComparison>,
     error: Option<String>,
     cancelled: bool,
-    previewing: bool,
+    preview: Option<MatchPreview>,
     preview_generation: u64,
 }
 
@@ -121,7 +127,7 @@ impl Default for ReferenceMatchState {
             comparison: None,
             error: None,
             cancelled: false,
-            previewing: false,
+            preview: None,
             preview_generation: 0,
         }
     }
@@ -292,8 +298,21 @@ impl AurisApp {
             .comparison
             .as_ref()
             .is_some_and(|result| !self.match_snapshot_is_current(&result.snapshot));
-        if (stale || stale_comparison) && self.reference_match.previewing {
+        if (stale || stale_comparison) && self.reference_match.preview.is_some() {
             self.stop_reference_preview();
+        }
+        if self
+            .reference_match
+            .preview
+            .as_ref()
+            .is_some_and(|preview| {
+                preview
+                    .status
+                    .as_ref()
+                    .is_some_and(|status| !status.is_active())
+            })
+        {
+            self.reference_match.preview = None;
         }
     }
 
@@ -599,14 +618,25 @@ impl AurisApp {
     }
 
     fn stop_reference_preview(&mut self) {
+        if let Some(status) = self
+            .reference_match
+            .preview
+            .as_ref()
+            .and_then(|preview| preview.status.as_ref())
+        {
+            status.stop();
+        }
         self.session.stop_output_preview();
-        self.reference_match.previewing = false;
+        self.reference_match.preview = None;
         self.reference_match.preview_generation =
             self.reference_match.preview_generation.wrapping_add(1);
     }
 
     fn preview_reference_match(&mut self, selection: usize, cx: &mut Context<Self>) {
         let state = &self.reference_match;
+        if !state.open || selection > 2 || (selection == 0 && !state.objective.needs_reference()) {
+            return;
+        }
         if selection > 0
             && state
                 .comparison
@@ -640,6 +670,11 @@ impl AurisApp {
         let language = self.language();
         self.stop_reference_preview();
         let preview_generation = self.reference_match.preview_generation;
+        self.reference_match.error = None;
+        self.reference_match.preview = Some(MatchPreview {
+            selection,
+            status: None,
+        });
         cx.spawn(async move |this, cx| {
             let prepared = cx
                 .background_executor()
@@ -660,6 +695,10 @@ impl AurisApp {
                     || this.reference_match.preview_generation != preview_generation
                     || this.session.revision() != revision
                 {
+                    if this.reference_match.preview_generation == preview_generation {
+                        this.reference_match.preview = None;
+                        cx.notify();
+                    }
                     return;
                 }
                 let result = prepared.and_then(|buffer| {
@@ -668,13 +707,22 @@ impl AurisApp {
                         .map_err(|error| error_text(&error, this.language()))
                 });
                 match result {
-                    Ok(()) => this.reference_match.previewing = true,
-                    Err(error) => this.reference_match.error = Some(error),
+                    Ok(status) => {
+                        this.reference_match.preview = Some(MatchPreview {
+                            selection,
+                            status: Some(status),
+                        });
+                    }
+                    Err(error) => {
+                        this.reference_match.preview = None;
+                        this.reference_match.error = Some(error);
+                    }
                 }
                 cx.notify();
             });
         })
         .detach();
+        cx.notify();
     }
 
     fn apply_reference_match(&mut self, cx: &mut Context<Self>) -> bool {
@@ -693,8 +741,7 @@ impl AurisApp {
         self.stop_reference_preview();
         match result {
             Ok(changed) => {
-                self.reference_match.comparison = None;
-                self.reference_match.generation = self.reference_match.generation.wrapping_add(1);
+                self.close_reference_match(cx);
                 self.set_status(self.t(if changed {
                     Key::ReferenceMatchApplied
                 } else {

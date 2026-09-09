@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use auris_core::AudioBuffer;
-use auris_engine::EngineCommand;
+use auris_engine::{EngineCommand, OutputPreviewStatus};
 
 use super::Session;
 use crate::SessionError;
@@ -64,14 +64,19 @@ impl Session {
     /// Prepare with [`prepare_output_preview`] on a worker using [`Self::sample_rate`].
     /// An output-device change during preparation is rejected; prepare again at its new rate.
     /// Playback stops and effect tails clear before audition, without advancing the playhead.
-    pub fn play_output_preview(&mut self, audio: Arc<AudioBuffer>) -> Result<(), SessionError> {
+    /// The returned status remains active while queued or playing, and clears on completion,
+    /// cancellation, replacement or output-device loss. A headless session reports it inactive.
+    /// Its [`OutputPreviewStatus::stop`] cancels this request even when the command queue is full.
+    pub fn play_output_preview(
+        &mut self,
+        audio: Arc<AudioBuffer>,
+    ) -> Result<OutputPreviewStatus, SessionError> {
         if audio.sample_rate() != self.sample_rate() || audio.frame_count() == 0 {
             return Err(SessionError::OutputPreview(
                 "the output rate changed; prepare the audition again".into(),
             ));
         }
-        self.engine.send(EngineCommand::PlayOutputPreview(audio))?;
-        Ok(())
+        Ok(self.engine.play_output_preview(audio)?)
     }
 
     /// Stops finished-audio audition while keeping the document and playhead untouched.
@@ -116,7 +121,11 @@ mod tests {
         let original = session.project().clone();
         let revision = session.revision();
         let prepared = prepare_output_preview(&tone(0.4), session.sample_rate()).unwrap();
-        session.play_output_preview(prepared).unwrap();
+        let status = session.play_output_preview(prepared).unwrap();
+        assert!(
+            !status.is_active(),
+            "a headless session has no audible playback"
+        );
         session.stop_output_preview();
         assert_eq!(session.project(), &original);
         assert_eq!(session.revision(), revision);

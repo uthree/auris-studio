@@ -80,9 +80,6 @@ impl AurisApp {
                     )))
                 })
             });
-        if state.loading.is_some() {
-            body = body.child(div().text_xs().child(self.t(Key::ReferenceMatchLoading)));
-        }
         body = body
             .child(
                 div()
@@ -290,12 +287,18 @@ impl AurisApp {
                             ),
                         ]
                         .into_iter()
+                        .filter(|(selection, _, _, _)| {
+                            *selection != 0 || state.objective.needs_reference()
+                        })
                         .map(|(selection, id, label, enabled)| {
                             button(
                                 id,
                                 self.t(label),
                                 ButtonStyle::Normal,
-                                false,
+                                state
+                                    .preview
+                                    .as_ref()
+                                    .is_some_and(|preview| preview.selection == selection),
                                 theme.accent,
                                 theme,
                                 cx.listener(move |this, _, _, cx| {
@@ -308,67 +311,28 @@ impl AurisApp {
                             .into_any_element()
                         }),
                     )
-                    .child(button(
-                        "reference-preview-stop",
-                        self.t(Key::ReferenceMatchStop),
-                        ButtonStyle::Ghost,
-                        false,
-                        theme.accent,
-                        theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.stop_reference_preview();
-                            cx.notify();
-                        }),
-                    )),
-            );
-        if let Some(run) = &state.running {
-            let completed = run.completed.load(Ordering::Relaxed);
-            let fraction = f32::from_bits(run.fraction.load(Ordering::Relaxed)).clamp(0.0, 1.0);
-            let progress = fraction;
-            body = body
-                .child(
-                    div()
-                        .debug_selector(|| "reference-match-progress".to_string())
-                        .text_xs()
-                        .child(format!(
-                            "{} · {} / {}",
-                            self.t(if run.cancel.load(Ordering::Relaxed) {
-                                Key::SongSearchCancelling
-                            } else if !run.prepared.load(Ordering::Relaxed) {
-                                if run.snapshot.objective.uses_clap() {
-                                    Key::AudioMatchPreparingClap
-                                } else {
-                                    Key::ReferenceMatchPreparing
+                    .child(
+                        button(
+                            "reference-preview-stop",
+                            self.t(Key::ReferenceMatchStop),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.accent,
+                            theme,
+                            cx.listener(|this, _, _, cx| {
+                                if this.reference_match.preview.is_some() {
+                                    this.stop_reference_preview();
+                                    cx.notify();
                                 }
-                            } else {
-                                Key::ReferenceMatchRendering
                             }),
-                            completed,
-                            run.snapshot.settings.attempts
-                        )),
-                )
-                .child(
-                    div()
-                        .h(px(4.0))
-                        .w_full()
-                        .bg(theme.border_subtle)
-                        .child(div().h_full().w(relative(progress)).bg(theme.accent)),
-                );
-        }
+                        )
+                        .when(state.preview.is_none(), |this| this.opacity(0.5)),
+                    ),
+            );
         if let Some(comparison) = &state.comparison {
             let report = &comparison.report;
             body = body
                 .child(divider(theme))
-                .child(div().text_xs().child(format!(
-                    "{} · {} {}",
-                    self.t(if report.cancelled {
-                        Key::SongSearchCancelled
-                    } else {
-                        Key::SongSearchComplete
-                    }),
-                    report.attempts,
-                    self.t(Key::SongSearchProgress)
-                )))
                 .child(div().text_sm().child(self.t(
                     if comparison.snapshot.objective.uses_clap() {
                         Key::AudioMatchSimilarity
@@ -434,36 +398,15 @@ impl AurisApp {
                         .iter()
                         .map(|change| div().text_xs().child(change.clone()).into_any_element()),
                 );
-        } else if state.cancelled && state.running.is_none() {
-            body = body.child(div().text_xs().child(self.t(Key::SongSearchCancelled)));
-        }
-        if stale {
-            body = body.child(
-                div()
-                    .debug_selector(|| "reference-match-stale".to_string())
-                    .text_xs()
-                    .child(self.t(Key::ReferenceMatchChanged)),
-            );
-        }
-        if let Some(error) = &state.error {
-            body = body.child(
-                div()
-                    .debug_selector(|| "reference-match-error".to_string())
-                    .text_xs()
-                    .child(format!("{}: {error}", self.t(Key::ReferenceMatchFailed))),
-            );
-        }
-        if editable && let Some(problem) = state.input_problem() {
-            body = body.child(
-                div()
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(self.t(problem)),
-            );
         }
         let can_start = editable && state.input_problem().is_none();
         let can_apply = editable && can_preview;
-        let mut actions = div().flex().flex_wrap().items_center().gap_2();
+        let mut actions = div()
+            .flex_shrink_0()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2();
         if state.running.is_some() {
             actions = actions.child(button(
                 "reference-match-cancel",
@@ -537,6 +480,7 @@ impl AurisApp {
                         .text_color(theme.text)
                         .child(
                             div()
+                                .flex_shrink_0()
                                 .flex()
                                 .items_center()
                                 .gap_2()
@@ -558,16 +502,154 @@ impl AurisApp {
                         )
                         .child(body)
                         .child(divider(theme))
-                        .child(actions)
                         .child(
                             div()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .child(self.t(Key::ReferenceMatchApplyHint)),
+                                .debug_selector(|| "reference-match-footer".to_string())
+                                .flex_shrink_0()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .children(self.audio_match_status(stale))
+                                .child(actions)
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .child(self.t(Key::ReferenceMatchApplyHint)),
+                                ),
                         ),
                 )
                 .into_any_element(),
         )
+    }
+
+    fn audio_match_status(&self, stale: bool) -> Option<AnyElement> {
+        let status = self.audio_match_main_status(stale);
+        let preview = self.reference_match.preview.as_ref().map(|preview| {
+            div()
+                .debug_selector(|| "reference-match-preview-status".to_string())
+                .flex_shrink_0()
+                .text_xs()
+                .child(format!(
+                    "{} · {}",
+                    self.t(if preview.status.is_some() {
+                        Key::AudioMatchPreviewPlaying
+                    } else {
+                        Key::AudioMatchPreviewPreparing
+                    }),
+                    self.t(match preview.selection {
+                        0 => Key::ReferenceMatchSource,
+                        1 => Key::ReferenceMatchBefore,
+                        _ => Key::ReferenceMatchBest,
+                    })
+                ))
+        });
+        if status.is_none() && preview.is_none() {
+            return None;
+        }
+        Some(
+            div()
+                .id("reference-match-status")
+                .debug_selector(|| "reference-match-status".to_string())
+                .flex_shrink_0()
+                .max_h(px(80.0))
+                .min_w_0()
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .children(preview)
+                .children(status)
+                .into_any_element(),
+        )
+    }
+
+    fn audio_match_main_status(&self, stale: bool) -> Option<AnyElement> {
+        let state = &self.reference_match;
+        let theme = &self.theme;
+        let message = |selector: &'static str, text: String| {
+            div()
+                .debug_selector(move || selector.to_string())
+                .flex_shrink_0()
+                .text_xs()
+                .child(text)
+                .into_any_element()
+        };
+        let content = if let Some(run) = &state.running {
+            let completed = run.completed.load(Ordering::Relaxed);
+            let progress = f32::from_bits(run.fraction.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+            div()
+                .flex_shrink_0()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(message(
+                    "reference-match-progress",
+                    format!(
+                        "{} · {} / {}",
+                        self.t(if run.cancel.load(Ordering::Relaxed) {
+                            Key::SongSearchCancelling
+                        } else if !run.prepared.load(Ordering::Relaxed) {
+                            if run.snapshot.objective.uses_clap() {
+                                Key::AudioMatchPreparingClap
+                            } else {
+                                Key::ReferenceMatchPreparing
+                            }
+                        } else {
+                            Key::ReferenceMatchRendering
+                        }),
+                        completed,
+                        run.snapshot.settings.attempts
+                    ),
+                ))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .h(px(4.0))
+                        .w_full()
+                        .bg(theme.border_subtle)
+                        .child(div().h_full().w(relative(progress)).bg(theme.accent)),
+                )
+                .into_any_element()
+        } else if state.loading.is_some() {
+            message(
+                "reference-match-loading",
+                self.t(Key::ReferenceMatchLoading).into(),
+            )
+        } else if let Some(error) = &state.error {
+            message(
+                "reference-match-error",
+                format!("{}: {error}", self.t(Key::ReferenceMatchFailed)),
+            )
+        } else if stale {
+            message(
+                "reference-match-stale",
+                self.t(Key::ReferenceMatchChanged).into(),
+            )
+        } else if let Some(comparison) = &state.comparison {
+            message(
+                "reference-match-complete",
+                format!(
+                    "{} · {} {}",
+                    self.t(if comparison.report.cancelled {
+                        Key::SongSearchCancelled
+                    } else {
+                        Key::SongSearchComplete
+                    }),
+                    comparison.report.attempts,
+                    self.t(Key::SongSearchProgress)
+                ),
+            )
+        } else if state.cancelled {
+            message(
+                "reference-match-cancelled",
+                self.t(Key::SongSearchCancelled).into(),
+            )
+        } else {
+            let problem = state.input_problem()?;
+            message("reference-match-input-problem", self.t(problem).into())
+        };
+        Some(content)
     }
 
     fn audio_match_target(&self, cx: &mut Context<Self>) -> AnyElement {
