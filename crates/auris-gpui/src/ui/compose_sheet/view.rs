@@ -61,6 +61,7 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         self.reconcile_section_lyrics();
+        self.reconcile_chord_preview();
         let dials = self.song_sheet.clone()?;
         let theme = self.theme.clone();
         let viewport = window.viewport_size();
@@ -269,6 +270,7 @@ impl AurisApp {
                                 ),
                         )
                         .child(divider(&theme))
+                        .child(self.render_chord_preview(&spec, cx))
                         .child(
                             div()
                                 .flex()
@@ -293,6 +295,7 @@ impl AurisApp {
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
                                         this.song_sheet = None;
+                                        this.clear_chord_preview();
                                         // The lyrics box edits the song sheet's sections;
                                         // it cannot outlive them.
                                         this.lyrics_edit = None;

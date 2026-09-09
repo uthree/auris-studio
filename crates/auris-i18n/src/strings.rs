@@ -782,6 +782,15 @@ strings! {
     SongMajor { en: "Major", ja: "長調" }
     SongMinor { en: "Minor", ja: "短調" }
     SongSound { en: "Sound", ja: "響き" }
+    SongPreviewSection { en: "Preview section", ja: "試聴するセクション" }
+    SongPreviewPlay { en: "Preview chords", ja: "コードを試聴" }
+    SongPreviewStop { en: "Stop preview", ja: "試聴を停止" }
+    SongPreviewAnother { en: "Another progression", ja: "別の進行" }
+    SongPreviewAdopt { en: "Use these chords", ja: "この進行を採用" }
+    SongPreviewAdopted { en: "The previewed chords will be used for this section.", ja: "試聴したコード進行を、このセクションに採用しました。" }
+    SongPreviewRendering { en: "Rendering chords…", ja: "コードをレンダリング中…" }
+    SongPreviewFailed { en: "Could not preview chords", ja: "コードを試聴できませんでした" }
+    SongPreviewHint { en: "Hear up to 8 bars on a fixed keyboard sound, then adopt the progression for this section.", ja: "一定の鍵盤音で最大8小節を試聴し、気に入った進行をこのセクションに採用できます。" }
     SongSoundAuto { en: "Automatic", ja: "おまかせ" }
     SongSoundMajor { en: "Bright (Major)", ja: "素直で明るい（メジャー）" }
     SongSoundMinor { en: "Subdued (Minor)", ja: "しっとり暗い（マイナー）" }

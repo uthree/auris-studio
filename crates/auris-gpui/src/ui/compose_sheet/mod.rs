@@ -28,6 +28,7 @@ mod menus;
 mod pad;
 #[cfg(test)]
 mod part_role_tests;
+pub(crate) mod preview;
 mod singers;
 #[cfg(test)]
 mod tempo_tests;

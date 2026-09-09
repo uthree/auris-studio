@@ -681,6 +681,7 @@ fn build_stream(
 /// The audio-thread half of the engine.
 pub(crate) struct AudioEngine {
     graph: Option<Box<RenderGraph>>,
+    preview: Option<(Arc<AudioBuffer>, usize)>,
     transport: Transport,
     commands: Receiver<EngineCommand>,
     returned_graphs: Sender<Retired>,
@@ -745,6 +746,7 @@ impl AudioEngine {
         scratch.reserve_frames(max_block);
         Self {
             graph: None,
+            preview: None,
             transport: Transport::new(),
             commands,
             returned_graphs,
@@ -789,6 +791,25 @@ impl AudioEngine {
                     render_block(graph, &mut self.transport, &mut self.scratch, false);
                 }
                 None => self.scratch.clear(),
+            }
+            if let Some((buffer, cursor)) = &mut self.preview
+                && *cursor < buffer.frame_count()
+            {
+                // Preview bypasses even a muted master and works with an empty document.
+                self.scratch.clear();
+                let available = count.min(buffer.frame_count() - *cursor);
+                for channel in 0..self.channels {
+                    let source = if buffer.channel_count() == 1 {
+                        0
+                    } else {
+                        channel
+                    };
+                    for frame in 0..available {
+                        self.scratch.channel_mut(channel)[frame] =
+                            buffer.sample(source, *cursor + frame);
+                    }
+                }
+                *cursor += available;
             }
             let start = written * self.channels;
             let end = start + count * self.channels;
@@ -891,6 +912,7 @@ impl AudioEngine {
     fn apply(&mut self, command: EngineCommand) {
         match command {
             EngineCommand::SetGraph(graph) => {
+                self.stop_preview();
                 // Meters past the new track count would otherwise sit at the level a deleted
                 // track last reached, with nothing left to report them down.
                 self.meters.clear_tracks_from(graph.track_count());
@@ -901,9 +923,13 @@ impl AudioEngine {
                 // staleness the graph it replaced had reported.
                 self.publish_latency();
             }
-            EngineCommand::Play => self.transport.playing = true,
+            EngineCommand::Play => {
+                self.stop_preview();
+                self.transport.playing = true;
+            }
             EngineCommand::CountIn(count) => self.transport.set_count_in(count),
             EngineCommand::Stop => {
+                self.stop_preview();
                 self.transport.playing = false;
                 // A count nobody is going to play to is over. Left running, it would hold the
                 // next press of Play at the position this one was stopped at, counting out the
@@ -1036,12 +1062,35 @@ impl AudioEngine {
                     graph.set_metronome(enabled);
                 }
             }
+            EngineCommand::PlayPreview(buffer) => {
+                if !buffer.sample_rate().is_finite()
+                    || (buffer.sample_rate() - self.sample_rate).abs() > 0.1
+                {
+                    self.retire(Retired::Buffer(buffer));
+                } else {
+                    self.transport.playing = false;
+                    if let Some(graph) = &mut self.graph {
+                        graph.panic();
+                    }
+                    if let Some((previous, _)) = self.preview.replace((buffer, 0)) {
+                        self.retire(Retired::Buffer(previous));
+                    }
+                }
+            }
+            EngineCommand::StopPreview => self.stop_preview(),
             EngineCommand::Panic => {
+                self.stop_preview();
                 if let Some(graph) = &mut self.graph {
                     graph.panic();
                 }
                 self.meters.reset();
             }
+        }
+    }
+
+    fn stop_preview(&mut self) {
+        if let Some((buffer, cursor)) = &mut self.preview {
+            *cursor = buffer.frame_count();
         }
     }
 }
@@ -1052,6 +1101,7 @@ fn command_may_retire(command: &EngineCommand) -> bool {
         EngineCommand::SetGraph(_)
             | EngineCommand::SetSoloResolution(_)
             | EngineCommand::PlayOneShot { .. }
+            | EngineCommand::PlayPreview(_)
     )
 }
 
@@ -1328,6 +1378,38 @@ mod tests {
             matches!(retired[0], Retired::Buffer(_)),
             "the replaced buffer travels back to the UI thread"
         );
+    }
+
+    #[test]
+    fn independent_preview_plays_without_tracks_stops_and_retires_off_thread() {
+        let (mut engine, commands, retired, _meters, playhead) = engine();
+        let mut buffer = AudioBuffer::new(1, 64, SAMPLE_RATE);
+        buffer.channel_mut(0).fill(0.25);
+        let buffer = Arc::new(buffer);
+        commands
+            .send(EngineCommand::PlayPreview(Arc::clone(&buffer)))
+            .unwrap();
+        let mut data = [0.0_f32; 32];
+        engine.fill(&mut data);
+        assert!(data.iter().all(|v| *v == 0.25));
+        assert_eq!(playhead.load(Ordering::Relaxed), 0);
+        commands.send(EngineCommand::StopPreview).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|v| *v == 0.0));
+        assert!(retired.is_empty(), "stopping retains the allocation");
+        commands
+            .send(EngineCommand::PlayPreview(Arc::clone(&buffer)))
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(matches!(retired.try_recv(), Ok(Retired::Buffer(_))));
+        for _ in 0..4 {
+            engine.fill(&mut data);
+        }
+        assert!(data.iter().all(|v| *v == 0.0), "the buffer plays once");
+        commands.send(EngineCommand::PlayPreview(buffer)).unwrap();
+        commands.send(EngineCommand::Panic).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|v| *v == 0.0));
     }
 
     #[test]

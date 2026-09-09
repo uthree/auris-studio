@@ -38,6 +38,7 @@ impl AurisApp {
         self.cancel_auto_sing();
         self.reset_drum_analysis();
         self.stop_audition();
+        self.clear_chord_preview();
         self.session.release_typed_notes();
         self.session.stop();
         self.menu = None;

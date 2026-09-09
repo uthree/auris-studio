@@ -998,6 +998,17 @@ pub mod composition {
     //! The song sheet uses these same choices, while the saved specification contains their
     //! resolved musical values. Exact key, rhythmic detail and arrangement live in its advanced view.
     //!
+    //! The song sheet can audition a section's block chords before writing the song.
+    //! [`crate::ChordPreviewJob`] snapshots the request and renders up to eight complete bars
+    //! on a fixed FM keyboard on a worker. The preview bypasses the document's tracks and mixer,
+    //! stops arrangement playback, and works in an empty project. Replacement buffers travel
+    //! back through the engine's retired-data channel; the callback never frees their storage.
+    //! [`crate::ChordPreview::apply_to`] adopts the full section chart as given harmony, including
+    //! explicit chord qualities, while retaining the melody seed and other sections. The GUI
+    //! rejects stale completions after edits, section changes, cancellation or an audio-rate change.
+    //! Storage uses [`auris_core::theory::chart::Chart::to_text`] so a pinned major V in minor
+    //! survives saving and regeneration. Trial candidates do not modify the document or history.
+    //!
     //! A detailed specification can name every musical choice:
     //!
     //! ```text

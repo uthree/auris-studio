@@ -248,6 +248,8 @@ pub enum MenuCommand {
     SongTonality(Tonality),
     /// Selects a harmonic character without requiring theory vocabulary.
     SongSound(ScaleChoice),
+    /// Chooses the section whose chord progression is auditioned.
+    SongPreviewSection(String),
     /// Set the song speed in ordinary words.
     SongPace(Pace),
     /// Set what one section of the song sheet plays, by chart name or catalogue name.
@@ -955,6 +957,7 @@ impl AurisApp {
                     crate::ui::compose_sheet::set_song_sound(dials, sound);
                 }
             }
+            MenuCommand::SongPreviewSection(section) => self.select_chord_preview_section(section),
             MenuCommand::SongPace(pace) => {
                 if let Some(dials) = self.song_sheet.as_mut() {
                     crate::ui::compose_sheet::set_song_pace(dials, pace);

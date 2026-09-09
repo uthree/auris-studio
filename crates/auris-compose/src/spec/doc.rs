@@ -1083,7 +1083,7 @@ impl From<&SongSpec> for SongDoc {
                     } else {
                         match &chart.quoted_as {
                             Some(quoted) => format!("@{quoted}"),
-                            None => chart.to_string(),
+                            None => chart.to_text(),
                         }
                     };
                     (name.clone(), text)
