@@ -172,8 +172,9 @@ melody_from = "chorus"
 ///
 /// The verse walks 純情進行 — the canon over a stepwise descending bass — and the chorus lifts
 /// into 王道進行, which is the shape of the songs this preset is named for: an Aメロ that steps
-/// quietly downhill so the サビ has somewhere to arrive from. One progression for the whole form
-/// was the arrangement changing at every join over harmony that never did.
+/// quietly downhill so the サビ has somewhere to arrive from. A four-bar pre-chorus climbs
+/// ii–iii–IV–V into that arrival. After the second chorus, a quieter bridge starts on vi with
+/// keys and strings under the lead, making room for the full band's final chorus.
 const POP_BAND: &str = r#"
 performance = "pop-band"
 title  = "Pop Band"
@@ -184,10 +185,12 @@ groove = "eight-beat"
 chords = "@royal-road"
 fill   = 0.7
 seed   = 6
-form   = ["intro","verse","chorus","verse2","chorus2","outro"]
+form   = ["intro","verse","pre","chorus","verse2","pre2","chorus2","bridge","chorus3","outro"]
 
 [harmony]
 a-melo = "@junjo"
+b-melo = "| ii7 | iii7 | IVmaj7 | V7 |"
+c-melo = "| vi7 | IVmaj7 | Imaj7 | V7 |"
 
 [section.intro]
 bars      = 4
@@ -196,6 +199,17 @@ parts     = "keys bass kick hat"
 
 [section.verse]
 chords = "a-melo"
+
+[section.pre]
+bars = 4
+chords = "b-melo"
+intensity = 0.75
+
+[section.bridge]
+bars = 8
+chords = "c-melo"
+intensity = 0.60
+parts = "lead keys strings bass"
 
 [section.chorus]
 intensity = 0.95
@@ -251,9 +265,20 @@ program = "Reverse Cymbal"
 
 [section.verse2]
 chords = "a-melo"
+intensity = 0.60
 melody_from = "verse"
 
+[section.pre2]
+bars = 4
+chords = "b-melo"
+intensity = 0.75
+melody_from = "pre"
+
 [section.chorus2]
+intensity = 0.95
+melody_from = "chorus"
+
+[section.chorus3]
 intensity = 0.95
 melody_from = "chorus"
 "#;
@@ -752,6 +777,62 @@ mod tests {
     use crate::spec::Role;
     use crate::theory::chord_scale::ChordScale;
     use auris_core::time::{TICKS_PER_QUARTER, Ticks};
+
+    #[test]
+    fn pop_band_builds_through_pre_choruses_and_returns_from_its_bridge() {
+        let spec = preset("pop-band").unwrap().spec();
+        for sequence in [
+            ["verse", "pre", "chorus"],
+            ["verse2", "pre2", "chorus2"],
+            ["chorus2", "bridge", "chorus3"],
+        ] {
+            assert!(spec.form.windows(3).any(|window| window == sequence));
+        }
+        let pre = &spec.sections["pre"];
+        let bridge = &spec.sections["bridge"];
+        assert!(spec.sections["verse"].intensity < pre.intensity);
+        assert!(pre.intensity < spec.sections["chorus"].intensity);
+        assert!(bridge.intensity < spec.sections["chorus3"].intensity);
+        assert_ne!(
+            spec.chart_for(pre).bars,
+            spec.chart_for(&spec.sections["verse"]).bars
+        );
+        assert_ne!(
+            spec.chart_for(bridge).bars,
+            spec.chart_for(&spec.sections["chorus"]).bars
+        );
+        for (later, original) in [("pre2", "pre"), ("chorus3", "chorus")] {
+            assert_eq!(spec.sections[later].melody_from.as_deref(), Some(original));
+            assert_eq!(spec.sections[later].bars, spec.sections[original].bars);
+            assert_eq!(spec.sections[later].chords, spec.sections[original].chords);
+        }
+        let frame = crate::frame::plan(&spec);
+        let piece = compose(&spec);
+        let lead = piece
+            .tracks
+            .iter()
+            .find(|track| track.name == "lead")
+            .unwrap();
+        for (name, bars) in [("pre", 4), ("pre2", 4), ("bridge", 8), ("chorus3", 8)] {
+            let section = frame.sections.iter().find(|s| s.name == name).unwrap();
+            let clip = lead
+                .clips
+                .iter()
+                .find(|clip| clip.start == section.start)
+                .unwrap();
+            assert!(!clip.notes.is_empty(), "{name} must contain music");
+            assert_eq!(clip.length, spec.meter.ticks_per_bar() * bars);
+        }
+        let bridge = frame.sections.iter().find(|s| s.name == "bridge").unwrap();
+        assert!(
+            piece
+                .tracks
+                .iter()
+                .filter(|t| !t.drum_parts.is_empty())
+                .all(|track| track.clips.iter().all(|clip| clip.start != bridge.start))
+        );
+        assert_eq!(auris_compose_round_trip(&spec), spec);
+    }
 
     #[test]
     fn every_preset_parses_and_writes_a_piece() {

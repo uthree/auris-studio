@@ -386,10 +386,14 @@ pub struct SectionSpec {
 }
 
 impl SectionSpec {
-    /// A section with the defaults its name implies.
+    /// A section with the defaults its name implies, including numbered occurrences.
     pub fn named(name: impl Into<String>) -> Self {
         let name = name.into();
-        let intensity = match name.trim().to_ascii_lowercase().as_str() {
+        let stem = name
+            .trim()
+            .trim_end_matches(|c: char| c.is_ascii_digit())
+            .trim_end();
+        let intensity = match stem.to_ascii_lowercase().as_str() {
             "intro" => 0.30,
             "verse" => 0.55,
             "pre" => 0.70,
@@ -621,6 +625,31 @@ mod tests {
         let spec = SongSpec::parse("form = [\"intro\", \"chorus\", \"outro\"]").unwrap();
         assert!(spec.sections["intro"].intensity < spec.sections["chorus"].intensity);
         assert!(spec.sections["outro"].intensity < spec.sections["chorus"].intensity);
+    }
+
+    #[test]
+    fn numbered_sections_keep_their_roles_defaults_and_original_identifiers() {
+        for stem in ["verse", "pre", "chorus", "bridge"] {
+            let original = SectionSpec::named(stem);
+            for name in [format!("{stem}2"), format!("{stem} 3")] {
+                let section = SectionSpec::named(&name);
+                assert_eq!(section.name, name);
+                assert_eq!(section.intensity, original.intensity);
+            }
+        }
+        for name in ["prelude", "pre reprise", "chorus finale", "Aメロ"] {
+            assert_eq!(SectionSpec::named(name).intensity, 0.60);
+        }
+        let spec = SongSpec::parse(
+            r#"
+            form = ["pre2", "bridge 2"]
+            [section.pre2]
+            intensity = 0.42
+        "#,
+        )
+        .unwrap();
+        assert_eq!(spec.sections["pre2"].intensity, 0.42);
+        assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
     }
 
     #[test]
