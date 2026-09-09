@@ -525,7 +525,8 @@ pub fn degree_of(key: Key, class: PitchClass) -> (u8, i32) {
     }
     let major = Key::new(key.tonic, super::scale::ScaleId::Major);
     // Flat before sharp, and one accidental before two: `bVI` is how everybody writes that note.
-    for accidental in [0, -1, 1, -2, 2] {
+    // Zero was exhausted above: it reads from the actual scale, not the major reference.
+    for accidental in [-1, 1, -2, 2] {
         for degree in 1..=7u8 {
             if major.class(i32::from(degree) - 1).transposed(accidental) == class {
                 return (degree, accidental);
@@ -818,10 +819,33 @@ mod tests {
     }
 
     #[test]
-    fn a_borrowed_major_scale_degree_in_minor_needs_no_accidental() {
-        let c_major = key("C major");
-        assert_eq!(degree_of(key("C minor"), c_major.class(5)), (6, 0));
-        assert_eq!(degree_of(key("C minor"), c_major.class(6)), (7, 0));
+    fn every_pitch_class_can_be_named_and_read_back_in_every_scale() {
+        for scale in ScaleId::ALL {
+            for tonic in 0..12 {
+                let key = Key::new(PitchClass::new(tonic), scale);
+                for pitch in 0..12 {
+                    let root = PitchClass::new(pitch);
+                    let (degree, accidental) = degree_of(key, root);
+                    let numeral = Numeral {
+                        accidental,
+                        ..Numeral::new(degree, false)
+                    };
+                    assert_eq!(
+                        numeral.chord_in(key).root,
+                        root,
+                        "{}: {pitch}",
+                        key.to_text()
+                    );
+                    assert_eq!(
+                        Numeral::parse(&numeral.to_text())
+                            .unwrap()
+                            .chord_in(key)
+                            .root,
+                        root
+                    );
+                }
+            }
+        }
     }
 
     #[test]

@@ -85,16 +85,17 @@ pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::{
-    AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, Clipboard, ComposeBalanceJob,
-    ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep,
-    ComposeReport, CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE,
-    DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont,
-    LyricSongReport, MIN_PHONEME_SECONDS, MixAnalysis, MusicalTyping, OCTAVE_RANGE, Played,
-    PluginWindow, Quantize, RecordingReport, RecordingStatus, Release, SaveReport, SectionLoudness,
-    Session, SessionOptions, SingPlan, SingerTakeState, SingerVoiceInfo, Struck, SungFrames,
-    TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole, VELOCITY_STEP,
-    WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of, master_gain_db,
-    quantized, read_soundfont, shadows_musical_typing, take_fingerprint,
+    AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, ChordPreview, ChordPreviewJob,
+    Clipboard, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
+    ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent,
+    DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
+    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport, MIN_PHONEME_SECONDS, MixAnalysis,
+    MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport, RecordingStatus,
+    Release, SaveReport, SectionLoudness, Session, SessionOptions, SingPlan, SingerTakeState,
+    SingerVoiceInfo, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
+    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
+    input_level_of, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
+    take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
@@ -186,8 +187,9 @@ pub mod prelude {
     /// takes one refuses exactly what the file would refuse.
     pub use auris_compose::spec::{PartSource, parse_motif};
     pub use auris_compose::{
-        Composition, Ending, Mood, PRESETS, PartSpec, PerformanceStyle, Role, SectionSpec,
-        SongPreset, SongSpec, SpecError, compose, default_instrument, motif_of, preset,
+        Composition, Ending, Mood, PRESETS, Pace, PartSpec, PerformanceStyle, Role, ScaleChoice,
+        SectionSpec, SongPreset, SongSpec, SpecError, Tonality, compose, default_instrument,
+        motif_of, preset,
     };
     pub use auris_core::automation::{
         Automation, AutomationCurve, AutomationLane, AutomationPoint,

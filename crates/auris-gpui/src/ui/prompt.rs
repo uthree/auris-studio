@@ -843,6 +843,8 @@ impl AurisApp {
                 Some(key) => {
                     if let Some(dials) = self.song_sheet.as_mut() {
                         dials.key = key;
+                        dials.tonality = None;
+                        dials.sound = None;
                     }
                     Ok(())
                 }
@@ -855,6 +857,7 @@ impl AurisApp {
                 Ok(bpm) if crate::ui::compose_sheet::TEMPO.contains(&bpm) => {
                     if let Some(dials) = self.song_sheet.as_mut() {
                         dials.tempo = bpm;
+                        dials.pace = None;
                     }
                     Ok(())
                 }

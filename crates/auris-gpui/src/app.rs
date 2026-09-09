@@ -1323,6 +1323,7 @@ pub struct AurisApp {
     /// State of the sheet rather than of the document: nothing here has been written until Write
     /// is pressed, which is what lets a whole song be set up and then thrown away.
     pub(crate) song_sheet: Option<crate::ui::compose_sheet::SongDials>,
+    pub(crate) song_preview: crate::ui::compose_sheet::preview::SongPreviewState,
     /// Modal progress while a song is written, prepared and balanced.
     pub(crate) compose_progress: Option<crate::ui::compose_progress::ComposeProgressState>,
     /// The library browser currently choosing a song part's source.
@@ -1595,6 +1596,7 @@ impl AurisApp {
                             this.poll_auto_sing(cx);
                             this.poll_drum_analysis(cx);
                             this.poll_sung_preview(cx);
+                            this.reconcile_chord_preview();
                         }
                         // Also here rather than in a command, because a monitor breaking up
                         // happens *between* commands: without this the only evidence is a noise
@@ -1665,6 +1667,7 @@ impl AurisApp {
             sung_geometry: std::collections::HashMap::new(),
             sung_geometry_revision: 0,
             song_sheet: None,
+            song_preview: Default::default(),
             compose_progress: None,
             song_library: None,
             song_library_fonts: Vec::new(),

@@ -155,6 +155,11 @@ pub enum EngineCommand {
         /// Track position in the project.
         track: usize,
     },
+    /// Auditions pre-rendered audio independently of project tracks and mixer settings.
+    /// The buffer must use the device sample rate; replaced buffers are retired off-thread.
+    PlayPreview(std::sync::Arc<auris_core::AudioBuffer>),
+    /// Silences the independent preview, retaining its allocation until replacement.
+    StopPreview,
     /// Turns the click on or off.
     SetMetronome(bool),
     /// Silences everything: voices, delay lines and filter memory.
@@ -274,6 +279,11 @@ impl std::fmt::Debug for EngineCommand {
                 f.debug_struct("StopOneShot").field("track", track).finish()
             }
             Self::SetMetronome(enabled) => f.debug_tuple("SetMetronome").field(enabled).finish(),
+            Self::PlayPreview(buffer) => f
+                .debug_tuple("PlayPreview")
+                .field(&buffer.frame_count())
+                .finish(),
+            Self::StopPreview => f.write_str("StopPreview"),
             Self::Panic => f.write_str("Panic"),
         }
     }

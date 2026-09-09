@@ -92,7 +92,7 @@ fn repeated_columns_edit_the_same_section_and_survive_specification_roundtrip(
         assert!(!part_plays_in(&dials.sections[0], "lead"));
         assert_eq!(dials.sections[1], before.sections[1]);
         let reopened = song_dials(&SongSpec::parse(&song_spec(dials).to_toml()).unwrap());
-        assert_eq!(reopened, *dials);
+        assert_eq!(song_spec(&reopened), song_spec(dials));
         assert_eq!(reopened.form, ["verse", "chorus", "verse"]);
     });
 

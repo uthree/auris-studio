@@ -11,17 +11,8 @@
 /// number can be nudged. Every one runs from 0 to 1.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct Mood {
-    /// Dark to bright. Slides the register the melodic skeleton is written in.
-    ///
-    /// It used to be documented as choosing the scale when none was named, through a ladder of
-    /// modes from Phrygian to Lydian. Nothing ever called it: a specification always carries a
-    /// key, and a clip generated against the document reads the harmony lane's — so there was no
-    /// path where a scale had not been named, and the dial moved nothing at all. Overriding a key
-    /// the user did choose is not a repair, it is a different and worse feature.
-    ///
-    /// Register is the other thing "bright" says about a melody, it is audible immediately, and
-    /// it composes with the key instead of fighting it. The melodic skeleton reads it, and every
-    /// part hangs off that skeleton.
+    /// Dark to bright. Sets melodic register and, when tonality is automatic, the mode.
+    /// An explicitly chosen key or scale takes precedence over the mood.
     pub brightness: f32,
     /// Calm to driving. Sets note density, how hard the drums hit, and how often invented
     /// harmony changes within a bar.

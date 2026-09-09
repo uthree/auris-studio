@@ -150,6 +150,23 @@ impl Chart {
         self.bars.len()
     }
 
+    /// Storage notation, preserving explicitly pinned chord qualities such as a major V in minor.
+    pub fn to_text(&self) -> String {
+        let mut text = String::new();
+        for bar in &self.bars {
+            if bar.is_empty() {
+                continue;
+            }
+            text.push_str("| ");
+            for numeral in bar {
+                text.push_str(&numeral.to_text());
+                text.push(' ');
+            }
+        }
+        text.push('|');
+        text
+    }
+
     /// `true` when the chart has no chords at all.
     pub fn is_empty(&self) -> bool {
         self.bars.iter().all(|bar| bar.is_empty())

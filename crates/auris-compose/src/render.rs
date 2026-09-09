@@ -1663,119 +1663,8 @@ mod tests {
         assert_eq!(drums.color, Role::Snare.color());
     }
 
-    /// The pieces the composer writes today, pinned exactly.
-    ///
-    /// Not because this output is sacred — it is a composer, and what it writes is a matter of
-    /// taste — but because it is about to be taken apart and reassembled, and a change that
-    /// nobody chose is the one thing that must not happen quietly. A fixture that moves is either
-    /// a bug or a decision, and this is what makes anyone look.
-    ///
-    /// It last moved when the feel left the text: the humanise wander, its velocity scatter and
-    /// the per-role lean stopped being baked into the notes and became the transform stack each
-    /// clip arrives carrying (`crate::perform`). The fixtures that pin a nonzero `humanize` —
-    /// or none, and so the default — moved back onto the grid: not one chord and not one note
-    /// count changed, because the dial never decided what to play, only how loosely, and the
-    /// looseness now happens at performance time where these digests cannot see it. That
-    /// blindness is correct — the digest pins the *score*.
-    ///
-    /// Before that it moved when the kit stopped missing: the survival roll used to thin everything
-    /// below the downbeat by how quiet the section was, so at the default settings one backbeat
-    /// in nine and one four-on-the-floor kick in nine simply vanished, a different bar of holes
-    /// every bar — heard as mistakes, never as dynamics. A hit the groove spells now always
-    /// plays, and what breathes with the intensity is the ghosts alone, the finest steps first
-    /// — see `parts::drums::survival`. All four moved: every count rose by the spelled hits
-    /// thinning used to take, less the ghosts a verse no longer plays, and not one chord went
-    /// anywhere, because which bar carries which chord was never the kit's to decide.
-    ///
-    /// Before that it moved when the melody grew a germ: one piece-level contour per part, which every
-    /// section's figure wears re-sampled onto its own rhythm, so a verse and a chorus became two
-    /// statements of one tune instead of two tunes. Every count stayed and every chord stayed —
-    /// the germ changes which degrees a figure asks for and nothing about when anything sounds —
-    /// so all four digests moved and nothing else did. Measured over the presets: contour
-    /// correlation between different sections of one song rose from 0.40 to 0.46 while
-    /// correlation between different songs *fell* from 0.15 to 0.04, and the line's own grammar
-    /// improved in the bargain — steps 55.4% → 60.5% (the corpus says 68), mean interval 2.53 →
-    /// 2.29 semitones — because a busy section now fills the germ's line in with passing steps
-    /// where it used to draw fresh leaps.
-    ///
-    /// Before that it moved when the comp learned to push: a section may strike each chord change half
-    /// a beat early and hold it over the line, drawn per section at a rate the syncopation dial
-    /// sets. Only the third fixture moved — the one whose mood leaves syncopation at the default
-    /// and whose seed drew a pushing section — and its count *fell* by the line-strikes and
-    /// borrowed half-beats a push replaces. The chords are untouched everywhere, because a push
-    /// moves when a chord is struck and never which.
-    ///
-    /// Before that it moved when the figure's variations grew from three to six — retrograde, the
-    /// ornament on the longest note, the late entry — so every closing bar's variation draw sees
-    /// six weights where it saw three and lands differently. Not one chord moved, and the counts
-    /// drifted by a note or two where an ornament splits one note into a pair or a late entry
-    /// takes one away: the scope of a change that touches nothing but which variation a bar
-    /// draws.
-    ///
-    /// Before that it moved when the piece learned to end: every fixture gains an `ending` section —
-    /// one bar of the final key's tonic, held, spelled through one numeral so the lane agrees —
-    /// and the two whose charts are the composer's own also turn their last bar around into it,
-    /// which is why `F → G7` and `Dm7 → E7` appear in their chord lines and the quoted fixtures'
-    /// lines gained only the ending bar. Every count rose by the landing's own notes.
-    ///
-    /// Before that it moved when the fill grew a vocabulary: `parts::drums::FillShape` draws one of
-    /// four shapes per join where every fill used to be the rising run. The two multi-section
-    /// fixtures moved — their counts by the few snare hits a sparser shape leaves out — and the
-    /// two single-section ones did not, because a piece's last section runs no fill: which is
-    /// the scope of a change that touches nothing but the bar before a join.
-    ///
-    /// Before that it moved when the bass learned to walk: `BassFigure::Walk` joined the figure table,
-    /// so every bar's figure draw sees five weights where it saw four and some bars land on a
-    /// different line. The chords did not move — the walk plays the harmony, it does not choose
-    /// it — and the counts drifted by a handful of notes where a bar that followed the kick now
-    /// walks quarter notes, or the other way round. The third fixture's count held at 629 while
-    /// its digest moved, which is the drift at its smallest: the same number of notes on
-    /// different pitches.
-    ///
-    /// Before that it moved when the melody stopped repeating notes nobody drew — the second pass of
-    /// [`crate::melodic`]: the join is chosen against the chord-snapped landing and ranks a
-    /// repeat below anything within a fourth, and `unstick` undoes the repeat the range clamp
-    /// made by folding two degrees onto one pitch. All four digests moved and not one chord or
-    /// note count did, which is the scope of it: the tune's pitches are all that changed, and
-    /// repeated notes went from 22.8 per cent of the line to 10.5 against a corpus 11.
-    ///
-    /// Before that it moved when the band stopped varying so much: `parts::writer::WIDEST` narrowed how
-    /// far apart two strokes of one part may sit, and `parts::WANDER_MS` how far the timing of a
-    /// pitched one wanders. All four moved, the fourth included — it writes `humanize = 0` and so
-    /// holds still in *time*, but a velocity is a velocity at every setting of that dial. Not one
-    /// chord or note count changed, which is the scope of it: this decides how hard a note is
-    /// struck and when, never which note it is.
-    ///
-    /// Before that it moved when a note stopped being left sounding into the next strike of its own
-    /// pitch — see `parts::untangle`. Three of the four moved and the third did not, which is the
-    /// assertion about the scope: the third is the one fixture writing `humanize = 0` over a
-    /// groove that does not swing, so it is the only one that never held an overlap to cut. No
-    /// chord moved and no note count changed in any of them, because nothing here writes or drops
-    /// a note — it only shortens ones that were running over their own successor.
-    ///
-    /// Before that it moved when the melody stopped choosing each note without looking at the one
-    /// before it — see [`crate::melodic`], which is the measurement that change came out of. All four
-    /// digests moved, and not one chord or note count did: the tune's *pitches* and the length of
-    /// its phrase-ending notes are all that is different, and every other part is untouched. The
-    /// piece is the same piece with a singable line in it. A third of the composer's melodic
-    /// intervals used to be a fourth or wider; it is now one in seven.
-    ///
-    /// Before that it moved when the bass's octave figure started actually leaping one — the same
-    /// shape of report, pitches of some weak-beat bass notes and nothing else. The `Gmaj7 → G7`
-    /// and `Amaj7 → Am7` corrections below are older still, and are described where each fixture
-    /// is.
-    ///
-    /// Before that it moved when `colour` stopped adding sevenths through [`Quality::with_seventh`],
-    /// which can only ever give a major triad a *major* seventh and so wrote `Vmaj7` where `V7`
-    /// belongs, and when a borrow started asking the parallel mode for its own chord on the degree
-    /// instead of replaying the numeral's case at it.
-    ///
-    /// The two fixtures that moved are the two whose charts the composer wrote itself. The other
-    /// two quote `@axis` and `@marusa`, and a quoted chart is never coloured — that they did not
-    /// move is the assertion that the trade is still exactly what it was documented to be, and
-    /// that nothing outside the colouring changed. Both counts rose, which is the property to
-    /// check here: the edit adds chord tones that were being written wrongly or dropped, so notes
-    /// may appear, but no chord may move to a degree the chart did not name.
+    /// Complete compositions pin intended changes in harmony, note counts and performance.
+    /// Updated for phrase-based generated harmony and mood-derived default tempo.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -1791,35 +1680,14 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 C major | Cmaj7 Gm7 Am Fmaj7 Cmaj7 G7 Am9 G7 |\n\
+            "verse·1 C major | Am7 Fm7 C G7 Cmaj7 Em7 Fmaj9 G |\n\
              ending·1 C major | C |\n\
-             182 notes, digest 9761272ff4f3833e\n"
+             178 notes, digest 3f89c829b62510b0\n"
         );
 
-        // The same in a minor key, and the fixture that moved furthest when colouring stopped
-        // reaching for `Quality::with_seventh`. It used to read
-        //
-        //     Amaj7 E Fm7 D Amaj7 Emaj7 Gbm Dmaj7
-        //
-        // in **A minor** — a tonic spelled A C♯ E G♯, a subdominant spelled D F♯ A C♯ and a
-        // dominant carrying D♯. Four of the eight bars were chromatic in a way nobody asked for,
-        // because a seventh added to a triad's *quality* is always the major one and the key was
-        // never consulted. It now takes the seventh the key stacks on that degree, so the tonic
-        // is `Am7`, the subdominant `Dm`, and the dominant `E9` — major third, minor seventh, the
-        // one chord in a minor key that is supposed to be chromatic and the only one that is.
-        //
-        // One chord is still a borrow that moves the root: `vi` read in the parallel major is an
-        // F sharp minor, and the numeral goes with it. The source F minor and its moved F-sharp
-        // destination are both shown; the destination is the plain major-scale sixth rather than
-        // the double-flat seventh the old inverse spelling produced in a minor key.
-        //
-        // The count rose from 227 because a borrow used to *discard* a seventh already added in
-        // the same pass, and now composes with it.
-        //
-        // This is also the only fixture whose mood names a brightness away from the middle —
-        // `tense` writes 0.2 — so it is the only one the register slide reaches. That it moved the
-        // digest and not the chords, and not the count, is the whole assertion about that change:
-        // brightness decides how high the skeleton sits and nothing else.
+        // Minor harmony keeps its dominant major while other chords follow the mood.
+        // The borrowed sixth now comes from parallel major, and its numeral reads back to
+        // the same pitch even though the natural sixth is outside the song's scale.
         assert_eq!(
             fingerprint(
                 r#"
@@ -1831,9 +1699,9 @@ mod tests {
                     bars = 8
                     "#
             ),
-            "verse·1 A minor | Am7 E9 Fmaj7 Dm Am7 Em7 Fm7→Gbm7 E7 |\n\
+            "verse·1 A minor | Am7 Gbm9 Dm7 Dm E Am7 Gbm7 Cmaj7 E7 |\n\
              ending·1 A minor | Am |\n\
-             252 notes, digest fe792a40951da0c3\n"
+             253 notes, digest d36091242b7e9bed\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture

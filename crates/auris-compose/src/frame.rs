@@ -9,7 +9,7 @@ use auris_core::time::Ticks;
 
 use crate::rhythm::{Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
-use crate::spec::{Ending, LeadIn, Mood, SectionSpec, SongSpec};
+use crate::spec::{Ending, LeadIn, Mood, SongSpec};
 use crate::theory::chart::{ChartOrigin, HarmonicEvent};
 use crate::theory::chord::{Chord, Quality};
 use crate::theory::key::Key;
@@ -132,31 +132,26 @@ pub fn plan(spec: &SongSpec) -> Frame {
     // The form resolved before anything is written, because a section has to know what follows it:
     // a key change is prepared in the bars *before* it, and those bars belong to the section that
     // does not modulate. Reading the next entry's key is the whole reason this is two passes.
-    let played: Vec<&SectionSpec> = spec
+    let played: Vec<_> = spec
         .form
         .iter()
-        .filter_map(|name| spec.sections.get(name))
+        .filter_map(|name| spec.sections.get(name).map(|section| (name, section)))
         .collect();
 
-    for (place, name) in spec
-        .form
-        .iter()
-        .filter(|name| spec.sections.contains_key(*name))
-        .enumerate()
-    {
-        let Some(section) = spec.sections.get(name) else {
-            continue;
-        };
+    for (place, &(name, section)) in played.iter().enumerate() {
         let instance = counts.entry(name.as_str()).or_insert(0);
         *instance += 1;
         let instance = *instance;
 
         let key = spec.key.transposed(section.transpose);
-        let next = played.get(place + 1).or_else(|| {
-            (spec.ending == Ending::Loop)
-                .then(|| played.first())
-                .flatten()
-        });
+        let next = played
+            .get(place + 1)
+            .or_else(|| {
+                (spec.ending == Ending::Loop)
+                    .then(|| played.first())
+                    .flatten()
+            })
+            .map(|(_, section)| *section);
         // Read against the key before it is fitted to the bars: a progression quoted by name is
         // written in a mode, and asked for in the other one it names its chords from the
         // relative key rather than reading its degrees literally. 丸サ進行 in C minor is the loop
@@ -164,41 +159,25 @@ pub fn plan(spec: &SongSpec) -> Frame {
         let chart = spec.chart_for(section).spelled_in(key).fit_to(section.bars);
         let mut events = chart.resolve(key, grid.bar_ticks());
 
-        // A chart the user wrote or quoted is played as written. Only a chart the composer made
-        // up is coloured, because colouring 丸サ進行 would stop it being 丸サ進行.
+        // Generated harmony gets colour and one arrival decision. Explicit charts stay as written.
         if chart.origin == ChartOrigin::Generated {
             colour(&mut events, spec.mood, spec.seed, name, instance);
-        }
-
-        // The turnaround: the composer's own chart leans into an arrival. Only its own — a
-        // quoted chart is played as written, which is the same trade `colour` makes — and only
-        // where the form actually arrives somewhere, which is the same question the cymbal asks.
-        // Fills deliberately mark every join, including a drop, while harmony and crashes reserve
-        // this comparison for arrivals that hold or raise the intensity.
-        if chart.origin == ChartOrigin::Generated
-            && let Some(next) = next
-            && spec.key.transposed(next.transpose) == key
-            && next.intensity >= section.intensity
-        {
-            let opening = spec
-                .chart_for(next)
-                .spelled_in(key)
-                .bars
-                .first()
-                .and_then(|bar| bar.first())
-                .map(|numeral| numeral.chord_in(key).root);
-            if opening == Some(key.tonic) {
+            let held_ending = spec.ending == Ending::Held && place + 1 == played.len();
+            let tonic_arrival = next.is_some_and(|next| {
+                if spec.key.transposed(next.transpose) != key || next.intensity < section.intensity
+                {
+                    return false;
+                }
+                spec.chart_for(next)
+                    .spelled_in(key)
+                    .bars
+                    .first()
+                    .and_then(|bar| bar.first())
+                    .is_some_and(|numeral| numeral.chord_in(key).root == key.tonic)
+            });
+            if held_ending || tonic_arrival {
                 turn_around(&mut events, key);
             }
-        }
-        // The held ending is an arrival by construction — it opens on the tonic the whole piece
-        // has been heading for — so the composer's own chart turns around into it exactly as it
-        // does into any other arrival.
-        if chart.origin == ChartOrigin::Generated
-            && spec.ending == Ending::Held
-            && place + 1 == played.len()
-        {
-            turn_around(&mut events, key);
         }
 
         // Before the skeleton, because the melody hangs on these chords: a line written against
@@ -322,7 +301,8 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
         }
         // Which mode the degree is taken from. A borrow moves it into the parallel one, which is
         // where a minor iv in a major key comes from and the cheapest colour in the book.
-        let source = if borrow {
+        let modal = crate::progression::modal_approach(event.key).is_some();
+        let source = if borrow && !modal {
             event.key.parallel()
         } else {
             event.key
@@ -342,7 +322,16 @@ fn colour(events: &mut [HarmonicEvent], mood: Mood, seed: u64, section: &str, in
             // Only over a seventh, which is what `Mood::ninth_rate` already says it is. On its
             // own it made an add9 of a major triad and nothing whatever of a minor one.
             if ninth {
-                chord.quality = chord.quality.with_ninth();
+                let extended = chord.quality.with_ninth();
+                if !modal
+                    || extended.intervals().iter().all(|&interval| {
+                        source
+                            .scale
+                            .contains(source.tonic, chord.root.transposed(interval))
+                    })
+                {
+                    chord.quality = extended;
+                }
             }
         }
         if chord == event.chord {
@@ -410,7 +399,7 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
     last.chord = dominant;
 }
 
-/// Turns the last chord of a section into the key's own dominant, so the join is a cadence.
+/// Prepares a section arrival with a tonal dominant or a characteristic modal chord.
 ///
 /// The turnaround, and the reachable half of what a cadence-aware composer means: a piece built
 /// on a four-bar loop ran that loop straight across every section join, so nothing in the
@@ -428,12 +417,20 @@ fn lead_into(events: &mut [HarmonicEvent], from: Key, to: Key) {
 /// *relative* major, and a dominant prepared for a tonic that never comes is a question with the
 /// wrong answer.
 ///
-/// A final bar already on the tonic or the dominant is left alone — the first has its own kind
-/// of close and the second needs no help.
+/// A final bar already on the tonic or the chosen approach is left alone. Modal approaches
+/// preserve the scale's character: IV for Dorian, II for Lydian and Phrygian, VII for Mixolydian.
 fn turn_around(events: &mut [HarmonicEvent], key: Key) {
     let Some(last) = events.last_mut() else {
         return;
     };
+    if let Some(approach) = crate::progression::modal_approach(key) {
+        let chord = approach.chord_in(key);
+        if last.chord.root != key.tonic && last.chord.root != chord.root {
+            last.numeral = approach;
+            last.chord = chord;
+        }
+        return;
+    }
     // The same construction `lead_into` uses, for the same reason: what a dominant is does not
     // vary with the mode of the key it belongs to.
     let dominant = Chord::new(key.tonic.transposed(7), Quality::Dominant7);
@@ -670,6 +667,33 @@ mod tests {
         let frame = plan(&spec(r#"form = "verse chorus verse chorus""#));
         let instances: Vec<usize> = frame.sections.iter().map(|s| s.instance).collect();
         assert_eq!(instances, [1, 1, 2, 2, 1], "and the ending is played once");
+    }
+
+    #[test]
+    fn modal_colour_and_arrivals_retain_the_selected_scale() {
+        for mode in ["dorian", "lydian", "mixolydian", "phrygian"] {
+            for ending in ["held", "loop", "none"] {
+                for seed in 0..32 {
+                    let song = spec(&format!(
+                        "key = 'D {mode}'\nseed = {seed}\nmood = 'tense'\ntension = 1.0\nending = '{ending}'\nform = 'verse chorus verse chorus'\n[section.verse]\nbars = 4\n[section.chorus]\nbars = 7"
+                    ));
+                    let frame = plan(&song);
+                    for section in &frame.sections {
+                        for event in &section.events {
+                            assert_eq!(event.chord, event.numeral.chord_in(event.key));
+                            assert!(
+                                event.chord.quality.intervals().iter().all(|&i| event
+                                    .key
+                                    .scale
+                                    .contains(event.key.tonic, event.chord.root.transposed(i))),
+                                "{mode} {ending} seed {seed}: {}",
+                                event.chord
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

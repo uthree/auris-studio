@@ -442,10 +442,19 @@ pub mod spec_reference {
         // these crates are built from the repository, never published, so the examples the
         // *repository's* documentation points at stay the ones this tool serves.
         const HELLO: &str = include_str!("../../../examples/hello.asong");
+        const DARK_SONG: &str = include_str!("../../../examples/dark-song.asong");
         const NEON_DRIVE: &str = include_str!("../../../examples/neon-drive.asong");
         format!(
             "A specification is TOML; every field has a default, so start small and only say \
-             what should differ. The smallest useful song:\n\n{HELLO}\n\nAnd most of the \
+             what should differ. Start from an idea:\n\n{DARK_SONG}\n\n\
+             tonality: auto, major, minor. pace: auto, slow, moderate, fast. \
+             sound: auto, major, minor, dorian, lydian, mixolydian, phrygian. \
+             Explicit sound overrides tonality; when both are auto, mood chooses the scale: \
+             bright=major, dark=minor, epic=dorian, dreamy=lydian, funky=mixolydian, tense=phrygian. \
+             Explicit key/scale and tempo override these choices. \
+             style supplies instruments and form, with newly generated chords; use chords \
+             to specify your own progression. Saved specs contain the resolved settings.\n\n\
+             The smallest useful song:\n\n{HELLO}\n\nAnd most of the \
              vocabulary, each field explained where it is used:\n\n{NEON_DRIVE}"
         )
     }

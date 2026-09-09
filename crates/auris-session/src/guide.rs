@@ -977,6 +977,40 @@ pub mod composition {
     //! format that can only be read makes a dialog that saves its settings a second
     //! implementation of the same grammar, free to disagree with the first.
     //!
+    //! A beginner can describe an intention without naming a chord or a tonic:
+    //!
+    //! ```text
+    //! style = "pop-band"
+    //! mood = "dark"
+    //! tonality = "minor"
+    //! pace = "slow"
+    //! ```
+    //!
+    //! `style` supplies the instruments and form with generated harmony. `tonality` accepts
+    //! `auto`, `major`, or `minor`; `pace` accepts `auto`, `slow`, `moderate`, or `fast`.
+    //! Optional `sound` accepts `auto`, `major`, `minor`, `dorian`, `lydian`, `mixolydian`, or
+    //! `phrygian`. An explicit sound takes precedence over tonality. With both automatic,
+    //! dreamy moods choose Lydian, epic moods Dorian, funky moods Mixolydian, and tense moods
+    //! Phrygian; ordinary bright and dark moods keep major and minor. These are expressive
+    //! defaults, not promises about how a scale must feel. The generator shares modal phrase
+    //! shapes, building chords from the selected scale and retaining its characteristic tones
+    //! through chord colouring and section arrivals. Explicit `key`/`scale` and `tempo` win.
+    //! The song sheet uses these same choices, while the saved specification contains their
+    //! resolved musical values. Exact key, rhythmic detail and arrangement live in its advanced view.
+    //!
+    //! The song sheet can audition a section's block chords before writing the song.
+    //! [`crate::ChordPreviewJob`] snapshots the request and renders up to eight complete bars
+    //! on a fixed FM keyboard on a worker. The preview bypasses the document's tracks and mixer,
+    //! stops arrangement playback, and works in an empty project. Replacement buffers travel
+    //! back through the engine's retired-data channel; the callback never frees their storage.
+    //! [`crate::ChordPreview::apply_to`] adopts the full section chart as given harmony, including
+    //! explicit chord qualities, while retaining the melody seed and other sections. The GUI
+    //! rejects stale completions after edits, section changes, cancellation or an audio-rate change.
+    //! Storage uses [`auris_core::theory::chart::Chart::to_text`] so a pinned major V in minor
+    //! survives saving and regeneration. Trial candidates do not modify the document or history.
+    //!
+    //! A detailed specification can name every musical choice:
+    //!
     //! ```text
     //! title  = "Neon Drive"
     //! key    = "C minor"
@@ -1711,9 +1745,10 @@ pub mod harmony {
     //! is composed for the section's full bar count. Short phrases shape the arrivals without
     //! turning a long section into repetitions of an eight-bar loop. Sections sharing a chart
     //! name and length share its invention; a different length gets its own phrase boundaries.
-    //! Energy and tension admit additional half-bar chords, chosen to connect the preceding
-    //! harmony to the bar's destination in both major and minor. The seed makes these choices
-    //! repeatable within a build. Explicit charts still keep their written harmonic rhythm.
+    //! Generation selects complete four-chord phrases in the chosen mode, compresses them for
+    //! shorter phrases, and brings the opening phrase back every other phrase. Energy and tension
+    //! may add ii before V in major or iv before V in minor, sharing one bar. The seed makes
+    //! these choices repeatable within a build. Explicit charts keep their written harmonic rhythm.
     //!
     //! # Clips that write themselves
     //!
