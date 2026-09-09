@@ -158,7 +158,12 @@ fn adopting_the_retained_project_is_one_undo(cx: &mut TestAppContext) {
             revision: this.session.revision(),
             settings,
             reference_start: 0.0,
-            reference: Arc::clone(&this.reference_match.source.as_ref().unwrap().audio),
+            reference: Some(Arc::clone(
+                &this.reference_match.source.as_ref().unwrap().audio,
+            )),
+            objective: this.reference_match.objective,
+            model_directory: this.reference_match.model_directory.clone(),
+            text_prompt: this.reference_match.text_prompt.clone(),
         };
         this.reference_match.comparison = Some(MatchComparison { snapshot, report });
         assert_eq!(this.project(), &before);
@@ -207,7 +212,13 @@ fn modal_actions_fit_both_languages_and_escape_closes(cx: &mut TestAppContext) {
     app.update(cx, |this, cx| this.open_reference_match(cx));
     for language in [Language::English, Language::Japanese] {
         app.update(cx, |this, _| this.language = language);
-        for width in [640.0, 900.0] {
+        for (width, objective) in [
+            (640.0, MatchObjective::AcousticReference),
+            (900.0, MatchObjective::AcousticReference),
+            (640.0, MatchObjective::ClapReference),
+            (900.0, MatchObjective::ClapText),
+        ] {
+            app.update(cx, |this, _| this.reference_match.objective = objective);
             resize(&app, cx, size(px(width), px(650.0)));
             for selector in [
                 "reference-match-panel",
@@ -223,4 +234,130 @@ fn modal_actions_fit_both_languages_and_escape_closes(cx: &mut TestAppContext) {
     }
     cx.simulate_keystrokes("escape");
     app.read_with(cx, |this, _| assert!(!this.reference_match.open));
+}
+
+#[gpui::test]
+fn clap_text_form_accepts_a_prompt_without_reference_audio(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    let before = app.update(cx, |this, cx| {
+        this.open_reference_match(cx);
+        this.project().clone()
+    });
+    paint(&app, cx);
+    click("audio-match-clap-text", cx);
+    app.update(cx, |this, cx| {
+        assert_eq!(this.reference_match.objective, MatchObjective::ClapText);
+        assert_eq!(
+            this.reference_match.input_problem(),
+            Some(Key::AudioMatchModelRequired)
+        );
+        assert!(!this.start_reference_match(cx));
+        this.change_reference_settings(|state| {
+            state.model_directory = Some("missing-clap-model-for-test".into())
+        });
+        assert_eq!(
+            this.reference_match.input_problem(),
+            Some(Key::AudioMatchPromptRequired)
+        );
+    });
+    paint(&app, cx);
+    click("audio-match-prompt", cx);
+    paint(&app, cx);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.prompt.as_ref().and_then(Prompt::target),
+            Some(PromptTarget::AudioMatchText)
+        );
+    });
+    cx.simulate_input("Warm piano, 柔らかな音色");
+    cx.simulate_keystrokes("enter");
+    app.read_with(cx, |this, _| {
+        assert!(this.prompt.is_none());
+        assert_eq!(this.reference_match.text_prompt, "Warm piano, 柔らかな音色");
+        assert!(this.reference_match.source.is_none());
+        assert!(this.reference_match.input_problem().is_none());
+        assert_eq!(this.project(), &before);
+        assert!(!this.session.can_undo());
+    });
+    paint(&app, cx);
+    click("reference-match-start", cx);
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.reference_match.running.is_none());
+        assert!(this.reference_match.comparison.is_none());
+        assert!(
+            this.reference_match.error.is_some(),
+            "the missing model is reported by preparation"
+        );
+        assert_eq!(this.project(), &before);
+        assert!(!this.session.can_undo());
+    });
+}
+
+#[gpui::test]
+fn changing_the_audio_target_cancels_obsolete_preparation(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        configure(this, cx);
+        assert!(this.start_reference_match(cx));
+        let snapshot = this
+            .reference_match
+            .running
+            .as_ref()
+            .unwrap()
+            .snapshot
+            .clone();
+        let cancel = Arc::clone(&this.reference_match.running.as_ref().unwrap().cancel);
+        this.change_reference_settings(|state| {
+            state.objective = MatchObjective::ClapText;
+            state.text_prompt = "Soft drums".into();
+        });
+        assert!(cancel.load(Ordering::Relaxed));
+        assert!(!this.match_snapshot_is_current(&snapshot));
+        assert!(this.reference_match.running.is_some());
+        assert!(!this.start_reference_match(cx));
+    });
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.reference_match.running.is_none());
+        assert!(this.reference_match.comparison.is_none());
+        assert!(!this.session.can_undo());
+    });
+}
+
+#[gpui::test]
+fn escape_cancels_the_prompt_before_closing_the_audio_sheet(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        this.open_reference_match(cx);
+        this.reference_match.objective = MatchObjective::ClapText;
+        this.reference_match.text_prompt = "Piano".into();
+    });
+    paint(&app, cx);
+    click("audio-match-prompt", cx);
+    paint(&app, cx);
+    cx.simulate_input("Discard this text");
+    cx.simulate_keystrokes("escape");
+    app.read_with(cx, |this, _| {
+        assert!(this.prompt.is_none());
+        assert!(this.reference_match.open);
+        assert_eq!(this.reference_match.text_prompt, "Piano");
+    });
+    cx.simulate_keystrokes("escape");
+    app.read_with(cx, |this, _| assert!(!this.reference_match.open));
+}
+
+#[test]
+fn clap_reference_requires_audio_but_text_does_not() {
+    let mut state = ReferenceMatchState {
+        objective: MatchObjective::ClapReference,
+        model_directory: Some("model".into()),
+        text_prompt: "Soft piano".into(),
+        ..ReferenceMatchState::default()
+    };
+    assert_eq!(state.input_problem(), Some(Key::ReferenceMatchMissing));
+    state.objective = MatchObjective::ClapText;
+    assert!(state.input_problem().is_none());
+    state.text_prompt.clear();
+    assert_eq!(state.input_problem(), Some(Key::AudioMatchPromptRequired));
 }

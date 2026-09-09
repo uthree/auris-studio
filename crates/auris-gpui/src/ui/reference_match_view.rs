@@ -1,4 +1,4 @@
-//! Reference-matching controls and captured audio-feature comparisons.
+//! Audio objective controls and comparisons of captured renders.
 
 use crate::theme::{Metrics, Theme};
 use crate::ui::widgets::{ButtonStyle, button, divider};
@@ -39,43 +39,46 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .child(self.t(Key::ReferenceMatchHint)),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .items_center()
-                    .child(
-                        button(
-                            "reference-match-file",
-                            self.t(Key::ReferenceMatchChoose),
-                            ButtonStyle::Normal,
-                            false,
-                            theme.accent,
-                            theme,
-                            cx.listener(|this, _, _, cx| this.choose_reference_audio(cx)),
+            .child(self.audio_match_target(cx))
+            .when(state.objective.needs_reference(), |this| {
+                this.child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .items_center()
+                        .child(
+                            button(
+                                "reference-match-file",
+                                self.t(Key::ReferenceMatchChoose),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                theme,
+                                cx.listener(|this, _, _, cx| this.choose_reference_audio(cx)),
+                            )
+                            .when(!editable, |this| this.opacity(0.5)),
                         )
-                        .when(!editable, |this| this.opacity(0.5)),
-                    )
-                    .when_some(state.source.as_ref(), |this, source| {
-                        this.child(
-                            div().min_w_0().text_xs().child(
-                                source
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .into_owned(),
-                            ),
-                        )
-                    }),
-            )
-            .when_some(state.source.as_ref(), |this, source| {
-                this.child(div().text_xs().text_color(theme.text_muted).child(format!(
-                    "{}: {:.1} s",
-                    self.t(Key::ReferenceMatchFileDuration),
-                    source.audio.duration_seconds()
-                )))
+                        .when_some(state.source.as_ref(), |this, source| {
+                            this.child(
+                                div().min_w_0().text_xs().child(
+                                    source
+                                        .path
+                                        .file_name()
+                                        .unwrap_or_default()
+                                        .to_string_lossy()
+                                        .into_owned(),
+                                ),
+                            )
+                        }),
+                )
+                .when_some(state.source.as_ref(), |this, source| {
+                    this.child(div().text_xs().text_color(theme.text_muted).child(format!(
+                        "{}: {:.1} s",
+                        self.t(Key::ReferenceMatchFileDuration),
+                        source.audio.duration_seconds()
+                    )))
+                })
             });
         if state.loading.is_some() {
             body = body.child(div().text_xs().child(self.t(Key::ReferenceMatchLoading)));
@@ -136,30 +139,33 @@ impl AurisApp {
                                 .when(!editable, |this| this.opacity(0.5)),
                             ),
                     )
-                    .child(
-                        reference_row(self, Key::ReferenceMatchReferenceStart)
-                            .child(choice(
-                                self,
-                                cx,
-                                "reference-source-less",
-                                "−",
-                                editable && state.reference_start > 0.0,
-                                false,
-                                |state| {
-                                    state.reference_start = (state.reference_start - 1.0).max(0.0)
-                                },
-                            ))
-                            .child(number(state.reference_start))
-                            .child(choice(
-                                self,
-                                cx,
-                                "reference-source-more",
-                                "+",
-                                editable,
-                                false,
-                                |state| state.reference_start += 1.0,
-                            )),
-                    )
+                    .when(state.objective.needs_reference(), |this| {
+                        this.child(
+                            reference_row(self, Key::ReferenceMatchReferenceStart)
+                                .child(choice(
+                                    self,
+                                    cx,
+                                    "reference-source-less",
+                                    "−",
+                                    editable && state.reference_start > 0.0,
+                                    false,
+                                    |state| {
+                                        state.reference_start =
+                                            (state.reference_start - 1.0).max(0.0)
+                                    },
+                                ))
+                                .child(number(state.reference_start))
+                                .child(choice(
+                                    self,
+                                    cx,
+                                    "reference-source-more",
+                                    "+",
+                                    editable,
+                                    false,
+                                    |state| state.reference_start += 1.0,
+                                )),
+                        )
+                    })
                     .child(reference_row(self, Key::ReferenceMatchDuration).children(
                         [1usize, 2, 5, 10, 12, 20, 30].into_iter().map(|seconds| {
                             choice(
@@ -328,6 +334,12 @@ impl AurisApp {
                             "{} · {} / {}",
                             self.t(if run.cancel.load(Ordering::Relaxed) {
                                 Key::SongSearchCancelling
+                            } else if !run.prepared.load(Ordering::Relaxed) {
+                                if run.snapshot.objective.uses_clap() {
+                                    Key::AudioMatchPreparingClap
+                                } else {
+                                    Key::ReferenceMatchPreparing
+                                }
                             } else {
                                 Key::ReferenceMatchRendering
                             }),
@@ -357,8 +369,15 @@ impl AurisApp {
                     report.attempts,
                     self.t(Key::SongSearchProgress)
                 )))
-                .child(div().text_sm().child(self.t(Key::ReferenceMatchDistance)));
+                .child(div().text_sm().child(self.t(
+                    if comparison.snapshot.objective.uses_clap() {
+                        Key::AudioMatchSimilarity
+                    } else {
+                        Key::ReferenceMatchDistance
+                    },
+                )));
             for (name, label) in [
+                ("clap_cosine_similarity", Key::AudioMatchCosine),
                 ("reference_distance", Key::ReferenceMatchDistance),
                 ("reference_spectrum_distance", Key::ReferenceMatchSpectrum),
                 ("reference_dynamics_distance", Key::ReferenceMatchDynamics),
@@ -378,6 +397,11 @@ impl AurisApp {
                     .find(|metric| metric.name == name)
                     .map(|metric| metric.value);
                 if let (Some(before), Some(best)) = (before, best) {
+                    let precision = if comparison.snapshot.objective.uses_clap() {
+                        6
+                    } else {
+                        4
+                    };
                     body = body.child(
                         div()
                             .flex()
@@ -386,21 +410,24 @@ impl AurisApp {
                             .text_xs()
                             .child(div().min_w(px(180.0)).child(self.t(label)))
                             .child(format!(
-                                "{}: {:.4}",
+                                "{}: {before:.precision$}",
                                 self.t(Key::ReferenceMatchBefore),
-                                before
                             ))
-                            .child(format!("{}: {:.4}", self.t(Key::ReferenceMatchBest), best)),
+                            .child(format!(
+                                "{}: {best:.precision$}",
+                                self.t(Key::ReferenceMatchBest)
+                            )),
                     );
                 }
             }
             body = body
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(self.t(Key::ReferenceMatchMetricHint)),
-                )
+                .child(div().text_xs().text_color(theme.text_muted).child(self.t(
+                    if comparison.snapshot.objective.uses_clap() {
+                        Key::AudioMatchClapMetricHint
+                    } else {
+                        Key::ReferenceMatchMetricHint
+                    },
+                )))
                 .children(
                     report
                         .changes
@@ -426,9 +453,15 @@ impl AurisApp {
                     .child(format!("{}: {error}", self.t(Key::ReferenceMatchFailed))),
             );
         }
-        let can_start = editable
-            && state.source.is_some()
-            && (state.settings.mix || state.settings.performance);
+        if editable && let Some(problem) = state.input_problem() {
+            body = body.child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(problem)),
+            );
+        }
+        let can_start = editable && state.input_problem().is_none();
         let can_apply = editable && can_preview;
         let mut actions = div().flex().flex_wrap().items_center().gap_2();
         if state.running.is_some() {
@@ -535,6 +568,104 @@ impl AurisApp {
                 )
                 .into_any_element(),
         )
+    }
+
+    fn audio_match_target(&self, cx: &mut Context<Self>) -> AnyElement {
+        let state = &self.reference_match;
+        let editable = !state.busy();
+        let theme = &self.theme;
+        let mut target = div().flex().flex_col().gap_2().child(
+            reference_row(self, Key::AudioMatchObjective).children(
+                [
+                    ("audio-match-acoustic", MatchObjective::AcousticReference),
+                    ("audio-match-clap-reference", MatchObjective::ClapReference),
+                    ("audio-match-clap-text", MatchObjective::ClapText),
+                ]
+                .into_iter()
+                .map(|(id, objective)| {
+                    choice(
+                        self,
+                        cx,
+                        id,
+                        self.t(objective.label()),
+                        editable,
+                        state.objective == objective,
+                        move |state| state.objective = objective,
+                    )
+                }),
+            ),
+        );
+        if state.objective.uses_clap() {
+            target = target
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            button(
+                                "audio-match-model",
+                                self.t(Key::AudioMatchChooseModel),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                theme,
+                                cx.listener(|this, _, _, cx| this.choose_audio_match_model(cx)),
+                            )
+                            .when(!editable, |this| this.opacity(0.5)),
+                        )
+                        .when_some(state.model_directory.as_ref(), |this, path| {
+                            this.child(
+                                div()
+                                    .min_w_0()
+                                    .text_xs()
+                                    .truncate()
+                                    .child(path.display().to_string()),
+                            )
+                        }),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::AudioMatchModelHint)),
+                );
+        }
+        if state.objective == MatchObjective::ClapText {
+            target = target
+                .child(
+                    button(
+                        "audio-match-prompt",
+                        self.t(Key::AudioMatchPrompt),
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.edit_audio_match_prompt();
+                            cx.notify();
+                        }),
+                    )
+                    .when(!editable, |this| this.opacity(0.5)),
+                )
+                .when(!state.text_prompt.is_empty(), |this| {
+                    this.child(
+                        div()
+                            .debug_selector(|| "audio-match-prompt-text".to_string())
+                            .min_w_0()
+                            .text_xs()
+                            .child(state.text_prompt.clone()),
+                    )
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::AudioMatchPromptHint)),
+                );
+        }
+        target.into_any_element()
     }
 }
 

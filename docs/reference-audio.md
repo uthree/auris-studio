@@ -1,6 +1,6 @@
 # Match a reference recording
 
-**Compose → Match Reference Audio…** searches small changes to the current project's mix and
+**Compose → Adjust by Audio Evaluation…** searches small changes to the current project's mix and
 performance. Every candidate is rendered through the project's instruments, routing and effects,
 then compared with an excerpt from a reference recording. Written notes and instrument choices
 stay intact. The unchanged project is the first candidate and remains the result when no measured
@@ -8,8 +8,8 @@ improvement is found.
 
 ## Use the desktop app
 
-1. Open or compose the project you want to adjust, then choose **Compose → Match Reference Audio…**.
-2. Choose a reference audio file. Set its excerpt start and the project excerpt start separately;
+1. Open or compose the project you want to adjust, then choose **Compose → Adjust by Audio Evaluation…**.
+2. Select **Reference · audio features** and choose a reference audio file. Set its excerpt start and the project excerpt start separately;
    **Use Playhead** selects the current project position. Choose a length of 1–30 seconds that
    contains the sound you want to compare.
 3. Enable **Adjust Mix**, **Adjust Performance**, or both. Set the attempt limit and search seed.
@@ -58,7 +58,7 @@ applied without a subsequent automatic balance pass that would replace the searc
 
 ## What the distance measures
 
-The current evaluator uses deterministic CPU measurements without model downloads. Reference
+The acoustic evaluator uses deterministic CPU measurements without model downloads. Reference
 features are captured once and remain fixed for the entire run. Candidate audio is rendered at
 44.1 kHz, and the reference and candidate use the same analysis method.
 
@@ -117,11 +117,10 @@ pub trait AudioEvaluator: Send + Sync {
 evaluator to the session's staged reference-matching job. Rendering runs on a worker; the
 session thread prepares each next render and explicitly adopts the completed report.
 
-A learned audio/text CLAP objective can implement the same trait with its model and text
-embedding held fixed for a search. It would define its own score and diagnostic units; the
-optimizer does not require a negative distance or a particular feature vector. The current
-reference evaluator's acoustic distance should not be relabeled as CLAP similarity or as a
-percentage of semantic agreement.
+[`ClapAudioEvaluator`](clap-evaluation.md) implements the same trait with a local ONNX model
+and text or reference embedding held fixed for the search. The GUI offers both CLAP objectives
+alongside the acoustic comparison. CLAP reports cosine similarity, with higher values closer
+to the chosen target; the acoustic objective continues to report lower-is-closer distance.
 
 ## Reproduce a render comparison
 

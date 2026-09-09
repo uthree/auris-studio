@@ -1105,8 +1105,12 @@ pub mod composition {
     //!
     //! [`ReferenceAudioEvaluator`](crate::audio_evaluation::ReferenceAudioEvaluator) compares fixed
     //! spectral, envelope, stereo and transient statistics. Its negative distance is an acoustic
-    //! objective, not a semantic quality score. Learned evaluators can retain a model and prompt
-    //! behind the same trait without changing the search or rendering protocol.
+    //! objective. [`ClapAudioEvaluator`](crate::clap_evaluation::ClapAudioEvaluator) instead keeps
+    //! a verified local ONNX model and a fixed text or reference-audio embedding. Its CPU worker
+    //! evaluates deterministic ten-second mono windows and compares duration-weighted embeddings
+    //! by cosine similarity. Model loading, tokenization and DSP stay below the frontend; only
+    //! the controls and background scheduling belong to the window. Similarity describes target
+    //! agreement, not musical quality. Model preparation is documented in `docs/clap-evaluation.md`.
     //!
     //! Retained renders are auditioned through
     //! [`prepare_output_preview`](crate::prepare_output_preview) and

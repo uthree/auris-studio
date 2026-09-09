@@ -31,7 +31,8 @@ The desktop [reference-audio search](reference-audio.md) renders bounded mix and
 adjustments to the current project and evaluates their PCM against a chosen reference excerpt.
 Its fixed acoustic features compare tonal balance, dynamics, stereo and transient distributions;
 they do not measure semantic mood or musical quality. The session's replaceable `AudioEvaluator`
-boundary also supports future learned objectives with a fixed model and prompt.
+boundary also supports [local CLAP audio/text evaluation](clap-evaluation.md) with a fixed
+model and prompt or reference embedding.
 
 The optional [composition search](composition-search.md) uses a separate, explicit symbolic
 target: written note events per bar. It maximizes negative absolute distance from that target,

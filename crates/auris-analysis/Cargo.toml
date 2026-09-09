@@ -16,3 +16,4 @@ serde_json.workspace = true
 sha2.workspace = true
 ort = "=2.0.0-rc.9"
 ndarray.workspace = true
+tokenizers = { version = "0.21.4", default-features = false, features = ["onig"] }

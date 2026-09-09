@@ -157,6 +157,11 @@ impl Render for AurisApp {
         let song_library = self.render_song_library_overlay(window, cx);
         let compose_progress = self.render_compose_progress(window);
         let prompt = self.render_prompt(cx);
+        let (prompt, match_prompt) = if self.reference_match.open {
+            (None, prompt)
+        } else {
+            (prompt, None)
+        };
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
         // Files dragged in from the desktop, taken by the whole window rather than by one panel:
@@ -380,6 +385,8 @@ impl Render for AurisApp {
             .children(plugin_window)
             .children(menu)
             .children(reference_match)
+            // The audio objective editor opens above its comparison sheet.
+            .children(match_prompt)
             .children(compose_progress)
     }
 }

@@ -196,7 +196,11 @@ impl ReferenceMatchJob {
         {
             return Err(failure("the renderer produced non-finite samples"));
         }
-        let evaluation = self.state.evaluator.evaluate(&audio).map_err(failure)?;
+        let evaluation = self.state.evaluator.evaluate(&audio);
+        if cancelled.load(Ordering::Relaxed) {
+            return self.cancel();
+        }
+        let evaluation = evaluation.map_err(failure)?;
         evaluation.validate().map_err(failure)?;
         let audio = Arc::new(audio);
         if self.state.baseline.is_none() {

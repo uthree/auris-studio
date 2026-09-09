@@ -70,6 +70,8 @@ pub enum PromptTarget {
     /// No payload: the command writes new material rather than editing anything on screen,
     /// so there is nothing for it to point at yet.
     ComposeLyrics,
+    /// A sound description used by CLAP to evaluate rendered audio.
+    AudioMatchText,
     /// The seed a generated clip is written from.
     ///
     /// Typed for a different reason than the other three: "another take" is the *next* seed, so
@@ -156,6 +158,8 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             // Not a clear, but the session's own refusal names the problem better than a
             // generic "cannot be empty" would.
             | PromptTarget::ComposeLyrics
+            // Clearing the target is useful while deciding what sound to search for.
+            | PromptTarget::AudioMatchText
             // Let the numeric field report its own valid range for an empty answer.
             | PromptTarget::DrumAssignment { .. }
             | PromptTarget::SongSectionTempo(_)
@@ -231,6 +235,7 @@ impl PromptTarget {
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
             | PromptTarget::ComposeLyrics
+            | PromptTarget::AudioMatchText
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -248,6 +253,9 @@ impl PromptTarget {
         // them is where the phrases break.
         if matches!(self, PromptTarget::ComposeLyrics) {
             return Some(Key::HintComposeLyrics);
+        }
+        if matches!(self, PromptTarget::AudioMatchText) {
+            return Some(Key::AudioMatchPromptHint);
         }
         self.notation().map(Notation::hint)
     }
@@ -712,6 +720,11 @@ impl AurisApp {
             return;
         }
         let outcome = match target {
+            PromptTarget::AudioMatchText => {
+                self.set_audio_match_prompt(text);
+                self.close_accepted_prompt();
+                return;
+            }
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1370,6 +1383,7 @@ impl AurisApp {
                     // Rename over it would be answering a different question.
                     match target {
                         PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
+                        PromptTarget::AudioMatchText => self.t(Key::AudioMatchUsePrompt).into(),
                         PromptTarget::DrumAssignment { .. } => {
                             self.t(Key::DrumApplyAssignment).into()
                         }
@@ -2013,6 +2027,7 @@ mod tests {
             },
             PromptTarget::Lyrics { clip: ClipId(1) },
             PromptTarget::ComposeLyrics,
+            PromptTarget::AudioMatchText,
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
@@ -2046,6 +2061,7 @@ mod tests {
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
                 | PromptTarget::ComposeLyrics
+                | PromptTarget::AudioMatchText
                 | PromptTarget::Seed(_)
                 | PromptTarget::Tempo(_)
                 | PromptTarget::TempoFrom(_)
@@ -2072,12 +2088,15 @@ mod tests {
 
     #[test]
     fn everything_that_is_a_notation_rather_than_a_name_says_so() {
-        // A notation has a hint; prose and names do not, except the multiline compose prompt,
-        // whose hint explains how phrase breaks are entered.
+        // Prose hints explain phrase entry or the model's expected description language.
         for target in every_target() {
             assert_eq!(
                 target.hint().is_some(),
-                target.notation().is_some() || matches!(target, PromptTarget::ComposeLyrics),
+                target.notation().is_some()
+                    || matches!(
+                        target,
+                        PromptTarget::ComposeLyrics | PromptTarget::AudioMatchText
+                    ),
                 "{target:?} has the wrong idea about needing a hint",
             );
         }

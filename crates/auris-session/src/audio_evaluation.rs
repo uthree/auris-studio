@@ -1,7 +1,7 @@
 //! Replaceable objectives that evaluate rendered PCM, independently of search and editing.
 //!
-//! Reference matching is one implementation. A future learned audio/text CLAP evaluator can own
-//! its model and fixed text embedding behind the same [`AudioEvaluator`] trait; the optimizer
+//! Reference matching and [`crate::clap_evaluation::ClapAudioEvaluator`] own their fixed targets
+//! behind the same [`AudioEvaluator`] trait; the optimizer
 //! still supplies real rendered audio and consumes finite fitness plus named diagnostics.
 
 use auris_core::AudioBuffer;

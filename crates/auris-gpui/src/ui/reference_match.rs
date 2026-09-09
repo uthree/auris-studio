@@ -7,13 +7,15 @@ use std::sync::{
 };
 
 use auris_i18n::Key;
-use auris_session::audio_evaluation::ReferenceAudioEvaluator;
+use auris_session::audio_evaluation::{AudioEvaluator, ReferenceAudioEvaluator};
+use auris_session::clap_evaluation::{ClapAudioEvaluator, ClapTarget};
 use auris_session::prelude::AudioBuffer;
 use auris_session::{ReferenceMatchReport, ReferenceMatchSettings, ReferenceMatchStep};
 use gpui::Context;
 
 use crate::app::AurisApp;
 use crate::i18n::error_text;
+use crate::ui::prompt::{Prompt, PromptTarget};
 
 #[cfg(test)]
 #[path = "reference_match_tests.rs"]
@@ -26,13 +28,41 @@ struct ReferenceSource {
     audio: Arc<AudioBuffer>,
 }
 
+/// The fixed audio objective used throughout one pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum MatchObjective {
+    #[default]
+    AcousticReference,
+    ClapReference,
+    ClapText,
+}
+
+impl MatchObjective {
+    fn needs_reference(self) -> bool {
+        self != Self::ClapText
+    }
+    fn uses_clap(self) -> bool {
+        self != Self::AcousticReference
+    }
+    fn label(self) -> Key {
+        match self {
+            Self::AcousticReference => Key::AudioMatchAcoustic,
+            Self::ClapReference => Key::AudioMatchClapReference,
+            Self::ClapText => Key::AudioMatchClapText,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct MatchSnapshot {
     generation: u64,
     revision: u64,
     settings: ReferenceMatchSettings,
     reference_start: f64,
-    reference: Arc<AudioBuffer>,
+    reference: Option<Arc<AudioBuffer>>,
+    objective: MatchObjective,
+    model_directory: Option<PathBuf>,
+    text_prompt: String,
 }
 
 struct MatchControl {
@@ -40,6 +70,7 @@ struct MatchControl {
     cancel: Arc<AtomicBool>,
     completed: Arc<AtomicUsize>,
     fraction: Arc<AtomicU32>,
+    prepared: Arc<AtomicBool>,
 }
 
 struct MatchComparison {
@@ -53,6 +84,9 @@ pub(crate) struct ReferenceMatchState {
     pub(crate) open: bool,
     settings: ReferenceMatchSettings,
     reference_start: f64,
+    objective: MatchObjective,
+    model_directory: Option<PathBuf>,
+    text_prompt: String,
     source: Option<ReferenceSource>,
     loading: Option<u64>,
     generation: u64,
@@ -77,6 +111,9 @@ impl Default for ReferenceMatchState {
                 performance: true,
             },
             reference_start: 0.0,
+            objective: MatchObjective::default(),
+            model_directory: None,
+            text_prompt: String::new(),
             source: None,
             loading: None,
             generation: 0,
@@ -100,6 +137,65 @@ impl ReferenceMatchState {
 
     fn busy(&self) -> bool {
         self.running.is_some() || self.loading.is_some()
+    }
+
+    fn input_problem(&self) -> Option<Key> {
+        if self.objective.uses_clap() && self.model_directory.is_none() {
+            Some(Key::AudioMatchModelRequired)
+        } else if self.objective == MatchObjective::ClapText && self.text_prompt.trim().is_empty() {
+            Some(Key::AudioMatchPromptRequired)
+        } else if self.objective.needs_reference() && self.source.is_none() {
+            Some(Key::ReferenceMatchMissing)
+        } else if !self.settings.mix && !self.settings.performance {
+            Some(Key::ReferenceMatchNeedScope)
+        } else {
+            None
+        }
+    }
+}
+
+/// Builds a fixed evaluator on a worker; native models never load in a UI callback.
+fn prepare_evaluator(
+    snapshot: &MatchSnapshot,
+    cancel: Arc<AtomicBool>,
+    language: auris_i18n::Language,
+) -> Result<Arc<dyn AudioEvaluator>, String> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(Key::SongSearchCancelled.get(language).into());
+    }
+    let excerpt = || {
+        let reference = snapshot
+            .reference
+            .as_ref()
+            .ok_or_else(|| Key::ReferenceMatchMissing.get(language).to_string())?;
+        reference_excerpt(
+            reference,
+            snapshot.reference_start,
+            snapshot.settings.duration_seconds,
+        )
+        .ok_or_else(|| Key::ReferenceMatchShort.get(language).to_string())
+    };
+    match snapshot.objective {
+        MatchObjective::AcousticReference => {
+            Ok(Arc::new(ReferenceAudioEvaluator::new(excerpt()?.as_ref())?))
+        }
+        MatchObjective::ClapReference | MatchObjective::ClapText => {
+            let directory = snapshot
+                .model_directory
+                .as_ref()
+                .ok_or_else(|| Key::AudioMatchModelRequired.get(language).to_string())?;
+            let target = if snapshot.objective == MatchObjective::ClapText {
+                if snapshot.text_prompt.trim().is_empty() {
+                    return Err(Key::AudioMatchPromptRequired.get(language).into());
+                }
+                ClapTarget::Text(snapshot.text_prompt.clone())
+            } else {
+                ClapTarget::Audio(excerpt()?)
+            };
+            Ok(Arc::new(ClapAudioEvaluator::load(
+                directory, target, cancel,
+            )?))
+        }
     }
 }
 
@@ -148,6 +244,9 @@ impl AurisApp {
     /// Closes the sheet, stops preview audio, and prevents late worker results from reopening it.
     pub(crate) fn close_reference_match(&mut self, cx: &mut Context<Self>) {
         self.reference_match.cancel();
+        if self.prompt.as_ref().and_then(Prompt::target) == Some(PromptTarget::AudioMatchText) {
+            self.cancel_prompt();
+        }
         self.reference_match.open = false;
         self.reference_match.generation = self.reference_match.generation.wrapping_add(1);
         self.reference_match.comparison = None;
@@ -161,11 +260,14 @@ impl AurisApp {
             && snapshot.revision == self.session.revision()
             && snapshot.settings == self.reference_match.settings
             && snapshot.reference_start == self.reference_match.reference_start
-            && self
-                .reference_match
-                .source
-                .as_ref()
-                .is_some_and(|source| Arc::ptr_eq(&source.audio, &snapshot.reference))
+            && snapshot.objective == self.reference_match.objective
+            && snapshot.model_directory == self.reference_match.model_directory
+            && snapshot.text_prompt == self.reference_match.text_prompt
+            && match (&snapshot.reference, &self.reference_match.source) {
+                (Some(reference), Some(source)) => Arc::ptr_eq(&source.audio, reference),
+                (None, None) => true,
+                _ => false,
+            }
     }
 
     fn owns_match_worker(&self, generation: u64) -> bool {
@@ -199,18 +301,66 @@ impl AurisApp {
         let before = (
             self.reference_match.settings.clone(),
             self.reference_match.reference_start,
+            self.reference_match.objective,
+            self.reference_match.model_directory.clone(),
+            self.reference_match.text_prompt.clone(),
         );
         update(&mut self.reference_match);
         if before
             != (
                 self.reference_match.settings.clone(),
                 self.reference_match.reference_start,
+                self.reference_match.objective,
+                self.reference_match.model_directory.clone(),
+                self.reference_match.text_prompt.clone(),
             )
         {
             self.reference_match.generation = self.reference_match.generation.wrapping_add(1);
             self.reference_match.cancel();
             self.reference_match.error = None;
             self.stop_reference_preview();
+        }
+    }
+
+    fn choose_audio_match_model(&mut self, cx: &mut Context<Self>) {
+        if self.reference_match.busy() {
+            return;
+        }
+        let generation = self.reference_match.generation;
+        let language = self.language();
+        cx.spawn(async move |this, cx| {
+            let directory = rfd::AsyncFileDialog::new()
+                .set_title(Key::AudioMatchChooseModel.get(language))
+                .pick_folder()
+                .await;
+            if let Some(directory) = directory {
+                let _ = this.update(cx, |this, cx| {
+                    if this.reference_match.open && this.reference_match.generation == generation {
+                        this.change_reference_settings(|state| {
+                            state.model_directory = Some(directory.path().to_path_buf())
+                        });
+                        cx.notify();
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn edit_audio_match_prompt(&mut self) {
+        if !self.reference_match.busy() {
+            self.open_prompt(Prompt::new(
+                self.t(Key::AudioMatchPrompt),
+                PromptTarget::AudioMatchText,
+                self.reference_match.text_prompt.clone(),
+            ));
+        }
+    }
+
+    /// Accepts text from the shared editable prompt without altering the document.
+    pub(crate) fn set_audio_match_prompt(&mut self, text: String) {
+        if self.reference_match.open {
+            self.change_reference_settings(|state| state.text_prompt = text);
         }
     }
 
@@ -288,17 +438,16 @@ impl AurisApp {
         if self.reference_match.busy() || self.compose_progress.is_some() {
             return false;
         }
-        let Some(source) = &self.reference_match.source else {
-            self.reference_match.error = Some(self.t(Key::ReferenceMatchMissing).into());
-            cx.notify();
-            return false;
-        };
-        if !self.reference_match.settings.mix && !self.reference_match.settings.performance {
-            self.reference_match.error = Some(self.t(Key::ReferenceMatchNeedScope).into());
+        if let Some(problem) = self.reference_match.input_problem() {
+            self.reference_match.error = Some(self.t(problem).into());
             cx.notify();
             return false;
         }
-        let reference = Arc::clone(&source.audio);
+        let reference = self
+            .reference_match
+            .source
+            .as_ref()
+            .map(|source| Arc::clone(&source.audio));
         self.stop_reference_preview();
         self.reference_match.generation = self.reference_match.generation.wrapping_add(1);
         let snapshot = MatchSnapshot {
@@ -307,15 +456,20 @@ impl AurisApp {
             settings: self.reference_match.settings.clone(),
             reference_start: self.reference_match.reference_start,
             reference,
+            objective: self.reference_match.objective,
+            model_directory: self.reference_match.model_directory.clone(),
+            text_prompt: self.reference_match.text_prompt.clone(),
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let completed = Arc::new(AtomicUsize::new(0));
         let fraction = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let prepared = Arc::new(AtomicBool::new(false));
         self.reference_match.running = Some(MatchControl {
             snapshot: snapshot.clone(),
             cancel: Arc::clone(&cancel),
             completed: Arc::clone(&completed),
             fraction: Arc::clone(&fraction),
+            prepared: Arc::clone(&prepared),
         });
         self.reference_match.comparison = None;
         self.reference_match.error = None;
@@ -324,17 +478,10 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let mut snapshot = snapshot;
             let preparation = snapshot.clone();
-            let prepared = cx
+            let preparation_cancel = Arc::clone(&cancel);
+            let evaluator = cx
                 .background_executor()
-                .spawn(async move {
-                    let excerpt = reference_excerpt(
-                        &preparation.reference,
-                        preparation.reference_start,
-                        preparation.settings.duration_seconds,
-                    )
-                    .ok_or_else(|| Key::ReferenceMatchShort.get(language).to_string())?;
-                    ReferenceAudioEvaluator::new(&excerpt)
-                })
+                .spawn(async move { prepare_evaluator(&preparation, preparation_cancel, language) })
                 .await;
             let job = this
                 .update(cx, |this, cx| {
@@ -348,13 +495,14 @@ impl AurisApp {
                         cx.notify();
                         return None;
                     }
-                    let job = prepared.and_then(|evaluator| {
+                    let job = evaluator.and_then(|evaluator| {
                         this.session
-                            .begin_reference_match(snapshot.settings.clone(), Arc::new(evaluator))
+                            .begin_reference_match(snapshot.settings.clone(), evaluator)
                             .map_err(|error| error_text(&error, this.language()))
                     });
                     match job {
                         Ok(job) => {
+                            prepared.store(true, Ordering::Relaxed);
                             snapshot.revision = this.session.revision();
                             if let Some(run) = &mut this.reference_match.running {
                                 run.snapshot = snapshot.clone();

@@ -175,6 +175,55 @@ fn repeated_seed_retains_the_same_exact_audio_and_candidate() {
 }
 
 struct Constant;
+
+struct CancelDuringEvaluation {
+    cancel: Arc<AtomicBool>,
+    interrupt: AtomicBool,
+}
+
+impl AudioEvaluator for CancelDuringEvaluation {
+    fn evaluate(&self, audio: &AudioBuffer) -> Result<AudioEvaluation, String> {
+        if self.interrupt.load(Ordering::Relaxed) {
+            self.cancel.store(true, Ordering::Relaxed);
+            Err("model evaluation interrupted".into())
+        } else {
+            Constant.evaluate(audio)
+        }
+    }
+
+    fn description(&self) -> String {
+        "cancellable test objective".into()
+    }
+}
+
+#[test]
+fn cancellation_inside_a_model_keeps_the_completed_partial_best() {
+    let mut session = session();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let evaluator = Arc::new(CancelDuringEvaluation {
+        cancel: Arc::clone(&cancel),
+        interrupt: AtomicBool::new(false),
+    });
+    let job = session
+        .begin_reference_match(settings(), evaluator.clone())
+        .unwrap();
+    let result = job.run(&cancel, &mut |_| {}).unwrap();
+    let ReferenceMatchStep::Pending(job) = session.continue_reference_match(result).unwrap() else {
+        panic!("candidate pending")
+    };
+    evaluator.interrupt.store(true, Ordering::Relaxed);
+    let result = job.run(&cancel, &mut |_| {}).unwrap();
+    let ReferenceMatchStep::Complete(report) = session.continue_reference_match(result).unwrap()
+    else {
+        panic!("cancellation completes the pass")
+    };
+    assert!(report.cancelled);
+    assert_eq!(report.attempts, 1);
+    assert!(Arc::ptr_eq(&report.baseline_audio, &report.best_audio));
+    assert!(!session.apply_reference_match(&report).unwrap());
+    assert!(!session.can_undo());
+}
+
 impl AudioEvaluator for Constant {
     fn evaluate(&self, _: &AudioBuffer) -> Result<AudioEvaluation, String> {
         Ok(AudioEvaluation {
