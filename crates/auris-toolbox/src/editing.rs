@@ -566,6 +566,11 @@ mod tests {
         let mut session = opened(&fixture.path).unwrap();
         let mut spec = preset("chiptune").unwrap().spec();
         spec.parts.retain(|part| part.role.is_drum());
+        for section in spec.sections.values_mut() {
+            section
+                .parts
+                .retain(|name| spec.parts.iter().any(|part| part.name == *name));
+        }
         session
             .compose(&auris_session::prelude::compose(&spec))
             .unwrap();

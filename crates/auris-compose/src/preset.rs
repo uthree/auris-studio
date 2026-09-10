@@ -128,6 +128,7 @@ form   = ["intro","verse","chorus","verse2","chorus2","outro"]
 [section.intro]
 bars      = 4
 intensity = 0.5
+parts     = "chords bass kick snare hat crash"
 
 [section.chorus]
 intensity = 0.95
@@ -314,6 +315,7 @@ sabi = "@marusa5"
 [section.intro]
 bars      = 4
 intensity = 0.5
+parts     = "rhodes stabs bass kick snare hat crash riser"
 
 [section.chorus]
 intensity = 0.9
@@ -402,6 +404,7 @@ lift = "@axis"
 [section.intro]
 bars      = 4
 intensity = 0.6
+parts     = "rhythm organ bass kick snare hat crash"
 
 [section.chorus]
 intensity = 1.0
