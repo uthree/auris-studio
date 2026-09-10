@@ -140,6 +140,7 @@ role = "melody"
 [[part]]
 name = "chords"
 role = "chords"
+gate = 0.65
 
 [[part]]
 name = "bass"
@@ -420,6 +421,7 @@ name    = "rhythm"
 role    = "chords"
 program = "Distortion Guitar"
 octave  = 3
+gate    = 0.65
 
 [[part]]
 name    = "organ"
