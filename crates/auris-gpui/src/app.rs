@@ -426,11 +426,11 @@ pub enum Drag {
         index: usize,
         /// Original start and length of every note affected by this gesture.
         origins: Vec<(usize, Ticks, Ticks)>,
+        /// Creating a note: its creation modifier must not also disable length snapping.
+        drawing: bool,
         /// Where the button went down, until the pointer has travelled far enough to mean it.
         ///
-        /// Guards a grabbed *existing* note the way `ClipMove` guards a clip: a click wobble
-        /// on an off-grid note's handle snapped its end onto the grid. `None` when the drag is
-        /// drawing a brand-new note, whose end starts on the grid and should follow at once.
+        /// Protects existing ends and the remembered length of a newly drawn note from wobble.
         pressed_at: Option<Point<Pixels>>,
     },
     /// Dragging the boundary between two phonemes inside a note.
@@ -1243,6 +1243,8 @@ pub struct AurisApp {
     /// Every selected clip. Edits act on all of them; the piano roll edits the primary one.
     pub(crate) selected_clips: BTreeSet<ClipId>,
     pub(crate) selected_notes: BTreeSet<usize>,
+    /// Duration reused by the next piano-roll note; absent until a note is handled.
+    pub(crate) last_note_length: Option<Ticks>,
     /// Which tool the piano roll has in hand.
     ///
     /// Deliberately not a setting: a tool is a mode, and a mode the application remembers is a
@@ -1638,6 +1640,7 @@ impl AurisApp {
             selected_clip,
             selected_clips: selected_clip.into_iter().collect(),
             selected_notes: BTreeSet::new(),
+            last_note_length: None,
             tool: RollTool::default(),
             score_layer: ScoreLayer::default(),
             score_preview: None,
@@ -1965,6 +1968,14 @@ impl AurisApp {
         let Some(drag) = self.drag.take() else {
             return;
         };
+        if let Drag::NoteResize { clip, index, .. } = &drag
+            && let Some(note) = self
+                .session
+                .midi_clip(*clip)
+                .and_then(|c| c.notes.get(*index))
+        {
+            self.last_note_length = Some(note.length);
+        }
         // A clip dropped over its neighbour is a join, and the join is shaped before the gesture
         // closes so that it is part of the same undo step: the fade exists because the clip
         // landed there, and undoing the move without it would leave a fade over nothing.
@@ -2218,6 +2229,33 @@ impl AurisApp {
             return;
         };
         self.sound(track, vec![pitch], velocity, Some(index));
+    }
+
+    /// Auditions the actual pitches of a moved selection, including MIDI-limit clamps.
+    pub(crate) fn audition_moved_notes(&mut self, clip: ClipId, origins: &[(usize, Ticks, u8)]) {
+        let Some((track, notes)) = self.project().midi_clip(clip) else {
+            self.stop_audition();
+            return;
+        };
+        let mut pitches: Vec<_> = origins
+            .iter()
+            .filter_map(|(index, _, _)| notes.notes.get(*index).map(|note| note.pitch))
+            .collect();
+        pitches.sort_unstable();
+        pitches.dedup();
+        let sounding = self
+            .auditioning
+            .as_ref()
+            .filter(|(playing_track, _)| *playing_track == track)
+            .map(|(_, pitches)| pitches.as_slice());
+        match audition_for(sounding, &pitches) {
+            Audition::Silence => self.stop_audition(),
+            Audition::Hold => {}
+            Audition::Strike => {
+                let index = origins.first().map(|(index, _, _)| *index);
+                self.sound(track, pitches, NOTE_VELOCITY, index);
+            }
+        }
     }
 
     /// Sounds the chord in force at `tick`, and says so when nothing can play it.

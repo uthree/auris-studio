@@ -412,6 +412,7 @@ strings! {
         ja: "約30秒ごとに、復旧用のコピーを作業用キャッシュへ保存します。プロジェクト本体は、手動で保存したときだけ更新されます。"
     }
     SnapNoteLengths { en: "Snap Note Lengths", ja: "ノートの長さをスナップ" }
+    SnapNoteLengthsShort { en: "Length Snap", ja: "長さスナップ" }
     SnapNoteLengthsNote {
         en: "Rounds a note's duration to the editing grid while its right edge is dragged.",
         ja: "ノートの右端をドラッグしたとき、長さを編集グリッドに合わせます。"

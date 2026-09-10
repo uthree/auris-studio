@@ -845,6 +845,12 @@ impl Theme {
         readable_on(color, self.background)
     }
 
+    /// Opaque note fill; selection reverses luminance instead of relying on hue alone.
+    pub fn note_fill(&self, velocity: f32, selected: bool) -> Hsla {
+        let color = self.velocity_color(velocity);
+        if selected { self.text_on(color) } else { color }
+    }
+
     /// Colour of the primary written degree (one-based), independent of key and chord quality.
     pub fn chord_color(&self, degree: u8) -> Hsla {
         self.chord_palette[(degree.clamp(1, 7) - 1) as usize]
@@ -1436,6 +1442,27 @@ mod tests {
                         scheme.id
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn selected_notes_and_their_labels_contrast_in_every_scheme() {
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            for velocity in 0..=127 {
+                let velocity = velocity as f32 / 127.0;
+                let selected = theme.note_fill(velocity, true);
+                assert!(
+                    contrast_ratio(selected, theme.note_fill(velocity, false)) >= 4.5,
+                    "{}: selection must change luminance",
+                    scheme.name
+                );
+                assert!(
+                    contrast_ratio(theme.text_on(selected), selected) >= 4.5,
+                    "{}: selected lyrics must remain readable",
+                    scheme.name
+                );
             }
         }
     }

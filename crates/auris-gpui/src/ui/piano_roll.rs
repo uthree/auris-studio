@@ -755,6 +755,20 @@ impl AurisApp {
                     }))
                     .when(source, |row| {
                         row.child(button(
+                            "roll-snap-length",
+                            self.t(Key::SnapNoteLengthsShort),
+                            ButtonStyle::Ghost,
+                            self.settings.snap_note_lengths,
+                            theme.accent_soft,
+                            &theme,
+                            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                                this.apply_snap_note_lengths(!this.settings.snap_note_lengths);
+                                cx.notify();
+                            }),
+                        ))
+                    })
+                    .when(source, |row| {
+                        row.child(button(
                             "roll-lanes",
                             self.t(Key::CurveLanes),
                             ButtonStyle::Ghost,
@@ -1349,6 +1363,7 @@ impl AurisApp {
                 }
                 self.selected_notes.insert(index);
 
+                self.last_note_length = Some(note.length);
                 if resizing {
                     let origins = self
                         .session
@@ -1368,6 +1383,7 @@ impl AurisApp {
                         clip: clip_id,
                         index,
                         origins,
+                        drawing: false,
                         pressed_at: Some(event.position),
                     });
                 } else if let Some((phoneme, from_seconds, end_seconds)) =
@@ -1398,27 +1414,31 @@ impl AurisApp {
             None => match empty_press(self.pointer, event) {
                 EmptyPress::Create => {
                     let start = snapped_note_start(tick, clip_start, self.project().grid);
-                    let length = default_note_length(self.project().grid);
+                    let length = self
+                        .last_note_length
+                        .unwrap_or_else(|| default_note_length(self.project().grid));
                     // The new note and the resize that follows it are one gesture, so the
                     // transaction opens first and the note lands inside it.
                     self.begin_drag(Drag::NoteResize {
                         clip: clip_id,
                         index: 0,
                         origins: Vec::new(),
+                        drawing: true,
                         pressed_at: None,
                     });
                     let Ok(index) = self
                         .session
                         .add_note(clip_id, Note::new(pitch, start, length))
                     else {
-                        self.drag = None;
+                        self.abandon_drag();
                         return;
                     };
                     self.drag = Some(Drag::NoteResize {
                         clip: clip_id,
                         index,
                         origins: vec![(index, start, length)],
-                        pressed_at: None,
+                        drawing: true,
+                        pressed_at: Some(event.position),
                     });
                     self.selected_notes.clear();
                     self.selected_notes.insert(index);
@@ -1476,6 +1496,7 @@ impl AurisApp {
             .notes
             .get(index)
             .map(|note| (note.pitch, note.velocity));
+        self.last_note_length = target.notes.get(index).map(|note| note.length);
 
         self.begin_drag(Drag::NoteVelocity {
             clip,
@@ -2036,6 +2057,7 @@ fn paint_velocity_bar(
     note_bounds: Bounds<Pixels>,
     velocity: f32,
     theme: &Theme,
+    fill: gpui::Hsla,
 ) {
     if !bar_fits(note_bounds) {
         return;
@@ -2054,7 +2076,7 @@ fn paint_velocity_bar(
         },
         // Against the note's own fill, which runs from blue to red: a fixed colour would vanish
         // into one end of the ramp or the other.
-        Theme::translucent(theme.text_on(theme.velocity_color(velocity)), 0.8),
+        Theme::translucent(theme.text_on(fill), 0.8),
     );
 }
 
@@ -2124,6 +2146,7 @@ fn paint_lyric(
     note: &Note,
     theme: &Theme,
     timed: bool,
+    fill: gpui::Hsla,
 ) {
     let row = f32::from(note_bounds.size.height);
     if row >= LYRIC_MIN_ROW && !note.lyric.is_empty() {
@@ -2137,7 +2160,7 @@ fn paint_lyric(
             ),
             note.lyric.clone(),
             size,
-            theme.text_on(theme.velocity_color(note.velocity)),
+            theme.text_on(fill),
         );
     }
     // The untimed list yields to the timed segmentation — the same symbols drawn where
@@ -2187,48 +2210,30 @@ fn paint_notes(
         {
             continue;
         }
-        // The fill says how hard the note was struck and nothing else, so the dynamics of a part
-        // are readable at a glance rather than one note at a time.
+        let selected = selected.contains(&index);
+        let fill = theme.note_fill(note.velocity, selected);
         let note_bounds = Bounds {
             origin: point(x, y + px(1.0)),
             size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
         };
-        paint::rounded_rect(
-            window,
-            note_bounds,
-            Metrics::RADIUS_XS,
-            theme.velocity_color(note.velocity),
-        );
-        // The word and the bar want the same pixels; on a singer track the word wins, and the
-        // fill still says how hard the note is struck.
+        paint::rounded_rect(window, note_bounds, Metrics::RADIUS_XS, fill);
+        // The word and the bar want the same pixels; on a singer track the word wins.
         if lyrics {
-            paint_lyric(window, cx, note_bounds, note, theme, timed_phonemes);
+            paint_lyric(window, cx, note_bounds, note, theme, timed_phonemes, fill);
         }
         if !(lyrics
             && !note.lyric.is_empty()
             && f32::from(note_bounds.size.height) >= LYRIC_MIN_ROW)
         {
-            paint_velocity_bar(window, note_bounds, note.velocity, theme);
+            paint_velocity_bar(window, note_bounds, note.velocity, theme, fill);
         }
         if tag.is_some_and(|(grabbed, _)| grabbed == index) {
             tag_at = Some(note_bounds);
         }
-        // Which leaves selection to the outline alone. It used to share the fill, and the two
-        // cannot both have it: a selected note and a loud one would be the same rectangle.
-        if selected.contains(&index) {
-            paint::rounded_outline(
-                window,
-                note_bounds,
-                Metrics::RADIUS_XS,
-                px(1.5),
-                // Against the note's own colour, not against the accent. The selection colour is
-                // a shade of the accent, and the velocity ramp runs through blue, green, yellow
-                // and red: at mid velocity the outline landed on green about one and a tenth to
-                // one from it, and a selected note in the middle of a phrase simply did not look
-                // selected. Deciding per note also stops the whole thing resting on hue, which
-                // is the one channel a red-green-deficient reader does not have.
-                theme.text_on(theme.velocity_color(note.velocity)),
-            );
+        // The outline keeps selected notes visible against the lane even when the reversed
+        // fill resembles its background. Bar length still conveys velocity.
+        if selected {
+            paint::rounded_outline(window, note_bounds, Metrics::RADIUS_XS, px(2.0), theme.text);
         }
     }
 
@@ -3731,6 +3736,129 @@ mod window_tests {
 
     /// The create gesture writes a note and hands it straight to the resize, so placing a note and
     /// giving it a length is one movement of the hand rather than click, look, click again.
+    #[gpui::test]
+    fn drawing_snaps_lengths_even_while_the_create_modifier_is_held(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        app.update(cx, |this, _| this.session.set_grid(HALF_BEAT));
+        let from = roll_point(&app, cx, BEAT, MIDDLE_C);
+        let to = roll_point(&app, cx, BEAT * 3 + Ticks(HALF_BEAT.raw() / 3), MIDDLE_C);
+        drag_with(cx, from, to, creating());
+        assert_eq!(notes(&app, cx)[0].length, BEAT * 2);
+    }
+
+    #[gpui::test]
+    fn cancelled_lengths_do_not_leak_into_the_next_note(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, BEAT, BEAT * 2))
+                .unwrap();
+        });
+        paint(&app, cx);
+        let mut edge = roll_point(&app, cx, BEAT * 3, MIDDLE_C);
+        edge.x -= gpui::px(1.0);
+        let end = roll_point(&app, cx, BEAT * 4, MIDDLE_C);
+        press(cx, edge);
+        crate::harness::drag_to(cx, end);
+        cx.simulate_keystrokes("escape");
+        release(cx, end);
+        let at = roll_point(&app, cx, BEAT, MIDDLE_C + 4);
+        click_at(cx, at, creating());
+        assert_eq!(notes(&app, cx)[1].length, BEAT * 2);
+    }
+
+    #[gpui::test]
+    fn length_snap_toggle_and_fine_resize_use_the_same_grid(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session.set_grid(HALF_BEAT);
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, BEAT, BEAT))
+                .unwrap();
+        });
+        paint(&app, cx);
+        let mut edge = roll_point(&app, cx, BEAT * 2, MIDDLE_C);
+        edge.x -= gpui::px(1.0);
+        let end = roll_point(&app, cx, BEAT * 3 + Ticks(HALF_BEAT.raw() / 3), MIDDLE_C);
+        drag(cx, edge, end);
+        assert_eq!(notes(&app, cx)[0].length, BEAT * 2);
+        app.update(cx, |this, _| {
+            this.session.undo();
+        });
+        paint(&app, cx);
+        drag_with(cx, edge, end, creating());
+        assert!(notes(&app, cx)[0].length > BEAT * 2);
+        app.update(cx, |this, _| {
+            this.session.undo();
+        });
+        paint(&app, cx);
+        crate::harness::click("roll-snap-length", cx);
+        app.read_with(cx, |this, _| assert!(!this.settings.snap_note_lengths));
+        drag(cx, edge, end);
+        assert!(notes(&app, cx)[0].length > BEAT * 2);
+    }
+
+    #[gpui::test]
+    fn clicked_notes_reuse_the_last_length_without_pointer_wobble(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_the_roll_open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, BEAT, BEAT * 2))
+                .unwrap();
+        });
+        paint(&app, cx);
+        let picked = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        click_at(cx, picked, gpui::Modifiers::none());
+        let at = roll_point(&app, cx, BEAT, MIDDLE_C + 4);
+        drag_with(cx, at, gpui::point(at.x + gpui::px(1.0), at.y), creating());
+        assert_eq!(notes(&app, cx)[1].length, BEAT * 2);
+
+        let mut edge = roll_point(&app, cx, BEAT * 3, MIDDLE_C + 4);
+        edge.x -= gpui::px(1.0);
+        let end = roll_point(&app, cx, BEAT * 4, MIDDLE_C + 4);
+        drag(cx, edge, end);
+        let next = roll_point(&app, cx, BEAT, MIDDLE_C + 7);
+        click_at(cx, next, creating());
+        assert_eq!(notes(&app, cx)[2].length, BEAT * 3);
+        app.update(cx, |this, cx| {
+            this.run_menu_command(
+                crate::ui::context_menu::MenuCommand::NewNote {
+                    pitch: MIDDLE_C + 9,
+                    start: BEAT,
+                },
+                cx,
+            );
+        });
+        assert_eq!(notes(&app, cx)[3].length, BEAT * 3);
+    }
+
+    #[gpui::test]
+    fn swept_notes_audition_the_whole_transposed_selection_and_stop_on_release(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        let from = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        let to = roll_point(&app, cx, BEAT * 2 + HALF_BEAT, MIDDLE_C + 3);
+        press(cx, from);
+        crate::harness::drag_to(cx, to);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.auditioning.as_ref().unwrap().1,
+                vec![MIDDLE_C + 3, MIDDLE_C + 5]
+            );
+        });
+        release(cx, to);
+        app.read_with(cx, |this, _| assert!(this.auditioning.is_none()));
+
+        paint(&app, cx);
+        press(cx, to);
+        crate::harness::drag_to(cx, from);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(this.auditioning.is_none()));
+        release(cx, from);
+        assert_eq!(notes(&app, cx)[0].pitch, MIDDLE_C + 3);
+    }
+
     #[gpui::test]
     fn the_create_gesture_writes_a_note_and_stretches_it_in_one_go(cx: &mut TestAppContext) {
         let (app, cx, _) = with_the_roll_open(cx);
