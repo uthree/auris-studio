@@ -241,6 +241,7 @@ gain    = -19
 name    = "bass"
 role    = "bass"
 program = "Electric Bass (finger)"
+gate    = 0.8
 
 [[part]]
 name    = "kick"
