@@ -1141,6 +1141,20 @@ mod tests {
     const SAMPLE_RATE: f64 = 48_000.0;
 
     #[test]
+    fn compiled_asio_backend_requires_the_windows_feature() {
+        // Check compiled backends without enumerating or opening installed drivers.
+        let has_asio = cpal::ALL_HOSTS.iter().any(|host| host.name() == "ASIO");
+        assert_eq!(has_asio, cfg!(all(target_os = "windows", feature = "asio")));
+    }
+
+    #[test]
+    fn windows_builds_always_include_wasapi() {
+        if cfg!(target_os = "windows") {
+            assert!(cpal::ALL_HOSTS.iter().any(|host| host.name() == "WASAPI"));
+        }
+    }
+
+    #[test]
     fn failed_stream_is_dropped_before_its_command_queue_is_drained() {
         struct DropSignal(Arc<AtomicBool>);
 

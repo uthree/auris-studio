@@ -11,6 +11,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+asio = ["auris-session/asio"]
+
 [[bin]]
 name = "auris-agent"
 path = "src/main.rs"

@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+asio = ["auris-engine/asio"]
+
 # No UI dependency of any kind. This crate is what a GUI, a CLI and an MCP server all sit on.
 [dependencies]
 auris-analysis.workspace = true

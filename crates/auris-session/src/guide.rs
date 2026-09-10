@@ -201,7 +201,9 @@ pub mod architecture {
     //! # The two threads
     //!
     //! Audio preferences select a host as well as a device. Windows builds include WASAPI
-    //! (the default shared-mode host) and ASIO, with CPAL's realtime priority support enabled.
+    //! (the default shared-mode host), with CPAL's realtime priority support enabled. The `asio`
+    //! Cargo feature adds ASIO and is forwarded by every frontend through the session to the
+    //! engine. Distributed Windows releases enable it explicitly; local builds default to WASAPI.
     //! ASIO input clones the output's device so both directions share the same driver, stream
     //! state, sample rate and buffer size. A host or output change closes capture before output
     //! and reattaches monitoring to the new engine; a recording take refuses such changes.
