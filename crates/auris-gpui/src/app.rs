@@ -386,6 +386,8 @@ pub enum Drag {
     },
     /// Moving one or more notes in the piano roll.
     NoteMove {
+        /// Note whose values the drag readout follows.
+        grabbed: usize,
         /// Clip the notes live in.
         clip: ClipId,
         /// Tick under the pointer when the drag began.
@@ -400,6 +402,25 @@ pub enum Drag {
         /// click drifting one pixel across a row boundary transposed the whole selection — and
         /// auditioned the wrong pitch — before the hand had decided anything.
         pressed_at: Option<Point<Pixels>>,
+    },
+    /// Alt/Option-click waits for release to delete; dragging instead duplicates the selection.
+    NoteCopy {
+        /// Clip containing the source and copied notes.
+        clip: ClipId,
+        /// Source index before movement, then the corresponding copied index.
+        grabbed: usize,
+        /// Clip-relative tick under the initial press.
+        origin_tick: Ticks,
+        /// Pitch under the initial press.
+        origin_pitch: u8,
+        /// Source positions before movement, then copied indices with those same origins.
+        origins: Vec<(usize, Ticks, u8)>,
+        /// Present until the drag threshold is crossed and a transaction begins.
+        pressed_at: Option<Point<Pixels>>,
+        /// Selection restored when copying is cancelled.
+        selection_before: BTreeSet<usize>,
+        /// Whether the configured delete gesture matched the initial press.
+        delete_on_click: bool,
     },
     /// Dragging a note's velocity up or down with the roll's velocity tool.
     NoteVelocity {
@@ -711,6 +732,9 @@ impl Drag {
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
             Drag::CurvePoint { clip, which, .. } => Some(Edit::write_curve(*which, *clip)),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
+            Drag::NoteCopy { pressed_at, .. } => {
+                pressed_at.is_none().then_some(Edit::DuplicateNotes)
+            }
             Drag::NoteResize { .. } => Some(Edit::ResizeNote),
             Drag::NoteVelocity { .. } => Some(Edit::SetNoteVelocity),
             Drag::PhonemeDuration {
@@ -1968,11 +1992,32 @@ impl AurisApp {
         let Some(drag) = self.drag.take() else {
             return;
         };
-        if let Drag::NoteResize { clip, index, .. } = &drag
+        if let Drag::NoteCopy {
+            clip,
+            grabbed,
+            pressed_at: Some(_),
+            delete_on_click: true,
+            ..
+        } = &drag
+        {
+            let _ = self.session.remove_notes(*clip, &[*grabbed]);
+            self.selected_notes.clear();
+        }
+        let edited_note = match &drag {
+            Drag::NoteResize { clip, index, .. } => Some((*clip, *index)),
+            Drag::NoteCopy {
+                clip,
+                grabbed,
+                pressed_at: None,
+                ..
+            } => Some((*clip, *grabbed)),
+            _ => None,
+        };
+        if let Some((clip, index)) = edited_note
             && let Some(note) = self
                 .session
-                .midi_clip(*clip)
-                .and_then(|c| c.notes.get(*index))
+                .midi_clip(clip)
+                .and_then(|c| c.notes.get(index))
         {
             self.last_note_length = Some(note.length);
         }
@@ -2028,6 +2073,12 @@ impl AurisApp {
         };
         if drag.edit().is_some() {
             self.session.revert_transaction();
+        }
+        if let Drag::NoteCopy {
+            selection_before, ..
+        } = drag
+        {
+            self.selected_notes = selection_before;
         }
         true
     }

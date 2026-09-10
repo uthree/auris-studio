@@ -122,6 +122,15 @@ fn default_note_length(grid: Ticks) -> Ticks {
     Ticks(grid.raw().max(1))
 }
 
+/// The grabbed note's written values, captured before the canvas borrows the window.
+#[derive(Debug)]
+struct NoteEditTag {
+    start: Ticks,
+    length: Ticks,
+    pitch: u8,
+    lines: [String; 3],
+}
+
 /// Clip-relative note start snapped to the song grid drawn behind it.
 fn snapped_note_start(tick: Ticks, clip_start: Ticks, grid: Ticks) -> Ticks {
     (tick.snap_nearest(grid) - clip_start).max_zero()
@@ -653,6 +662,7 @@ impl AurisApp {
             .then(|| self.rubber_band(crate::app::BandSurface::Roll))
             .flatten();
         let velocity_tag = source.then(|| self.velocity_tag()).flatten();
+        let edit_tag = source.then(|| self.note_edit_tag()).flatten();
         let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
@@ -985,6 +995,17 @@ impl AurisApp {
                                             if let Some(band) = band {
                                                 paint::selection_band(window, band, &theme);
                                             }
+                                            if let Some(tag) = &edit_tag {
+                                                paint_note_edit_tag(
+                                                    window,
+                                                    cx,
+                                                    bounds,
+                                                    tag,
+                                                    &view,
+                                                    &pitch_view,
+                                                    &theme,
+                                                );
+                                            }
                                         });
                                     },
                                 )
@@ -1252,7 +1273,7 @@ impl AurisApp {
         )
     }
 
-    /// Starts a note drag, creating a note when alt is held on empty space.
+    /// Starts a note gesture, using the configured create gesture on empty space.
     fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
         if !self.source_score() {
             return;
@@ -1301,6 +1322,31 @@ impl AurisApp {
                     event.modifiers.shift,
                 ),
             }
+            cx.notify();
+            return;
+        }
+
+        // Alt-click must wait for release: moving instead copies the selection. Alt-Shift
+        // remains available for matching ends and lengths.
+        if let Some(index) = under_pointer
+            && event.modifiers.alt
+            && !event.modifiers.shift
+        {
+            let selection_before = self.selected_notes.clone();
+            if !self.selected_notes.contains(&index) {
+                self.selected_notes.clear();
+                self.selected_notes.insert(index);
+            }
+            self.begin_drag(Drag::NoteCopy {
+                clip: clip_id,
+                grabbed: index,
+                origin_tick: local_tick,
+                origin_pitch: pitch,
+                origins: self.selected_note_origins(clip_id),
+                pressed_at: Some(event.position),
+                selection_before,
+                delete_on_click: self.pointer.delete.matches(event),
+            });
             cx.notify();
             return;
         }
@@ -1403,6 +1449,7 @@ impl AurisApp {
                     let origins = self.selected_note_origins(clip_id);
                     self.begin_drag(Drag::NoteMove {
                         clip: clip_id,
+                        grabbed: index,
                         origin_tick: local_tick,
                         origin_pitch: pitch,
                         origins,
@@ -1452,6 +1499,115 @@ impl AurisApp {
             },
         }
         cx.notify();
+    }
+
+    /// Starts the copy transaction only after an Alt/Option press becomes a drag.
+    pub(crate) fn start_note_copy(&mut self) -> bool {
+        let Some(Drag::NoteCopy {
+            clip,
+            grabbed,
+            origins,
+            ..
+        }) = self.drag.as_ref()
+        else {
+            return false;
+        };
+        let (clip, grabbed, origins) = (*clip, *grabbed, origins.clone());
+        let indices: Vec<_> = origins.iter().map(|(index, _, _)| *index).collect();
+        self.session
+            .begin_transaction(auris_session::Edit::DuplicateNotes);
+        let copies = match self
+            .session
+            .duplicate_notes_at_offset(clip, &indices, Ticks::ZERO)
+        {
+            Ok(copies) if copies.len() == origins.len() && !copies.is_empty() => copies,
+            _ => {
+                self.session.revert_transaction();
+                self.abort_drag();
+                return false;
+            }
+        };
+        let copied_grabbed = origins
+            .iter()
+            .position(|(index, _, _)| *index == grabbed)
+            .and_then(|position| copies.get(position))
+            .copied();
+        self.selected_notes = copies.iter().copied().collect();
+        let copied_origins = copies
+            .into_iter()
+            .zip(origins)
+            .map(|(copy, (_, start, pitch))| (copy, start, pitch))
+            .collect();
+        if let Some(Drag::NoteCopy {
+            grabbed,
+            origins,
+            pressed_at,
+            ..
+        }) = &mut self.drag
+        {
+            *grabbed = copied_grabbed.unwrap_or(*grabbed);
+            *origins = copied_origins;
+            *pressed_at = None;
+        }
+        true
+    }
+
+    /// Reads the document after snapping, never the unsnapped pointer coordinates.
+    fn note_edit_tag(&self) -> Option<NoteEditTag> {
+        let (clip, index, copying) = match self.drag.as_ref()? {
+            Drag::NoteMove {
+                clip,
+                grabbed,
+                pressed_at: None,
+                ..
+            } => (*clip, *grabbed, false),
+            Drag::NoteCopy {
+                clip,
+                grabbed,
+                pressed_at: None,
+                ..
+            } => (*clip, *grabbed, true),
+            Drag::NoteResize {
+                clip,
+                index,
+                drawing,
+                pressed_at,
+                ..
+            } if *drawing || pressed_at.is_none() => (*clip, *index, false),
+            _ => return None,
+        };
+        if Some(clip) != self.selected_clip {
+            return None;
+        }
+        let clip = self.session.midi_clip(clip)?;
+        let note = clip.notes.get(index)?;
+        let start = clip.start + note.start;
+        let (bar, beat, tick) = self.project().signatures.bar_beat_at(start);
+        let signature = self.project().signatures.signature_at(start);
+        let per_bar = signature.ticks_per_bar().raw().max(1);
+        let per_beat = signature.ticks_per_beat().raw().max(1);
+        let length = note.length.raw();
+        let pitch = crate::ui::timeline::pitch_name(note.pitch);
+        let title = if copying {
+            messages::note_copy_title(self.language(), &pitch, self.selected_notes.len())
+        } else {
+            messages::note_drag_title(self.language(), &pitch, self.selected_notes.len())
+        };
+        Some(NoteEditTag {
+            start,
+            length: note.length,
+            pitch: note.pitch,
+            lines: [
+                title,
+                messages::note_drag_position(self.language(), bar, beat, tick),
+                messages::note_drag_length(
+                    self.language(),
+                    length / per_bar,
+                    length % per_bar / per_beat,
+                    length % per_beat,
+                ),
+            ],
+        })
     }
 
     /// Takes hold of a note's dynamics, and of every note selected along with it.
@@ -2080,6 +2236,94 @@ fn paint_velocity_bar(
     );
 }
 
+/// Fits the readout beside a note, including notes dragged beyond the visible canvas.
+fn note_tag_bounds(
+    canvas: Bounds<Pixels>,
+    note: Bounds<Pixels>,
+    wanted: gpui::Size<Pixels>,
+    gap: Pixels,
+) -> Bounds<Pixels> {
+    let width = wanted.width.min(canvas.size.width).max(px(0.0));
+    let height = wanted.height.min(canvas.size.height).max(px(0.0));
+    let x = if note.right() + gap + width <= canvas.right() {
+        note.right() + gap
+    } else {
+        note.left() - gap - width
+    };
+    let y = if note.top() - gap - height >= canvas.top() {
+        note.top() - gap - height
+    } else {
+        note.bottom() + gap
+    };
+    Bounds {
+        origin: point(
+            x.clamp(canvas.left(), canvas.right() - width),
+            y.clamp(canvas.top(), canvas.bottom() - height),
+        ),
+        size: size(width, height),
+    }
+}
+
+/// Paints a non-interactive readout, measured in the current font and kept inside the roll.
+fn paint_note_edit_tag(
+    window: &mut Window,
+    cx: &mut App,
+    canvas: Bounds<Pixels>,
+    tag: &NoteEditTag,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    let font_size = window.rem_size() * 0.75;
+    let padding = font_size / 2.0;
+    let line_height = font_size * paint::LINE_HEIGHT;
+    let width = tag
+        .lines
+        .iter()
+        .map(|line| paint::measure_label(window, line.clone(), font_size))
+        .fold(px(0.0), |a, b| a.max(b))
+        + padding * 2.0;
+    let note = Bounds {
+        origin: point(
+            canvas.left() + view.tick_to_x(tag.start),
+            canvas.top() + pitch_view.pitch_to_y(tag.pitch),
+        ),
+        size: size(
+            view.duration_to_width(tag.length),
+            px(pitch_view.row_height),
+        ),
+    };
+    let bounds = note_tag_bounds(
+        canvas,
+        note,
+        size(width, line_height * 3.0 + padding * 2.0),
+        padding,
+    );
+    paint::rounded_rect(window, bounds, Metrics::RADIUS_XS, theme.surface_raised);
+    paint::rounded_outline(
+        window,
+        bounds,
+        Metrics::RADIUS_XS,
+        px(1.0),
+        theme.text_muted,
+    );
+    paint::clipped(window, bounds, |window| {
+        for (row, line) in tag.lines.iter().enumerate() {
+            paint::label(
+                window,
+                cx,
+                point(
+                    bounds.left() + padding,
+                    bounds.top() + padding + line_height * row as f32,
+                ),
+                line.clone(),
+                font_size,
+                theme.text,
+            );
+        }
+    });
+}
+
 /// Draws the number a velocity drag has reached, beside the note it has hold of.
 ///
 /// Logic's help tag. The value is the one thing a continuous drag cannot say by itself, and it is
@@ -2634,6 +2878,34 @@ mod backend_window_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_readouts_fit_at_canvas_edges_and_when_the_canvas_is_small() {
+        for canvas in [
+            Bounds {
+                origin: point(px(50.0), px(100.0)),
+                size: size(px(400.0), px(180.0)),
+            },
+            Bounds {
+                origin: point(px(50.0), px(100.0)),
+                size: size(px(30.0), px(20.0)),
+            },
+        ] {
+            for origin in [
+                canvas.origin,
+                canvas.bottom_right(),
+                point(px(-500.0), px(900.0)),
+            ] {
+                let note = Bounds {
+                    origin,
+                    size: size(px(80.0), px(12.0)),
+                };
+                let tag = note_tag_bounds(canvas, note, size(px(170.0), px(65.0)), px(6.0));
+                assert!(tag.left() >= canvas.left() && tag.right() <= canvas.right());
+                assert!(tag.top() >= canvas.top() && tag.bottom() <= canvas.bottom());
+            }
+        }
+    }
 
     #[test]
     fn new_notes_snap_to_the_song_grid_before_becoming_clip_relative() {
@@ -3572,6 +3844,179 @@ mod window_tests {
         drag(cx, from, to);
         app.read_with(cx, |this, _| assert_eq!(this.selected_notes, [0, 1].into()));
         (app, cx, clip)
+    }
+
+    #[gpui::test]
+    fn edit_readouts_follow_the_grabbed_note_and_use_absolute_song_positions(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx, _) = with_the_roll_open(cx);
+        let clip = app.update(cx, |this, _| {
+            let track = this.selected_track.unwrap();
+            let clip = this
+                .session
+                .add_midi_clip(track, "Offset", BEAT * 8, BEAT * 4)
+                .unwrap();
+            this.session
+                .add_note(clip, Note::new(MIDDLE_C, BEAT, BEAT * 2 + Ticks(7)))
+                .unwrap();
+            this.open_clip_in_editor(clip);
+            this.timeline.scroll_ticks = BEAT * 8;
+            clip
+        });
+        paint(&app, cx);
+        show_pitch(&app, cx, MIDDLE_C);
+        let from = roll_point(&app, cx, BEAT * 9 + HALF_BEAT, MIDDLE_C);
+        let to = roll_point(&app, cx, BEAT * 10 + HALF_BEAT, MIDDLE_C + 2);
+        press(cx, from);
+        app.read_with(cx, |this, _| assert!(this.note_edit_tag().is_none()));
+        crate::harness::drag_to(cx, to);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let tag = this.note_edit_tag().unwrap();
+            let note = &this.session.midi_clip(clip).unwrap().notes[0];
+            assert_eq!(tag.start, BEAT * 10);
+            assert_eq!(tag.pitch, note.pitch);
+            assert_eq!(tag.length, note.length);
+            assert_eq!(
+                tag.lines[1],
+                auris_i18n::messages::note_drag_position(this.language(), 3, 3, 0)
+            );
+            assert_eq!(
+                tag.lines[2],
+                auris_i18n::messages::note_drag_length(this.language(), 0, 2, 7)
+            );
+        });
+        release(cx, to);
+        let mut edge = roll_point(&app, cx, BEAT * 12 + Ticks(7), MIDDLE_C + 2);
+        edge.x -= gpui::px(1.0);
+        let resized = roll_point(&app, cx, BEAT * 13, MIDDLE_C + 2);
+        press(cx, edge);
+        crate::harness::drag_to(cx, resized);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.note_edit_tag().unwrap().length, BEAT * 3)
+        });
+        cx.simulate_keystrokes("escape");
+        release(cx, resized);
+        app.read_with(cx, |this, _| {
+            assert!(this.note_edit_tag().is_none());
+            assert_eq!(
+                this.session.midi_clip(clip).unwrap().notes[0].length,
+                BEAT * 2 + Ticks(7)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn alt_drag_copies_only_the_selection_once_and_undoes_as_one_edit(cx: &mut TestAppContext) {
+        let (app, cx, clip) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        let from = roll_point(&app, cx, BEAT * 2 + HALF_BEAT, MIDDLE_C + 2);
+        let to = roll_point(&app, cx, BEAT * 3 + HALF_BEAT, MIDDLE_C + 6);
+        cx.simulate_mouse_down(from, gpui::MouseButton::Left, deleting());
+        assert_eq!(
+            notes(&app, cx),
+            original,
+            "pressing has not deleted anything"
+        );
+        cx.simulate_mouse_move(to, gpui::MouseButton::Left, deleting());
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_notes, [3, 4].into());
+            let tag = this.note_edit_tag().unwrap();
+            assert_eq!(
+                tag.pitch,
+                MIDDLE_C + 6,
+                "follow the grabbed copy, not the first index"
+            );
+            assert_eq!(tag.start, BEAT * 3);
+            assert_eq!(tag.length, BEAT);
+            assert_eq!(
+                this.auditioning.as_ref().unwrap().1,
+                vec![MIDDLE_C + 4, MIDDLE_C + 6]
+            );
+        });
+        // Releasing Alt after starting the copy must not produce another copy or move originals.
+        let farther = roll_point(&app, cx, BEAT * 4 + HALF_BEAT, MIDDLE_C + 6);
+        crate::harness::drag_to(cx, farther);
+        release(cx, farther);
+        let changed = notes(&app, cx);
+        assert_eq!(changed.len(), 5);
+        assert_eq!(&changed[..3], original.as_slice());
+        for (copy, source) in changed[3..].iter().zip(&original[..2]) {
+            assert_eq!(copy.start, source.start + BEAT * 2);
+            assert_eq!(copy.pitch, source.pitch + 4);
+            assert_eq!(copy.length, source.length);
+            assert_eq!(copy.velocity, source.velocity);
+        }
+        app.update(cx, |this, _| {
+            assert!(this.note_edit_tag().is_none());
+            assert!(this.auditioning.is_none());
+            assert_eq!(
+                this.session.undo(),
+                Some(auris_session::Edit::DuplicateNotes)
+            );
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            this.session.redo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, changed);
+        });
+    }
+
+    #[gpui::test]
+    fn cancelling_an_outsider_copy_restores_the_original_selection(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        let from = roll_point(&app, cx, BEAT * 4 + HALF_BEAT, MIDDLE_C - 2);
+        let to = roll_point(&app, cx, BEAT * 5 + HALF_BEAT, MIDDLE_C);
+        cx.simulate_mouse_down(from, gpui::MouseButton::Left, deleting());
+        cx.simulate_mouse_move(to, gpui::MouseButton::Left, deleting());
+        assert_eq!(notes(&app, cx).len(), 4);
+        cx.simulate_keystrokes("escape");
+        release(cx, to);
+        assert_eq!(notes(&app, cx), original);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.selected_notes, [0, 1].into());
+            assert!(this.note_edit_tag().is_none());
+            assert!(this.auditioning.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn alt_click_waits_for_release_and_escape_cancels_pending_deletion(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        let original = notes(&app, cx);
+        let at = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        cx.simulate_mouse_down(at, gpui::MouseButton::Left, deleting());
+        cx.simulate_keystrokes("escape");
+        release(cx, at);
+        assert_eq!(notes(&app, cx), original);
+        cx.simulate_mouse_down(at, gpui::MouseButton::Left, deleting());
+        cx.simulate_mouse_move(
+            gpui::point(at.x + gpui::px(1.0), at.y),
+            gpui::MouseButton::Left,
+            deleting(),
+        );
+        assert_eq!(notes(&app, cx), original);
+        cx.simulate_mouse_up(at, gpui::MouseButton::Left, deleting());
+        assert_eq!(notes(&app, cx).len(), 2);
+        app.update(cx, |this, _| {
+            assert_eq!(this.session.undo(), Some(auris_session::Edit::DeleteNotes));
+        });
+        assert_eq!(notes(&app, cx), original);
+    }
+
+    #[gpui::test]
+    fn alt_copy_remains_available_with_a_custom_delete_gesture(cx: &mut TestAppContext) {
+        let (app, cx, _) = with_a_swept_phrase(cx);
+        app.update(cx, |this, _| {
+            this.pointer.set_delete(PointerGesture::DoubleClick)
+        });
+        let from = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
+        click_at(cx, from, deleting());
+        assert_eq!(notes(&app, cx).len(), 3);
+        let to = roll_point(&app, cx, BEAT * 2 + HALF_BEAT, MIDDLE_C + 1);
+        drag_with(cx, from, to, deleting());
+        assert_eq!(notes(&app, cx).len(), 5);
     }
 
     #[gpui::test]

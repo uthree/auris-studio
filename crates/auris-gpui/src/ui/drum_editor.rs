@@ -502,6 +502,7 @@ impl AurisApp {
             self.selected_notes.insert(index);
             self.begin_drag(Drag::NoteMove {
                 clip,
+                grabbed: index,
                 origin_tick: tick - clip_start,
                 origin_pitch: pitch,
                 origins: self.selected_note_origins(clip),
@@ -515,6 +516,7 @@ impl AurisApp {
             let length = Ticks(self.project().grid.raw().max(1));
             self.begin_drag(Drag::NoteMove {
                 clip,
+                grabbed: 0,
                 origin_tick: tick - clip_start,
                 origin_pitch: pitch,
                 origins: Vec::new(),
@@ -526,6 +528,7 @@ impl AurisApp {
                     self.selected_notes.insert(index);
                     self.drag = Some(Drag::NoteMove {
                         clip,
+                        grabbed: index,
                         origin_tick: tick - clip_start,
                         origin_pitch: pitch,
                         origins: self.selected_note_origins(clip),

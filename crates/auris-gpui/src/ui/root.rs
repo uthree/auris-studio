@@ -756,6 +756,16 @@ impl AurisApp {
         if event.pressed_button.is_none() {
             self.release_typed_key();
         }
+        if let Some(Drag::NoteCopy {
+            pressed_at: Some(from),
+            ..
+        }) = &self.drag
+            && (event.pressed_button != Some(gpui::MouseButton::Left)
+                || !past_drag_threshold(*from, event.position)
+                || !self.start_note_copy())
+        {
+            return;
+        }
         let Some(drag) = self.drag.clone() else {
             return;
         };
@@ -949,6 +959,15 @@ impl AurisApp {
                 origin_pitch,
                 ref origins,
                 pressed_at,
+                ..
+            }
+            | Drag::NoteCopy {
+                clip,
+                origin_tick,
+                origin_pitch,
+                ref origins,
+                pressed_at,
+                ..
             } => {
                 // The same wobble guard the clips have. Rows are floor-binned, so a click
                 // drifting one pixel across a row boundary transposed the whole selection —
