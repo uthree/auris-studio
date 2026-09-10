@@ -1,7 +1,7 @@
 //! The tune.
 //!
-//! One figure per part and section, restated bar after bar and turned over where a phrase turns
-//! over, which is what leaves a section with something an ear can hold on to. The motif, the way
+//! One figure per part and section, stated and echoed before its continuation and answer,
+//! which is what leaves a section with something an ear can hold on to. The motif, the way
 //! it is varied and the two scale walks it is stated through are all here because nothing else in
 //! the band writes one: this is the only part whose notes are a shape rather than a harmony.
 //!
@@ -26,6 +26,12 @@ use super::{Draft, ScoreSettings};
 
 #[path = "melody_rhythm.rs"]
 mod melody_rhythm;
+
+#[path = "melody_flow.rs"]
+mod melody_flow;
+
+#[path = "melody_phrase.rs"]
+mod melody_phrase;
 
 /// A contour needs three positions to express a turn rather than only an interval.
 const MOTIF_MINIMUM: usize = 3;
@@ -286,43 +292,28 @@ fn contour(
     Motif { cells }
 }
 
-/// The figure with one thing about it changed.
+/// Choose the response's articulation and a small inflection of its shared pitch target.
 ///
-/// Enough to stop four bars of the same bar, not so much that it stops being the same figure —
-/// which is the difference between a variation and a different tune.
-///
-/// Six operations where there were three, because three was every answer the composer had: over
-/// a whole song the fourth bar of every phrase drew from the same short list, and a listener
-/// hears a list. The three that joined are the other things a player actually does to a figure —
-/// say it backwards, ornament its longest note, come in late. What did *not* join is the
-/// sequence, deliberately: restating the figure a step higher is a uniform shift of every
-/// degree, and a uniform shift is exactly the freedom [`join_offset`] already owns — the join
-/// would simply choose it away again.
-fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
+/// Timing and pitch development have separate responsibilities. Omitting, repeating or delaying
+/// an attack still changes the rhythm; the other choices shade the phrase's arrival instead of
+/// independently reversing its last few pitches. In particular, an absolute degree is never
+/// negated: inversion belongs to intervals around a pivot, not to a distant scale origin.
+fn vary_rhythm(figure: &Motif, rng: &mut Rng) -> (Motif, i32) {
     let mut cells = figure.cells.clone();
     if cells.len() < 2 {
-        return Motif { cells };
+        return (Motif { cells }, 0);
     }
+    let mut inflection = 0;
     match rng.below(6) {
-        // Move the last note somewhere else, which is what turns a statement into a question.
         0 => {
-            let last = cells.len() - 1;
-            cells[last].degree += if rng.chance(0.5) { 2 } else { -2 };
+            inflection = if rng.chance(0.5) { 1 } else { -1 };
         }
         // Take a note out, leaving a hole where the ear expects one.
         1 if cells.len() > 2 => {
             let doomed = 1 + rng.below(cells.len() - 1);
             cells.remove(doomed);
         }
-        // Say it backwards: the rhythm stays where it was and the contour runs the other way.
-        // The retrograde, and the one variation here that survives the join untouched — a
-        // reversed contour is not a shifted one.
-        3 => {
-            let degrees: Vec<i32> = cells.iter().rev().map(|cell| cell.degree).collect();
-            for (cell, degree) in cells.iter_mut().zip(degrees) {
-                cell.degree = degree;
-            }
-        }
+        3 => inflection = 1,
         // Ornament the longest note: struck again halfway through itself, which is the
         // repetition figure singers put on a held syllable.
         4 if cells.iter().any(|cell| cell.length >= 2) => {
@@ -350,65 +341,51 @@ fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
         5 if cells.len() > 2 => {
             cells.remove(0);
         }
-        // Turn the figure over from its second note on.
-        _ => {
-            for cell in cells.iter_mut().skip(1) {
-                cell.degree = -cell.degree;
-            }
-        }
+        _ => inflection = -1,
     }
-    Motif { cells }
+    (Motif { cells }, inflection)
 }
 
-/// Develop one idea over a whole phrase: establish it, echo it, continue its tail and answer.
-/// The opening is retained, so the listener can identify the idea after it changes. A written
-/// rhythm owns its onsets even where an automatically written response would omit a note.
-fn phrase_figure(
+/// Keep the identifying rhythm while preparing the slots for a phrase's response.
+/// Written rhythms own every attack; pitch development is applied after the closing breath.
+fn phrase_rhythm(
     figure: &Motif,
     phrase: Option<&PhrasePlan>,
     bar: usize,
     written: bool,
     rng: &mut Rng,
-) -> Motif {
+) -> (Motif, i32) {
     let Some(phrase) = phrase else {
-        return figure.clone();
+        return (figure.clone(), 0);
     };
     let position = bar.saturating_sub(phrase.start_bar);
     let closing = bar + 1 == phrase.end_bar();
     if position < 2.min(phrase.bars.saturating_sub(1)) {
-        return figure.clone();
+        return (figure.clone(), 0);
     }
     let turn = figure.cells.len().div_ceil(2);
     let mut developed = figure.clone();
+    let mut inflection = 0;
     if !written {
         // Variation owns the response, not the identifying head. Applying the operation to
         // the whole figure first could delete or reverse the notes it promised to preserve.
         let tail = Motif {
             cells: figure.cells[turn..].to_vec(),
         };
+        let (tail, chosen) = vary_rhythm(&tail, rng);
+        inflection = chosen;
         developed.cells.truncate(turn);
-        developed.cells.extend(vary_motif(&tail, rng).cells);
+        developed.cells.extend(tail.cells);
     }
     let count = developed.cells.len();
     if count < 2 {
-        return developed;
-    }
-    // Change the latter half, rather than translating the whole figure: a translation is the
-    // join's register adjustment and would be silently cancelled by it.
-    let direction = match phrase.role {
-        PhraseRole::Statement | PhraseRole::Continuation if !closing => 1,
-        _ => -1,
-    };
-    for (at, cell) in developed.cells.iter_mut().enumerate() {
-        if at >= turn {
-            cell.degree += direction;
-        }
+        return (developed, inflection);
     }
     if closing && phrase.role == PhraseRole::Release && !written && count > turn + 1 {
         // A release says less. Keep both the identifying head and the final arrival.
         developed.cells.remove(count - 2);
     }
-    developed
+    (developed, inflection)
 }
 
 /// A prepared note can remain over a new chord when the next onset resolves it by a step.
@@ -578,10 +555,11 @@ pub(super) fn melody(
     // The pitch the last bar finished on, which the next one is joined to. `None` until the
     // section has sounded a note, where the figure simply starts where its anchor puts it.
     let mut left_off: Option<i32> = None;
+    let mut phrase_line = melody_phrase::PhraseLine::default();
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
         let closing = section.closes_phrase(bar);
-        let mut cells = phrase_figure(
+        let (mut cells, inflection) = phrase_rhythm(
             &figure,
             section.phrase_at(bar),
             bar,
@@ -591,6 +569,7 @@ pub(super) fn melody(
         if closing && part.rhythm.is_none() {
             melody_rhythm::close_phrase(grid, &mut cells);
         }
+        phrase_line.develop(&figure, &mut cells, section.phrase_at(bar), bar, inflection);
         let bar_start = grid.bar_ticks() * bar as i64;
 
         // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
@@ -833,6 +812,7 @@ pub(super) fn melody(
             });
         }
     }
+    melody_flow::connect(settings, frame, section, part, &mut notes);
     notes
 }
 
@@ -901,7 +881,7 @@ mod tests {
     use auris_core::time::Ticks;
 
     #[test]
-    fn the_melody_restates_its_figure_bar_after_bar() {
+    fn the_melody_restates_its_call_and_echo_in_the_next_phrase() {
         // Every bar used to roll its own rhythm from its own stream, so no figure ever recurred
         // and a section had nothing in it to recognise.
         let (_, frame, parts) = draft(
@@ -920,13 +900,11 @@ mod tests {
         let figure = bar_steps(&frame, lead, 0);
         assert!(!figure.is_empty(), "the melody played nothing at all");
 
-        let restated = (0..8)
-            .filter(|bar| bar_steps(&frame, lead, *bar) == figure)
-            .count();
-        assert!(
-            restated >= 4,
-            "only {restated} of 8 bars restate the figure {figure:?}"
-        );
+        assert_eq!(bar_steps(&frame, lead, 4), figure);
+        let echo = bar_steps(&frame, lead, 1);
+        assert!(!echo.is_empty());
+        assert_eq!(bar_steps(&frame, lead, 5), echo);
+        assert_ne!(echo, figure, "the echo should answer the opening rhythm");
     }
 
     #[test]
@@ -976,7 +954,7 @@ mod tests {
     }
 
     #[test]
-    fn a_phrase_keeps_its_head_and_develops_its_tail() {
+    fn a_phrase_states_its_hook_then_continues_and_recalls_it() {
         let figure = figure_of(&[(0, 0), (2, 1), (4, 2), (6, 1), (8, 0), (10, 1)]);
         let phrase = PhrasePlan {
             start_bar: 0,
@@ -991,16 +969,32 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let mut rng = Rng::stream(12, &[]);
-        let opening = phrase_figure(&figure, Some(&phrase), 0, true, &mut rng);
-        let echo = phrase_figure(&figure, Some(&phrase), 1, true, &mut rng);
-        let continuation = phrase_figure(&figure, Some(&phrase), 2, true, &mut rng);
-        let answer = phrase_figure(&figure, Some(&phrase), 3, true, &mut rng);
-        assert_eq!(signature(&opening), signature(&echo));
-        assert_ne!(signature(&opening), signature(&continuation));
-        assert_ne!(signature(&continuation), signature(&answer));
-        let opening_signature = signature(&opening);
-        for developed in [&continuation, &answer] {
-            assert_eq!(&signature(developed)[..3], &opening_signature[..3]);
+        let mut line = melody_phrase::PhraseLine::default();
+        let bars: Vec<_> = (0..4)
+            .map(|bar| {
+                let (mut cells, inflection) =
+                    phrase_rhythm(&figure, Some(&phrase), bar, true, &mut rng);
+                line.develop(&figure, &mut cells, Some(&phrase), bar, inflection);
+                cells
+            })
+            .collect();
+        let [opening, echo, continuation, answer] = bars.as_slice() else {
+            unreachable!("four bars were written")
+        };
+        assert_eq!(signature(opening), signature(echo));
+        assert_ne!(signature(opening), signature(continuation));
+        assert_ne!(signature(continuation), signature(answer));
+        let relative_head = |motif: &Motif| {
+            motif
+                .cells
+                .iter()
+                .take(3)
+                .map(|cell| cell.degree - motif.cells[0].degree)
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(relative_head(continuation), relative_head(opening));
+        assert_eq!(relative_head(answer), relative_head(opening));
+        for developed in [continuation, answer] {
             assert_eq!(
                 developed
                     .cells
@@ -1040,30 +1034,147 @@ mod tests {
     }
 
     #[test]
-    fn generated_closing_variations_keep_the_identifying_head() {
+    fn generated_answers_recall_the_identifying_head_after_the_continuation() {
         let figure = figure_of(&[(0, 0), (2, 1), (4, 2), (6, 1), (8, 0), (10, 1)]);
         let phrase = PhrasePlan {
             start_bar: 0,
             bars: 4,
             role: PhraseRole::Release,
         };
-        let head = |figure: &Motif| {
-            figure
-                .cells
+        for seed in 0..64 {
+            let mut line = melody_phrase::PhraseLine::default();
+            for bar in 0..4 {
+                let (mut cells, inflection) = phrase_rhythm(
+                    &figure,
+                    Some(&phrase),
+                    bar,
+                    false,
+                    &mut Rng::stream(seed, &[]),
+                );
+                if bar == 3 {
+                    melody_rhythm::close_phrase(Grid::default(), &mut cells);
+                }
+                let timing: Vec<_> = cells
+                    .cells
+                    .iter()
+                    .map(|cell| (cell.step, cell.length, cell.accent))
+                    .collect();
+                line.develop(&figure, &mut cells, Some(&phrase), bar, inflection);
+                assert_eq!(
+                    timing,
+                    cells
+                        .cells
+                        .iter()
+                        .map(|cell| (cell.step, cell.length, cell.accent))
+                        .collect::<Vec<_>>()
+                );
+                if bar == 3 {
+                    let head = 3.min(cells.cells.len().saturating_sub(1));
+                    for index in 0..head {
+                        assert_eq!(
+                            cells.cells[index].degree - cells.cells[0].degree,
+                            figure.cells[index].degree - figure.cells[0].degree,
+                            "seed {seed}: {cells:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn phrase_pitch_planning_keeps_every_timing_and_accent_decision() {
+        for signature in auris_core::time::TimeSignature::COMMON {
+            for subdivision in [1, 3, 4, 8] {
+                let grid = Grid::new(signature, subdivision);
+                for style in [
+                    None,
+                    Some(PerformanceStyle::Ambient),
+                    Some(PerformanceStyle::CityPop),
+                ] {
+                    for seed in 0..8 {
+                        let rhythm =
+                            motif(grid, None, 0.55, 0.6, style, &mut Rng::stream(seed, &[]));
+                        let call =
+                            dressed(&rhythm, &figure_of(&[(0, 0), (1, -1), (2, -2), (3, -1)]));
+                        for bars in [1, 2, 3, 4, 8] {
+                            let phrase = PhrasePlan {
+                                start_bar: 0,
+                                bars,
+                                role: PhraseRole::Answer,
+                            };
+                            let mut line = melody_phrase::PhraseLine::default();
+                            for bar in 0..bars {
+                                let (mut figure, inflection) = phrase_rhythm(
+                                    &call,
+                                    Some(&phrase),
+                                    bar,
+                                    false,
+                                    &mut Rng::stream(seed, &[RngKey::Index(bar as u64)]),
+                                );
+                                if bar + 1 == bars {
+                                    melody_rhythm::close_phrase(grid, &mut figure);
+                                }
+                                let signature = |figure: &Motif| {
+                                    figure
+                                        .cells
+                                        .iter()
+                                        .map(|cell| (cell.step, cell.length, cell.accent))
+                                        .collect::<Vec<_>>()
+                                };
+                                let before = signature(&figure);
+                                line.develop(&call, &mut figure, Some(&phrase), bar, inflection);
+                                assert_eq!(
+                                    signature(&figure),
+                                    before,
+                                    "seed {seed}, {grid:?}, bar {bar}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_realized_continuation_answers_a_monotone_call() {
+        let (_, frame, parts) = draft(
+            r#"
+                form = "verse"
+                key = "C major"
+                chords = "I"
+                motif = "0 -1 -2 -3"
+                ending = "none"
+                humanize = 0
+                variation = 0
+                [section.verse]
+                bars = 4
+                [[part]]
+                name = "lead"
+                rhythm = "x...x.x...x....."
+            "#,
+        );
+        let lead = part(&parts, "lead");
+        let bar_ticks = frame.grid.bar_ticks().raw();
+        let pitches = |bar: i64| {
+            lead.notes
                 .iter()
-                .take(3)
-                .map(|cell| (cell.step, cell.length, cell.degree))
+                .filter(|note| note.start.raw() / bar_ticks == bar)
+                .map(|note| i32::from(note.pitch))
                 .collect::<Vec<_>>()
         };
-        for seed in 0..64 {
-            let answer = phrase_figure(
-                &figure,
-                Some(&phrase),
-                3,
-                false,
-                &mut Rng::stream(seed, &[]),
-            );
-            assert_eq!(head(&answer), head(&figure), "seed {seed}: {answer:?}");
+        let call = pitches(0);
+        let response = pitches(2);
+        assert_eq!(call.len(), 4);
+        assert_eq!(response.len(), 4);
+        assert!(call.last().unwrap() < call.first().unwrap(), "{call:?}");
+        assert!(
+            response.last().unwrap() > response.first().unwrap(),
+            "{response:?}"
+        );
+        for bar in 0..4 {
+            assert_eq!(bar_steps(&frame, lead, bar), vec![0, 4, 6, 10]);
         }
     }
 
@@ -1382,10 +1493,10 @@ mod tests {
             ],
         };
         let mut seen = std::collections::BTreeSet::new();
-        let (mut backwards, mut ornamented, mut late) = (false, false, false);
+        let (mut raised, mut lowered, mut ornamented, mut late) = (false, false, false, false);
         for seed in 0..64u64 {
             let mut rng = Rng::stream(seed, &[RngKey::Word("vary")]);
-            let varied = vary_motif(&figure, &mut rng);
+            let (varied, inflection) = vary_rhythm(&figure, &mut rng);
             assert!(
                 varied.cells.len() >= 2,
                 "seed {seed} left too little figure"
@@ -1397,25 +1508,27 @@ mod tests {
                     "seed {seed} ran past the figure's own span"
                 );
             }
-            let degrees: Vec<i32> = varied.cells.iter().map(|cell| cell.degree).collect();
-            if degrees == [1, 2, 1, 0] {
-                backwards = true;
-            }
+            raised |= inflection > 0;
+            lowered |= inflection < 0;
             if varied.cells.len() > figure.cells.len() {
                 ornamented = true;
             }
             if varied.cells.len() == 3 && varied.cells[0].step == 2 {
                 late = true;
             }
-            seen.insert(
+            seen.insert((
+                inflection,
                 varied
                     .cells
                     .iter()
                     .map(|cell| (cell.step, cell.length, cell.degree))
                     .collect::<Vec<_>>(),
-            );
+            ));
         }
-        assert!(backwards, "the retrograde is unreachable");
+        assert!(
+            raised && lowered,
+            "the phrase's inflections are unreachable"
+        );
         assert!(ornamented, "the ornament is unreachable");
         assert!(late, "the late entry is unreachable");
         assert!(

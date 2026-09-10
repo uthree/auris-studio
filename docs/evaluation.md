@@ -70,6 +70,134 @@ The JSON manifest records source, candidate, output and preserved-content hashes
 CLI rendering records the executable and WAV hashes. The backing score and mix are fixed;
 shared effects may still react differently to the changed melody.
 
+### Four-condition melody comparisons
+
+`tools/eval/melody_phrase_ab.py` compares the current continuity baseline, a pitch
+change, a rhythm change and their combination over the same accepted backing.
+Supply a completed `melody_continuity_ab.py` **after** manifest as the baseline.
+The tool copies its projects and audio byte for byte; the three candidates use
+that manifest's frozen renderer and SoundFont, even when their composers differ.
+Every candidate remains an editable `.auris` project with the source's mixer,
+performance transforms, backing, harmony and clip IDs.
+
+The cohort is fixed in advance and retained in full:
+
+| Preset | Diagnostic seed | Reference seed | Prior regression seeds |
+| --- | --- | --- | --- |
+| `pop-band` | 102 | 105 | 201, 202 |
+| `rock` | 105 | 107 | 201, 202 |
+| `city-pop` | 102 | — | 201, 202 |
+
+Seeds 201/202 were held out for the previous continuity experiment; they are known
+regression cases in this iteration. Their stored cohort label remains `held-out`
+for provenance. Fresh seeds 301–308 belong to the current separate score-only
+generalization check and are not part of these eleven listening cases.
+
+Create a variant specification with three explicit, archived composer inputs.
+Artifact paths must be absolute; use native absolute paths on Windows, such as
+`C:/experiment/pitch-auris.exe`. Replace the example hashes with actual SHA-256
+values, and describe the isolated implementation used for each executable:
+
+```json
+{
+  "schema_version": 1,
+  "variants": {
+    "pitch": {
+      "controls": {"pitch": true, "rhythm": false},
+      "description": "Pitch writer change only; archived build/revision",
+      "cli": {"path": "/absolute/path/pitch-auris", "sha256": "ACTUAL_SHA256"}
+    },
+    "rhythm": {
+      "controls": {"pitch": false, "rhythm": true},
+      "description": "Rhythm writer change only; archived build/revision",
+      "cli": {"path": "/absolute/path/rhythm-auris", "sha256": "ACTUAL_SHA256"}
+    },
+    "combined": {
+      "controls": {"pitch": true, "rhythm": true},
+      "description": "Combined writer changes; archived build/revision",
+      "cli": {"path": "/absolute/path/combined-auris", "sha256": "ACTUAL_SHA256"}
+    }
+  }
+}
+```
+
+Alternatively, replace a condition's `cli` with `projects`, a map from all eleven
+labels, such as `rock-s201`, to `{ "path": "...", "sha256": "..." }` candidate
+project artifacts. Provide exactly one source form per condition. These inputs
+are complete independently generated melodies: the tool never constructs an
+ablation by zipping or truncating note arrays.
+
+Pitch-writer candidates must preserve note count, onsets, velocities and every note
+field except pitch and the narrowly checked articulation coupling below. Rhythm-only candidates must preserve the complete
+ordered pitch/velocity sequence and every note field except onset and duration.
+The combined condition can contain interactions and a different note count.
+Violations of these component controls are rejected before rendering.
+Track/clip layout, musical context and recipe knobs must match for every condition.
+
+The composer's existing post-swing cleanup trims a note at the next attack of the
+same pitch. Changing pitches can therefore change a saved duration without changing
+the rhythm writer. A pitch-writer duration difference is accepted only when both
+lengths independently equal `min(shared_requested_length, next_same_pitch_gap)`,
+where the shared requested length is the larger of the two saved lengths. A missing
+later retrigger leaves the requested length unchanged. The check mirrors the native
+reverse pass, including equal-start duplicate behavior. Every exception records its
+clip, note index, both lengths and both retrigger gaps. Arbitrary trimming or
+extension is rejected; no notes are rewritten to force an exact-duration ablation.
+This condition isolates the pitch writer with documented articulation coupling,
+rather than claiming that only saved pitch fields can differ.
+
+```sh
+uv run tools/eval/melody_phrase_ab.py --baseline target/melody-continuity/after/manifest.json --variants target/melody-phrases/variants.json --out target/melody-phrases/comparison
+```
+
+The output directory must be new. Its `baseline`, `pitch`, `rhythm` and `combined`
+children each contain a normal evaluator manifest, projects, full renders and
+excerpts. The top manifest is complete only after every condition and case succeeds
+and all inputs are verified again. Manifests retain artifact hashes, preserved
+content hashes, declared controls and observed pitch/rhythm/velocity changes.
+
+The listening excerpt is the same first eight-bar 4/4 chorus in every condition,
+at 48 kHz stereo. Five-millisecond edge fades precede linear gain to -23 integrated
+LUFS. There is no limiter: insufficient true-peak headroom causes a failure rather
+than an unrecorded change of level. Audiobox evaluates these exact excerpts; CLAP
+uses their center ten seconds with the unchanged prompt manifest and `--segments 1`:
+
+```sh
+uv run tools/eval/aesthetics.py target/melody-phrases/comparison/baseline/excerpts --json target/melody-phrases/comparison/baseline/aesthetics.json
+uv run tools/eval/clap.py target/melody-phrases/comparison/baseline/excerpts --segments 1 --json target/melody-phrases/comparison/baseline/clap.json
+uv run tools/eval/aesthetics.py target/melody-phrases/comparison/pitch/excerpts --baseline target/melody-phrases/comparison/baseline/aesthetics.json --json target/melody-phrases/comparison/pitch/aesthetics.json
+uv run tools/eval/clap.py target/melody-phrases/comparison/pitch/excerpts --segments 1 --baseline target/melody-phrases/comparison/baseline/clap.json --json target/melody-phrases/comparison/pitch/clap.json
+```
+
+Repeat the candidate commands for `rhythm` and `combined`, retaining all results.
+Previously computed baseline scores may be reused when their scored excerpt hashes
+match the copied baseline. Do not substitute full-song scores for excerpt scores.
+
+`tools/eval/melody_phrase_listening.py` creates a standalone local HTML report with
+four labeled native audio players per case, genre selection, an initially hidden
+measurement table, and links to the editable projects and WAVs. Starting another
+player pauses the previous one. The page uploads nothing and invents no ratings:
+
+```sh
+uv run tools/eval/melody_phrase_listening.py --manifest target/melody-phrases/comparison/manifest.json --scores target/melody-phrases/scores.json --output target/melody-phrases/comparison/listening.html
+```
+
+The optional score specification has `schema_version: 1` and a `variants` object
+containing all four conditions. Each condition contains `aesthetics` and `clap`
+file artifacts with absolute `path` and `sha256`, plus `excerpt_sha256`, a complete
+map from case label to the WAV hash used for scoring. This explicit input map is
+needed because Audiobox's score JSON does not carry audio hashes. The report checks
+CLAP's native audio hashes and consistent model, prompt and preprocessing metadata.
+Omit `--scores` to leave model cells blank. Existing HTML outputs are refused.
+
+Written-score diagnostics use exact ticks without quantization. Each chorus is
+divided into nonoverlapping two- and four-bar blocks, preserving leading rests,
+durations and notes carried across a block boundary. The manifest records rhythm
+signatures, pitch intervals, relative pitch sequences and transposed-motif matches
+between blocks. These describe repetition and shape; more matches, fewer leaps or
+higher learned scores do not establish better groove or memorability. Judge each
+condition against the same audio and retain per-case regressions alongside means.
+
 ### Scoring final renders
 
 For the melody-continuity experiment, both learned models read the same linearly

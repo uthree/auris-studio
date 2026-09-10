@@ -68,6 +68,17 @@ same excerpts with Audiobox and centered-window CLAP.
 See [the continuity experiment](../../docs/reviews/melody-continuity-2026-09-10.md)
 for reproduction commands, artifacts, paired results and limitations.
 
+## Pitch and rhythm comparisons
+
+`melody_phrase_ab.py` creates baseline, pitch-writer, rhythm-only and combined
+conditions for eleven fixed cases. It checks component controls, records required
+same-pitch retrigger articulation differences, and keeps
+the accepted backing and renderer. Both models score the same -23 LUFS chorus
+excerpts used by `melody_phrase_listening.py`, a local four-condition listening page.
+Phrase signatures describe the score; they do not rate musical quality. See the
+[four-condition guide](../../docs/evaluation.md#four-condition-melody-comparisons)
+for input schemas, commands and provenance checks.
+
 ## Local model tool and audio checks
 
 `agent_tools.ps1` tests saved project state through real MCP stdio and rig/Ollama

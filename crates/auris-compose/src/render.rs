@@ -1665,7 +1665,7 @@ mod tests {
     }
 
     /// Complete compositions pin intended changes in harmony, note counts and performance.
-    /// Updated for shared phrases, prepared tensions and cooperating accompaniment.
+    /// Updated for melodic call/answer development and phrase-aware timing.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -1683,7 +1683,7 @@ mod tests {
             ),
             "verse·1 C major | Am7 Fm7 C G7 Cmaj7 Em7 Fmaj9 G |\n\
              ending·1 C major | C |\n\
-             207 notes, digest 4bd9d1f1009d0ada\n"
+             207 notes, digest 51e81b7d8a27aa42\n"
         );
 
         // Minor harmony keeps its dominant major while other chords follow the mood.
@@ -1702,7 +1702,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 Gbm9 Dm7 Dm E Am7 Gbm7 Cmaj7 E7 |\n\
              ending·1 A minor | Am |\n\
-             214 notes, digest c09f6359352e950d\n"
+             214 notes, digest 8c2d24337a9c7aff\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1715,7 +1715,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             516 notes, digest a4e3a08b1e28c062\n"
+             516 notes, digest 63f5ade01569a85d\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1742,7 +1742,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             239 notes, digest 256dad3fe490c425\n"
+             239 notes, digest 3cd8c201e2dd889d\n"
         );
     }
 
