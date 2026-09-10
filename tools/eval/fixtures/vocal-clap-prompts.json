@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Fixed descriptions for audible singing in a pop arrangement. Frozen before scoring; not a test of intelligibility or musical quality.",
+  "presets": {
+    "vocal-pop": {
+      "positive": [
+        {"id": "vocal-band", "text": "A melodic pop song with a sung vocal melody, piano chords, strings, bass guitar and a steady drum kit."},
+        {"id": "singer", "text": "A singer performs a pop melody over a rhythmic band accompaniment."}
+      ],
+      "contrast": [
+        {"id": "instrumental-band", "text": "An instrumental pop tune with a synthesizer lead melody, piano chords, strings, bass guitar and a steady drum kit."},
+        {"id": "instrumental", "text": "An instrumental pop melody played by a synthesizer over a rhythmic band accompaniment, without singing."}
+      ]
+    }
+  }
+}

@@ -220,6 +220,10 @@ structure or hook quality, and Audiobox predictions do not establish human prefe
 The vocal probe does not evaluate a learned singer's intelligibility. No evaluator scores were
 used as an optimization objective in this change.
 
+The [VOICEVOX follow-up](composition-voicevox-2026-09-10.md) sings these same saved vocal scores
+with Zundamon and remeasures the final mixes. The original vocal CE increase does not reproduce
+under that singer, so the built-in-vocal result above should not be generalized across renderers.
+
 ## Integration validation
 
 - `cargo fmt --all --check`: passed.
