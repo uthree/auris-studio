@@ -56,7 +56,7 @@ impl AurisApp {
     /// Every preset, aimed at a clip that already has one.
     ///
     /// Ticks the one it is now: this menu is opened from a button showing that same name, and a
-    /// list of six with nothing marked would leave the reader checking the button behind it.
+    /// list with nothing marked would leave the reader checking the button behind it.
     pub(crate) fn clip_preset_menu(&self, anchor: Point<Pixels>, clip: ClipId) -> ContextMenu {
         let current = self.session.clip_recipe(clip).map(|recipe| recipe.preset);
         let mut menu = ContextMenu::new(anchor, self.t(Key::PartPreset));
@@ -355,7 +355,6 @@ pub(crate) fn preset_key(preset: ClipPreset) -> Key {
         ClipPreset::Pad => Key::PresetPad,
         ClipPreset::Arp => Key::PresetArp,
         ClipPreset::Bass => Key::PresetBass,
-        ClipPreset::Stab => Key::PresetStab,
         ClipPreset::Drums => Key::PresetDrums,
         ClipPreset::Kick => Key::PresetKick,
         ClipPreset::Snare => Key::PresetSnare,
@@ -479,7 +478,7 @@ mod tests {
         let drum = project.add_drum_track("Drums", "auris.synth.drumkit");
         let melodic: Vec<_> = presets_for_track(&project.track(melodic).unwrap().kind).collect();
         let drum: Vec<_> = presets_for_track(&project.track(drum).unwrap().kind).collect();
-        assert_eq!(melodic.len(), 6);
+        assert_eq!(melodic.len(), 5);
         assert!(melodic.iter().all(|preset| !preset.is_drums()));
         assert_eq!(
             drum,

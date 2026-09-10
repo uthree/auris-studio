@@ -1338,7 +1338,7 @@ The arrangement can be edited in place, so one more part is an edit rather than 
 recomposition: `add_track` puts a new track in an existing project — voiced by a built-in
 instrument id (`list_instruments` names them) or by any General MIDI sound, asked for by name
 ("Electric Piano 1") or program number, with the shipped font adopted into the project as part
-of the same step — `add_part` writes a generated part (lead, chords, pad, arp, bass, stab, or
+of the same step — `add_part` writes a generated part (lead, chords, pad, arp, bass, or
 the kit and its pieces) onto a track from the key and chords already under the song, keeping
 its recipe so `regenerate_clips` applies to it like any composed clip, and
 `set_instrument`, `rename_track` and `remove_track` do what they say.

@@ -31,7 +31,6 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
         ClipPreset::Chords => &[Role::Chords],
         ClipPreset::Pad => &[Role::Pad],
         ClipPreset::Arp => &[Role::Arp],
-        ClipPreset::Stab => &[Role::Stab],
         ClipPreset::Bass => &[Role::Bass],
         ClipPreset::Drums => &[Role::Kick, Role::Snare, Role::Hat],
         ClipPreset::Kick => &[Role::Kick],
@@ -40,7 +39,7 @@ pub fn roles_of(preset: ClipPreset) -> &'static [Role] {
     }
 }
 
-/// The preset that writes exactly one role, which is [`roles_of`] read backwards.
+/// The clip preset for a role; rhythmic chord roles share the chord preset.
 ///
 /// `None` for [`Role::Crash`], which is the one role no preset names: a crash is written against
 /// the *joins of the form* — it asks whether arriving at a section is worth striking something for
@@ -56,7 +55,7 @@ pub fn preset_of(role: Role) -> Option<ClipPreset> {
         Role::Chords => ClipPreset::Chords,
         Role::Pad => ClipPreset::Pad,
         Role::Arp => ClipPreset::Arp,
-        Role::Stab => ClipPreset::Stab,
+        Role::Stab => ClipPreset::Chords,
         Role::Bass => ClipPreset::Bass,
         Role::Kick => ClipPreset::Kick,
         Role::Snare => ClipPreset::Snare,
@@ -347,9 +346,7 @@ pub fn write_phrase(
             // The recipe's dial, not the mood's: a person moving a slider expects that slider to
             // be what decides, rather than to be averaged with something they cannot see.
             part.density = Some(recipe.density.clamp(0.0, 1.0));
-            // Likewise the recipe's, and not the role's default: choosing the stab preset is what
-            // set them, and a dial that snapped back to the role's idea would be one that undid
-            // the choice the moment anything else on the panel was touched.
+            // Keep articulation independent of role defaults when another dial moves.
             part.subdivision = recipe.subdivision;
             part.gate = recipe.gate;
             Some(part)
@@ -810,11 +807,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stab_is_a_short_chord_struck_often() {
-        // The preset exists to be chosen rather than dialled in, so what it writes with nobody
-        // touching a dial is the whole of what it is worth. Two properties, and it is the second
-        // that names it: many strikes, each one released before the next arrives.
-        let stab = phrase(ClipPreset::Stab, 3);
+    fn dense_chords_with_a_short_gate_are_released_before_the_next_strike() {
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
+        recipe.density = 1.0;
+        recipe.gate = 0.3;
+        let stab = write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None);
         let chords = phrase(ClipPreset::Chords, 3);
         assert!(
             stab.len() > chords.len(),
@@ -840,6 +837,49 @@ mod tests {
             }
         }
         assert!(checked > 8, "only {checked} pairs of notes to check");
+    }
+
+    #[test]
+    fn full_chord_density_reaches_the_selected_grid_even_when_played_softly() {
+        use std::collections::BTreeSet;
+        for subdivision in Subdivision::ALL {
+            for seed in 1..=8 {
+                let mut recipe = ClipRecipe::new(ClipPreset::Chords, seed);
+                recipe.density = 1.0;
+                recipe.intensity = 0.2;
+                recipe.subdivision = subdivision;
+                let notes = write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None);
+                let starts: BTreeSet<_> = notes.iter().map(|note| note.start).collect();
+                let step = Ticks(Ticks::QUARTER.raw() / i64::from(subdivision.steps_per_beat()));
+                let expected: BTreeSet<_> = (0..16 * subdivision.steps_per_beat())
+                    .map(|index| step * i64::from(index))
+                    .collect();
+                assert_eq!(starts, expected, "{subdivision:?}, seed {seed}");
+                assert!(
+                    notes
+                        .iter()
+                        .all(|note| note.length > Ticks::ZERO && note.end() <= BAR * 4)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn full_chord_density_preserves_authored_rests() {
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, 7);
+        recipe.rhythm = Some("x...............".into());
+        recipe.density = 0.2;
+        let sparse = write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None);
+        recipe.density = 1.0;
+        let dense = write_phrase(&axis(), Ticks::ZERO, BAR * 4, four_four(), &recipe, None);
+        let starts = |notes: &[Note]| {
+            notes
+                .iter()
+                .map(|note| note.start)
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert_eq!(starts(&sparse), starts(&dense));
+        assert_eq!(starts(&dense).len(), 4);
     }
 
     #[test]

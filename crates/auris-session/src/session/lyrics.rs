@@ -202,12 +202,14 @@ pub(super) fn arrange_generated_backing(
     excluded: Option<ClipId>,
     notes: &mut Vec<Note>,
 ) {
-    if recipe.rhythm.is_some() {
+    if recipe.rhythm.is_some()
+        || (recipe.preset == ClipPreset::Chords
+            && auris_compose::arrangement::chord_subdivision_fill(recipe.density) > 0.0)
+    {
         return;
     }
     let role = match recipe.preset {
         ClipPreset::Chords => auris_compose::Role::Chords,
-        ClipPreset::Stab => auris_compose::Role::Stab,
         ClipPreset::Arp => auris_compose::Role::Arp,
         _ => return,
     };
@@ -1167,7 +1169,7 @@ mod tests {
             [[part]]
             name = "comp"
             role = "chords"
-            density = 1.0
+            density = 0.7
         "#,
         )
         .unwrap();

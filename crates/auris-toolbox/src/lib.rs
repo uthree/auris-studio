@@ -1963,7 +1963,7 @@ pub mod add_part {
     pub const NAME: &str = "add_part";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Writes a generated part onto an existing instrument track, \
-        from the key and chords already under the song — lead, chords, pad, arp, bass, stab, \
+        from the key and chords already under the song — lead, chords, pad, arp, bass, \
         drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. \
         The clip keeps its recipe, so `regenerate_clips` chooses a new take or follows a \
         harmony change; the answer numbers it the way `describe` does.";
@@ -1976,7 +1976,7 @@ pub mod add_part {
         /// The track to write on, by name as `describe` lists it.
         /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
-        /// What the part plays: lead, chords, pad, arp, bass, stab, drums, kick, snare or hat.
+        /// What the part plays: lead, chords, pad, arp, bass, drums, kick, snare or hat.
         pub part: String,
         /// The 1-based bar the part starts at. Bar 1 when left out.
         pub start_bar: Option<u32>,
@@ -2496,7 +2496,7 @@ pub mod accompany {
         pub track: String,
         /// Which clip the melody is, by the 1-based number `describe` shows.
         pub clip: usize,
-        /// The parts to write: lead, chords, pad, arp, bass, stab, drums, kick, snare or hat.
+        /// The parts to write: lead, chords, pad, arp, bass, drums, kick, snare or hat.
         /// Bass, chords and drums when left out.
         pub parts: Option<Vec<String>>,
         /// The first part's seed; the rest count up from it. 0 when left out.

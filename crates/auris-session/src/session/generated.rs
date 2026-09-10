@@ -1235,6 +1235,30 @@ mod tests {
     }
 
     #[test]
+    fn a_busy_foreground_does_not_thin_explicitly_dense_chords() {
+        let (mut session, track) = with_a_progression();
+        let lead = session
+            .generate_clip(track, BAR, BAR, ClipRecipe::new(ClipPreset::Lead, 3))
+            .unwrap();
+        session.project.midi_clip_mut(lead).unwrap().notes = (0..16)
+            .map(|slot| Note::new(72, Ticks(slot * 240), Ticks(240)))
+            .collect();
+        let backing = session.add_default_instrument_track("Chords").unwrap();
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
+        recipe.density = 1.0;
+        recipe.gate = 0.3;
+        let clip = session.generate_clip(backing, BAR, BAR, recipe).unwrap();
+        let starts: std::collections::BTreeSet<_> = session
+            .midi_clip(clip)
+            .unwrap()
+            .notes
+            .iter()
+            .map(|note| note.start)
+            .collect();
+        assert_eq!(starts, (0..16).map(|slot| Ticks(slot * 240)).collect());
+    }
+
+    #[test]
     fn changing_a_generated_preset_across_track_families_is_refused() {
         let (mut session, track) = with_a_progression();
         let clip = session
@@ -1525,7 +1549,7 @@ mod tests {
         let user_clip = session.midi_clip(played).unwrap().clone();
         let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
         recipe.style = Some(auris_core::PerformanceStyle::CityPop);
-        recipe.density = 1.0;
+        recipe.density = 0.7;
         let clip = session
             .generate_clip(track, Ticks::ZERO, BAR * 4, recipe)
             .unwrap();
