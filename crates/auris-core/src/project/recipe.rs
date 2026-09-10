@@ -46,6 +46,7 @@ pub enum ClipPreset {
     /// The tune.
     Lead,
     /// Chords, played rhythmically.
+    #[serde(alias = "stab")]
     Chords,
     /// A held chord bed.
     Pad,
@@ -53,8 +54,6 @@ pub enum ClipPreset {
     Arp,
     /// The bass line.
     Bass,
-    /// Short chords hammered on the subdivision.
-    Stab,
     /// Kick, snare and hat together.
     Drums,
     /// The kick drum alone.
@@ -70,12 +69,11 @@ impl ClipPreset {
     ///
     /// The whole kit before the three pieces of it: a person reaching for drums usually means all
     /// of them, and the parts are what a mix wants rather than what a first choice does.
-    pub const ALL: [ClipPreset; 10] = [
+    pub const ALL: [ClipPreset; 9] = [
         ClipPreset::Lead,
         ClipPreset::Chords,
         ClipPreset::Pad,
         ClipPreset::Arp,
-        ClipPreset::Stab,
         ClipPreset::Bass,
         ClipPreset::Drums,
         ClipPreset::Kick,
@@ -91,7 +89,6 @@ impl ClipPreset {
             ClipPreset::Pad => "pad",
             ClipPreset::Arp => "arp",
             ClipPreset::Bass => "bass",
-            ClipPreset::Stab => "stab",
             ClipPreset::Drums => "drums",
             ClipPreset::Kick => "kick",
             ClipPreset::Snare => "snare",
@@ -107,7 +104,7 @@ impl ClipPreset {
             "pad" | "strings" => ClipPreset::Pad,
             "arp" | "arpeggio" => ClipPreset::Arp,
             "bass" => ClipPreset::Bass,
-            "stab" | "stabs" | "release-cut" => ClipPreset::Stab,
+            "stab" | "stabs" | "release-cut" => ClipPreset::Chords,
             "drums" | "drum" | "kit" => ClipPreset::Drums,
             "kick" | "bd" => ClipPreset::Kick,
             "snare" | "sd" => ClipPreset::Snare,
@@ -368,12 +365,9 @@ impl ClipRecipe {
 
     /// A recipe for `preset`, with the dials where a first attempt should start.
     ///
-    /// Only the stab starts anywhere unusual, and it has to: every other preset is a *part* whose
-    /// identity survives the dials being moved, while a stab is nothing but a position on them —
-    /// short, fast and machine-tight. Landing it on the same middling defaults as a pad would mean
-    /// choosing it and hearing a pad, with the sound it was named for three dials away.
+    /// Density and gate independently control how often and how briefly a chord is struck.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
-        let mut recipe = Self {
+        Self {
             style: None,
             drum_map: None,
             drum_voices: Vec::new(),
@@ -393,17 +387,7 @@ impl ClipRecipe {
             octave: 0,
             fill: default_fill(),
             text_digest: 0,
-        };
-        if preset == ClipPreset::Stab {
-            recipe.density = 0.95;
-            recipe.intensity = 0.85;
-            recipe.gate = 0.3;
-            // Flatter than most parts, on purpose. A stab is a rhythm played by a chord, and a
-            // metric hierarchy at full strength turns the sixteenths between the beats into
-            // ghost notes — which is a groove, and not this one.
-            recipe.dynamics = 0.45;
         }
-        recipe
     }
 
     /// The same recipe with a different seed, which is what "another take" means.
@@ -424,6 +408,30 @@ impl ClipRecipe {
 mod tests {
     use super::*;
     use crate::project::DrumRole;
+
+    #[test]
+    fn a_saved_stab_recipe_loads_as_chords_without_changing_its_dials() {
+        let mut expected = ClipRecipe::new(ClipPreset::Chords, 42);
+        expected.density = 0.95;
+        expected.gate = 0.3;
+        expected.intensity = 0.85;
+        expected.dynamics = 0.45;
+        let mut stored = serde_json::to_value(&expected).unwrap();
+        stored["preset"] = serde_json::json!("stab");
+        let restored: ClipRecipe = serde_json::from_value(stored).unwrap();
+        assert_eq!(restored, expected);
+        assert_eq!(serde_json::to_value(restored).unwrap()["preset"], "chords");
+        for name in ["stab", "stabs", "release-cut", "chords"] {
+            assert_eq!(ClipPreset::parse(name), Some(ClipPreset::Chords));
+        }
+        assert_eq!(
+            ClipPreset::ALL
+                .iter()
+                .filter(|preset| **preset == ClipPreset::Chords)
+                .count(),
+            1
+        );
+    }
 
     #[test]
     fn another_kit_take_moves_each_independent_seed_by_the_same_distance() {

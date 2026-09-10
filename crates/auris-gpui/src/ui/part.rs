@@ -281,9 +281,7 @@ fn with_part_position(
 /// exactly where the old preset put it is the old preset's opinion rather than anybody's, and
 /// becomes the new preset's instead.
 ///
-/// Without this the stab would be unreachable from the picker: its whole identity is a gate near
-/// the floor and a density near the ceiling, and choosing it from a pad would have kept the pad's
-/// and given back a pad under a new name.
+/// Deliberately adjusted articulation belongs to the clip when its musical role changes.
 pub fn with_preset(recipe: &ClipRecipe, preset: ClipPreset) -> ClipRecipe {
     let was = ClipRecipe::new(recipe.preset, recipe.seed);
     let becomes = ClipRecipe::new(preset, recipe.seed);
@@ -1109,12 +1107,13 @@ mod tests {
             (clip, other, this.session.midi_clip(other).unwrap().clone())
         });
         paint(&app, cx);
-        click("part-role-stab", cx);
+        assert!(cx.debug_bounds("part-role-stab").is_none());
+        click("part-role-chords", cx);
         let original = app.update(cx, |this, _| {
             let midi = this.session.midi_clip(clip).unwrap();
             let settings = midi.recipe.as_ref().unwrap();
-            assert_eq!(settings.preset, ClipPreset::Stab);
-            assert_eq!(settings.gate, recipe(ClipPreset::Stab).gate);
+            assert_eq!(settings.preset, ClipPreset::Chords);
+            assert_eq!(settings.gate, recipe(ClipPreset::Chords).gate);
             assert_eq!(settings.seed, 1);
             midi.clone()
         });
@@ -1517,26 +1516,27 @@ mod tests {
 
     #[test]
     fn changing_the_preset_keeps_the_dials_somebody_moved_and_replaces_the_ones_they_did_not() {
-        // The stab is the case that forced the rule: its identity is a gate near the floor and a
-        // density near the ceiling, so choosing it from a pad while keeping the pad's dials would
-        // have written a pad under a new name.
+        // Choosing a role uses its defaults until a dial has been deliberately adjusted.
         let pad = recipe(ClipPreset::Pad);
-        let stab = with_preset(&pad, ClipPreset::Stab);
-        assert_eq!(stab.preset, ClipPreset::Stab);
-        assert_eq!(stab.gate, ClipRecipe::new(ClipPreset::Stab, 1).gate);
-        assert!(stab.gate < 1.0, "a stab that is not short is a chord part");
-        assert_eq!(stab.density, ClipRecipe::new(ClipPreset::Stab, 1).density);
+        let chords = with_preset(&pad, ClipPreset::Chords);
+        assert_eq!(chords.preset, ClipPreset::Chords);
+        assert_eq!(chords.gate, ClipRecipe::new(ClipPreset::Chords, 1).gate);
+
+        assert_eq!(
+            chords.density,
+            ClipRecipe::new(ClipPreset::Chords, 1).density
+        );
 
         // And a dial that was moved is the person's, not the preset's.
         let mut deliberate = recipe(ClipPreset::Pad);
         Dial::Gate.set(&mut deliberate, 0.5);
         let moved = deliberate.gate;
-        let stab = with_preset(&deliberate, ClipPreset::Stab);
-        assert_eq!(stab.gate, moved, "the preset overwrote a deliberate gate");
+        let chords = with_preset(&deliberate, ClipPreset::Chords);
+        assert_eq!(chords.gate, moved, "the preset overwrote a deliberate gate");
 
         // The seed never moves: another take is the next seed, and changing what the part is
         // should not also change which take of it you are hearing.
-        assert_eq!(stab.seed, deliberate.seed);
+        assert_eq!(chords.seed, deliberate.seed);
     }
 
     #[test]

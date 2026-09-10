@@ -466,7 +466,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_track::run(&args)).await
     }
 
-    /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, stab, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `regenerate_clips` chooses a new take or follows a harmony change; the answer numbers it the way `describe` does.
+    /// Writes a generated part onto an existing instrument track, from the key and chords already under the song — lead, chords, pad, arp, bass, drums, kick, snare or hat. Covers the whole song unless `start_bar` and `bars` aim it. The clip keeps its recipe, so `regenerate_clips` chooses a new take or follows a harmony change; the answer numbers it the way `describe` does.
     #[tool(input_schema = tool_schema("add_part"))]
     async fn add_part(
         &self,

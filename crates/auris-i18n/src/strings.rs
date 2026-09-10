@@ -728,7 +728,6 @@ strings! {
     // The short chords hammered on every step that dance music runs on. Japanese producers name
     // it after the sound rather than the gesture — a piano with its release cut off — and that
     // is the word anybody looking for it would search for.
-    PresetStab { en: "Stab", ja: "リリースカットピアノ" }
     PresetDrums { en: "Drums", ja: "ドラム" }
     PresetKick { en: "Kick", ja: "キック" }
     PresetSnare { en: "Snare", ja: "スネア" }

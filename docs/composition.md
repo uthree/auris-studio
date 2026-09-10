@@ -393,7 +393,7 @@ In an `.asong`, set `ending = "loop"`; CLI and model tools also accept the overr
 
 A single clip can be written from the chords underneath it without a specification for a whole
 song: right-click an empty stretch of a melodic instrument track to generate lead, chords, pad,
-arpeggio, stab or bass. Drum tracks offer the full kit, kick, snare and hi-hat presets. Separate
+arpeggio or bass. Drum tracks offer the full kit, kick, snare and hi-hat presets. Separate
 drum tracks allow their mixer levels and processing to be controlled independently.
 
 The new clip fills the free interval containing the right-click position, within that section.
@@ -408,8 +408,8 @@ the recipe when a take turns out to be the keeper. A track's own menu has **Keep
 which does that to all of them at once and says how many it acted on. The dials are in the
 inspector.
 
-Select a generated melodic clip to open **Session Player** in the inspector. The six role
-buttons choose lead, chords, pad, arpeggio, stab or bass, highlighting the current choice.
+Select a generated melodic clip to open **Session Player** in the inspector. The five role
+buttons choose lead, chords, pad, arpeggio or bass, highlighting the current choice.
 The same XY pad used by Drummer controls **Complexity** horizontally (the recipe's density)
 and **Intensity** vertically: right makes the part busier, up plays it harder. The readouts
 show both values. Each drag rewrites the selected clip as one undo step and keeps its seed
@@ -428,7 +428,7 @@ The controls mean:
 |---|---|
 | **Subdivision** | How finely the beat divides: 1/8, 1/16, or either of them in triplets |
 | **Octave** | Which register, ±2 from where the preset sits |
-| **Density** | How busy the part is — for a comp, which figure it reaches for |
+| **Density** | How busy the part is; chords above 75% fill more of the subdivision, reaching every step at 100% |
 | **Syncopation** | How far the figure pulls off the beat, without making it busier |
 | **Gate** | How long each note sounds, as a share of the gap to the next |
 | **Intensity** | How hard it is played |
@@ -478,8 +478,10 @@ subdivision entirely, since a groove is written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
 a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
-sometimes. At the top of the density dial the figure it reaches for is a rhythm rolled from the
-metric hierarchy — most of the steps, with the holes that make it a rhythm rather than a tremolo.
+sometimes. Above 75% density, chords keep a driving figure and fill more of the subdivision.
+At 100%, every step is struck: sixteen attacks per 4/4 bar with a 1/16 subdivision, or
+twenty-four with 1/16 triplets. Foreground-aware arrangement preserves this explicit dense
+rhythm. Authored rhythms retain their rests regardless of density.
 
 **Chords** and **pad** read the same harmony through the same writer, and what separates them is
 what a pad does at a chord change: it holds whatever the two chords have in common and moves only
@@ -487,10 +489,10 @@ the voices that have somewhere to go, where a comp restrikes every one of them. 
 difference between a chord *changing* and a chord *drifting*, and it is the reason the two presets
 are two presets rather than one with the rhythm turned off.
 
-The **stab** preset is the settings that have to be turned up together: fast, short and hammered,
-which is what most dance music has underneath it. It arrives with its own dials rather than the
-middling defaults, and moving one of them keeps it moved when the preset changes — a dial somebody
-set is theirs, a dial still where the last preset left it is not.
+For short, repeated piano chords, choose **Chords**, set density near 100%, subdivision to
+1/16, and gate near 30%. Density controls the attacks; gate controls their length. Lower
+the Performance humanize amount for tighter timing. Changing presets preserves dials that
+were deliberately adjusted.
 
 **A drum part says which note it strikes.** General MIDI is the only agreement there is about
 which number is a kick, and a SoundFont is under no obligation to keep it — a kit that puts its

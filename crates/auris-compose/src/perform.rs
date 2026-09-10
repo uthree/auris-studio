@@ -34,11 +34,6 @@ use crate::spec::Role;
 /// specification's own `humanize` instead.
 const DEFAULT_LOOSENESS: f32 = 0.25;
 
-/// A stab starts tighter than the default, as its recipe always had it.
-///
-/// Its whole identity is a rhythm hammered by a chord, and a rhythm that wanders is a rhythm.
-const STAB_LOOSENESS: f32 = 0.1;
-
 /// How far a role sits against the beat at full looseness, in ticks.
 ///
 /// The lean the humanisation pass used to add: a hat pushes, a bass drags, the snare lays back.
@@ -91,10 +86,7 @@ pub fn part_performance(role: Role, looseness: f32, seed: u64) -> Vec<NoteTransf
 /// [`ClipPreset::Drums`] is the one preset holding several roles in one clip, and their leans
 /// disagree — the hat pushes while the snare lays back — so a merged kit starts with nothing.
 pub fn clip_performance(preset: ClipPreset, seed: u64) -> Vec<NoteTransform> {
-    let looseness = match preset {
-        ClipPreset::Stab => STAB_LOOSENESS,
-        _ => DEFAULT_LOOSENESS,
-    };
+    let looseness = DEFAULT_LOOSENESS;
     match roles_of(preset) {
         [role] => part_performance(*role, looseness, seed),
         _ => Vec::new(),
@@ -155,11 +147,6 @@ mod tests {
                 NoteTransform::Lean { ticks: -1 },
                 NoteTransform::Humanize { amount, seed: 3 }
             ] if (*amount - DEFAULT_LOOSENESS).abs() < 1e-6
-        ));
-        let stab = clip_performance(ClipPreset::Stab, 3);
-        assert!(matches!(
-            stab.as_slice(),
-            [NoteTransform::Humanize { amount, .. }] if (*amount - STAB_LOOSENESS).abs() < 1e-6
         ));
         // The merged kit's roles disagree about which way to lean, so it starts square.
         assert!(clip_performance(ClipPreset::Drums, 3).is_empty());

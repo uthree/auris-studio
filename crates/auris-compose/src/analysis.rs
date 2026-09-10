@@ -89,7 +89,6 @@ pub fn sound_for(preset: ClipPreset) -> gm::Sound {
         ClipPreset::Chords => 0, // Acoustic grand — the comping instrument that suits everything.
         ClipPreset::Pad => 48,  // String ensemble.
         ClipPreset::Arp => 4,   // Electric piano, which arpeggiates without smearing.
-        ClipPreset::Stab => 48, // Strings again: a stab is a section hit.
         ClipPreset::Bass => 33, // Finger bass.
         // Every drum part is the standard kit. Which *pieces* of it play is the preset's business
         // and not the sound's — a kick track and a hat track are the same kit struck differently.

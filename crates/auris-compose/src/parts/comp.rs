@@ -43,10 +43,6 @@ pub(super) enum CompFigure {
     /// A rhythm rolled from the metric hierarchy: most of the steps, with the holes that make it
     /// a rhythm. This is the fast one — with the gate most of the way down it is the release-cut
     /// piano dance music is built on.
-    ///
-    /// It used to be a chord on literally every step, which was reachable and too plain to use:
-    /// sixteen identical strikes in a bar is a tremolo, not a part. Rolling it the way the melody
-    /// rolls its figure keeps the density and buys back a shape.
     Rolled,
 }
 
@@ -246,6 +242,16 @@ pub(super) fn comp(
     // the whole of what the density dial can reach on a pad, which holds one chord and has no
     // rhythm to thin or thicken.
     let busy = density(settings, part, section);
+    // The upper quarter of the dial fills the subdivision, independently of loudness.
+    // At full density even a quiet section must reach every step. Authored rests and pads
+    // retain their own timing contract.
+    let drive = if pad || written {
+        0.0
+    } else {
+        crate::arrangement::chord_subdivision_fill(
+            part.density.unwrap_or_else(|| settings.mood.density()),
+        )
+    };
     let voicing_variant = choose.weighted(&[1.0, 0.2 + (1.0 - busy) * 1.8, 0.2 + busy * 1.8]);
 
     // How the part comps, drawn once for the section and then restated over every chord in it.
@@ -264,7 +270,7 @@ pub(super) fn comp(
             RngKey::Word(&section.name),
         ],
     );
-    let chosen_figure = if written {
+    let chosen_figure = if written || drive > 0.0 {
         // The written rhythm plays through the rolled figure's machinery, which is already
         // "strike on exactly these steps".
         CompFigure::Rolled
@@ -278,13 +284,25 @@ pub(super) fn comp(
     // so that a turnaround reaching for it later finds the section's rhythm rather than a
     // different one — and so the stream does not shift under everything else depending on which
     // figure came out.
-    let rolled = bar_onsets(
+    let mut rolled = bar_onsets(
         grid,
         part.rhythm.as_ref(),
         busy,
         settings.mood.syncopation,
         &mut invent,
     );
+    if drive > 0.0 {
+        let mut fill = bar_stream(settings, frame, part, section, "comp-density", 0);
+        for step in 0..grid.steps_per_bar() {
+            // Draw on every step so raising density only opens more opportunities in this
+            // stream, instead of rescrambling the following decisions.
+            let add = fill.chance(drive);
+            if add && !rolled.iter().any(|(at, _)| *at == step) {
+                rolled.push((step, crate::rhythm::Accent::Normal));
+            }
+        }
+        rolled.sort_unstable_by_key(|(step, _)| *step);
+    }
     // Whether this section's comp pushes: each chord change struck half a beat early and held
     // over the line, the anticipation every keyboard player owns. A property of the section and
     // not of the chord — a player who pushes, pushes, and a per-change roll would also break the
@@ -319,7 +337,7 @@ pub(super) fn comp(
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         // The shared phrase plan supplies the turn, including unequal phrase lengths.
         // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
-        let figure = if pad || written || !section.closes_phrase(bar) {
+        let figure = if pad || written || drive > 0.0 || !section.closes_phrase(bar) {
             chosen_figure
         } else {
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
@@ -349,8 +367,12 @@ pub(super) fn comp(
                 ))
             })
             .unwrap_or(push_early);
-        let push =
-            pushing && !pad && !written && pushed_by > Ticks::ZERO && event.start >= pushed_by;
+        let push = pushing
+            && !pad
+            && !written
+            && drive == 0.0
+            && pushed_by > Ticks::ZERO
+            && event.start >= pushed_by;
         let mut onsets: Vec<usize> = if figure == CompFigure::Held {
             vec![0]
         } else {
@@ -554,12 +576,7 @@ mod tests {
     }
 
     #[test]
-    fn a_comp_at_full_density_is_dense_without_being_a_metronome() {
-        // Two claims, and the second is the one that was learned the hard way. The four original
-        // figures topped out at the offbeat eighth, so no setting anywhere reached a comp that
-        // moved on sixteenths — but the first fix was a chord on *literally* every step, which is
-        // a tremolo rather than a part and was too plain to use. What the top of the dial should
-        // give is most of the steps, with the holes that make it a rhythm.
+    fn a_comp_at_full_density_strikes_every_sixteenth() {
         let full = |seed: u64| {
             format!(
                 r#"
@@ -583,15 +600,7 @@ mod tests {
             counts.extend((0..4).map(|bar| bar_steps(&frame, chords, bar).len()));
         }
         let steps = 16;
-        let busiest = counts.iter().copied().max().unwrap_or(0);
-        assert!(
-            busiest > steps / 2,
-            "the busiest bar in thirty-two struck {busiest} of {steps} steps at full density"
-        );
-        assert!(
-            counts.iter().any(|count| *count < steps),
-            "every bar struck every step, which is a tremolo rather than a rhythm"
-        );
+        assert!(counts.iter().all(|count| *count == steps), "{counts:?}");
     }
 
     #[test]
@@ -810,7 +819,7 @@ mod tests {
                     bars = 6
                     [[part]]
                     name = "chords"
-                    density = 0.8
+                    density = 0.7
                     "#
             ));
             let chords = part(&parts, "chords");

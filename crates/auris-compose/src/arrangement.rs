@@ -10,6 +10,14 @@ use crate::frame::Frame;
 use crate::parts::PartDraft;
 use crate::{PerformanceStyle, Role, SongSpec};
 
+/// How much of a chord's subdivision to fill above the ordinary comping range.
+///
+/// A positive value requests a driving rhythm, which foreground arrangement must preserve.
+/// Full density reaches every subdivision, independently of the part's intensity.
+pub fn chord_subdivision_fill(density: f32) -> f32 {
+    ((density - 0.75) * 4.0).clamp(0.0, 1.0)
+}
+
 /// Shapes one generated accompaniment clip around a foreground line in clip-relative ticks.
 ///
 /// The foreground is never edited. Sustained ambient textures keep their attacks, and bass
@@ -198,6 +206,10 @@ pub(crate) fn arrange(spec: &SongSpec, frame: &Frame, drafts: &mut [PartDraft]) 
             let played = section.played(part);
             if played.rhythm.is_some()
                 || !matches!(played.role, Role::Chords | Role::Stab | Role::Arp)
+                || (matches!(played.role, Role::Chords | Role::Stab)
+                    && chord_subdivision_fill(
+                        played.density.unwrap_or_else(|| spec.mood.density()),
+                    ) > 0.0)
             {
                 continue;
             }

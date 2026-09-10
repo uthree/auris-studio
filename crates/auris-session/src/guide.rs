@@ -1312,6 +1312,10 @@ pub mod composition {
     //!
     //! # Every clip knows what it is
     //!
+    //! Rhythmic chord clips use one chord preset. Density above 75% fills the chosen subdivision;
+    //! at 100% it strikes every step, while gate independently controls note length. The
+    //! foreground-arrangement pass preserves this dense rhythm, and authored rests stay intact.
+    //!
     //! Each clip a piece arrives with carries a [`ClipRecipe`](auris_core::ClipRecipe), derived by
     //! [`recipe_for`](auris_compose::recipe_for) from the part *as that section played it* — a
     //! chorus that patched the bass an octave up produces a clip whose recipe says so. That one
