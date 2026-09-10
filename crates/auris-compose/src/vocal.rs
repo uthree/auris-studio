@@ -11,10 +11,9 @@
 //! The stages are deliberately separable, because each is a seam something better can walk
 //! in through:
 //!
-//! * **Rhythm** ([`vocal_rhythm`]) turns syllable counts into note slots — one syllable, one
-//!   note, the syllabic default of Japanese song. It is its own public function so a richer
-//!   scheme (Orpheus's rhythm trees, a learned rhythm model) can replace it without touching
-//!   the pitch search.
+//! * **Rhythm** ([`vocal_rhythm_expressive_in_bars`]) turns spoken groups and contours into
+//!   short/long rhythmic cells — one syllable, one note, inside a fixed span. The count-only
+//!   [`vocal_rhythm`] and [`vocal_rhythm_in_bars`] also serve the editor's length estimates.
 //! * **Pitch** ([`write_vocal`]) fills the slots. It reads only [`Contour`] — a vocabulary
 //!   that names no language — and the document's own harmony, so another language's prosody
 //!   changes nothing here, and a learned melody engine would be a *sibling* of this function
@@ -77,9 +76,9 @@ pub struct VocalRhythm {
 /// least an eighth of breath after this one ends — a singer breathes between phrases, and a
 /// melody with nowhere to breathe reads as wrong before it sounds wrong. The last syllable
 /// is *held*, because that is what a sung phrase does — and the held note is where the
-/// vibrato rule below finds room to sway. The scheme is Orpheus's "rhythm decision" reduced
-/// to its plainest honest form; the rhythm-tree library that would vary it is future work,
-/// and lives behind this signature when it comes.
+/// vibrato rule below finds room to sway. This count-only layout estimates a standalone
+/// lyric's span; [`vocal_rhythm_expressive_in_bars`] writes the actual rhythmic phrasing
+/// inside that span.
 pub fn vocal_rhythm(counts: &[usize], meter: TimeSignature) -> VocalRhythm {
     let eighth = Ticks(TICKS_PER_QUARTER / 2);
     let half = Ticks(TICKS_PER_QUARTER * 2);
@@ -164,7 +163,7 @@ pub fn vocal_rhythm_in_bars(
     let mut phrases = Vec::with_capacity(counts.len());
     for ((count, weight), minimum) in counts.iter().zip(&weights).zip(minimum) {
         cumulative += weight;
-        let share = spare * cumulative / needed;
+        let share = (spare as u128 * cumulative as u128 / needed as u128) as usize;
         let span = (minimum + share - assigned) * boundary;
         assigned = share;
         let step = if span / weight >= 4 {
@@ -179,11 +178,11 @@ pub fn vocal_rhythm_in_bars(
         let sung = available - breath;
         let mut slots = Vec::with_capacity(*count);
         for syllable in 0..*count {
-            let onset = sung * syllable / (count + 1);
+            let onset = (sung as u128 * syllable as u128 / (count + 1) as u128) as usize;
             let end = if syllable + 1 == *count {
                 sung
             } else {
-                sung * (syllable + 1) / (count + 1)
+                (sung as u128 * (syllable + 1) as u128 / (count + 1) as u128) as usize
             };
             let duration =
                 ((end - onset) as i64 * step as i64 * sixteenth).min(meter.ticks_per_bar().raw());
@@ -198,11 +197,187 @@ pub fn vocal_rhythm_in_bars(
     Some(VocalRhythm { phrases, length })
 }
 
+/// Spoken grouping available to the rhythm writer, without a language dependency.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VocalPhraseProsody {
+    /// One contour per syllable; its length is the required note count.
+    pub contours: Vec<Contour>,
+    /// Syllable indices starting a word or accent group, including zero when known.
+    pub group_starts: Vec<usize>,
+}
+
+/// Fits a lyric using a bounded search over rhythmic cells and spoken group boundaries.
+///
+/// Capacity is identical to [`vocal_rhythm_in_bars`]: a sixteenth per syllable, an extra
+/// sixteenth for each ending, and a breath. Within that budget, candidates vary pickups,
+/// short/long cells and group endings. Pitch-accent nuclei may hold, while group starts
+/// favour the beat or its offbeat according to `style`. A phrase recalls the opening
+/// rhythm of the first phrase when its length permits. The seed selects a reproducible
+/// take; no note is dropped to improve a score and no candidate extends the given bars.
+pub fn vocal_rhythm_expressive_in_bars(
+    phrases: &[VocalPhraseProsody],
+    meter: TimeSignature,
+    bars: usize,
+    style: Option<crate::PerformanceStyle>,
+    seed: u64,
+) -> Option<VocalRhythm> {
+    let counts: Vec<_> = phrases.iter().map(|phrase| phrase.contours.len()).collect();
+    let mut rhythm = vocal_rhythm_in_bars(&counts, meter, bars)?;
+    let sixteenth = TICKS_PER_QUARTER / 4;
+    let beat = (meter.ticks_per_beat().raw() / sixteenth).max(1) as usize;
+    let bar = (meter.ticks_per_bar().raw() / sixteenth).max(1) as usize;
+    let syncopation = match style {
+        Some(crate::PerformanceStyle::CityPop | crate::PerformanceStyle::JazzTrio) => 0.55,
+        Some(crate::PerformanceStyle::Rock | crate::PerformanceStyle::Chiptune) => 0.2,
+        Some(crate::PerformanceStyle::Ambient | crate::PerformanceStyle::Orchestral) => 0.1,
+        _ => 0.35,
+    };
+    let mut hook = Vec::new();
+    for (index, phrase) in phrases
+        .iter()
+        .filter(|phrase| !phrase.contours.is_empty())
+        .enumerate()
+    {
+        let start = rhythm.phrases[index][0].0.raw() / sixteenth;
+        let end = rhythm
+            .phrases
+            .get(index + 1)
+            .map_or(rhythm.length.raw(), |next| next[0].0.raw())
+            / sixteenth;
+        let span = (end - start) as usize;
+        let count = phrase.contours.len();
+        let spare = span - count - 2;
+        let mut best = (f64::INFINITY, Vec::new());
+        // Fixed work per syllable, independent of the duration or rejection rate.
+        for candidate in 0..24 {
+            let mut rng = Rng::stream(
+                seed,
+                &[
+                    RngKey::Word("vocal-rhythm"),
+                    RngKey::Index(index as u64),
+                    RngKey::Index(candidate),
+                ],
+            );
+            let pickup = if candidate % 3 == 0 {
+                (beat / 2).min(spare)
+            } else {
+                0
+            };
+            let breath = 1 + spare.saturating_sub(pickup).min(beat.saturating_sub(1));
+            let sung = span - pickup - breath;
+            let cell = match candidate % 6 {
+                0 => [2usize, 1, 1, 2],
+                1 => [1, 1, 2, 2],
+                2 => [3, 1, 2, 2],
+                3 => [1, 3, 2, 2],
+                4 => [2, 2, 1, 3],
+                _ => [2, 2, 2, 2],
+            };
+            let rotation = rng.below(cell.len());
+            let weights: Vec<_> = (0..count)
+                .map(|at| {
+                    let nucleus = phrase.contours.get(at + 1) == Some(&Contour::Fall);
+                    let group_end = phrase.group_starts.contains(&(at + 1));
+                    cell[(at + rotation) % cell.len()]
+                        + usize::from(nucleus || group_end)
+                        + usize::from(at + 1 == count) * 3
+                })
+                .collect();
+            let total_weight = weights.iter().sum::<usize>();
+            let extra = sung - count - 1;
+            let mut accumulated = 0;
+            let mut assigned = 0;
+            let mut onset = start as usize + pickup;
+            let mut slots = Vec::with_capacity(count);
+            for (at, weight) in weights.into_iter().enumerate() {
+                accumulated += weight;
+                // Use u128 so a long but valid timeline cannot overflow intermediate shares.
+                let share = (extra as u128 * accumulated as u128 / total_weight as u128) as usize;
+                let interval = 1 + usize::from(at + 1 == count) + share - assigned;
+                assigned = share;
+                let separation =
+                    usize::from(phrase.group_starts.contains(&(at + 1)) && interval >= 3);
+                let duration = (interval - separation).min(bar);
+                // A very sparse lyric leaves rests, not an early cadence followed by
+                // several empty bars. Place its final held syllable at the phrase's end.
+                let entry = onset
+                    + if at + 1 == count {
+                        interval - duration
+                    } else {
+                        0
+                    };
+                slots.push((
+                    Ticks(entry as i64 * sixteenth),
+                    Ticks(duration as i64 * sixteenth),
+                ));
+                onset += interval;
+            }
+            let score =
+                rhythm_cost(&slots, phrase, beat, syncopation, &hook) + f64::from(rng.unit()) * 0.3;
+            if score < best.0 {
+                best = (score, slots);
+            }
+        }
+        if hook.is_empty() {
+            hook = best.1.clone();
+        }
+        rhythm.phrases[index] = best.1;
+    }
+    Some(rhythm)
+}
+
+fn rhythm_cost(
+    slots: &[(Ticks, Ticks)],
+    phrase: &VocalPhraseProsody,
+    beat: usize,
+    syncopation: f64,
+    hook: &[(Ticks, Ticks)],
+) -> f64 {
+    let unit = TICKS_PER_QUARTER / 4;
+    let beat_ticks = beat as i64 * unit;
+    let mut cost = 0.0;
+    let mut offbeats = 0;
+    for (at, &(onset, length)) in slots.iter().enumerate() {
+        let position = onset.raw().rem_euclid(beat_ticks);
+        offbeats += usize::from(position != 0);
+        if phrase.group_starts.contains(&at) {
+            cost += if position == 0 {
+                syncopation * 0.25
+            } else if position == beat_ticks / 2 {
+                (1.0 - syncopation) * 0.25
+            } else {
+                0.7
+            };
+        }
+        if phrase.contours.get(at + 1) == Some(&Contour::Fall)
+            && let Some((_, following)) = slots.get(at + 1)
+            && length < *following
+        {
+            cost += 0.35;
+        }
+    }
+    cost += (offbeats as f64 / slots.len() as f64 - syncopation).abs() * 3.0;
+    let intervals: Vec<_> = slots.windows(2).map(|pair| pair[1].0 - pair[0].0).collect();
+    if intervals.len() >= 3 && intervals.windows(2).all(|pair| pair[0] == pair[1]) {
+        cost += 1.2;
+    }
+    if hook.len() == slots.len() {
+        // Recall the hook's first few onsets while leaving the cadence free to answer it.
+        for at in 1..slots.len().saturating_sub(2).min(5) {
+            let original = hook[at].0 - hook[0].0;
+            let recalled = slots[at].0 - slots[0].0;
+            cost += ((original.raw() - recalled.raw()).abs() as f64 / beat_ticks as f64).min(2.0)
+                * 0.45;
+        }
+    }
+    cost
+}
+
 /// The shortest note the vibrato rule sways, in seconds.
 ///
 /// Under half a second there is no room for the sway to grow before the note is over, and a
 /// vibrato that never reaches depth reads as a wobble. With the phrase-final half note this
-/// rhythm writes, the held syllable clears the bar at any tempo under ~260 BPM. Phrase position
+/// estimate writes, the held syllable clears the bar at any tempo under ~260 BPM. Phrase position
 /// separately keeps passing notes out at slower tempos, where an eighth can cross this duration.
 pub const VIBRATO_FROM_SECONDS: f64 = 0.45;
 
@@ -322,8 +497,9 @@ struct Slot {
 /// chords written under it constrains nothing harmonically rather than refusing: a lyric is
 /// singable over silence, and the session decides whether to write chords first.
 ///
-/// Two runs with the same inputs and seed are the same melody, exactly; the seed breaks ties
-/// between paths the costs cannot tell apart, and nothing else.
+/// Two runs with the same inputs and seed are the same melody, exactly. The seed chooses
+/// an initial melodic gesture, which later phrases recall; accent and harmony costs remain
+/// stronger than that gesture. Consecutive phrases share a register and a singable entry.
 pub fn write_vocal(
     harmony: &Harmony,
     start: Ticks,
@@ -334,6 +510,15 @@ pub fn write_vocal(
 ) -> Vec<Note> {
     let centre = range.centre();
     let mut notes = Vec::new();
+    let mut hook: Vec<u8> = Vec::new();
+    let mut previous_end: Option<u8> = None;
+    const GESTURES: [[i8; 8]; 4] = [
+        [0, 0, 2, 4, 2, 0, -2, 0],
+        [0, 2, 4, 2, 0, 2, 0, -2],
+        [2, 0, -2, 0, 2, 4, 2, 0],
+        [0, 2, 0, -2, 0, 2, 4, 2],
+    ];
+    let gesture = GESTURES[Rng::stream(seed, &[RngKey::Word("vocal-hook")]).below(GESTURES.len())];
 
     for (index, (slots, contours)) in rhythm.phrases.iter().zip(phrases).enumerate() {
         let count = slots.len().min(contours.len());
@@ -379,9 +564,21 @@ pub fn write_vocal(
             );
             f64::from(stream.unit()) * JITTER
         };
-        let register = |pitch: u8| {
+        let register = |at: usize, pitch: u8| {
             let octaves = (f64::from(pitch) - centre) / 12.0;
-            octaves * octaves * REGISTER_WEIGHT
+            let target = if hook.is_empty() {
+                centre + f64::from(gesture[at * gesture.len() / count])
+            } else {
+                f64::from(hook[at * hook.len() / count])
+            };
+            // A remembered pitch is a preference, never a reason to mispronounce a word.
+            // The final two syllables remain free to find this phrase's own cadence.
+            let recall = if !hook.is_empty() && at + 2 >= count {
+                0.1
+            } else {
+                0.45
+            };
+            octaves * octaves * REGISTER_WEIGHT + (f64::from(pitch) - target).abs() * recall
         };
         let harmony_cost = |slot: &Slot, pitch: u8, arrived_by: Option<i64>| {
             let Some(chord) = slot.chord else { return 0.0 };
@@ -406,7 +603,12 @@ pub fn write_vocal(
             .iter()
             .map(|pitch| {
                 (
-                    register(*pitch) + harmony_cost(&slots[0], *pitch, None) + jitter(0, *pitch),
+                    register(0, *pitch)
+                        + harmony_cost(&slots[0], *pitch, None)
+                        + previous_end.map_or(0.0, |previous| {
+                            leap_cost(i64::from(*pitch) - i64::from(previous))
+                        })
+                        + jitter(0, *pitch),
                     0,
                 )
             })
@@ -449,7 +651,7 @@ pub fn write_vocal(
                             best = (cost, from);
                         }
                     }
-                    (best.0 + register(*pitch) + jitter(at, *pitch), best.1)
+                    (best.0 + register(at, *pitch) + jitter(at, *pitch), best.1)
                 })
                 .collect();
             paths.push(row);
@@ -473,6 +675,14 @@ pub fn write_vocal(
                 slot.length,
             ));
         }
+        if hook.is_empty() {
+            hook = slots
+                .iter()
+                .enumerate()
+                .map(|(at, slot)| slot.candidates[chosen[at]])
+                .collect();
+        }
+        previous_end = notes.last().map(|note| note.pitch);
     }
 
     notes
@@ -485,6 +695,181 @@ mod tests {
     use auris_core::theory::numeral::Numeral;
     use auris_core::theory::pitch::PitchClass;
     use auris_core::theory::scale::ScaleId;
+
+    fn prosody(count: usize, group_starts: &[usize]) -> VocalPhraseProsody {
+        VocalPhraseProsody {
+            contours: vec![Contour::Free; count],
+            group_starts: group_starts.to_vec(),
+        }
+    }
+
+    #[test]
+    fn expressive_rhythm_preserves_capacity_moras_and_breaths_in_every_meter() {
+        for meter in [
+            TimeSignature::new(4, 4),
+            TimeSignature::new(3, 4),
+            TimeSignature::new(6, 8),
+            TimeSignature::new(7, 8),
+        ] {
+            for counts in [&[3][..], &[6, 5], &[14], &[15], &[24, 36, 9], &[0, 4, 0, 5]] {
+                let phrases: Vec<_> = counts.iter().map(|&count| prosody(count, &[0])).collect();
+                for bars in [1, 4, 8] {
+                    let capacity = vocal_rhythm_in_bars(counts, meter, bars).is_some();
+                    for seed in 0..4 {
+                        let result = vocal_rhythm_expressive_in_bars(
+                            &phrases,
+                            meter,
+                            bars,
+                            Some(crate::PerformanceStyle::CityPop),
+                            seed,
+                        );
+                        assert_eq!(result.is_some(), capacity);
+                        let Some(rhythm) = result else { continue };
+                        assert_eq!(rhythm.length, meter.ticks_per_bar() * bars as i64);
+                        assert_eq!(
+                            rhythm.phrases.len(),
+                            counts.iter().filter(|&&n| n > 0).count()
+                        );
+                        for (slots, &count) in
+                            rhythm.phrases.iter().zip(counts.iter().filter(|&&n| n > 0))
+                        {
+                            assert_eq!(slots.len(), count);
+                            assert!(slots.iter().all(|&(at, length)| {
+                                at >= Ticks::ZERO
+                                    && length >= Ticks(TICKS_PER_QUARTER / 4)
+                                    && at + length <= rhythm.length
+                            }));
+                            assert!(
+                                slots
+                                    .windows(2)
+                                    .all(|pair| pair[0].0 + pair[0].1 <= pair[1].0)
+                            );
+                        }
+                        assert!(rhythm.phrases.windows(2).all(|pair| {
+                            let &(at, length) = pair[0].last().unwrap();
+                            pair[1][0].0 - (at + length) >= Ticks(TICKS_PER_QUARTER / 4)
+                        }));
+                        let &(at, length) = rhythm.phrases.last().unwrap().last().unwrap();
+                        assert!((at + length).raw() > rhythm.length.raw() / 2);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn expressive_capacity_handles_empty_and_overflowing_spans_without_panicking() {
+        let meter = TimeSignature::default();
+        assert!(
+            vocal_rhythm_expressive_in_bars(&[prosody(4, &[0])], meter, usize::MAX, None, 0)
+                .is_none()
+        );
+        let empty = vocal_rhythm_expressive_in_bars(&[], meter, 4, None, 0).unwrap();
+        assert!(empty.phrases.is_empty());
+        let bars = (i64::MAX / meter.ticks_per_bar().raw()) as usize;
+        let rhythm = vocal_rhythm_expressive_in_bars(
+            &[prosody(1000, &[0]), prosody(1000, &[0])],
+            meter,
+            bars,
+            None,
+            0,
+        )
+        .unwrap();
+        assert_eq!(rhythm.phrases.iter().map(Vec::len).sum::<usize>(), 2000);
+        assert!(
+            rhythm
+                .phrases
+                .iter()
+                .flatten()
+                .all(|(at, length)| *at + *length <= rhythm.length)
+        );
+    }
+
+    #[test]
+    fn expressive_rhythm_has_short_long_cells_seed_variation_and_style_control() {
+        let phrases = [prosody(10, &[0, 3, 6])];
+        let meter = TimeSignature::default();
+        let take =
+            |seed, style| vocal_rhythm_expressive_in_bars(&phrases, meter, 4, style, seed).unwrap();
+        let original = take(2, None);
+        assert_eq!(original, take(2, None));
+        let intervals: Vec<_> = original.phrases[0]
+            .windows(2)
+            .map(|pair| pair[1].0 - pair[0].0)
+            .collect();
+        assert!(
+            intervals.windows(2).any(|pair| pair[0] != pair[1]),
+            "a sung phrase needs more than an even walk"
+        );
+        assert!((0..16).any(|seed| take(seed, None) != original));
+        let offbeats = |style| -> usize {
+            (0..16)
+                .map(|seed| {
+                    take(seed, Some(style)).phrases[0]
+                        .iter()
+                        .filter(|(onset, _)| onset.raw() % TICKS_PER_QUARTER != 0)
+                        .count()
+                })
+                .sum()
+        };
+        assert!(
+            offbeats(crate::PerformanceStyle::CityPop)
+                > offbeats(crate::PerformanceStyle::Orchestral)
+        );
+    }
+
+    #[test]
+    fn grouping_and_accent_shape_rhythm_without_changing_capacity() {
+        let plain = prosody(9, &[0]);
+        let grouped = prosody(9, &[0, 3, 6]);
+        let mut accented = grouped.clone();
+        accented.contours[4] = Contour::Fall;
+        let write = |phrase: &VocalPhraseProsody, seed| {
+            vocal_rhythm_expressive_in_bars(
+                std::slice::from_ref(phrase),
+                TimeSignature::default(),
+                3,
+                None,
+                seed,
+            )
+            .unwrap()
+        };
+        assert!((0..16).any(|seed| write(&plain, seed) != write(&grouped, seed)));
+        assert!((0..16).any(|seed| write(&grouped, seed) != write(&accented, seed)));
+        for seed in 0..16 {
+            assert_eq!(write(&accented, seed).phrases[0].len(), 9);
+        }
+    }
+
+    #[test]
+    fn vocal_phrases_recall_the_hook_and_reenter_without_an_unsingable_jump() {
+        let rhythm = vocal_rhythm(&[8, 8, 8], TimeSignature::default());
+        let phrases = vec![vec![Contour::Free; 8]; 3];
+        for seed in 0..8 {
+            let notes = write_vocal(
+                &c_major(),
+                Ticks::ZERO,
+                &rhythm,
+                &phrases,
+                VocalRange::default(),
+                seed,
+            );
+            assert_eq!(notes.len(), 24);
+            for next in [8, 16] {
+                let leap = (i16::from(notes[next].pitch) - i16::from(notes[next - 1].pitch)).abs();
+                assert!(leap <= 12 && leap != 6);
+                let opening_distance: i16 = (0..4)
+                    .map(|at| {
+                        (i16::from(notes[at].pitch) - i16::from(notes[next + at].pitch)).abs()
+                    })
+                    .sum();
+                assert!(
+                    opening_distance <= 8,
+                    "the hook's first four pitches drifted by {opening_distance} semitones"
+                );
+            }
+        }
+    }
 
     #[test]
     fn fitted_rhythm_uses_fixed_bars_and_preserves_every_syllable() {

@@ -74,7 +74,8 @@ jobs:
   # gpui's `platform` modifier is ⌘ on macOS and the Windows key on Windows, and half the
   # behaviour that follows from that is decided by `cfg!` rather than by types.
   #
-  # ASIO needs the C++ toolchain and libclang to build its SDK bindings.
+  # Exercise the default WASAPI build before preparing ASIO's optional LLVM dependency,
+  # then test the feature used by the shipped Windows binaries in the same cached job.
   windows:
     name: Test on Windows
     runs-on: windows-latest
@@ -82,10 +83,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: ilammy/msvc-dev-cmd@v1
-
-      - name: Prepare LLVM for ASIO
-        shell: pwsh
-        run: ./tools/setup-windows.ps1 -InstallLlvm
 
       - name: Install the toolchain
         run: rustup toolchain install stable --profile minimal --component clippy
@@ -101,14 +98,24 @@ jobs:
           key: windows-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: windows-cargo-
 
-      - name: Lint
+      - name: Lint the default Windows build
         run: cargo clippy --workspace --all-targets --locked
 
       # No audio device and no GPU on the runner; every test that needs either checks first and
       # skips. What this does exercise is every `cfg!(target_os = ...)` arm the other two jobs
       # never take — the key bindings, the pointer gestures, the menu bar and the locale.
-      - name: Test
+      - name: Test the default Windows build
         run: cargo test --workspace --locked
+
+      - name: Prepare LLVM for ASIO
+        shell: pwsh
+        run: ./tools/setup-windows.ps1 -InstallLlvm
+
+      - name: Lint with ASIO
+        run: cargo clippy --workspace --all-targets --locked --features asio
+
+      - name: Test with ASIO
+        run: cargo test --workspace --locked --features asio
 
   # Everything except the gpui frontend, on a platform with no Apple frameworks at all.
   #

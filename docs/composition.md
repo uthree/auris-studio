@@ -71,6 +71,31 @@ suited to its instruments: guitar strokes and muted tails, quiet pickups, shared
 and pitch gestures on appropriate solo parts. Adjust them in each clip's Performance tab.
 The `.asong` root field `performance` stores the palette independently of the song title.
 
+The separate `writing_style` field selects the written musical vocabulary. Presets set both
+fields, and the song sheet preserves them independently. For example,
+`writing_style = "city-pop"` selects syncopated comping and bass figures, while
+`performance = "city-pop"` selects how the stored notes are played. Changing performance
+alone does not rewrite a note. Writing style is saved in each generated clip's recipe.
+
+Composition shares multi-bar phrases between harmony, melody and accompaniment. A melodic
+head returns with developed tails; phrase endings shape approaches, holds and breaths.
+Automatic instrumental melodies combine short gestures and held targets in two-beat cells.
+Density subdivides those gestures, syncopation moves their preparation off the beat, and
+writing style changes the mix of holds, pickups and anticipations. Variations preserve the
+figure's opening; automatic phrase endings place an arrival before a final beat of rest.
+The beat follows the meter, including compound meters. Explicit rhythm patterns keep their
+authored onsets.
+Chord voicings consider each voice's movement, and prepared melodic suspensions resolve by
+step. Generated chords, stabs and arpeggios leave room around a busy foreground and can
+answer in its final breath. Bass and drums keep time, ambient textures retain their sustained
+attacks, and explicit rhythm patterns retain their authored onsets.
+
+Lyrics use their actual mora contours and word groups to choose a seeded rhythmic pattern
+inside the section's fixed bars. Rhythms include varied lengths, holds, pickups and breaths;
+every mora remains present, and text that cannot fit is rejected. Shared section melodies
+keep the same slots. Accompaniment reads the actual sung notes. These are all score edits:
+the piano roll, lyrics, save/load, Undo and clip regeneration work on normal editable notes.
+
 **Style** is the first row and the one to start at. Around thirty dials is a lot to be asked for
 before anything has made a sound, and the honest answer to what they should be is *depends what you
 are writing* — so the shelf answers all of them at once:
@@ -452,7 +477,7 @@ where swing is trying to push it has nothing left to be pushed — and a drum ki
 subdivision entirely, since a groove is written in sixteenths and read by index.
 
 A chord part picks its figure once for the section and restates it, the way a keyboard player picks
-a feel and keeps it; only the fourth bar of a phrase is allowed to turn it over, and only
+a feel and keeps it; only the closing bar of a planned phrase can turn it over, and only
 sometimes. At the top of the density dial the figure it reaches for is a rhythm rolled from the
 metric hierarchy — most of the steps, with the holes that make it a rhythm rather than a tremolo.
 

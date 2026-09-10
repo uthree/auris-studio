@@ -72,6 +72,18 @@ fn phrases(key: Key) -> [[u8; 4]; 6] {
 /// The section is covered exactly, including odd lengths; zero bars gives an empty chart.
 /// Rhythm has its own random stream, so changing energy or tension keeps the phrase chords.
 pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usize) -> Chart {
+    invent_chart_styled(seed, name, key, mood, bar_count, None)
+}
+
+/// Generates harmony against the same phrase boundaries used by the score writers.
+pub fn invent_chart_styled(
+    seed: u64,
+    name: &str,
+    key: Key,
+    mood: Mood,
+    bar_count: usize,
+    style: Option<crate::PerformanceStyle>,
+) -> Chart {
     let mode = ChartMode::of(key);
     let phrases = phrases(key);
     let modal = modal_degrees(key.scale).is_some();
@@ -80,7 +92,11 @@ pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usiz
     let opening = rng.below(phrases.len());
     let split_rate = (mood.energy * mood.tension * 0.75).clamp(0.0, 0.75);
     let mut bars = Vec::with_capacity(bar_count);
-    for (index, length) in phrase_lengths(bar_count).into_iter().enumerate() {
+    for (index, phrase_plan) in crate::phrasing::plan_phrases(bar_count, style)
+        .into_iter()
+        .enumerate()
+    {
+        let length = phrase_plan.bars;
         let phrase = &phrases[if index % 2 == 0 {
             opening
         } else {
@@ -108,14 +124,6 @@ pub fn invent_chart(seed: u64, name: &str, key: Key, mood: Mood, bar_count: usiz
         }
     }
     Chart::new(bars, ChartOrigin::Generated).written_in(mode)
-}
-
-/// Balanced phrases avoid a one-bar tail: five bars become 3 + 2, ten become 4 + 3 + 3.
-fn phrase_lengths(bars: usize) -> Vec<usize> {
-    let count = bars.div_ceil(4);
-    (0..count)
-        .map(|index| bars / count + usize::from(index < bars % count))
-        .collect()
 }
 
 /// Stack the chosen scale's thirds; only tonal minor asks for a raised leading tone.
@@ -214,8 +222,6 @@ mod tests {
                 }
             }
         }
-        assert_eq!(phrase_lengths(5), [3, 2]);
-        assert_eq!(phrase_lengths(10), [4, 3, 3]);
     }
 
     #[test]

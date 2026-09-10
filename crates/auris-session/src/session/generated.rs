@@ -165,8 +165,8 @@ impl Session {
 
     /// Writes a generated clip's notes again from its own recipe, and returns how many there are.
     ///
-    /// Within one build, unchanged harmony writes the same notes back, which is what makes it
-    /// safe to press; what it is for is the other case, where the chords underneath moved and the
+    /// Within one build, unchanged harmony and foreground write the same notes back, which makes
+    /// it safe to press; what it is for is the other case, where the chords underneath moved and the
     /// part should follow them. Across a composer update it is instead a redraw in the current
     /// style — the old take was only ever the stored notes, and cannot be re-derived once they
     /// are replaced. "Keep this one" is [`Session::freeze_clip`], not a seed written down.
@@ -398,7 +398,7 @@ impl Session {
             });
         }
         let (start, length) = (midi.start, midi.length);
-        let notes = self.phrase(start, length, &recipe);
+        let notes = self.phrase_excluding(start, length, &recipe, Some(clip));
         recipe.text_digest = auris_core::notes_digest(&notes);
         let written = notes.len();
         let mut transforms = if midi
@@ -436,7 +436,18 @@ impl Session {
     /// written into stretches with the same label draw the same figures, which is what makes
     /// the second サビ recognisably the first.
     pub(super) fn phrase(&self, start: Ticks, length: Ticks, recipe: &ClipRecipe) -> Vec<Note> {
-        auris_compose::write_phrase(
+        self.phrase_excluding(start, length, recipe, None)
+    }
+
+    /// Excludes the replaced clip so changing its role cannot feed its old lead back into itself.
+    fn phrase_excluding(
+        &self,
+        start: Ticks,
+        length: Ticks,
+        recipe: &ClipRecipe,
+        excluded: Option<ClipId>,
+    ) -> Vec<Note> {
+        let mut notes = auris_compose::write_phrase(
             &self.project.harmony,
             start,
             length,
@@ -448,7 +459,16 @@ impl Session {
             // renderer hands it the tempo actually in force at playback.
             recipe,
             self.project.sections.section_at(start),
-        )
+        );
+        super::lyrics::arrange_generated_backing(
+            &self.project,
+            start,
+            length,
+            recipe,
+            excluded,
+            &mut notes,
+        );
+        notes
     }
 }
 
@@ -1181,6 +1201,40 @@ mod tests {
     }
 
     #[test]
+    fn changing_a_lead_to_backing_never_uses_its_own_previous_notes_as_foreground() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(track, BAR, BAR, ClipRecipe::new(ClipPreset::Lead, 3))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = (0..16)
+            .map(|slot| Note::new(72, Ticks(slot * 240), Ticks(240)))
+            .collect();
+        let other_track = session.add_default_instrument_track("Played").unwrap();
+        let other = session
+            .add_midi_clip(other_track, "Played", BAR, BAR)
+            .unwrap();
+        session
+            .add_note(other, Note::new(65, Ticks::ZERO, BAR))
+            .unwrap();
+        let untouched = session.midi_clip(other).unwrap().clone();
+
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
+        recipe.style = Some(auris_core::PerformanceStyle::CityPop);
+        recipe.density = 1.0;
+        session.set_clip_recipe(clip, recipe).unwrap();
+        let first = session.midi_clip(clip).unwrap().notes.clone();
+        assert!(!first.is_empty());
+        session.forget_history();
+        session.regenerate_clip(clip).unwrap();
+        assert_eq!(session.midi_clip(clip).unwrap().notes, first);
+        assert!(
+            !session.can_undo(),
+            "unchanged inputs rewrote the backing a second time"
+        );
+        assert_eq!(session.midi_clip(other).unwrap(), &untouched);
+    }
+
+    #[test]
     fn changing_a_generated_preset_across_track_families_is_refused() {
         let (mut session, track) = with_a_progression();
         let clip = session
@@ -1449,13 +1503,31 @@ mod tests {
     fn a_generated_clip_survives_a_save_and_writes_itself_again_after() {
         let scratch = Scratch::new("clip-recipe");
         let (mut session, track) = with_a_progression();
+        let vocal_track = session
+            .project
+            .add_singer_track("Voice", auris_synth::Vocal::ID);
+        let vocal = session
+            .project
+            .add_midi_clip(vocal_track, "Sung", Ticks::ZERO, BAR * 4)
+            .unwrap();
+        let foreground: Vec<_> = (0..4)
+            .flat_map(|bar| {
+                (0..6).map(move |slot| Note::new(72, BAR * bar + Ticks(slot * 480), Ticks(480)))
+            })
+            .collect();
+        session.project.midi_clip_mut(vocal).unwrap().notes = foreground.clone();
+        let played = session
+            .add_midi_clip(track, "Played", BAR * 5, BAR)
+            .unwrap();
+        session
+            .add_note(played, Note::new(61, Ticks::ZERO, BAR))
+            .unwrap();
+        let user_clip = session.midi_clip(played).unwrap().clone();
+        let mut recipe = ClipRecipe::new(ClipPreset::Chords, 3);
+        recipe.style = Some(auris_core::PerformanceStyle::CityPop);
+        recipe.density = 1.0;
         let clip = session
-            .generate_clip(
-                track,
-                Ticks::ZERO,
-                BAR * 4,
-                ClipRecipe::new(ClipPreset::Bass, 3),
-            )
+            .generate_clip(track, Ticks::ZERO, BAR * 4, recipe)
             .unwrap();
         let written = session.project().midi_clip(clip).unwrap().1.notes.clone();
 
@@ -1472,7 +1544,35 @@ mod tests {
             .expect("the clip came back");
         assert_eq!(midi.notes, written, "the notes are stored, not recomputed");
         assert_eq!(reopened.clip_recipe(clip).unwrap().seed, 3);
+        assert_eq!(
+            reopened.clip_recipe(clip).unwrap().style,
+            Some(auris_core::PerformanceStyle::CityPop)
+        );
         assert_eq!(reopened.regenerate_clip(clip).unwrap(), written.len());
+        assert_eq!(reopened.midi_clip(clip).unwrap().notes, written);
+        assert!(!reopened.clip_hand_edited(clip));
+
+        reopened.reroll_clip(clip).unwrap();
+        let retaken = reopened.midi_clip(clip).unwrap().notes.clone();
+        assert_ne!(retaken, written);
+        reopened.regenerate_clip(clip).unwrap();
+        assert_eq!(reopened.midi_clip(clip).unwrap().notes, retaken);
+        assert_eq!(reopened.midi_clip(vocal).unwrap().notes, foreground);
+        assert_eq!(reopened.midi_clip(played).unwrap(), &user_clip);
+
+        let origin = retaken[0].clone();
+        reopened
+            .move_notes(clip, &[(0, origin.start, origin.pitch)], Ticks(30), 0)
+            .unwrap();
+        assert!(reopened.clip_hand_edited(clip));
+        reopened.undo();
+        assert_eq!(reopened.midi_clip(clip).unwrap().notes, retaken);
+        assert!(!reopened.clip_hand_edited(clip));
+        reopened.freeze_clip(clip).unwrap();
+        assert_eq!(reopened.midi_clip(clip).unwrap().notes, retaken);
+        assert!(reopened.clip_recipe(clip).is_none());
+        assert_eq!(reopened.midi_clip(vocal).unwrap().notes, foreground);
+        assert_eq!(reopened.midi_clip(played).unwrap(), &user_clip);
     }
 
     #[test]

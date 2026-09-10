@@ -201,7 +201,9 @@ pub mod architecture {
     //! # The two threads
     //!
     //! Audio preferences select a host as well as a device. Windows builds include WASAPI
-    //! (the default shared-mode host) and ASIO, with CPAL's realtime priority support enabled.
+    //! (the default shared-mode host), with CPAL's realtime priority support enabled. The `asio`
+    //! Cargo feature adds ASIO and is forwarded by every frontend through the session to the
+    //! engine. Distributed Windows releases enable it explicitly; local builds default to WASAPI.
     //! ASIO input clones the output's device so both directions share the same driver, stream
     //! state, sample rate and buffer size. A host or output change closes capture before output
     //! and reattaches monitoring to the new engine; a recording take refuses such changes.
@@ -1078,7 +1080,8 @@ pub mod composition {
     //!
     //! # Two stages
     //!
-    //! **The frame is planned first and then frozen.** Harmony, form and a melodic skeleton are
+    //! **The frame is planned first and then frozen.** Harmony, form, shared phrase boundaries
+    //! and a melodic skeleton are
     //! decided before any part exists. That is what makes the parts agree without knowing about
     //! each other: the bass and the melody both read the same chord at the same tick, so they
     //! cannot drift.
@@ -1088,10 +1091,17 @@ pub mod composition {
     //! that wanders, because nothing is looking ahead to where the phrase has to end; solving the
     //! phrase at once is what makes it arrive somewhere.
     //!
-    //! **Then every part is written as a pure function of that frame and its own name.** No part
-    //! can depend on another's notes. What makes them sound like a band anyway is that they all
+    //! **Then every part is drafted as a pure function of that frame and its own name.** They all
     //! read the same harmony, and the rhythm section all reads the same groove — the bass follows
     //! the kick *pattern*, not the kick *part*.
+    //!
+    //! A final score pass lets generated chords, stabs and arpeggios leave space around the
+    //! foreground and answer in its planned breaths. It reads a stable foreground selection;
+    //! reordering the roster cannot change it. Bass, drums, sustained ambient textures and
+    //! authored rhythm patterns retain their own attacks. Lyric sections use the actual sung
+    //! notes after the session has written them. Local generation and regeneration read the
+    //! overlapping foreground already in the document, changing only the requested clip.
+    //! Every result is ordinary editable note data; playback never runs this planning pass.
     //!
     //! Reading the same harmony has to mean reading the same *notes*, which is why a part steps
     //! through [`ChordScale`](auris_core::theory::chord_scale::ChordScale) rather than through
@@ -1108,6 +1118,12 @@ pub mod composition {
     //! is written in scale steps from whatever pitch the skeleton puts under it rather than in
     //! absolute notes, so restating it over the next chord keeps its shape and still belongs to
     //! the harmony.
+    //!
+    //! Shared phrases assign statement, continuation, answer and release functions over several
+    //! bars. The melodic head returns while its tail develops; bass approaches and comping
+    //! closures use those same boundaries. Generated harmony uses the same planner, while an
+    //! authored chart stays exact. Voicings compare individual noncrossing voices, and a melodic
+    //! suspension must be prepared before the chord change and resolve by step afterward.
     //!
     //! A section played twice is the same section both times. `variation` buys the departures
     //! back: at 0 a repeat is note for note, at 1 every playing is written afresh.
@@ -1885,6 +1901,11 @@ pub mod harmony {
     //! song sheet and `.asong` round trips. Omitting it retains plain lean/wander behavior.
     //! Retaking updates inherited ghost/expression seeds without replacing edited controls or
     //! ensemble groups. Singing melody parts keep the singer's separate ornament pipeline.
+    //!
+    //! The independent `writing_style` field selects the written vocabulary: phrase span,
+    //! melodic moves, bass figures, comping rhythm and lyric rhythm. It uses the same palette
+    //! names but is stored in `ClipRecipe::style` for regeneration. Changing only `performance`
+    //! still cannot alter the score. Presets select both; the song sheet preserves both fields.
     //!
     //! [`set_clip_transforms`](crate::Session::set_clip_transforms) replaces the stack whole,
     //! and [`freeze_clip_transforms`](crate::Session::freeze_clip_transforms) is the recipe's

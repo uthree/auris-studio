@@ -163,7 +163,29 @@ jobs:
         run: rustup toolchain install stable --profile minimal
 
       - name: Build
-        run: cargo build --release --locked -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
+        shell: pwsh
+        run: |
+          $frontends = @('auris-gpui', 'auris-cli', 'auris-mcp', 'auris-agent')
+          $metadataJson = cargo metadata --no-deps --format-version 1 --locked
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the checked-out Cargo workspace.' }
+          $metadata = $metadataJson | ConvertFrom-Json
+          $asioFrontends = @(
+            foreach ($name in $frontends) {
+              $package = @($metadata.packages | Where-Object { $_.name -eq $name -and $_.id -in $metadata.workspace_members })
+              if ($package.Count -ne 1) { throw "Expected one workspace package named $name." }
+              if ('asio' -in $package[0].features.PSObject.Properties.Name) { $name }
+            }
+          )
+          $buildArgs = @('build', '--release', '--locked')
+          # New releases opt into ASIO; historical tags included it without a feature.
+          if ($asioFrontends.Count -eq $frontends.Count) {
+            $buildArgs += @('--features', 'asio')
+          } elseif ($asioFrontends.Count -ne 0) {
+            throw "Inconsistent ASIO features across release frontends; only these expose asio: $($asioFrontends -join ', ')."
+          }
+          foreach ($name in $frontends) { $buildArgs += @('-p', $name) }
+          cargo @buildArgs
+          exit $LASTEXITCODE
 
       - name: Fetch the shipped SoundFonts
         shell: bash

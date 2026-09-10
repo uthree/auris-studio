@@ -1,0 +1,3031 @@
+{
+  "date": "2026-09-10",
+  "purpose": "Focused instrumental melody candidate. Backing and mixer held fixed; quality is not established by these metrics.",
+  "baseline": "Saved after compositions from fdf81be, reported at e8b5124; Audiobox rescored before this change, CLAP baseline reused after hash verification.",
+  "design": "Nine presets x seeds 101/103; same full-length 48 kHz stereo float WAV rendering, no tail or gain normalization. Fixed written backing, effects and performance transforms. Candidate changes instrumental melody notes and recipe digest only. Singer writer untouched.",
+  "models": {
+    "audiobox": {
+      "repository": "facebook/audiobox-aesthetics",
+      "revision": "9b1dd8e5df9af7216e836a98974fe3b82c56ded6",
+      "artifacts_sha256": {
+        "config.json": "0b8eabc5ced92cefed116a3aca8f1e59d2a33dc4d376b9e86dfb9c072e1d280d",
+        "model.safetensors": "a5a3c2412649cc2384ec525ffd5180ce6c4778f43bed6108e0a1303de04d014e"
+      },
+      "packages": {
+        "audiobox-aesthetics": "0.0.4",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "soundfile": "0.14.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "scoring": "Existing aesthetics.py score function unchanged; model handles 10-second windows across complete WAV, duration-weighted final partial window."
+    },
+    "clap": {
+      "implementation": "native laion-clap",
+      "architecture": "HTSAT-base, non-fusion, RoBERTa",
+      "repository": "lukewys/laion_clap",
+      "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+      "checkpoint": "music_audioset_epoch_15_esc_90.14.pt",
+      "checkpoint_sha256": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd",
+      "reference": "https://github.com/LAION-AI/CLAP",
+      "tokenizer_artifacts": {
+        "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+        "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+        "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+        "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+        "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+      },
+      "tokenizer_repository": "roberta-base",
+      "tokenizer_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+      "device": "cpu",
+      "threads": 4,
+      "python": "3.11.15",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "packages": {
+        "laion-clap": "1.1.7",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "transformers": "4.57.6",
+        "soundfile": "0.14.0",
+        "numpy": "1.26.4",
+        "scipy": "1.17.1"
+      }
+    }
+  },
+  "clap_preprocessing": {
+    "sample_rate": 48000,
+    "channels": "arithmetic mean before resampling",
+    "resampler": "scipy.signal.resample_poly default Kaiser window",
+    "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+    "window_samples": 480000,
+    "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+    "requested_segments": 3,
+    "short_audio": "repeat complete copies, zero-pad remainder",
+    "silent_rms_threshold": 1e-07,
+    "aggregation": "unweighted mean of valid excerpt cosines"
+  },
+  "clap_prompts_sha256": "69fc5ac6e1b765eeee57644bcd1d99c500e7bb8f33b8c4e0389518eb13f935d7",
+  "measurement_artifacts": {
+    "target/melody-hooks/before-aesthetics.json": "5f80e9f6f819cab49bc0087bb9885c21d042614033846c2aa50911361c75cf02",
+    "target/melody-hooks/iteration-1/after-aesthetics.json": "e995f3333fe9f43ee651eb13e53f850c3feecbd34471d92e52e4fc3e6da5abf1",
+    "target/composition-eval/after-clap.json": "134d47fcbded28ad73c5507640ddb88cb9beaa21194f0fea6fd349a08b0a0849",
+    "target/melody-hooks/iteration-1/after-clap.json": "8a6c8b969cda8670a9fb6f9bc90569f2e6430f5beb8dd3dfa8049670df328663",
+    "target/composition-eval/after-structure.json": "03c6f65e27442d9161769b5377067a4f1b0a7db979b5c609fd5bfdcf5285172d",
+    "target/melody-hooks/iteration-1/after-structure.json": "94302db0281d9f912c9657a994f95e02a799624a7062d4b991fb5ff01b459aa0",
+    "target/melody-hooks/before-hooks.json": "94a0f0cea8bdb48ca28d7c1df2ed4e2295fa974976cbd1dcf33c80134ea89d66",
+    "target/melody-hooks/iteration-1/after-hooks.json": "59c5562a21fb9876069387e64a864b72e6a06bedaf87a8a474f5810d3af65c30",
+    "target/melody-hooks/before-symbolic.txt": "a6048430f548d61407fd489514c69f28662529ba2e8234e3b6a836bc248de3af",
+    "target/melody-hooks/after-symbolic.txt": "c906ba5b61313d5df10537d955eaf68dca0e6615bbe20b90d7f62dd8a49ba85f",
+    "target/melody-hooks/iteration-1/render-manifest.json": "18d374e8624cbb414e28603b624032474171815be4be1bf82d111a3adef4a761",
+    "target/melody-hooks/iteration-1/excerpts/manifest.json": "9b5e9d8061586ac76ebcdeb034c8dfaaecd49c6bdc4c90a6226852d1b01d32a9",
+    "target/melody-hooks/measure_hooks.py": "ce5ed5143c31dd87846dd84ebc128297b8b4f49861d6a7a6456701ded8dc3c30",
+    "target/melody-hooks/excerpts.py": "5b65e4aa4438aa52aaf3eaa3bb6ca30dc36d967fbbbc377d04ad12c3482c160f",
+    "target/melody-hooks/render_candidates.py": "5574cac41b83158f5ce9d98e37eef6616ca0cac4925825eb7336caef225c4307"
+  },
+  "renderer_sha256": "b9e63a925350a56ab5cb34e7809231d633c56e94d45d388f021d773ad2719c7d",
+  "writer_sha256": {
+    "crates/auris-compose/src/parts/melody.rs": "0a53d8efabb34276d1a9ce49e0431896331cc15b9e9ad62e6995f1722378d493",
+    "crates/auris-compose/src/parts/melody_rhythm.rs": "f405801c0fbe476817c75cc1caeb48d574bcc7d52f8f06e3470ae1d88042c006"
+  },
+  "summary": {
+    "all": {
+      "audiobox": {
+        "before": {
+          "CE": 6.892333333333333,
+          "CU": 7.703944444444444,
+          "PC": 5.104611111111111,
+          "PQ": 7.857833333333334
+        },
+        "after": {
+          "CE": 6.777055555555556,
+          "CU": 7.698,
+          "PC": 4.938888888888889,
+          "PQ": 7.866888888888889
+        },
+        "delta": {
+          "CE": -0.11527777777777759,
+          "CU": -0.005944444444444258,
+          "PC": -0.16572222222222216,
+          "PQ": 0.009055555555555421
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.43219223121802014,
+          "contrast_margin": 0.3597738999287011
+        },
+        "after": {
+          "positive_cosine": 0.4307670493920644,
+          "contrast_margin": 0.3613182499970275
+        },
+        "delta": {
+          "positive_cosine": -0.001425181825955712,
+          "contrast_margin": 0.0015443500683263445
+        }
+      }
+    },
+    "ambient": {
+      "audiobox": {
+        "before": {
+          "CE": 6.7695,
+          "CU": 7.6315,
+          "PC": 4.414,
+          "PQ": 7.782
+        },
+        "after": {
+          "CE": 6.7684999999999995,
+          "CU": 7.62,
+          "PC": 4.477,
+          "PQ": 7.7745
+        },
+        "delta": {
+          "CE": -0.0009999999999998899,
+          "CU": -0.011499999999999844,
+          "PC": 0.06299999999999972,
+          "PQ": -0.00749999999999984
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.3905411312977473,
+          "contrast_margin": 0.41480530068899196
+        },
+        "after": {
+          "positive_cosine": 0.39286238451798755,
+          "contrast_margin": 0.42056990585600335
+        },
+        "delta": {
+          "positive_cosine": 0.002321253220240238,
+          "contrast_margin": 0.005764605167011383
+        }
+      }
+    },
+    "chiptune": {
+      "audiobox": {
+        "before": {
+          "CE": 5.647,
+          "CU": 7.1274999999999995,
+          "PC": 5.1165,
+          "PQ": 7.408
+        },
+        "after": {
+          "CE": 5.5435,
+          "CU": 7.2085,
+          "PC": 4.9945,
+          "PQ": 7.506
+        },
+        "delta": {
+          "CE": -0.10349999999999993,
+          "CU": 0.08099999999999996,
+          "PC": -0.12199999999999989,
+          "PQ": 0.09799999999999942
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.48960326611995697,
+          "contrast_margin": 0.41756111259261763
+        },
+        "after": {
+          "positive_cosine": 0.486116886138916,
+          "contrast_margin": 0.4238078917066256
+        },
+        "delta": {
+          "positive_cosine": -0.0034863799810409546,
+          "contrast_margin": 0.00624677911400795
+        }
+      }
+    },
+    "city-pop": {
+      "audiobox": {
+        "before": {
+          "CE": 7.768,
+          "CU": 8.1465,
+          "PC": 5.7325,
+          "PQ": 8.267
+        },
+        "after": {
+          "CE": 7.7,
+          "CU": 8.099499999999999,
+          "PC": 5.5489999999999995,
+          "PQ": 8.212
+        },
+        "delta": {
+          "CE": -0.06799999999999962,
+          "CU": -0.04699999999999971,
+          "PC": -0.18350000000000044,
+          "PQ": -0.054999999999999716
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4060136675834656,
+          "contrast_margin": 0.24545024583737057
+        },
+        "after": {
+          "positive_cosine": 0.3975616494814555,
+          "contrast_margin": 0.21777589122454327
+        },
+        "delta": {
+          "positive_cosine": -0.008452018102010073,
+          "contrast_margin": -0.0276743546128273
+        }
+      }
+    },
+    "game-loop": {
+      "audiobox": {
+        "before": {
+          "CE": 5.7515,
+          "CU": 7.1975,
+          "PC": 5.04,
+          "PQ": 7.4725
+        },
+        "after": {
+          "CE": 5.5825,
+          "CU": 7.212,
+          "PC": 4.9025,
+          "PQ": 7.454
+        },
+        "delta": {
+          "CE": -0.16900000000000004,
+          "CU": 0.014499999999999957,
+          "PC": -0.13749999999999973,
+          "PQ": -0.018500000000000405
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4335754613081614,
+          "contrast_margin": 0.3695831311245759
+        },
+        "after": {
+          "positive_cosine": 0.4539116869370142,
+          "contrast_margin": 0.38400111844142276
+        },
+        "delta": {
+          "positive_cosine": 0.020336225628852844,
+          "contrast_margin": 0.014417987316846848
+        }
+      }
+    },
+    "jazz-trio": {
+      "audiobox": {
+        "before": {
+          "CE": 7.754,
+          "CU": 8.207999999999998,
+          "PC": 4.7095,
+          "PQ": 8.258500000000002
+        },
+        "after": {
+          "CE": 7.702500000000001,
+          "CU": 8.2515,
+          "PC": 4.5715,
+          "PQ": 8.306000000000001
+        },
+        "delta": {
+          "CE": -0.05149999999999988,
+          "CU": 0.04350000000000076,
+          "PC": -0.13799999999999946,
+          "PQ": 0.04749999999999943
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.3622356951236725,
+          "contrast_margin": 0.3007123054315647
+        },
+        "after": {
+          "positive_cosine": 0.3505423863728841,
+          "contrast_margin": 0.29561309330165386
+        },
+        "delta": {
+          "positive_cosine": -0.01169330875078839,
+          "contrast_margin": -0.005099212129910796
+        }
+      }
+    },
+    "orchestral": {
+      "audiobox": {
+        "before": {
+          "CE": 7.114,
+          "CU": 7.6985,
+          "PC": 4.967499999999999,
+          "PQ": 7.6875
+        },
+        "after": {
+          "CE": 7.1005,
+          "CU": 7.6955,
+          "PC": 4.7780000000000005,
+          "PQ": 7.6815
+        },
+        "delta": {
+          "CE": -0.013499999999999623,
+          "CU": -0.0030000000000001137,
+          "PC": -0.18949999999999978,
+          "PQ": -0.006000000000000227
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4925161600112915,
+          "contrast_margin": 0.423014584928751
+        },
+        "after": {
+          "positive_cosine": 0.48966004947821296,
+          "contrast_margin": 0.4214201867580414
+        },
+        "delta": {
+          "positive_cosine": -0.002856110533078521,
+          "contrast_margin": -0.00159439817070961
+        }
+      }
+    },
+    "pop-band": {
+      "audiobox": {
+        "before": {
+          "CE": 7.05,
+          "CU": 7.872,
+          "PC": 5.039,
+          "PQ": 8.055
+        },
+        "after": {
+          "CE": 6.7235,
+          "CU": 7.7684999999999995,
+          "PC": 4.694,
+          "PQ": 8.004
+        },
+        "delta": {
+          "CE": -0.3264999999999998,
+          "CU": -0.10349999999999993,
+          "PC": -0.3450000000000002,
+          "PQ": -0.05099999999999971
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.38808298110961914,
+          "contrast_margin": 0.29294074699282646
+        },
+        "after": {
+          "positive_cosine": 0.38396063446998596,
+          "contrast_margin": 0.3114386427526673
+        },
+        "delta": {
+          "positive_cosine": -0.004122346639633179,
+          "contrast_margin": 0.018497895759840816
+        }
+      }
+    },
+    "rock": {
+      "audiobox": {
+        "before": {
+          "CE": 7.272,
+          "CU": 7.797499999999999,
+          "PC": 6.082000000000001,
+          "PQ": 7.8185
+        },
+        "after": {
+          "CE": 7.252000000000001,
+          "CU": 7.8149999999999995,
+          "PC": 6.033,
+          "PQ": 7.948
+        },
+        "delta": {
+          "CE": -0.019999999999999574,
+          "CU": 0.01750000000000007,
+          "PC": -0.04899999999999993,
+          "PQ": 0.12950000000000017
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.49357263247172034,
+          "contrast_margin": 0.4553007648016016
+        },
+        "after": {
+          "positive_cosine": 0.49364662667115533,
+          "contrast_margin": 0.4524415945634246
+        },
+        "delta": {
+          "positive_cosine": 7.399419943493468e-05,
+          "contrast_margin": -0.002859170238177
+        }
+      }
+    },
+    "synthwave": {
+      "audiobox": {
+        "before": {
+          "CE": 6.904999999999999,
+          "CU": 7.656499999999999,
+          "PC": 4.8405,
+          "PQ": 7.971500000000001
+        },
+        "after": {
+          "CE": 6.6205,
+          "CU": 7.6115,
+          "PC": 4.4505,
+          "PQ": 7.916
+        },
+        "delta": {
+          "CE": -0.2845,
+          "CU": -0.044999999999999485,
+          "PC": -0.3899999999999997,
+          "PQ": -0.05550000000000033
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4335890859365463,
+          "contrast_margin": 0.31859690696001053
+        },
+        "after": {
+          "positive_cosine": 0.428641140460968,
+          "contrast_margin": 0.32479592536886537
+        },
+        "delta": {
+          "positive_cosine": -0.004947945475578308,
+          "contrast_margin": 0.006199018408854812
+        }
+      }
+    }
+  },
+  "timing_definition": "Descriptive written-note timing only. Not human catchiness, rendered silence, or musical quality. Fixed 3/4 and 4/4 benchmark; active recipe lead clips; unrecipe'd endings excluded. Terminal rests at clip ends only. Fractions averaged equally per project.",
+  "timing_mean": {
+    "before": {
+      "sixteenth_or_shorter_fraction": 0.4037845130445654,
+      "quarter_or_longer_fraction": 0.2612420720243588,
+      "silent_middle_half_bar_fraction": 0.03825757575757576,
+      "terminal_rest_beats_mean": 0.4963676697530864,
+      "terminal_rest_at_least_three_quarters_beat_fraction": 0.39567901234567904
+    },
+    "after": {
+      "sixteenth_or_shorter_fraction": 0.34591029596233763,
+      "quarter_or_longer_fraction": 0.4298302501832837,
+      "silent_middle_half_bar_fraction": 0.0,
+      "terminal_rest_beats_mean": 0.9953472222222223,
+      "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+    }
+  },
+  "files": {
+    "ambient-s101": {
+      "hashes": {
+        "before_project_sha256": "93fe1cde8d4aeed23572e924e81b1cdf64c63611596bb08242c8985416eae81c",
+        "candidate_project_sha256": "119cbce9fdfaea1a24f6d7319f4c7d88103777fe5dc7d6405c2049d1739b2b9d",
+        "after_project_sha256": "66da44598bb58899fe5f91aad47c7b4f0a53ed6ad465c61f31a1ccae114cb77e",
+        "before_wav_sha256": "52bf7d4f8b447aaf129db88a2c56c93fa29b4e111f1f8f035078e36cb7a0227c",
+        "after_wav_sha256": "e539e5db59d7b373b955f0ae83c95efee017487a9a737583c501081d11efb891",
+        "preserved_content_sha256": "91b6757e5db2edadab75205af342d30bf12bc39035412e0e54f570898a8ab767",
+        "backing_notes_sha256": "d87fc6867f58c95a53a72460b9d8ee9c4c417d5ee31b8d9f6ea946d0bf05ee38",
+        "source_melody_sha256": "7e151862bf78338f2b0949b786beef2aa3ea4c61728c97ae1829cd54ec227a1d",
+        "output_melody_sha256": "c8c503a79c4789ff9be01f7e533f398c395ae9402e43279af6bd6212da0bdd97",
+        "ab_manifest_sha256": "1bd2571fa57b99d576b8cb343a7cb5c2d21b7dee936da8161c940559e3f1ca6a"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 6.713,
+          "CU": 7.545,
+          "PC": 4.485,
+          "PQ": 7.716
+        },
+        "after": {
+          "CE": 6.717,
+          "CU": 7.529,
+          "PC": 4.508,
+          "PQ": 7.7
+        },
+        "delta": {
+          "CE": 0.0039999999999995595,
+          "CU": -0.016000000000000014,
+          "PC": 0.022999999999999687,
+          "PQ": -0.016000000000000014
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.39654893676439923,
+          "contrast_cosine": -0.01735424343496561,
+          "contrast_margin": 0.41390318019936484,
+          "positive_cosine_stddev": 0.03899799075958243,
+          "contrast_margin_stddev": 0.01736464078880232
+        },
+        "after": {
+          "positive_cosine": 0.3960130711396535,
+          "contrast_cosine": -0.02103500533849001,
+          "contrast_margin": 0.4170480764781435,
+          "positive_cosine_stddev": 0.03910312937049495,
+          "contrast_margin_stddev": 0.015602898327590368
+        },
+        "delta": {
+          "positive_cosine": -0.0005358656247457239,
+          "contrast_cosine": -0.003680761903524399,
+          "contrast_margin": 0.003144896278778675,
+          "positive_cosine_stddev": 0.00010513861091251964,
+          "contrast_margin_stddev": -0.0017617424612119507
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 1.0,
+          "foreground_bar_rhythm_unique_fraction": 0.16,
+          "foreground_nonempty_bars": 25,
+          "foreground_adjacent_bar_pairs": 21,
+          "melody_large_leap_fraction": 0.05,
+          "melody_continuous_note_pairs": 40,
+          "support_foreground_onset_collision_fraction": 0.422680412371134,
+          "support_foreground_duration_overlap_fraction": 0.835,
+          "support_attack_count": 97,
+          "support_sounding_ticks": 96000,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 252,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.9523809523809523,
+          "foreground_bar_rhythm_unique_fraction": 0.2,
+          "foreground_nonempty_bars": 25,
+          "foreground_adjacent_bar_pairs": 21,
+          "melody_large_leap_fraction": 0.13157894736842105,
+          "melody_continuous_note_pairs": 38,
+          "support_foreground_onset_collision_fraction": 0.422680412371134,
+          "support_foreground_duration_overlap_fraction": 0.895,
+          "support_attack_count": 97,
+          "support_sounding_ticks": 96000,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 235,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.04761904761904767,
+          "foreground_bar_rhythm_unique_fraction": 0.04000000000000001,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.08157894736842104,
+          "melody_continuous_note_pairs": -2,
+          "support_foreground_onset_collision_fraction": 0.0,
+          "support_foreground_duration_overlap_fraction": 0.06000000000000005,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -17,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.2222222222222222,
+          "quarter_or_longer_fraction": 0.5555555555555556,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.6666666666666666,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.6666666666666666
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.0,
+          "quarter_or_longer_fraction": 1.0,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "ambient-s103": {
+      "hashes": {
+        "before_project_sha256": "dfbe51d0cbdebb70a2c4a0ba74506284bbd9f228430b05d4d682f45647fd4bca",
+        "candidate_project_sha256": "8495d57fc649df13827564f1598807f12713a561548043188b7c4f1f33797d9e",
+        "after_project_sha256": "b1505c19e1a569ed31ad4c3f5489026c7d6bbb1915f954a1042e42b85762ce58",
+        "before_wav_sha256": "6cdb47cde3cbbcb80bc5aaa0826075db94662f44e72491f7d4ce8fdbbf3beaa2",
+        "after_wav_sha256": "19266df8c262b259877bc7d758a7d303bd2920a00f0b6cc47ab4721032218bce",
+        "preserved_content_sha256": "5d94e51b68114db8eda38d251a2ebcfbc97d5f590d256153ba4d7ebe39d126b3",
+        "backing_notes_sha256": "64b5233e1e29e3acc2a313c82037dc5d7adc511edfa34452f5e150fac4b0324a",
+        "source_melody_sha256": "73ec45576124398c112ebf252e59f89f35568c15d6763cfc86397e0fe265152c",
+        "output_melody_sha256": "b21549e03e09963a885cb9adea69725edf717bb89132988df19a4bd93a1c6db8",
+        "ab_manifest_sha256": "7c360c6ce80c571936e2fce75a67aafdb22cfe136181a95450d2586ed3f8bffc"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 6.826,
+          "CU": 7.718,
+          "PC": 4.343,
+          "PQ": 7.848
+        },
+        "after": {
+          "CE": 6.82,
+          "CU": 7.711,
+          "PC": 4.446,
+          "PQ": 7.849
+        },
+        "delta": {
+          "CE": -0.005999999999999339,
+          "CU": -0.006999999999999673,
+          "PC": 0.10299999999999976,
+          "PQ": 0.001000000000000334
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.3845333258310954,
+          "contrast_cosine": -0.03117409534752369,
+          "contrast_margin": 0.4157074211786191,
+          "positive_cosine_stddev": 0.03625228694067539,
+          "contrast_margin_stddev": 0.0047892169624291735
+        },
+        "after": {
+          "positive_cosine": 0.3897116978963216,
+          "contrast_cosine": -0.03438003733754158,
+          "contrast_margin": 0.4240917352338632,
+          "positive_cosine_stddev": 0.03697237433653074,
+          "contrast_margin_stddev": 0.007196455995698045
+        },
+        "delta": {
+          "positive_cosine": 0.0051783720652262,
+          "contrast_cosine": -0.003205941990017891,
+          "contrast_margin": 0.008384314055244091,
+          "positive_cosine_stddev": 0.0007200873958553497,
+          "contrast_margin_stddev": 0.0024072390332688714
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 1.0,
+          "foreground_bar_rhythm_unique_fraction": 0.16,
+          "foreground_nonempty_bars": 25,
+          "foreground_adjacent_bar_pairs": 21,
+          "melody_large_leap_fraction": 0.09090909090909091,
+          "melody_continuous_note_pairs": 55,
+          "support_foreground_onset_collision_fraction": 0.5876288659793815,
+          "support_foreground_duration_overlap_fraction": 0.7325,
+          "support_attack_count": 97,
+          "support_sounding_ticks": 96000,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 268,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.9047619047619048,
+          "foreground_bar_rhythm_unique_fraction": 0.24,
+          "foreground_nonempty_bars": 25,
+          "foreground_adjacent_bar_pairs": 21,
+          "melody_large_leap_fraction": 0.06666666666666667,
+          "melody_continuous_note_pairs": 45,
+          "support_foreground_onset_collision_fraction": 0.422680412371134,
+          "support_foreground_duration_overlap_fraction": 0.895,
+          "support_attack_count": 97,
+          "support_sounding_ticks": 96000,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 250,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.09523809523809523,
+          "foreground_bar_rhythm_unique_fraction": 0.07999999999999999,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": -0.024242424242424246,
+          "melody_continuous_note_pairs": -10,
+          "support_foreground_onset_collision_fraction": -0.16494845360824745,
+          "support_foreground_duration_overlap_fraction": 0.16249999999999998,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -18,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.1125,
+          "quarter_or_longer_fraction": 0.4875,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0833333333333333,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.0,
+          "quarter_or_longer_fraction": 0.7580645161290323,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "chiptune-s101": {
+      "hashes": {
+        "before_project_sha256": "6386757177f8fddfdd375a03f3a9ecf1548c527f6a654839e44501f65fa9cfc7",
+        "candidate_project_sha256": "d98fec96654d95f05e51b3c17fbec8d4201824f7b314138db92a686460f0b9fd",
+        "after_project_sha256": "0d8c333e4efb790f681a3b268e800e9ddcbb7b8dc9d5c4c7be1f8c714f96b9c8",
+        "before_wav_sha256": "1ebefbee6c91ebd98efd3b932e6ee0177d8cc556651240419a7c270c8726f315",
+        "after_wav_sha256": "dc488933f6d6328e11ae784320668beb382273f7bdb8e8456b1d713d138a6cb1",
+        "preserved_content_sha256": "90f10081ae80144a6b7f7c554d9d513704ea0deb6505b0f1aac07f25e601709f",
+        "backing_notes_sha256": "ee671f75e05889f1ef854b52f69e179d4c41e51749cedf45f24d8a30d33dd41b",
+        "source_melody_sha256": "340f56ecc3274407d59da3c0f268db6503c4295e85c0739dddb2553f80e2e1fc",
+        "output_melody_sha256": "ede2dc5b66f91978a51b6215544697370f329afbcb2bb7dfebe0a7453617af7c",
+        "ab_manifest_sha256": "0b88d56adf8330340b9b5e63c885bb1a96eb56c030b402b1c53b6042c6901921"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 5.701,
+          "CU": 7.078,
+          "PC": 5.125,
+          "PQ": 7.331
+        },
+        "after": {
+          "CE": 5.504,
+          "CU": 7.191,
+          "PC": 5.016,
+          "PQ": 7.468
+        },
+        "delta": {
+          "CE": -0.19700000000000006,
+          "CU": 0.11299999999999955,
+          "PC": -0.10899999999999999,
+          "PQ": 0.13699999999999957
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.49718452493349713,
+          "contrast_cosine": 0.07319743434588115,
+          "contrast_margin": 0.42398709058761597,
+          "positive_cosine_stddev": 0.009371938628918329,
+          "contrast_margin_stddev": 0.013758887781057817
+        },
+        "after": {
+          "positive_cosine": 0.4856787919998169,
+          "contrast_cosine": 0.05562459180752436,
+          "contrast_margin": 0.4300542001922925,
+          "positive_cosine_stddev": 0.0008500519359383912,
+          "contrast_margin_stddev": 0.024399012782950362
+        },
+        "delta": {
+          "positive_cosine": -0.011505732933680235,
+          "contrast_cosine": -0.017572842538356788,
+          "contrast_margin": 0.006067109604676546,
+          "positive_cosine_stddev": -0.008521886692979937,
+          "contrast_margin_stddev": 0.010640125001892545
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7105263157894737,
+          "foreground_bar_rhythm_unique_fraction": 0.26666666666666666,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.07,
+          "melody_continuous_note_pairs": 100,
+          "support_foreground_onset_collision_fraction": 0.19607843137254902,
+          "support_foreground_duration_overlap_fraction": 0.5111111111111111,
+          "support_attack_count": 153,
+          "support_sounding_ticks": 172800,
+          "comp_voice_motion_semitones": 1.6666666666666667,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 117,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1331,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4473684210526316,
+          "foreground_bar_rhythm_unique_fraction": 0.4444444444444444,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.10880829015544041,
+          "melody_continuous_note_pairs": 193,
+          "support_foreground_onset_collision_fraction": 0.5359477124183006,
+          "support_foreground_duration_overlap_fraction": 0.8444444444444444,
+          "support_attack_count": 153,
+          "support_sounding_ticks": 172800,
+          "comp_voice_motion_semitones": 1.6666666666666667,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 117,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1411,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2631578947368421,
+          "foreground_bar_rhythm_unique_fraction": 0.17777777777777776,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.038808290155440406,
+          "melody_continuous_note_pairs": 93,
+          "support_foreground_onset_collision_fraction": 0.33986928104575165,
+          "support_foreground_duration_overlap_fraction": 0.33333333333333337,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 80,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.43790849673202614,
+          "quarter_or_longer_fraction": 0.21568627450980393,
+          "silent_middle_half_bar_fraction": 0.18181818181818182,
+          "terminal_rest_beats_mean": 0.625,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.3333333333333333
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.33476394849785407,
+          "quarter_or_longer_fraction": 0.34334763948497854,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "chiptune-s103": {
+      "hashes": {
+        "before_project_sha256": "36a47ae52b3e682e019f0aa21dc9146d7961ae431ce96b1653f24452009d6e67",
+        "candidate_project_sha256": "7cfb27c3a926d7252b085246b139a4833107bfb86e743d630a712be92ac881a7",
+        "after_project_sha256": "813fb93e0d8e659bce64abcb2d6694cba231b328b63708b435d49a120beb1a1e",
+        "before_wav_sha256": "78f155eb1600f4ad631fcaef19257f70e0db31f49b1514e05908cd6d95f4338c",
+        "after_wav_sha256": "b45ec5930d96c5ac4ad1358edf1ea5d5c34f449f48dddd392bfa0df94b66ec99",
+        "preserved_content_sha256": "820106a820d0952a11b1f95ceddb8bfe8e94cd882a55f436b5f7d74c6c138b87",
+        "backing_notes_sha256": "7d482a6885ae2fbef6725c623bac5caa53a2ce9754838f91c6226838179201c5",
+        "source_melody_sha256": "b7eec0ed2927119ec39fcd593432289ac25fd574d72c2e2be82b7009c50126a2",
+        "output_melody_sha256": "1dd06a413c7f4ffcc5d8321f8134de3acb5d32c9e8ff1f5b3223b710568d1ce4",
+        "ab_manifest_sha256": "2813e87ee5359847d464590ca1223c064f98184b418bd039e4bab599e0d837c0"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 5.593,
+          "CU": 7.177,
+          "PC": 5.108,
+          "PQ": 7.485
+        },
+        "after": {
+          "CE": 5.583,
+          "CU": 7.226,
+          "PC": 4.973,
+          "PQ": 7.544
+        },
+        "delta": {
+          "CE": -0.009999999999999787,
+          "CU": 0.04900000000000038,
+          "PC": -0.1349999999999998,
+          "PQ": 0.058999999999999275
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4820220073064168,
+          "contrast_cosine": 0.07088687270879745,
+          "contrast_margin": 0.41113513459761936,
+          "positive_cosine_stddev": 0.013248370878574715,
+          "contrast_margin_stddev": 0.015030827951446557
+        },
+        "after": {
+          "positive_cosine": 0.48655498027801514,
+          "contrast_cosine": 0.06899339705705643,
+          "contrast_margin": 0.4175615832209587,
+          "positive_cosine_stddev": 0.006471209664469043,
+          "contrast_margin_stddev": 0.010987976993247087
+        },
+        "delta": {
+          "positive_cosine": 0.004532972971598326,
+          "contrast_cosine": -0.0018934756517410278,
+          "contrast_margin": 0.006426448623339354,
+          "positive_cosine_stddev": -0.006777161214105673,
+          "contrast_margin_stddev": -0.00404285095819947
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7368421052631579,
+          "foreground_bar_rhythm_unique_fraction": 0.3111111111111111,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.045714285714285714,
+          "melody_continuous_note_pairs": 175,
+          "support_foreground_onset_collision_fraction": 0.4,
+          "support_foreground_duration_overlap_fraction": 0.7487179487179487,
+          "support_attack_count": 180,
+          "support_sounding_ticks": 140400,
+          "comp_voice_motion_semitones": 1.6666666666666667,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 90,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1344,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.42105263157894735,
+          "foreground_bar_rhythm_unique_fraction": 0.4888888888888889,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.09134615384615384,
+          "melody_continuous_note_pairs": 208,
+          "support_foreground_onset_collision_fraction": 0.5166666666666667,
+          "support_foreground_duration_overlap_fraction": 0.9008547008547009,
+          "support_attack_count": 180,
+          "support_sounding_ticks": 140400,
+          "comp_voice_motion_semitones": 1.6666666666666667,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 90,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1348,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.3157894736842105,
+          "foreground_bar_rhythm_unique_fraction": 0.17777777777777776,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.04563186813186813,
+          "melody_continuous_note_pairs": 33,
+          "support_foreground_onset_collision_fraction": 0.1166666666666667,
+          "support_foreground_duration_overlap_fraction": 0.15213675213675215,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 4,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.45414847161572053,
+          "quarter_or_longer_fraction": 0.2576419213973799,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.4583333333333333,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.3333333333333333
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.24892703862660945,
+          "quarter_or_longer_fraction": 0.3605150214592275,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "city-pop-s101": {
+      "hashes": {
+        "before_project_sha256": "cfa99ab93478852cf8a3a6b54579704c6f0f289580d62d6a716723e2981ef41f",
+        "candidate_project_sha256": "8d18079a8cce67c0569b3bdcb3e4fbca09092872233b7288f3ce94e24a89f66e",
+        "after_project_sha256": "b5ba01d764c438de634d940d51a5e7b009683423bf3973062d151f4a0b562394",
+        "before_wav_sha256": "09088189ab50a6b369d8de9caf9f9763c6ea01f5b43f538f4bc0479783af19e0",
+        "after_wav_sha256": "2a73c5e9e2ed909b770a3d255da77551db8b2fc78717a38ad365d6b05c70ec0b",
+        "preserved_content_sha256": "59a0f96047e681ffd8c9b55189453f91a62f64674bb76569f6a40cf04be49908",
+        "backing_notes_sha256": "e91aaca95b0e4751ecf04fcd6b690174140816d52cc0997059c3705249ea29df",
+        "source_melody_sha256": "a7084de6dd41185fb8a0645661d60635947118c94361cb14c29db19439578bf0",
+        "output_melody_sha256": "1c5d212b106beea9fd405abb01442adbbdd5a7d4c37bb65f18c051cc884404df",
+        "ab_manifest_sha256": "3f116a582d80b9e9d23ceb950196ea69f83ec16f10f78fd4b926ba0d583fa029"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.758,
+          "CU": 8.157,
+          "PC": 5.727,
+          "PQ": 8.272
+        },
+        "after": {
+          "CE": 7.729,
+          "CU": 8.102,
+          "PC": 5.566,
+          "PQ": 8.22
+        },
+        "delta": {
+          "CE": -0.028999999999999915,
+          "CU": -0.054999999999999716,
+          "PC": -0.16100000000000048,
+          "PQ": -0.0519999999999996
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4268714686234792,
+          "contrast_cosine": 0.13699244459470114,
+          "contrast_margin": 0.2898790240287781,
+          "positive_cosine_stddev": 0.007723276936848038,
+          "contrast_margin_stddev": 0.015574265335806518
+        },
+        "after": {
+          "positive_cosine": 0.42010192076365155,
+          "contrast_cosine": 0.1600429266691208,
+          "contrast_margin": 0.26005899409453076,
+          "positive_cosine_stddev": 0.013459562527858484,
+          "contrast_margin_stddev": 0.034970262227006534
+        },
+        "delta": {
+          "positive_cosine": -0.00676954785982764,
+          "contrast_cosine": 0.023050482074419648,
+          "contrast_margin": -0.029820029934247316,
+          "positive_cosine_stddev": 0.005736285591010446,
+          "contrast_margin_stddev": 0.019395996891200015
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7105263157894737,
+          "foreground_bar_rhythm_unique_fraction": 0.26666666666666666,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.08,
+          "melody_continuous_note_pairs": 75,
+          "support_foreground_onset_collision_fraction": 0.25471698113207547,
+          "support_foreground_duration_overlap_fraction": 0.6248705958840739,
+          "support_attack_count": 318,
+          "support_sounding_ticks": 199955,
+          "comp_voice_motion_semitones": 1.1780415430267062,
+          "comp_voicing_changes": 84,
+          "comp_matched_voice_count": 337,
+          "comp_entering_leaving_voice_count": 4,
+          "active_note_count": 2585,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4473684210526316,
+          "foreground_bar_rhythm_unique_fraction": 0.4444444444444444,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.09016393442622951,
+          "melody_continuous_note_pairs": 122,
+          "support_foreground_onset_collision_fraction": 0.42452830188679247,
+          "support_foreground_duration_overlap_fraction": 0.8064614538271111,
+          "support_attack_count": 318,
+          "support_sounding_ticks": 199955,
+          "comp_voice_motion_semitones": 1.1780415430267062,
+          "comp_voicing_changes": 84,
+          "comp_matched_voice_count": 337,
+          "comp_entering_leaving_voice_count": 4,
+          "active_note_count": 2665,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2631578947368421,
+          "foreground_bar_rhythm_unique_fraction": 0.17777777777777776,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.01016393442622951,
+          "melody_continuous_note_pairs": 47,
+          "support_foreground_onset_collision_fraction": 0.169811320754717,
+          "support_foreground_duration_overlap_fraction": 0.1815908579430372,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 80,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.37254901960784315,
+          "quarter_or_longer_fraction": 0.30718954248366015,
+          "silent_middle_half_bar_fraction": 0.18181818181818182,
+          "terminal_rest_beats_mean": 0.5366319444444444,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.5
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.5321888412017167,
+          "quarter_or_longer_fraction": 0.33047210300429186,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "city-pop-s103": {
+      "hashes": {
+        "before_project_sha256": "85c2267be0862db70f3ab3052ba2087435ec6b6ea3da085227cfa1f321270403",
+        "candidate_project_sha256": "2a74feb49544fc383909409a76871d1964756918cc3787e3129665c6f250268c",
+        "after_project_sha256": "3c504fa36c4e4766f2df358e4f492ceb405c70cc1501753cc2d8a32cfc6b7d90",
+        "before_wav_sha256": "959472d4976d4d03d59e01ebb47f86b8535653b059ad5b1d698781325a59e975",
+        "after_wav_sha256": "637a0d94a5f5b98988986552dfbbe4e74fc5df85dd17856d68d941250684cfd4",
+        "preserved_content_sha256": "725b0662edf1a3a6228f179f02ef46b07ba83791703ec29d6171d239ee1e74b6",
+        "backing_notes_sha256": "c3a60abe6b53433307a94a60b0bbd9fdfb6412194977dd0d6dd27d94507fbd6c",
+        "source_melody_sha256": "6981da80536e94b0658024f3e5b96a885ee453b613ec7ac0a8cb5f204ac80c9a",
+        "output_melody_sha256": "b372e665b4435538a3a1f9b61894b0e86989a2be37eba68045088ab3a37e9f3d",
+        "ab_manifest_sha256": "8d8f1a553febf38f61089838734d7b7d28eb4408eaab67ebc9074854c584841d"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.778,
+          "CU": 8.136,
+          "PC": 5.738,
+          "PQ": 8.262
+        },
+        "after": {
+          "CE": 7.671,
+          "CU": 8.097,
+          "PC": 5.532,
+          "PQ": 8.204
+        },
+        "delta": {
+          "CE": -0.10699999999999932,
+          "CU": -0.0389999999999997,
+          "PC": -0.2060000000000004,
+          "PQ": -0.05799999999999983
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.38515586654345196,
+          "contrast_cosine": 0.18413439889748892,
+          "contrast_margin": 0.20102146764596304,
+          "positive_cosine_stddev": 0.02599384830555482,
+          "contrast_margin_stddev": 0.02426719614723651
+        },
+        "after": {
+          "positive_cosine": 0.37502137819925946,
+          "contrast_cosine": 0.19952858984470367,
+          "contrast_margin": 0.17549278835455576,
+          "positive_cosine_stddev": 0.0009793075246546086,
+          "contrast_margin_stddev": 0.016822272184843307
+        },
+        "delta": {
+          "positive_cosine": -0.010134488344192505,
+          "contrast_cosine": 0.015394190947214753,
+          "contrast_margin": -0.025528679291407286,
+          "positive_cosine_stddev": -0.02501454078090021,
+          "contrast_margin_stddev": -0.0074449239623932024
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7368421052631579,
+          "foreground_bar_rhythm_unique_fraction": 0.3111111111111111,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.03278688524590164,
+          "melody_continuous_note_pairs": 122,
+          "support_foreground_onset_collision_fraction": 0.27586206896551724,
+          "support_foreground_duration_overlap_fraction": 0.6693199503623412,
+          "support_attack_count": 203,
+          "support_sounding_ticks": 145857,
+          "comp_voice_motion_semitones": 1.4717607973421927,
+          "comp_voicing_changes": 84,
+          "comp_matched_voice_count": 301,
+          "comp_entering_leaving_voice_count": 5,
+          "active_note_count": 2122,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.42105263157894735,
+          "foreground_bar_rhythm_unique_fraction": 0.4444444444444444,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.14492753623188406,
+          "melody_continuous_note_pairs": 138,
+          "support_foreground_onset_collision_fraction": 0.3891625615763547,
+          "support_foreground_duration_overlap_fraction": 0.8567912407357892,
+          "support_attack_count": 203,
+          "support_sounding_ticks": 145857,
+          "comp_voice_motion_semitones": 1.4717607973421927,
+          "comp_voicing_changes": 84,
+          "comp_matched_voice_count": 301,
+          "comp_entering_leaving_voice_count": 5,
+          "active_note_count": 2096,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.3157894736842105,
+          "foreground_bar_rhythm_unique_fraction": 0.1333333333333333,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.11214065098598242,
+          "melody_continuous_note_pairs": 16,
+          "support_foreground_onset_collision_fraction": 0.11330049261083747,
+          "support_foreground_duration_overlap_fraction": 0.187471290373448,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -26,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.5875486381322957,
+          "quarter_or_longer_fraction": 0.17509727626459143,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.48993055555555554,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.3333333333333333
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.46320346320346323,
+          "quarter_or_longer_fraction": 0.354978354978355,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "game-loop-s101": {
+      "hashes": {
+        "before_project_sha256": "d94424f5af2bf2b634c6ea998e030b31165a41430c73563da57c616499f4ab25",
+        "candidate_project_sha256": "5443f8259b255235166a82c0031b8af497b6d9570ae72568e0aa3018e076e48e",
+        "after_project_sha256": "0c863fda1bca892d116caacf161cafa1e3b6e3e5d783c204a02410e44b2b360f",
+        "before_wav_sha256": "83de7f05ae22c24aeee1b3fac42c1c541abed24ed1a56872d40af733ba173de8",
+        "after_wav_sha256": "9b9e0b7f8b06d2cca8073591e217fa7612235d4c86331fe32777c086d408e22d",
+        "preserved_content_sha256": "3d81d40684df4cce4392e7409507e1950cc5bbd7dbaa1a1a1d9fecb5d7d7caa3",
+        "backing_notes_sha256": "fdbb7b0c2274d5f9325444ed303cdc41ca9b39ebe4f92084caf5234eb06d25d3",
+        "source_melody_sha256": "d36f28482f60c73f0f1e9af098be816f2f750b7a5c2946dafc761ca143e2590d",
+        "output_melody_sha256": "5ab19ac56f71d4eb2f75c07f4e3c207bd967c7f56fd4dd5cf96abbec7c51fa02",
+        "ab_manifest_sha256": "21d218bcf3f2bfdf385415c094e50a59eaac3fa2b99e7fb3f19a79aeac8cacb1"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 5.8,
+          "CU": 7.06,
+          "PC": 5.103,
+          "PQ": 7.322
+        },
+        "after": {
+          "CE": 5.507,
+          "CU": 7.183,
+          "PC": 4.961,
+          "PQ": 7.401
+        },
+        "delta": {
+          "CE": -0.29300000000000015,
+          "CU": 0.12300000000000022,
+          "PC": -0.14199999999999946,
+          "PQ": 0.07899999999999974
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.42208518584569293,
+          "contrast_cosine": 0.07652412354946136,
+          "contrast_margin": 0.34556106229623157,
+          "positive_cosine_stddev": 0.010901894613780027,
+          "contrast_margin_stddev": 0.009334964773676737
+        },
+        "after": {
+          "positive_cosine": 0.4416405161221822,
+          "contrast_cosine": 0.07497008144855499,
+          "contrast_margin": 0.3666704346736272,
+          "positive_cosine_stddev": 0.009795335380423485,
+          "contrast_margin_stddev": 0.012541177910418668
+        },
+        "delta": {
+          "positive_cosine": 0.019555330276489258,
+          "contrast_cosine": -0.001554042100906372,
+          "contrast_margin": 0.02110937237739563,
+          "positive_cosine_stddev": -0.0011065592333565424,
+          "contrast_margin_stddev": 0.0032062131367419314
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.6428571428571429,
+          "foreground_bar_rhythm_unique_fraction": 0.3125,
+          "foreground_nonempty_bars": 16,
+          "foreground_adjacent_bar_pairs": 14,
+          "melody_large_leap_fraction": 0.06896551724137931,
+          "melody_continuous_note_pairs": 29,
+          "support_foreground_onset_collision_fraction": 0.1702127659574468,
+          "support_foreground_duration_overlap_fraction": 0.51953125,
+          "support_attack_count": 47,
+          "support_sounding_ticks": 61440,
+          "comp_voice_motion_semitones": 1.457142857142857,
+          "comp_voicing_changes": 14,
+          "comp_matched_voice_count": 35,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 380,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.42857142857142855,
+          "foreground_bar_rhythm_unique_fraction": 0.4375,
+          "foreground_nonempty_bars": 16,
+          "foreground_adjacent_bar_pairs": 14,
+          "melody_large_leap_fraction": 0.08823529411764706,
+          "melody_continuous_note_pairs": 68,
+          "support_foreground_onset_collision_fraction": 0.46808510638297873,
+          "support_foreground_duration_overlap_fraction": 0.82421875,
+          "support_attack_count": 47,
+          "support_sounding_ticks": 61440,
+          "comp_voice_motion_semitones": 1.457142857142857,
+          "comp_voicing_changes": 14,
+          "comp_matched_voice_count": 35,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 410,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.21428571428571436,
+          "foreground_bar_rhythm_unique_fraction": 0.125,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.019269776876267755,
+          "melody_continuous_note_pairs": 39,
+          "support_foreground_onset_collision_fraction": 0.2978723404255319,
+          "support_foreground_duration_overlap_fraction": 0.3046875,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 30,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.43636363636363634,
+          "quarter_or_longer_fraction": 0.14545454545454545,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.375,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.5
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.5058823529411764,
+          "quarter_or_longer_fraction": 0.32941176470588235,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "game-loop-s103": {
+      "hashes": {
+        "before_project_sha256": "26302860e590a4ca443a4deb6d6602b9a4e9e7c6d129a571cbf834da36684dcb",
+        "candidate_project_sha256": "c9694c968176d0a8329676ffde676e823c0a9e8d8a05d4874efac8641ac37066",
+        "after_project_sha256": "a002c13f3b44270cb0da28518e674546dd57b07801dba11a59eb93b57524849c",
+        "before_wav_sha256": "fe10e755367cad0a715d3b066c15ab7b63bc5cd8b5f1555bf678b8a787bb99d1",
+        "after_wav_sha256": "08239f3a822537ffa955198f0a8137aac9519e075d3d56ec9512255f5f1e09a7",
+        "preserved_content_sha256": "5ef0a61c12cbbc87557322a30bef34096a839688207704780f3c99030c01488a",
+        "backing_notes_sha256": "963947c3c5c13acfd5c6353f5ce912ed7506a5f7271385e8a89cc63dfa915d3b",
+        "source_melody_sha256": "0ef2dd23cb88fd794dc818514b6ffc0a4cf38a42616518165f445d7be8e7ca99",
+        "output_melody_sha256": "39974688e11043513d6a9ca13fa34185c5df45c866d77f9f794e5a3fc634d0f9",
+        "ab_manifest_sha256": "e38c5039be87c826c04d4c507f827c066f99456daee1ffb71a5f6284df0abb01"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 5.703,
+          "CU": 7.335,
+          "PC": 4.977,
+          "PQ": 7.623
+        },
+        "after": {
+          "CE": 5.658,
+          "CU": 7.241,
+          "PC": 4.844,
+          "PQ": 7.507
+        },
+        "delta": {
+          "CE": -0.04499999999999993,
+          "CU": -0.0940000000000003,
+          "PC": -0.133,
+          "PQ": -0.11600000000000055
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4450657367706299,
+          "contrast_cosine": 0.0514605368177096,
+          "contrast_margin": 0.39360519995292026,
+          "positive_cosine_stddev": 0.02833230773942395,
+          "contrast_margin_stddev": 0.038142524442009024
+        },
+        "after": {
+          "positive_cosine": 0.4661828577518463,
+          "contrast_cosine": 0.06485105554262798,
+          "contrast_margin": 0.4013318022092183,
+          "positive_cosine_stddev": 0.0018108636588174958,
+          "contrast_margin_stddev": 0.011856474614025756
+        },
+        "delta": {
+          "positive_cosine": 0.02111712098121643,
+          "contrast_cosine": 0.013390518724918372,
+          "contrast_margin": 0.007726602256298065,
+          "positive_cosine_stddev": -0.026521444080606454,
+          "contrast_margin_stddev": -0.026286049827983268
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7857142857142857,
+          "foreground_bar_rhythm_unique_fraction": 0.25,
+          "foreground_nonempty_bars": 16,
+          "foreground_adjacent_bar_pairs": 14,
+          "melody_large_leap_fraction": 0.06666666666666667,
+          "melody_continuous_note_pairs": 60,
+          "support_foreground_onset_collision_fraction": 0.559322033898305,
+          "support_foreground_duration_overlap_fraction": 0.8775510204081632,
+          "support_attack_count": 59,
+          "support_sounding_ticks": 47040,
+          "comp_voice_motion_semitones": 1.6285714285714286,
+          "comp_voicing_changes": 14,
+          "comp_matched_voice_count": 35,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 463,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.35714285714285715,
+          "foreground_bar_rhythm_unique_fraction": 0.5,
+          "foreground_nonempty_bars": 16,
+          "foreground_adjacent_bar_pairs": 14,
+          "melody_large_leap_fraction": 0.07894736842105263,
+          "melody_continuous_note_pairs": 76,
+          "support_foreground_onset_collision_fraction": 0.3898305084745763,
+          "support_foreground_duration_overlap_fraction": 0.8979591836734694,
+          "support_attack_count": 59,
+          "support_sounding_ticks": 47040,
+          "comp_voice_motion_semitones": 1.6285714285714286,
+          "comp_voicing_changes": 14,
+          "comp_matched_voice_count": 35,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 460,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.42857142857142855,
+          "foreground_bar_rhythm_unique_fraction": 0.25,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.012280701754385961,
+          "melody_continuous_note_pairs": 16,
+          "support_foreground_onset_collision_fraction": -0.16949152542372875,
+          "support_foreground_duration_overlap_fraction": 0.020408163265306145,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -3,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.3023255813953488,
+          "quarter_or_longer_fraction": 0.27906976744186046,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.25,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.0
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.3132530120481928,
+          "quarter_or_longer_fraction": 0.3614457831325301,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "jazz-trio-s101": {
+      "hashes": {
+        "before_project_sha256": "76c14ad54f072eb0a4479870ff7bb77bdd80b1bd82e8b0cbc7b3a8d385bb7d89",
+        "candidate_project_sha256": "4ffda2f5bc1e53b76b2a912d139679738497627921a276e8a8e3a9b27e789ab7",
+        "after_project_sha256": "03f19182b374e1736d573bbaaf7bc64aff9c2ce10ff27e655e771561412a12d2",
+        "before_wav_sha256": "c2489ed0540fad9ade7af563992d4d0ad09260f1d137562b5cf8bc143ebbe8f5",
+        "after_wav_sha256": "fc3e6393c730e79646a969d960b722dc419c2bea77ccb97e18e5b2771dacb80e",
+        "preserved_content_sha256": "b72f4c13d89a35e5aeeb97e6ff182b163131e312c019f011f3cea19cf9e89d83",
+        "backing_notes_sha256": "a91a438bd84b62e5adcb9a43b81d9221f80acd9e9f494297520cfa96b3241289",
+        "source_melody_sha256": "04779c91ac93dd54cf15b424a450629e8ab7d1c456b0c93610331872b169b8a8",
+        "output_melody_sha256": "3b2200e2255020c8cd06ead6673ee23938bc49252fade8a38d561c6b09e29a5a",
+        "ab_manifest_sha256": "8f260b53b11e578bcbc1c5849c617e5fbdee5c2d688ec30cfa6a1ed0e482ef68"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.768,
+          "CU": 8.2,
+          "PC": 4.72,
+          "PQ": 8.236
+        },
+        "after": {
+          "CE": 7.747,
+          "CU": 8.255,
+          "PC": 4.554,
+          "PQ": 8.313
+        },
+        "delta": {
+          "CE": -0.020999999999999908,
+          "CU": 0.05500000000000149,
+          "PC": -0.16599999999999948,
+          "PQ": 0.07699999999999996
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.3695497214794159,
+          "contrast_cosine": 0.06088716660936674,
+          "contrast_margin": 0.3086625548700492,
+          "positive_cosine_stddev": 0.006995932940034615,
+          "contrast_margin_stddev": 0.014153013724117001
+        },
+        "after": {
+          "positive_cosine": 0.34406067927678424,
+          "contrast_cosine": 0.0667392152051131,
+          "contrast_margin": 0.2773214640716712,
+          "positive_cosine_stddev": 0.004869539667554767,
+          "contrast_margin_stddev": 0.006325184014446935
+        },
+        "delta": {
+          "positive_cosine": -0.02548904220263165,
+          "contrast_cosine": 0.0058520485957463605,
+          "contrast_margin": -0.03134109079837799,
+          "positive_cosine_stddev": -0.0021263932724798484,
+          "contrast_margin_stddev": -0.007827829709670067
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.8285714285714286,
+          "foreground_bar_rhythm_unique_fraction": 0.21951219512195122,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.13793103448275862,
+          "melody_continuous_note_pairs": 29,
+          "support_foreground_onset_collision_fraction": 0.28225806451612906,
+          "support_foreground_duration_overlap_fraction": 0.5736742373695588,
+          "support_attack_count": 124,
+          "support_sounding_ticks": 149876,
+          "comp_voice_motion_semitones": 1.858695652173913,
+          "comp_voicing_changes": 27,
+          "comp_matched_voice_count": 92,
+          "comp_entering_leaving_voice_count": 1,
+          "active_note_count": 1194,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.34285714285714286,
+          "foreground_bar_rhythm_unique_fraction": 0.4634146341463415,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.11278195488721804,
+          "melody_continuous_note_pairs": 133,
+          "support_foreground_onset_collision_fraction": 0.3951612903225806,
+          "support_foreground_duration_overlap_fraction": 0.7119752328591635,
+          "support_attack_count": 124,
+          "support_sounding_ticks": 149876,
+          "comp_voice_motion_semitones": 1.858695652173913,
+          "comp_voicing_changes": 27,
+          "comp_matched_voice_count": 92,
+          "comp_entering_leaving_voice_count": 1,
+          "active_note_count": 1258,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.48571428571428577,
+          "foreground_bar_rhythm_unique_fraction": 0.24390243902439027,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": -0.02514907959554058,
+          "melody_continuous_note_pairs": 104,
+          "support_foreground_onset_collision_fraction": 0.11290322580645157,
+          "support_foreground_duration_overlap_fraction": 0.13830099548960473,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 64,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.4189189189189189,
+          "quarter_or_longer_fraction": 0.36486486486486486,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.49416666666666664,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.4
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.41037735849056606,
+          "quarter_or_longer_fraction": 0.35377358490566035,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.9441666666666667,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "jazz-trio-s103": {
+      "hashes": {
+        "before_project_sha256": "df24321326899b5245f610411099f3d462ebc3435a78599e7ed259b5eb774caf",
+        "candidate_project_sha256": "7bcc3078972923a833eb1416fbbeaf4c1a80725e61c18edd832c9046486dc7b4",
+        "after_project_sha256": "9a12c2f94fa7d95505a78b9d0ac52fe2e26d216ad3da91f1bfaad7b8fc197f29",
+        "before_wav_sha256": "b5b66efbb8b0e301459198972ff4de8000fbb8ab8fd981f0451eaa69371eef49",
+        "after_wav_sha256": "6eb0853d469709e7e7d2aa0da287ba4e903bc433e811e168757a16d8ce5121c0",
+        "preserved_content_sha256": "28c3198ae40813f81643f16d0f9372a8f7141b5d1d6003f565359e1dc088d511",
+        "backing_notes_sha256": "4fe57ada557f38f1c4fc56101adcff89174c89ecf96199c95b8d5655796488f5",
+        "source_melody_sha256": "513b56177f985951d87d870fdfdd2288a48b033cb6b8e243f19ce5a9e0957ba4",
+        "output_melody_sha256": "7b19e62823e283008e88ccd3ac2afa23ba5d739c0fc4f6aee5b6456ba1a396d2",
+        "ab_manifest_sha256": "170904f5c6579a77f855c69c61451288e2bfb7d5328ed34efd85be1eb07e1beb"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.74,
+          "CU": 8.216,
+          "PC": 4.699,
+          "PQ": 8.281
+        },
+        "after": {
+          "CE": 7.658,
+          "CU": 8.248,
+          "PC": 4.589,
+          "PQ": 8.299
+        },
+        "delta": {
+          "CE": -0.08199999999999985,
+          "CU": 0.03200000000000003,
+          "PC": -0.10999999999999943,
+          "PQ": 0.017999999999998906
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.3549216687679291,
+          "contrast_cosine": 0.06215961277484894,
+          "contrast_margin": 0.29276205599308014,
+          "positive_cosine_stddev": 0.007410538775278381,
+          "contrast_margin_stddev": 0.00951411330436523
+        },
+        "after": {
+          "positive_cosine": 0.35702409346898395,
+          "contrast_cosine": 0.04311937093734741,
+          "contrast_margin": 0.31390472253163654,
+          "positive_cosine_stddev": 0.01306824625846851,
+          "contrast_margin_stddev": 0.011792910971928883
+        },
+        "delta": {
+          "positive_cosine": 0.0021024247010548724,
+          "contrast_cosine": -0.019040241837501526,
+          "contrast_margin": 0.0211426665385564,
+          "positive_cosine_stddev": 0.00565770748319013,
+          "contrast_margin_stddev": 0.0022787976675636527
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.8,
+          "foreground_bar_rhythm_unique_fraction": 0.2682926829268293,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.18840579710144928,
+          "melody_continuous_note_pairs": 69,
+          "support_foreground_onset_collision_fraction": 0.3162393162393162,
+          "support_foreground_duration_overlap_fraction": 0.7089949124088527,
+          "support_attack_count": 117,
+          "support_sounding_ticks": 156066,
+          "comp_voice_motion_semitones": 1.697674418604651,
+          "comp_voicing_changes": 27,
+          "comp_matched_voice_count": 86,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1130,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4857142857142857,
+          "foreground_bar_rhythm_unique_fraction": 0.34146341463414637,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.1484375,
+          "melody_continuous_note_pairs": 128,
+          "support_foreground_onset_collision_fraction": 0.4358974358974359,
+          "support_foreground_duration_overlap_fraction": 0.7665603014109416,
+          "support_attack_count": 117,
+          "support_sounding_ticks": 156066,
+          "comp_voice_motion_semitones": 1.697674418604651,
+          "comp_voicing_changes": 27,
+          "comp_matched_voice_count": 86,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1213,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.31428571428571433,
+          "foreground_bar_rhythm_unique_fraction": 0.07317073170731708,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": -0.03996829710144928,
+          "melody_continuous_note_pairs": 59,
+          "support_foreground_onset_collision_fraction": 0.11965811965811968,
+          "support_foreground_duration_overlap_fraction": 0.05756538900208885,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 83,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.21212121212121213,
+          "quarter_or_longer_fraction": 0.4696969696969697,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.75,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.8
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.413953488372093,
+          "quarter_or_longer_fraction": 0.35348837209302325,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.9720833333333333,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "orchestral-s101": {
+      "hashes": {
+        "before_project_sha256": "bbe880bdca348beea59ccebd819c7fedfd87dbd4aad2bc9f3187e62c4c6c3116",
+        "candidate_project_sha256": "d5ff91af8e00aefd4e8a43b1f5662e094000b8dc4ec432557e6f6d9c9882ee12",
+        "after_project_sha256": "bd158f65611a6c4ac7ed065d2beeac3ec9fde5dc9690a8af5b1ae2237d6facaf",
+        "before_wav_sha256": "8c6dfe51fcac5696c40a239b23836c9af6ef8647721eeffd0b0bf59d82d471fe",
+        "after_wav_sha256": "f362af5bc3e961c340a17a5e679ce6bdd8ae3c8562cd41b33beb381aa27c2a7f",
+        "preserved_content_sha256": "824e6cc2feea10094ece32122e39c491159c72e34bf6284b84a787717dac9ef4",
+        "backing_notes_sha256": "844256ba962ec3f98bebc681d92188f7c84e49fd90d05498883f063972fd8569",
+        "source_melody_sha256": "bc1cf140d10963eb4cc1f8a2bb29939ba80d559a5cf7f060cdeda41435a4e93d",
+        "output_melody_sha256": "764fe0338dd35692bc7256a618a3cdf59f4ba22249eba6840cf0fb3c8d316550",
+        "ab_manifest_sha256": "44400ab3f6f64fe48389f3d15ec4621c81724653c7726c69471a8ccd1a79669b"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.191,
+          "CU": 7.702,
+          "PC": 5.036,
+          "PQ": 7.683
+        },
+        "after": {
+          "CE": 7.115,
+          "CU": 7.692,
+          "PC": 4.753,
+          "PQ": 7.669
+        },
+        "delta": {
+          "CE": -0.07599999999999962,
+          "CU": -0.009999999999999787,
+          "PC": -0.2829999999999995,
+          "PQ": -0.014000000000000234
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4985400239626567,
+          "contrast_cosine": 0.06856728096803029,
+          "contrast_margin": 0.42997274299462634,
+          "positive_cosine_stddev": 0.016030048891423957,
+          "contrast_margin_stddev": 0.02255865945409743
+        },
+        "after": {
+          "positive_cosine": 0.49117717146873474,
+          "contrast_cosine": 0.06482527901728947,
+          "contrast_margin": 0.4263518924514453,
+          "positive_cosine_stddev": 0.011538937101899844,
+          "contrast_margin_stddev": 0.02576500126078348
+        },
+        "delta": {
+          "positive_cosine": -0.007362852493921934,
+          "contrast_cosine": -0.003742001950740814,
+          "contrast_margin": -0.0036208505431810645,
+          "positive_cosine_stddev": -0.0044911117895241135,
+          "contrast_margin_stddev": 0.0032063418066860493
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.9428571428571428,
+          "foreground_bar_rhythm_unique_fraction": 0.1951219512195122,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.07878787878787878,
+          "melody_continuous_note_pairs": 165,
+          "support_foreground_onset_collision_fraction": 0.314410480349345,
+          "support_foreground_duration_overlap_fraction": 0.7704280155642024,
+          "support_attack_count": 229,
+          "support_sounding_ticks": 185040,
+          "comp_voice_motion_semitones": 1.422680412371134,
+          "comp_voicing_changes": 35,
+          "comp_matched_voice_count": 97,
+          "comp_entering_leaving_voice_count": 5,
+          "active_note_count": 726,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.5714285714285714,
+          "foreground_bar_rhythm_unique_fraction": 0.36585365853658536,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.05384615384615385,
+          "melody_continuous_note_pairs": 130,
+          "support_foreground_onset_collision_fraction": 0.5851528384279476,
+          "support_foreground_duration_overlap_fraction": 0.9325551232166018,
+          "support_attack_count": 229,
+          "support_sounding_ticks": 185040,
+          "comp_voice_motion_semitones": 1.422680412371134,
+          "comp_voicing_changes": 35,
+          "comp_matched_voice_count": 97,
+          "comp_entering_leaving_voice_count": 5,
+          "active_note_count": 670,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.37142857142857144,
+          "foreground_bar_rhythm_unique_fraction": 0.17073170731707316,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": -0.024941724941724933,
+          "melody_continuous_note_pairs": -35,
+          "support_foreground_onset_collision_fraction": 0.27074235807860264,
+          "support_foreground_duration_overlap_fraction": 0.16212710765239946,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -56,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.48484848484848486,
+          "quarter_or_longer_fraction": 0.12121212121212122,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.35,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.2
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.21830985915492956,
+          "quarter_or_longer_fraction": 0.49295774647887325,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "orchestral-s103": {
+      "hashes": {
+        "before_project_sha256": "8ec12e10d912b24005a084145e3b94da3e2f6affa62e874df7fb59d8f2683759",
+        "candidate_project_sha256": "04ce3f5f8b06ab16715b5208403be980bd402e636d7e03ee90825cc0387d6091",
+        "after_project_sha256": "86c85f65406e6e4ceda5608880c78cee2753c96f891122593432ca44802ad9b7",
+        "before_wav_sha256": "39a72ec4fb3d375c9b6374c1b641a3b511d1dfecaa5bb8c79f0974ac42ae0e09",
+        "after_wav_sha256": "01e214b0f764789d370c95dca931aa1017392c9fd5f79d83ff6b54c99d9e9ca5",
+        "preserved_content_sha256": "defce86f880f88ef52c6dff8ca966776af5ba46b5fd404e4a32aed00b8b7dc3b",
+        "backing_notes_sha256": "54eeea7480887aa6c3e38b54cfc7e55e8b0ee4f44b43fc8ed63e58fbf4e1ae61",
+        "source_melody_sha256": "f060270771bf6ab67601c2c901f89afe4359d5f768f7584c8bd5bd87310f05b8",
+        "output_melody_sha256": "5a6733d9e111cca703937ed22fbe054bb63473d7c5ff520e13eec1b0432ea46a",
+        "ab_manifest_sha256": "f24eb65e72b90ce39309a3aeb0e12fe58a81291452c8295dad7b5bc0b3b42be4"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.037,
+          "CU": 7.695,
+          "PC": 4.899,
+          "PQ": 7.692
+        },
+        "after": {
+          "CE": 7.086,
+          "CU": 7.699,
+          "PC": 4.803,
+          "PQ": 7.694
+        },
+        "delta": {
+          "CE": 0.04900000000000038,
+          "CU": 0.0039999999999995595,
+          "PC": -0.09600000000000009,
+          "PQ": 0.0019999999999997797
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.48649229605992633,
+          "contrast_cosine": 0.07043586919705074,
+          "contrast_margin": 0.41605642686287564,
+          "positive_cosine_stddev": 0.03211743698364584,
+          "contrast_margin_stddev": 0.01231332131334006
+        },
+        "after": {
+          "positive_cosine": 0.4881429274876912,
+          "contrast_cosine": 0.07165444642305374,
+          "contrast_margin": 0.4164884810646375,
+          "positive_cosine_stddev": 0.03082688305930587,
+          "contrast_margin_stddev": 0.007462551892547076
+        },
+        "delta": {
+          "positive_cosine": 0.0016506314277648926,
+          "contrast_cosine": 0.0012185772260030064,
+          "contrast_margin": 0.0004320542017618445,
+          "positive_cosine_stddev": -0.001290553924339969,
+          "contrast_margin_stddev": -0.004850769420792985
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.9142857142857143,
+          "foreground_bar_rhythm_unique_fraction": 0.21951219512195122,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.09826589595375723,
+          "melody_continuous_note_pairs": 173,
+          "support_foreground_onset_collision_fraction": 0.6833333333333333,
+          "support_foreground_duration_overlap_fraction": 0.9423076923076923,
+          "support_attack_count": 240,
+          "support_sounding_ticks": 149760,
+          "comp_voice_motion_semitones": 1.6136363636363635,
+          "comp_voicing_changes": 35,
+          "comp_matched_voice_count": 88,
+          "comp_entering_leaving_voice_count": 2,
+          "active_note_count": 781,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.8,
+          "foreground_bar_rhythm_unique_fraction": 0.2926829268292683,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.21153846153846154,
+          "melody_continuous_note_pairs": 104,
+          "support_foreground_onset_collision_fraction": 0.6375,
+          "support_foreground_duration_overlap_fraction": 0.8910256410256411,
+          "support_attack_count": 240,
+          "support_sounding_ticks": 149760,
+          "comp_voice_motion_semitones": 1.6136363636363635,
+          "comp_voicing_changes": 35,
+          "comp_matched_voice_count": 88,
+          "comp_entering_leaving_voice_count": 2,
+          "active_note_count": 704,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.11428571428571421,
+          "foreground_bar_rhythm_unique_fraction": 0.07317073170731705,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.1132725655847043,
+          "melody_continuous_note_pairs": -69,
+          "support_foreground_onset_collision_fraction": -0.04583333333333339,
+          "support_foreground_duration_overlap_fraction": -0.05128205128205121,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -77,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.3471502590673575,
+          "quarter_or_longer_fraction": 0.23834196891191708,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.5,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.4
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.27586206896551724,
+          "quarter_or_longer_fraction": 0.6379310344827587,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "pop-band-s101": {
+      "hashes": {
+        "before_project_sha256": "00d9d3f8f695341a1b9a027fd3d2f1aea649fe9cc3b3082a458c43e0bddff280",
+        "candidate_project_sha256": "9d33f34f98e4be1a50698a7f366c3dc4520e7a1169595bd82bfe2855e1b33486",
+        "after_project_sha256": "b3e1a25043b504065bb4401f02f50f9e886ade77759d79515e3c487ff05568cb",
+        "before_wav_sha256": "ed1d4fe8227084c4cc57c98b2e237b5555c1348323226495d855eb4085b21c6c",
+        "after_wav_sha256": "5557155cad75a184b389471cca7716184f9d5150e67e97c747c1f6b2e7de7d44",
+        "preserved_content_sha256": "a2f6372bd2f4da0a9fc788413e11bad872439a1a7b7beafbb39e9b98ab8350c2",
+        "backing_notes_sha256": "d36f182c4d8a411612e3e6c791ea19970a72129fe40ebbd24e58989862a58a9e",
+        "source_melody_sha256": "b9f780dd0dabbfb4e977fb768abf439f4f073f43494c99c6271c62dcd3f8728e",
+        "output_melody_sha256": "bc1923029c473bc15b08ce24ffb2e0e042ca8704323b73444a9ffe65e9cc4eb3",
+        "ab_manifest_sha256": "3a2096a3b1d5de8113b507c78bd7b079b8ae023c2cbbe9c9c654bafc5858a536"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.167,
+          "CU": 7.942,
+          "PC": 5.105,
+          "PQ": 8.107
+        },
+        "after": {
+          "CE": 6.738,
+          "CU": 7.789,
+          "PC": 4.689,
+          "PQ": 8.02
+        },
+        "delta": {
+          "CE": -0.4289999999999994,
+          "CU": -0.15300000000000047,
+          "PC": -0.41600000000000037,
+          "PQ": -0.08699999999999974
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.38877854744593304,
+          "contrast_cosine": 0.09771386037270229,
+          "contrast_margin": 0.29106468707323074,
+          "positive_cosine_stddev": 0.014984989909038104,
+          "contrast_margin_stddev": 0.05635830662142867
+        },
+        "after": {
+          "positive_cosine": 0.39906028906504315,
+          "contrast_cosine": 0.08154651025931041,
+          "contrast_margin": 0.3175137788057327,
+          "positive_cosine_stddev": 0.011146326130227563,
+          "contrast_margin_stddev": 0.03525034234393978
+        },
+        "delta": {
+          "positive_cosine": 0.010281741619110107,
+          "contrast_cosine": -0.016167350113391876,
+          "contrast_margin": 0.026449091732501984,
+          "positive_cosine_stddev": -0.003838663778810541,
+          "contrast_margin_stddev": -0.021107964277488886
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.6909090909090909,
+          "foreground_bar_rhythm_unique_fraction": 0.2923076923076923,
+          "foreground_nonempty_bars": 65,
+          "foreground_adjacent_bar_pairs": 55,
+          "melody_large_leap_fraction": 0.07936507936507936,
+          "melody_continuous_note_pairs": 189,
+          "support_foreground_onset_collision_fraction": 0.34951456310679613,
+          "support_foreground_duration_overlap_fraction": 0.45838218053927315,
+          "support_attack_count": 206,
+          "support_sounding_ticks": 204720,
+          "comp_voice_motion_semitones": 1.5206185567010309,
+          "comp_voicing_changes": 58,
+          "comp_matched_voice_count": 194,
+          "comp_entering_leaving_voice_count": 17,
+          "active_note_count": 2041,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.45454545454545453,
+          "foreground_bar_rhythm_unique_fraction": 0.4307692307692308,
+          "foreground_nonempty_bars": 65,
+          "foreground_adjacent_bar_pairs": 55,
+          "melody_large_leap_fraction": 0.10909090909090909,
+          "melody_continuous_note_pairs": 275,
+          "support_foreground_onset_collision_fraction": 0.4854368932038835,
+          "support_foreground_duration_overlap_fraction": 0.7936694021101993,
+          "support_attack_count": 206,
+          "support_sounding_ticks": 204720,
+          "comp_voice_motion_semitones": 1.5206185567010309,
+          "comp_voicing_changes": 58,
+          "comp_matched_voice_count": 194,
+          "comp_entering_leaving_voice_count": 17,
+          "active_note_count": 2085,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2363636363636364,
+          "foreground_bar_rhythm_unique_fraction": 0.13846153846153847,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.029725829725829725,
+          "melody_continuous_note_pairs": 86,
+          "support_foreground_onset_collision_fraction": 0.13592233009708737,
+          "support_foreground_duration_overlap_fraction": 0.33528722157092616,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 44,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.5088967971530249,
+          "quarter_or_longer_fraction": 0.18505338078291814,
+          "silent_middle_half_bar_fraction": 0.125,
+          "terminal_rest_beats_mean": 0.5277777777777778,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.3333333333333333
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.39692307692307693,
+          "quarter_or_longer_fraction": 0.36,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "pop-band-s103": {
+      "hashes": {
+        "before_project_sha256": "1662dec22d1bddc7dfd1390b0790521118e8bb706415c898b110f67f5227f1cc",
+        "candidate_project_sha256": "40f45e281b7a16812741d382b343e609397bec213e42a4068ed4ef1a3e78739c",
+        "after_project_sha256": "14365a6dcbdefea756432ba0087a1e61967516f56467d1edd3425ce9d03c411f",
+        "before_wav_sha256": "a54ca73f1dde678f4158432f66bf12b7368d1c16ea26a8d9a5abf1245d5bb65b",
+        "after_wav_sha256": "b286b0e356c6e2ecaf9158300c1ccb9a6d1ba9e8f2c805cfc3fd28ed3c1b65d2",
+        "preserved_content_sha256": "7d01046933cf217f0ac33d62468437562dc5ccf1f34c6dc392abcc12c27c9aea",
+        "backing_notes_sha256": "c6fb98ba40fbe1091a0c58ed61ee4ecb0104cd5871f157f075f9c794d7dd4d54",
+        "source_melody_sha256": "050a3983c4f8e7c2bf73b5eec4196b2d733f3dcc311f7623f49c18434519193c",
+        "output_melody_sha256": "cc3e9c1e6428a18f0dbbfd5c231df4f28523657db698bd0034faedab76b54b4f",
+        "ab_manifest_sha256": "1a1753834cf901868c1b0f89236b80f7f296a103e0620abf22c0ffa1dae2b142"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 6.933,
+          "CU": 7.802,
+          "PC": 4.973,
+          "PQ": 8.003
+        },
+        "after": {
+          "CE": 6.709,
+          "CU": 7.748,
+          "PC": 4.699,
+          "PQ": 7.988
+        },
+        "delta": {
+          "CE": -0.2240000000000002,
+          "CU": -0.05399999999999938,
+          "PC": -0.274,
+          "PQ": -0.01499999999999968
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.38738741477330524,
+          "contrast_cosine": 0.09257060786088307,
+          "contrast_margin": 0.2948168069124222,
+          "positive_cosine_stddev": 0.0028166302682433994,
+          "contrast_margin_stddev": 0.03865063238759
+        },
+        "after": {
+          "positive_cosine": 0.3688609798749288,
+          "contrast_cosine": 0.06349747317532699,
+          "contrast_margin": 0.3053635066996018,
+          "positive_cosine_stddev": 0.01299749094392157,
+          "contrast_margin_stddev": 0.042386464400947836
+        },
+        "delta": {
+          "positive_cosine": -0.018526434898376465,
+          "contrast_cosine": -0.029073134685556085,
+          "contrast_margin": 0.010546699787179648,
+          "positive_cosine_stddev": 0.01018086067567817,
+          "contrast_margin_stddev": 0.003735832013357837
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7272727272727273,
+          "foreground_bar_rhythm_unique_fraction": 0.3076923076923077,
+          "foreground_nonempty_bars": 65,
+          "foreground_adjacent_bar_pairs": 55,
+          "melody_large_leap_fraction": 0.047244094488188976,
+          "melody_continuous_note_pairs": 254,
+          "support_foreground_onset_collision_fraction": 0.18994413407821228,
+          "support_foreground_duration_overlap_fraction": 0.6028460543337646,
+          "support_attack_count": 179,
+          "support_sounding_ticks": 185520,
+          "comp_voice_motion_semitones": 1.330188679245283,
+          "comp_voicing_changes": 58,
+          "comp_matched_voice_count": 212,
+          "comp_entering_leaving_voice_count": 17,
+          "active_note_count": 2092,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4727272727272727,
+          "foreground_bar_rhythm_unique_fraction": 0.4153846153846154,
+          "foreground_nonempty_bars": 65,
+          "foreground_adjacent_bar_pairs": 55,
+          "melody_large_leap_fraction": 0.09154929577464789,
+          "melody_continuous_note_pairs": 284,
+          "support_foreground_onset_collision_fraction": 0.44692737430167595,
+          "support_foreground_duration_overlap_fraction": 0.8175937904269082,
+          "support_attack_count": 179,
+          "support_sounding_ticks": 185520,
+          "comp_voice_motion_semitones": 1.330188679245283,
+          "comp_voicing_changes": 58,
+          "comp_matched_voice_count": 212,
+          "comp_entering_leaving_voice_count": 17,
+          "active_note_count": 2083,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2545454545454546,
+          "foreground_bar_rhythm_unique_fraction": 0.1076923076923077,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.044305201286458915,
+          "melody_continuous_note_pairs": 30,
+          "support_foreground_onset_collision_fraction": 0.25698324022346364,
+          "support_foreground_duration_overlap_fraction": 0.21474773609314357,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -9,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.4676470588235294,
+          "quarter_or_longer_fraction": 0.22941176470588234,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.3611111111111111,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.2222222222222222
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.32326283987915405,
+          "quarter_or_longer_fraction": 0.36253776435045315,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "rock-s101": {
+      "hashes": {
+        "before_project_sha256": "720421fd42e20f059809472fc77c458059edd8de071248d23e39e42f89075319",
+        "candidate_project_sha256": "52a176cc642a51977e5e8204d03084ece2f8a1fff29ebefe70445b487cfa7bbb",
+        "after_project_sha256": "074c1776ec5d4e7ea031ba408aad14f0afe7f9555b4796a533b4532f038bc7d3",
+        "before_wav_sha256": "37f183273c90d36679d81e3f6c9451795ef398032763bcd3fe82997291d42378",
+        "after_wav_sha256": "754dfc1035b5d31e091c42814b02e79ec8a68c092fc0c6c538da21c351dfd855",
+        "preserved_content_sha256": "e6b75ea8a3519ffe10f6a0565cbbb92568bd1674b06d4abe66d5c8832d7b445b",
+        "backing_notes_sha256": "279dd33fa683038822c5692b0b981d283f1717aeb5e2394595962a4d1b0a507e",
+        "source_melody_sha256": "e1bdb6eb5fb104cb5517032711152023ccef5932f861751b68bf3273cf87ad71",
+        "output_melody_sha256": "aa5cabb1cadddbeecc04411536913e7824b05fa8c6ad80afe359c50ca11c3f8d",
+        "ab_manifest_sha256": "f44c8ba87ee88df0529df74352487457493fd6f8f177e1deef46f47f347624e0"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.239,
+          "CU": 7.777,
+          "PC": 6.049,
+          "PQ": 7.773
+        },
+        "after": {
+          "CE": 7.184,
+          "CU": 7.785,
+          "PC": 6.017,
+          "PQ": 7.897
+        },
+        "delta": {
+          "CE": -0.054999999999999716,
+          "CU": 0.008000000000000007,
+          "PC": -0.03200000000000003,
+          "PQ": 0.12400000000000055
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.5001337031523386,
+          "contrast_cosine": 0.03758745640516281,
+          "contrast_margin": 0.46254624674717587,
+          "positive_cosine_stddev": 0.008755938190839467,
+          "contrast_margin_stddev": 0.02340311972735124
+        },
+        "after": {
+          "positive_cosine": 0.5004566510518392,
+          "contrast_cosine": 0.04267052126427492,
+          "contrast_margin": 0.4577861297875643,
+          "positive_cosine_stddev": 0.02123778911854557,
+          "contrast_margin_stddev": 0.055624469922762675
+        },
+        "delta": {
+          "positive_cosine": 0.000322947899500603,
+          "contrast_cosine": 0.005083064859112106,
+          "contrast_margin": -0.004760116959611593,
+          "positive_cosine_stddev": 0.012481850927706102,
+          "contrast_margin_stddev": 0.03222135019541143
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.6842105263157895,
+          "foreground_bar_rhythm_unique_fraction": 0.28888888888888886,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.15492957746478872,
+          "melody_continuous_note_pairs": 142,
+          "support_foreground_onset_collision_fraction": 0.5,
+          "support_foreground_duration_overlap_fraction": 0.6708860759493671,
+          "support_attack_count": 172,
+          "support_sounding_ticks": 151680,
+          "comp_voice_motion_semitones": 1.8674698795180722,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 83,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1419,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4473684210526316,
+          "foreground_bar_rhythm_unique_fraction": 0.4222222222222222,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.2,
+          "melody_continuous_note_pairs": 200,
+          "support_foreground_onset_collision_fraction": 0.5406976744186046,
+          "support_foreground_duration_overlap_fraction": 0.8386075949367089,
+          "support_attack_count": 172,
+          "support_sounding_ticks": 151680,
+          "comp_voice_motion_semitones": 1.8674698795180722,
+          "comp_voicing_changes": 38,
+          "comp_matched_voice_count": 83,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1441,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2368421052631579,
+          "foreground_bar_rhythm_unique_fraction": 0.13333333333333336,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.04507042253521129,
+          "melody_continuous_note_pairs": 58,
+          "support_foreground_onset_collision_fraction": 0.04069767441860461,
+          "support_foreground_duration_overlap_fraction": 0.16772151898734178,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 22,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.3761467889908257,
+          "quarter_or_longer_fraction": 0.1743119266055046,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.3333333333333333,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.3333333333333333
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.4,
+          "quarter_or_longer_fraction": 0.3375,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "rock-s103": {
+      "hashes": {
+        "before_project_sha256": "cec38c569200dd4373871ca9dcae8771e4b0902a268eec0afb6c2cb06123e895",
+        "candidate_project_sha256": "08369368e01ea03ccb4e185914ba6c22147d10f9e629d58961fd77c3c40255b0",
+        "after_project_sha256": "b7093a91341346f16c2064b3015a3f06ba75e595e774fcaecfdd0b0dd30bfc7e",
+        "before_wav_sha256": "daf5f12ef4f59462e3d244fbca6778c41bc386e5b40714fd4cb9e0ecb77ac3ea",
+        "after_wav_sha256": "9910bf7e9c77341ba02cd21a772b0092c31200f87a6955b8a0cd712633d4d794",
+        "preserved_content_sha256": "6b76a9b0350e6e2837027c14e08b8c26181caf5e1726df2fddae95060796a390",
+        "backing_notes_sha256": "25c75d5fbed6bb7f9ec747c1dd4e474d3013a21ba87a4de77b775f379c1a191e",
+        "source_melody_sha256": "708c0dd4325b39c8d79004babee788c725b3d029b3929e1b98696e1fcc360ad0",
+        "output_melody_sha256": "9a2f979e8ed44fa0cdb17d297252a9269160fbbbe171a946b45d8d0ebaa4143d",
+        "ab_manifest_sha256": "2e4398df721933ca02172b29ab9481d37767042c4f5b8216824d86cbebcaf90e"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 7.305,
+          "CU": 7.818,
+          "PC": 6.115,
+          "PQ": 7.864
+        },
+        "after": {
+          "CE": 7.32,
+          "CU": 7.845,
+          "PC": 6.049,
+          "PQ": 7.999
+        },
+        "delta": {
+          "CE": 0.015000000000000568,
+          "CU": 0.027000000000000135,
+          "PC": -0.06599999999999984,
+          "PQ": 0.1349999999999998
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4870115617911021,
+          "contrast_cosine": 0.038956278935074806,
+          "contrast_margin": 0.4480552828560273,
+          "positive_cosine_stddev": 0.023790133746487564,
+          "contrast_margin_stddev": 0.05340017536534091
+        },
+        "after": {
+          "positive_cosine": 0.4868366022904714,
+          "contrast_cosine": 0.0397395429511865,
+          "contrast_margin": 0.4470970593392849,
+          "positive_cosine_stddev": 0.0099071728433616,
+          "contrast_margin_stddev": 0.028811241663777593
+        },
+        "delta": {
+          "positive_cosine": -0.00017495950063073362,
+          "contrast_cosine": 0.0007832640161116941,
+          "contrast_margin": -0.0009582235167424069,
+          "positive_cosine_stddev": -0.013882960903125964,
+          "contrast_margin_stddev": -0.024588933701563318
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7368421052631579,
+          "foreground_bar_rhythm_unique_fraction": 0.3111111111111111,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.06761565836298933,
+          "melody_continuous_note_pairs": 281,
+          "support_foreground_onset_collision_fraction": 0.44155844155844154,
+          "support_foreground_duration_overlap_fraction": 0.8231292517006803,
+          "support_attack_count": 154,
+          "support_sounding_ticks": 141120,
+          "comp_voice_motion_semitones": 1.6590909090909092,
+          "comp_voicing_changes": 36,
+          "comp_matched_voice_count": 88,
+          "comp_entering_leaving_voice_count": 3,
+          "active_note_count": 1616,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.42105263157894735,
+          "foreground_bar_rhythm_unique_fraction": 0.4666666666666667,
+          "foreground_nonempty_bars": 45,
+          "foreground_adjacent_bar_pairs": 38,
+          "melody_large_leap_fraction": 0.11637931034482758,
+          "melody_continuous_note_pairs": 232,
+          "support_foreground_onset_collision_fraction": 0.551948051948052,
+          "support_foreground_duration_overlap_fraction": 0.9166666666666666,
+          "support_attack_count": 154,
+          "support_sounding_ticks": 141120,
+          "comp_voice_motion_semitones": 1.6590909090909092,
+          "comp_voicing_changes": 36,
+          "comp_matched_voice_count": 88,
+          "comp_entering_leaving_voice_count": 3,
+          "active_note_count": 1531,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.3157894736842105,
+          "foreground_bar_rhythm_unique_fraction": 0.15555555555555556,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.048763651981838255,
+          "melody_continuous_note_pairs": -49,
+          "support_foreground_onset_collision_fraction": 0.11038961038961043,
+          "support_foreground_duration_overlap_fraction": 0.09353741496598633,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": 0.0,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": -85,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.6028985507246377,
+          "quarter_or_longer_fraction": 0.0927536231884058,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.3333333333333333,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.16666666666666666
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.43846153846153846,
+          "quarter_or_longer_fraction": 0.3230769230769231,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "synthwave-s101": {
+      "hashes": {
+        "before_project_sha256": "e0b6b24e0d55d53d783655dd79e72b47a24d34fbbe9e1b55b4e8397ad348713d",
+        "candidate_project_sha256": "a89a7da0d12947c8d0c30d04ed444b87b29b553fe993fad7541af2030a4c1f19",
+        "after_project_sha256": "a52f4123f96d594615fb60cfda8990d06e9e2af841dedf8101ab550c5c42243e",
+        "before_wav_sha256": "b8282dcbae730fc53149eda1c4019e49959c0d5c5e7df08a97da6de7eda29d61",
+        "after_wav_sha256": "2ffa3afcea52ef3d4f03a3d4ec667974de0136636cce65fbb1429e5395adfa85",
+        "preserved_content_sha256": "d5ac315aedffbb530e5ad496a4fe79455d89d929e561b2c9f1f11672ff4710df",
+        "backing_notes_sha256": "c70f50f70fd02fce172fddcc59d6eb9f185d8f54524d59f6656a2e187648b0e4",
+        "source_melody_sha256": "b16b09fb83f215c1fe280eff939424f4e9d9f62e53c7d2c822e170b76d49c4cc",
+        "output_melody_sha256": "b455bc0a64db1a302ef45caa46ecb1001c340673918185e5ffe1bd8ece0e7ace",
+        "ab_manifest_sha256": "f54f1e6527d1c85f1b577ff205097111dc85a692aaac0896faf8f75521cb6a93"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 6.941,
+          "CU": 7.685,
+          "PC": 4.887,
+          "PQ": 7.993
+        },
+        "after": {
+          "CE": 6.614,
+          "CU": 7.61,
+          "PC": 4.499,
+          "PQ": 7.911
+        },
+        "delta": {
+          "CE": -0.32699999999999996,
+          "CU": -0.07499999999999929,
+          "PC": -0.3879999999999999,
+          "PQ": -0.08200000000000074
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.43168312311172485,
+          "contrast_cosine": 0.11389613151550293,
+          "contrast_margin": 0.3177869915962219,
+          "positive_cosine_stddev": 0.013190286331939227,
+          "contrast_margin_stddev": 0.057966715913243025
+        },
+        "after": {
+          "positive_cosine": 0.4198491871356964,
+          "contrast_cosine": 0.09410488232970238,
+          "contrast_margin": 0.32574430480599403,
+          "positive_cosine_stddev": 0.003673733310728846,
+          "contrast_margin_stddev": 0.06382713701124887
+        },
+        "delta": {
+          "positive_cosine": -0.011833935976028442,
+          "contrast_cosine": -0.019791249185800552,
+          "contrast_margin": 0.00795731320977211,
+          "positive_cosine_stddev": -0.009516553021210381,
+          "contrast_margin_stddev": 0.005860421098005844
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.6857142857142857,
+          "foreground_bar_rhythm_unique_fraction": 0.2682926829268293,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.12,
+          "melody_continuous_note_pairs": 100,
+          "support_foreground_onset_collision_fraction": 0.2681992337164751,
+          "support_foreground_duration_overlap_fraction": 0.416044776119403,
+          "support_attack_count": 261,
+          "support_sounding_ticks": 128640,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1178,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.45714285714285713,
+          "foreground_bar_rhythm_unique_fraction": 0.4146341463414634,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.07975460122699386,
+          "melody_continuous_note_pairs": 163,
+          "support_foreground_onset_collision_fraction": 0.4827586206896552,
+          "support_foreground_duration_overlap_fraction": 0.8302238805970149,
+          "support_attack_count": 261,
+          "support_sounding_ticks": 128640,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1227,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.2285714285714286,
+          "foreground_bar_rhythm_unique_fraction": 0.1463414634146341,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": -0.04024539877300613,
+          "melody_continuous_note_pairs": 63,
+          "support_foreground_onset_collision_fraction": 0.2145593869731801,
+          "support_foreground_duration_overlap_fraction": 0.4141791044776119,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 49,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.4697986577181208,
+          "quarter_or_longer_fraction": 0.18791946308724833,
+          "silent_middle_half_bar_fraction": 0.2,
+          "terminal_rest_beats_mean": 0.35,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.4
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.494949494949495,
+          "quarter_or_longer_fraction": 0.36363636363636365,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    },
+    "synthwave-s103": {
+      "hashes": {
+        "before_project_sha256": "1eb34d3418b8a5c982ea6d79d4e8b705eaf204212130e1db24a4321ab1fcfec9",
+        "candidate_project_sha256": "85676f1974eb52f0626390014f6c0d4356390919ce47420803a9d9ea54fadf9d",
+        "after_project_sha256": "bfaffe53c5c45aec894763e0d24977fbde69ca8fd47b3a3b1c011eaf099d4a1a",
+        "before_wav_sha256": "4e6dcd42b99f4325aef55126dae6cb234ac0406e7a676045ab0bff6134a20dca",
+        "after_wav_sha256": "d1ad5655df396e4f8c0eb44db628488b4ad44ea3fcb17605c518cd073a6739a1",
+        "preserved_content_sha256": "f1308f32646a0af2e59c88e1ce120cf39531487d428f926a5a923baf392f2aa3",
+        "backing_notes_sha256": "0471182d08ca5afed504b65a992a8bf314dc6ff4dbf5e58c15173214bcc3ba42",
+        "source_melody_sha256": "5872db0c4020c1d3d76fbbd8484c5365409d30ed383cb792b0891a0cbfa4dbf1",
+        "output_melody_sha256": "18134317e70285188eeaac42376e0fe37e11f8e0ea98683431283a5fff4093e5",
+        "ab_manifest_sha256": "8a3688ca72bb42f04d48eb6d888dd6e4b7c65eb262108e1386867509a7971c75"
+      },
+      "audiobox": {
+        "before": {
+          "CE": 6.869,
+          "CU": 7.628,
+          "PC": 4.794,
+          "PQ": 7.95
+        },
+        "after": {
+          "CE": 6.627,
+          "CU": 7.613,
+          "PC": 4.402,
+          "PQ": 7.921
+        },
+        "delta": {
+          "CE": -0.242,
+          "CU": -0.01499999999999968,
+          "PC": -0.39199999999999946,
+          "PQ": -0.028999999999999915
+        }
+      },
+      "clap": {
+        "before": {
+          "positive_cosine": 0.4354950487613678,
+          "contrast_cosine": 0.11608822643756866,
+          "contrast_margin": 0.31940682232379913,
+          "positive_cosine_stddev": 0.00163704555053251,
+          "contrast_margin_stddev": 0.050463267122134
+        },
+        "after": {
+          "positive_cosine": 0.4374330937862396,
+          "contrast_cosine": 0.11358554785450299,
+          "contrast_margin": 0.32384754593173665,
+          "positive_cosine_stddev": 0.0020890456076761714,
+          "contrast_margin_stddev": 0.05479301581029986
+        },
+        "delta": {
+          "positive_cosine": 0.0019380450248718262,
+          "contrast_cosine": -0.0025026785830656734,
+          "contrast_margin": 0.004440723607937513,
+          "positive_cosine_stddev": 0.0004520000571436615,
+          "contrast_margin_stddev": 0.004329748688165859
+        }
+      },
+      "structure": {
+        "before": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.7428571428571429,
+          "foreground_bar_rhythm_unique_fraction": 0.2926829268292683,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.07738095238095238,
+          "melody_continuous_note_pairs": 168,
+          "support_foreground_onset_collision_fraction": 0.3582089552238806,
+          "support_foreground_duration_overlap_fraction": 0.6298076923076923,
+          "support_attack_count": 201,
+          "support_sounding_ticks": 99840,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1221,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "after": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": 0.4,
+          "foreground_bar_rhythm_unique_fraction": 0.4634146341463415,
+          "foreground_nonempty_bars": 41,
+          "foreground_adjacent_bar_pairs": 35,
+          "melody_large_leap_fraction": 0.09545454545454546,
+          "melody_continuous_note_pairs": 220,
+          "support_foreground_onset_collision_fraction": 0.5870646766169154,
+          "support_foreground_duration_overlap_fraction": 0.8918269230769231,
+          "support_attack_count": 201,
+          "support_sounding_ticks": 99840,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 1242,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        },
+        "delta": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": -0.34285714285714286,
+          "foreground_bar_rhythm_unique_fraction": 0.1707317073170732,
+          "foreground_nonempty_bars": 0,
+          "foreground_adjacent_bar_pairs": 0,
+          "melody_large_leap_fraction": 0.018073593073593075,
+          "melody_continuous_note_pairs": 52,
+          "support_foreground_onset_collision_fraction": 0.22885572139303484,
+          "support_foreground_duration_overlap_fraction": 0.26201923076923084,
+          "support_attack_count": 0,
+          "support_sounding_ticks": 0,
+          "comp_voice_motion_semitones": null,
+          "comp_voicing_changes": 0,
+          "comp_matched_voice_count": 0,
+          "comp_entering_leaving_voice_count": 0,
+          "active_note_count": 21,
+          "invalid_clip_count": 0,
+          "invalid_note_count": 0,
+          "nonfinite_values": 0
+        }
+      },
+      "timing": {
+        "before": {
+          "sixteenth_or_shorter_fraction": 0.4541284403669725,
+          "quarter_or_longer_fraction": 0.21559633027522937,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 0.45,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 0.2
+        },
+        "after": {
+          "sixteenth_or_shorter_fraction": 0.4560669456066946,
+          "quarter_or_longer_fraction": 0.3138075313807531,
+          "silent_middle_half_bar_fraction": 0.0,
+          "terminal_rest_beats_mean": 1.0,
+          "terminal_rest_at_least_three_quarters_beat_fraction": 1.0
+        }
+      }
+    }
+  },
+  "listening_excerpts": {
+    "processing": "Same first-chorus slice with a 5 ms linear fade at each edge; no gain normalization. These excerpts are for listening only, not model evaluation.",
+    "files": {
+      "rock-s101": {
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "bpm": 148.0,
+        "start_seconds": 19.45945945945946,
+        "duration_seconds": 12.972972972972974,
+        "files": {
+          "before": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\rock-s101-before-chorus.wav",
+            "sha256": "12254f5c020e206f54a18dd0b1fb3a6ca8bf661727f97fb2f8d74078b3e7ed4d",
+            "source_sha256": "37f183273c90d36679d81e3f6c9451795ef398032763bcd3fe82997291d42378"
+          },
+          "after": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\rock-s101-after-chorus.wav",
+            "sha256": "9ca11ee1b726f4a4b4c71bc70a1f259e9ab6ad308688a201615ed87074488c56",
+            "source_sha256": "754dfc1035b5d31e091c42814b02e79ec8a68c092fc0c6c538da21c351dfd855"
+          }
+        }
+      },
+      "city-pop-s101": {
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "bpm": 106.0,
+        "start_seconds": 27.169811320754718,
+        "duration_seconds": 18.11320754716981,
+        "files": {
+          "before": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\city-pop-s101-before-chorus.wav",
+            "sha256": "6202abe92987a93a6b3879b0b15ccd16b73352a80faaedfa2bb07db756a1b274",
+            "source_sha256": "09088189ab50a6b369d8de9caf9f9763c6ea01f5b43f538f4bc0479783af19e0"
+          },
+          "after": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\city-pop-s101-after-chorus.wav",
+            "sha256": "a9d04e21340b22e50e49861bd26dfab5e3026cc67db9726419e5c10967d55e79",
+            "source_sha256": "2a73c5e9e2ed909b770a3d255da77551db8b2fc78717a38ad365d6b05c70ec0b"
+          }
+        }
+      },
+      "chiptune-s101": {
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "bpm": 140.0,
+        "start_seconds": 20.571428571428573,
+        "duration_seconds": 13.714285714285714,
+        "files": {
+          "before": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\chiptune-s101-before-chorus.wav",
+            "sha256": "4dcd22449c946624c490ae601da71c040aaaa4554d75b339baad974b8d674ba5",
+            "source_sha256": "1ebefbee6c91ebd98efd3b932e6ee0177d8cc556651240419a7c270c8726f315"
+          },
+          "after": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\chiptune-s101-after-chorus.wav",
+            "sha256": "719cfdfb14cf5ab1da97426246df4809402d0f7434b328b1a42392cfe3fb89c6",
+            "source_sha256": "dc488933f6d6328e11ae784320668beb382273f7bdb8e8456b1d713d138a6cb1"
+          }
+        }
+      },
+      "pop-band-s101": {
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "bpm": 124.0,
+        "start_seconds": 30.967741935483872,
+        "duration_seconds": 15.483870967741936,
+        "files": {
+          "before": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\pop-band-s101-before-chorus.wav",
+            "sha256": "f9fe11bd7c25d38ebda430b3fb1fa2c1aceb644f717e4c5fb8127b4acde2a052",
+            "source_sha256": "ed1d4fe8227084c4cc57c98b2e237b5555c1348323226495d855eb4085b21c6c"
+          },
+          "after": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\pop-band-s101-after-chorus.wav",
+            "sha256": "d60ad55f92d74a2f64c8a9cb2076a3071f098dd0674db2018f6417e004bd7087",
+            "source_sha256": "5557155cad75a184b389471cca7716184f9d5150e67e97c747c1f6b2e7de7d44"
+          }
+        }
+      },
+      "synthwave-s101": {
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "bpm": 112.0,
+        "start_seconds": 34.285714285714285,
+        "duration_seconds": 17.142857142857142,
+        "files": {
+          "before": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\synthwave-s101-before-chorus.wav",
+            "sha256": "d087cadcd05e749df10ba9e371062580594c30765bb31f6017d30f65dbc20b79",
+            "source_sha256": "b8282dcbae730fc53149eda1c4019e49959c0d5c5e7df08a97da6de7eda29d61"
+          },
+          "after": {
+            "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\iteration-1\\excerpts\\synthwave-s101-after-chorus.wav",
+            "sha256": "706534e9b33ce703d2275a29f08ef7ba126d7d60958a2aeecb7abeee124e5828",
+            "source_sha256": "2ffa3afcea52ef3d4f03a3d4ec667974de0136636cce65fbb1429e5395adfa85"
+          }
+        }
+      }
+    }
+  },
+  "integrity_audit": {
+    "sha256": "2681e4daef6c5ff4995e71f8958a3c6296c7529f5fb9380bf546fe55e47c6243",
+    "summary": {
+      "status": "pass",
+      "issues": [],
+      "paired_wavs": 18,
+      "full_wavs_checked": 36,
+      "excerpt_wavs_checked": 10,
+      "projects_checked": 54,
+      "all_melodies_changed": true,
+      "all_backing_preserved": true,
+      "before_peak_range": [
+        0.9608144760131836,
+        0.9660508036613464
+      ],
+      "after_peak_range": [
+        0.8819725513458252,
+        0.9682714343070984
+      ],
+      "before_rms_range": [
+        0.10341230836378185,
+        0.15761725495369158
+      ],
+      "after_rms_range": [
+        0.1005043982222295,
+        0.1697073453332928
+      ]
+    }
+  }
+}

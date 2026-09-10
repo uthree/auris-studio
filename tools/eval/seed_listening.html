@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auris — seed listening</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #242b33; background: #f4f5f6; }
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 1040px; padding: 36px 24px 64px; }
+h1 { font-size: 28px; margin: 0 0 12px; } h2 { font-size: 19px; margin: 0 0 16px; }
+p { line-height: 1.7; } .muted { color: #55616d; font-size: 14px; }
+.toolbar, .samples, .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.toolbar { margin: 28px 0 16px; } .actions { margin: 24px 0 12px; }
+button, select, .file-button { font: inherit; border: 1px solid #a5aeb8; border-radius: 8px; padding: 9px 14px; background: white; color: inherit; cursor: pointer; }
+button:hover, .file-button:hover { background: #eaf0f5; }
+button:focus-visible, select:focus-visible, a:focus-visible, .file-button:focus-within { outline: 3px solid #3b75b9; outline-offset: 3px; }
+button[aria-pressed="true"] { color: white; background: #285681; border-color: #285681; }
+.samples button { min-width: 64px; font-weight: 650; }
+.panel { background: white; border: 1px solid #dce1e6; border-radius: 14px; padding: 24px; }
+.sample-label { font-size: 26px; font-weight: 650; margin: 20px 0 10px; }
+audio { width: 100%; margin: 8px 0 18px; }
+.ratings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+.ratings label { display: grid; gap: 8px; font-size: 14px; }
+.ratings select { width: 100%; } .ratings small { color: #55616d; line-height: 1.5; }
+.detail { border-top: 1px solid #dce1e6; margin-top: 24px; padding-top: 20px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 22px; font-size: 14px; }
+dt { color: #55616d; } dd { margin: 0; overflow-wrap: anywhere; }
+.links { display: flex; flex-wrap: wrap; gap: 18px; margin: 18px 0; }
+a { color: #245b8b; } pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f5f6; padding: 12px; border-radius: 6px; font-size: 12px; }
+.comparison-scroll { max-width: 100%; overflow-x: auto; }
+table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 13px; }
+caption { text-align: left; font-weight: 650; margin-bottom: 12px; }
+th, td { text-align: right; white-space: nowrap; padding: 9px 10px; border-bottom: 1px solid #dce1e6; }
+thead th { background: #f4f5f6; font-weight: 600; } th:first-child { text-align: left; }
+.comparison-scroll:focus-visible { outline: 3px solid #3b75b9; outline-offset: 3px; }
+.file-button input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+[hidden] { display: none !important; } #status { min-height: 24px; }
+@media (max-width: 620px) { body { padding: 24px 14px; } .panel { padding: 18px; } .ratings { grid-template-columns: 1fr; } }
+</style>
+<h1>同じジャンル、違う曲の聴き比べ</h1>
+<p class="muted">A〜Hを同じ音量設定で聴き、好み・ノリ・覚えやすさを記録します。最初はseedとモデルのスコアを隠しています。各ジャンルの抜粋は同じ長さです。評価は未入力のままでも保存できます。</p>
+<p id="conditions" class="muted"></p>
+<p id="level-note" class="muted"></p>
+<div class="toolbar"><label for="genre">ジャンル</label><select id="genre"></select><span id="progress" class="muted"></span></div>
+<main id="panels"></main>
+<div class="actions">
+  <button id="reveal" type="button" aria-pressed="false">seedと測定値を表示</button>
+  <button id="export" type="button">評価JSONをダウンロード</button>
+  <label class="file-button">評価JSONを読み込む<input id="import" type="file" accept="application/json,.json"></label>
+</div>
+<p id="status" class="muted" role="status" aria-live="polite"></p>
+<p class="muted">評価はこのブラウザー内に保存します。ファイルを移動した場合やブラウザーによって保存できない場合に備え、JSONをダウンロードしてください。音声・評価を外部に送信する機能はありません。</p>
+<p class="muted">モデル値は曲全体の元WAVを測定した参考情報です。Audiobox CEは楽しさ、PQは制作音質の予測値です。CLAPは指定した説明との類似度で、曲の良さやキャッチーさを直接測るものではありません。</p>
+<noscript><p>このローカル比較表にはJavaScriptが必要です。音声をアップロードする処理はありません。</p></noscript>
+<script>
+"use strict";
+const DATA = /* LISTENING_DATA */ null;
+document.getElementById("level-note").textContent = DATA.groups.every(group => group.level_matched)
+  ? "試聴用の抜粋は、ジャンル内で同じラウドネス目標に揃えています。機器の音量設定も固定して比較してください。"
+  : "抜粋音声の正規化条件は、測定値を表示すると確認できます。機器の音量設定は固定して比較してください。";
+const METRICS = ["preference", "groove", "memorability"];
+const METRIC_LABELS = ["好み", "ノリやすさ", "覚えやすさ"];
+const METRIC_HINTS = ["1：好みに合わない ／ 5：とても好き", "1：拍を感じにくい ／ 5：自然に乗れる", "1：印象に残らない ／ 5：口ずさめる"];
+const STORE_KEY = "auris-listening-" + DATA.corpus_sha256;
+const samples = new Map(DATA.groups.flatMap(g => g.samples.map(s => [s.id, s])));
+let ratings = Object.create(null), diversity = Object.create(null), revealed = false, storageAvailable = true;
+const panels = [], players = [];
+const status = document.getElementById("status");
+const say = text => { status.textContent = text; };
+function element(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  if (className) node.className = className;
+  return node;
+}
+function validateRatings(value) {
+  if (!value || value.schema_version !== 1 || value.corpus_sha256 !== DATA.corpus_sha256)
+    throw new Error("この比較セットの評価JSONではありません。");
+  if (!value.ratings || typeof value.ratings !== "object" || Array.isArray(value.ratings))
+    throw new Error("評価データの形式が正しくありません。");
+  const clean = Object.create(null);
+  for (const [id, entry] of Object.entries(value.ratings)) {
+    if (!samples.has(id) || !entry || typeof entry !== "object" || Array.isArray(entry))
+      throw new Error("不明な音声または評価項目があります。");
+    clean[id] = Object.create(null);
+    for (const metric of METRICS) {
+      const rating = entry[metric];
+      if (rating !== undefined && rating !== null) {
+        if (!Number.isInteger(rating) || rating < 1 || rating > 5)
+          throw new Error("評価は1〜5または未入力にしてください。");
+        clean[id][metric] = rating;
+      }
+    }
+  }
+  const setDiversity = Object.create(null);
+  if (value.set_diversity !== undefined) {
+    if (!value.set_diversity || typeof value.set_diversity !== "object" || Array.isArray(value.set_diversity))
+      throw new Error("ジャンル全体の評価形式が正しくありません。");
+    const presets = new Set(DATA.groups.map(group => group.preset));
+    for (const [preset, rating] of Object.entries(value.set_diversity)) {
+      if (!presets.has(preset) || (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)))
+        throw new Error("ジャンル全体の違いは1〜5または未入力にしてください。");
+      setDiversity[preset] = rating;
+    }
+  }
+  return {ratings: clean, diversity: setDiversity};
+}
+function ratingDocument() {
+  return {schema_version: 1, corpus_sha256: DATA.corpus_sha256,
+    shuffle_version: DATA.shuffle_version, exported_at: new Date().toISOString(),
+    mapping: DATA.groups.flatMap(g => g.samples.map(s => ({id: s.id, preset: g.preset,
+      blind_label: s.blind_label, ...(revealed ? {seed: s.seed} : {})}))), ratings, set_diversity: diversity};
+}
+function persist() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(ratingDocument())); }
+  catch (_) { storageAvailable = false; }
+  say(storageAvailable ? "評価をこのブラウザーに保存しました。" : "ブラウザー保存を利用できません。評価JSONをダウンロードしてください。");
+  updateProgress();
+  panels.forEach(showSummary);
+}
+function updateProgress() {
+  const count = Object.values(ratings).reduce((sum, entry) => sum + METRICS.filter(m => Number.isInteger(entry[m])).length, 0);
+  const sets = Object.values(diversity).filter(Number.isInteger).length;
+  document.getElementById("progress").textContent = `曲の評価 ${count} / ${samples.size * METRICS.length}・ジャンル全体 ${sets} / ${DATA.groups.length}`;
+}
+try {
+  const saved = localStorage.getItem(STORE_KEY);
+  if (saved) { const valid = validateRatings(JSON.parse(saved)); ratings = valid.ratings; diversity = valid.diversity; }
+} catch (_) { storageAvailable = false; }
+function pauseOthers(current) { players.forEach(player => { if (player !== current) player.pause(); }); }
+function showSummary(panel) {
+  panel.summary.hidden = !revealed;
+  panel.summary.replaceChildren();
+  if (!revealed) return;
+  const scroll = element("div", undefined, "comparison-scroll");
+  scroll.tabIndex = 0; scroll.setAttribute("role", "region");
+  scroll.setAttribute("aria-label", `${panel.group.preset} の評価比較表。狭い画面では横にスクロールできます。`);
+  const table = element("table"), head = element("thead"), headRow = element("tr"), body = element("tbody");
+  table.append(element("caption", "このジャンルの比較 — 未入力は「—」"));
+  for (const name of ["サンプル", "Seed", "好み", "ノリ", "覚えやすさ", "CE", "PQ", "CLAP"]) {
+    const cell = element("th", name); cell.scope = "col"; headRow.append(cell);
+  }
+  head.append(headRow);
+  for (const sample of panel.group.samples) {
+    const row = element("tr"), name = element("th", sample.blind_label); name.scope = "row"; row.append(name);
+    const values = [sample.seed, ...METRICS.map(metric => ratings[sample.id]?.[metric] ?? "—"),
+      sample.scores.CE === null ? "—" : sample.scores.CE.toFixed(3),
+      sample.scores.PQ === null ? "—" : sample.scores.PQ.toFixed(3),
+      sample.scores.CLAP === null ? "—" : sample.scores.CLAP.toFixed(4)];
+    values.forEach(value => row.append(element("td", String(value)))); body.append(row);
+  }
+  table.append(head, body); scroll.append(table); panel.summary.append(scroll);
+}
+function showDetail(panel) {
+  const sample = panel.current;
+  showSummary(panel);
+  panel.detail.hidden = !revealed;
+  panel.detail.replaceChildren();
+  if (!revealed) return;
+  const terms = element("dl");
+  const entries = [["seed", sample.seed], ["抜粋の長さ", `${sample.duration.toFixed(2)} 秒`],
+    ["Audiobox CE", sample.scores.CE], ["Audiobox PQ", sample.scores.PQ], ["CLAP 類似度", sample.scores.CLAP]];
+  for (const [name, value] of entries) {
+    terms.append(element("dt", name), element("dd", value === null ? "未測定" : typeof value === "number" && name !== "seed" ? value.toFixed(4) : String(value)));
+  }
+  const links = element("div", undefined, "links");
+  for (const [name, url] of [["抜粋WAV", sample.excerpt], ["曲全体のWAV", sample.wav], ["編集可能な楽譜", sample.project]]) {
+    const link = element("a", name); link.href = url; links.append(link);
+  }
+  panel.detail.append(terms, links);
+  const metadata = {...sample.excerpt_conditions};
+  if (Object.keys(metadata).length) {
+    panel.detail.append(element("p", "抜粋・音量の条件", "muted"), element("pre", JSON.stringify(metadata, null, 2)));
+  }
+  if (sample.symbolic && Object.keys(sample.symbolic).length) {
+    const disclosure = element("details");
+    disclosure.append(element("summary", "楽譜の測定値・リズムの特徴"), element("pre", JSON.stringify(sample.symbolic, null, 2)));
+    panel.detail.append(disclosure);
+  }
+}
+function choose(panel, sample, play) {
+  pauseOthers(panel.audio);
+  panel.audio.pause();
+  panel.current = sample;
+  panel.audio.src = sample.excerpt;
+  panel.heading.textContent = `サンプル ${sample.blind_label}`;
+  panel.audio.setAttribute("aria-label", `${panel.group.preset} サンプル ${sample.blind_label}`);
+  panel.buttons.forEach((button, id) => button.setAttribute("aria-pressed", String(id === sample.id)));
+  panel.selects.forEach((select, index) => { select.value = String(ratings[sample.id]?.[METRICS[index]] ?? ""); });
+  showDetail(panel);
+  if (play) panel.audio.play().catch(() => say("再生ボタンを押すと音声を聴けます。"));
+}
+const genreSelect = document.getElementById("genre");
+for (const group of DATA.groups) {
+  const option = element("option", group.preset); option.value = group.preset; genreSelect.append(option);
+  const section = element("section", undefined, "panel");
+  const heading = element("h2", group.preset), row = element("div", undefined, "samples");
+  row.setAttribute("aria-label", "サンプルを選んで再生");
+  const current = element("p", undefined, "sample-label"), audio = element("audio");
+  audio.controls = true; audio.preload = "none"; players.push(audio);
+  audio.addEventListener("play", () => pauseOthers(audio));
+  const ratingRow = element("div", undefined, "ratings"), detail = element("div", undefined, "detail");
+  const setRating = element("label", "このジャンルのA〜Hは、互いにどのくらい違う曲に感じますか？");
+  const setSelect = element("select");
+  const setEmpty = element("option", "未入力"); setEmpty.value = ""; setSelect.append(setEmpty);
+  for (let rating = 1; rating <= 5; rating++) {
+    const option = element("option", String(rating)); option.value = String(rating); setSelect.append(option);
+  }
+  setSelect.value = String(diversity[group.preset] ?? "");
+  setSelect.addEventListener("change", () => { diversity[group.preset] = setSelect.value === "" ? null : Number(setSelect.value); persist(); });
+  setRating.append(setSelect, element("small", "一通り聴いてから記録。1：よく似ている ／ 5：とても違う"));
+  const setRow = element("div", undefined, "ratings detail"); setRow.style.gridTemplateColumns = "1fr"; setRow.append(setRating);
+  const summary = element("div", undefined, "detail");
+  const panel = {group, section, audio, heading: current, detail, summary, buttons: new Map(), selects: [], setSelect};
+  group.samples.forEach(sample => {
+    const button = element("button", sample.blind_label); button.type = "button";
+    button.setAttribute("aria-label", `サンプル ${sample.blind_label} を再生`);
+    button.addEventListener("click", () => choose(panel, sample, true));
+    panel.buttons.set(sample.id, button); row.append(button);
+  });
+  METRICS.forEach((metric, index) => {
+    const label = element("label", METRIC_LABELS[index]), select = element("select");
+    const empty = element("option", "未入力"); empty.value = ""; select.append(empty);
+    for (let rating = 1; rating <= 5; rating++) {
+      const option = element("option", String(rating)); option.value = String(rating); select.append(option);
+    }
+    select.addEventListener("change", () => {
+      const id = panel.current.id;
+      ratings[id] ??= Object.create(null);
+      if (select.value === "") delete ratings[id][metric]; else ratings[id][metric] = Number(select.value);
+      persist();
+    });
+    label.append(select, element("small", METRIC_HINTS[index])); ratingRow.append(label); panel.selects.push(select);
+  });
+  section.append(heading, row, current, audio, ratingRow, setRow, detail, summary);
+  document.getElementById("panels").append(section); panels.push(panel);
+  choose(panel, group.samples[0], false);
+}
+function showGenre() {
+  pauseOthers(null);
+  panels.forEach(panel => { panel.section.hidden = panel.group.preset !== genreSelect.value; });
+}
+genreSelect.addEventListener("change", showGenre); showGenre(); updateProgress();
+if (Object.keys(DATA.conditions).length) document.getElementById("conditions").textContent = typeof DATA.conditions === "string" ? DATA.conditions : JSON.stringify(DATA.conditions);
+document.getElementById("reveal").addEventListener("click", event => {
+  revealed = !revealed;
+  event.currentTarget.textContent = revealed ? "seedと測定値を隠す" : "seedと測定値を表示";
+  event.currentTarget.setAttribute("aria-pressed", String(revealed));
+  panels.forEach(showDetail);
+});
+document.getElementById("export").addEventListener("click", () => {
+  const blob = new Blob([JSON.stringify(ratingDocument(), null, 2) + "\n"], {type: "application/json"});
+  const url = URL.createObjectURL(blob), link = element("a");
+  link.href = url; link.download = "auris-listening-ratings.json";
+  document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+  say("評価JSONをダウンロードしました。未入力の項目は補完していません。");
+});
+document.getElementById("import").addEventListener("change", async event => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const imported = validateRatings(JSON.parse(await file.text()));
+    for (const [id, entry] of Object.entries(imported.ratings)) ratings[id] = entry;
+    for (const [preset, rating] of Object.entries(imported.diversity)) diversity[preset] = rating;
+    panels.forEach(panel => {
+      panel.selects.forEach((select, index) => { select.value = String(ratings[panel.current.id]?.[METRICS[index]] ?? ""); });
+      panel.setSelect.value = String(diversity[panel.group.preset] ?? "");
+    });
+    persist();
+  } catch (error) { say(error.message || "評価JSONを読み込めませんでした。"); }
+  event.target.value = "";
+});
+if (!storageAvailable) say("ブラウザー保存を利用できません。評価JSONをダウンロードしてください。");
+</script>
+</html>

@@ -208,6 +208,7 @@ mod tests {
                 start: Ticks::ZERO,
                 length: Ticks::ZERO,
                 bars: 4,
+                phrases: crate::phrasing::plan_phrases(4, None),
                 key: crate::theory::key::Key::parse("C major").unwrap(),
                 tempo: 120.0,
                 intensity: *intensity,

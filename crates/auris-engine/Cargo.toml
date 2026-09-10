@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# The Windows ASIO backend needs the external ASIO SDK and LLVM for its bindings.
+asio = ["cpal/asio"]
+
 # The engine drives plugins only through the `auris-core` traits, so it deliberately does not
 # depend on `auris-dsp` or `auris-synth`; the binary is what installs those into the registry.
 [dependencies]
@@ -17,4 +21,4 @@ log.workspace = true
 thiserror.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-cpal = { workspace = true, features = ["asio", "realtime"] }
+cpal = { workspace = true, features = ["realtime"] }

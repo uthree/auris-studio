@@ -1,0 +1,419 @@
+//! Rhythmic gestures whose arrivals are placed in the context of the whole bar.
+
+use super::{Accent, Cell, Grid, Motif, PerformanceStyle, Rng};
+
+/// Fill a short run with evenly spaced subdivisions, retaining a longer target beside it.
+fn subdivisions(start: usize, length: usize, count: usize, onsets: &mut Vec<usize>) {
+    for index in 0..count.min(length).max(1) {
+        onsets.push(start + index * length / count.min(length).max(1));
+    }
+}
+
+/// Draw gestures, then allocate their approaches against the following gesture's arrival.
+pub(super) fn grouped(
+    grid: Grid,
+    density: f32,
+    syncopation: f32,
+    style: Option<PerformanceStyle>,
+    rng: &mut Rng,
+) -> Vec<Cell> {
+    let steps = grid.steps_per_bar();
+    let beat = grid.steps_per_beat().min(steps).max(1);
+    let density = density.clamp(0.0, 1.0);
+    let syncopation = syncopation.clamp(0.0, 1.0);
+    let splits = (1 + (density * 3.0).round() as usize).min(beat);
+    // Held, short-long, long-short, anticipation, pickup. Styles choose gestures, while the
+    // meter supplies their size; a dotted quarter in 6/8 remains a whole felt beat.
+    let weights = match style {
+        Some(PerformanceStyle::Ambient) => [8.0, 1.0, 1.0, 0.5, 0.5],
+        Some(PerformanceStyle::Orchestral) => [4.0, 2.0, 2.0, 0.5, 0.5],
+        Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => {
+            [0.5, 2.0, 2.0, 2.0 + 3.0 * syncopation, 2.0]
+        }
+        Some(PerformanceStyle::Rock | PerformanceStyle::Chiptune) => {
+            [0.5, 4.0, 3.0, 0.5 + syncopation, 1.0]
+        }
+        _ => [0.5, 3.0, 2.0, 1.0 + 3.0 * syncopation, 1.0],
+    };
+    let mut cells = Vec::new();
+    for start in (0..steps).step_by(2 * beat) {
+        let end = (start + 2 * beat).min(steps);
+        let length = end - start;
+        let mut onsets = Vec::new();
+        let mut target = start;
+        if length <= beat {
+            // An unmatched beat in an odd meter finishes the cell with one held arrival.
+            onsets.push(start);
+        } else {
+            let middle = start + beat;
+            let short = (beat / 2).max(1);
+            match rng.weighted(&weights) {
+                0 => onsets.push(start),
+                1 => {
+                    subdivisions(start, beat, splits, &mut onsets);
+                    onsets.push(middle);
+                    target = middle;
+                }
+                2 => {
+                    onsets.push(start);
+                    subdivisions(middle, end - middle, splits, &mut onsets);
+                }
+                3 if beat > 1 => {
+                    target = middle - short;
+                    subdivisions(start, target - start, splits, &mut onsets);
+                    onsets.push(target);
+                }
+                _ => {
+                    let pickup = start + short.min(beat - 1);
+                    subdivisions(pickup, middle - pickup, splits, &mut onsets);
+                    onsets.push(middle);
+                    target = middle;
+                }
+            }
+        }
+        // Move a short preparation off the beat, keeping the held target intact. Changing
+        // only palette weights can select the same rhythm at both ends of the syncopation dial.
+        if beat > 1 && rng.chance(syncopation) {
+            for position in 0..onsets.len() {
+                let step = onsets[position];
+                let next = onsets.get(position + 1).copied().unwrap_or(end);
+                let held = step == target;
+                let room = next - step;
+                if step.is_multiple_of(beat) && room > if held { beat } else { 1 } {
+                    let delay = (beat / 2).max(1).min(room - if held { beat } else { 1 });
+                    onsets[position] += delay;
+                    if held {
+                        target += delay;
+                    }
+                    break;
+                }
+            }
+        }
+        for (position, step) in onsets.iter().enumerate() {
+            let next = onsets.get(position + 1).copied().unwrap_or(end);
+            cells.push(Cell {
+                step: *step,
+                accent: if *step == target {
+                    Accent::Strong
+                } else {
+                    Accent::Normal
+                },
+                length: next - step,
+                degree: 0,
+            });
+        }
+    }
+    connect_gestures(grid, style, &mut cells);
+    cells
+}
+
+/// Spread a busy preparation towards its answer instead of stopping early in the bar.
+///
+/// An anticipated target is provisional until the following gesture is known. Two short
+/// attacks followed by a long hold and a pickup rest can otherwise leave two felt beats
+/// without a new attack. Retiming the existing approach preserves its contour and density;
+/// a sparse hold, a late arrival and a sustained palette have no such obligation to move.
+fn connect_gestures(grid: Grid, style: Option<PerformanceStyle>, cells: &mut [Cell]) {
+    if matches!(
+        style,
+        Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral)
+    ) {
+        return;
+    }
+    let steps = grid.steps_per_bar();
+    let beat = grid.steps_per_beat().max(1);
+    for boundary in (2 * beat..steps).step_by(2 * beat) {
+        let start = cells.partition_point(|cell| cell.step < boundary - 2 * beat);
+        let next = cells.partition_point(|cell| cell.step < boundary);
+        if next - start < 3 || next == cells.len() {
+            continue;
+        }
+        let target = next - 1;
+        let following = cells[next].step;
+        if cells[target].length < beat || following - cells[target].step <= beat {
+            continue;
+        }
+        let arrival = following.saturating_sub(beat).min(boundary - 1);
+        let first = cells[start].step;
+        let end = cells[target].step + cells[target].length;
+        if arrival <= cells[target].step || arrival >= end {
+            continue;
+        }
+        // Prefer felt beats, then their natural subdivisions. Evenly stretching the old
+        // run would invent dotted subdivisions on a straight grid. The pickup stays put.
+        let mut preparation: Vec<usize> = (first + 1..arrival).collect();
+        preparation.sort_by_key(|step| {
+            // Grid::weight distinguishes beats and their first subdivisions. Below that,
+            // the common divisor prefers nested subdivisions on fine or triplet grids.
+            let mut divisor = beat;
+            let mut phase = step % beat;
+            while phase != 0 {
+                (divisor, phase) = (phase, divisor % phase);
+            }
+            (
+                std::cmp::Reverse(grid.weight(*step)),
+                std::cmp::Reverse(divisor),
+                *step,
+            )
+        });
+        preparation.truncate(target - start - 1);
+        preparation.push(first);
+        preparation.push(arrival);
+        preparation.sort_unstable();
+        for (cell, step) in cells[start..next].iter_mut().zip(preparation) {
+            cell.step = step;
+        }
+        // Only the approach is reflowed. The following gesture keeps its deliberate pickup
+        // rest, and a liked late held target keeps both its timing and its articulation.
+        for index in start..target {
+            cells[index].length = cells[index + 1].step - cells[index].step;
+        }
+        cells[target].length = end - arrival;
+    }
+}
+
+/// Place a held arrival before the final felt beat, which is reserved for the next phrase.
+pub(super) fn close_phrase(grid: Grid, figure: &mut Motif) {
+    let steps = grid.steps_per_bar();
+    let beat = grid.steps_per_beat();
+    if steps <= beat || figure.cells.is_empty() {
+        return;
+    }
+    let arrival_degree = figure.cells.last().map_or(0, |cell| cell.degree);
+    let release = steps - beat;
+    let target = release.saturating_sub(beat);
+    let earliest = target.saturating_sub(beat / 2);
+    if let Some(index) = figure.cells.iter().rposition(|cell| cell.step <= target) {
+        figure.cells.truncate(index + 1);
+        if index >= 2 && figure.cells[index].step < earliest {
+            // An early preparation is not the final arrival. Keep the approach and give
+            // the final degree its own landing, rather than stretching that preparation
+            // across most of the bar. A half-beat anticipated arrival is already valid.
+            let previous = &mut figure.cells[index];
+            previous.length = previous.length.min(target - previous.step);
+            figure.cells.push(Cell {
+                step: target,
+                length: release - target,
+                degree: arrival_degree,
+                accent: Accent::Strong,
+            });
+        }
+    } else {
+        // A pickup may begin after the available arrival in a two-beat bar. Move that one
+        // arrival onto the downbeat; retaining the pickup would consume its own breath.
+        figure.cells.truncate(1);
+        figure.cells[0].step = 0;
+    }
+    if let Some(last) = figure.cells.last_mut() {
+        last.length = release - last.step;
+        last.accent = Accent::Strong;
+        last.degree = arrival_degree;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use auris_core::time::TimeSignature;
+
+    fn cells_at(positions: &[(usize, usize)]) -> Vec<Cell> {
+        positions
+            .iter()
+            .enumerate()
+            .map(|(degree, &(step, length))| Cell {
+                step,
+                length,
+                degree: degree as i32,
+                accent: Accent::Normal,
+            })
+            .collect()
+    }
+
+    fn signature(cells: &[Cell]) -> Vec<(usize, usize, i32, Accent)> {
+        cells
+            .iter()
+            .map(|cell| (cell.step, cell.length, cell.degree, cell.accent))
+            .collect()
+    }
+
+    #[test]
+    fn an_early_busy_arrival_is_retimed_without_adding_notes_or_filling_the_pickup() {
+        let mut cells = cells_at(&[(0, 1), (1, 1), (2, 6), (10, 1), (11, 1), (12, 4)]);
+        cells[2].accent = Accent::Strong;
+        connect_gestures(Grid::default(), Some(PerformanceStyle::PopBand), &mut cells);
+        assert_eq!(
+            signature(&cells),
+            vec![
+                (0, 4, 0, Accent::Normal),
+                (4, 2, 1, Accent::Normal),
+                (6, 2, 2, Accent::Strong),
+                (10, 1, 3, Accent::Normal),
+                (11, 1, 4, Accent::Normal),
+                (12, 4, 5, Accent::Normal),
+            ]
+        );
+    }
+
+    #[test]
+    fn late_arrivals_flowing_heads_and_sparse_holds_keep_their_rhythm() {
+        for positions in [
+            &[(0, 4), (4, 2), (6, 2), (10, 6)][..],
+            &[(0, 2), (2, 2), (4, 4), (8, 2), (10, 2), (12, 4)],
+            &[(0, 8), (8, 4), (12, 4)],
+        ] {
+            let mut cells = cells_at(positions);
+            let before = signature(&cells);
+            connect_gestures(Grid::default(), Some(PerformanceStyle::PopBand), &mut cells);
+            assert_eq!(signature(&cells), before);
+        }
+    }
+
+    #[test]
+    fn sustained_palettes_can_keep_an_early_held_target() {
+        for style in [PerformanceStyle::Ambient, PerformanceStyle::Orchestral] {
+            let mut cells = cells_at(&[(0, 1), (1, 1), (2, 6), (10, 6)]);
+            let before = signature(&cells);
+            connect_gestures(Grid::default(), Some(style), &mut cells);
+            assert_eq!(signature(&cells), before);
+        }
+    }
+
+    #[test]
+    fn redistributing_an_approach_keeps_its_leading_pickup() {
+        let mut cells = cells_at(&[(1, 1), (2, 1), (3, 5), (10, 6)]);
+        connect_gestures(Grid::default(), Some(PerformanceStyle::CityPop), &mut cells);
+        assert_eq!(
+            cells.iter().map(|cell| cell.step).collect::<Vec<_>>(),
+            [1, 4, 6, 10]
+        );
+    }
+
+    #[test]
+    fn fine_grids_prefer_nested_subdivisions_over_an_initial_cluster() {
+        let grid = Grid::new(TimeSignature::default(), 8);
+        let mut cells = cells_at(&[(0, 1), (1, 1), (2, 1), (3, 1), (4, 12), (20, 12)]);
+        connect_gestures(grid, Some(PerformanceStyle::PopBand), &mut cells);
+        assert_eq!(
+            cells.iter().map(|cell| cell.step).collect::<Vec<_>>(),
+            [0, 2, 4, 8, 12, 20]
+        );
+    }
+
+    #[test]
+    fn sparse_phrase_endings_do_not_gain_an_extra_attack() {
+        let mut figure = Motif {
+            cells: cells_at(&[(0, 16)]),
+        };
+        close_phrase(Grid::default(), &mut figure);
+        assert_eq!(signature(&figure.cells), [(0, 12, 0, Accent::Strong)]);
+    }
+
+    #[test]
+    fn a_busy_opening_does_not_spend_two_beats_waiting_for_the_answer() {
+        let grid = Grid::default();
+        let middle = grid.steps_per_bar() / 2;
+        for seed in 0..128 {
+            let cells = grouped(
+                grid,
+                0.55,
+                0.65,
+                Some(PerformanceStyle::PopBand),
+                &mut Rng::stream(seed, &[]),
+            );
+            if cells.iter().filter(|cell| cell.step < middle).count() < 3 {
+                continue;
+            }
+            for pair in cells.windows(2) {
+                if pair[0].step < middle && pair[1].step >= middle {
+                    assert!(
+                        pair[1].step - pair[0].step < 2 * grid.steps_per_beat(),
+                        "seed {seed} stops in mid-phrase: {cells:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_closing_answer_does_not_stretch_the_early_preparation_into_the_cadence() {
+        let grid = Grid::default();
+        let mut figure = Motif {
+            cells: cells_at(&[(0, 1), (1, 1), (2, 6), (10, 1), (11, 1), (12, 4)]),
+        };
+        close_phrase(grid, &mut figure);
+        let last = figure.cells.last().unwrap();
+        assert!(
+            last.step >= grid.steps_per_bar() / 2 - grid.steps_per_beat() / 2,
+            "the answer fell back to the opening: {figure:?}"
+        );
+        assert_eq!(last.degree, 5);
+    }
+
+    #[test]
+    fn cells_and_arrivals_fit_odd_compound_and_triplet_grids() {
+        let signatures = TimeSignature::COMMON
+            .into_iter()
+            .chain([TimeSignature::new(1, 16)]);
+        for signature in signatures {
+            for subdivision in [1, 2, 3, 4, 6, 8] {
+                let grid = Grid::new(signature, subdivision);
+                for style in [
+                    None,
+                    Some(PerformanceStyle::PopBand),
+                    Some(PerformanceStyle::Rock),
+                    Some(PerformanceStyle::Chiptune),
+                    Some(PerformanceStyle::CityPop),
+                    Some(PerformanceStyle::JazzTrio),
+                    Some(PerformanceStyle::Synthwave),
+                    Some(PerformanceStyle::Orchestral),
+                    Some(PerformanceStyle::Ambient),
+                ] {
+                    for seed in 0..16 {
+                        let mut figure = Motif {
+                            cells: grouped(
+                                grid,
+                                seed as f32 / 15.0,
+                                0.7,
+                                style,
+                                &mut Rng::stream(seed, &[]),
+                            ),
+                        };
+                        assert!(!figure.cells.is_empty());
+                        assert!(figure.cells.iter().all(|cell| {
+                            cell.length > 0 && cell.step + cell.length <= grid.steps_per_bar()
+                        }));
+                        assert!(
+                            figure
+                                .cells
+                                .windows(2)
+                                .all(|pair| { pair[0].step + pair[0].length <= pair[1].step })
+                        );
+                        close_phrase(grid, &mut figure);
+                        let last = figure.cells.last().unwrap();
+                        let limit = if grid.steps_per_bar() > grid.steps_per_beat() {
+                            grid.steps_per_bar() - grid.steps_per_beat()
+                        } else {
+                            grid.steps_per_bar()
+                        };
+                        assert_eq!(last.step + last.length, limit);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn density_subdivides_gestures_without_removing_the_held_target() {
+        let grid = Grid::default();
+        let mut low_count = 0;
+        let mut high_count = 0;
+        for seed in 0..32 {
+            let low = grouped(grid, 0.1, 0.5, None, &mut Rng::stream(seed, &[]));
+            let high = grouped(grid, 0.9, 0.5, None, &mut Rng::stream(seed, &[]));
+            low_count += low.len();
+            high_count += high.len();
+            assert!(high.iter().any(|cell| cell.length >= grid.steps_per_beat()));
+        }
+        assert!(high_count > low_count);
+    }
+}

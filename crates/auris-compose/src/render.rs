@@ -385,7 +385,8 @@ fn clips_of(
 /// Turns a planned frame and its parts into tracks of clips.
 fn render(spec: &SongSpec, frame: &Frame) -> Composition {
     let settings = ScoreSettings::from(spec);
-    let drafts = write_parts(&settings, &spec.parts, frame);
+    let mut drafts = write_parts(&settings, &spec.parts, frame);
+    crate::arrangement::arrange(spec, frame, &mut drafts);
     // The roster entry each draft came from. A draft carries its part's name and not the part, and
     // the name is what ties the two together — which is enough, because a roster may not hold two
     // parts of one name.
@@ -1664,7 +1665,7 @@ mod tests {
     }
 
     /// Complete compositions pin intended changes in harmony, note counts and performance.
-    /// Updated for phrase-based generated harmony and mood-derived default tempo.
+    /// Updated for melodic call/answer development and phrase-aware timing.
     #[test]
     fn the_composer_writes_what_it_wrote_before() {
         // A chart nobody asked for is the composer's own, and so the only kind it colours. In a
@@ -1682,7 +1683,7 @@ mod tests {
             ),
             "verse·1 C major | Am7 Fm7 C G7 Cmaj7 Em7 Fmaj9 G |\n\
              ending·1 C major | C |\n\
-             178 notes, digest 3f89c829b62510b0\n"
+             207 notes, digest 51e81b7d8a27aa42\n"
         );
 
         // Minor harmony keeps its dominant major while other chords follow the mood.
@@ -1701,21 +1702,20 @@ mod tests {
             ),
             "verse·1 A minor | Am7 Gbm9 Dm7 Dm E Am7 Gbm7 Cmaj7 E7 |\n\
              ending·1 A minor | Am |\n\
-             253 notes, digest d36091242b7e9bed\n"
+             214 notes, digest 8c2d24337a9c7aff\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
         // here that writes `humanize = 0`, so nothing it holds has ever been moved by the wander.
         // Its chords are therefore the assertion that colouring reaches no quoted chart: they have
-        // not changed through any of this. Its digest has, because the bass leaps where it used to
-        // restrike.
+        // not changed through any of this. Its digest follows the current score writers.
         assert_eq!(
             fingerprint(BASE),
             "intro·1 C major | C G Am F |\n\
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             627 notes, digest ded762cc6bf7af13\n"
+             516 notes, digest 63f5ade01569a85d\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1724,8 +1724,7 @@ mod tests {
         // the key still in force. Every other chord of the quoted chart is untouched, which is the
         // scope of the trade — one bar, only where a modulation was asked for by hand.
         //
-        // The count is unchanged at 204. This edit moves a chord and must never add or drop a
-        // note; the digest moved because the parts play what the chord says.
+        // The parts follow that explicit modulation as well as the current phrase plan.
         assert_eq!(
             fingerprint(
                 r#"
@@ -1743,8 +1742,32 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             221 notes, digest 358d5fd52944492d\n"
+             239 notes, digest 3cd8c201e2dd889d\n"
         );
+    }
+
+    #[test]
+    fn foreground_cooperation_does_not_depend_on_roster_order() {
+        let mut spec = crate::preset("city-pop").unwrap().spec();
+        let original = compose(&spec);
+        spec.parts.reverse();
+        let reordered = compose(&spec);
+        for track in original
+            .tracks
+            .iter()
+            .filter(|track| track.drum_parts.is_empty())
+        {
+            let same = reordered
+                .tracks
+                .iter()
+                .find(|t| t.name == track.name)
+                .unwrap();
+            assert_eq!(
+                track.clips, same.clips,
+                "{} changed when the roster moved",
+                track.name
+            );
+        }
     }
 
     #[test]

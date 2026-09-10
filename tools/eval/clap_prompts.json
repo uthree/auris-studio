@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "purpose": "Fixed descriptions of preset identity. Similarity is not musical quality or probability. Freeze this file before comparing renders.",
+  "presets": {
+    "chiptune": {
+      "positive": [
+        {"id": "style", "text": "This audio is upbeat chiptune video game music."},
+        {"id": "instruments", "text": "An instrumental electronic melody with square wave synthesizers, synthesized bass and a steady drum beat."}
+      ],
+      "contrast": [
+        {"id": "acoustic", "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."},
+        {"id": "orchestral", "text": "This audio is slow orchestral music with strings, horns and a flute."}
+      ]
+    },
+    "game-loop": {
+      "positive": [
+        {"id": "style", "text": "This audio is looping retro video game background music."},
+        {"id": "instruments", "text": "An instrumental chiptune with a repeating electronic melody, synthesized bass and rhythmic drums."}
+      ],
+      "contrast": [
+        {"id": "acoustic", "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."},
+        {"id": "orchestral", "text": "This audio is slow orchestral music with strings, horns and a flute."}
+      ]
+    },
+    "pop-band": {
+      "positive": [
+        {"id": "style", "text": "This audio is upbeat instrumental pop band music."},
+        {"id": "instruments", "text": "A pop melody accompanied by piano chords, strings, bass guitar and a steady drum kit."}
+      ],
+      "contrast": [
+        {"id": "ambient", "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."},
+        {"id": "jazz", "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."}
+      ]
+    },
+    "city-pop": {
+      "positive": [
+        {"id": "style", "text": "This audio is instrumental city pop with a relaxed funky groove."},
+        {"id": "instruments", "text": "A melodic pop instrumental with electric piano chords, syncopated bass and a rhythmic drum kit."}
+      ],
+      "contrast": [
+        {"id": "orchestral", "text": "This audio is slow orchestral music with strings, horns and a flute."},
+        {"id": "ambient", "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."}
+      ]
+    },
+    "rock": {
+      "positive": [
+        {"id": "style", "text": "This audio is energetic instrumental rock music."},
+        {"id": "instruments", "text": "An electric guitar melody with rhythm guitar chords, bass guitar and a driving rock drum beat."}
+      ],
+      "contrast": [
+        {"id": "ambient", "text": "This audio is slow ambient music with sustained synthesizer pads and no drums."},
+        {"id": "jazz", "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."}
+      ]
+    },
+    "jazz-trio": {
+      "positive": [
+        {"id": "style", "text": "This audio is instrumental jazz trio music with a swinging rhythm."},
+        {"id": "instruments", "text": "An acoustic piano melody and jazz chords with upright bass and brushed drums."}
+      ],
+      "contrast": [
+        {"id": "rock", "text": "This audio is heavy rock music with distorted electric guitars and loud drums."},
+        {"id": "chiptune", "text": "This audio is chiptune video game music with square wave synthesizers."}
+      ]
+    },
+    "orchestral": {
+      "positive": [
+        {"id": "style", "text": "This audio is orchestral instrumental music."},
+        {"id": "instruments", "text": "A flute melody with strings, French horns, harp, cello and occasional timpani."}
+      ],
+      "contrast": [
+        {"id": "rock", "text": "This audio is heavy rock music with distorted electric guitars and loud drums."},
+        {"id": "chiptune", "text": "This audio is chiptune video game music with square wave synthesizers."}
+      ]
+    },
+    "synthwave": {
+      "positive": [
+        {"id": "style", "text": "This audio is retro synthwave electronic instrumental music."},
+        {"id": "instruments", "text": "A synthesizer lead with sustained synth pads, pulsing synth bass, arpeggios and a drum machine beat."}
+      ],
+      "contrast": [
+        {"id": "acoustic", "text": "This audio is an acoustic jazz piano trio with upright bass and brushed drums."},
+        {"id": "orchestral", "text": "This audio is slow orchestral music with strings, horns and a flute."}
+      ]
+    },
+    "ambient": {
+      "positive": [
+        {"id": "style", "text": "This audio is calm ambient instrumental music."},
+        {"id": "instruments", "text": "Slow sustained synthesizer pads and soft bell tones with spacious textures and no drum beat."}
+      ],
+      "contrast": [
+        {"id": "rock", "text": "This audio is energetic rock music with electric guitars and a driving drum beat."},
+        {"id": "dance", "text": "This audio is fast electronic dance music with a strong kick drum and rapid percussion."}
+      ]
+    }
+  }
+}

@@ -19,6 +19,7 @@ use jpreprocess::{DefaultTokenizer, JPreprocess, SystemDictionaryConfig};
 use crate::accent::{AccentPhrase, SungMora};
 use crate::kana::{kana_phonemes, split_kana_lyric};
 use crate::openjtalk::openjtalk_phoneme;
+use crate::phoneme::VOWELS;
 
 /// What went wrong turning text into phonemes.
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +133,7 @@ impl JapaneseDictionary {
         njd.preprocess();
 
         let mut phrases: Vec<AccentPhrase> = Vec::new();
+        let mut previous_vowel = None;
         for node in &njd.nodes {
             let pron = node.get_pron();
             // Katakana per mora; a devoiced mora prints a trailing ’ the kana table has no
@@ -143,13 +145,16 @@ impl JapaneseDictionary {
                 .filter(|text| !matches!(text.as_str(), "、" | "？"))
                 .collect();
             if kana.is_empty() {
+                previous_vowel = None;
                 continue;
             }
-            let moras: Vec<SungMora> = split_kana_lyric(&kana)
-                .ok_or_else(|| refused(format!("unreadable moras `{kana}`")))?
-                .into_iter()
-                .map(|(text, phonemes)| SungMora { text, phonemes })
-                .collect();
+            let moras = dictionary_moras(&kana, previous_vowel.as_deref())
+                .ok_or_else(|| refused(format!("unreadable moras `{kana}`")))?;
+            previous_vowel = moras
+                .last()
+                .and_then(|mora| mora.phonemes.last())
+                .filter(|phoneme| VOWELS.contains(&phoneme.as_str()))
+                .cloned();
             match (node.get_chain_flag(), phrases.last_mut()) {
                 (Some(true), Some(last)) => last.moras.extend(moras),
                 _ => phrases.push(AccentPhrase {
@@ -160,6 +165,28 @@ impl JapaneseDictionary {
         }
         Ok(phrases)
     }
+}
+
+/// Reads one dictionary node while retaining the vowel a preceding node can prolong.
+fn dictionary_moras(kana: &str, previous_vowel: Option<&str>) -> Option<Vec<SungMora>> {
+    let mut remaining = kana;
+    let mut moras = Vec::new();
+    // NJD turns the auxiliary in ゆこう into a separate ー node. Its vowel lives in
+    // ゆこ, but its mora and accent-group membership still belong to the current node.
+    while let Some(rest) = remaining.strip_prefix('ー') {
+        let vowel = previous_vowel.filter(|vowel| VOWELS.contains(vowel))?;
+        moras.push(SungMora {
+            text: "ー".into(),
+            phonemes: vec![vowel.into()],
+        });
+        remaining = rest;
+    }
+    moras.extend(
+        split_kana_lyric(remaining)?
+            .into_iter()
+            .map(|(text, phonemes)| SungMora { text, phonemes }),
+    );
+    Some(moras)
 }
 
 /// The phonemes of one note's lyric: the kana table, then the dictionary, then an honest error.
@@ -189,6 +216,63 @@ pub fn lyric_phonemes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_split_dictionary_long_vowel_keeps_its_mora_and_previous_vowel() {
+        let mut moras = dictionary_moras("ユコ", None).unwrap();
+        let vowel = moras.last().unwrap().phonemes.last().unwrap();
+        let continuation = dictionary_moras("ー", Some(vowel)).unwrap();
+        assert_eq!(continuation.len(), 1);
+        assert_eq!(continuation[0].text, "ー");
+        assert_eq!(continuation[0].phonemes, ["o"]);
+        moras.extend(continuation);
+        assert_eq!(
+            moras,
+            dictionary_moras("ユコー", None).unwrap(),
+            "a dictionary node boundary must not change sung moras"
+        );
+        assert_eq!(
+            dictionary_moras("ーート", Some("o")).unwrap(),
+            dictionary_moras("オーート", None).unwrap()[1..]
+        );
+    }
+
+    #[test]
+    fn a_dictionary_long_vowel_needs_immediately_preceding_vowel_context() {
+        for previous in [None, Some("ʔ"), Some("ɴ")] {
+            assert!(dictionary_moras("ー", previous).is_none());
+        }
+        assert!(dictionary_moras("ー漢字", Some("o")).is_none());
+        assert_eq!(
+            dictionary_moras("ッ", Some("o")).unwrap()[0].phonemes,
+            ["ʔ"]
+        );
+    }
+
+    #[test]
+    fn the_dictionary_reads_volitional_lyrics_without_losing_a_section() {
+        let Some(folder) = std::env::var_os("AURIS_JAPANESE_DICTIONARY") else {
+            return;
+        };
+        let dictionary = JapaneseDictionary::load(Path::new(&folder)).expect("a loadable folder");
+        for (text, expected_moras) in [("ずっと きみと", 6), ("あるいて ゆこう", 7)] {
+            let phrases = dictionary.accent_phrases(text).expect("valid lyrics read");
+            assert_eq!(
+                phrases.iter().map(|p| p.moras.len()).sum::<usize>(),
+                expected_moras
+            );
+            assert!(phrases.iter().all(|p| p.accent.unwrap() <= p.moras.len()));
+            let moras: Vec<_> = phrases.iter().flat_map(|phrase| &phrase.moras).collect();
+            assert!(moras.iter().all(|mora| !mora.phonemes.is_empty()));
+            if text.ends_with("ゆこう") {
+                assert_eq!(moras.last().unwrap().text, "ー");
+                assert_eq!(moras.last().unwrap().phonemes, ["o"]);
+            } else {
+                assert_eq!(moras[1].text, "っ");
+                assert_eq!(moras[1].phonemes, ["ʔ"]);
+            }
+        }
+    }
 
     /// Runs only where `AURIS_JAPANESE_DICTIONARY` points at a compiled dictionary folder —
     /// the same silent-skip contract the singer's model tests keep, and for the same reason:

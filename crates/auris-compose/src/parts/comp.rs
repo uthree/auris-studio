@@ -8,14 +8,14 @@
 
 use auris_core::time::Ticks;
 
+use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::{PartSpec, Role};
+use crate::theory::chord::Chord;
 use crate::theory::pitch::{OCTAVE, fold_into};
 
-use super::writer::{
-    bar_onsets, bar_stream, closes_phrase, density, part_grid, phrase_shape, velocity,
-};
+use super::writer::{bar_onsets, bar_stream, density, part_grid, phrase_shape, velocity};
 use super::{Draft, ScoreSettings};
 
 /// How a chord is struck through a bar.
@@ -50,10 +50,9 @@ pub(super) enum CompFigure {
     Rolled,
 }
 
-/// How often the last bar of a four-bar phrase departs from the figure the section chose.
+/// How often the last bar of a planned phrase departs from the figure the section chose.
 ///
-/// A turnaround, not a new part. Somewhere to put it is worth having — the fourth bar is where a
-/// phrase turns over, and it is the one place a change reads as intent rather than as drift.
+/// A turnaround belongs at the shared phrase boundary, including short and uneven phrases.
 const TURNAROUND: f32 = 0.45;
 
 /// Draws one comping figure, weighted by how busy the part was asked to be.
@@ -61,7 +60,7 @@ const TURNAROUND: f32 = 0.45;
 /// Sparse reaches for the held chord, busy for the offbeats and the rolled figure. Every figure
 /// keeps some weight, because a dial that forbids a choice outright makes every section the same
 /// again.
-fn pick_figure(rng: &mut Rng, busy: f32) -> CompFigure {
+fn pick_figure(rng: &mut Rng, busy: f32, style: Option<PerformanceStyle>) -> CompFigure {
     const FIGURES: [CompFigure; 6] = [
         CompFigure::Held,
         CompFigure::Beats,
@@ -70,22 +69,151 @@ fn pick_figure(rng: &mut Rng, busy: f32) -> CompFigure {
         CompFigure::Cross,
         CompFigure::Rolled,
     ];
-    FIGURES[rng
-        .weighted(&[
-            // Weighted far below where it started. Now that a figure lasts a whole section,
-            // drawing the held chord means holding one chord for the whole of it — which is a
-            // pad played by the wrong part, and the pad is the part that does it properly:
-            // it sustains what two chords have in common instead of striking them again.
-            0.1 + (1.0 - busy) * 0.8,
-            1.0,
-            0.2 + busy,
-            0.2 + busy * 1.6,
-            0.2 + busy * 1.4,
-            // Squared, so the fast one is somewhere the dial has to be pushed rather than
-            // somewhere a middling setting wanders into. It is the loudest thing a comp can do.
-            0.05 + busy * busy * 3.0,
-        ])
-        .min(FIGURES.len() - 1)]
+    let mut weights = [
+        // Weighted far below where it started. Now that a figure lasts a whole section,
+        // drawing the held chord means holding one chord for the whole of it — which is a
+        // pad played by the wrong part, and the pad is the part that does it properly:
+        // it sustains what two chords have in common instead of striking them again.
+        0.1 + (1.0 - busy) * 0.8,
+        1.0,
+        0.2 + busy,
+        0.2 + busy * 1.6,
+        0.2 + busy * 1.4,
+        // Squared, so the fast one is somewhere the dial has to be pushed rather than
+        // somewhere a middling setting wanders into. It is the loudest thing a comp can do.
+        0.05 + busy * busy * 3.0,
+    ];
+    // These are preferences, not exclusions: a sparse jazz passage can still hold a chord.
+    // Rhythm and articulation stay separate, so changing a sound never chooses a new figure.
+    let vocabulary = match style {
+        Some(PerformanceStyle::JazzTrio) => [0.9, 0.3, 2.6, 1.8, 0.8, 0.2],
+        Some(PerformanceStyle::CityPop) => [0.3, 0.5, 1.5, 2.0, 1.8, 0.8],
+        Some(PerformanceStyle::Rock) => [0.6, 3.0, 0.5, 0.7, 0.3, 1.0],
+        Some(PerformanceStyle::Ambient) => [8.0, 0.3, 0.4, 0.3, 0.5, 0.1],
+        Some(PerformanceStyle::Orchestral) => [3.5, 1.5, 0.4, 0.3, 0.6, 0.3],
+        Some(PerformanceStyle::Synthwave | PerformanceStyle::Chiptune) => {
+            [0.4, 1.8, 0.5, 1.6, 1.0, 1.2]
+        }
+        Some(PerformanceStyle::PopBand) => [0.7, 1.2, 1.4, 1.2, 0.8, 0.7],
+        None => [1.0; 6],
+    };
+    for (weight, preference) in weights.iter_mut().zip(vocabulary) {
+        *weight *= preference;
+    }
+    FIGURES[rng.weighted(&weights).min(FIGURES.len() - 1)]
+}
+
+/// Motion of ordered voices, allowing a voice to enter or leave without remapping every other
+/// voice to it. The dynamic program finds a non-crossing assignment between successive chords.
+fn voice_motion(previous: &[i32], next: &[i32]) -> i32 {
+    let mut costs: Vec<i32> = (0..=next.len()).map(|n| n as i32 * 7).collect();
+    for (index, before) in previous.iter().enumerate() {
+        let mut row = vec![(index as i32 + 1) * 7; next.len() + 1];
+        for (at, after) in next.iter().enumerate() {
+            let distance = (after - before).abs();
+            let moving = distance + (distance - 7).max(0) * 2;
+            row[at + 1] = (costs[at] + moving).min(costs[at + 1] + 7).min(row[at] + 7);
+        }
+        costs = row;
+    }
+    costs[next.len()]
+}
+
+/// Choose a register, inversion and spacing together, after choosing which chord tones to use.
+/// Low seconds are expensive; upper seconds and open voicings remain available. The previous
+/// upper voice gets its own continuity cost instead of disappearing into the chord's mean.
+fn voiced(
+    chord: Chord,
+    previous: &[i32],
+    range: (i32, i32),
+    centre: i32,
+    variant: usize,
+    style: Option<PerformanceStyle>,
+) -> Vec<i32> {
+    let (low, high) = range;
+    let mut classes = chord.classes();
+    if variant == 1 && classes.len() > 2 {
+        classes.remove(2);
+    }
+    classes.sort_by_key(|class| class.semitones());
+    let open = matches!(
+        style,
+        Some(PerformanceStyle::Orchestral | PerformanceStyle::Ambient)
+    );
+    let mut candidates = Vec::new();
+    for inversion in 0..classes.len() {
+        // Starting from each octave of every chord tone reaches every inversion.
+        for bottom in low..=high {
+            if crate::theory::pitch::PitchClass::new(bottom) != classes[inversion] {
+                continue;
+            }
+            let mut closed = vec![bottom];
+            for voice in 1..classes.len() {
+                let class = classes[(inversion + voice) % classes.len()];
+                let before = *closed.last().expect("the bottom voice exists");
+                let interval = crate::theory::pitch::PitchClass::new(before)
+                    .distance_up_to(class)
+                    .max(1);
+                closed.push(before + interval);
+            }
+            for spread in 0..3 {
+                let mut candidate = closed.clone();
+                if spread == 1 && candidate.len() >= 3 {
+                    // Drop two: open the upper stack without moving its top note.
+                    let voice = candidate.len() - 2;
+                    candidate[voice] -= OCTAVE;
+                } else if spread == 2 && candidate.len() >= 3 {
+                    candidate[1] += OCTAVE;
+                }
+                if variant == 2 {
+                    let root = fold_into(chord.root.midi(4), low, high);
+                    if !candidate.contains(&root) {
+                        candidate.push(root);
+                    } else if root + OCTAVE <= high && !candidate.contains(&(root + OCTAVE)) {
+                        candidate.push(root + OCTAVE);
+                    }
+                }
+                candidate.sort_unstable();
+                candidate.dedup();
+                if candidate.iter().any(|pitch| !(low..=high).contains(pitch)) {
+                    continue;
+                }
+                let middle = candidate.iter().sum::<i32>() / candidate.len() as i32;
+                let mut cost = (middle - centre).abs() * if previous.is_empty() { 3 } else { 1 };
+                if !previous.is_empty() {
+                    cost += voice_motion(previous, &candidate) * 4;
+                    cost += (previous.last().unwrap() - candidate.last().unwrap()).abs() * 2;
+                }
+                for pair in candidate.windows(2) {
+                    let gap = pair[1] - pair[0];
+                    if pair[0] < 55 {
+                        cost += (5 - gap).max(0) * 8;
+                    }
+                    cost += (gap - OCTAVE).max(0) * 3;
+                }
+                let span = candidate.last().unwrap() - candidate.first().unwrap();
+                cost += if open {
+                    (OCTAVE - span).max(0) * 2
+                } else {
+                    (span - 19).max(0)
+                };
+                candidates.push((cost, candidate));
+            }
+        }
+    }
+    candidates
+        .into_iter()
+        .min_by(|(a_cost, a), (b_cost, b)| a_cost.cmp(b_cost).then_with(|| a.cmp(b)))
+        .map(|(_, pitches)| pitches)
+        .unwrap_or_else(|| {
+            let mut pitches: Vec<_> = classes
+                .iter()
+                .map(|class| fold_into(class.midi(4), low, high))
+                .collect();
+            pitches.sort_unstable();
+            pitches.dedup();
+            pitches
+        })
 }
 
 /// Chords, either comped in rhythm or held as a pad.
@@ -143,7 +271,7 @@ pub(super) fn comp(
     } else if pad {
         CompFigure::Held
     } else {
-        pick_figure(&mut invent, busy)
+        pick_figure(&mut invent, busy, settings.style)
     };
     // The rolled figure's own rhythm — or the written one, played as written. Drawn from the
     // same stream so that it belongs to the section too, and drawn whether or not it is wanted,
@@ -167,61 +295,21 @@ pub(super) fn comp(
     let push_early = grid.step_ticks() * (grid.steps_per_beat() / 2).max(1) as i64;
 
     for (event_index, event) in section.events.iter().enumerate() {
-        // Voiced upward from a floor, so a ninth sounds an octave and a tone above the root
-        // rather than being folded into the triad as a second. The floor is whichever octave
-        // leaves the chord nearest to where the last one sat — as much voice leading as a part
-        // that plays whole chords can honestly claim.
+        // Keep individual voices near their predecessors while allowing the chord's inversion
+        // and spacing to change. A stationary mean cannot tell two crossing voices apart.
         let centre = if previous.is_empty() {
             (low + high) / 2 + register
         } else {
             previous.iter().sum::<i32>() / previous.len() as i32
         };
-        let mut voicing: Vec<i32> = Vec::new();
-        let mut best_distance = i32::MAX;
-        for octave in -1..=2 {
-            let candidate = event.chord.voiced_from(low + octave * OCTAVE);
-            if candidate.iter().any(|pitch| *pitch < low || *pitch > high) {
-                continue;
-            }
-            let middle = candidate.iter().sum::<i32>() / candidate.len().max(1) as i32;
-            if (middle - centre).abs() < best_distance {
-                best_distance = (middle - centre).abs();
-                voicing = candidate;
-            }
-        }
-        // Nothing fits the window — an extended chord in a narrow range — so fold each note into
-        // it and accept that the spacing suffers.
-        if voicing.is_empty() {
-            voicing = event
-                .chord
-                .classes()
-                .iter()
-                .map(|class| fold_into(class.midi(4), low, high))
-                .collect();
-        }
-        voicing.sort_unstable();
-        voicing.dedup();
-        // Which notes of the chord actually sound. A player choosing what to leave out is most of
-        // what makes one voicing different from another, and for a pad it is nearly all of it.
-        match voicing_variant {
-            // Drop the fifth: the note the bass is most likely to be covering anyway. A plain
-            // triad comes down to root and third, which is a shell voicing and a real thing to
-            // play — the guard used to be `> 3`, which made this a no-op on every triad and so
-            // on most of what gets written. That left one of the three variants doing nothing,
-            // and the density dial with almost nothing to reach on a part that holds one chord.
-            1 if voicing.len() > 2 => {
-                voicing.remove(2);
-            }
-            // Double the root an octave up, for a wider chord.
-            2 => {
-                if let Some(root) = voicing.first().copied()
-                    && root + OCTAVE <= high
-                {
-                    voicing.push(root + OCTAVE);
-                }
-            }
-            _ => {}
-        }
+        let voicing = voiced(
+            event.chord,
+            &previous,
+            (low, high),
+            centre,
+            voicing_variant,
+            settings.style,
+        );
         previous.clone_from(&voicing);
 
         // Which rhythm the chord is struck on. Chosen per bar from the section's own stream, so a
@@ -229,17 +317,14 @@ pub(super) fn comp(
         // whole of this part used to be one fixed pattern, which made "another take" a button
         // that could not do anything.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
-        // Four bars is the phrase almost everything is built in, and the fourth is where one
-        // turns over — the section's own last bar too, whatever number it carries. Those are the
-        // only bars allowed to depart, and only sometimes: anywhere else a change reads as the
-        // part losing its place rather than as a player finishing a thought.
+        // The shared phrase plan supplies the turn, including unequal phrase lengths.
         // `variation` reaches this through `bar_stream`, so a repeat can turn around differently.
-        let figure = if pad || written || !closes_phrase(bar, section.bars) {
+        let figure = if pad || written || !section.closes_phrase(bar) {
             chosen_figure
         } else {
             let mut rng = bar_stream(settings, frame, part, section, "comp", bar);
             if rng.chance(TURNAROUND) {
-                pick_figure(&mut rng, busy)
+                pick_figure(&mut rng, busy, settings.style)
             } else {
                 chosen_figure
             }
@@ -402,6 +487,71 @@ pub(super) fn comp(
 mod tests {
     use super::*;
     use crate::parts::fixture::{bar_steps, draft, part};
+
+    #[test]
+    fn inversions_reduce_voice_motion_and_preserve_common_tones() {
+        let mut previous = vec![60, 64, 67];
+        let mut root_previous = previous.clone();
+        let (mut led_motion, mut root_motion, mut held) = (0, 0, 0);
+        for name in ["F", "G", "C", "Am", "F", "G", "C"] {
+            let chord = Chord::parse(name).unwrap();
+            let next = voiced(chord, &previous, (48, 84), 64, 0, None);
+            assert_eq!(next.len(), chord.classes().len());
+            assert!(
+                next.iter()
+                    .all(|pitch| (48..=84).contains(pitch) && chord.contains_midi(*pitch))
+            );
+            assert!(next.windows(2).all(|pair| pair[0] < pair[1]));
+            led_motion += voice_motion(&previous, &next);
+            held += next.iter().filter(|pitch| previous.contains(pitch)).count();
+            let root_next = chord.voiced_from(60);
+            root_motion += voice_motion(&root_previous, &root_next);
+            root_previous = root_next;
+            previous = next;
+        }
+        assert!(
+            led_motion < root_motion,
+            "inversions cost {led_motion}, root positions cost {root_motion}"
+        );
+        assert!(held >= 3, "only {held} common tones remained in place");
+    }
+
+    #[test]
+    fn an_extended_low_chord_can_open_its_spacing() {
+        let chord = Chord::parse("Cmaj9").unwrap();
+        let pitches = voiced(chord, &[], (36, 84), 54, 0, Some(PerformanceStyle::Ambient));
+        assert_eq!(pitches.len(), 5);
+        assert!(
+            pitches
+                .windows(2)
+                .all(|pair| pair[0] >= 55 || pair[1] - pair[0] >= 3),
+            "cramped low voices: {pitches:?}"
+        );
+        assert!(
+            pitches.last().unwrap() - pitches.first().unwrap() >= OCTAVE,
+            "no room was opened: {pitches:?}"
+        );
+    }
+
+    #[test]
+    fn comping_styles_choose_different_rhythmic_vocabularies() {
+        let count = |style, figure| {
+            (0..256)
+                .filter(|seed| {
+                    let mut rng = Rng::stream(*seed, &[RngKey::Word("vocabulary")]);
+                    pick_figure(&mut rng, 0.6, Some(style)) == figure
+                })
+                .count()
+        };
+        assert!(
+            count(PerformanceStyle::Ambient, CompFigure::Held)
+                > count(PerformanceStyle::JazzTrio, CompFigure::Held) * 3
+        );
+        assert!(
+            count(PerformanceStyle::Rock, CompFigure::Beats)
+                > count(PerformanceStyle::JazzTrio, CompFigure::Beats) * 3
+        );
+    }
 
     #[test]
     fn a_comp_at_full_density_is_dense_without_being_a_metronome() {
@@ -642,9 +792,8 @@ mod tests {
 
     #[test]
     fn a_comp_may_turn_over_in_the_sections_own_last_bar() {
-        // Six bars: the fourth bar of the phrase and the section's last are different bars, and
-        // only those two may depart from the figure. Bar four sits between them and never moves —
-        // a change there would be the part losing its place, not a player finishing a thought.
+        // Six bars may divide into unequal or shorter phrases. The planner's boundaries are
+        // the places that may depart; an interior bar keeps the established figure.
         // Syncopation pinned for the same reason as the figure-constancy test above: a pushing
         // section moves strikes across bar lines, and this test reads bars back step for step.
         let mut departed = 0;
@@ -666,7 +815,7 @@ mod tests {
             ));
             let chords = part(&parts, "chords");
             let first = bar_steps(&frame, chords, 0);
-            for bar in [1, 2, 4] {
+            for bar in (1..6).filter(|bar| !frame.sections[0].closes_phrase(*bar)) {
                 assert_eq!(
                     bar_steps(&frame, chords, bar),
                     first,

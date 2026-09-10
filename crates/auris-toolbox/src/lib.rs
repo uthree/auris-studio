@@ -453,7 +453,12 @@ pub mod spec_reference {
              bright=major, dark=minor, epic=dorian, dreamy=lydian, funky=mixolydian, tense=phrygian. \
              Explicit key/scale and tempo override these choices. \
              style supplies instruments and form, with newly generated chords; use chords \
-             to specify your own progression. Saved specs contain the resolved settings.\n\n\
+             to specify your own progression. writing_style selects the score vocabulary \
+             independently of performance, which only sets editable playback transforms. \
+             Both accept chiptune, pop-band, city-pop, rock, jazz-trio, orchestral, synthwave \
+             or ambient; style presets select both automatically. Saved specs contain the \
+             resolved settings. Lyrics stay inside each section's bars: every mora is kept \
+             and impossible density is rejected. melody_from shares exact vocal slots.\n\n\
              The smallest useful song:\n\n{HELLO}\n\nAnd most of the \
              vocabulary, each field explained where it is used:\n\n{NEON_DRIVE}"
         )

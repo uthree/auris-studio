@@ -6,6 +6,62 @@
 //! have to find again. The constants in that module are what this page argues for; read them
 //! together or neither will make sense.
 //!
+//! # Rhythm and the hook
+//!
+//! Listening feedback on the September 2026 phrase changes preferred the accompaniment's
+//! contrast but still found the main melody hard to follow. Saved-score inspection exposed
+//! a separate problem from the pitch intervals discussed below: independently sampled attacks
+//! could cluster at a bar's edges, and reusing that bar repeated the scattered rhythm. A last
+//! note on the final subdivision also left no room for the intended phrase breath.
+//!
+//! Automatic instrumental melodies draw two-beat gestures, then place a busy approach's
+//! target against the next gesture in the whole bar. An early anticipation followed by a
+//! pickup could otherwise spend two beats holding and resting immediately after a pair of
+//! short notes, repeating that interruption in every bar. When a busy approach lands more
+//! than a felt beat before the next gesture, its existing attacks are spread towards that
+//! answer on the meter's hierarchy. Its note count, contour degrees and following pickup
+//! rest stay intact; no extra random draw changes the piece's pitch germ. Sparse holds and
+//! sustained palettes can still remain still, and late held arrivals need no redistribution.
+//!
+//! Rhythmic variations preserve the opening cells and develop the tail. A closing bar leaves a final
+//! felt beat of silence when the meter has room. If its answer would fall back to an early
+//! preparation, it instead writes the final degree at a later arrival; an anticipated arrival
+//! already near the final two beats is retained. Explicit rhythms keep their authored onsets.
+//! Timing can still affect realized pitches through the existing harmonic and metric rules.
+//!
+//! These rules make the intended rhythm observable; they do not prove catchiness. The
+//! `tools/eval/melody_ab.py` probe transplants the new melody into the same saved backing and
+//! mixer so listening comparisons isolate it. The account and paired measurements are in
+//! `docs/reviews/melody-hooks-2026-09-10.md` and
+//! `docs/reviews/melody-continuity-2026-09-10.md`. The tables below describe earlier pitch-focused
+//! experiments, not the results of these rhythm changes.
+//!
+//! # A call and its response
+//!
+//! A four-bar phrase first states its call twice, develops the call's final interval gesture,
+//! then recalls the head while approaching a reachable answer. The response carries the degree
+//! reached by the preceding bar. A descending call can therefore return upward rather than
+//! restarting its descent in every bar. The excursion is bounded by the call's own span, and
+//! the approach reserves enough movement for its final arrival. Repeated degrees remain valid.
+//! Short phrases omit the echo; longer phrases keep their existing shared breath boundary.
+//!
+//! This plan changes contour degrees after rhythmic slots and the closing breath are allotted.
+//! The chord-scale, register join and prepared-tension passes then realize those degrees as
+//! pitches. An answer's landing belongs to the chord sounding there; it is not forced onto the
+//! key tonic. The shared skeleton and the other writers retain their existing responsibilities.
+//!
+//! A separate timing pass gives the second, nonclosing bar a delayed entry or an anticipated
+//! late arrival. It keeps note count, ordered pitches, velocities and gesture endpoints, and
+//! stays within the original harmonic event while weakening the moved onset's metric position.
+//! A named random stream selects the recurring response without changing pitch draws. Written
+//! rhythms and sustained palettes keep their timing; shorter meters keep their late holds.
+//!
+//! The four-condition probe in `tools/eval/melody_phrase_ab.py` compares the previous writer,
+//! pitch development, timing development and both together over the same saved accompaniment.
+//! Component controls are checked before audio rendering. A pitch change can also alter the
+//! finalizer's mandatory shortening at a same-pitch restrike after swing; the probe verifies and
+//! reports this articulation coupling. These are structural decisions, not a score of catchiness.
+//!
 //! # The asymmetry the question starts from
 //!
 //! An accompaniment is right or wrong *locally*. Given the chord, a bass note is a member of it or

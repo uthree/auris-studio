@@ -1,0 +1,402 @@
+{
+  "render": {
+    "engine_version": "0.25.2",
+    "credit": "VOICEVOX:ずんだもん",
+    "voice_config": {
+      "format_version": 1,
+      "name": "VOICEVOX Zundamon",
+      "url": "http://127.0.0.1:50021",
+      "sample_rate": 24000,
+      "frame_rate": 93.75,
+      "styles": [
+        {
+          "name": "Zundamon / normal",
+          "query_style_id": 6000,
+          "decode_style_id": 3003
+        }
+      ]
+    },
+    "voice_sha256": "12e6071e92ab9bf89f626b61cfcc35a7afed39876ad4a892204c62fbdeb0b1c1",
+    "cli_sha256": "05c33108bc01cec14a1e30d3dd5a85352e66942a3f43cd84b49c21c1bd16183c",
+    "git_commit": "fdf81be98fd4a295e8d9beab44d88495c1809f22",
+    "synthesis_seed": 42,
+    "conditions": "Same current CLI and synthesis seed for all four saved scores. No recomposition, gain changes or loudness normalization. Stereo 48 kHz float32 mix with no export tail.",
+    "files": {
+      "before/vocal-pop-s101": {
+        "source_project_sha256": "99d8190a77910aa53250fca5520d54ca5be87242fe1492f79dd3caa64234389f",
+        "sung_project_sha256": "77f00105e9052e6482877405e40b971e9dcb541113bc56529dbd36748c93487d",
+        "wav_sha256": "4c2ad8606f573de3480afdbfc9983a953f232a4c6f88537685d5977f2420972d",
+        "score_preserved": true,
+        "float_serialization_roundtrips": [
+          {
+            "path": "tracks[6].clips[3].notes[12].vibrato.delay",
+            "before": 0.38888888888888995,
+            "after": 0.3888888888888899
+          }
+        ],
+        "backing_and_mixer_preserved": true,
+        "moras": 54,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "frames": 1813333,
+        "seconds": 37.777770833333335,
+        "peak": 0.9660508036613464,
+        "rms": 0.15558939234652644,
+        "nonfinite_samples": 0,
+        "render_wall_seconds": 0.046999999998661224
+      },
+      "before/vocal-pop-s103": {
+        "source_project_sha256": "9d4528b0070d55be4f2c7e237376b7ac5d55571f85a153562cd0df425209ea66",
+        "sung_project_sha256": "dd52831294bd30c4e16366b584722ed90a57c2629a634181b68fe7390fc30ed9",
+        "wav_sha256": "a16acfb8d78ba7c27c869f520f47f7a5f960371b00d67336c05b9d66550ab0d5",
+        "score_preserved": true,
+        "float_serialization_roundtrips": [
+          {
+            "path": "tracks[6].clips[3].notes[12].vibrato.delay",
+            "before": 0.38888888888888995,
+            "after": 0.3888888888888899
+          }
+        ],
+        "backing_and_mixer_preserved": true,
+        "moras": 54,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "frames": 1813333,
+        "seconds": 37.777770833333335,
+        "peak": 0.9660508036613464,
+        "rms": 0.1559418514063299,
+        "nonfinite_samples": 0,
+        "render_wall_seconds": 4.03099999999904
+      },
+      "after/vocal-pop-s101": {
+        "source_project_sha256": "8c940eeb169ada9fb5c7ba25f24b220eb08b6da8a17a004c13e059d518372144",
+        "sung_project_sha256": "bc5d3d6316a61bbc6c850098856a4ee070d13cb9ee47a9ab9ecb66bbb60c8104",
+        "wav_sha256": "fab4304b54fc1c117f4cfd816f5a687d29b9b19a92906c7736fa6d765341d1be",
+        "score_preserved": true,
+        "float_serialization_roundtrips": [
+          {
+            "path": "tracks[6].clips[3].notes[5].vibrato.delay",
+            "before": 0.38888888888888995,
+            "after": 0.3888888888888899
+          }
+        ],
+        "backing_and_mixer_preserved": true,
+        "moras": 54,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "frames": 1813333,
+        "seconds": 37.777770833333335,
+        "peak": 0.9660508036613464,
+        "rms": 0.15680813026266407,
+        "nonfinite_samples": 0,
+        "render_wall_seconds": 3.812000000001717
+      },
+      "after/vocal-pop-s103": {
+        "source_project_sha256": "6d76b91747a3011db04db252390a90d2c1e038571978715ea0acc81d32ee4ff0",
+        "sung_project_sha256": "8f5299156fd80b3d9cd4ed3c7d168dd6f859f10e42788eef93b5ec2a4ed18801",
+        "wav_sha256": "cb101e5bf6e3cca1a34d1f788a5c69457bd5a4829152dff38de716e2c726a2d6",
+        "score_preserved": true,
+        "float_serialization_roundtrips": [
+          {
+            "path": "tracks[6].clips[3].notes[5].vibrato.delay",
+            "before": 0.38888888888888995,
+            "after": 0.3888888888888899
+          }
+        ],
+        "backing_and_mixer_preserved": true,
+        "moras": 54,
+        "sample_rate": 48000,
+        "channels": 2,
+        "subtype": "FLOAT",
+        "frames": 1813333,
+        "seconds": 37.777770833333335,
+        "peak": 0.9660508036613464,
+        "rms": 0.15381398069972987,
+        "nonfinite_samples": 0,
+        "render_wall_seconds": 3.7969999999986612
+      }
+    }
+  },
+  "prompts": {
+    "version": 1,
+    "description": "Fixed descriptions for audible singing in a pop arrangement. Frozen before scoring; not a test of intelligibility or musical quality.",
+    "presets": {
+      "vocal-pop": {
+        "positive": [
+          {
+            "id": "vocal-band",
+            "text": "A melodic pop song with a sung vocal melody, piano chords, strings, bass guitar and a steady drum kit."
+          },
+          {
+            "id": "singer",
+            "text": "A singer performs a pop melody over a rhythmic band accompaniment."
+          }
+        ],
+        "contrast": [
+          {
+            "id": "instrumental-band",
+            "text": "An instrumental pop tune with a synthesizer lead melody, piano chords, strings, bass guitar and a steady drum kit."
+          },
+          {
+            "id": "instrumental",
+            "text": "An instrumental pop melody played by a synthesizer over a rhythmic band accompaniment, without singing."
+          }
+        ]
+      }
+    }
+  },
+  "prompts_sha256": "74c0aa1d7597552d1ac29af6c75504edcbca38dd0983b1391e244997ad8e51a0",
+  "audiobox_model": {
+    "repository": "facebook/audiobox-aesthetics",
+    "revision": "9b1dd8e5df9af7216e836a98974fe3b82c56ded6",
+    "artifacts_sha256": {
+      "config.json": "0b8eabc5ced92cefed116a3aca8f1e59d2a33dc4d376b9e86dfb9c072e1d280d",
+      "model.safetensors": "a5a3c2412649cc2384ec525ffd5180ce6c4778f43bed6108e0a1303de04d014e"
+    },
+    "packages": {
+      "audiobox-aesthetics": "0.0.4",
+      "torch": "2.6.0+cpu",
+      "torchaudio": "2.6.0+cpu",
+      "soundfile": "0.14.0"
+    },
+    "device": "cpu",
+    "threads": 4,
+    "scoring": "Existing aesthetics.py score function unchanged; model handles 10-second windows across complete WAV, duration-weighted final partial window."
+  },
+  "clap_model": {
+    "implementation": "native laion-clap",
+    "architecture": "HTSAT-base, non-fusion, RoBERTa",
+    "repository": "lukewys/laion_clap",
+    "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+    "checkpoint": "music_audioset_epoch_15_esc_90.14.pt",
+    "checkpoint_sha256": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd",
+    "reference": "https://github.com/LAION-AI/CLAP",
+    "tokenizer_artifacts": {
+      "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+      "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+      "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+      "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+      "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+    },
+    "tokenizer_repository": "roberta-base",
+    "tokenizer_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+    "device": "cpu",
+    "threads": 4,
+    "python": "3.11.15",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "packages": {
+      "laion-clap": "1.1.7",
+      "torch": "2.6.0+cpu",
+      "torchaudio": "2.6.0+cpu",
+      "transformers": "4.57.6",
+      "soundfile": "0.14.0",
+      "numpy": "1.26.4",
+      "scipy": "1.17.1"
+    }
+  },
+  "clap_preprocessing": {
+    "sample_rate": 48000,
+    "channels": "arithmetic mean before resampling",
+    "resampler": "scipy.signal.resample_poly default Kaiser window",
+    "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+    "window_samples": 480000,
+    "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+    "requested_segments": 3,
+    "short_audio": "repeat complete copies, zero-pad remainder",
+    "silent_rms_threshold": 1e-07,
+    "aggregation": "unweighted mean of valid excerpt cosines"
+  },
+  "raw_reports_sha256": {
+    "vocal-before-aesthetics.json": "9cf27a765975deaeca9e3f45199146bb61585fd5d4fc281e26ac1da1d28da01f",
+    "voicevox/builtin-before-clap.json": "aca04377e3c7b9bfe67f3bfc19d406fa8adff1717fc815978bf10b63758068d0",
+    "vocal-after-aesthetics.json": "c7e1218a10f6672e8b03104889015ab07ab70775b3fe3272ef49c675cbd4d144",
+    "voicevox/builtin-after-clap.json": "45def015376eef94a4f9200645009b5c8bf4ab32cbcb7a4baa41bbe1f0e423c8",
+    "voicevox/before-aesthetics.json": "58f109495f3f7ee9714df956550a54b419f8280655065e1d776b6c3afa0c6178",
+    "voicevox/before-clap.json": "74acb382012163f571b65c68813b7640a95f4b1421cdb03cf001f720dbbb677f",
+    "voicevox/after-aesthetics.json": "6eb50b61ea43c191982e5d9ed6c5155c9cdba0a46a5b1c4b50570c46ae8d3aef",
+    "voicevox/after-clap.json": "3238471850acf1c2da28ee4b12f559693bed359ebadda839c40aeb330d6c187b"
+  },
+  "conditions": {
+    "builtin/before": {
+      "files": {
+        "vocal-pop-s101": {
+          "CE": 6.897,
+          "CU": 7.912,
+          "PC": 5.284,
+          "PQ": 8.126,
+          "positive_cosine": 0.2906523545583089,
+          "contrast_margin": -0.19174099961916605,
+          "audio_sha256": "7b3a0127f6b0d1ad7a633f5ee2484bc4ff13a2341f15e5cd5015a86f9a4e80d4",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        },
+        "vocal-pop-s103": {
+          "CE": 6.877,
+          "CU": 7.803,
+          "PC": 5.16,
+          "PQ": 8.012,
+          "positive_cosine": 0.28008020917574566,
+          "contrast_margin": -0.19415750106175741,
+          "audio_sha256": "7029bb1916a6eceb41067540af87ba6fe78084d9e26bd661c4347500911d3781",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        }
+      },
+      "mean": {
+        "CE": 6.8870000000000005,
+        "CU": 7.8575,
+        "PC": 5.2219999999999995,
+        "PQ": 8.068999999999999,
+        "positive_cosine": 0.2853662818670273,
+        "contrast_margin": -0.19294925034046173
+      }
+    },
+    "builtin/after": {
+      "files": {
+        "vocal-pop-s101": {
+          "CE": 7.156,
+          "CU": 7.934,
+          "PC": 5.406,
+          "PQ": 8.145,
+          "positive_cosine": 0.26875555515289307,
+          "contrast_margin": -0.21049885948499045,
+          "audio_sha256": "d0f53b1f0d7ad52d4070be672ba3cc4f21611f5b0508550a998848c5f1d92545",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        },
+        "vocal-pop-s103": {
+          "CE": 7.006,
+          "CU": 7.869,
+          "PC": 5.169,
+          "PQ": 8.061,
+          "positive_cosine": 0.2710968653361003,
+          "contrast_margin": -0.2002942462762197,
+          "audio_sha256": "b2f1f8a10c883595bbf9d0e917b0e79c4495e3d2cd3996d350962d91ae5ce777",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        }
+      },
+      "mean": {
+        "CE": 7.0809999999999995,
+        "CU": 7.9015,
+        "PC": 5.2875,
+        "PQ": 8.103,
+        "positive_cosine": 0.2699262102444967,
+        "contrast_margin": -0.20539655288060507
+      }
+    },
+    "voicevox/before": {
+      "files": {
+        "vocal-pop-s101": {
+          "CE": 6.647,
+          "CU": 7.635,
+          "PC": 6.014,
+          "PQ": 8.191,
+          "positive_cosine": 0.32790957887967426,
+          "contrast_margin": -0.029483507076899212,
+          "audio_sha256": "4c2ad8606f573de3480afdbfc9983a953f232a4c6f88537685d5977f2420972d",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        },
+        "vocal-pop-s103": {
+          "CE": 6.571,
+          "CU": 7.511,
+          "PC": 5.852,
+          "PQ": 8.018,
+          "positive_cosine": 0.34517168005307514,
+          "contrast_margin": -0.06252692143122356,
+          "audio_sha256": "a16acfb8d78ba7c27c869f520f47f7a5f960371b00d67336c05b9d66550ab0d5",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        }
+      },
+      "mean": {
+        "CE": 6.609,
+        "CU": 7.573,
+        "PC": 5.933,
+        "PQ": 8.104500000000002,
+        "positive_cosine": 0.3365406294663747,
+        "contrast_margin": -0.046005214254061386
+      }
+    },
+    "voicevox/after": {
+      "files": {
+        "vocal-pop-s101": {
+          "CE": 6.6,
+          "CU": 7.622,
+          "PC": 6.129,
+          "PQ": 8.209,
+          "positive_cosine": 0.3329868217309316,
+          "contrast_margin": -0.049665868282318115,
+          "audio_sha256": "fab4304b54fc1c117f4cfd816f5a687d29b9b19a92906c7736fa6d765341d1be",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        },
+        "vocal-pop-s103": {
+          "CE": 6.552,
+          "CU": 7.531,
+          "PC": 5.889,
+          "PQ": 7.976,
+          "positive_cosine": 0.3487083812554677,
+          "contrast_margin": -0.05799517035484314,
+          "audio_sha256": "cb101e5bf6e3cca1a34d1f788a5c69457bd5a4829152dff38de716e2c726a2d6",
+          "segment_starts_seconds": [
+            0.0,
+            13.888875,
+            27.777770833333335
+          ]
+        }
+      },
+      "mean": {
+        "CE": 6.576,
+        "CU": 7.576499999999999,
+        "PC": 6.009,
+        "PQ": 8.0925,
+        "positive_cosine": 0.34084760149319965,
+        "contrast_margin": -0.05383051931858063
+      }
+    }
+  },
+  "composer_deltas": {
+    "builtin": {
+      "CE": 0.19399999999999906,
+      "CU": 0.04400000000000048,
+      "PC": 0.06550000000000011,
+      "PQ": 0.034000000000000696,
+      "positive_cosine": -0.015440071622530582,
+      "contrast_margin": -0.01244730254014334
+    },
+    "voicevox": {
+      "CE": -0.03300000000000036,
+      "CU": 0.0034999999999989484,
+      "PC": 0.07600000000000051,
+      "PQ": -0.012000000000002231,
+      "positive_cosine": 0.004306972026824951,
+      "contrast_margin": -0.007825305064519242
+    }
+  }
+}

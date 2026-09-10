@@ -3,6 +3,7 @@
 #![warn(missing_docs)]
 
 pub mod analysis;
+pub mod arrangement;
 pub mod frame;
 pub mod gm;
 pub mod intent;
@@ -12,6 +13,7 @@ pub mod parts;
 pub mod perform;
 pub mod performance_style;
 pub mod phrase;
+pub mod phrasing;
 pub mod preset;
 pub mod progression;
 pub mod render;

@@ -1,5 +1,6 @@
 # A complete sixteen-bar cycle. Both sections play on every repetition.
 performance = "chiptune"
+writing_style = "chiptune"
 title = "Pixel Journey"
 key = "C major"
 tempo = 120
@@ -27,6 +28,7 @@ density = 0.45
 [[part]]
 name = "chords"
 role = "chords"
+gate = 0.65
 
 [[part]]
 name = "bass"

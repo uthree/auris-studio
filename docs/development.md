@@ -112,26 +112,39 @@ in PowerShell, or `"$HOME/.config/auris-studio/Dictionary"` to the Bash script. 
 
 ### Windows
 
-Build with the Rust MSVC toolchain, Visual Studio C++ Build Tools, and LLVM/Clang.
-From a Visual Studio developer PowerShell terminal, prepare LLVM and then build:
+Build with the Rust MSVC toolchain and Visual Studio C++ Build Tools.
+From a Visual Studio developer PowerShell terminal:
+
+```powershell
+cargo run
+```
+
+Windows builds use WASAPI by default. To include ASIO, enable the `asio` Cargo feature;
+this also requires LLVM/Clang and the ASIO SDK:
 
 ```powershell
 .\tools\setup-windows.ps1 -InstallLlvm
-cargo build --locked
+cargo run --features asio
 ```
+
+All four frontends accept this feature, including `cargo run -p auris-cli --features asio`.
+The Windows release workflow builds all four with `--release --features asio`. For a local
+release build with the same audio backends, use `cargo build --release --locked --features asio`.
+`--release` alone changes optimization settings and does not enable ASIO.
 
 The setup script uses an existing LLVM installation or installs it with Chocolatey or WinGet.
 It sets `LIBCLANG_PATH` for the current PowerShell session; run it again when opening a new
-terminal. For a custom installation, use `-LlvmBin 'D:\LLVM\bin'`. CI and release builds use
-the same script.
+terminal. For a custom installation, use `-LlvmBin 'D:\LLVM\bin'`. CI's ASIO checks and
+Windows release builds use the same script. CI tests both the default and ASIO configurations.
 
 An `asio-sys` build failure reporting `Unable to find libclang` means this build dependency
 is missing or `LIBCLANG_PATH` points to the wrong directory. The Visual Studio C++ workload
 alone does not provide the `libclang.dll` required by [bindgen](https://rust-lang.github.io/rust-bindgen/requirements.html),
 and Rust's bundled LLVM does not replace this dependency.
 
-Windows builds include WASAPI and ASIO. CPAL's ASIO dependency downloads the ASIO SDK on
-the first build; set `CPAL_ASIO_DIR` to an extracted SDK directory to use a local copy.
+With `asio` enabled, CPAL downloads the ASIO SDK on the first build; set `CPAL_ASIO_DIR`
+to an extracted SDK directory to use a local copy. The default build needs neither the
+ASIO SDK nor LLVM for ASIO bindings.
 
 In Settings → Audio, select the audio driver, device, sample rate and requested buffer size.
 WASAPI uses shared mode and requests elevated audio thread priority. ASIO requires an installed

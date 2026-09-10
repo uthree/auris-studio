@@ -115,6 +115,7 @@ pub const PRESETS: &[SongPreset] = &[
 /// What the composer has always written: the built-in oscillators, no SoundFont needed.
 const CHIPTUNE: &str = r#"
 performance = "chiptune"
+writing_style = "chiptune"
 title  = "Chiptune"
 key    = "C major"
 tempo  = 140
@@ -127,6 +128,7 @@ form   = ["intro","verse","chorus","verse2","chorus2","outro"]
 [section.intro]
 bars      = 4
 intensity = 0.5
+parts     = "chords bass kick snare hat crash"
 
 [section.chorus]
 intensity = 0.95
@@ -138,6 +140,7 @@ role = "melody"
 [[part]]
 name = "chords"
 role = "chords"
+gate = 0.65
 
 [[part]]
 name = "bass"
@@ -177,6 +180,7 @@ melody_from = "chorus"
 /// keys and strings under the lead, making room for the full band's final chorus.
 const POP_BAND: &str = r#"
 performance = "pop-band"
+writing_style = "pop-band"
 title  = "Pop Band"
 key    = "F major"
 tempo  = 124
@@ -237,6 +241,7 @@ gain    = -19
 name    = "bass"
 role    = "bass"
 program = "Electric Bass (finger)"
+gate    = 0.8
 
 [[part]]
 name    = "kick"
@@ -291,6 +296,7 @@ melody_from = "chorus"
 /// change; see the third pass of [`crate::melodic`].
 const CITY_POP: &str = r#"
 performance = "city-pop"
+writing_style = "city-pop"
 title       = "City Pop"
 key         = "A major"
 tempo       = 106
@@ -311,6 +317,7 @@ sabi = "@marusa5"
 [section.intro]
 bars      = 4
 intensity = 0.5
+parts     = "rhodes stabs bass kick snare hat crash riser"
 
 [section.chorus]
 intensity = 0.9
@@ -381,6 +388,7 @@ melody_from = "chorus"
 /// verse did not already own.
 const ROCK: &str = r#"
 performance = "rock"
+writing_style = "rock"
 title    = "Rock"
 key      = "E minor"
 tempo    = 148
@@ -398,6 +406,7 @@ lift = "@axis"
 [section.intro]
 bars      = 4
 intensity = 0.6
+parts     = "rhythm organ bass kick snare hat crash"
 
 [section.chorus]
 intensity = 1.0
@@ -413,6 +422,7 @@ name    = "rhythm"
 role    = "chords"
 program = "Distortion Guitar"
 octave  = 3
+gate    = 0.65
 
 [[part]]
 name    = "organ"
@@ -458,6 +468,7 @@ melody_from = "chorus"
 /// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
 const JAZZ_TRIO: &str = r#"
 performance = "jazz-trio"
+writing_style = "jazz-trio"
 title    = "Jazz Trio"
 key      = "F major"
 tempo    = 132
@@ -526,6 +537,7 @@ melody_from = "chorus"
 /// moments.
 const ORCHESTRAL: &str = r#"
 performance = "orchestral"
+writing_style = "orchestral"
 title      = "Orchestral"
 key        = "D minor"
 tempo      = 76
@@ -602,6 +614,7 @@ melody_from = "chorus"
 /// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
 const SYNTHWAVE: &str = r#"
 performance = "synthwave"
+writing_style = "synthwave"
 title       = "Synthwave"
 key         = "A minor"
 tempo       = 112
@@ -689,6 +702,7 @@ melody_from = "chorus"
 /// two of `II` is the floating that lydian was chosen for.
 const AMBIENT: &str = r#"
 performance = "ambient"
+writing_style = "ambient"
 title       = "Ambient"
 key         = "C lydian"
 tempo       = 64

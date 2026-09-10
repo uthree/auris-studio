@@ -1,0 +1,739 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-10",
+  "baseline_revision": "19b8d21",
+  "current_state": "Implementation accompanying this report. Output hashes identify the measured artifacts.",
+  "scope": {
+    "instrumental_pairs": 18,
+    "presets": ["ambient","chiptune","city-pop","game-loop","jazz-trio","orchestral","pop-band","rock","synthwave"],
+    "seeds": [101,103],
+    "vocal_pairs": 2,
+    "learned_models_used_for": "offline evaluation only; composition remains rule based"
+  },
+  "render": {
+    "sample_rate": 48000,
+    "channels": 2,
+    "container": "WAVE_FORMAT_EXTENSIBLE",
+    "sample_format": "IEEE float32",
+    "tail": "disabled with --no-tail",
+    "headers_verified_files": 40,
+    "soundfont": {
+      "name": "MuseScore_General v0.2",
+      "file": "MuseScore_General.sf2",
+      "bytes": 215614036,
+      "sha256": "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3",
+      "matching_project_references": 40
+    },
+    "dictionary": "Same installed compiled NAIST dictionary on both sides; no neural singer model evaluated"
+  },
+  "evaluators": {
+    "clap": {
+      "implementation": "native laion-clap",
+      "architecture": "HTSAT-base, non-fusion, RoBERTa",
+      "repository": "lukewys/laion_clap",
+      "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+      "checkpoint": "music_audioset_epoch_15_esc_90.14.pt",
+      "checkpoint_sha256": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd",
+      "reference": "https://github.com/LAION-AI/CLAP",
+      "tokenizer_artifacts": {
+        "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+        "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+        "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+        "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+        "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+      },
+      "tokenizer_repository": "roberta-base",
+      "tokenizer_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+      "device": "cpu",
+      "threads": 4,
+      "python": "3.11.15",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "packages": {
+        "laion-clap": "1.1.7",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "transformers": "4.57.6",
+        "soundfile": "0.14.0",
+        "numpy": "1.26.4",
+        "scipy": "1.17.1"
+      },
+      "preprocessing": {
+        "sample_rate": 48000,
+        "channels": "arithmetic mean before resampling",
+        "resampler": "scipy.signal.resample_poly default Kaiser window",
+        "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+        "window_samples": 480000,
+        "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+        "requested_segments": 3,
+        "short_audio": "repeat complete copies, zero-pad remainder",
+        "silent_rms_threshold": 1e-7,
+        "aggregation": "unweighted mean of valid excerpt cosines"
+      },
+      "prompts_file": "tools/eval/clap_prompts.json",
+      "prompts_sha256": "69fc5ac6e1b765eeee57644bcd1d99c500e7bb8f33b8c4e0389518eb13f935d7",
+      "valid_windows": 108,
+      "total_windows": 108,
+      "samples_outside_unit_range_in_sampled_windows": 0,
+      "same_paired_excerpt_positions": true,
+      "repeat_file": "jazz-trio-s101",
+      "repeat_aggregate_deltas": {
+        "positive_cosine": 0,
+        "contrast_cosine": 0,
+        "contrast_margin": 0
+      }
+    },
+    "audiobox": {
+      "repository": "facebook/audiobox-aesthetics",
+      "revision": "9b1dd8e5df9af7216e836a98974fe3b82c56ded6",
+      "artifacts_sha256": {
+        "config.json": "0b8eabc5ced92cefed116a3aca8f1e59d2a33dc4d376b9e86dfb9c072e1d280d",
+        "model.safetensors": "a5a3c2412649cc2384ec525ffd5180ce6c4778f43bed6108e0a1303de04d014e"
+      },
+      "packages": {
+        "audiobox-aesthetics": "0.0.4",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "soundfile": "0.14.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "scoring": "Existing aesthetics.py score function unchanged; model handles 10-second windows across complete WAV, duration-weighted final partial window."
+    }
+  },
+  "value_order": ["before","after","after_minus_before"],
+  "learned": {
+    "overall": {
+      "CE": [6.85994444,6.89233333,0.03238889],
+      "CU": [7.67594444,7.70394444,0.028],
+      "PC": [5.12888889,5.10461111,-0.02427778],
+      "PQ": [7.8165,7.85783333,0.04133333],
+      "positive_cosine": [0.43289168,0.43219223,-0.00069945],
+      "contrast_margin": [0.35633446,0.3597739,0.00343944]
+    },
+    "by_preset": {
+      "ambient": {
+        "CE": [6.9505,6.7695,-0.181],
+        "CU": [7.72,7.6315,-0.0885],
+        "PC": [4.496,4.414,-0.082],
+        "PQ": [7.8605,7.782,-0.0785],
+        "positive_cosine": [0.3872569,0.39054113,0.00328424],
+        "contrast_margin": [0.39141878,0.4148053,0.02338652]
+      },
+      "chiptune": {
+        "CE": [5.5455,5.647,0.1015],
+        "CU": [7.091,7.1275,0.0365],
+        "PC": [5.1095,5.1165,0.007],
+        "PQ": [7.365,7.408,0.043],
+        "positive_cosine": [0.49553579,0.48960327,-0.00593252],
+        "contrast_margin": [0.42123748,0.41756111,-0.00367637]
+      },
+      "city-pop": {
+        "CE": [7.757,7.768,0.011],
+        "CU": [8.1295,8.1465,0.017],
+        "PC": [5.7205,5.7325,0.012],
+        "PQ": [8.257,8.267,0.01],
+        "positive_cosine": [0.40783808,0.40601367,-0.00182441],
+        "contrast_margin": [0.25256289,0.24545025,-0.00711264]
+      },
+      "game-loop": {
+        "CE": [5.5955,5.7515,0.156],
+        "CU": [7.14,7.1975,0.0575],
+        "PC": [5.046,5.04,-0.006],
+        "PQ": [7.38,7.4725,0.0925],
+        "positive_cosine": [0.46830546,0.43357546,-0.03473],
+        "contrast_margin": [0.40634966,0.36958313,-0.03676653]
+      },
+      "jazz-trio": {
+        "CE": [7.689,7.754,0.065],
+        "CU": [8.16,8.208,0.048],
+        "PC": [4.7585,4.7095,-0.049],
+        "PQ": [8.211,8.2585,0.0475],
+        "positive_cosine": [0.3483989,0.3622357,0.01383679],
+        "contrast_margin": [0.26699094,0.30071231,0.03372137]
+      },
+      "orchestral": {
+        "CE": [7.084,7.114,0.03],
+        "CU": [7.6695,7.6985,0.029],
+        "PC": [5.103,4.9675,-0.1355],
+        "PQ": [7.581,7.6875,0.1065],
+        "positive_cosine": [0.48207412,0.49251616,0.01044204],
+        "contrast_margin": [0.42023264,0.42301458,0.00278194]
+      },
+      "pop-band": {
+        "CE": [7.0955,7.05,-0.0455],
+        "CU": [7.896,7.872,-0.024],
+        "PC": [5.0295,5.039,0.0095],
+        "PQ": [8.098,8.055,-0.043],
+        "positive_cosine": [0.38632544,0.38808298,0.00175754],
+        "contrast_margin": [0.31389051,0.29294075,-0.02094976]
+      },
+      "rock": {
+        "CE": [7.153,7.272,0.119],
+        "CU": [7.657,7.7975,0.1405],
+        "PC": [6.156,6.082,-0.074],
+        "PQ": [7.6505,7.8185,0.168],
+        "positive_cosine": [0.4913504,0.49357263,0.00222223],
+        "contrast_margin": [0.42207881,0.45530076,0.03322196]
+      },
+      "synthwave": {
+        "CE": [6.8695,6.905,0.0355],
+        "CU": [7.6205,7.6565,0.036],
+        "PC": [4.741,4.8405,0.0995],
+        "PQ": [7.9455,7.9715,0.026],
+        "positive_cosine": [0.42894004,0.43358909,0.00464904],
+        "contrast_margin": [0.31224846,0.31859691,0.00634845]
+      }
+    },
+    "paired_delta_columns": ["CE","CU","PC","PQ","positive_cosine","contrast_margin"],
+    "paired_deltas": {
+      "ambient-s101": [-0.247,-0.183,-0.024,-0.144,0.00863206,0.03038868],
+      "ambient-s103": [-0.115,0.006,-0.14,-0.013,-0.00206359,0.01638436],
+      "chiptune-s101": [0.103,0.021,-0.017,0.027,0.00423094,0.00010297],
+      "chiptune-s103": [0.1,0.052,0.031,0.059,-0.01609599,-0.00745571],
+      "city-pop-s101": [-0.009,-0.006,-0.027,-0.004,0.0088725,-0.00241779],
+      "city-pop-s103": [0.031,0.04,0.051,0.024,-0.01252132,-0.01180749],
+      "game-loop-s101": [0.295,0.022,0.065,0.088,-0.04182212,-0.04969225],
+      "game-loop-s103": [0.017,0.093,-0.077,0.097,-0.02763789,-0.0238408],
+      "jazz-trio-s101": [0.049,0.058,-0.114,0.057,0.01262565,0.03151132],
+      "jazz-trio-s103": [0.081,0.038,0.016,0.038,0.01504793,0.03593142],
+      "orchestral-s101": [0.056,0.029,-0.137,0.137,0.01262116,0.00016529],
+      "orchestral-s103": [0.004,0.029,-0.134,0.076,0.00826291,0.00539859],
+      "pop-band-s101": [-0.014,-0.003,0.016,-0.023,0.0035905,-0.01081906],
+      "pop-band-s103": [-0.077,-0.045,0.003,-0.063,-0.00007542,-0.03108047],
+      "rock-s101": [0.165,0.167,-0.082,0.223,-0.00148015,0.02286319],
+      "rock-s103": [0.073,0.114,-0.066,0.113,0.00592461,0.04358072],
+      "synthwave-s101": [-0.019,0.041,0.078,0.019,-0.0014617,-0.0045584],
+      "synthwave-s103": [0.09,0.031,0.121,0.033,0.01075979,0.01725531]
+    },
+    "ce_increased_pairs": 12,
+    "ce_decreased_pairs": 6,
+    "pq_increased_pairs": 13,
+    "pq_decreased_pairs": 5
+  },
+  "structure": {
+    "parameters": {
+      "large_leap_semitones": 5,
+      "melody_max_gap_ticks": 0
+    },
+    "aggregation": "Equal-weight project means; null motion omitted only from its own mean. Ratios are descriptive, not objectives.",
+    "instrumental": {
+      "overall": {
+        "foreground_adjacent_bar_rhythm_repeat_fraction": {
+          "projects": 18,
+          "values": [0.71196552,0.78204602,0.0700805]
+        },
+        "foreground_bar_rhythm_unique_fraction": {
+          "projects": 18,
+          "values": [0.28941181,0.26119279,-0.02821903]
+        },
+        "melody_large_leap_fraction": {
+          "projects": 18,
+          "values": [0.07111822,0.08638713,0.01526891]
+        },
+        "support_foreground_onset_collision_fraction": {
+          "projects": 18,
+          "values": [0.35882074,0.36500934,0.0061886]
+        },
+        "support_foreground_duration_overlap_fraction": {
+          "projects": 18,
+          "values": [0.68632463,0.67306126,-0.01326337]
+        },
+        "comp_voice_motion_semitones": {
+          "projects": 14,
+          "values": [3.98782045,1.57420749,-2.41361296]
+        }
+      },
+      "by_preset": {
+        "ambient": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.78571429,1,0.21428571],
+          "foreground_bar_rhythm_unique_fraction": [0.26,0.16,-0.1],
+          "melody_large_leap_fraction": [0.13574939,0.07045455,-0.06529484],
+          "support_foreground_onset_collision_fraction": [0.49484536,0.50515464,0.01030928],
+          "support_foreground_duration_overlap_fraction": [0.70375,0.78375,0.08],
+          "comp_voice_motion_semitones": [null,null,null]
+        },
+        "chiptune": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.71052632,0.72368421,0.01315789],
+          "foreground_bar_rhythm_unique_fraction": [0.3,0.28888889,-0.01111111],
+          "melody_large_leap_fraction": [0.04040816,0.05785714,0.01744898],
+          "support_foreground_onset_collision_fraction": [0.28928678,0.29803922,0.00875243],
+          "support_foreground_duration_overlap_fraction": [0.64236111,0.62991453,-0.01244658],
+          "comp_voice_motion_semitones": [4.03931624,1.66666667,-2.37264957]
+        },
+        "city-pop": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.71052632,0.72368421,0.01315789],
+          "foreground_bar_rhythm_unique_fraction": [0.3,0.28888889,-0.01111111],
+          "melody_large_leap_fraction": [0.04587448,0.05639344,0.01051896],
+          "support_foreground_onset_collision_fraction": [0.29479817,0.26528953,-0.02950865],
+          "support_foreground_duration_overlap_fraction": [0.6841765,0.64709527,-0.03708122],
+          "comp_voice_motion_semitones": [3.60761533,1.32490117,-2.28271416]
+        },
+        "game-loop": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.64285714,0.71428571,0.07142857],
+          "foreground_bar_rhythm_unique_fraction": [0.28125,0.28125,0],
+          "melody_large_leap_fraction": [0.075,0.06781609,-0.00718391],
+          "support_foreground_onset_collision_fraction": [0.31305419,0.3647674,0.05171321],
+          "support_foreground_duration_overlap_fraction": [0.6953125,0.69854114,0.00322864],
+          "comp_voice_motion_semitones": [4,1.54285714,-2.45714286]
+        },
+        "jazz-trio": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.8,0.81428571,0.01428571],
+          "foreground_bar_rhythm_unique_fraction": [0.25609756,0.24390244,-0.01219512],
+          "melody_large_leap_fraction": [0.02459016,0.16316842,0.13857825],
+          "support_foreground_onset_collision_fraction": [0.33290536,0.29924869,-0.03365667],
+          "support_foreground_duration_overlap_fraction": [0.64928095,0.64133457,-0.00794638],
+          "comp_voice_motion_semitones": [5.1504126,1.77818504,-3.37222757]
+        },
+        "orchestral": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.71428571,0.92857143,0.21428571],
+          "foreground_bar_rhythm_unique_fraction": [0.2804878,0.20731707,-0.07317073],
+          "melody_large_leap_fraction": [0.06836281,0.08852689,0.02016407],
+          "support_foreground_onset_collision_fraction": [0.45853717,0.49887191,0.04033473],
+          "support_foreground_duration_overlap_fraction": [0.80487805,0.85636785,0.05148981],
+          "comp_voice_motion_semitones": [4.12436061,1.51815839,-2.60620223]
+        },
+        "pop-band": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.67272727,0.70909091,0.03636364],
+          "foreground_bar_rhythm_unique_fraction": [0.32307692,0.3,-0.02307692],
+          "melody_large_leap_fraction": [0.04901816,0.06330459,0.01428642],
+          "support_foreground_onset_collision_fraction": [0.30807668,0.26972935,-0.03834733],
+          "support_foreground_duration_overlap_fraction": [0.61548913,0.53061412,-0.08487501],
+          "comp_voice_motion_semitones": [2.69170804,1.42540362,-1.26630443]
+        },
+        "rock": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.67105263,0.71052632,0.03947368],
+          "foreground_bar_rhythm_unique_fraction": [0.31111111,0.3,-0.01111111],
+          "melody_large_leap_fraction": [0.10114586,0.11127262,0.01012676],
+          "support_foreground_onset_collision_fraction": [0.40610721,0.47077922,0.06467201],
+          "support_foreground_duration_overlap_fraction": [0.75972222,0.74700766,-0.01271456],
+          "comp_voice_motion_semitones": [4.30133032,1.76328039,-2.53804993]
+        },
+        "synthwave": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.7,0.71428571,0.01428571],
+          "foreground_bar_rhythm_unique_fraction": [0.29268293,0.2804878,-0.01219512],
+          "melody_large_leap_fraction": [0.09991497,0.09869048,-0.00122449],
+          "support_foreground_onset_collision_fraction": [0.3317757,0.31320409,-0.01857161],
+          "support_foreground_duration_overlap_fraction": [0.62195122,0.52292623,-0.09902499],
+          "comp_voice_motion_semitones": [null,null,null]
+        }
+      }
+    },
+    "vocal": {
+      "overall": {
+        "foreground_adjacent_bar_rhythm_repeat_fraction": {
+          "projects": 2,
+          "values": [0.33333333,0.375,0.04166667]
+        },
+        "foreground_bar_rhythm_unique_fraction": {
+          "projects": 2,
+          "values": [0.62121212,0.6969697,0.07575758]
+        },
+        "melody_large_leap_fraction": {
+          "projects": 2,
+          "values": [0.03117591,0.06306561,0.0318897]
+        },
+        "support_foreground_onset_collision_fraction": {
+          "projects": 2,
+          "values": [0.53176931,0.43969298,-0.09207632]
+        },
+        "support_foreground_duration_overlap_fraction": {
+          "projects": 2,
+          "values": [0.95955882,0.92751843,-0.0320404]
+        },
+        "comp_voice_motion_semitones": {
+          "projects": 2,
+          "values": [3.51515152,1.625,-1.89015152]
+        }
+      },
+      "by_preset": {
+        "vocal-pop": {
+          "foreground_adjacent_bar_rhythm_repeat_fraction": [0.33333333,0.375,0.04166667],
+          "foreground_bar_rhythm_unique_fraction": [0.62121212,0.6969697,0.07575758],
+          "melody_large_leap_fraction": [0.03117591,0.06306561,0.0318897],
+          "support_foreground_onset_collision_fraction": [0.53176931,0.43969298,-0.09207632],
+          "support_foreground_duration_overlap_fraction": [0.95955882,0.92751843,-0.0320404],
+          "comp_voice_motion_semitones": [3.51515152,1.625,-1.89015152]
+        }
+      }
+    },
+    "validation": {
+      "projects": 40,
+      "invalid_clip_count": 0,
+      "invalid_note_count": 0,
+      "nonfinite_values": 0,
+      "source_project_hash_mismatches": 0
+    }
+  },
+  "vocal": {
+    "fixture": "tools/eval/fixtures/vocal-phrases.asong",
+    "fixture_sha256": "8ec23cf68057630c681bb23b036c880cd08815c7418462b962e819e118ee57d1",
+    "controlled_final_line": "あるいて いくよ",
+    "production_regression_line": "あるいて ゆこう",
+    "production_regression_separate_from_controlled_comparison": true,
+    "audiobox": {
+      "CE": [6.887,7.081,0.194],
+      "CU": [7.8575,7.9015,0.044],
+      "PC": [5.222,5.2875,0.0655],
+      "PQ": [8.069,8.103,0.034]
+    },
+    "paired": {
+      "vocal-pop-s101": {
+        "CE": {
+          "before": 6.897,
+          "after": 7.156,
+          "delta": 0.25899999999999945
+        },
+        "CU": {
+          "before": 7.912,
+          "after": 7.934,
+          "delta": 0.02200000000000024
+        },
+        "PC": {
+          "before": 5.284,
+          "after": 5.406,
+          "delta": 0.12199999999999989
+        },
+        "PQ": {
+          "before": 8.126,
+          "after": 8.145,
+          "delta": 0.019000000000000128
+        }
+      },
+      "vocal-pop-s103": {
+        "CE": {
+          "before": 6.877,
+          "after": 7.006,
+          "delta": 0.12900000000000045
+        },
+        "CU": {
+          "before": 7.803,
+          "after": 7.869,
+          "delta": 0.06599999999999984
+        },
+        "PC": {
+          "before": 5.16,
+          "after": 5.169,
+          "delta": 0.008999999999999453
+        },
+        "PQ": {
+          "before": 8.012,
+          "after": 8.061,
+          "delta": 0.04899999999999949
+        }
+      }
+    },
+    "contract": {
+      "before/vocal-pop-s101": {
+        "sha256": "99d8190a77910aa53250fca5520d54ca5be87242fe1492f79dd3caa64234389f",
+        "moras": 54,
+        "vocal_sections": 4,
+        "shared_verse_exact": true,
+        "bounds_valid": true,
+        "closure_count": 1,
+        "closure_valid": true,
+        "distinct_note_lengths": [480,960,1920]
+      },
+      "before/vocal-pop-s103": {
+        "sha256": "9d4528b0070d55be4f2c7e237376b7ac5d55571f85a153562cd0df425209ea66",
+        "moras": 54,
+        "vocal_sections": 4,
+        "shared_verse_exact": true,
+        "bounds_valid": true,
+        "closure_count": 1,
+        "closure_valid": true,
+        "distinct_note_lengths": [480,960,1920]
+      },
+      "after/vocal-pop-s101": {
+        "sha256": "8c940eeb169ada9fb5c7ba25f24b220eb08b6da8a17a004c13e059d518372144",
+        "moras": 54,
+        "vocal_sections": 4,
+        "shared_verse_exact": true,
+        "bounds_valid": true,
+        "closure_count": 1,
+        "closure_valid": true,
+        "distinct_note_lengths": [480,720,960,1200,1920,2160,2400]
+      },
+      "after/vocal-pop-s103": {
+        "sha256": "6d76b91747a3011db04db252390a90d2c1e038571978715ea0acc81d32ee4ff0",
+        "moras": 54,
+        "vocal_sections": 4,
+        "shared_verse_exact": true,
+        "bounds_valid": true,
+        "closure_count": 1,
+        "closure_valid": true,
+        "distinct_note_lengths": [480,720,960,1200,1680,1920,2160,2400]
+      },
+      "before_seed_changes_rhythm": false,
+      "after_seed_changes_rhythm": true
+    }
+  },
+  "final_game_merge": {
+    "reason": "External game-loop preset omitted writing_style=chiptune; corrected before final measurement.",
+    "replaced_labels": ["game-loop-s101","game-loop-s103"],
+    "initial_reports": {
+      "after-clap.json": "e808ae43c3129e732d10f009e82d27144b496b1f57650a2e553378826ab78545",
+      "after-aesthetics.json": "3975dbf9c567de078a3d0f62d25d6ac301429e18b2fc45cd6113c93958e1c581"
+    },
+    "replacement_reports": {
+      "final-game-clap.json": "1c447919d83797651eab4708ff6c6b3e7fb663a76fd69985d7ff1cbebb0c369e",
+      "final-game-aesthetics.json": "67a550aec856603d0b6b1f5fa63a3222cd783301307de91a033282f8f7ed3d26"
+    },
+    "unchanged_labels": ["ambient-s101","ambient-s103","chiptune-s101","chiptune-s103","city-pop-s101","city-pop-s103","jazz-trio-s101","jazz-trio-s103","orchestral-s101","orchestral-s103","pop-band-s101","pop-band-s103","rock-s101","rock-s103","synthwave-s101","synthwave-s103"]
+  },
+  "audio": {
+    "before/ambient-s101.wav": {
+      "sha256": "99a7361fa417841141c628fd5354d9b28018426fe11488267ef4b18ae121ca15",
+      "duration_seconds": 153.75,
+      "clap_excerpt_starts_seconds": [0,71.875,143.75]
+    },
+    "before/ambient-s103.wav": {
+      "sha256": "fd816cefb772264f68fe41b78c2abb8724fd2502f0b885159b7cfd0e9a19a2e2",
+      "duration_seconds": 153.75,
+      "clap_excerpt_starts_seconds": [0,71.875,143.75]
+    },
+    "before/chiptune-s101.wav": {
+      "sha256": "475a986f7b792ed9d194cb96c113a32bb86279673a46f1691e3d657ebeac80c1",
+      "duration_seconds": 77.14285416666667,
+      "clap_excerpt_starts_seconds": [0,33.571416666666664,67.14285416666667]
+    },
+    "before/chiptune-s103.wav": {
+      "sha256": "dd8a899cfcbf7a3450d8705f823e821993536d08072c4edc42f227a6a7715691",
+      "duration_seconds": 77.14285416666667,
+      "clap_excerpt_starts_seconds": [0,33.571416666666664,67.14285416666667]
+    },
+    "before/city-pop-s101.wav": {
+      "sha256": "a9e89c4affffe4f4d2bab2a6e9817e68d342794b3400f48b63c517bf4447edd1",
+      "duration_seconds": 101.88679166666667,
+      "clap_excerpt_starts_seconds": [0,45.943395833333334,91.88679166666667]
+    },
+    "before/city-pop-s103.wav": {
+      "sha256": "5cff9580f1f7ce472e552b4058bef354828e96ac1d28a8660032f77fd2607a54",
+      "duration_seconds": 101.88679166666667,
+      "clap_excerpt_starts_seconds": [0,45.943395833333334,91.88679166666667]
+    },
+    "before/game-loop-s101.wav": {
+      "sha256": "05ed67fa66a319ec97aebb5775f7a2b7b27408d422f6bd9588c7fa4c65265736",
+      "duration_seconds": 32,
+      "clap_excerpt_starts_seconds": [0,11,22]
+    },
+    "before/game-loop-s103.wav": {
+      "sha256": "e992a5114f7dbc5d8b22c78d64f0b33d78e9bd4f5e6f738b386a3594c1c813e6",
+      "duration_seconds": 32,
+      "clap_excerpt_starts_seconds": [0,11,22]
+    },
+    "before/jazz-trio-s101.wav": {
+      "sha256": "c840057ad6c5ac197f1e2e7f9285c312df6efb7bd60c8821246238a16405c688",
+      "duration_seconds": 81.8181875,
+      "clap_excerpt_starts_seconds": [0,35.909083333333335,71.8181875]
+    },
+    "before/jazz-trio-s103.wav": {
+      "sha256": "cdfd318684950ba118b129f61769150aabec9ddd52b7f1523760fb65cf494bf6",
+      "duration_seconds": 81.8181875,
+      "clap_excerpt_starts_seconds": [0,35.909083333333335,71.8181875]
+    },
+    "before/orchestral-s101.wav": {
+      "sha256": "7132f09677c256ac5256db3a13e12e34ea217f460e565e3afe024bf27d240152",
+      "duration_seconds": 116.052625,
+      "clap_excerpt_starts_seconds": [0,53.0263125,106.052625]
+    },
+    "before/orchestral-s103.wav": {
+      "sha256": "5d4b9ba10ac42238b327bd6ff20911c8fe3874ee3762f069c9c76fb1fa21283a",
+      "duration_seconds": 116.052625,
+      "clap_excerpt_starts_seconds": [0,53.0263125,106.052625]
+    },
+    "before/pop-band-s101.wav": {
+      "sha256": "a2145b2ed1b020a1e85bd7790e728a42ea13b7e79a250c421f9c61bebce8d74d",
+      "duration_seconds": 133.54839583333333,
+      "clap_excerpt_starts_seconds": [0,61.7741875,123.54839583333333]
+    },
+    "before/pop-band-s103.wav": {
+      "sha256": "860bd69a365017fe77fade8551f902ed9e559e952aabef4825a632bb4427dc7a",
+      "duration_seconds": 133.54839583333333,
+      "clap_excerpt_starts_seconds": [0,61.7741875,123.54839583333333]
+    },
+    "before/rock-s101.wav": {
+      "sha256": "476b78afc861bcdf4e510863fdae57e8f5a8e94a8a76df9023b6d28621b94534",
+      "duration_seconds": 72.97297916666666,
+      "clap_excerpt_starts_seconds": [0,31.486479166666665,62.97297916666667]
+    },
+    "before/rock-s103.wav": {
+      "sha256": "99acfcba831c4b9306db6c91a917dde5e31abbfe7ab7d77134af58914084621f",
+      "duration_seconds": 72.97297916666666,
+      "clap_excerpt_starts_seconds": [0,31.486479166666665,62.97297916666667]
+    },
+    "before/synthwave-s101.wav": {
+      "sha256": "ae4f701c7722b35d07fc6fa3af03fb3a8df0d19a83aab344d2aa6ca5b7f5f4ad",
+      "duration_seconds": 105,
+      "clap_excerpt_starts_seconds": [0,47.5,95]
+    },
+    "before/synthwave-s103.wav": {
+      "sha256": "f5f1fffdfc406cb9cd4ae4723e04f813f540843e4a885bfecb15eaf2cf2db7a4",
+      "duration_seconds": 105,
+      "clap_excerpt_starts_seconds": [0,47.5,95]
+    },
+    "after/ambient-s101.wav": {
+      "sha256": "52bf7d4f8b447aaf129db88a2c56c93fa29b4e111f1f8f035078e36cb7a0227c",
+      "duration_seconds": 153.75,
+      "clap_excerpt_starts_seconds": [0,71.875,143.75]
+    },
+    "after/ambient-s103.wav": {
+      "sha256": "6cdb47cde3cbbcb80bc5aaa0826075db94662f44e72491f7d4ce8fdbbf3beaa2",
+      "duration_seconds": 153.75,
+      "clap_excerpt_starts_seconds": [0,71.875,143.75]
+    },
+    "after/chiptune-s101.wav": {
+      "sha256": "1ebefbee6c91ebd98efd3b932e6ee0177d8cc556651240419a7c270c8726f315",
+      "duration_seconds": 77.14285416666667,
+      "clap_excerpt_starts_seconds": [0,33.571416666666664,67.14285416666667]
+    },
+    "after/chiptune-s103.wav": {
+      "sha256": "78f155eb1600f4ad631fcaef19257f70e0db31f49b1514e05908cd6d95f4338c",
+      "duration_seconds": 77.14285416666667,
+      "clap_excerpt_starts_seconds": [0,33.571416666666664,67.14285416666667]
+    },
+    "after/city-pop-s101.wav": {
+      "sha256": "09088189ab50a6b369d8de9caf9f9763c6ea01f5b43f538f4bc0479783af19e0",
+      "duration_seconds": 101.88679166666667,
+      "clap_excerpt_starts_seconds": [0,45.943395833333334,91.88679166666667]
+    },
+    "after/city-pop-s103.wav": {
+      "sha256": "959472d4976d4d03d59e01ebb47f86b8535653b059ad5b1d698781325a59e975",
+      "duration_seconds": 101.88679166666667,
+      "clap_excerpt_starts_seconds": [0,45.943395833333334,91.88679166666667]
+    },
+    "after/game-loop-s101.wav": {
+      "sha256": "83de7f05ae22c24aeee1b3fac42c1c541abed24ed1a56872d40af733ba173de8",
+      "duration_seconds": 32,
+      "clap_excerpt_starts_seconds": [0,11,22]
+    },
+    "after/game-loop-s103.wav": {
+      "sha256": "fe10e755367cad0a715d3b066c15ab7b63bc5cd8b5f1555bf678b8a787bb99d1",
+      "duration_seconds": 32,
+      "clap_excerpt_starts_seconds": [0,11,22]
+    },
+    "after/jazz-trio-s101.wav": {
+      "sha256": "c2489ed0540fad9ade7af563992d4d0ad09260f1d137562b5cf8bc143ebbe8f5",
+      "duration_seconds": 81.8181875,
+      "clap_excerpt_starts_seconds": [0,35.909083333333335,71.8181875]
+    },
+    "after/jazz-trio-s103.wav": {
+      "sha256": "b5b66efbb8b0e301459198972ff4de8000fbb8ab8fd981f0451eaa69371eef49",
+      "duration_seconds": 81.8181875,
+      "clap_excerpt_starts_seconds": [0,35.909083333333335,71.8181875]
+    },
+    "after/orchestral-s101.wav": {
+      "sha256": "8c6dfe51fcac5696c40a239b23836c9af6ef8647721eeffd0b0bf59d82d471fe",
+      "duration_seconds": 116.052625,
+      "clap_excerpt_starts_seconds": [0,53.0263125,106.052625]
+    },
+    "after/orchestral-s103.wav": {
+      "sha256": "39a72ec4fb3d375c9b6374c1b641a3b511d1dfecaa5bb8c79f0974ac42ae0e09",
+      "duration_seconds": 116.052625,
+      "clap_excerpt_starts_seconds": [0,53.0263125,106.052625]
+    },
+    "after/pop-band-s101.wav": {
+      "sha256": "ed1d4fe8227084c4cc57c98b2e237b5555c1348323226495d855eb4085b21c6c",
+      "duration_seconds": 133.54839583333333,
+      "clap_excerpt_starts_seconds": [0,61.7741875,123.54839583333333]
+    },
+    "after/pop-band-s103.wav": {
+      "sha256": "a54ca73f1dde678f4158432f66bf12b7368d1c16ea26a8d9a5abf1245d5bb65b",
+      "duration_seconds": 133.54839583333333,
+      "clap_excerpt_starts_seconds": [0,61.7741875,123.54839583333333]
+    },
+    "after/rock-s101.wav": {
+      "sha256": "37f183273c90d36679d81e3f6c9451795ef398032763bcd3fe82997291d42378",
+      "duration_seconds": 72.97297916666666,
+      "clap_excerpt_starts_seconds": [0,31.486479166666665,62.97297916666667]
+    },
+    "after/rock-s103.wav": {
+      "sha256": "daf5f12ef4f59462e3d244fbca6778c41bc386e5b40714fd4cb9e0ecb77ac3ea",
+      "duration_seconds": 72.97297916666666,
+      "clap_excerpt_starts_seconds": [0,31.486479166666665,62.97297916666667]
+    },
+    "after/synthwave-s101.wav": {
+      "sha256": "b8282dcbae730fc53149eda1c4019e49959c0d5c5e7df08a97da6de7eda29d61",
+      "duration_seconds": 105,
+      "clap_excerpt_starts_seconds": [0,47.5,95]
+    },
+    "after/synthwave-s103.wav": {
+      "sha256": "4e6dcd42b99f4325aef55126dae6cb234ac0406e7a676045ab0bff6134a20dca",
+      "duration_seconds": 105,
+      "clap_excerpt_starts_seconds": [0,47.5,95]
+    },
+    "vocal-before/vocal-pop-s101.wav": {
+      "sha256": "7b3a0127f6b0d1ad7a633f5ee2484bc4ff13a2341f15e5cd5015a86f9a4e80d4"
+    },
+    "vocal-before/vocal-pop-s103.wav": {
+      "sha256": "7029bb1916a6eceb41067540af87ba6fe78084d9e26bd661c4347500911d3781"
+    },
+    "vocal-after/vocal-pop-s101.wav": {
+      "sha256": "d0f53b1f0d7ad52d4070be672ba3cc4f21611f5b0508550a998848c5f1d92545"
+    },
+    "vocal-after/vocal-pop-s103.wav": {
+      "sha256": "b2f1f8a10c883595bbf9d0e917b0e79c4495e3d2cd3996d350962d91ae5ce777"
+    }
+  },
+  "project_sha256": {
+    "before/ambient-s101.auris": "913d08c17b933bffb69d6fde12c5cbb5668e15cddefa1c35ae1917ec18bd7084",
+    "before/ambient-s103.auris": "e14748050434db1c5712e542b7ae87bae19d56560b1e20364138ed9d87d41e13",
+    "before/chiptune-s101.auris": "abe6ed72f6c730dddd6251eb2975535a1ee1cc1c6b659c3ad5ea3c53c08ae470",
+    "before/chiptune-s103.auris": "80bf637fc642f705ffd81cae06496532d0cfd84117676aab7147dbe3837ae5a1",
+    "before/city-pop-s101.auris": "1711d56962769d1bfa473c842e5952f30211dbbbb2f2f8e9e6e3f913bf1cdb11",
+    "before/city-pop-s103.auris": "bea5e175b7dfa8a7099ef406622e72d7bfa6fc423f0e3320fad760bd0ce8a63d",
+    "before/game-loop-s101.auris": "1767b6fb35a23c8c03780328e2622bddf651e24763eef1e64947328cbb5072d2",
+    "before/game-loop-s103.auris": "c86cac9428de9c8b003783022f1ea55bedeb962785cbfd94a9065f99168cf343",
+    "before/jazz-trio-s101.auris": "30b72a61d3c2b63680e905f7afc862582bff1245572fe34fb0d76cb9cc77a5ba",
+    "before/jazz-trio-s103.auris": "c38cee21fe840beeeb5e4d4d8c8237be2e33d82ed27b8425131710ea43a65906",
+    "before/orchestral-s101.auris": "01ffba8600f16f8b9043a0314d4a6833f9e75ad30c27e30c9b55eb85f75f5cc7",
+    "before/orchestral-s103.auris": "b4f4075853bdc01b647c66ccfa55f04bd57c5b9a087be04866a0d352bee62785",
+    "before/pop-band-s101.auris": "a5cc51150fae975e22fb93576da55fc21d1a77f833072cf8f739a3eae55bcefd",
+    "before/pop-band-s103.auris": "46c2d2dfa251f17b32bb4e54a0a6aa7704cff5e7416d7eb72102f9261bc77bbe",
+    "before/rock-s101.auris": "6eb1f49a382f58a1b8f6247cd4e42cae41048a9e3a00aa40296b2139c2a63f16",
+    "before/rock-s103.auris": "77d6a68331775be99bfdce1138d5037859d3d683c731b211b42c3f6dd6bb9b86",
+    "before/synthwave-s101.auris": "c59d632fd3e22fa7b07eee500b0a43873a33b6483ed7decde420036eb5b391f6",
+    "before/synthwave-s103.auris": "f1c6fd23b05777b9cd1fa180a93c4a07a0aa3d7df46d82c4f972d63b4eb24c00",
+    "after/ambient-s101.auris": "93fe1cde8d4aeed23572e924e81b1cdf64c63611596bb08242c8985416eae81c",
+    "after/ambient-s103.auris": "dfbe51d0cbdebb70a2c4a0ba74506284bbd9f228430b05d4d682f45647fd4bca",
+    "after/chiptune-s101.auris": "6386757177f8fddfdd375a03f3a9ecf1548c527f6a654839e44501f65fa9cfc7",
+    "after/chiptune-s103.auris": "36a47ae52b3e682e019f0aa21dc9146d7961ae431ce96b1653f24452009d6e67",
+    "after/city-pop-s101.auris": "cfa99ab93478852cf8a3a6b54579704c6f0f289580d62d6a716723e2981ef41f",
+    "after/city-pop-s103.auris": "85c2267be0862db70f3ab3052ba2087435ec6b6ea3da085227cfa1f321270403",
+    "after/game-loop-s101.auris": "d94424f5af2bf2b634c6ea998e030b31165a41430c73563da57c616499f4ab25",
+    "after/game-loop-s103.auris": "26302860e590a4ca443a4deb6d6602b9a4e9e7c6d129a571cbf834da36684dcb",
+    "after/jazz-trio-s101.auris": "76c14ad54f072eb0a4479870ff7bb77bdd80b1bd82e8b0cbc7b3a8d385bb7d89",
+    "after/jazz-trio-s103.auris": "df24321326899b5245f610411099f3d462ebc3435a78599e7ed259b5eb774caf",
+    "after/orchestral-s101.auris": "bbe880bdca348beea59ccebd819c7fedfd87dbd4aad2bc9f3187e62c4c6c3116",
+    "after/orchestral-s103.auris": "8ec12e10d912b24005a084145e3b94da3e2f6affa62e874df7fb59d8f2683759",
+    "after/pop-band-s101.auris": "00d9d3f8f695341a1b9a027fd3d2f1aea649fe9cc3b3082a458c43e0bddff280",
+    "after/pop-band-s103.auris": "1662dec22d1bddc7dfd1390b0790521118e8bb706415c898b110f67f5227f1cc",
+    "after/rock-s101.auris": "720421fd42e20f059809472fc77c458059edd8de071248d23e39e42f89075319",
+    "after/rock-s103.auris": "cec38c569200dd4373871ca9dcae8771e4b0902a268eec0afb6c2cb06123e895",
+    "after/synthwave-s101.auris": "e0b6b24e0d55d53d783655dd79e72b47a24d34fbbe9e1b55b4e8397ad348713d",
+    "after/synthwave-s103.auris": "1eb34d3418b8a5c982ea6d79d4e8b705eaf204212130e1db24a4321ab1fcfec9",
+    "vocal-before/vocal-pop-s101.auris": "99d8190a77910aa53250fca5520d54ca5be87242fe1492f79dd3caa64234389f",
+    "vocal-before/vocal-pop-s103.auris": "9d4528b0070d55be4f2c7e237376b7ac5d55571f85a153562cd0df425209ea66",
+    "vocal-after/vocal-pop-s101.auris": "8c940eeb169ada9fb5c7ba25f24b220eb08b6da8a17a004c13e059d518372144",
+    "vocal-after/vocal-pop-s103.auris": "6d76b91747a3011db04db252390a90d2c1e038571978715ea0acc81d32ee4ff0"
+  },
+  "source_report_sha256": {
+    "learned-comparison.json": "30f8ed43f6a90d38fc94c80b5f5a0234c5d628130cefb7a8c50d1689bb570985",
+    "before-clap.json": "f1b2e623a71a7de435451990498cdd27567d3d6e4c8830f0176c498f51c4fb02",
+    "after-clap.json": "134d47fcbded28ad73c5507640ddb88cb9beaa21194f0fea6fd349a08b0a0849",
+    "before-aesthetics.json": "61e21f9454bf59abd2998867ffd99b0bb7f4af96968de0546ffc26b562d64edb",
+    "after-aesthetics.json": "5f80e9f6f819cab49bc0087bb9885c21d042614033846c2aa50911361c75cf02",
+    "audiobox-provenance.json": "4df5fcbfbe1e7d0968832f3e430aee4b5800068354408c6ba46741a997ee6cac",
+    "vocal-comparison.json": "3df883d4f80530018048650fd4df8f3faca5ad3616317e631050f452e0455fd0",
+    "vocal-contract.json": "c88c3d6ba500d55682fa5ea335324f8229093a0544aee7ab272a3c5cd4ea6a65",
+    "before-structure.json": "570f29ca9911e5a3cd7747f528ba0cb25aebb13085cb3fde4258ea78624e48f6",
+    "after-structure.json": "03c6f65e27442d9161769b5377067a4f1b0a7db979b5c609fd5bfdcf5285172d",
+    "vocal-before-structure.json": "e5900a7bf62bd0e70dee04e601793bd92510ad34374007a92ebe84a4d10372e0",
+    "vocal-after-structure.json": "1ed200c0d45db9387593fac122fac1140ad370bb6975e0739e565e8ab3b626cd",
+    "repeat-clap.json": "b8de18f8ab114235484b4f2364e4f914b0ef0b81618993334e5f47a8c29f797f",
+    "final-game-merge.json": "4cdd415ff6a212a3a1502400d90032bf6a72b696dbe09bec0af9478af2c3e600",
+    "python-environment.txt": "ae9966320b4b5d572ca2a16db0d39a6d9fd62134a5f7f8b22cd2ae2e7b2018f3",
+    "before-symbolic.txt": "f6d5d800bb5d75e4026c3aa168fa94e62c0485d7be7b1e532c2775d70661ee56",
+    "after-symbolic.txt": "33c1db2564169da03fe075891ed2ab2e89da30ae1eeb0d37b837d7f26bb3f2af"
+  },
+  "limitations": ["Two chosen seeds per preset; paired descriptive measurements only, no significance test or confidence interval.","No listening evaluation or universal musical-quality claim.","CLAP describes prompt alignment from three excerpts; Audiobox CE/CU/PC/PQ are model predictions.","Structural repetition, overlap, leaps and complexity can serve musical purposes; lower or higher is not universally better.","The vocal audio probe is built-in synthesis, not evaluation of intelligibility or a learned singer.","Large WAV files, raw reports, logs and model artifacts remain under target/composition-eval."]
+}

@@ -7,7 +7,8 @@
 //!
 //! * **A singer sings one note at a time.** Where notes overlap, the later-starting note cuts
 //!   the earlier one off at its own start — the legato a keyboardist means by overlapping two
-//!   notes slightly.
+//!   notes slightly. Coincident duplicates with identical performance data sing once, for the
+//!   longest duration; the stored notes remain editable.
 //! * **Consonants are short; syllabics stretch.** Each consonant before the first syllabic
 //!   phoneme takes its width at the note's start, each one after the last takes its width at
 //!   the end, and everything between shares the remainder equally. The width is the voice
@@ -173,6 +174,7 @@ impl SingerFrames {
 }
 
 /// One note flattened onto the timeline, with the curves that shape it.
+#[derive(PartialEq)]
 struct TimedNote<'a> {
     /// Seconds where the note begins.
     start: f64,
@@ -443,6 +445,24 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
     }
 
     placed.sort_by_key(|(start, end, _)| (start.raw(), end.raw()));
+    // Before assigning seconds, TimedNote compares only performance data. A shorter duplicate
+    // must not invent a second syllable when the frame walker reaches the longer note.
+    // Keep the last match: it has the longest end, and other simultaneous notes keep their order.
+    let keep: Vec<bool> = placed
+        .iter()
+        .enumerate()
+        .map(|(at, (start, _, note))| {
+            !placed[at + 1..]
+                .iter()
+                .take_while(|(other_start, _, _)| other_start == start)
+                .any(|(_, _, other)| note == other)
+        })
+        .collect();
+    let placed: Vec<_> = placed
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(note, keep)| keep.then_some(note))
+        .collect();
     let ends: Vec<Ticks> = placed
         .iter()
         .enumerate()
@@ -713,6 +733,95 @@ mod tests {
                 .sum::<usize>(),
             frames.len()
         );
+    }
+
+    #[test]
+    fn coincident_duplicates_sing_once_for_the_longest_duration() {
+        let mut long = sung(67, 2.0, 1.0, &["k", "a"]);
+        long.lyric = "カ".into();
+        let mut short = long.clone();
+        short.length = Ticks(23);
+        let mut expected = track(vec![long.clone()]);
+        expected.frame_hop = 256.0 / 24_000.0;
+
+        for notes in [
+            vec![short.clone(), long.clone()],
+            vec![long.clone(), short],
+            vec![long.clone(), long],
+        ] {
+            let mut singer = track(notes);
+            singer.frame_hop = expected.frame_hop;
+            let original = singer.clone();
+            assert_eq!(
+                render_score(&singer, &map()),
+                render_score(&expected, &map())
+            );
+            assert_eq!(
+                render_frames(&singer, &map()),
+                render_frames(&expected, &map())
+            );
+            assert_eq!(
+                render_expression_frames(&singer, &map()),
+                render_expression_frames(&expected, &map())
+            );
+            assert_eq!(
+                singer, original,
+                "rendering keeps the editable notes intact"
+            );
+        }
+    }
+
+    #[test]
+    fn removing_duplicates_preserves_other_simultaneous_notes_and_later_attacks() {
+        let mut long = sung(67, 1.0, 2.0, &["k", "a"]);
+        long.lyric = "カ".into();
+        let mut short = long.clone();
+        short.length = Ticks(23);
+        let mut other = sung(64, 1.0, 0.5, &["r", "a"]);
+        other.lyric = "ラ".into();
+        let mut later = long.clone();
+        later.start = Ticks::from_beats(2.0);
+        let singer = track(vec![short, other.clone(), long.clone(), later.clone()]);
+        let expected = track(vec![other, long, later]);
+        let score = render_score(&singer, &map());
+        assert_eq!(score, render_score(&expected, &map()));
+        assert_eq!(
+            render_frames(&singer, &map()),
+            render_frames(&expected, &map())
+        );
+        assert_eq!(
+            score
+                .notes
+                .iter()
+                .filter_map(|note| note.key)
+                .collect::<Vec<_>>(),
+            [64, 67, 67],
+            "a different simultaneous note and the later repeated syllable still sound"
+        );
+    }
+
+    #[test]
+    fn simultaneous_notes_with_distinct_performance_are_not_duplicates() {
+        let mut long = sung(67, 1.0, 1.0, &["k", "a"]);
+        long.lyric = "カ".into();
+        let mut short = long.clone();
+        short.length = Ticks(23);
+        let mut quiet = short.clone();
+        quiet.velocity = 0.3;
+        let mut pinned = short;
+        pinned.phoneme_seconds = vec![0.005, 0.0];
+        for variant in [quiet, pinned] {
+            let singer = track(vec![variant, long.clone()]);
+            assert_eq!(
+                render_score(&singer, &map())
+                    .notes
+                    .iter()
+                    .filter(|note| note.key.is_some())
+                    .count(),
+                2,
+                "authored performance differences are retained"
+            );
+        }
     }
 
     #[test]

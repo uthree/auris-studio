@@ -303,6 +303,8 @@ struct SongDoc {
     humanize: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     performance: Option<crate::PerformanceStyle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    writing_style: Option<crate::PerformanceStyle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     dynamics: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -486,6 +488,9 @@ impl SongDoc {
         };
         if self.performance.is_some() {
             base.performance = self.performance;
+        }
+        if self.writing_style.is_some() {
+            base.writing_style = self.writing_style;
         }
         let mut spec = SongSpec {
             singer: self.singer,
@@ -1048,6 +1053,7 @@ impl From<&SongSpec> for SongDoc {
             swing: (spec.swing != plain.swing).then_some(u32::from(spec.swing)),
             humanize: (spec.humanize != plain.humanize).then_some(spec.humanize),
             performance: spec.performance,
+            writing_style: spec.writing_style,
             dynamics: (spec.dynamics != plain.dynamics).then_some(spec.dynamics),
             fill: (spec.fill != plain.fill).then_some(spec.fill),
             variation: (spec.variation != plain.variation).then_some(spec.variation),
@@ -1372,6 +1378,15 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn written_and_performed_palettes_round_trip_independently() {
+        let spec = SongSpec::parse("writing_style = 'city-pop'\nperformance = 'rock'").unwrap();
+        assert_eq!(spec.writing_style, Some(crate::PerformanceStyle::CityPop));
+        assert_eq!(spec.performance, Some(crate::PerformanceStyle::Rock));
+        assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
+        assert!(SongSpec::parse("writing_style = 'rok'").is_err());
     }
     use super::*;
 

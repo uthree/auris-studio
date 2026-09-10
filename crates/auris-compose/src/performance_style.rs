@@ -1,34 +1,12 @@
 //! Genre and instrument decisions for a composed clip's editable performance stack.
 
+pub use auris_core::PerformanceStyle;
 use auris_core::{
     Expression, GhostNotes, GhostPattern, NoteTransform, PitchPerformance, StrokeDirection, Strum,
     StrumClock,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::spec::{PartSpec, Role};
-
-/// The performance palette a song installs on its clips, independently of its written notes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PerformanceStyle {
-    /// Tight oscillators with a small amount of lead motion.
-    Chiptune,
-    /// Restrained band phrasing and soft bass pickups.
-    PopBand,
-    /// Laid-back accents, saxophone gestures and syncopated bass pickups.
-    CityPop,
-    /// Alternating guitar strokes, muted tails and expressive lead bends.
-    Rock,
-    /// Piano attack spread, offbeat dynamics and quiet kit pickups.
-    JazzTrio,
-    /// Shared phrase dynamics and restrained solo wind/string vibrato.
-    Orchestral,
-    /// Tight rhythm with connected synthesizer leads.
-    Synthwave,
-    /// Slow shared dynamics and subtle bowed-bass motion.
-    Ambient,
-}
 
 /// Builds a genre's initial stack. `seed` names the clip; `group` names the whole ensemble.
 /// The humanize dial scales wander and lean, while intentional articulations keep their depth.
