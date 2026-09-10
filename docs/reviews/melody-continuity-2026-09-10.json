@@ -1,0 +1,1783 @@
+{
+  "schema_version": 1,
+  "design": "Prespecified diagnostic/reference/held-out pairs; only instrumental melody transplanted; same archived renderer and backing; no selection by model score.",
+  "baseline_revision": "c6711de",
+  "baseline_cli_sha256": "b9e63a925350a56ab5cb34e7809231d633c56e94d45d388f021d773ad2719c7d",
+  "candidate_cli_sha256": "31a58d5675a6b1b86c8eeec262fefa462f1865454c74c5aad2213b835f39be1b",
+  "writer_sha256": {
+    "crates\\auris-compose\\src\\parts\\melody_rhythm.rs": "b62130f594a48cd1752139bb80610118d28a0155043fad32f94083dfa4859a88",
+    "crates\\auris-compose\\src\\parts\\melody.rs": "0a53d8efabb34276d1a9ce49e0431896331cc15b9e9ad62e6995f1722378d493"
+  },
+  "source_report_sha256": {
+    "before\\manifest.json": "27bb44ecd433d564ba9c2ba74e8ebb5cfd9d1d6a3a55691815b53d641e016137",
+    "before\\aesthetics.json": "8cdb9d17e26a45cf9c7d821c868248b5c24c06b39c6a1df8dbc32722abed4454",
+    "before\\clap.json": "7e2e9b64938ebbc71f5408078a74e0486927e537c788b9530fc9e93422f2b5a6",
+    "before\\continuity.json": "b3afb161d7f6761c1c1f249b3494b491001dd571965c3108157b23e70bf1458e",
+    "after\\manifest.json": "07528f4dfe741356a2db0fc9fe05000feb29b01ef6d892cfce3019e133ee1df4",
+    "after\\aesthetics.json": "13e79172963309967405071da96bdeff48d5d92f0480bef550bfabeb557159bc",
+    "after\\clap.json": "c3f2c2ba865a9d363b0256af430e83a26111de3a43051a7d88c1a38faed5bf7e",
+    "after\\continuity.json": "d94153f86cebb52ac757d686c6033d495b8e20d92783210bb73018cf26b5b6af",
+    "integrity-audit.json": "eb4d64172ba13bc011bb3a4cc1c1f472d6efca7b3ec9a0a555918f3e5e4e83c6"
+  },
+  "soundfont_sha256": "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3",
+  "ffmpeg_sha256": "b2663834d9162f6ee431e7d864d8afd7ac385ec289de70463af67beab6f2257e",
+  "model_input": {
+    "input": "The exact normalized first-chorus listening excerpts",
+    "audiobox": "Existing evaluator over the complete excerpt",
+    "clap": "Existing frozen prompt manifest; --segments 1; centered ten-second window",
+    "limitations": "Neither model directly measures groove, memorability, or whole-song quality"
+  },
+  "clap_model": {
+    "implementation": "native laion-clap",
+    "architecture": "HTSAT-base, non-fusion, RoBERTa",
+    "repository": "lukewys/laion_clap",
+    "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+    "checkpoint": "music_audioset_epoch_15_esc_90.14.pt",
+    "checkpoint_sha256": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd",
+    "reference": "https://github.com/LAION-AI/CLAP",
+    "tokenizer_artifacts": {
+      "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+      "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+      "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+      "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+      "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+    },
+    "tokenizer_repository": "roberta-base",
+    "tokenizer_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+    "device": "cpu",
+    "threads": 4,
+    "python": "3.11.15",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "packages": {
+      "laion-clap": "1.1.7",
+      "torch": "2.6.0+cpu",
+      "torchaudio": "2.6.0+cpu",
+      "transformers": "4.57.6",
+      "soundfile": "0.14.0",
+      "numpy": "1.26.4",
+      "scipy": "1.17.1"
+    }
+  },
+  "clap_preprocessing": {
+    "sample_rate": 48000,
+    "channels": "arithmetic mean before resampling",
+    "resampler": "scipy.signal.resample_poly default Kaiser window",
+    "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+    "window_samples": 480000,
+    "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+    "requested_segments": 1,
+    "short_audio": "repeat complete copies, zero-pad remainder",
+    "silent_rms_threshold": 1e-07,
+    "aggregation": "unweighted mean of valid excerpt cosines"
+  },
+  "clap_prompts_sha256": "69fc5ac6e1b765eeee57644bcd1d99c500e7bb8f33b8c4e0389518eb13f935d7",
+  "audiobox_model": {
+    "repository": "facebook/audiobox-aesthetics",
+    "revision": "9b1dd8e5df9af7216e836a98974fe3b82c56ded6",
+    "artifacts_sha256": {
+      "config.json": "0b8eabc5ced92cefed116a3aca8f1e59d2a33dc4d376b9e86dfb9c072e1d280d",
+      "model.safetensors": "a5a3c2412649cc2384ec525ffd5180ce6c4778f43bed6108e0a1303de04d014e"
+    },
+    "packages": {
+      "audiobox-aesthetics": "0.0.4",
+      "torch": "2.6.0+cpu",
+      "torchaudio": "2.6.0+cpu",
+      "soundfile": "0.14.0"
+    },
+    "device": "cpu",
+    "threads": 4,
+    "scoring": "Existing aesthetics.py score function unchanged; model handles 10-second windows across complete WAV, duration-weighted final partial window."
+  },
+  "subjective": {
+    "status": "pending",
+    "note": "No new human listening rating is inferred or reused for these candidate renders."
+  },
+  "measurement_summary": {
+    "before": {
+      "normalized_lufs_range": [
+        -23.01,
+        -23.0
+      ],
+      "normalized_true_peak_range": [
+        -11.51,
+        -8.24
+      ],
+      "full_peak_range": [
+        0.8533309102058411,
+        0.9660508036613464
+      ],
+      "full_rms_range": [
+        0.13039693567040403,
+        0.14273869123647695
+      ],
+      "early_stationary_bars_total": 12
+    },
+    "after": {
+      "normalized_lufs_range": [
+        -23.0,
+        -23.0
+      ],
+      "normalized_true_peak_range": [
+        -10.74,
+        -8.24
+      ],
+      "full_peak_range": [
+        0.892845869064331,
+        0.9660508036613464
+      ],
+      "full_rms_range": [
+        0.13025579917135013,
+        0.14258555418481078
+      ],
+      "early_stationary_bars_total": 0
+    },
+    "changed_melodies": 11,
+    "unchanged_melodies": [],
+    "heldout_changed": 6
+  },
+  "distinct_chorus_rhythms": {
+    "before": {
+      "pop-band": {
+        "n": 4,
+        "distinct": 4
+      },
+      "rock": {
+        "n": 4,
+        "distinct": 4
+      },
+      "city-pop": {
+        "n": 3,
+        "distinct": 3
+      }
+    },
+    "after": {
+      "pop-band": {
+        "n": 4,
+        "distinct": 4
+      },
+      "rock": {
+        "n": 4,
+        "distinct": 4
+      },
+      "city-pop": {
+        "n": 3,
+        "distinct": 3
+      }
+    }
+  },
+  "model_means": {
+    "all": {
+      "n": 11,
+      "CE": {
+        "before": 7.315545454545455,
+        "after": 7.317909090909091,
+        "delta": 0.0023636363636363455
+      },
+      "PQ": {
+        "before": 8.225272727272728,
+        "after": 8.236818181818181,
+        "delta": 0.011545454545453637
+      },
+      "CLAP": {
+        "before": 0.3417976038022475,
+        "after": 0.34365900267254224,
+        "delta": 0.0018613988702947393
+      }
+    },
+    "diagnostic": {
+      "n": 3,
+      "CE": {
+        "before": 7.357666666666667,
+        "after": 7.324666666666666,
+        "delta": -0.03300000000000036
+      },
+      "PQ": {
+        "before": 8.276666666666667,
+        "after": 8.279666666666667,
+        "delta": 0.0030000000000001137
+      },
+      "CLAP": {
+        "before": 0.3382144371668498,
+        "after": 0.3384438057740529,
+        "delta": 0.00022936860720312868
+      }
+    },
+    "reference": {
+      "n": 2,
+      "CE": {
+        "before": 7.115,
+        "after": 7.115,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.118500000000001,
+        "after": 8.118500000000001,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.35778096318244934,
+        "after": 0.35778121650218964,
+        "delta": 2.5331974029541016e-07
+      }
+    },
+    "held-out": {
+      "n": 6,
+      "CE": {
+        "before": 7.3613333333333335,
+        "after": 7.3821666666666665,
+        "delta": 0.020833333333333037
+      },
+      "PQ": {
+        "before": 8.235166666666666,
+        "after": 8.254833333333334,
+        "delta": 0.01966666666666761
+      },
+      "CLAP": {
+        "before": 0.33826140065987903,
+        "after": 0.3415591965119044,
+        "delta": 0.003297795852025387
+      }
+    }
+  },
+  "validation": {
+    "rust_passed": 3278,
+    "rust_ignored": 8,
+    "workspace_clippy_denied_warnings": "passed",
+    "python_tests": 106,
+    "ruff_changed_files": "passed",
+    "ruff_directory": "Four pre-existing findings in unchanged tools/eval/tune.py; changed files pass.",
+    "audio_integrity": {
+      "status": "pass",
+      "issues": [],
+      "pairs": 11,
+      "before_projects": 11,
+      "wavs_checked": 66
+    },
+    "listening_browser_checks": 34
+  },
+  "pairs": [
+    {
+      "preset": "pop-band",
+      "seed": 102,
+      "cohort": "diagnostic",
+      "label": "pop-band-s102",
+      "CE": {
+        "before": 6.998,
+        "after": 6.995,
+        "delta": -0.0030000000000001137
+      },
+      "CU": {
+        "before": 8.047,
+        "after": 8.087,
+        "delta": 0.03999999999999915
+      },
+      "PC": {
+        "before": 5.351,
+        "after": 5.323,
+        "delta": -0.02799999999999958
+      },
+      "PQ": {
+        "before": 8.249,
+        "after": 8.271,
+        "delta": 0.02200000000000024
+      },
+      "CLAP": {
+        "before": 0.3195715546607971,
+        "after": 0.3097701668739319,
+        "delta": -0.009801387786865234
+      },
+      "CLAP_margin": {
+        "before": 0.23459601402282715,
+        "after": 0.23581936955451965,
+        "delta": 0.0012233555316925049
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 42,
+          "chorus_notes_sha256": "81eebb144c231538f2f28c16ded62952305dd855e12f12fc969538dda3da91f1",
+          "first_bar_rhythm": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 36,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 6,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 2.0,
+            "maximum_complete_in_bar_ioi_beats": 2.0,
+            "early_long_hold_count": 6,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 42,
+          "chorus_notes_sha256": "dfc8b8d69460f2599b349a7efece3962306043355c6dbe846af2188d33ee9a67",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 36,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "07f3414e4af876263b02c04f6ffdc24ec8f6d1e9158996c3085ba8f4e6cfc4e3",
+          "wav": "81de0104b2b4eadc11408b6a22e5d313e538eccb44b99fb06964a3af9183777b",
+          "raw_excerpt": "aebf49241f5b75e9641e246293158840b31198c59cbd655c4b55ea7bcef0320b",
+          "excerpt": "6d794509f9d73e9427a4880150dc66c7d11e8f08fbb719bf4a93aff2f49d0b92"
+        },
+        "after": {
+          "project": "40833708601b9696add70ef1ba987cf059e13b0a4b9b6b27633ba0531bc6e697",
+          "wav": "85c948b64ea43dba1988211a42efe59bae08fb8d6431e944ec43c3cb384492cc",
+          "raw_excerpt": "dd05f1cb3b061909c048dcfd05fc464200214a34f79819f25e6b02408bc4bfb7",
+          "excerpt": "9b7b8d4edb98d1e723adbc925b5f33d76ba2605364cfcab7056af818be76658b"
+        }
+      },
+      "chorus_notes_equal": false,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.1612878143787384
+    },
+    {
+      "preset": "pop-band",
+      "seed": 105,
+      "cohort": "reference",
+      "label": "pop-band-s105",
+      "CE": {
+        "before": 6.82,
+        "after": 6.82,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 7.89,
+        "after": 7.89,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 4.972,
+        "after": 4.972,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.112,
+        "after": 8.112,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.3302772343158722,
+        "after": 0.3302772343158722,
+        "delta": 0.0
+      },
+      "CLAP_margin": {
+        "before": 0.1818951666355133,
+        "after": 0.1818951666355133,
+        "delta": 0.0
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 30,
+          "chorus_notes_sha256": "ff1649c2a082ab540b67efc7d61683281e4d5f946ad9d684979e3e68076dc855",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 24,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 6
+          }
+        },
+        "after": {
+          "note_count": 30,
+          "chorus_notes_sha256": "ff1649c2a082ab540b67efc7d61683281e4d5f946ad9d684979e3e68076dc855",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 24,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 6
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "fecbfb8bfa2867d1e1a2d9bd26394c25b7aea468018af68d113d8f2665022e98",
+          "wav": "0d85938419f623fd4358a5cea297b286c8ce21f30b8a8d788bd02653fd0d6797",
+          "raw_excerpt": "16dd2ac24ede0d141c3358b37110ca4ef3ef082d89b1245b0647dc3b176cecc1",
+          "excerpt": "f459d1e83d1f88f2f8bd37e8eea6c03986e710ff97924afb4aadac41b7674a59"
+        },
+        "after": {
+          "project": "04f52641caa2fbd4aa9b04e0637ba572049e0fdf87fedf53a106dea37825540e",
+          "wav": "aeb5bb35f5da5aaf1177cb2d391b170cf30f2bd2fccb742632e0c9078cf03c1e",
+          "raw_excerpt": "0be9884f59d8b65f86b46dd1b24254e289009a627032a792c04e51b59483db9b",
+          "excerpt": "b23f99b82c070c1c6c1dda3a934e52fe5015a3dde00076315eb46db603abc766"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": true,
+      "excerpt_max_abs_pcm_delta": 0.0
+    },
+    {
+      "preset": "rock",
+      "seed": 105,
+      "cohort": "diagnostic",
+      "label": "rock-s105",
+      "CE": {
+        "before": 7.384,
+        "after": 7.383,
+        "delta": -0.001000000000000334
+      },
+      "CU": {
+        "before": 8.018,
+        "after": 8.018,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 6.17,
+        "after": 6.17,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.195,
+        "after": 8.194,
+        "delta": -0.0009999999999994458
+      },
+      "CLAP": {
+        "before": 0.35850846767425537,
+        "after": 0.35850274562835693,
+        "delta": -5.7220458984375e-06
+      },
+      "CLAP_margin": {
+        "before": 0.3176414892077446,
+        "after": 0.31763434410095215,
+        "delta": -7.145106792449951e-06
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 38,
+          "chorus_notes_sha256": "d1546fe9f5e4b92a5dbfce50dc85fb3f01ed0ee6ff876f3db49a458d035cd256",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 30,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 6
+          }
+        },
+        "after": {
+          "note_count": 38,
+          "chorus_notes_sha256": "d1546fe9f5e4b92a5dbfce50dc85fb3f01ed0ee6ff876f3db49a458d035cd256",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 30,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 6
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "40a8f36f0db9aafdc311c39842cd314af6bd13e8f7119a3e4d55110d53e18623",
+          "wav": "8803ba72dbc74f1e86405537c17a202b39e0c19b3b6435ceeecc3a708c2fb120",
+          "raw_excerpt": "a52e435aa3f2325776ebcde67ea71286a4a0f1fc674b2ccb8703170cfd17c37f",
+          "excerpt": "ced8bbd7dca57ec6ae82ba84fb6243b8c103af6ac90fbc9f7cddab55a01b2b16"
+        },
+        "after": {
+          "project": "df4bd76e60e022271984fec06d0742731d9fc55ec49cafab3b2e10ab327c1a92",
+          "wav": "732e09586570f2fffbf19a45d9cc287fc8424a8b27eba24bc12a859d15ca3177",
+          "raw_excerpt": "c3b9c5f92cca5eeb01c1c32310d0bca726006141cf8ea12f7705614dc3473bb5",
+          "excerpt": "abcecc5dace663cb7f20f1b09a797afb788dbb99fa27c1ac18ec9fda1a2f441a"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.001792222261428833
+    },
+    {
+      "preset": "rock",
+      "seed": 107,
+      "cohort": "reference",
+      "label": "rock-s107",
+      "CE": {
+        "before": 7.41,
+        "after": 7.41,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 8.011,
+        "after": 8.011,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 6.281,
+        "after": 6.281,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.125,
+        "after": 8.125,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.3852846920490265,
+        "after": 0.3852851986885071,
+        "delta": 5.066394805908203e-07
+      },
+      "CLAP_margin": {
+        "before": 0.3500640317797661,
+        "after": 0.3500634804368019,
+        "delta": -5.513429641723633e-07
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 58,
+          "chorus_notes_sha256": "5676b619a04ca75a8e75b3b42065cdbe7c61a690b885ea4bd9d22a6bc691c0ec",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 48,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 5,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 58,
+          "chorus_notes_sha256": "5676b619a04ca75a8e75b3b42065cdbe7c61a690b885ea4bd9d22a6bc691c0ec",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 48,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 5,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "e6fa4abd71119787bd60da15c9f47a13e4f81142728fddc59542fa9747429d95",
+          "wav": "4d52b350a20d9196643cbfa32470e1bf3e2a7bc72648a870b49cf0b9626c1ea2",
+          "raw_excerpt": "f9d030fc0cdc35f68350096c71f03d12a6104242894b3275545f96bdfb42d088",
+          "excerpt": "f62f802a7e86e54b6852a6d29eac318daa5a9ba9fcb8a39565603ce3f114c5b0"
+        },
+        "after": {
+          "project": "ec8b297acb816ef0687527c3b7a070e12956946463992c94171fc9bd0f81db7c",
+          "wav": "6ad7d40f344a38c488c6c1fd89f89add9d1cb8b3790b55b21903369ae4be5b45",
+          "raw_excerpt": "4181344674a02d42e68ff9d62bbfd3626c2cf5cf6bbf6d6fb1a011070bd24420",
+          "excerpt": "dc28f5bcd012c4c0b615de88472d33836261442734008c78aa0b41a8d1ed37d4"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.0002499707043170929
+    },
+    {
+      "preset": "city-pop",
+      "seed": 102,
+      "cohort": "diagnostic",
+      "label": "city-pop-s102",
+      "CE": {
+        "before": 7.691,
+        "after": 7.596,
+        "delta": -0.09499999999999975
+      },
+      "CU": {
+        "before": 8.239,
+        "after": 8.201,
+        "delta": -0.038000000000000256
+      },
+      "PC": {
+        "before": 5.862,
+        "after": 5.883,
+        "delta": 0.020999999999999908
+      },
+      "PQ": {
+        "before": 8.386,
+        "after": 8.374,
+        "delta": -0.011999999999998678
+      },
+      "CLAP": {
+        "before": 0.3365632891654968,
+        "after": 0.34705850481987,
+        "delta": 0.010495215654373169
+      },
+      "CLAP_margin": {
+        "before": 0.12469246983528137,
+        "after": 0.17064063251018524,
+        "delta": 0.04594816267490387
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 42,
+          "chorus_notes_sha256": "efd1125f3601a1735eee9b787d1a24fd5f56850d9d39f7855525b2eeaf65cd3a",
+          "first_bar_rhythm": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 36,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 6,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 2.0,
+            "maximum_complete_in_bar_ioi_beats": 2.0,
+            "early_long_hold_count": 6,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 42,
+          "chorus_notes_sha256": "ce1fd6131bb06648a9f46b5f015bb63f060c953fdd63a4701716936650277ac6",
+          "first_bar_rhythm": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 36,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "e6352d7183d7b67eda09e8e760d47887db6e464c9e9fed5b99fee463289aab20",
+          "wav": "0c58067472d59be1109ce3cf35eb4222c3805928d760a4d7fa1d6af6b729192a",
+          "raw_excerpt": "0e3fc3012960b7138b1c1ce84d45a707c3ad1c126ac485d7c7199e1a35b5193d",
+          "excerpt": "971707dc75239b8d86dd79cdf83774b5ffc30856aa570862e15aaad0304aed27"
+        },
+        "after": {
+          "project": "314444594e6086b266d7da76bd526ec720062d38c433b97fd8c47f7052d55201",
+          "wav": "5bc01fe9a4a8f1a426b28e3e51617dd461760ff281313406698905e1e05345a0",
+          "raw_excerpt": "7ea93efec8641e4bc7ccb040168bdf1024c7a84920a3d8a85da62ae764ebfdcb",
+          "excerpt": "4de0a295d7b280ddf56825d13df92933a012ce5a242f6f1e13c2e493a4676ca1"
+        }
+      },
+      "chorus_notes_equal": false,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.17607563734054565
+    },
+    {
+      "preset": "rock",
+      "seed": 201,
+      "cohort": "held-out",
+      "label": "rock-s201",
+      "CE": {
+        "before": 7.357,
+        "after": 7.357,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 7.971,
+        "after": 7.971,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 6.312,
+        "after": 6.312,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.113,
+        "after": 8.113,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.38482749462127686,
+        "after": 0.38482749462127686,
+        "delta": 0.0
+      },
+      "CLAP_margin": {
+        "before": 0.36781671829521656,
+        "after": 0.36781671829521656,
+        "delta": 0.0
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 57,
+          "chorus_notes_sha256": "3660a6b7493aca5b3a26f5f66e5654a36a666c043ffe7d160404a069026b9e1c",
+          "first_bar_rhythm": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 47,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 6,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 57,
+          "chorus_notes_sha256": "3660a6b7493aca5b3a26f5f66e5654a36a666c043ffe7d160404a069026b9e1c",
+          "first_bar_rhythm": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 47,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 6,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "4b984ed8ced8714e94ca720811a25945b1d20694fb97c06b9ba9b9f862c995c5",
+          "wav": "5411fc8414b5855e5d0faf78eebc16f764072a5a303d7df6716b6f6da0f19a41",
+          "raw_excerpt": "8fa76809a304637b5f970de1da85fabdf5cd43a968c09cd7a436c8b5de4cf9ad",
+          "excerpt": "cd647c6977d20b823c7f841ecbba40f9144ab2ac4f394a59e8c9a9d650fdab51"
+        },
+        "after": {
+          "project": "1dec1d042b30aed6365d5a88243a55295d013ba6967226ce925caac25f503ac2",
+          "wav": "a834988718e3421af61a753e326df17174209f276f86aeb36fd91e8db5208f81",
+          "raw_excerpt": "2d9d33d68d34cca18c4a8bb2de13ad28332ab8e04fe83c595c810699f4fd2303",
+          "excerpt": "43af865b5112e541b84f8f33ff8ae19ac6cec4f8ddf12dd23c497034fa9b274b"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": true,
+      "excerpt_max_abs_pcm_delta": 0.0
+    },
+    {
+      "preset": "rock",
+      "seed": 202,
+      "cohort": "held-out",
+      "label": "rock-s202",
+      "CE": {
+        "before": 7.32,
+        "after": 7.428,
+        "delta": 0.10799999999999965
+      },
+      "CU": {
+        "before": 7.958,
+        "after": 8.114,
+        "delta": 0.15600000000000058
+      },
+      "PC": {
+        "before": 6.136,
+        "after": 6.137,
+        "delta": 0.0009999999999994458
+      },
+      "PQ": {
+        "before": 8.04,
+        "after": 8.159,
+        "delta": 0.11900000000000155
+      },
+      "CLAP": {
+        "before": 0.35589998960494995,
+        "after": 0.361419141292572,
+        "delta": 0.00551915168762207
+      },
+      "CLAP_margin": {
+        "before": 0.3348120376467705,
+        "after": 0.34277230128645897,
+        "delta": 0.007960263639688492
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 51,
+          "chorus_notes_sha256": "03ab03062453540fe546104769d2a67023856f469535f24014b409bfc3465356",
+          "first_bar_rhythm": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 43,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.5,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 51,
+          "chorus_notes_sha256": "29b0dc78cff8beb598a32a083980d0f7fe7cac9b73a200d770b821d3063d49b3",
+          "first_bar_rhythm": [
+            [
+              0,
+              480
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 43,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "edf3c6859f4d2b6eb4f7ab362b38050b72b9773e756f68ce1db8b1df3b91ce2b",
+          "wav": "1c1dd0511e292cc5ebe5cb1a49dfc9edb9960a2b1d739767d9d5e8ab7b4344c3",
+          "raw_excerpt": "caa0bae0b87459cf6d66b08c6fa0793a7467dc3e737aa79525ca019023f5fe48",
+          "excerpt": "0191a761aca77bc7774206726448671e3edb365afa0acb43418d5fb99e7bb19e"
+        },
+        "after": {
+          "project": "f11a542257c9b96cb2a07054250cff4c83bbd8c7e6d855267b5659a94c165bb9",
+          "wav": "e2c3ac04d7870b377de849d2c7c77b26a3b35a9043dfdd094c51ce252402db0a",
+          "raw_excerpt": "a1e67be19ca0cd635c3d6637a27082cf99410ab3853c37706f3a068d6835d56b",
+          "excerpt": "09cfb2ce33233e517d824cd998acd3fd32596e2e4d024387c0ebdae3cdafd2f3"
+        }
+      },
+      "chorus_notes_equal": false,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.13356252014636993
+    },
+    {
+      "preset": "city-pop",
+      "seed": 201,
+      "cohort": "held-out",
+      "label": "city-pop-s201",
+      "CE": {
+        "before": 7.768,
+        "after": 7.768,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 8.243,
+        "after": 8.243,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 5.851,
+        "after": 5.851,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.411,
+        "after": 8.411,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.3651500940322876,
+        "after": 0.3651500940322876,
+        "delta": 0.0
+      },
+      "CLAP_margin": {
+        "before": 0.17654849588871002,
+        "after": 0.17654849588871002,
+        "delta": 0.0
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 41,
+          "chorus_notes_sha256": "5556d6f3a6a99bb5fb799bf67b4dd6b848e0b852229d5dd3a877a5d247b48b34",
+          "first_bar_rhythm": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 35,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.25,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 41,
+          "chorus_notes_sha256": "5556d6f3a6a99bb5fb799bf67b4dd6b848e0b852229d5dd3a877a5d247b48b34",
+          "first_bar_rhythm": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 35,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.25,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "0df26ed230259af7a078a3684f66f9eadb4ee6de32e1b2f77a84ef22383894f1",
+          "wav": "4f27b98bbfa3c057429e5f4f8445a1ff1c0c3e9e2f3c4548b735a02d89f9f487",
+          "raw_excerpt": "3dccd56a846bdf1c13aa44f706120ade56e97e38099b894885c3940455709b92",
+          "excerpt": "7f9a8be4d167ccef6632b4f0ee65100e0538127f5eb8ce14c527ff6c7ff4874e"
+        },
+        "after": {
+          "project": "b83c870b9a77bb28d7e068c51552a94ede041f69ee96f15d2416d6ae9d4a7d7c",
+          "wav": "5bc49194e3a97770c0471c124762f547c50a94df2cec82d9d4785839ee40176a",
+          "raw_excerpt": "246ba800db6235201a8e3b2820ca494c1acab95abbad691c72e742555fb18ac8",
+          "excerpt": "1b7f77baf1ffc5d19ef1a50b6db5984d090c24b58b78b721f572b6cd326665ae"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": true,
+      "excerpt_max_abs_pcm_delta": 0.0
+    },
+    {
+      "preset": "city-pop",
+      "seed": 202,
+      "cohort": "held-out",
+      "label": "city-pop-s202",
+      "CE": {
+        "before": 7.76,
+        "after": 7.76,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 8.222,
+        "after": 8.222,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 5.87,
+        "after": 5.87,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.423,
+        "after": 8.423,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.3345646262168884,
+        "after": 0.3345646262168884,
+        "delta": 0.0
+      },
+      "CLAP_margin": {
+        "before": 0.15573769807815552,
+        "after": 0.15573769807815552,
+        "delta": 0.0
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 43,
+          "chorus_notes_sha256": "d8aa827751f49724c3fdc72780263dcaad9499f58fbb5a5598de1161d5e17121",
+          "first_bar_rhythm": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 37,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.25,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 43,
+          "chorus_notes_sha256": "d8aa827751f49724c3fdc72780263dcaad9499f58fbb5a5598de1161d5e17121",
+          "first_bar_rhythm": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 37,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.25,
+            "maximum_complete_in_bar_ioi_beats": 1.25,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "425864ec4d255a64b03ef9c14ef01a5c3aa944da20c5257f0db34214127c4a1c",
+          "wav": "3670615e1e50b1d631db805806017bcd0ef8f3fbe5f0a8f5eb0e2bc529d6d168",
+          "raw_excerpt": "c7edc635623ecf9e5648489065e743d419f7eff97f34cfc8684d52dd9d9666eb",
+          "excerpt": "ad16665e535a77540532b46ddc48662a9f90fd7c75d0373d7ffc99e3af07b2a3"
+        },
+        "after": {
+          "project": "9017c0aa029c6fa372d49967d8a5bd2882a22a7c660582754f600a4494411853",
+          "wav": "332ed4b05c4e8e8a26a41ca0d13d7b7f142057591a271f92f70b36aacc41bcd3",
+          "raw_excerpt": "690f9ae62890ec0b3323109158f43bdd0cca0aee618223d392548eefa7c1df41",
+          "excerpt": "6bbcd12ada5158b5accb144e7509101bb9929ceab3918806dd715083116568c2"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.0008035004138946533
+    },
+    {
+      "preset": "pop-band",
+      "seed": 201,
+      "cohort": "held-out",
+      "label": "pop-band-s201",
+      "CE": {
+        "before": 6.997,
+        "after": 6.997,
+        "delta": 0.0
+      },
+      "CU": {
+        "before": 8.055,
+        "after": 8.055,
+        "delta": 0.0
+      },
+      "PC": {
+        "before": 5.256,
+        "after": 5.256,
+        "delta": 0.0
+      },
+      "PQ": {
+        "before": 8.248,
+        "after": 8.248,
+        "delta": 0.0
+      },
+      "CLAP": {
+        "before": 0.29198750853538513,
+        "after": 0.29198750853538513,
+        "delta": 0.0
+      },
+      "CLAP_margin": {
+        "before": 0.2025260478258133,
+        "after": 0.2025260478258133,
+        "delta": 0.0
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 43,
+          "chorus_notes_sha256": "eff4a64baf4a70f173e52f7bea5d7017465752a6af7b6bbdcf5d7741cb2b04f2",
+          "first_bar_rhythm": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 35,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 6,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 43,
+          "chorus_notes_sha256": "eff4a64baf4a70f173e52f7bea5d7017465752a6af7b6bbdcf5d7741cb2b04f2",
+          "first_bar_rhythm": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 35,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 6,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "76a099928662783ffb3a65199769df2593dc57c7ea6792a59fdd1fca90597330",
+          "wav": "01c4b9f46daaac3a43464102791cdd9cf287f671554014a9c1f2d88f215517f2",
+          "raw_excerpt": "bd6025b6959a09cd7b36c54c8c1053410be839dd069201ce1e8d5b4bc274bc13",
+          "excerpt": "301c50ddaf152b0dd0089149db23c1efe7e1354068f51287def06dd9bf4e5de4"
+        },
+        "after": {
+          "project": "a66ea4c44f33ffacca6a824477731bab32d8849e8c91c0a13389a888d8ecbeef",
+          "wav": "1471addf77b1ca059ffbb83ddb584d54e7af713c8381126e68d07fa5d335fa0d",
+          "raw_excerpt": "f506569747bcfe02e52c549e6978c3f70268451efb2649cd4d21cc3b54bb436e",
+          "excerpt": "939a4cf2788211bc3d0dabca8db98e3a33dfacbd9bd8fe352881513cba4739f3"
+        }
+      },
+      "chorus_notes_equal": true,
+      "excerpt_pcm_equal": true,
+      "excerpt_max_abs_pcm_delta": 0.0
+    },
+    {
+      "preset": "pop-band",
+      "seed": 202,
+      "cohort": "held-out",
+      "label": "pop-band-s202",
+      "CE": {
+        "before": 6.966,
+        "after": 6.983,
+        "delta": 0.01699999999999946
+      },
+      "CU": {
+        "before": 8.004,
+        "after": 7.996,
+        "delta": -0.007999999999999119
+      },
+      "PC": {
+        "before": 5.206,
+        "after": 5.201,
+        "delta": -0.005000000000000782
+      },
+      "PQ": {
+        "before": 8.176,
+        "after": 8.175,
+        "delta": -0.0009999999999994458
+      },
+      "CLAP": {
+        "before": 0.29713869094848633,
+        "after": 0.31140631437301636,
+        "delta": 0.01426762342453003
+      },
+      "CLAP_margin": {
+        "before": 0.18107149004936218,
+        "after": 0.19658278673887253,
+        "delta": 0.015511296689510345
+      },
+      "symbolic": {
+        "before": {
+          "note_count": 43,
+          "chorus_notes_sha256": "dceb1074142438fc599185b67c6a3997f74b52e2d32a121e80963e21f7aef1d1",
+          "first_bar_rhythm": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 37,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.5,
+            "maximum_complete_in_bar_ioi_beats": 1.5,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        },
+        "after": {
+          "note_count": 43,
+          "chorus_notes_sha256": "6cd075b035c653b5aba2e389dd5feef2c97fa384e31a6a7c34b922c5e6dff97c",
+          "first_bar_rhythm": [
+            [
+              240,
+              720
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "continuity": {
+            "bar_count": 6,
+            "note_count": 37,
+            "empty_attack_bar_count": 0,
+            "early_stationary_bar_count": 0,
+            "beat_three_attack_bar_count": 0,
+            "maximum_attack_free_span_beats": 1.0,
+            "maximum_complete_in_bar_ioi_beats": 1.0,
+            "early_long_hold_count": 0,
+            "late_long_hold_count": 0
+          }
+        }
+      },
+      "artifacts": {
+        "before": {
+          "project": "f769ded075e8228cc39abb5d3279c703523e3ac0251708e7a2c4a0e26be307ad",
+          "wav": "0ab2c98cf0df6a7a4a49d00806e3f4f29f3af66518ad6f86f61d96850dbfa8be",
+          "raw_excerpt": "789caee5ba2a3341bd6de92063f685f1333e3244a5bd548472d1f2e4f8a8358d",
+          "excerpt": "163004c8533599317a65d08e61fa3ee0ae73fe4ddf83b2ecfd6aa55082b92c5e"
+        },
+        "after": {
+          "project": "c72d9582eaf394515e44d8eeaaac15ab7cbfd5b974fdea3e097882888ec6b042",
+          "wav": "780aaaa57011b708a4455b5641e18f782a6b32c8096a104820e29ac6a49c7ed0",
+          "raw_excerpt": "88d73134588974b52b508edf88c0b525b4a2f2f5cd8e9ee94a7e43edf8eca6a8",
+          "excerpt": "fc65f4b0b256a8b81ee2fcc4df7bdde95b44af1696ac4563e1ec39d44e13f8ae"
+        }
+      },
+      "chorus_notes_equal": false,
+      "excerpt_pcm_equal": false,
+      "excerpt_max_abs_pcm_delta": 0.17260771989822388
+    }
+  ]
+}

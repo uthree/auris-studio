@@ -52,6 +52,22 @@ See [the measured seed comparison](../../docs/reviews/seed-diversity-2026-09-10.
 commands, conditions, results and the listening protocol. Full unmodified renders feed the
 learned models; level-matched excerpts feed listening. Human ratings are never inferred.
 
+## Melody continuity
+
+`melody_continuity.py` measures where the written lead stops moving in its first
+eight-bar chorus: midpoint inter-onset spans, held/resting coverage, the placement
+of long notes and repeated early spans. Phrase-ending bars are explicit and
+separate. These are descriptive diagnostics, not quality penalties.
+
+`melody_continuity_ab.py` prepares the fixed diagnostic/reference/held-out cohort
+in two stages, `baseline` and `candidate`. The candidate replaces only lead notes
+and their digest in the old editable project, then renders using the frozen old
+CLI. Both sides use linear -23 LUFS chorus excerpts; the experiment scores those
+same excerpts with Audiobox and centered-window CLAP.
+
+See [the continuity experiment](../../docs/reviews/melody-continuity-2026-09-10.md)
+for reproduction commands, artifacts, paired results and limitations.
+
 ## Local model tool and audio checks
 
 `agent_tools.ps1` tests saved project state through real MCP stdio and rig/Ollama

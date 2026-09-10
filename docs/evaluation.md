@@ -72,6 +72,37 @@ shared effects may still react differently to the changed melody.
 
 ### Scoring final renders
 
+For the melody-continuity experiment, both learned models read the same linearly
+level-matched chorus excerpts used for listening. Audiobox reads the entire excerpt;
+CLAP uses one centered ten-second window (`--segments 1`) with the existing frozen
+prompts. Keep these results separate from earlier full-song evaluations. The paired
+corpus is prepared by `tools/eval/melody_continuity_ab.py`: a baseline stage freezes
+the reference projects and renderer, and a candidate stage transplants the new lead
+into each old backing before rendering with that same baseline executable. All
+prespecified diagnostic, reference and held-out cases are retained.
+
+`tools/eval/melody_continuity.py` adds written-score diagnostics for this comparison:
+
+```
+uv run tools/eval/melody_continuity.py --manifest before/manifest.json --json before-continuity.json
+uv run tools/eval/melody_continuity.py --manifest after/manifest.json --json after-continuity.json
+```
+
+It reuses the first eight-bar 4/4 lead-chorus extraction and nearest-sixteenth
+quantization from `seed_metrics.py`. It records the inter-onset interval spanning
+beat three, its held/resting portions, early versus late long-note onsets, and the
+recurrence of early intervals lasting at least two beats. Musical beat three is
+`2.0` in these zero-based beat records. The default phrase-ending bars, 4 and 8, are
+an explicit analysis assumption; `--phrase-end-bars` changes them. Endings remain
+reported separately. Bar boundaries do not create fake attacks, overlapping holds
+use interval-union coverage, and an absent inter-onset interval remains `null`.
+
+These diagnostics describe where motion pauses; they do not rate long notes or
+rests as defects. There is no combined quality score. Use them to check a specific
+listening hypothesis, and validate any ensuing writer change on new seeds. See
+[the continuity experiment](reviews/melody-continuity-2026-09-10.md) for conditions,
+results and reproduction commands.
+
 ```
 uv run tools/eval/aesthetics.py --preset all --json before.json
 # ...change something...

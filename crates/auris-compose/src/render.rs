@@ -1715,7 +1715,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             516 notes, digest 4ad2760a6dbf2af6\n"
+             516 notes, digest a4e3a08b1e28c062\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1742,7 +1742,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             239 notes, digest 326f33e5041ae3aa\n"
+             239 notes, digest 256dad3fe490c425\n"
         );
     }
 
