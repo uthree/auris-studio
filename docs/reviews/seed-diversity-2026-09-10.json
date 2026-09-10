@@ -1,0 +1,4225 @@
+{
+  "date": "2026-09-10",
+  "composer_revision": "c6711dea01957ee0be0b7dbd9d95630eef459852",
+  "question": "How diverse are seeds 101 through 108 in the listener-preferred melody writer?",
+  "conditions": "Presets and composer fixed; whole arrangements vary with seed. Models use full unmodified renders. Listening uses first-chorus excerpts with linear loudness matching per preset.",
+  "presets": [
+    "rock",
+    "city-pop",
+    "pop-band"
+  ],
+  "seeds": [
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108
+  ],
+  "subjective": {
+    "status": "unrated",
+    "prior_feedback": "The user explicitly preferred the c6711de melody candidate to the preceding writer. No human ratings have been supplied for this new seed cohort.",
+    "protocol": "Independently shuffled A-H per genre; seed and model scores initially hidden; same eight-bar first chorus, linear loudness matching to -23 LUFS. Per-song preference/groove/memorability 1-5 and per-genre perceived diversity 1-5, all initially blank."
+  },
+  "summary": {
+    "rock": {
+      "diversity": {
+        "seed_count": 8,
+        "seeds": [
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108
+        ],
+        "pair_count": 28,
+        "unique_first_bar_rhythm_count": 7,
+        "duplicate_first_bar_rhythm_pair_count": 1,
+        "unique_first_bar_interval_count": 8,
+        "duplicate_first_bar_interval_pair_count": 0,
+        "unique_chorus_rhythm_count": 8,
+        "duplicate_chorus_rhythm_pair_count": 0,
+        "unique_chorus_interval_count": 8,
+        "duplicate_chorus_interval_pair_count": 0,
+        "pairs": [
+          {
+            "seed_a": 101,
+            "seed_b": 102,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3582089552238806,
+            "onset_duration_jaccard": 0.19736842105263158
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5901639344262295,
+            "onset_duration_jaccard": 0.29333333333333333
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.44776119402985076,
+            "onset_duration_jaccard": 0.19753086419753085
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.2153846153846154,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5714285714285714,
+            "onset_duration_jaccard": 0.2692307692307692
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.25316455696202533,
+            "onset_duration_jaccard": 0.05319148936170213
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.47619047619047616,
+            "onset_duration_jaccard": 0.2077922077922078
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.34177215189873417,
+            "onset_duration_jaccard": 0.0392156862745098
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.2619047619047619,
+            "onset_duration_jaccard": 0.009523809523809525
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.76,
+            "onset_duration_jaccard": 0.5714285714285714
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3333333333333333,
+            "onset_duration_jaccard": 0.038461538461538464
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6615384615384615,
+            "onset_duration_jaccard": 0.4594594594594595
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.275,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6231884057971014,
+            "onset_duration_jaccard": 0.36585365853658536
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3055555555555556,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": true,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.9655172413793104,
+            "onset_duration_jaccard": 0.9
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5405405405405406,
+            "onset_duration_jaccard": 0.25274725274725274
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.8620689655172413,
+            "onset_duration_jaccard": 0.6615384615384615
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.20512820512820512,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6521739130434783,
+            "onset_duration_jaccard": 0.4074074074074074
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3411764705882353,
+            "onset_duration_jaccard": 0.017857142857142856
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5652173913043478,
+            "onset_duration_jaccard": 0.42105263157894735
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.2972972972972973,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6551724137931034,
+            "onset_duration_jaccard": 0.45454545454545453
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3235294117647059,
+            "onset_duration_jaccard": 0.07142857142857142
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5675675675675675,
+            "onset_duration_jaccard": 0.28888888888888886
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.864406779661017,
+            "onset_duration_jaccard": 0.6923076923076923
+          },
+          {
+            "seed_a": 107,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4666666666666667,
+            "onset_duration_jaccard": 0.13402061855670103
+          }
+        ],
+        "onset_jaccard": {
+          "min": 0.20512820512820512,
+          "max": 0.9655172413793104,
+          "mean": 0.4921806370687612,
+          "median": 0.4714285714285714
+        },
+        "onset_duration_jaccard": {
+          "min": 0.0,
+          "max": 0.9,
+          "mean": 0.25014942608961316,
+          "median": 0.20266153599486933
+        }
+      },
+      "models": {
+        "CE": {
+          "mean": 7.335375,
+          "min": 7.224,
+          "max": 7.47,
+          "sample_stddev": 0.08290258913757913
+        },
+        "PQ": {
+          "mean": 8.011875,
+          "min": 7.907,
+          "max": 8.115,
+          "sample_stddev": 0.0777329448450637
+        },
+        "CU": {
+          "mean": 7.876875,
+          "min": 7.799,
+          "max": 7.986,
+          "sample_stddev": 0.06499766479321713
+        },
+        "PC": {
+          "mean": 6.105125,
+          "min": 6.045,
+          "max": 6.175,
+          "sample_stddev": 0.04463962845467497
+        },
+        "positive_cosine": {
+          "mean": 0.4795541415611903,
+          "min": 0.4669816195964813,
+          "max": 0.49186721444129944,
+          "sample_stddev": 0.009244493438473464
+        },
+        "contrast_margin": {
+          "mean": 0.45222450195190805,
+          "min": 0.42643890529870987,
+          "max": 0.475689010694623,
+          "sample_stddev": 0.015120000958971926
+        }
+      }
+    },
+    "city-pop": {
+      "diversity": {
+        "seed_count": 8,
+        "seeds": [
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108
+        ],
+        "pair_count": 28,
+        "unique_first_bar_rhythm_count": 8,
+        "duplicate_first_bar_rhythm_pair_count": 0,
+        "unique_first_bar_interval_count": 8,
+        "duplicate_first_bar_interval_pair_count": 0,
+        "unique_chorus_rhythm_count": 8,
+        "duplicate_chorus_rhythm_pair_count": 0,
+        "unique_chorus_interval_count": 8,
+        "duplicate_chorus_interval_pair_count": 0,
+        "pairs": [
+          {
+            "seed_a": 101,
+            "seed_b": 102,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4067796610169492,
+            "onset_duration_jaccard": 0.22058823529411764
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.17142857142857143,
+            "onset_duration_jaccard": 0.07894736842105263
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3387096774193548,
+            "onset_duration_jaccard": 0.09210526315789473
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.24561403508771928,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.49122807017543857,
+            "onset_duration_jaccard": 0.14864864864864866
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.31746031746031744,
+            "onset_duration_jaccard": 0.0641025641025641
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.25757575757575757,
+            "onset_duration_jaccard": 0.25757575757575757
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.296875,
+            "onset_duration_jaccard": 0.05063291139240506
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3333333333333333,
+            "onset_duration_jaccard": 0.10526315789473684
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.7142857142857143,
+            "onset_duration_jaccard": 0.5
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4576271186440678,
+            "onset_duration_jaccard": 0.16216216216216217
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.7142857142857143,
+            "onset_duration_jaccard": 0.5
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.423728813559322,
+            "onset_duration_jaccard": 0.23529411764705882
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.136986301369863,
+            "onset_duration_jaccard": 0.0641025641025641
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.24561403508771928,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.1643835616438356,
+            "onset_duration_jaccard": 0.14864864864864866
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.43103448275862066,
+            "onset_duration_jaccard": 0.23880597014925373
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.7659574468085106,
+            "onset_duration_jaccard": 0.5660377358490566
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4117647058823529,
+            "onset_duration_jaccard": 0.22033898305084745
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6862745098039216,
+            "onset_duration_jaccard": 0.3870967741935484
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4482758620689655,
+            "onset_duration_jaccard": 0.18309859154929578
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.06329113924050633,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4230769230769231,
+            "onset_duration_jaccard": 0.12121212121212122
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.7142857142857143,
+            "onset_duration_jaccard": 0.5
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.2413793103448276,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.5087719298245614,
+            "onset_duration_jaccard": 0.3230769230769231
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.16216216216216217,
+            "onset_duration_jaccard": 0.06172839506172839
+          },
+          {
+            "seed_a": 107,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3125,
+            "onset_duration_jaccard": 0.06329113924050633
+          }
+        ],
+        "onset_jaccard": {
+          "min": 0.06329113924050633,
+          "max": 0.7659574468085106,
+          "mean": 0.3887389238796694,
+          "median": 0.37274466921815197
+        },
+        "onset_duration_jaccard": {
+          "min": 0.0,
+          "max": 0.5660377358490566,
+          "mean": 0.18902707258681756,
+          "median": 0.14864864864864866
+        }
+      },
+      "models": {
+        "CE": {
+          "mean": 7.690125,
+          "min": 7.627,
+          "max": 7.763,
+          "sample_stddev": 0.03912776690353217
+        },
+        "PQ": {
+          "mean": 8.236375,
+          "min": 8.2,
+          "max": 8.276,
+          "sample_stddev": 0.026859089975010582
+        },
+        "CU": {
+          "mean": 8.123875,
+          "min": 8.074,
+          "max": 8.17,
+          "sample_stddev": 0.03144808647369742
+        },
+        "PC": {
+          "mean": 5.57875,
+          "min": 5.533,
+          "max": 5.627,
+          "sample_stddev": 0.028594455006921378
+        },
+        "positive_cosine": {
+          "mean": 0.4055425524711609,
+          "min": 0.3860762615998586,
+          "max": 0.42591987053553265,
+          "sample_stddev": 0.012171721357095329
+        },
+        "contrast_margin": {
+          "mean": 0.23217787904043993,
+          "min": 0.19127089778582254,
+          "max": 0.27153028547763824,
+          "sample_stddev": 0.025210648514824154
+        }
+      }
+    },
+    "pop-band": {
+      "diversity": {
+        "seed_count": 8,
+        "seeds": [
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108
+        ],
+        "pair_count": 28,
+        "unique_first_bar_rhythm_count": 8,
+        "duplicate_first_bar_rhythm_pair_count": 0,
+        "unique_first_bar_interval_count": 8,
+        "duplicate_first_bar_interval_pair_count": 0,
+        "unique_chorus_rhythm_count": 8,
+        "duplicate_chorus_rhythm_pair_count": 0,
+        "unique_chorus_interval_count": 8,
+        "duplicate_chorus_interval_pair_count": 0,
+        "pairs": [
+          {
+            "seed_a": 101,
+            "seed_b": 102,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4067796610169492,
+            "onset_duration_jaccard": 0.22058823529411764
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.509090909090909,
+            "onset_duration_jaccard": 0.18571428571428572
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3387096774193548,
+            "onset_duration_jaccard": 0.09210526315789473
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.24561403508771928,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.49122807017543857,
+            "onset_duration_jaccard": 0.14864864864864866
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3076923076923077,
+            "onset_duration_jaccard": 0.0625
+          },
+          {
+            "seed_a": 101,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3492063492063492,
+            "onset_duration_jaccard": 0.0759493670886076
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 103,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.47368421052631576,
+            "onset_duration_jaccard": 0.05
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.3333333333333333,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.2413793103448276,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4576271186440678,
+            "onset_duration_jaccard": 0.16216216216216217
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6862745098039216,
+            "onset_duration_jaccard": 0.43333333333333335
+          },
+          {
+            "seed_a": 102,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.34375,
+            "onset_duration_jaccard": 0.10256410256410256
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 104,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.68,
+            "onset_duration_jaccard": 0.3548387096774194
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.44,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6538461538461539,
+            "onset_duration_jaccard": 0.5925925925925926
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6538461538461539,
+            "onset_duration_jaccard": 0.2463768115942029
+          },
+          {
+            "seed_a": 103,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4827586206896552,
+            "onset_duration_jaccard": 0.22857142857142856
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 105,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4117647058823529,
+            "onset_duration_jaccard": 0.07462686567164178
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4576271186440678,
+            "onset_duration_jaccard": 0.22857142857142856
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4576271186440678,
+            "onset_duration_jaccard": 0.011764705882352941
+          },
+          {
+            "seed_a": 104,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6538461538461539,
+            "onset_duration_jaccard": 0.6226415094339622
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 106,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.23333333333333334,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.23333333333333334,
+            "onset_duration_jaccard": 0.0
+          },
+          {
+            "seed_a": 105,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.23333333333333334,
+            "onset_duration_jaccard": 0.08823529411764706
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 107,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.6923076923076923,
+            "onset_duration_jaccard": 0.4666666666666667
+          },
+          {
+            "seed_a": 106,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.7254901960784313,
+            "onset_duration_jaccard": 0.41935483870967744
+          },
+          {
+            "seed_a": 107,
+            "seed_b": 108,
+            "first_bar_rhythm_equal": false,
+            "chorus_rhythm_equal": false,
+            "first_bar_intervals_equal": false,
+            "chorus_intervals_equal": false,
+            "onset_jaccard": 0.4915254237288136,
+            "onset_duration_jaccard": 0.1282051282051282
+          }
+        ],
+        "onset_jaccard": {
+          "min": 0.23333333333333334,
+          "max": 0.7254901960784313,
+          "mean": 0.45303602963767986,
+          "median": 0.4576271186440678
+        },
+        "onset_duration_jaccard": {
+          "min": 0.0,
+          "max": 0.6226415094339622,
+          "mean": 0.17842897777347502,
+          "median": 0.11538461538461538
+        }
+      },
+      "models": {
+        "CE": {
+          "mean": 6.817,
+          "min": 6.689,
+          "max": 6.991,
+          "sample_stddev": 0.10213296655410946
+        },
+        "PQ": {
+          "mean": 8.06075,
+          "min": 7.993,
+          "max": 8.135,
+          "sample_stddev": 0.059490095214005265
+        },
+        "CU": {
+          "mean": 7.840625,
+          "min": 7.766,
+          "max": 7.938,
+          "sample_stddev": 0.06558296272661072
+        },
+        "PC": {
+          "mean": 4.821125,
+          "min": 4.682,
+          "max": 5.09,
+          "sample_stddev": 0.12459813974763585
+        },
+        "positive_cosine": {
+          "mean": 0.38776381810506183,
+          "min": 0.3631300727526347,
+          "max": 0.4000866810480754,
+          "sample_stddev": 0.01320753779117138
+        },
+        "contrast_margin": {
+          "mean": 0.32616881917541224,
+          "min": 0.30124899558722973,
+          "max": 0.3406778872013092,
+          "sample_stddev": 0.01502429294624742
+        }
+      }
+    }
+  },
+  "cross_genre_same_seed": {
+    "pair_count": 24,
+    "pairs": [
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 101,
+        "first_bar_rhythm_equal": true,
+        "chorus_rhythm_equal": true,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 1.0,
+        "onset_duration_jaccard": 1.0
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 102,
+        "first_bar_rhythm_equal": true,
+        "chorus_rhythm_equal": true,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 1.0,
+        "onset_duration_jaccard": 1.0
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 103,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": true,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.31746031746031744,
+        "onset_duration_jaccard": 0.16901408450704225
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 104,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.68,
+        "onset_duration_jaccard": 0.68
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 105,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.30434782608695654,
+        "onset_duration_jaccard": 0.1111111111111111
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 106,
+        "first_bar_rhythm_equal": true,
+        "chorus_rhythm_equal": true,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 1.0,
+        "onset_duration_jaccard": 1.0
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 107,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.7551020408163265,
+        "onset_duration_jaccard": 0.6862745098039216
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "pop-band",
+        "seed": 108,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.075,
+        "onset_duration_jaccard": 0.0
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 101,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.43859649122807015,
+        "onset_duration_jaccard": 0.26153846153846155
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 102,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.3939393939393939,
+        "onset_duration_jaccard": 0.24324324324324326
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 103,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.3472222222222222,
+        "onset_duration_jaccard": 0.2125
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 104,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.4626865671641791,
+        "onset_duration_jaccard": 0.3424657534246575
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 105,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.25925925925925924,
+        "onset_duration_jaccard": 0.0967741935483871
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 106,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.7586206896551724,
+        "onset_duration_jaccard": 0.6190476190476191
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 107,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.35135135135135137,
+        "onset_duration_jaccard": 0.21951219512195122
+      },
+      {
+        "preset_a": "city-pop",
+        "preset_b": "rock",
+        "seed": 108,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.175,
+        "onset_duration_jaccard": 0.0
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 101,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.43859649122807015,
+        "onset_duration_jaccard": 0.26153846153846155
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 102,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.3939393939393939,
+        "onset_duration_jaccard": 0.24324324324324326
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 103,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.75,
+        "onset_duration_jaccard": 0.42028985507246375
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 104,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.4626865671641791,
+        "onset_duration_jaccard": 0.20987654320987653
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 105,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.7894736842105263,
+        "onset_duration_jaccard": 0.4782608695652174
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 106,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.7586206896551724,
+        "onset_duration_jaccard": 0.6190476190476191
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 107,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.3783783783783784,
+        "onset_duration_jaccard": 0.1724137931034483
+      },
+      {
+        "preset_a": "pop-band",
+        "preset_b": "rock",
+        "seed": 108,
+        "first_bar_rhythm_equal": false,
+        "chorus_rhythm_equal": false,
+        "first_bar_intervals_equal": false,
+        "chorus_intervals_equal": false,
+        "onset_jaccard": 0.8461538461538461,
+        "onset_duration_jaccard": 0.8461538461538461
+      }
+    ],
+    "first_bar_rhythm_collision_pair_count": 3,
+    "first_bar_interval_collision_pair_count": 1,
+    "chorus_rhythm_collision_pair_count": 3,
+    "chorus_interval_collision_pair_count": 0
+  },
+  "models": {
+    "audiobox": {
+      "repository": "facebook/audiobox-aesthetics",
+      "revision": "9b1dd8e5df9af7216e836a98974fe3b82c56ded6",
+      "artifacts_sha256": {
+        "config.json": "0b8eabc5ced92cefed116a3aca8f1e59d2a33dc4d376b9e86dfb9c072e1d280d",
+        "model.safetensors": "a5a3c2412649cc2384ec525ffd5180ce6c4778f43bed6108e0a1303de04d014e"
+      },
+      "packages": {
+        "audiobox-aesthetics": "0.0.4",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "soundfile": "0.14.0"
+      },
+      "device": "cpu",
+      "threads": 4,
+      "scoring": "Existing aesthetics.py score function unchanged; model handles 10-second windows across complete WAV, duration-weighted final partial window."
+    },
+    "clap": {
+      "implementation": "native laion-clap",
+      "architecture": "HTSAT-base, non-fusion, RoBERTa",
+      "repository": "lukewys/laion_clap",
+      "revision": "b3708341862f581175dba5c356a4ebf74a9b6651",
+      "checkpoint": "music_audioset_epoch_15_esc_90.14.pt",
+      "checkpoint_sha256": "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd",
+      "reference": "https://github.com/LAION-AI/CLAP",
+      "tokenizer_artifacts": {
+        "config.json": "ef0185e2aae6e06c5f105a285006952c340e20c7dbf43c86ec82601b13fc45e9",
+        "merges.txt": "1ce1664773c50f3e0cc8842619a93edc4624525b728b188a9e0be33b7726adc5",
+        "tokenizer.json": "847bbeab6174d66a88898f729d52fa8d355fafe1bea101cf960dd404581df70e",
+        "tokenizer_config.json": "994f46754c5bf4014f1aa92d34b1374319c3a6b3f702105cd5b742beaecd18ce",
+        "vocab.json": "9e7f63c2d15d666b52e21d250d2e513b87c9b713cfa6987a82ed89e5e6e50655"
+      },
+      "tokenizer_repository": "roberta-base",
+      "tokenizer_revision": "e2da8e2f811d1448a5b465c236feacd80ffbac7b",
+      "device": "cpu",
+      "threads": 4,
+      "python": "3.11.15",
+      "platform": "Windows-10-10.0.26200-SP0",
+      "packages": {
+        "laion-clap": "1.1.7",
+        "torch": "2.6.0+cpu",
+        "torchaudio": "2.6.0+cpu",
+        "transformers": "4.57.6",
+        "soundfile": "0.14.0",
+        "numpy": "1.26.4",
+        "scipy": "1.17.1"
+      }
+    }
+  },
+  "clap_preprocessing": {
+    "sample_rate": 48000,
+    "channels": "arithmetic mean before resampling",
+    "resampler": "scipy.signal.resample_poly default Kaiser window",
+    "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+    "window_samples": 480000,
+    "window_selection": "equally spaced first-to-last complete window; one segment uses center",
+    "requested_segments": 3,
+    "short_audio": "repeat complete copies, zero-pad remainder",
+    "silent_rms_threshold": 1e-07,
+    "aggregation": "unweighted mean of valid excerpt cosines"
+  },
+  "clap_prompts_sha256": "69fc5ac6e1b765eeee57644bcd1d99c500e7bb8f33b8c4e0389518eb13f935d7",
+  "cli": {
+    "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\melody-hooks\\after-auris.exe",
+    "sha256": "b9e63a925350a56ab5cb34e7809231d633c56e94d45d388f021d773ad2719c7d"
+  },
+  "soundfont": {
+    "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\composition-eval\\assets\\SoundFonts\\MuseScore_General.sf2",
+    "sha256": "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3"
+  },
+  "ffmpeg": {
+    "path": "C:\\Users\\uthree\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-N-125365-g9a01c1cb6a-win64-gpl\\bin\\ffmpeg.exe",
+    "sha256": "b2663834d9162f6ee431e7d864d8afd7ac385ec289de70463af67beab6f2257e"
+  },
+  "writer_sha256": {
+    "crates/auris-compose/src/parts/melody.rs": "0a53d8efabb34276d1a9ce49e0431896331cc15b9e9ad62e6995f1722378d493",
+    "crates/auris-compose/src/parts/melody_rhythm.rs": "f405801c0fbe476817c75cc1caeb48d574bcc7d52f8f06e3470ae1d88042c006"
+  },
+  "evidence": {
+    "target/seed-diversity/manifest.json": "e0644b844ca253be6c5ff6f96eb42b33823ec6fe3d7970e8f7c5437745a5ef39",
+    "target/seed-diversity/symbolic.json": "ca803ce21e21029f3059c2bb291bb897b5a23d0ab31d25c4d0c75821ab048946",
+    "target/seed-diversity/aesthetics.json": "1d85b833841c4a56e56847babbc35c39954f38ec2d706329673fb72108d87913",
+    "target/seed-diversity/clap.json": "85df855ab93215fd4a4a4ebdb7dbc0c504d3051f159290a97afb60f8e2714df9",
+    "target/seed-diversity/integrity-audit.json": "3c519837f217bf522c3124a8b8e435ef46c5cf2b08c3c408b3aab048cc641619",
+    "target/seed-diversity/listening-final.html": "5911878503f2606a091668bc07b3da6caf0c4c6915fee99a71a4ffdcd136d88f",
+    "target/seed-diversity/browser-qa/results.json": "a96560eda29c48a7b7fd1734617e00899f2f386b4acb4838a0df9d48abc82a6a"
+  },
+  "files": {
+    "rock-s101": {
+      "seed": 101,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s101\\rock-s101.auris",
+        "sha256": "52a176cc642a51977e5e8204d03084ece2f8a1fff29ebefe70445b487cfa7bbb"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s101.wav",
+        "sha256": "5810881a48e1a9be466143c2b8a526d095c64dd62d75190391fea0955184ef49",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.8863678574562073,
+        "rms": 0.1426804249919283
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s101.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "527069a3568ecc06c72450dd04f0e83c525ac3809c8c2c81c1f2daf697039c48",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.7,
+          "input_true_peak_dbfs": -0.92,
+          "target_lufs": -23.0,
+          "gain_db": -10.3,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -11.22
+        }
+      },
+      "audiobox": {
+        "CE": 7.224,
+        "CU": 7.799,
+        "PC": 6.08,
+        "PQ": 7.912
+      },
+      "clap": {
+        "positive_cosine": 0.490129013856252,
+        "contrast_cosine": 0.043694946294029556,
+        "contrast_margin": 0.4464340675622225,
+        "positive_cosine_stddev": 0.014451885777608803,
+        "contrast_margin_stddev": 0.04844268448420757
+      },
+      "symbolic": {
+        "note_count": 41,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -6,
+            2,
+            -2,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -7,
+            -5,
+            -7,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 3,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 11,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s102": {
+      "seed": 102,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s102\\rock-s102.auris",
+        "sha256": "ef90705b1233487967db31b37a77c4a2dc52559f95912bf55c2d9f0104a8d143"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s102.wav",
+        "sha256": "8034ec0e0a07c5c36a279e4d58fb08b0888add2a83a18e06c079320eafd3add2",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.14115627061145763
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s102.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "ec5570690dca065eaafcac614ce13b038a50d04029d1960c30adbb5a355fd128",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.62,
+          "input_true_peak_dbfs": -0.25,
+          "target_lufs": -23.0,
+          "gain_db": -10.38,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -10.63
+        }
+      },
+      "audiobox": {
+        "CE": 7.47,
+        "CU": 7.986,
+        "PC": 6.162,
+        "PQ": 8.115
+      },
+      "clap": {
+        "positive_cosine": 0.4818467100461324,
+        "contrast_cosine": 0.006157699351509412,
+        "contrast_margin": 0.475689010694623,
+        "positive_cosine_stddev": 0.030367180859362883,
+        "contrast_margin_stddev": 0.0027066455955768497
+      },
+      "symbolic": {
+        "note_count": 50,
+        "first_bar_note_count": 7,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            2,
+            2,
+            -2,
+            -2,
+            4,
+            1
+          ],
+          "relative_pitches": [
+            0,
+            2,
+            4,
+            2,
+            0,
+            4,
+            5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s103": {
+      "seed": 103,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s103\\rock-s103.auris",
+        "sha256": "08369368e01ea03ccb4e185914ba6c22147d10f9e629d58961fd77c3c40255b0"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s103.wav",
+        "sha256": "170365311cca12b105d8f2df4b9517ae74aef59f4bfa7da7777be5b260c6adf8",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.14168039283235678
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s103.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "e8bba4d86299fedec2793c76c144c0c89d9687b9ebffcd46ccddcd95ea4cca0a",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -13.36,
+          "input_true_peak_dbfs": -0.24,
+          "target_lufs": -23.0,
+          "gain_db": -9.64,
+          "measured_output_lufs": -22.99,
+          "output_true_peak_dbfs": -9.88
+        }
+      },
+      "audiobox": {
+        "CE": 7.339,
+        "CU": 7.853,
+        "PC": 6.108,
+        "PQ": 8.004
+      },
+      "clap": {
+        "positive_cosine": 0.49186721444129944,
+        "contrast_cosine": 0.03615538775920868,
+        "contrast_margin": 0.45571182668209076,
+        "positive_cosine_stddev": 0.01372903038077835,
+        "contrast_margin_stddev": 0.02772188382003071
+      },
+      "symbolic": {
+        "note_count": 56,
+        "first_bar_note_count": 8,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            3,
+            -5,
+            -2,
+            2,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            0,
+            -5,
+            -7,
+            -5,
+            -3
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 10,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s104": {
+      "seed": 104,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s104\\rock-s104.auris",
+        "sha256": "8f1efc4a5cb343800938b7f5cc78b7899010fd8ff8e4a38173ba1fe3bc3c5c85"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s104.wav",
+        "sha256": "8c4e3ecf61c9f1b17a8b655b0aa3ea514646f97c2989722e010e6adaaf3452d4",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.1409950237426215
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s104.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "44f0df8886b9015ef87a9c7e448772cca59882fa43e6a15a30b97fbe6ba295af",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.76,
+          "input_true_peak_dbfs": -0.17,
+          "target_lufs": -23.0,
+          "gain_db": -10.24,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -10.41
+        }
+      },
+      "audiobox": {
+        "CE": 7.396,
+        "CU": 7.934,
+        "PC": 6.115,
+        "PQ": 8.059
+      },
+      "clap": {
+        "positive_cosine": 0.48410523931185406,
+        "contrast_cosine": 0.020069163292646408,
+        "contrast_margin": 0.46403607601920766,
+        "positive_cosine_stddev": 0.004384614263111114,
+        "contrast_margin_stddev": 0.021474969668281826
+      },
+      "symbolic": {
+        "note_count": 56,
+        "first_bar_note_count": 8,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              960
+            ],
+            [
+              2880,
+              240
+            ],
+            [
+              3120,
+              240
+            ],
+            [
+              3360,
+              480
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            2,
+            1,
+            2,
+            2,
+            1
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -1,
+            0,
+            2,
+            4,
+            5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 10,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s105": {
+      "seed": 105,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s105\\rock-s105.auris",
+        "sha256": "40a8f36f0db9aafdc311c39842cd314af6bd13e8f7119a3e4d55110d53e18623"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s105.wav",
+        "sha256": "8803ba72dbc74f1e86405537c17a202b39e0c19b3b6435ceeecc3a708c2fb120",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.14155396979247276
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s105.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "1b6845b3fab3ec8d8ebf14f6b50ddce87801f2de2654fb96c7a5d3d5dcee0d5c",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.9,
+          "input_true_peak_dbfs": -0.3,
+          "target_lufs": -23.0,
+          "gain_db": -10.1,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -10.4
+        }
+      },
+      "audiobox": {
+        "CE": 7.291,
+        "CU": 7.852,
+        "PC": 6.076,
+        "PQ": 7.971
+      },
+      "clap": {
+        "positive_cosine": 0.4756489197413127,
+        "contrast_cosine": 0.04921001444260279,
+        "contrast_margin": 0.42643890529870987,
+        "positive_cosine_stddev": 0.021507144012315703,
+        "contrast_margin_stddev": 0.0059034722417957266
+      },
+      "symbolic": {
+        "note_count": 38,
+        "first_bar_note_count": 5,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            -7
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s106": {
+      "seed": 106,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s106\\rock-s106.auris",
+        "sha256": "ec19f138147842aece129ea3f705fe00d3927a8a40cecc38cf4daaa7f44daf80"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s106.wav",
+        "sha256": "102e506407dcb2effe4755779a3d2d72be6387b2417982d64e5bdb9817f8a2bb",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.14090901169530534
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s106.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "d1944cdccac624a3a796505379f9186c5484bb6f360367ffce6dc49894503825",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.71,
+          "input_true_peak_dbfs": -0.22,
+          "target_lufs": -23.0,
+          "gain_db": -10.29,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -10.51
+        }
+      },
+      "audiobox": {
+        "CE": 7.393,
+        "CU": 7.912,
+        "PC": 6.175,
+        "PQ": 8.09
+      },
+      "clap": {
+        "positive_cosine": 0.4669816195964813,
+        "contrast_cosine": 0.02576302116115888,
+        "contrast_margin": 0.44121859843532246,
+        "positive_cosine_stddev": 0.007663447020495837,
+        "contrast_margin_stddev": 0.007104127774655655
+      },
+      "symbolic": {
+        "note_count": 58,
+        "first_bar_note_count": 8,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            0,
+            2,
+            2,
+            0,
+            3,
+            2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            0,
+            2,
+            4,
+            4,
+            7,
+            9,
+            7
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s107": {
+      "seed": 107,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s107\\rock-s107.auris",
+        "sha256": "e6fa4abd71119787bd60da15c9f47a13e4f81142728fddc59542fa9747429d95"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s107.wav",
+        "sha256": "4d52b350a20d9196643cbfa32470e1bf3e2a7bc72648a870b49cf0b9626c1ea2",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.8929627537727356,
+        "rms": 0.14154879345325913
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s107.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "7a4b904023888f27b51053206c46eb4110a2603ee15c8f954274527f92becd37",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -13.12,
+          "input_true_peak_dbfs": -0.86,
+          "target_lufs": -23.0,
+          "gain_db": -9.88,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -10.74
+        }
+      },
+      "audiobox": {
+        "CE": 7.327,
+        "CU": 7.879,
+        "PC": 6.08,
+        "PQ": 8.037
+      },
+      "clap": {
+        "positive_cosine": 0.47780906160672504,
+        "contrast_cosine": 0.02964172326028347,
+        "contrast_margin": 0.44816733834644157,
+        "positive_cosine_stddev": 0.004652335895473738,
+        "contrast_margin_stddev": 0.014712912793802104
+      },
+      "symbolic": {
+        "note_count": 58,
+        "first_bar_note_count": 8,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              240
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            9,
+            -7,
+            -2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            4,
+            -3,
+            -5,
+            -7
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "rock-s108": {
+      "seed": 108,
+      "preset": "rock",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\rock-s108\\rock-s108.auris",
+        "sha256": "9fb203b81c63f4a7958de7b87b617d56c462748e3c9ba81a517659e4aa61325f"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\rock-s108.wav",
+        "sha256": "904dc55de488d18b1d5316ae28c864ed26c75715d6973e6311ccbea60448bde3",
+        "frames": 3502703,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508632659912,
+        "rms": 0.14153889102716483
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\rock-s108.wav",
+        "duration_seconds": 12.972979166666667,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 934054,
+        "end_frame": 1556757,
+        "bpm": 148.0,
+        "sha256": "a777e4b3f6fb883c9185491f853d52c9201da6c1bdb14f7218591cda909f8212",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -12.43,
+          "input_true_peak_dbfs": -0.29,
+          "target_lufs": -23.0,
+          "gain_db": -10.57,
+          "measured_output_lufs": -22.99,
+          "output_true_peak_dbfs": -10.86
+        }
+      },
+      "audiobox": {
+        "CE": 7.243,
+        "CU": 7.8,
+        "PC": 6.045,
+        "PQ": 7.907
+      },
+      "clap": {
+        "positive_cosine": 0.46804535388946533,
+        "contrast_cosine": 0.007945161312818527,
+        "contrast_margin": 0.4601001925766468,
+        "positive_cosine_stddev": 0.019219251776860003,
+        "contrast_margin_stddev": 0.013047289123940431
+      },
+      "symbolic": {
+        "note_count": 52,
+        "first_bar_note_count": 7,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -3,
+            3,
+            -5,
+            9,
+            -7,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -3,
+            0,
+            -5,
+            4,
+            -3,
+            -1
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s101": {
+      "seed": 101,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s101\\city-pop-s101.auris",
+        "sha256": "8d18079a8cce67c0569b3bdcb3e4fbca09092872233b7288f3ce94e24a89f66e"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s101.wav",
+        "sha256": "b53af7f1094c0f1d8d4df13bd53c94199403392358663abec55967ccf5bf85e3",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13157566489784006
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s101.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "4ef4738bd45a3b14aa10ff5589d0c7d29352504487fb0f32d796fcdd975907b2",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.61,
+          "input_true_peak_dbfs": -0.16,
+          "target_lufs": -23.0,
+          "gain_db": -8.39,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.55
+        }
+      },
+      "audiobox": {
+        "CE": 7.694,
+        "CU": 8.118,
+        "PC": 5.533,
+        "PQ": 8.224
+      },
+      "clap": {
+        "positive_cosine": 0.40623605251312256,
+        "contrast_cosine": 0.1668823460737864,
+        "contrast_margin": 0.23935370643933615,
+        "positive_cosine_stddev": 0.0313750705478936,
+        "contrast_margin_stddev": 0.03526490290451278
+      },
+      "symbolic": {
+        "note_count": 41,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 9.195121951219512,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 13,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              480,
+              240
+            ],
+            [
+              720,
+              240
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            -3,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 3,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 11,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s102": {
+      "seed": 102,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s102\\city-pop-s102.auris",
+        "sha256": "e6352d7183d7b67eda09e8e760d47887db6e464c9e9fed5b99fee463289aab20"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s102.wav",
+        "sha256": "0c58067472d59be1109ce3cf35eb4222c3805928d760a4d7fa1d6af6b729192a",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13085612950676176
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s102.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "51cf0a153d5ef6040dce6b1e8bec406ef452dbb31d7925c208f08dcf49a4cb34",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.65,
+          "input_true_peak_dbfs": -0.18,
+          "target_lufs": -23.0,
+          "gain_db": -8.35,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.53
+        }
+      },
+      "audiobox": {
+        "CE": 7.763,
+        "CU": 8.17,
+        "PC": 5.566,
+        "PQ": 8.273
+      },
+      "clap": {
+        "positive_cosine": 0.39751768112182617,
+        "contrast_cosine": 0.17420717577139536,
+        "contrast_margin": 0.22331050535043082,
+        "positive_cosine_stddev": 0.018052372914478646,
+        "contrast_margin_stddev": 0.04495178769636395
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 9.666666666666666,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 14,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            4,
+            -4,
+            2,
+            -5,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            4,
+            0,
+            2,
+            -3,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s103": {
+      "seed": 103,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s103\\city-pop-s103.auris",
+        "sha256": "2a74feb49544fc383909409a76871d1964756918cc3787e3129665c6f250268c"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s103.wav",
+        "sha256": "46f3ef046d4aedbe72910ff1cb805951fba3937bdf9b6897711b053475fe5f01",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13260834464058818
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s103.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "ef662e9d892bc24d231832a813ca363d5547fe923768ecb8311d0cddbc01bbe7",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.4,
+          "input_true_peak_dbfs": -0.11,
+          "target_lufs": -23.0,
+          "gain_db": -8.6,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.71
+        }
+      },
+      "audiobox": {
+        "CE": 7.678,
+        "CU": 8.11,
+        "PC": 5.593,
+        "PQ": 8.2
+      },
+      "clap": {
+        "positive_cosine": 0.3860762615998586,
+        "contrast_cosine": 0.19480536381403604,
+        "contrast_margin": 0.19127089778582254,
+        "positive_cosine_stddev": 0.010653561044713855,
+        "contrast_margin_stddev": 0.006484668545608929
+      },
+      "symbolic": {
+        "note_count": 41,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 9.195121951219512,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 13,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            2,
+            -2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -1,
+            -3,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 3,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 11,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s104": {
+      "seed": 104,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s104\\city-pop-s104.auris",
+        "sha256": "c75c962216a5e2adb95904a96493c5c55fb5b4233ed288d972d68fa303edf77f"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s104.wav",
+        "sha256": "2a93fea80d507d980d94af960e23837a42616d3c42a56f670a3d42c9009cd67d",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.1303212561973334
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s104.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "76bb4cbce5549d283a6fcb7c8f69001fda9dd3c1348354064762b359701e719c",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.39,
+          "input_true_peak_dbfs": -0.17,
+          "target_lufs": -23.0,
+          "gain_db": -8.61,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.78
+        }
+      },
+      "audiobox": {
+        "CE": 7.669,
+        "CU": 8.136,
+        "PC": 5.571,
+        "PQ": 8.24
+      },
+      "clap": {
+        "positive_cosine": 0.400948166847229,
+        "contrast_cosine": 0.14830353359381357,
+        "contrast_margin": 0.2526446332534154,
+        "positive_cosine_stddev": 0.022982674129324848,
+        "contrast_margin_stddev": 0.045908525163952364
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 9.666666666666666,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 14,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            3,
+            2,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            0,
+            2,
+            4
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 10,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s105": {
+      "seed": 105,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s105\\city-pop-s105.auris",
+        "sha256": "c2dfe64ae58c3bd807915c5cae8048bc3c67f71d52d0739b1ac6e415591426aa"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s105.wav",
+        "sha256": "10069ea71562b3cc72861e8a7442e6c897cc46b31c486d9e9ccd20dce82cbb14",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13023427968537088
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s105.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "7b4e245fb04dfbf6f63efc0cb241d83de7c1a3ca968803a36c248641d5eb412c",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.54,
+          "input_true_peak_dbfs": -0.21,
+          "target_lufs": -23.0,
+          "gain_db": -8.46,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.67
+        }
+      },
+      "audiobox": {
+        "CE": 7.687,
+        "CU": 8.163,
+        "PC": 5.627,
+        "PQ": 8.276
+      },
+      "clap": {
+        "positive_cosine": 0.4119931062062581,
+        "contrast_cosine": 0.1404628207286199,
+        "contrast_margin": 0.27153028547763824,
+        "positive_cosine_stddev": 0.00456548167126848,
+        "contrast_margin_stddev": 0.018152647206221176
+      },
+      "symbolic": {
+        "note_count": 30,
+        "first_bar_note_count": 4,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 7.733333333333333,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 8,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            2,
+            2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            2,
+            4,
+            2
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s106": {
+      "seed": 106,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s106\\city-pop-s106.auris",
+        "sha256": "eb3395aa406659207c5932da8955d9231b4734ca08db4a0978d4e97fe3a060d2"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s106.wav",
+        "sha256": "96523d67e2fe8a6f1b2cd687ea3459a2676fb1deaf4106db68005d71eb93cbcd",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13113916017254862
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s106.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "bd6f0a748cf3cc430d648c3876d00a12d9a25d573ffd6b747bbbb3dac99574bc",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -15.08,
+          "input_true_peak_dbfs": -0.13,
+          "target_lufs": -23.0,
+          "gain_db": -7.92,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.05
+        }
+      },
+      "audiobox": {
+        "CE": 7.685,
+        "CU": 8.107,
+        "PC": 5.556,
+        "PQ": 8.223
+      },
+      "clap": {
+        "positive_cosine": 0.415065864721934,
+        "contrast_cosine": 0.16978134711583456,
+        "contrast_margin": 0.24528451760609946,
+        "positive_cosine_stddev": 0.014365893075737417,
+        "contrast_margin_stddev": 0.015127465626915894
+      },
+      "symbolic": {
+        "note_count": 44,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 5.2727272727272725,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 8,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -4,
+            -1,
+            5
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -7,
+            -8,
+            -3
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s107": {
+      "seed": 107,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s107\\city-pop-s107.auris",
+        "sha256": "fdbaec496c165be7d232b2b4161f0b662f24ebd39c54799ed8170561e7b974b6"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s107.wav",
+        "sha256": "d43619036d60612ae1237a96f1a266378b7967bf864116e236ab6a7314e11ecf",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.1321043413273922
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s107.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "905a9f991886fcfddc11f4e388baaddde7f0e418e3b3c1377da79cc60e467895",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.55,
+          "input_true_peak_dbfs": -0.14,
+          "target_lufs": -23.0,
+          "gain_db": -8.45,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.59
+        }
+      },
+      "audiobox": {
+        "CE": 7.718,
+        "CU": 8.113,
+        "PC": 5.594,
+        "PQ": 8.24
+      },
+      "clap": {
+        "positive_cosine": 0.400583416223526,
+        "contrast_cosine": 0.18838467200597128,
+        "contrast_margin": 0.21219874421755472,
+        "positive_cosine_stddev": 0.006995596789598578,
+        "contrast_margin_stddev": 0.02312672810674519
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 29,
+          "mean_abs_onset_error_ticks": 8.976190476190476,
+          "mean_abs_duration_error_ticks": 0.6904761904761905,
+          "changed_onset_count": 13,
+          "changed_duration_count": 1
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            2,
+            -4
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            -3,
+            -7
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "city-pop-s108": {
+      "seed": 108,
+      "preset": "city-pop",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\city-pop-s108\\city-pop-s108.auris",
+        "sha256": "7cbccb280bfc26148f9753440ccee9039e934cbae73787332eca2183a028c516"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\city-pop-s108.wav",
+        "sha256": "ec9fb6cf73a247c78ff482ec2877a8df3b7aef8875aabfb7393aa25f88630a39",
+        "frames": 4890566,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13072050270371244
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\city-pop-s108.wav",
+        "duration_seconds": 18.113208333333333,
+        "start_tick": 46080,
+        "end_tick": 76800,
+        "start_frame": 1304151,
+        "end_frame": 2173585,
+        "bpm": 106.0,
+        "sha256": "3788c80dc6f51fc70d5a0dd04845cbe15a4826474783abc540bbd388359ca5b9",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.53,
+          "input_true_peak_dbfs": -0.22,
+          "target_lufs": -23.0,
+          "gain_db": -8.47,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.69
+        }
+      },
+      "audiobox": {
+        "CE": 7.627,
+        "CU": 8.074,
+        "PC": 5.59,
+        "PQ": 8.215
+      },
+      "clap": {
+        "positive_cosine": 0.42591987053553265,
+        "contrast_cosine": 0.20409012834231058,
+        "contrast_margin": 0.22182974219322205,
+        "positive_cosine_stddev": 0.015426648530774417,
+        "contrast_margin_stddev": 0.0341701907127171
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 29,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 9.666666666666666,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 14,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              1200
+            ],
+            [
+              1200,
+              240
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -3,
+            3,
+            2,
+            -3,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -3,
+            0,
+            2,
+            -1,
+            -3
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s101": {
+      "seed": 101,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s101\\pop-band-s101.auris",
+        "sha256": "9d33f34f98e4be1a50698a7f366c3dc4520e7a1169595bd82bfe2855e1b33486"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s101.wav",
+        "sha256": "f1cce32d2eac53fb10ae2855b28a11c8f20740604250ebd8c2e5cbfaac5b6b4f",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.12894173540265247
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s101.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "a29ca1714e71983fed7b22b0c5d2cce79892bd2900e9e00aa970472eadcae5af",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.84,
+          "input_true_peak_dbfs": 0.05,
+          "target_lufs": -23.0,
+          "gain_db": -8.16,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.11
+        }
+      },
+      "audiobox": {
+        "CE": 6.761,
+        "CU": 7.806,
+        "PC": 4.769,
+        "PQ": 8.025
+      },
+      "clap": {
+        "positive_cosine": 0.3992647627989451,
+        "contrast_cosine": 0.08754654228687286,
+        "contrast_margin": 0.31171822051207226,
+        "positive_cosine_stddev": 0.01248109990205777,
+        "contrast_margin_stddev": 0.03190267338236057
+      },
+      "symbolic": {
+        "note_count": 41,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              480,
+              240
+            ],
+            [
+              720,
+              240
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            -1,
+            1
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            -6,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 3,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 11,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s102": {
+      "seed": 102,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s102\\pop-band-s102.auris",
+        "sha256": "07f3414e4af876263b02c04f6ffdc24ec8f6d1e9158996c3085ba8f4e6cfc4e3"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s102.wav",
+        "sha256": "81de0104b2b4eadc11408b6a22e5d313e538eccb44b99fb06964a3af9183777b",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.1402920834365075
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s102.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "894ce68129532c71a3e827d9b722db7fdecbb322512d1c2d76719320ad00cffe",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.23,
+          "input_true_peak_dbfs": -0.01,
+          "target_lufs": -23.0,
+          "gain_db": -8.77,
+          "measured_output_lufs": -23.01,
+          "output_true_peak_dbfs": -8.78
+        }
+      },
+      "audiobox": {
+        "CE": 6.896,
+        "CU": 7.889,
+        "PC": 4.843,
+        "PQ": 8.1
+      },
+      "clap": {
+        "positive_cosine": 0.3924574851989746,
+        "contrast_cosine": 0.05198734067380428,
+        "contrast_margin": 0.3404701445251703,
+        "positive_cosine_stddev": 0.0022144365602180037,
+        "contrast_margin_stddev": 0.053229057693939895
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              2400,
+              240
+            ],
+            [
+              2640,
+              240
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            4,
+            -5,
+            3,
+            -2,
+            -1
+          ],
+          "relative_pitches": [
+            0,
+            4,
+            -1,
+            2,
+            0,
+            -1
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s103": {
+      "seed": 103,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s103\\pop-band-s103.auris",
+        "sha256": "40f45e281b7a16812741d382b343e609397bec213e42a4068ed4ef1a3e78739c"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s103.wav",
+        "sha256": "7be0191832d7bc33b07da471969930a69a87501707217afa82fe93592f73ec7b",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13366570096051028
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s103.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "fc38e6d7f850ec21ce331a149a25e4432381e002549f482794fd20d9727c4219",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.51,
+          "input_true_peak_dbfs": 0.03,
+          "target_lufs": -23.0,
+          "gain_db": -8.49,
+          "measured_output_lufs": -23.01,
+          "output_true_peak_dbfs": -8.46
+        }
+      },
+      "audiobox": {
+        "CE": 6.761,
+        "CU": 7.781,
+        "PC": 4.749,
+        "PQ": 8.015
+      },
+      "clap": {
+        "positive_cosine": 0.3631300727526347,
+        "contrast_cosine": 0.06188107716540495,
+        "contrast_margin": 0.30124899558722973,
+        "positive_cosine_stddev": 0.009447179070363841,
+        "contrast_margin_stddev": 0.04623933399497952
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              480
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            2,
+            -2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -1,
+            -3,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 10,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s104": {
+      "seed": 104,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s104\\pop-band-s104.auris",
+        "sha256": "8e27adb09d1502ceaaaa9955ad32127c5b8599684f99f56a274211efef6a65fb"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s104.wav",
+        "sha256": "fcacddb474cec0f9f810331e14ff9b3ce84dd104c82d8dbeaa4328ad58478fd6",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13248603840145187
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s104.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "7eeeaeef5550d4688e7e9bb9bd820c9079c6f2510d7c8de74381cb61a5586097",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.28,
+          "input_true_peak_dbfs": 0.0,
+          "target_lufs": -23.0,
+          "gain_db": -8.72,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.72
+        }
+      },
+      "audiobox": {
+        "CE": 6.897,
+        "CU": 7.897,
+        "PC": 4.858,
+        "PQ": 8.117
+      },
+      "clap": {
+        "positive_cosine": 0.38461415966351825,
+        "contrast_cosine": 0.04647726317246755,
+        "contrast_margin": 0.3381368964910507,
+        "positive_cosine_stddev": 0.01674783316186494,
+        "contrast_margin_stddev": 0.0433434011203661
+      },
+      "symbolic": {
+        "note_count": 42,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              480
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -1,
+            -4,
+            5,
+            2,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -5,
+            0,
+            2,
+            4
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 10,
+          "pair_count": 28,
+          "adjacent_repeat_count": 3,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s105": {
+      "seed": 105,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s105\\pop-band-s105.auris",
+        "sha256": "fecbfb8bfa2867d1e1a2d9bd26394c25b7aea468018af68d113d8f2665022e98"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s105.wav",
+        "sha256": "0d85938419f623fd4358a5cea297b286c8ce21f30b8a8d788bd02653fd0d6797",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13442202886642957
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s105.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "f3212a4365a1e0da65968f4324038e61f314331410947de7daf210a95d3ac01b",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.45,
+          "input_true_peak_dbfs": -0.02,
+          "target_lufs": -23.0,
+          "gain_db": -8.55,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.57
+        }
+      },
+      "audiobox": {
+        "CE": 6.731,
+        "CU": 7.778,
+        "PC": 4.738,
+        "PQ": 7.994
+      },
+      "clap": {
+        "positive_cosine": 0.4000866810480754,
+        "contrast_cosine": 0.06655186538894971,
+        "contrast_margin": 0.3335348156591256,
+        "positive_cosine_stddev": 0.02006845095420533,
+        "contrast_margin_stddev": 0.04585382845906926
+      },
+      "symbolic": {
+        "note_count": 30,
+        "first_bar_note_count": 4,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              960
+            ],
+            [
+              960,
+              480
+            ],
+            [
+              1440,
+              480
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s106": {
+      "seed": 106,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s106\\pop-band-s106.auris",
+        "sha256": "55ab861991203b8895c557ab6a436b190f97053bb6fc45ee8e8eb61daf131f2c"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s106.wav",
+        "sha256": "7aa8024f579bc8cf089b1e92e3ce7579a93fe616ea916875618c2d542e015efc",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13544089336373336
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s106.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "845087d1aef12f0b1d3c5cb8c7233becbc4c6c97dbb2f38f8899c5cc1c1bc76b",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.6,
+          "input_true_peak_dbfs": 0.04,
+          "target_lufs": -23.0,
+          "gain_db": -8.4,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.36
+        }
+      },
+      "audiobox": {
+        "CE": 6.81,
+        "CU": 7.87,
+        "PC": 4.84,
+        "PQ": 8.107
+      },
+      "clap": {
+        "positive_cosine": 0.3898443877696991,
+        "contrast_cosine": 0.04916650056838989,
+        "contrast_margin": 0.3406778872013092,
+        "positive_cosine_stddev": 0.009209095626313496,
+        "contrast_margin_stddev": 0.056517911610445185
+      },
+      "symbolic": {
+        "note_count": 44,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            0,
+            0,
+            0,
+            4,
+            -2
+          ],
+          "relative_pitches": [
+            0,
+            0,
+            0,
+            0,
+            4,
+            2
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s107": {
+      "seed": 107,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s107\\pop-band-s107.auris",
+        "sha256": "bdc4ad4ba7762fcf8dd7a9292cdbfbece44c793091321bbe589c78cfc2449257"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s107.wav",
+        "sha256": "c066f9cb1f61c8c74331b37f376671d39dd3e37606fec86d73250c88e69aeba6",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13655341429841414
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s107.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "0df9e55fa74f5c1d59239075211d373a5447ebbdf2390b676bc879ecda83a89f",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.43,
+          "input_true_peak_dbfs": -0.02,
+          "target_lufs": -23.0,
+          "gain_db": -8.57,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.59
+        }
+      },
+      "audiobox": {
+        "CE": 6.689,
+        "CU": 7.766,
+        "PC": 4.682,
+        "PQ": 7.993
+      },
+      "clap": {
+        "positive_cosine": 0.3743172585964203,
+        "contrast_cosine": 0.05958040927847227,
+        "contrast_margin": 0.31473684931794804,
+        "positive_cosine_stddev": 0.02095359217952306,
+        "contrast_margin_stddev": 0.03334345257085184
+      },
+      "symbolic": {
+        "note_count": 44,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              0,
+              240
+            ],
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              1440
+            ],
+            [
+              1920,
+              480
+            ],
+            [
+              2400,
+              480
+            ],
+            [
+              2880,
+              960
+            ]
+          ],
+          "intervals": [
+            -1,
+            -2,
+            -2,
+            2,
+            -3
+          ],
+          "relative_pitches": [
+            0,
+            -1,
+            -3,
+            -5,
+            -3,
+            -6
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 4,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 7,
+          "pair_count": 28,
+          "adjacent_repeat_count": 2,
+          "adjacent_pair_count": 7
+        }
+      }
+    },
+    "pop-band-s108": {
+      "seed": 108,
+      "preset": "pop-band",
+      "project": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\projects\\pop-band-s108\\pop-band-s108.auris",
+        "sha256": "d831c021e7612a72dc1ec30b9fd63b4faf6f58681c282774f26a655e99a63ad2"
+      },
+      "wav": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\audio\\pop-band-s108.wav",
+        "sha256": "d6d8e252fc53b1bc3e62c66f7c83d8b82abbd8f4ee31c9ae7eac450b4c56efe7",
+        "frames": 6410323,
+        "sample_rate": 48000,
+        "channels": 2,
+        "peak": 0.9660508036613464,
+        "rms": 0.13595254642766208
+      },
+      "excerpt": {
+        "path": "C:\\Users\\uthree\\.codex\\worktrees\\9390\\auris-studio\\target\\seed-diversity\\excerpts\\pop-band-s108.wav",
+        "duration_seconds": 15.483854166666667,
+        "start_tick": 61440,
+        "end_tick": 92160,
+        "start_frame": 1486452,
+        "end_frame": 2229677,
+        "bpm": 124.0,
+        "sha256": "d286c5bd9b3731fc7e04087524cf0f6d3006734cd9dd69f6f2a5dd6a74138c41",
+        "normalization": {
+          "method": "Five-millisecond edge fades, then linear gain to common integrated LUFS target per genre; no limiter",
+          "input_lufs": -14.16,
+          "input_true_peak_dbfs": 0.04,
+          "target_lufs": -23.0,
+          "gain_db": -8.84,
+          "measured_output_lufs": -23.0,
+          "output_true_peak_dbfs": -8.8
+        }
+      },
+      "audiobox": {
+        "CE": 6.991,
+        "CU": 7.938,
+        "PC": 5.09,
+        "PQ": 8.135
+      },
+      "clap": {
+        "positive_cosine": 0.39839573701222736,
+        "contrast_cosine": 0.0695689929028352,
+        "contrast_margin": 0.32882674410939217,
+        "positive_cosine_stddev": 0.002809774076542069,
+        "contrast_margin_stddev": 0.028854926713946467
+      },
+      "symbolic": {
+        "note_count": 44,
+        "first_bar_note_count": 6,
+        "quantization": {
+          "step_ticks": 240,
+          "rounding": "nearest_half_up",
+          "max_onset_error_ticks": 0,
+          "max_duration_error_ticks": 0,
+          "mean_abs_onset_error_ticks": 0,
+          "mean_abs_duration_error_ticks": 0,
+          "changed_onset_count": 0,
+          "changed_duration_count": 0
+        },
+        "first_bar": {
+          "onset_duration": [
+            [
+              240,
+              240
+            ],
+            [
+              480,
+              480
+            ],
+            [
+              960,
+              960
+            ],
+            [
+              1920,
+              240
+            ],
+            [
+              2160,
+              240
+            ],
+            [
+              2400,
+              1440
+            ]
+          ],
+          "intervals": [
+            -5,
+            5,
+            0,
+            7,
+            2
+          ],
+          "relative_pitches": [
+            0,
+            -5,
+            0,
+            0,
+            7,
+            9
+          ]
+        },
+        "within_chorus": {
+          "unique_rhythm_count": 2,
+          "empty_bar_count": 0,
+          "duplicate_pair_count": 16,
+          "pair_count": 28,
+          "adjacent_repeat_count": 4,
+          "adjacent_pair_count": 7
+        }
+      }
+    }
+  }
+}

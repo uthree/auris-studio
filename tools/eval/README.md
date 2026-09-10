@@ -40,6 +40,18 @@ The saved audition replaces only instrumental lead notes and their recipe digest
 It preserves the source mixer, performance settings and other parts, validates matching
 musical context, and records source/output hashes. See [the evaluation guide](../../docs/evaluation.md#holding-the-backing-fixed).
 
+## Seed diversity and listening
+
+`seed_diversity.py` renders a fixed preset/seed cohort through an existing CLI and prepares
+equal-duration first-chorus excerpts with linear LUFS matching (FFmpeg required).
+`seed_metrics.py` compares the written chorus rhythms and pitch intervals across seeds.
+`seed_listening.py` creates a local, initially blinded A-H listening page with blank human
+ratings, JSON import/export, and an optional reveal of seed/model measurements.
+
+See [the measured seed comparison](../../docs/reviews/seed-diversity-2026-09-10.md) for
+commands, conditions, results and the listening protocol. Full unmodified renders feed the
+learned models; level-matched excerpts feed listening. Human ratings are never inferred.
+
 ## Local model tool and audio checks
 
 `agent_tools.ps1` tests saved project state through real MCP stdio and rig/Ollama
