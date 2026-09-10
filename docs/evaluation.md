@@ -27,6 +27,18 @@ the table reads the *pattern* the composer chose rather than where the feel late
 The functions behind the table are `auris_compose::metrics`, public and unit-tested, so a
 future command or test can read the same numbers the example prints.
 
+The desktop [reference-audio search](reference-audio.md) renders bounded mix and performance
+adjustments to the current project and evaluates their PCM against a chosen reference excerpt.
+Its fixed acoustic features compare tonal balance, dynamics, stereo and transient distributions;
+they do not measure semantic mood or musical quality. The session's replaceable `AudioEvaluator`
+boundary also supports [local CLAP audio/text evaluation](clap-evaluation.md) with a fixed
+model and prompt or reference embedding.
+
+The optional [composition search](composition-search.md) uses a separate, explicit symbolic
+target: written note events per bar. It maximizes negative absolute distance from that target,
+with parameter bounds and a fixed composition seed. Moving closer to a requested density is
+a measurable arrangement change; it does not establish that the song sounds better.
+
 ## Inspecting the saved score
 
 ```
@@ -332,12 +344,14 @@ hand with the reason written down.
 
 ## What the numbers are for
 
-They are a regression detector and a coarse sieve, not a target. Two findings from the
+These evaluation tools are a regression detector and a coarse sieve. Two findings from the
 literature are load-bearing here:
 
-* Optimising a generator against a learned aesthetic score collapses its output diversity
-  (SMART, arXiv:2504.16839). Nothing in this repository feeds these scores back into the
-  composer, and nothing should without a diversity guard beside it.
+* Optimising a generator against a learned aesthetic score can collapse its output diversity
+  (SMART, arXiv:2504.16839). The experimental black-box tuner above needs held-out checks and
+  listening before adoption. The Rust composition search matches a declared symbolic density
+  target; it does not use the learned aesthetic model. A measured target and a claim of musical
+  quality require different evidence.
 * Objective metrics correlate weakly with human judgement across the board (survey,
   arXiv:2509.00051). Read several numbers together, never one alone, and let a pair of ears
   break every tie.

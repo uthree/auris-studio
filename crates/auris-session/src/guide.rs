@@ -968,9 +968,9 @@ pub mod composition {
     //! saving. Collect Assets and asset recovery also update the stored song specification, so
     //! reopening the sheet and composing again follow the same file as the saved arrangement.
     //!
-    //! [`auris_compose`] turns a text document into notes on a timeline. The whole crate is one
-    //! function — [`compose`](auris_compose::compose) — and everything it does is a pure function
-    //! of the specification and its seed, so the same document always writes the same piece.
+    //! [`auris_compose`] turns a text document into notes on a timeline through
+    //! [`compose`](auris_compose::compose). Generation is a pure function of the specification
+    //! and its seed within a build, so the same document writes the same piece.
     //!
     //! # The document
     //!
@@ -1077,6 +1077,90 @@ pub mod composition {
     //! // faces of one type, so neither can drift from the other.
     //! assert_eq!(SongSpec::parse(&spec.to_toml()).unwrap(), spec);
     //! ```
+    //!
+    //! # Bounded composition search
+    //!
+    //! [`composition_search`](crate::composition_search) exposes a headless command through
+    //! the session boundary; it needs neither a [`Session`](crate::Session) nor an audio device.
+    //! [`search_composition`](crate::composition_search::search_composition) keeps three jobs
+    //! separate: an algorithm proposes a specification, the existing composer writes it, and a
+    //! fixed evaluator measures its written notes. A sequential runner owns the attempt budget,
+    //! cancellation checks, history and exact best score. Search never rewrites the base document.
+    //!
+    //! The concrete space changes one part's explicit density and/or one played section's
+    //! intensity inside declared bounds. Everything else stays fixed, including the composition
+    //! seed. A separate search seed controls proposals. Random search samples independently;
+    //! hill climbing starts at the base and uses successful evaluation feedback to select the
+    //! parent of its next single-parameter mutation. Only a strictly higher fitness replaces
+    //! the incumbent or retained best, so equal scores keep the earlier candidate.
+    //!
+    //! The evaluator measures written note events per bar across all tracks, including the
+    //! score's ending in its length. Fitness is the
+    //! negative absolute distance from a fixed positive target: zero is an exact match, and
+    //! larger is better. This controls arrangement density; it is not a judgement of musical
+    //! quality. It counts chord tones and drum notes individually and does not measure rendered
+    //! audio, non-destructive performance transforms or vocals later materialized by the session.
+    //!
+    //! Invalid requests fail before search. Each proposal consumes an attempt, including a
+    //! validation, composition or evaluation failure; non-finite fitness or diagnostics fail the
+    //! candidate. The runner reports termination and failure counts, and preserves partial
+    //! results when cancelled between attempts. The existing synchronous composer has no
+    //! cancellation hook, so a running composition finishes before the next check.
+    //!
+    //! Results retain the exact generated [`Composition`](auris_compose::Composition), its
+    //! candidate specification and seed, evaluation and ordered history. Replaying a recipe is
+    //! deterministic within the same build; a newer writer may produce different notes. A caller
+    //! adopting a result passes that retained score to
+    //! [`Session::compose_without_balance`](crate::Session::compose_without_balance), without
+    //! composing it again. The runnable `compose_search` example and `docs/composition-search.md`
+    //! show the request and report format.
+    //!
+    //! The desktop song sheet captures its inputs and session revision, then runs
+    //! [`search_composition_with_progress`](crate::composition_search::search_composition_with_progress)
+    //! on a worker. Its observer publishes attempt counts and the best density. Changing the
+    //! sheet or document invalidates the run; cancellation keeps the worker busy until the
+    //! current composition finishes. A generation guard prevents a closed sheet's late result
+    //! from reaching a newly opened sheet. Explicit adoption uses the retained score in the
+    //! ordinary source-preparation and balance pipeline, as one undoable composition command;
+    //! playback begins only after successful completion.
+    //!
+    //! # Rendered reference matching
+    //!
+    //! [`Session::begin_reference_match`](crate::Session::begin_reference_match) captures the
+    //! current project and a fixed excerpt. Each proposal adjusts a selected family: mixer
+    //! gain/pan, expression/gate, generated clip seeds, instrument choices, or non-destructive
+    //! arrangement. It renders the complete mix and evaluates its PCM through
+    //! [`AudioEvaluator`](crate::audio_evaluation::AudioEvaluator). The unchanged baseline is
+    //! measured first; ties keep the earlier candidate. Families take turns independently of
+    //! their dimension counts. Seed proposals regenerate recipe-backed clips in detached copies;
+    //! frozen and authored clips have no recipe and retain their score. Instrument choices use
+    //! built-in voices and already loaded SoundFont presets; source assets stay fixed during the
+    //! pass. Missing render dependencies fail explicitly before they become silence.
+    //!
+    //! Native plugin factories stay on the session thread. A staged
+    //! [`ReferenceMatchJob`](crate::ReferenceMatchJob) moves only their render halves to a worker;
+    //! continuation checks the originating session, revision, document and project folder.
+    //! Cancellation keeps any fully measured partial best. Explicit adoption restores that exact
+    //! retained project in one undo step, without regenerating the winner or rebalancing it.
+    //! Instrument replacements discard incompatible instrument automation, while sampler preset
+    //! changes preserve player parameters and automation. The report lists these changes.
+    //!
+    //! [`ReferenceAudioEvaluator`](crate::audio_evaluation::ReferenceAudioEvaluator) compares fixed
+    //! spectral, envelope, stereo and transient statistics. Its negative distance is an acoustic
+    //! objective. [`ClapAudioEvaluator`](crate::clap_evaluation::ClapAudioEvaluator) instead keeps
+    //! a verified local ONNX model and a fixed text or reference-audio embedding. Its CPU worker
+    //! evaluates deterministic ten-second mono windows and compares duration-weighted embeddings
+    //! by cosine similarity. Model loading, tokenization and DSP stay below the frontend; only
+    //! the controls and background scheduling belong to the window. Similarity describes target
+    //! agreement, not musical quality. Model preparation is documented in `docs/clap-evaluation.md`.
+    //!
+    //! Retained renders are auditioned through
+    //! [`prepare_output_preview`](crate::prepare_output_preview) and
+    //! [`Session::play_output_preview`](crate::Session::play_output_preview): worker-side rate
+    //! conversion and uniform level adjustment, then PCM directly at the device output. This
+    //! bypasses the project graph so an already rendered mix is not processed twice. The callback
+    //! retains finished PCM until replacement and returns old buffers for destruction off-thread.
+    //! The desktop workflow and exact parameter bounds are described in `docs/reference-audio.md`.
     //!
     //! # Two stages
     //!

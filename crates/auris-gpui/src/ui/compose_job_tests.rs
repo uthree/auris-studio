@@ -233,3 +233,107 @@ fn a_score_finished_for_an_older_document_does_not_replace_a_newer_edit(cx: &mut
         assert_ne!(this.session.undo(), Some(auris_session::Edit::Compose));
     });
 }
+
+#[gpui::test]
+fn an_evaluated_score_is_adopted_exactly_and_undone_with_its_balance(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    let spec = short_song();
+    let mut piece = compose(&spec);
+    // This note cannot be reconstructed from the unchanged bass recipe. Applying the winner
+    // must preserve the generated artifact, including edits made after the composer returned.
+    let evaluated_notes = vec![Note::new(109, Ticks(137), Ticks(411))];
+    piece.tracks[0].clips[0].notes = evaluated_notes.clone();
+    assert_ne!(piece, compose(&spec));
+    let before = app.update(cx, |this, cx| {
+        this.session
+            .add_default_instrument_track("Previous song")
+            .unwrap();
+        this.session.forget_history();
+        this.song_sheet = Some(song_dials(&spec));
+        let before = this.project().clone();
+        assert!(this.compose_generated_score(piece, true, true, cx));
+        assert!(this.compose_progress.is_some());
+        assert_eq!(this.project(), &before);
+        assert!(!this.session.can_undo());
+        before
+    });
+
+    cx.run_until_parked();
+    app.update(cx, |this, _| {
+        assert!(this.compose_progress.is_none());
+        assert!(this.song_sheet.is_none());
+        let written = this
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "Written Bass")
+            .and_then(|track| track.kind.as_instrument())
+            .unwrap();
+        assert_eq!(written.clips[0].notes, evaluated_notes);
+        assert_eq!(this.session.undo(), Some(auris_session::Edit::Compose));
+        assert_eq!(this.project(), &before);
+        assert!(!this.session.can_undo());
+        // The headless window cannot observe playback; the audio thread owns that state.
+    });
+}
+
+#[gpui::test]
+fn an_evaluated_score_cannot_replace_a_document_edited_during_preparation(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    let newer = app.update(cx, |this, cx| {
+        let spec = short_song();
+        this.song_sheet = Some(song_dials(&spec));
+        assert!(this.compose_generated_score(compose(&spec), true, true, cx));
+        this.session
+            .add_default_instrument_track("Newer work before adoption")
+            .unwrap();
+        this.project().clone()
+    });
+
+    cx.run_until_parked();
+    app.update(cx, |this, _| {
+        assert!(this.compose_progress.is_none());
+        assert_eq!(this.project(), &newer);
+        assert!(this.song_sheet.is_some());
+        assert!(this.status_failed);
+        assert_ne!(this.session.undo(), Some(auris_session::Edit::Compose));
+    });
+}
+
+#[gpui::test]
+fn an_evaluated_score_with_an_unavailable_source_preserves_the_current_document(
+    cx: &mut TestAppContext,
+) {
+    let (app, cx) = open(cx);
+    let (before, draft) = app.update(cx, |this, cx| {
+        this.session
+            .add_default_instrument_track("Keep my current song")
+            .unwrap();
+        this.session.forget_history();
+        let mut spec = short_song();
+        let path = std::env::temp_dir()
+            .join(format!("auris-search-apply-missing-{}", std::process::id()))
+            .join("never-created.sf2");
+        assert!(!path.exists());
+        spec.parts[0].source = Some(PartSource::SoundFont {
+            path,
+            bank: 0,
+            patch: 0,
+        });
+        let draft = song_dials(&spec);
+        this.song_sheet = Some(draft.clone());
+        let before = this.project().clone();
+        assert!(this.compose_generated_score(compose(&spec), true, true, cx));
+        (before, draft)
+    });
+
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.compose_progress.is_none());
+        assert_eq!(this.project(), &before);
+        assert_eq!(this.song_sheet.as_ref(), Some(&draft));
+        assert!(!this.session.can_undo());
+        assert!(this.status_failed);
+        assert!(this.prompt.is_some());
+    });
+}

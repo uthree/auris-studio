@@ -70,6 +70,8 @@ pub enum PromptTarget {
     /// No payload: the command writes new material rather than editing anything on screen,
     /// so there is nothing for it to point at yet.
     ComposeLyrics,
+    /// A sound description used by CLAP to evaluate rendered audio.
+    AudioMatchText,
     /// The seed a generated clip is written from.
     ///
     /// Typed for a different reason than the other three: "another take" is the *next* seed, so
@@ -156,6 +158,8 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             // Not a clear, but the session's own refusal names the problem better than a
             // generic "cannot be empty" would.
             | PromptTarget::ComposeLyrics
+            // Clearing the target is useful while deciding what sound to search for.
+            | PromptTarget::AudioMatchText
             // Let the numeric field report its own valid range for an empty answer.
             | PromptTarget::DrumAssignment { .. }
             | PromptTarget::SongSectionTempo(_)
@@ -231,6 +235,7 @@ impl PromptTarget {
             | PromptTarget::Phonemes { .. }
             | PromptTarget::Lyrics { .. }
             | PromptTarget::ComposeLyrics
+            | PromptTarget::AudioMatchText
             // No shared notation: every parameter is written in its own units, and the range
             // and the unit are in the prompt's title instead, where they can name this one.
             | PromptTarget::Param(_) => return None,
@@ -248,6 +253,9 @@ impl PromptTarget {
         // them is where the phrases break.
         if matches!(self, PromptTarget::ComposeLyrics) {
             return Some(Key::HintComposeLyrics);
+        }
+        if matches!(self, PromptTarget::AudioMatchText) {
+            return Some(Key::AudioMatchPromptHint);
         }
         self.notation().map(Notation::hint)
     }
@@ -712,6 +720,11 @@ impl AurisApp {
             return;
         }
         let outcome = match target {
+            PromptTarget::AudioMatchText => {
+                self.set_audio_match_prompt(text);
+                self.close_accepted_prompt();
+                return;
+            }
             PromptTarget::Track(track) => self.session.rename_track(track, text),
             PromptTarget::Clip(clip) => self.session.rename_clip(clip, text),
             PromptTarget::Lyric { clip, index } => {
@@ -1328,6 +1341,8 @@ impl AurisApp {
         let (body, buttons) = match &prompt.body {
             PromptBody::Text { target, field } => (
                 div()
+                    .w_full()
+                    .debug_selector(|| "prompt-text-body".into())
                     .flex()
                     .flex_col()
                     .gap_2()
@@ -1373,6 +1388,7 @@ impl AurisApp {
                     // Rename over it would be answering a different question.
                     match target {
                         PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
+                        PromptTarget::AudioMatchText => self.t(Key::AudioMatchUsePrompt).into(),
                         PromptTarget::DrumAssignment { .. } => {
                             self.t(Key::DrumApplyAssignment).into()
                         }
@@ -1461,6 +1477,12 @@ impl AurisApp {
                         .child(
                             div()
                                 .id("prompt-body")
+                                .debug_selector(|| "prompt-body".into())
+                                // Stretch the field through the scroll container. A block
+                                // wrapper can resolve its percentage width to just the border.
+                                .w_full()
+                                .flex()
+                                .flex_col()
                                 .min_h_0()
                                 .overflow_y_scroll()
                                 .child(body),
@@ -1481,6 +1503,7 @@ impl AurisApp {
         theme: &Theme,
     ) -> impl IntoElement + use<> {
         div()
+            .debug_selector(|| "prompt-text-field".into())
             .h(FIELD_HEIGHT)
             .w_full()
             .rounded(Metrics::RADIUS_SM)
@@ -2016,6 +2039,7 @@ mod tests {
             },
             PromptTarget::Lyrics { clip: ClipId(1) },
             PromptTarget::ComposeLyrics,
+            PromptTarget::AudioMatchText,
             PromptTarget::Seed(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
@@ -2049,6 +2073,7 @@ mod tests {
                 | PromptTarget::Phonemes { .. }
                 | PromptTarget::Lyrics { .. }
                 | PromptTarget::ComposeLyrics
+                | PromptTarget::AudioMatchText
                 | PromptTarget::Seed(_)
                 | PromptTarget::Tempo(_)
                 | PromptTarget::TempoFrom(_)
@@ -2075,12 +2100,15 @@ mod tests {
 
     #[test]
     fn everything_that_is_a_notation_rather_than_a_name_says_so() {
-        // A notation has a hint; prose and names do not, except the multiline compose prompt,
-        // whose hint explains how phrase breaks are entered.
+        // Prose hints explain phrase entry or the model's expected description language.
         for target in every_target() {
             assert_eq!(
                 target.hint().is_some(),
-                target.notation().is_some() || matches!(target, PromptTarget::ComposeLyrics),
+                target.notation().is_some()
+                    || matches!(
+                        target,
+                        PromptTarget::ComposeLyrics | PromptTarget::AudioMatchText
+                    ),
                 "{target:?} has the wrong idea about needing a hint",
             );
         }
@@ -2339,6 +2367,38 @@ mod window_tests {
     use crate::harness::{
         CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
     };
+
+    #[gpui::test]
+    fn the_audio_prompt_keeps_a_visible_field_above_its_wrapped_hint(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            this.open_reference_match(cx);
+            this.open_prompt(Prompt::new(
+                "Describe the target sound",
+                PromptTarget::AudioMatchText,
+                "Warm piano with soft drums and a relaxed groove.",
+            ));
+        });
+        for language in [
+            auris_i18n::Language::English,
+            auris_i18n::Language::Japanese,
+        ] {
+            app.update(cx, |this, _| this.language = language);
+            for (width, height) in [(1650.0, 915.0), (900.0, 650.0), (640.0, 480.0)] {
+                resize(&app, cx, gpui::size(gpui::px(width), gpui::px(height)));
+                let bounds = cx.debug_bounds("prompt-text-field").unwrap();
+                let body = cx.debug_bounds("prompt-text-body").unwrap();
+                let scroll = cx.debug_bounds("prompt-body").unwrap();
+                assert!(bounds.size.height >= super::FIELD_HEIGHT, "{bounds:?}");
+                assert!(
+                    bounds.size.width >= gpui::px(280.0),
+                    "field: {bounds:?}; body: {body:?}; scroll: {scroll:?}"
+                );
+                assert!(bounds.top() >= gpui::px(0.0));
+                assert!(bounds.bottom() <= gpui::px(height));
+            }
+        }
+    }
 
     #[gpui::test]
     fn a_prompt_opened_over_the_menu_bar_takes_text_and_return(cx: &mut TestAppContext) {

@@ -105,7 +105,7 @@ pub use graph::{
     PlacedEffects, PlacedInstruments, RENDER_CHANNELS, RenderAudioClip, RenderGraph, RenderSource,
     RenderStrip, RenderTrack, ScheduledEvent, SmoothedGain,
 };
-pub use handle::EngineHandle;
+pub use handle::{EngineHandle, OutputPreviewStatus};
 pub use meter::MeterBank;
 pub use metronome::{Click, Metronome};
 pub use monitor::MonitorRing;

@@ -19,7 +19,7 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use crate::command::EngineCommand;
 use crate::error::EngineError;
 use crate::graph::{RETIRED_GRAPH_SLOTS, RenderGraph};
-use crate::handle::{EngineHandle, Retired};
+use crate::handle::{EngineHandle, OutputPreviewRequest, Retired};
 use crate::meter::MeterBank;
 use crate::renderer::render_block;
 use crate::transport::Transport;
@@ -293,6 +293,12 @@ impl std::fmt::Debug for AudioDevice {
             .field("channel_count", &self.channel_count)
             .field("max_block", &self.max_block)
             .finish()
+    }
+}
+
+impl Drop for AudioDevice {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
     }
 }
 
@@ -682,6 +688,7 @@ fn build_stream(
 pub(crate) struct AudioEngine {
     graph: Option<Box<RenderGraph>>,
     preview: Option<(Arc<AudioBuffer>, usize)>,
+    output_preview: Option<OutputPreview>,
     transport: Transport,
     commands: Receiver<EngineCommand>,
     returned_graphs: Sender<Retired>,
@@ -725,6 +732,41 @@ pub(crate) struct AudioEngine {
     max_block: usize,
 }
 
+/// Finished PCM stays owned until a later command retires it off the callback thread.
+struct OutputPreview {
+    request: OutputPreviewRequest,
+    position: usize,
+}
+
+impl OutputPreview {
+    fn fill(&mut self, out: &mut AudioBuffer) {
+        out.clear();
+        let buffer = &self.request.buffer;
+        let count = out.frame_count().min(buffer.frame_count() - self.position);
+        for channel in 0..out.channel_count().min(2) {
+            let source = if buffer.channel_count() == 1 {
+                0
+            } else {
+                channel
+            };
+            for frame in 0..count {
+                let value = if out.channel_count() == 1 && buffer.channel_count() == 2 {
+                    (buffer.sample(0, self.position + frame)
+                        + buffer.sample(1, self.position + frame))
+                        * 0.5
+                } else {
+                    buffer.sample(source, self.position + frame)
+                };
+                out.channel_mut(channel)[frame] = if value.is_finite() { value } else { 0.0 };
+            }
+        }
+        self.position += count;
+        if self.position == buffer.frame_count() {
+            self.request.status.finish();
+        }
+    }
+}
+
 impl AudioEngine {
     // Ten arguments, all of them shared state the callback needs; grouping them into a struct
     // would only move the same list one level down.
@@ -747,6 +789,7 @@ impl AudioEngine {
         Self {
             graph: None,
             preview: None,
+            output_preview: None,
             transport: Transport::new(),
             commands,
             returned_graphs,
@@ -786,11 +829,22 @@ impl AudioEngine {
         while written < frames {
             let count = (frames - written).min(self.max_block);
             self.scratch.set_frame_count(count);
-            match &mut self.graph {
-                Some(graph) => {
-                    render_block(graph, &mut self.transport, &mut self.scratch, false);
+            let previewing = self
+                .output_preview
+                .as_ref()
+                .is_some_and(|preview| preview.request.status.is_pending_or_playing());
+            if previewing {
+                self.output_preview
+                    .as_mut()
+                    .expect("an active preview exists")
+                    .fill(&mut self.scratch);
+            } else {
+                match &mut self.graph {
+                    Some(graph) => {
+                        render_block(graph, &mut self.transport, &mut self.scratch, false);
+                    }
+                    None => self.scratch.clear(),
                 }
-                None => self.scratch.clear(),
             }
             if let Some((buffer, cursor)) = &mut self.preview
                 && *cursor < buffer.frame_count()
@@ -814,7 +868,24 @@ impl AudioEngine {
             let start = written * self.channels;
             let end = start + count * self.channels;
             interleave(&self.scratch, &mut data[start..end], self.channels);
-            self.publish_meters(count);
+            if previewing {
+                self.meters.clear_tracks_from(0);
+                for channel in 0..2 {
+                    let peak = if channel < self.scratch.channel_count() {
+                        self.scratch
+                            .channel(channel)
+                            .iter()
+                            .map(|value| value.abs())
+                            .fold(0.0, f32::max)
+                    } else {
+                        0.0
+                    };
+                    self.meters
+                        .report_master(channel, peak, count, self.sample_rate);
+                }
+            } else {
+                self.publish_meters(count);
+            }
             written += count;
         }
         // Automation writes effect parameters while rendering, and those parameters may change
@@ -850,6 +921,10 @@ impl AudioEngine {
 
     fn publish_meters(&self, frames: usize) {
         let Some(graph) = &self.graph else {
+            for channel in 0..2 {
+                self.meters
+                    .report_master(channel, 0.0, frames, self.sample_rate);
+            }
             return;
         };
         let metered = graph.track_count().min(self.meters.track_capacity());
@@ -913,6 +988,7 @@ impl AudioEngine {
         match command {
             EngineCommand::SetGraph(graph) => {
                 self.stop_preview();
+                self.stop_output_preview();
                 // Meters past the new track count would otherwise sit at the level a deleted
                 // track last reached, with nothing left to report them down.
                 self.meters.clear_tracks_from(graph.track_count());
@@ -925,11 +1001,13 @@ impl AudioEngine {
             }
             EngineCommand::Play => {
                 self.stop_preview();
+                self.stop_output_preview();
                 self.transport.playing = true;
             }
             EngineCommand::CountIn(count) => self.transport.set_count_in(count),
             EngineCommand::Stop => {
                 self.stop_preview();
+                self.stop_output_preview();
                 self.transport.playing = false;
                 // A count nobody is going to play to is over. Left running, it would hold the
                 // next press of Play at the position this one was stopped at, counting out the
@@ -940,6 +1018,8 @@ impl AudioEngine {
                 }
             }
             EngineCommand::Seek { frames } => {
+                self.stop_preview();
+                self.stop_output_preview();
                 self.transport.seek(frames);
                 // Counted in to a position the transport is no longer at.
                 self.transport.count_in = None;
@@ -1057,6 +1137,33 @@ impl AudioEngine {
                     graph.stop_one_shot(track);
                 }
             }
+            EngineCommand::PlayOutputPreview(request) => {
+                let buffer = &request.buffer;
+                if !request.status.is_pending_or_playing()
+                    || buffer.sample_rate() != self.sample_rate
+                    || buffer.frame_count() == 0
+                {
+                    request.status.finish();
+                    self.retire(Retired::OutputPreview(request));
+                    return;
+                }
+                self.stop_preview();
+                self.transport.playing = false;
+                self.transport.count_in = None;
+                if let Some(graph) = &mut self.graph {
+                    graph.panic();
+                }
+                self.meters.reset();
+                let next = OutputPreview {
+                    request,
+                    position: 0,
+                };
+                if let Some(previous) = self.output_preview.replace(next) {
+                    previous.request.status.finish();
+                    self.retire(Retired::OutputPreview(previous.request));
+                }
+            }
+            EngineCommand::StopOutputPreview => self.stop_output_preview(),
             EngineCommand::SetMetronome(enabled) => {
                 if let Some(graph) = &mut self.graph {
                     graph.set_metronome(enabled);
@@ -1068,7 +1175,9 @@ impl AudioEngine {
                 {
                     self.retire(Retired::Buffer(buffer));
                 } else {
+                    self.stop_output_preview();
                     self.transport.playing = false;
+                    self.transport.count_in = None;
                     if let Some(graph) = &mut self.graph {
                         graph.panic();
                     }
@@ -1080,6 +1189,7 @@ impl AudioEngine {
             EngineCommand::StopPreview => self.stop_preview(),
             EngineCommand::Panic => {
                 self.stop_preview();
+                self.stop_output_preview();
                 if let Some(graph) = &mut self.graph {
                     graph.panic();
                 }
@@ -1093,6 +1203,12 @@ impl AudioEngine {
             *cursor = buffer.frame_count();
         }
     }
+
+    fn stop_output_preview(&mut self) {
+        if let Some(preview) = &mut self.output_preview {
+            preview.request.status.finish();
+        }
+    }
 }
 
 fn command_may_retire(command: &EngineCommand) -> bool {
@@ -1102,6 +1218,7 @@ fn command_may_retire(command: &EngineCommand) -> bool {
             | EngineCommand::SetSoloResolution(_)
             | EngineCommand::PlayOneShot { .. }
             | EngineCommand::PlayPreview(_)
+            | EngineCommand::PlayOutputPreview(_)
     )
 }
 
@@ -1139,6 +1256,10 @@ mod tests {
     use auris_core::time::Ticks;
 
     const SAMPLE_RATE: f64 = 48_000.0;
+
+    fn preview_request(buffer: Arc<AudioBuffer>) -> OutputPreviewRequest {
+        OutputPreviewRequest::new(buffer, Arc::new(AtomicBool::new(true)))
+    }
 
     #[test]
     fn compiled_asio_backend_requires_the_windows_feature() {
@@ -1337,6 +1458,324 @@ mod tests {
         engine.fill(&mut data);
         assert!(data.iter().all(|sample| *sample == 0.0));
         assert_eq!(playhead.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn chord_and_output_auditions_replace_each_other_without_resuming_old_audio() {
+        for chord_first in [true, false] {
+            let (mut engine, commands, _retired, _meters, _playhead) = engine();
+            for chord in [chord_first, !chord_first] {
+                let value = if chord { 0.25 } else { 0.5 };
+                let buffer = Arc::new(
+                    AudioBuffer::from_planar(vec![vec![value; 128]], SAMPLE_RATE).unwrap(),
+                );
+                let (start, stop_other) = if chord {
+                    (
+                        EngineCommand::PlayPreview(buffer),
+                        EngineCommand::StopOutputPreview,
+                    )
+                } else {
+                    (
+                        EngineCommand::PlayOutputPreview(preview_request(buffer)),
+                        EngineCommand::StopPreview,
+                    )
+                };
+                commands.send(start).unwrap();
+                let mut data = [0.0_f32; 32];
+                engine.fill(&mut data);
+                assert!(data.iter().all(|sample| *sample == value));
+                // A stale stop from the other UI must not stop the new audition.
+                commands.send(stop_other).unwrap();
+                engine.fill(&mut data);
+                assert!(data.iter().all(|sample| *sample == value));
+            }
+            commands.send(EngineCommand::Stop).unwrap();
+            let mut data = [1.0_f32; 32];
+            engine.fill(&mut data);
+            assert!(data.iter().all(|sample| *sample == 0.0));
+        }
+    }
+
+    #[test]
+    fn output_preview_bypasses_the_master_and_does_not_advance_the_song() {
+        let (mut engine, commands, _retired, _meters, playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands.send(EngineCommand::SetMasterGain(-60.0)).unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+        let audio = Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 17]], SAMPLE_RATE).unwrap());
+        commands
+            .send(EngineCommand::PlayOutputPreview(preview_request(audio)))
+            .unwrap();
+        let mut data = [1.0f32; 64];
+        engine.fill(&mut data);
+        assert_eq!(&data[..34], &[0.25; 34]);
+        assert!(data[34..].iter().all(|sample| *sample == 0.0));
+        assert_eq!(playhead.load(Ordering::Relaxed), 0);
+        assert!(!engine.transport.playing);
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn preview_status_tracks_completion_without_clearing_a_new_pending_audition() {
+        let (mut engine, commands, _retired, _meters, _playhead) = engine();
+        let first = preview_request(Arc::new(AudioBuffer::stereo(16, SAMPLE_RATE)));
+        let first_status = first.status.clone();
+        commands
+            .send(EngineCommand::PlayOutputPreview(first))
+            .unwrap();
+        assert!(
+            first_status.is_active(),
+            "queued playback is already active"
+        );
+
+        let next = preview_request(Arc::new(AudioBuffer::stereo(256, SAMPLE_RATE)));
+        let next_status = next.status.clone();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert!(
+            !first_status.is_active(),
+            "natural completion clears the ticket"
+        );
+        assert!(
+            next_status.is_active(),
+            "an older callback cannot clear a new request"
+        );
+        commands
+            .send(EngineCommand::PlayOutputPreview(next))
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(next_status.is_active());
+        commands.send(EngineCommand::StopOutputPreview).unwrap();
+        engine.fill(&mut data);
+        assert!(!next_status.is_active());
+    }
+
+    #[test]
+    fn replacing_a_preview_and_transport_changes_complete_its_status() {
+        for interrupt in [
+            EngineCommand::StopOutputPreview,
+            EngineCommand::Play,
+            EngineCommand::Stop,
+            EngineCommand::Seek { frames: 0 },
+            EngineCommand::SetGraph(graph()),
+            EngineCommand::Panic,
+            EngineCommand::PlayOutputPreview(preview_request(Arc::new(AudioBuffer::stereo(
+                256,
+                SAMPLE_RATE,
+            )))),
+        ] {
+            let (mut engine, commands, _retired, _meters, _playhead) = engine();
+            let request = preview_request(Arc::new(AudioBuffer::stereo(256, SAMPLE_RATE)));
+            let status = request.status.clone();
+            commands
+                .send(EngineCommand::PlayOutputPreview(request))
+                .unwrap();
+            let mut data = [0.0f32; 64];
+            engine.fill(&mut data);
+            assert!(status.is_active());
+            commands.send(interrupt).unwrap();
+            engine.fill(&mut data);
+            assert!(!status.is_active());
+        }
+    }
+
+    #[test]
+    fn preview_status_is_inactive_without_a_live_output_device() {
+        let (device, handle) = start_silent(&AudioSettings::default());
+        let buffer = Arc::new(AudioBuffer::stereo(128, handle.sample_rate()));
+        let headless = handle.play_output_preview(Arc::clone(&buffer)).unwrap();
+        assert!(!headless.is_active());
+        handle.running.store(true, Ordering::Relaxed);
+        let status = handle.play_output_preview(buffer).unwrap();
+        assert!(status.is_active());
+        handle.running.store(false, Ordering::Relaxed);
+        assert!(
+            !status.is_active(),
+            "device failure clears visible playback"
+        );
+        handle.running.store(true, Ordering::Relaxed);
+        drop(device);
+        assert!(
+            !status.is_active(),
+            "a retained handle cannot outlive its device"
+        );
+    }
+
+    #[test]
+    fn cancelled_queued_preview_leaves_transport_and_current_audition_untouched() {
+        let (mut engine, commands, returned, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands.send(EngineCommand::Play).unwrap();
+        let buffer =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 256]], SAMPLE_RATE).unwrap());
+        let cancelled = preview_request(Arc::clone(&buffer));
+        cancelled.status.stop();
+        commands
+            .send(EngineCommand::PlayOutputPreview(cancelled))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert!(engine.transport.playing);
+        assert!(data.iter().any(|value| *value != 0.0));
+        assert!(matches!(returned.try_recv(), Ok(Retired::OutputPreview(_))));
+
+        let playing = preview_request(Arc::clone(&buffer));
+        let playing_status = playing.status.clone();
+        commands
+            .send(EngineCommand::PlayOutputPreview(playing))
+            .unwrap();
+        engine.fill(&mut data);
+        let cancelled = preview_request(buffer);
+        cancelled.status.stop();
+        commands
+            .send(EngineCommand::PlayOutputPreview(cancelled))
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(playing_status.is_active());
+        assert_eq!(data, [0.25; 64]);
+        assert!(matches!(returned.try_recv(), Ok(Retired::OutputPreview(_))));
+    }
+
+    #[test]
+    fn direct_preview_cancellation_bypasses_a_full_command_queue() {
+        let (mut engine, commands, _returned, _meters, _playhead) = engine();
+        let buffer =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 256]], SAMPLE_RATE).unwrap());
+        let playing = preview_request(Arc::clone(&buffer));
+        let status = playing.status.clone();
+        commands
+            .send(EngineCommand::PlayOutputPreview(playing))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert_eq!(data, [0.25; 64]);
+        for _ in 0..commands.capacity().unwrap() {
+            commands
+                .try_send(EngineCommand::SetMasterGain(0.0))
+                .unwrap();
+        }
+        assert!(matches!(
+            commands.try_send(EngineCommand::StopOutputPreview),
+            Err(TrySendError::Full(_))
+        ));
+        let next = preview_request(buffer);
+        let next_status = next.status.clone();
+        status.stop();
+        assert!(!status.is_active());
+        assert!(
+            next_status.is_active(),
+            "cancellation is limited to its request"
+        );
+        engine.fill(&mut data);
+        assert_eq!(data, [0.0; 64]);
+        commands
+            .send(EngineCommand::PlayOutputPreview(next))
+            .unwrap();
+        engine.fill(&mut data);
+        assert_eq!(data, [0.25; 64]);
+        assert!(next_status.is_active());
+    }
+
+    #[test]
+    fn preview_completion_and_stop_keep_buffer_destruction_off_the_audio_thread() {
+        let (mut engine, commands, returned, _meters, _playhead) = engine();
+        let audio = Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 16]], SAMPLE_RATE).unwrap());
+        let weak = Arc::downgrade(&audio);
+        commands
+            .send(EngineCommand::PlayOutputPreview(preview_request(audio)))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        assert!(
+            weak.upgrade().is_some(),
+            "completion retains the finished PCM"
+        );
+        commands.send(EngineCommand::StopOutputPreview).unwrap();
+        engine.fill(&mut data);
+        assert!(
+            weak.upgrade().is_some(),
+            "Stop never frees PCM on the callback"
+        );
+        let next = Arc::new(AudioBuffer::from_planar(vec![vec![0.4; 64]], SAMPLE_RATE).unwrap());
+        assert!(command_may_retire(&EngineCommand::PlayOutputPreview(
+            preview_request(Arc::clone(&next))
+        )));
+        commands
+            .send(EngineCommand::PlayOutputPreview(preview_request(next)))
+            .unwrap();
+        engine.fill(&mut data);
+        assert_eq!(data, [0.4; 64]);
+        let retired = returned.try_recv().unwrap();
+        assert!(matches!(retired, Retired::OutputPreview(_)));
+        assert!(weak.upgrade().is_some());
+        drop(retired);
+        assert!(
+            weak.upgrade().is_none(),
+            "the owner thread releases retired PCM"
+        );
+    }
+
+    #[test]
+    fn output_preview_downmixes_stereo_and_meters_decay_without_a_graph() {
+        let audio = Arc::new(
+            AudioBuffer::from_planar(vec![vec![0.0; 16], vec![0.6; 16]], SAMPLE_RATE).unwrap(),
+        );
+        let mut preview = OutputPreview {
+            request: preview_request(audio),
+            position: 0,
+        };
+        let mut mono = AudioBuffer::from_planar(vec![vec![0.0; 16]], SAMPLE_RATE).unwrap();
+        preview.fill(&mut mono);
+        assert_eq!(mono.channel(0), &[0.3; 16]);
+        let (mut engine, commands, _retired, meters, _playhead) = engine();
+        commands
+            .send(EngineCommand::PlayOutputPreview(preview_request(Arc::new(
+                mono,
+            ))))
+            .unwrap();
+        let mut data = [0.0; 32];
+        engine.fill(&mut data);
+        let peak = meters.master_peak();
+        assert!(peak > 0.0);
+        engine.fill(&mut data);
+        assert!(meters.master_peak() < peak);
+    }
+
+    #[test]
+    fn transport_commands_stop_output_preview_and_wrong_rate_is_rejected() {
+        let (mut engine, commands, returned, _meters, _playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let audio =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.25; 1024]], SAMPLE_RATE).unwrap());
+        commands
+            .send(EngineCommand::PlayOutputPreview(preview_request(audio)))
+            .unwrap();
+        let mut data = [0.0f32; 64];
+        engine.fill(&mut data);
+        commands.send(EngineCommand::Stop).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
+        commands.send(EngineCommand::Play).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().any(|sample| *sample != 0.0));
+        let invalid =
+            Arc::new(AudioBuffer::from_planar(vec![vec![0.9; 64]], SAMPLE_RATE * 2.0).unwrap());
+        let request = preview_request(invalid);
+        let status = request.status.clone();
+        commands
+            .send(EngineCommand::PlayOutputPreview(request))
+            .unwrap();
+        engine.fill(&mut data);
+        assert!(
+            !status.is_active(),
+            "rejected playback clears its pending status"
+        );
+        assert!(
+            engine.transport.playing,
+            "a rejected buffer leaves current transport alone"
+        );
+        assert!(matches!(returned.try_recv(), Ok(Retired::OutputPreview(_))));
     }
 
     #[test]

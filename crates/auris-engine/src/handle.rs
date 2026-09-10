@@ -19,14 +19,78 @@ use crate::meter::MeterBank;
 pub enum Retired {
     /// A render graph replaced by [`EngineCommand::SetGraph`].
     Graph(Box<RenderGraph>),
-    /// A preview buffer replaced by [`EngineCommand::PlayOneShot`].
+    /// A buffer replaced by [`EngineCommand::PlayOneShot`].
     Buffer(Arc<auris_core::AudioBuffer>),
+    /// Audition PCM and its status replaced by [`EngineCommand::PlayOutputPreview`].
+    OutputPreview(OutputPreviewRequest),
     /// A solo-resolution array consumed by [`EngineCommand::SetSoloResolution`].
     SoloResolution(Box<[bool]>),
 }
 
 /// Retired data travelling back from the audio thread to be dropped here.
 pub(crate) type GraphReceiver = Receiver<Retired>;
+
+/// Status and cancellation for one queued or playing output audition.
+///
+/// Each request owns its own status, so completion of an older audition cannot clear a newer
+/// request that the audio callback has not received yet. Device loss also makes it inactive.
+#[derive(Clone, Debug)]
+pub struct OutputPreviewStatus {
+    active: Arc<AtomicBool>,
+    running: Arc<AtomicBool>,
+}
+
+impl OutputPreviewStatus {
+    /// Whether this audition is queued or playing on a live output device.
+    pub fn is_active(&self) -> bool {
+        self.active.load(Ordering::Relaxed) && self.running.load(Ordering::Relaxed)
+    }
+
+    /// Cancels this audition, including a request that has not reached the callback yet.
+    ///
+    /// This atomic signal bypasses the command queue, so cancellation cannot be lost when the
+    /// queue is full. Playing audio stops by the next render block; another request is unaffected.
+    pub fn stop(&self) {
+        self.finish();
+    }
+
+    pub(crate) fn is_pending_or_playing(&self) -> bool {
+        self.active.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn finish(&self) {
+        self.active.store(false, Ordering::Relaxed);
+    }
+}
+
+/// Prepared output audition, constructed by [`EngineHandle::play_output_preview`].
+///
+/// The callback retains the request after completion and returns it with replaced PCM for
+/// destruction off the audio thread; dropping the final status owner must not allocate or free
+/// memory in a running callback either.
+#[derive(Debug)]
+pub struct OutputPreviewRequest {
+    pub(crate) buffer: Arc<auris_core::AudioBuffer>,
+    pub(crate) status: OutputPreviewStatus,
+}
+
+impl OutputPreviewRequest {
+    pub(crate) fn new(buffer: Arc<auris_core::AudioBuffer>, running: Arc<AtomicBool>) -> Self {
+        Self {
+            buffer,
+            status: OutputPreviewStatus {
+                active: Arc::new(AtomicBool::new(true)),
+                running,
+            },
+        }
+    }
+}
+
+impl Drop for OutputPreviewRequest {
+    fn drop(&mut self) {
+        self.status.finish();
+    }
+}
 
 /// Everything the UI needs to talk to a running engine.
 ///
@@ -63,6 +127,17 @@ impl EngineHandle {
     /// Installs a freshly built graph.
     pub fn set_graph(&self, graph: RenderGraph) -> Result<(), EngineError> {
         self.send(EngineCommand::SetGraph(Box::new(graph)))
+    }
+
+    /// Queues prepared device-rate PCM and returns its independent audition status.
+    pub fn play_output_preview(
+        &self,
+        buffer: Arc<auris_core::AudioBuffer>,
+    ) -> Result<OutputPreviewStatus, EngineError> {
+        let request = OutputPreviewRequest::new(buffer, Arc::clone(&self.running));
+        let status = request.status.clone();
+        self.send(EngineCommand::PlayOutputPreview(request))?;
+        Ok(status)
     }
 
     /// Where the playhead is, in frames. Written by the audio thread every callback.

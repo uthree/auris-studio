@@ -199,6 +199,7 @@ pub fn edit_key(edit: Edit) -> Key {
         Edit::FreezeClipTransforms => Key::EditFreezeClipTransforms,
         Edit::Compose => Key::EditCompose,
         Edit::BalanceLevels => Key::EditBalanceLevels,
+        Edit::MatchReference => Key::EditMatchReference,
     }
 }
 
@@ -226,6 +227,8 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::StaleBalance => Key::BalanceChanged.get(language).to_string(),
         SessionError::InvalidDrumRecipe(detail)
         | SessionError::TrackConversion(detail)
+        | SessionError::ReferenceMatch(detail)
+        | SessionError::OutputPreview(detail)
         | SessionError::InvalidDrumAssignment(detail)
         | SessionError::DrumAnalysis(detail)
         | SessionError::MusicAnalysis(detail) => with(Key::ErrorDocument, detail.clone()),

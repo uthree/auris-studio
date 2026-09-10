@@ -42,7 +42,17 @@
 
 #![warn(missing_docs)]
 
+pub mod audio_evaluation;
 pub mod audio_review;
+pub mod clap_evaluation;
+/// Headless composition search and its request/result types.
+///
+/// This function-based command needs no session, audio device or UI. Frontends can prepare a
+/// bounded request and retain the exact generated score through the session boundary.
+pub mod composition_search {
+    pub use auris_compose::search::*;
+}
+
 mod drum_worker;
 pub mod error;
 pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};
@@ -72,6 +82,8 @@ pub use auris_core::CoreError;
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Workspace-owned engine error variants exposed for frontend localisation.
 pub use auris_engine::EngineError;
+/// Completion status and cancellation of a queued or playing output audition.
+pub use auris_engine::OutputPreviewStatus;
 /// Workspace-owned file error variants exposed for frontend localisation.
 pub use auris_io::IoError;
 pub use error::SessionError;
@@ -84,6 +96,7 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
+pub use session::prepare_output_preview;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, ChordPreview, ChordPreviewJob,
     Clipboard, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
@@ -109,6 +122,10 @@ pub use session::{
     MUSCRIPTOR_NOTICE, MixtureAnalysis, MixtureNote, MixtureOptions, transcribe_mixture_file,
 };
 pub use session::{MusicalClipAnalysis, RenderedSpectrogramJob, SpectrogramJob};
+pub use session::{
+    ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
+    ReferenceMatchSettings, ReferenceMatchStep,
+};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{

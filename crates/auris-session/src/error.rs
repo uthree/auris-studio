@@ -10,6 +10,9 @@ pub enum SessionError {
     /// A balance measurement no longer describes the document that is open.
     #[error("the project changed while its levels were being measured")]
     StaleBalance,
+    /// Reference matching could not render, evaluate, or safely adopt the captured project.
+    #[error("reference match: {0}")]
+    ReferenceMatch(String),
     /// A composed part explicitly selected an unavailable or incompatible instrument source.
     #[error("song instrument: {0}")]
     SongSource(String),
@@ -50,6 +53,9 @@ pub enum SessionError {
     /// A gesture must finish before replacing the document from disk.
     #[error("finish the current edit before accepting external changes")]
     EditInProgress,
+    /// Finished audio cannot be prepared or auditioned at the current output rate.
+    #[error("output preview: {0}")]
+    OutputPreview(String),
     /// A file could not be read, written, decoded or encoded.
     #[error(transparent)]
     Io(#[from] auris_io::IoError),

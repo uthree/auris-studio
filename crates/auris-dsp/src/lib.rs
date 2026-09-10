@@ -53,6 +53,7 @@ pub(crate) fn settled(value: f32) -> f32 {
 pub mod adsr;
 pub mod biquad;
 pub mod chorus;
+pub mod clap_features;
 pub mod compressor;
 pub mod delay;
 pub mod delay_line;
@@ -64,6 +65,7 @@ pub mod gain;
 pub mod limiter;
 pub mod loudness;
 pub mod pack;
+pub mod reference_features;
 pub mod reverb;
 pub mod smooth;
 pub mod spectrogram;

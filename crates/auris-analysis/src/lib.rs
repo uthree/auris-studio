@@ -7,6 +7,7 @@
 
 pub mod audio;
 pub mod chords;
+pub mod clap;
 pub mod instruments;
 pub mod mixture;
 mod pitch;
