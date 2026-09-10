@@ -79,6 +79,12 @@ alone does not rewrite a note. Writing style is saved in each generated clip's r
 
 Composition shares multi-bar phrases between harmony, melody and accompaniment. A melodic
 head returns with developed tails; phrase endings shape approaches, holds and breaths.
+Automatic instrumental melodies combine short gestures and held targets in two-beat cells.
+Density subdivides those gestures, syncopation moves their preparation off the beat, and
+writing style changes the mix of holds, pickups and anticipations. Variations preserve the
+figure's opening; automatic phrase endings place an arrival before a final beat of rest.
+The beat follows the meter, including compound meters. Explicit rhythm patterns keep their
+authored onsets.
 Chord voicings consider each voice's movement, and prepared melodic suspensions resolve by
 step. Generated chords, stabs and arpeggios leave room around a busy foreground and can
 answer in its final breath. Bass and drums keep time, ambient textures retain their sustained

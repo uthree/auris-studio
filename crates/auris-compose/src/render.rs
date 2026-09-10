@@ -1683,7 +1683,7 @@ mod tests {
             ),
             "verse·1 C major | Am7 Fm7 C G7 Cmaj7 Em7 Fmaj9 G |\n\
              ending·1 C major | C |\n\
-             189 notes, digest 9202136d893d9abb\n"
+             207 notes, digest 4bd9d1f1009d0ada\n"
         );
 
         // Minor harmony keeps its dominant major while other chords follow the mood.
@@ -1702,7 +1702,7 @@ mod tests {
             ),
             "verse·1 A minor | Am7 Gbm9 Dm7 Dm E Am7 Gbm7 Cmaj7 E7 |\n\
              ending·1 A minor | Am |\n\
-             208 notes, digest c62e30894e179be6\n"
+             214 notes, digest c09f6359352e950d\n"
         );
 
         // A quoted chart, which is never coloured, over a form that repeats — and the one fixture
@@ -1715,7 +1715,7 @@ mod tests {
              verse·1 C major | C G Am F C G Am F |\n\
              chorus·1 C major | C G Am F C G Am F |\n\
              ending·1 C major | C |\n\
-             628 notes, digest 125c4492b9252655\n"
+             516 notes, digest 4ad2760a6dbf2af6\n"
         );
 
         // A transposed section, which is a key change on the timeline — and the one fixture here
@@ -1742,7 +1742,7 @@ mod tests {
             "verse·1 C major | Fmaj7 E7 Am7 Bb7 |\n\
              chorus·1 Eb major | Abmaj7 G7 Cm7 Eb7 |\n\
              ending·1 Eb major | Eb |\n\
-             240 notes, digest d37ff14f4214839d\n"
+             239 notes, digest 326f33e5041ae3aa\n"
         );
     }
 

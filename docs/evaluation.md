@@ -53,6 +53,25 @@ audition of sung notes checks melody/rhythm, not the intelligibility of a learne
 
 ## The learned ear
 
+### Holding the backing fixed
+
+When accompaniment reacts to a new melody, freshly composing both sides changes more than
+the melody. To audition a candidate over a previously accepted arrangement:
+
+```
+uv run tools/eval/melody_ab.py --source before/before.auris --candidate candidate/candidate.auris --output audition/audition.auris --cli target/debug/auris --wav audition.wav
+```
+
+This copies only instrumental lead/melody notes and their matching recipe digest into a new,
+editable project. It preserves the source's backing, IDs, mixer, effects and performance
+transforms. Track/clip layout, harmony, meter, tempo and recipe settings must agree. Singer
+clips are not transplanted. Relative project assets and existing output files are rejected.
+The JSON manifest records source, candidate, output and preserved-content hashes; optional
+CLI rendering records the executable and WAV hashes. The backing score and mix are fixed;
+shared effects may still react differently to the changed melody.
+
+### Scoring final renders
+
 ```
 uv run tools/eval/aesthetics.py --preset all --json before.json
 # ...change something...

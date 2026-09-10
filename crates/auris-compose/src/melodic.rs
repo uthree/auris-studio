@@ -6,6 +6,27 @@
 //! have to find again. The constants in that module are what this page argues for; read them
 //! together or neither will make sense.
 //!
+//! # Rhythm and the hook
+//!
+//! Listening feedback on the September 2026 phrase changes preferred the accompaniment's
+//! contrast but still found the main melody hard to follow. Saved-score inspection exposed
+//! a separate problem from the pitch intervals discussed below: independently sampled attacks
+//! could cluster at a bar's edges, and reusing that bar repeated the scattered rhythm. A last
+//! note on the final subdivision also left no room for the intended phrase breath.
+//!
+//! Automatic instrumental melodies now draw two-beat rhythmic cells: a short gesture beside a
+//! held target, a longer hold, a pickup or an anticipation. Density divides the gesture; the
+//! meter supplies the beat size. Variations preserve the opening cells and develop the tail.
+//! A closing bar moves its planned answer before a final felt beat of silence when the meter
+//! has room. Explicit rhythms retain their authored onsets. The piece's pitch contour and
+//! pitch-joining rules remain separate from this rhythmic vocabulary.
+//!
+//! These rules make the intended rhythm observable; they do not prove catchiness. The
+//! `tools/eval/melody_ab.py` probe transplants the new melody into the same saved backing and
+//! mixer so listening comparisons isolate it. The account and paired measurements are in
+//! `docs/reviews/melody-hooks-2026-09-10.md`. The tables below describe earlier pitch-focused
+//! experiments, not the results of this rhythm change.
+//!
 //! # The asymmetry the question starts from
 //!
 //! An accompaniment is right or wrong *locally*. Given the chord, a bass note is a member of it or

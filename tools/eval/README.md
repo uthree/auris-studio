@@ -30,6 +30,16 @@ sources and render settings fixed across comparisons. See
 [the evaluation guide](../../docs/evaluation.md#audiotext-identity-with-laion-clap)
 for details and model-free tests.
 
+For a melody comparison over an unchanged saved backing:
+
+```
+uv run tools/eval/melody_ab.py --source before/before.auris --candidate candidate/candidate.auris --output audition/audition.auris --cli target/debug/auris --wav audition.wav
+```
+
+The saved audition replaces only instrumental lead notes and their recipe digest.
+It preserves the source mixer, performance settings and other parts, validates matching
+musical context, and records source/output hashes. See [the evaluation guide](../../docs/evaluation.md#holding-the-backing-fixed).
+
 ## Local model tool and audio checks
 
 `agent_tools.ps1` tests saved project state through real MCP stdio and rig/Ollama

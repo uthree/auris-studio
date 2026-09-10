@@ -24,10 +24,10 @@ use super::writer::{
 };
 use super::{Draft, ScoreSettings};
 
-/// Fewest notes a generated figure is allowed to have.
-///
-/// Three is the smallest number that can carry a shape: two notes are an interval, and one is a
-/// note. It is also the smallest [`vary_motif`] has anything to work with.
+#[path = "melody_rhythm.rs"]
+mod melody_rhythm;
+
+/// A contour needs three positions to express a turn rather than only an interval.
 const MOTIF_MINIMUM: usize = 3;
 
 /// The moves a figure may make, in scale steps, and how often each is drawn.
@@ -207,6 +207,24 @@ fn motif(
     style: Option<PerformanceStyle>,
     rng: &mut Rng,
 ) -> Motif {
+    match pattern {
+        Some(_) => contour(grid, pattern, density, syncopation, style, rng),
+        None => Motif {
+            cells: melody_rhythm::grouped(grid, density, syncopation, style, rng),
+        },
+    }
+}
+
+/// Draw the pitch contour on its own scaffolding, independently of the section's rhythm.
+/// Explicit patterns also keep their original articulation through this path.
+fn contour(
+    grid: Grid,
+    pattern: Option<&Pattern>,
+    density: f32,
+    syncopation: f32,
+    style: Option<PerformanceStyle>,
+    rng: &mut Rng,
+) -> Motif {
     let steps = grid.steps_per_bar();
     let mut onsets = bar_onsets(grid, pattern, density, syncopation, rng);
     // A figure needs a few notes to be one, and one note cannot be varied at all. A thin roll
@@ -360,18 +378,23 @@ fn phrase_figure(
     if position < 2.min(phrase.bars.saturating_sub(1)) {
         return figure.clone();
     }
-    let mut developed = if closing && !written {
-        vary_motif(figure, rng)
-    } else {
-        figure.clone()
-    };
+    let turn = figure.cells.len().div_ceil(2);
+    let mut developed = figure.clone();
+    if !written {
+        // Variation owns the response, not the identifying head. Applying the operation to
+        // the whole figure first could delete or reverse the notes it promised to preserve.
+        let tail = Motif {
+            cells: figure.cells[turn..].to_vec(),
+        };
+        developed.cells.truncate(turn);
+        developed.cells.extend(vary_motif(&tail, rng).cells);
+    }
     let count = developed.cells.len();
     if count < 2 {
         return developed;
     }
     // Change the latter half, rather than translating the whole figure: a translation is the
     // join's register adjustment and would be silently cancelled by it.
-    let turn = count.div_ceil(2);
     let direction = match phrase.role {
         PhraseRole::Statement | PhraseRole::Continuation if !closing => 1,
         _ => -1,
@@ -381,7 +404,7 @@ fn phrase_figure(
             cell.degree += direction;
         }
     }
-    if closing && phrase.role == PhraseRole::Release && !written && count > 3 {
+    if closing && phrase.role == PhraseRole::Release && !written && count > turn + 1 {
         // A release says less. Keep both the identifying head and the final arrival.
         developed.cells.remove(count - 2);
     }
@@ -517,7 +540,7 @@ pub(super) fn melody(
                 RngKey::Word("motif"),
             ],
         );
-        motif(
+        contour(
             grid,
             part.rhythm.as_ref(),
             density_at(settings, part, GERM_INTENSITY),
@@ -558,13 +581,16 @@ pub(super) fn melody(
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
         let closing = section.closes_phrase(bar);
-        let cells = phrase_figure(
+        let mut cells = phrase_figure(
             &figure,
             section.phrase_at(bar),
             bar,
             part.rhythm.is_some(),
             &mut rng,
         );
+        if closing && part.rhythm.is_none() {
+            melody_rhythm::close_phrase(grid, &mut cells);
+        }
         let bar_start = grid.bar_ticks() * bar as i64;
 
         // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
@@ -988,6 +1014,127 @@ mod tests {
                     .collect::<Vec<_>>(),
                 "a written rhythm changed"
             );
+        }
+    }
+
+    #[test]
+    fn a_generated_rhythm_groups_short_notes_around_a_held_target() {
+        let grid = Grid::default();
+        for seed in 0..64 {
+            let figure = motif(
+                grid,
+                None,
+                0.45,
+                0.5,
+                Some(PerformanceStyle::PopBand),
+                &mut Rng::stream(seed, &[]),
+            );
+            assert!(
+                figure
+                    .cells
+                    .iter()
+                    .any(|cell| cell.length >= grid.steps_per_beat()),
+                "seed {seed} has no held rhythmic target: {figure:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn generated_closing_variations_keep_the_identifying_head() {
+        let figure = figure_of(&[(0, 0), (2, 1), (4, 2), (6, 1), (8, 0), (10, 1)]);
+        let phrase = PhrasePlan {
+            start_bar: 0,
+            bars: 4,
+            role: PhraseRole::Release,
+        };
+        let head = |figure: &Motif| {
+            figure
+                .cells
+                .iter()
+                .take(3)
+                .map(|cell| (cell.step, cell.length, cell.degree))
+                .collect::<Vec<_>>()
+        };
+        for seed in 0..64 {
+            let answer = phrase_figure(
+                &figure,
+                Some(&phrase),
+                3,
+                false,
+                &mut Rng::stream(seed, &[]),
+            );
+            assert_eq!(head(&answer), head(&figure), "seed {seed}: {answer:?}");
+        }
+    }
+
+    #[test]
+    fn generated_phrase_endings_reserve_the_last_felt_beat() {
+        for seed in 0..16 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                form = "verse"
+                chords = "@axis"
+                ending = "none"
+                humanize = 0
+                seed = {seed}
+                writing_style = "rock"
+                [section.verse]
+                bars = 8
+                [[part]]
+                name = "lead"
+                density = 0.8
+                "#
+            ));
+            let lead = part(&parts, "lead");
+            let section = &frame.sections[0];
+            for phrase in &section.phrases {
+                let boundary = frame.grid.bar_ticks() * phrase.end_bar() as i64;
+                let last_bar = boundary - frame.grid.bar_ticks();
+                let played: Vec<_> = lead
+                    .notes
+                    .iter()
+                    .filter(|note| note.start >= last_bar && note.start < boundary)
+                    .collect();
+                assert!(!played.is_empty(), "seed {seed}: no phrase arrival");
+                let end = played
+                    .iter()
+                    .map(|note| note.start + note.length)
+                    .max()
+                    .unwrap();
+                assert!(
+                    end <= boundary - frame.grid.signature.beat_ticks(),
+                    "seed {seed}: phrase {} ended at {end:?}, boundary {boundary:?}",
+                    phrase.start_bar,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_planned_arrival_keeps_the_answers_final_contour_degree() {
+        let mut figure = figure_of(&[(0, 0), (2, 1), (4, 2), (8, 3), (12, 1), (15, -1)]);
+        melody_rhythm::close_phrase(Grid::default(), &mut figure);
+        assert_eq!(figure.cells.last().unwrap().degree, -1);
+    }
+
+    #[test]
+    fn written_rhythm_keeps_its_late_attacks_at_a_phrase_ending() {
+        let (_, frame, parts) = draft(
+            r#"
+            form = "verse"
+            chords = "@axis"
+            ending = "none"
+            humanize = 0
+            [section.verse]
+            bars = 4
+            [[part]]
+            name = "lead"
+            rhythm = ".X......x..o...x"
+            "#,
+        );
+        let lead = part(&parts, "lead");
+        for bar in 0..4 {
+            assert_eq!(bar_steps(&frame, lead, bar), [1, 8, 11, 15]);
         }
     }
 
