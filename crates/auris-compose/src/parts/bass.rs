@@ -8,8 +8,11 @@
 
 use auris_core::time::Ticks;
 
+use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
+use crate::phrasing::PhraseRole;
 use crate::rhythm::DrumVoice;
+use crate::rng::Rng;
 use crate::spec::PartSpec;
 use crate::theory::chord::Chord;
 use crate::theory::chord_scale::ChordScale;
@@ -41,6 +44,20 @@ fn octave_leap(root: i32, low: i32, high: i32) -> i32 {
     }
 }
 
+/// Voices a chord tone above or below its bass anchor when that octave fits the instrument.
+fn voice_on_side(pitch: i32, root: i32, above: bool, low: i32, high: i32) -> i32 {
+    let preferred = |pitch| if above { pitch > root } else { pitch < root };
+    let step = if above { OCTAVE } else { -OCTAVE };
+    let mut candidate = pitch;
+    while !preferred(candidate) {
+        candidate += step;
+        if !(low..=high).contains(&candidate) {
+            return pitch;
+        }
+    }
+    candidate
+}
+
 /// The shape of a bass line through a bar.
 ///
 /// Same reason as [`CompFigure`](super::comp::CompFigure): the bass followed the kick and
@@ -59,6 +76,45 @@ enum BassFigure {
     /// bass. The one figure that does not follow the kick — the walk *is* the timekeeping, which
     /// is the whole reason a trio can play without one.
     Walk,
+    /// A repeated root carrying the pulse, rather than a held root or an octave walk.
+    Pulse,
+}
+
+/// A phrase keeps its bass vocabulary while the chord changes underneath it. Density sets how
+/// active the line is; style changes the relative likelihood of coherent ways to play it.
+fn pick_figure(rng: &mut Rng, busy: f32, style: Option<PerformanceStyle>) -> BassFigure {
+    const FIGURES: [BassFigure; 6] = [
+        BassFigure::Root,
+        BassFigure::Fifth,
+        BassFigure::Approach,
+        BassFigure::Octave,
+        BassFigure::Walk,
+        BassFigure::Pulse,
+    ];
+    let mut weights = [
+        0.2 + (1.0 - busy) * 2.0,
+        1.0,
+        0.2 + busy,
+        0.2 + busy * 1.6,
+        0.1 + busy * 1.3,
+        0.2 + busy,
+    ];
+    let vocabulary = match style {
+        Some(PerformanceStyle::JazzTrio) => [0.4, 0.6, 1.2, 0.3, 6.0, 0.3],
+        Some(PerformanceStyle::CityPop) => [0.3, 0.8, 2.8, 1.6, 0.5, 0.7],
+        Some(PerformanceStyle::Rock) => [0.5, 1.0, 0.8, 0.6, 0.15, 4.0],
+        Some(PerformanceStyle::Ambient) => [6.0, 0.6, 0.5, 0.2, 0.15, 0.3],
+        Some(PerformanceStyle::Orchestral) => [3.0, 1.2, 1.0, 0.5, 0.3, 0.8],
+        Some(PerformanceStyle::Synthwave | PerformanceStyle::Chiptune) => {
+            [0.3, 0.8, 0.6, 2.0, 0.15, 3.0]
+        }
+        Some(PerformanceStyle::PopBand) => [0.7, 1.2, 1.8, 0.7, 0.3, 1.6],
+        None => [1.0; 6],
+    };
+    for (weight, preference) in weights.iter_mut().zip(vocabulary) {
+        *weight *= preference;
+    }
+    FIGURES[rng.weighted(&weights)]
 }
 
 /// The pitches of a walking line: `count` beats over one chord, from its root toward the next.
@@ -210,29 +266,35 @@ pub(super) fn bass(
         // own length — otherwise a meter that is not sixteen steps drifts against the drums.
         let per_bar = grid.steps_per_bar().max(1);
         let first = grid.step_of(event.start) % per_bar;
-        // Which line to play over this chord, drawn from the section's own stream so a repeat
-        // plays the same line and a different seed plays a different one.
+        // Choose once per phrase, so a held root does not turn into a walking line at every
+        // chord change. Only the closing bar may turn the established line into an approach.
         let bar = grid.step_of(event.start) / grid.steps_per_bar().max(1);
         let busy = density(settings, part, section);
-        let mut choose = bar_stream(settings, frame, part, section, "figure", bar);
-        const FIGURES: [BassFigure; 5] = [
-            BassFigure::Root,
-            BassFigure::Fifth,
-            BassFigure::Approach,
-            BassFigure::Octave,
-            BassFigure::Walk,
-        ];
-        // The same weighting the chords use: sparse reaches for the root alone, busy for the
-        // octave line that fills every beat and for the walk.
-        let figure = FIGURES[choose
-            .weighted(&[
-                0.2 + (1.0 - busy) * 2.0,
-                1.0,
-                0.2 + busy,
-                0.2 + busy * 1.6,
-                0.1 + busy * 1.3,
-            ])
-            .min(FIGURES.len() - 1)];
+        let phrase = section.phrase_at(bar);
+        let phrase_start = phrase.map_or(0, |phrase| phrase.start_bar);
+        // Without a chosen idiom, a take can voice its fifth above or below the root.
+        // Keep that relationship for the whole phrase, leaving the bass anchors and
+        // rhythm intact. Styled parts retain the register their vocabulary establishes.
+        let fifth = if settings.style.is_none() {
+            let above =
+                bar_stream(settings, frame, part, section, "voicing", phrase_start).chance(0.5);
+            voice_on_side(fifth, root, above, low, high)
+        } else {
+            fifth
+        };
+        let mut choose = bar_stream(settings, frame, part, section, "figure", phrase_start);
+        let phrase_busy = if phrase.is_some_and(|phrase| phrase.role == PhraseRole::Release) {
+            busy * 0.6
+        } else {
+            busy
+        };
+        let mut figure = pick_figure(&mut choose, phrase_busy, settings.style);
+        if section.closes_phrase(bar)
+            && matches!(figure, BassFigure::Root | BassFigure::Fifth)
+            && choose.chance(0.35)
+        {
+            figure = BassFigure::Approach;
+        }
 
         // The figure decides how busy the line is as well as what it plays. Two lines that hit
         // the same beats and differ only on the weak ones are the same line to a listener.
@@ -266,6 +328,26 @@ pub(super) fn bass(
                         ((first + offset) % per_bar).is_multiple_of(grid.steps_per_beat().max(1))
                     })
                     .collect(),
+                BassFigure::Pulse => {
+                    let division = if matches!(
+                        settings.style,
+                        Some(
+                            PerformanceStyle::Rock
+                                | PerformanceStyle::Synthwave
+                                | PerformanceStyle::Chiptune
+                        )
+                    ) {
+                        (grid.steps_per_beat() / 2).max(1)
+                    } else {
+                        grid.steps_per_beat().max(1)
+                    };
+                    (0..steps)
+                        .filter(|offset| {
+                            kick_at(event.start + grid.tick_of(*offset))
+                                || (first + offset).is_multiple_of(division)
+                        })
+                        .collect()
+                }
             },
         };
         // Always sound the chord's start, so a change of chord is heard whatever the figure —
@@ -298,7 +380,7 @@ pub(super) fn bass(
             let length = (next - grid.tick_of(*offset)).max(grid.step_ticks());
             let strong = position == 0 || grid.weight(grid.step_of(at)) >= 2;
             let pitch = match figure {
-                BassFigure::Root => root,
+                BassFigure::Root | BassFigure::Pulse => root,
                 BassFigure::Fifth => {
                     if strong {
                         root
@@ -371,6 +453,81 @@ pub(super) fn bass(
 mod tests {
     use super::*;
     use crate::parts::fixture::{BASE, draft, part};
+
+    #[test]
+    fn fifth_voicings_keep_the_chord_tone_on_the_selected_side_when_it_fits() {
+        let (low, high) = crate::spec::Role::Bass.range();
+        for root in low..=high {
+            for interval in [6, 7, 8] {
+                let fifth = fold_into(root + interval, low, high);
+                for above in [false, true] {
+                    let pitch = voice_on_side(fifth, root, above, low, high);
+                    assert!((low..=high).contains(&pitch));
+                    assert_eq!(PitchClass::new(pitch), PitchClass::new(fifth));
+                    let available = (low..=high).any(|candidate| {
+                        PitchClass::new(candidate) == PitchClass::new(fifth)
+                            && if above {
+                                candidate > root
+                            } else {
+                                candidate < root
+                            }
+                    });
+                    if available {
+                        assert!(
+                            if above { pitch > root } else { pitch < root },
+                            "root {root}, fifth {fifth}, above {above}: got {pitch}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_bass_keeps_its_figure_inside_each_phrase() {
+        use crate::parts::fixture::bar_steps;
+        for seed in 0..16 {
+            let (_, frame, parts) = draft(&format!(
+                "seed = {seed}\n{BASE}\n[[part]]\nname = \"bass\"\nrole = \"bass\""
+            ));
+            let bass = part(&parts, "bass");
+            let section = &frame.sections[0];
+            for phrase in &section.phrases {
+                let first = bar_steps(&frame, bass, phrase.start_bar);
+                for bar in phrase.start_bar + 1..phrase.end_bar().saturating_sub(1) {
+                    assert_eq!(
+                        bar_steps(&frame, bass, bar),
+                        first,
+                        "seed {seed}, bar {bar} changed its bass figure"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bass_styles_distinguish_pulse_walk_and_sustain() {
+        let count = |style, figure| {
+            (0..256)
+                .filter(|seed| {
+                    let mut rng = Rng::stream(*seed, &[]);
+                    pick_figure(&mut rng, 0.6, Some(style)) == figure
+                })
+                .count()
+        };
+        assert!(
+            count(PerformanceStyle::JazzTrio, BassFigure::Walk)
+                > count(PerformanceStyle::Rock, BassFigure::Walk) * 4
+        );
+        assert!(
+            count(PerformanceStyle::Rock, BassFigure::Pulse)
+                > count(PerformanceStyle::Ambient, BassFigure::Pulse) * 3
+        );
+        assert!(
+            count(PerformanceStyle::Ambient, BassFigure::Root)
+                > count(PerformanceStyle::JazzTrio, BassFigure::Root) * 3
+        );
+    }
 
     #[test]
     fn the_octave_figure_always_moves_an_octave() {

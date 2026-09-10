@@ -595,6 +595,9 @@ fn compose(args: &[String]) -> Result<(), String> {
     for missing in &report.substituted {
         warned(messages::instrument_substituted(LANGUAGE, missing));
     }
+    for section in &report.unsung {
+        warned(messages::song_section_unsung(LANGUAGE, section));
+    }
     let written = save_new_project(&mut session, &output, force)?;
 
     printed(writeln!(

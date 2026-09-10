@@ -13,6 +13,28 @@ use serde::{Deserialize, Serialize};
 
 use super::clip::Note;
 
+/// A musical palette, stored separately for score writing and non-destructive performance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PerformanceStyle {
+    /// Tight oscillators with a small amount of lead motion.
+    Chiptune,
+    /// Restrained band phrasing and soft bass pickups.
+    PopBand,
+    /// Laid-back accents, saxophone gestures and syncopated bass pickups.
+    CityPop,
+    /// Alternating guitar strokes, muted tails and expressive lead bends.
+    Rock,
+    /// Piano attack spread, offbeat dynamics and quiet kit pickups.
+    JazzTrio,
+    /// Shared phrase dynamics and restrained solo wind/string vibrato.
+    Orchestral,
+    /// Tight rhythm with connected synthesizer leads.
+    Synthwave,
+    /// Slow shared dynamics and subtle bowed-bass motion.
+    Ambient,
+}
+
 /// What an automatically written clip is trying to be.
 ///
 /// The vocabulary a person chooses from, and — since the drums arrived one at a time — the same
@@ -190,6 +212,9 @@ impl Subdivision {
 /// format — the way to keep a take is to freeze it, not to remember its number.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClipRecipe {
+    /// Score-writing palette retained by explicit regeneration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<PerformanceStyle>,
     /// The accepted assignment used for this take; an empty map deliberately writes no drums.
     ///
     /// Absent on older recipes. Stored here so subsequent instrument scans never alter a saved
@@ -349,6 +374,7 @@ impl ClipRecipe {
     /// choosing it and hearing a pad, with the sound it was named for three dials away.
     pub fn new(preset: ClipPreset, seed: u64) -> Self {
         let mut recipe = Self {
+            style: None,
             drum_map: None,
             drum_voices: Vec::new(),
             drum_note: None,

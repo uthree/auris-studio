@@ -133,6 +133,7 @@ pub fn recipe_for(
 ) -> Option<ClipRecipe> {
     let preset = preset_of(part.role)?;
     Some(ClipRecipe {
+        style: settings.style,
         drum_map: None,
         drum_voices: Vec::new(),
         drum_note: part.drum_note(),
@@ -289,6 +290,7 @@ pub fn write_phrase(
             start: Ticks::ZERO,
             length,
             bars,
+            phrases: crate::phrasing::plan_phrases(bars, recipe.style),
             key,
             // Nothing under `write_parts` reads a tempo any more — the wander that converted
             // milliseconds into ticks happens on the performance stack now — so the plan carries
@@ -313,6 +315,7 @@ pub fn write_phrase(
     };
 
     let settings = ScoreSettings {
+        style: recipe.style,
         mood: frame.mood,
         swing: recipe.swing,
         dynamics: recipe.dynamics.clamp(0.0, 1.0),
@@ -762,33 +765,48 @@ mod tests {
         // over a bar line lands under the previous chord. That is correct behaviour and would
         // make this test fail for a reason that has nothing to do with what it is checking.
         let harmony = axis();
-        let notes = write_phrase(
-            &harmony,
-            Ticks::ZERO,
-            BAR * 4,
-            four_four(),
-            &ClipRecipe::new(ClipPreset::Bass, 4),
-            None,
-        );
         let key = harmony.key_at(Ticks::ZERO);
         let mut checked = 0;
-        for note in &notes {
-            let Some(chord) = harmony.chord_at(note.start) else {
-                continue;
-            };
-            let class = auris_core::theory::pitch::PitchClass::new(i32::from(note.pitch));
-            // In the chord, or at least in the key. A bass line stepping into the next chord
-            // passes through a note the current chord does not contain, which is a bass line
-            // rather than a wrong note — but it stays inside the key, which every part here does.
-            assert!(
-                chord.contains(class) || key.scale.contains(key.tonic, class),
-                "the bass played {class} over {chord} in {} at tick {}",
-                key.to_text(),
-                note.start.raw()
+        // A phrase may legitimately sustain one root per chord. Several takes exercise both
+        // that restraint and active figures without requiring one seed to write extra notes.
+        for seed in 1..=8 {
+            let notes = write_phrase(
+                &harmony,
+                Ticks::ZERO,
+                BAR * 4,
+                four_four(),
+                &ClipRecipe::new(ClipPreset::Bass, seed),
+                None,
             );
-            checked += 1;
+            for bar in 0..4 {
+                let at = BAR * bar;
+                let entering = notes
+                    .iter()
+                    .find(|note| note.start == at)
+                    .expect("each change has an entering bass note");
+                let chord = harmony.chord_at(at).expect("a chord at each bar");
+                assert!(
+                    chord.contains_midi(i32::from(entering.pitch)),
+                    "seed {seed}: the bass entered {chord} on {}",
+                    entering.pitch
+                );
+            }
+            for note in &notes {
+                let Some(chord) = harmony.chord_at(note.start) else {
+                    continue;
+                };
+                let class = auris_core::theory::pitch::PitchClass::new(i32::from(note.pitch));
+                // An approach may leave the current chord, but stays inside the key.
+                assert!(
+                    chord.contains(class) || key.scale.contains(key.tonic, class),
+                    "the bass played {class} over {chord} in {} at tick {}",
+                    key.to_text(),
+                    note.start.raw()
+                );
+                checked += 1;
+            }
         }
-        assert!(checked > 4, "only {checked} bass notes to check");
+        assert!(checked > 32, "only {checked} bass notes across eight takes");
     }
 
     #[test]

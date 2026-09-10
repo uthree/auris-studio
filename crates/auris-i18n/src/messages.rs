@@ -938,6 +938,12 @@ messages! {
         ja: "警告: `{id}` という音源がないため既定の音源を使います"
     }
 
+    /// A requested lyrical section could not be written and stayed instrumental.
+    fn song_section_unsung(section: &str) {
+        en: "warning: lyrics in `{section}` could not be written; this section remains instrumental",
+        ja: "警告: `{section}` の歌詞を作曲できなかったため、このセクションは伴奏のみです"
+    }
+
     /// A song specification would not parse.
     fn spec_rejected(path: &str) {
         en: "{path} could not be read as a song specification",

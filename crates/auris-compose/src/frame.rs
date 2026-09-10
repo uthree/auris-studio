@@ -29,6 +29,8 @@ pub struct SectionPlan {
     pub length: Ticks,
     /// How many bars that is.
     pub bars: usize,
+    /// Shared phrase boundaries and their functions within this section.
+    pub phrases: Vec<crate::phrasing::PhrasePlan>,
     /// The key it is in, after any transposition.
     pub key: Key,
     /// The tempo it is played at, resolved: its own, or the song's.
@@ -56,6 +58,19 @@ pub struct SectionPlan {
 }
 
 impl SectionPlan {
+    /// The phrase containing a section-relative bar.
+    pub fn phrase_at(&self, bar: usize) -> Option<&crate::phrasing::PhrasePlan> {
+        self.phrases
+            .iter()
+            .find(|phrase| phrase.start_bar <= bar && bar < phrase.end_bar())
+    }
+
+    /// Whether this bar ends a planned phrase.
+    pub fn closes_phrase(&self, bar: usize) -> bool {
+        self.phrase_at(bar)
+            .is_some_and(|phrase| bar + 1 == phrase.end_bar())
+    }
+
     /// A part as this section plays it: the roster's, with whatever this section patches.
     ///
     /// Every pass has to go through here and none may read the roster's copy directly, which is
@@ -199,6 +214,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
             start,
             length,
             bars: section.bars,
+            phrases: crate::phrasing::plan_phrases(section.bars, spec.writing_style),
             key,
             tempo: spec.tempo_of(section),
             intensity: section.intensity,
@@ -242,6 +258,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
             start,
             length,
             bars: 1,
+            phrases: crate::phrasing::plan_phrases(1, spec.writing_style),
             key,
             tempo,
             intensity,

@@ -155,6 +155,8 @@ pub struct SongDials {
     pub humanize: f32,
     /// The preset's articulation palette, retained through edits and song-sheet round trips.
     pub performance: Option<PerformanceStyle>,
+    /// Score vocabulary retained independently of performance-only controls.
+    pub writing_style: Option<PerformanceStyle>,
     /// How far apart the hardest and softest notes are struck.
     pub dynamics: f32,
     /// How much of a section's last bar the snare runs as a fill.
@@ -281,6 +283,7 @@ pub fn song_spec(dials: &SongDials) -> SongSpec {
         swing: dials.swing,
         humanize: dials.humanize,
         performance: dials.performance,
+        writing_style: dials.writing_style,
         dynamics: dials.dynamics,
         fill: dials.fill,
         variation: dials.variation,
@@ -381,6 +384,7 @@ pub fn song_dials(spec: &SongSpec) -> SongDials {
         swing: spec.swing,
         humanize: spec.humanize,
         performance: spec.performance,
+        writing_style: spec.writing_style,
         dynamics: spec.dynamics,
         fill: spec.fill,
         variation: spec.variation,
@@ -1443,6 +1447,8 @@ mod tests {
             let restored = SongSpec::parse(&song_spec(&dials).to_toml()).unwrap();
             assert_eq!(restored.performance, spec.performance);
             assert!(restored.performance.is_some());
+            assert_eq!(restored.writing_style, spec.writing_style);
+            assert!(restored.writing_style.is_some());
         }
     }
 

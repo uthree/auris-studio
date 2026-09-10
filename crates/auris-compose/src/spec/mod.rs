@@ -458,6 +458,8 @@ pub struct SongSpec {
     /// Optional genre palette for non-destructive articulations and phrase expression.
     /// Absent preserves the plain lean/wander behavior of existing song specifications.
     pub performance: Option<crate::PerformanceStyle>,
+    /// Vocabulary for writing notes, independent of the performance palette.
+    pub writing_style: Option<crate::PerformanceStyle>,
     /// How far apart the hardest and softest notes are struck, from 0 to 1.
     ///
     /// How much the playing varies, where [`Self::mood`]'s energy says how hard it is played at
@@ -525,6 +527,7 @@ impl Default for SongSpec {
             swing: 50,
             humanize: 0.35,
             performance: None,
+            writing_style: None,
             dynamics: 1.0,
             fill: 0.5,
             variation: 0.25,
@@ -576,9 +579,14 @@ impl SongSpec {
             .or_else(|| self.charts.get_key_value("main"))
             .or_else(|| self.charts.iter().next());
         match named {
-            Some((name, chart)) if chart.is_unwritten() => {
-                crate::progression::invent_chart(self.seed, name, self.key, self.mood, section.bars)
-            }
+            Some((name, chart)) if chart.is_unwritten() => crate::progression::invent_chart_styled(
+                self.seed,
+                name,
+                self.key,
+                self.mood,
+                section.bars,
+                self.writing_style,
+            ),
             Some((_, chart)) => chart.clone(),
             None => Chart::new(Vec::new(), ChartOrigin::Given),
         }

@@ -1,8 +1,8 @@
 //! Writing the parts.
 //!
-//! Every part is a pure function of the frozen [`Frame`] and its own name,
-//! so no part can depend on another's notes. What makes them sound like a band anyway is that
-//! they all read the same harmony, and the rhythm section all reads the same groove.
+//! Each draft is a pure function of the frozen [`Frame`] and its own name. They share harmony,
+//! phrase boundaries and groove. After drafting, `crate::arrangement` coordinates the support
+//! parts with the foreground before ordinary notes are installed in clips.
 //!
 //! # Where things are
 //!
@@ -89,6 +89,8 @@ pub struct PartDraft {
 /// part without inventing a whole song around it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScoreSettings {
+    /// Musical vocabulary, independent of the clip's performance transforms.
+    pub style: Option<crate::PerformanceStyle>,
     /// How the music should feel, which sets density and syncopation.
     pub mood: Mood,
     /// How far the offbeats are delayed, as a percentage where 50 is straight.
@@ -120,6 +122,7 @@ pub struct ScoreSettings {
 impl From<&SongSpec> for ScoreSettings {
     fn from(spec: &SongSpec) -> Self {
         Self {
+            style: spec.writing_style,
             mood: spec.mood,
             swing: spec.swing,
             dynamics: spec.dynamics,

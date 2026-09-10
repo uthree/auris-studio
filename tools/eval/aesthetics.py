@@ -49,6 +49,7 @@ from pathlib import Path
 AXES = ("CE", "CU", "PC", "PQ")
 REPO = Path(__file__).resolve().parents[2]
 EXTRA_SEEDS = (101, 102, 103, 104, 105, 106, 107)
+CLI: Path | None = None
 
 
 def preset_names() -> list[str]:
@@ -66,7 +67,9 @@ def preset_names() -> list[str]:
 
 def run_cli(*args: str) -> str:
     done = subprocess.run(
-        ["cargo", "run", "-q", "-p", "auris-cli", "--", *args],
+        [str(CLI), *args]
+        if CLI
+        else ["cargo", "run", "-q", "-p", "auris-cli", "--", *args],
         cwd=REPO,
         capture_output=True,
         # The CLI speaks UTF-8 — preset descriptions carry Japanese — and Windows would
@@ -146,7 +149,9 @@ def score(wavs: list[Path]) -> dict[str, dict[str, float]]:
     return scores
 
 
-def format_row(name: str, row: dict[str, float], delta: dict[str, float] | None = None) -> str:
+def format_row(
+    name: str, row: dict[str, float], delta: dict[str, float] | None = None
+) -> str:
     cells = []
     for axis in AXES:
         cell = f"{row[axis]:5.2f}"
@@ -157,6 +162,7 @@ def format_row(name: str, row: dict[str, float], delta: dict[str, float] | None 
 
 
 def main() -> None:
+    global CLI
     parser = argparse.ArgumentParser(
         description="Audiobox Aesthetics scores for rendered Auris audio."
     )
@@ -175,7 +181,12 @@ def main() -> None:
     )
     parser.add_argument("--json", type=Path, help="write the scores to this file")
     parser.add_argument(
-        "--baseline", type=Path, help="print each score's change against this earlier --json"
+        "--cli", type=Path, help="render with this already-built auris executable"
+    )
+    parser.add_argument(
+        "--baseline",
+        type=Path,
+        help="print each score's change against this earlier --json",
     )
     parser.add_argument(
         "--workdir",
@@ -183,6 +194,10 @@ def main() -> None:
         help="where rendered presets go (default: a temporary folder)",
     )
     args = parser.parse_args()
+    if args.cli:
+        if not args.cli.is_file():
+            parser.error(f"CLI executable does not exist: {args.cli}")
+        CLI = args.cli.resolve()
     if not args.wavs and not args.preset:
         parser.error("nothing to score: pass WAVs, or --preset")
 
@@ -193,7 +208,9 @@ def main() -> None:
         workdir.mkdir(parents=True, exist_ok=True)
         # Plain "x": Windows consoles still default to legacy code pages, and a mojibake
         # progress line is a poor first impression for a measuring instrument.
-        print(f"rendering {len(presets)} preset(s) x {max(args.seeds, 1)} seed(s) into {workdir}")
+        print(
+            f"rendering {len(presets)} preset(s) x {max(args.seeds, 1)} seed(s) into {workdir}"
+        )
         wavs += render_presets(presets, args.seeds, workdir)
 
     print(f"  {'file':<24} " + "  ".join(f"{axis:>5}" for axis in AXES))

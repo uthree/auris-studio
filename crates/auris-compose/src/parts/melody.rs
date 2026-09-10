@@ -10,7 +10,9 @@
 //! come from and what the line measured like before they existed is [`crate::melodic`] — read it
 //! first if any constant here looks arbitrary, because every one of them was argued there.
 
+use crate::PerformanceStyle;
 use crate::frame::{Frame, SectionPlan};
+use crate::phrasing::{PhrasePlan, PhraseRole};
 use crate::rhythm::{Accent, Grid, Pattern};
 use crate::rng::{Key as RngKey, Rng};
 use crate::spec::PartSpec;
@@ -18,8 +20,7 @@ use crate::theory::chord_scale::ChordScale;
 use crate::theory::pitch::{OCTAVE, PitchClass, fold_into};
 
 use super::writer::{
-    bar_onsets, bar_stream, closes_phrase, density, density_at, dynamic, part_grid, phrase_shape,
-    velocity,
+    bar_onsets, bar_stream, density, density_at, dynamic, part_grid, phrase_shape, velocity,
 };
 use super::{Draft, ScoreSettings};
 
@@ -44,6 +45,24 @@ const MOVES: [i32; 7] = [-3, -2, -1, 0, 1, 2, 3];
 
 /// How often each of [`MOVES`] is drawn.
 const MOVE_WEIGHTS: [f32; 7] = [3.0, 7.5, 34.0, 11.0, 34.0, 7.5, 3.0];
+
+/// A style changes the melodic vocabulary without changing the range or disabling any move.
+/// Repetition belongs to a hook; a jazz line admits more thirds; sustained textures favour
+/// smaller moves. The unstyled writer retains the balanced interval distribution.
+fn move_weights(style: Option<PerformanceStyle>) -> [f32; 7] {
+    match style {
+        Some(PerformanceStyle::Rock | PerformanceStyle::Chiptune) => {
+            [2.5, 7.0, 32.0, 18.0, 32.0, 7.0, 2.5]
+        }
+        Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => {
+            [3.5, 10.0, 32.0, 9.0, 32.0, 10.0, 3.5]
+        }
+        Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral) => {
+            [1.5, 6.0, 38.0, 14.0, 38.0, 6.0, 1.5]
+        }
+        _ => MOVE_WEIGHTS,
+    }
+}
 
 /// How often a figure keeps the move it drew rather than being turned by [`shaped`].
 ///
@@ -185,6 +204,7 @@ fn motif(
     pattern: Option<&Pattern>,
     density: f32,
     syncopation: f32,
+    style: Option<PerformanceStyle>,
     rng: &mut Rng,
 ) -> Motif {
     let steps = grid.steps_per_bar();
@@ -212,7 +232,7 @@ fn motif(
         // Mostly steps with the occasional leap, and bounded either side of the anchor: a figure
         // that wandered off would not be recognisable when it came back.
         if position > 0 {
-            let drawn = MOVES[rng.weighted(&MOVE_WEIGHTS)];
+            let drawn = MOVES[rng.weighted(&move_weights(style))];
             let move_by = toward_middle(degree, shaped(previous_move, drawn, rng.chance(HOLD)));
             let landed = (degree + move_by).clamp(-6, 6);
             // What the figure *did*, not what it was asked to do. At the edge of the clamp the
@@ -228,7 +248,12 @@ fn motif(
         let gap = next.saturating_sub(*step).max(1);
         // The figure's last note stops short of the next bar, which is where the rest that lets a
         // phrase breathe comes from. Inside the figure a note is occasionally detached too.
-        let length = if position + 1 == onsets.len() || rng.chance(0.25) {
+        let detached = match style {
+            Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => 0.40,
+            Some(PerformanceStyle::Ambient | PerformanceStyle::Orchestral) => 0.10,
+            _ => 0.25,
+        };
+        let length = if position + 1 == onsets.len() || rng.chance(detached) {
             1 + rng.below(gap)
         } else {
             gap
@@ -315,6 +340,69 @@ fn vary_motif(figure: &Motif, rng: &mut Rng) -> Motif {
         }
     }
     Motif { cells }
+}
+
+/// Develop one idea over a whole phrase: establish it, echo it, continue its tail and answer.
+/// The opening is retained, so the listener can identify the idea after it changes. A written
+/// rhythm owns its onsets even where an automatically written response would omit a note.
+fn phrase_figure(
+    figure: &Motif,
+    phrase: Option<&PhrasePlan>,
+    bar: usize,
+    written: bool,
+    rng: &mut Rng,
+) -> Motif {
+    let Some(phrase) = phrase else {
+        return figure.clone();
+    };
+    let position = bar.saturating_sub(phrase.start_bar);
+    let closing = bar + 1 == phrase.end_bar();
+    if position < 2.min(phrase.bars.saturating_sub(1)) {
+        return figure.clone();
+    }
+    let mut developed = if closing && !written {
+        vary_motif(figure, rng)
+    } else {
+        figure.clone()
+    };
+    let count = developed.cells.len();
+    if count < 2 {
+        return developed;
+    }
+    // Change the latter half, rather than translating the whole figure: a translation is the
+    // join's register adjustment and would be silently cancelled by it.
+    let turn = count.div_ceil(2);
+    let direction = match phrase.role {
+        PhraseRole::Statement | PhraseRole::Continuation if !closing => 1,
+        _ => -1,
+    };
+    for (at, cell) in developed.cells.iter_mut().enumerate() {
+        if at >= turn {
+            cell.degree += direction;
+        }
+    }
+    if closing && phrase.role == PhraseRole::Release && !written && count > 3 {
+        // A release says less. Keep both the identifying head and the final arrival.
+        developed.cells.remove(count - 2);
+    }
+    developed
+}
+
+/// A prepared note can remain over a new chord when the next onset resolves it by a step.
+/// The note must belong to the new chord's scale; this does not introduce unprepared chromatic
+/// pitches or postpone a phrase's final arrival.
+fn tension_resolution(
+    scale: &ChordScale,
+    chord: crate::theory::chord::Chord,
+    prepared: i32,
+) -> Option<i32> {
+    if chord.contains_midi(prepared) || !scale.contains(PitchClass::new(prepared)) {
+        return None;
+    }
+    let resolved = chord.nearest_tone(prepared);
+    (1..=2)
+        .contains(&(resolved - prepared).abs())
+        .then_some(resolved)
 }
 
 /// The section's rhythm wearing the piece's contour.
@@ -434,6 +522,7 @@ pub(super) fn melody(
             part.rhythm.as_ref(),
             density_at(settings, part, GERM_INTENSITY),
             settings.mood.syncopation,
+            settings.style,
             &mut germinate,
         )
     };
@@ -457,6 +546,7 @@ pub(super) fn melody(
         part.rhythm.as_ref(),
         density,
         settings.mood.syncopation,
+        settings.style,
         &mut invent,
     );
     let figure = dressed(&figure, &germ);
@@ -467,15 +557,14 @@ pub(super) fn melody(
     let mut left_off: Option<i32> = None;
     for bar in 0..section.bars {
         let mut rng = bar_stream(settings, frame, part, section, "melody", bar);
-        // Four bars is the phrase almost everything is built in: state the figure, restate it,
-        // and then answer it. The fourth bar is where a tune stops repeating and goes somewhere
-        // — and so is the section's own last bar, whatever number it carries.
-        let closing = closes_phrase(bar, section.bars);
-        let cells = if closing || rng.chance(0.15) {
-            vary_motif(&figure, &mut rng)
-        } else {
-            figure.clone()
-        };
+        let closing = section.closes_phrase(bar);
+        let cells = phrase_figure(
+            &figure,
+            section.phrase_at(bar),
+            bar,
+            part.rhythm.is_some(),
+            &mut rng,
+        );
         let bar_start = grid.bar_ticks() * bar as i64;
 
         // Where the whole figure sits this bar. The shape is the figure's; the height is whatever
@@ -575,10 +664,8 @@ pub(super) fn melody(
                 carrying = Some(event_index);
             }
             let mut pitch = shift_within(&scale, anchor, cell.degree + offset, low, high);
-            // A note on a strong step has to agree with the chord, or the figure's shape wins an
-            // argument with the harmony that it should not be having. The last note of a closing
-            // bar is treated as strong however weak its step: a phrase that ends on a passing note
-            // has not ended, it has stopped.
+            // Start from a stable reading. The following pass can replace an accented landing
+            // with a prepared tension when it also writes the step that resolves it.
             let cadence = closing && position + 1 == cells.cells.len();
             if weight >= 3 || cadence {
                 pitch = fold_into(event.chord.nearest_tone(pitch), low, high);
@@ -591,6 +678,55 @@ pub(super) fn melody(
                 }
             }
             bar_notes.push((position, pitch, i32::from(weight)));
+        }
+
+        // At a harmonic change, repeat a previously stable pitch over the new chord, then
+        // resolve it on the next written onset. This is a two-note decision: allowing a strong
+        // dissonance without reserving its resolution would merely loosen the safety rule.
+        let tension_rate = settings.mood.tension
+            * match settings.style {
+                Some(PerformanceStyle::JazzTrio | PerformanceStyle::CityPop) => 0.8,
+                Some(PerformanceStyle::Orchestral | PerformanceStyle::Ambient) => 0.6,
+                _ => 0.4,
+            };
+        for position in 0..bar_notes.len().saturating_sub(1) {
+            let cell = &cells.cells[bar_notes[position].0];
+            let at = bar_start + grid.tick_of(cell.step);
+            let Some(event) = section.chord_at(at) else {
+                continue;
+            };
+            let previous = if position == 0 {
+                notes
+                    .last()
+                    .map(|note: &Draft| (note.start - section.start, i32::from(note.pitch)))
+            } else {
+                let previous = &bar_notes[position - 1];
+                Some((
+                    bar_start + grid.tick_of(cells.cells[previous.0].step),
+                    previous.1,
+                ))
+            };
+            let Some((previous_at, prepared)) = previous else {
+                continue;
+            };
+            let Some(before) = section.chord_at(previous_at) else {
+                continue;
+            };
+            let next_at = bar_start + grid.tick_of(cells.cells[bar_notes[position + 1].0].step);
+            if before.start == event.start
+                || !before.chord.contains_midi(prepared)
+                || next_at >= event.end()
+                || !rng.chance(tension_rate.clamp(0.0, 0.9))
+            {
+                continue;
+            }
+            let scale = ChordScale::new(event.key, event.chord);
+            if let Some(resolved) = tension_resolution(&scale, event.chord, prepared)
+                && (low..=high).contains(&resolved)
+            {
+                bar_notes[position].1 = prepared;
+                bar_notes[position + 1].1 = resolved;
+            }
         }
 
         // A dissonance that is left by a leap is not heard as a dissonance leaning on its
@@ -651,7 +787,8 @@ pub(super) fn melody(
             // line, but by as little as one step — and how much air it leaves was a draw rather
             // than a decision, so about half of the composer's phrases ran on into the next one
             // with nothing between them. At the end of a four-bar phrase it is a decision: the
-            // last note ends a beat before the bar does, or sooner if it was already shorter.
+            // last note ends a beat before the shared phrase boundary, or sooner if it was
+            // already shorter.
             let length = if closing && last_in_bar {
                 breath(grid, cell.step, cell.length)
             } else {
@@ -810,6 +947,115 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn a_phrase_keeps_its_head_and_develops_its_tail() {
+        let figure = figure_of(&[(0, 0), (2, 1), (4, 2), (6, 1), (8, 0), (10, 1)]);
+        let phrase = PhrasePlan {
+            start_bar: 0,
+            bars: 4,
+            role: PhraseRole::Continuation,
+        };
+        let signature = |motif: &Motif| {
+            motif
+                .cells
+                .iter()
+                .map(|cell| (cell.step, cell.degree))
+                .collect::<Vec<_>>()
+        };
+        let mut rng = Rng::stream(12, &[]);
+        let opening = phrase_figure(&figure, Some(&phrase), 0, true, &mut rng);
+        let echo = phrase_figure(&figure, Some(&phrase), 1, true, &mut rng);
+        let continuation = phrase_figure(&figure, Some(&phrase), 2, true, &mut rng);
+        let answer = phrase_figure(&figure, Some(&phrase), 3, true, &mut rng);
+        assert_eq!(signature(&opening), signature(&echo));
+        assert_ne!(signature(&opening), signature(&continuation));
+        assert_ne!(signature(&continuation), signature(&answer));
+        let opening_signature = signature(&opening);
+        for developed in [&continuation, &answer] {
+            assert_eq!(&signature(developed)[..3], &opening_signature[..3]);
+            assert_eq!(
+                developed
+                    .cells
+                    .iter()
+                    .map(|cell| cell.step)
+                    .collect::<Vec<_>>(),
+                figure
+                    .cells
+                    .iter()
+                    .map(|cell| cell.step)
+                    .collect::<Vec<_>>(),
+                "a written rhythm changed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prepared_tension_has_an_in_scale_stepwise_resolution() {
+        let (_, frame, _) = draft(BASE);
+        let chord = crate::theory::chord::Chord::parse("C").unwrap();
+        let scale = ChordScale::new(frame.sections[0].key, chord);
+        let resolution = tension_resolution(&scale, chord, 65).expect("F can resolve over C");
+        assert!(chord.contains_midi(resolution));
+        assert!((1..=2).contains(&(resolution - 65).abs()));
+        assert_eq!(
+            tension_resolution(&scale, chord, 61),
+            None,
+            "a chromatic tone was admitted"
+        );
+        assert_eq!(
+            tension_resolution(&scale, chord, 60),
+            None,
+            "a chord tone is not a tension"
+        );
+    }
+
+    #[test]
+    fn generated_accented_tensions_are_prepared_and_resolved() {
+        let mut resolved = 0;
+        for seed in 0..64 {
+            let (_, frame, parts) = draft(&format!(
+                r#"
+                form = "verse"
+                ending = "none"
+                chords = "| IV | I | IV | I |"
+                seed = {seed}
+                tension = 1.0
+                [section.verse]
+                bars = 4
+                [[part]]
+                name = "lead"
+                rhythm = "x.x.x.x.x.x.x.x."
+            "#
+            ));
+            let section = &frame.sections[0];
+            let lead = part(&parts, "lead");
+            for notes in lead.notes.windows(3) {
+                let at = notes[1].start - section.start;
+                if at.raw() % frame.grid.bar_ticks().raw() != 0 {
+                    continue;
+                }
+                let chord = section.chord_at(at).unwrap().chord;
+                if chord.contains_midi(i32::from(notes[1].pitch)) {
+                    continue;
+                }
+                resolved += 1;
+                assert_eq!(notes[0].pitch, notes[1].pitch, "a tension was not prepared");
+                assert!(
+                    chord.contains_midi(i32::from(notes[2].pitch)),
+                    "a tension was not resolved"
+                );
+                assert!(
+                    (1..=2)
+                        .contains(&(i32::from(notes[2].pitch) - i32::from(notes[1].pitch)).abs())
+                );
+            }
+        }
+        assert!(
+            resolved >= 4,
+            "only {resolved} prepared tensions in 64 takes"
+        );
     }
 
     #[test]

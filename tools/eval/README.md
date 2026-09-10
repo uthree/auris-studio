@@ -11,6 +11,25 @@ uv run tools/eval/aesthetics.py --preset all --baseline before.json
 See `docs/evaluation.md` for what the four axes mean and how these numbers are meant to be
 used. Not part of any release build.
 
+Pass `--cli path/to/auris.exe` to `aesthetics.py` to render with an archived or
+already-built CLI. Passing WAV files or directories scores existing final renders.
+
+CLAP measures audio/text identity against a frozen per-preset prompt manifest:
+
+```
+uv run tools/eval/clap.py target/before --json before-clap.json
+uv run tools/eval/clap.py target/after --baseline before-clap.json --json after-clap.json
+```
+
+It uses LAION's native music `HTSAT-base` model locally, downloads public model
+artifacts on first use, and records checkpoint/tokenizer hashes and preprocessing.
+By default, three fixed ten-second excerpts cover the beginning, middle and end.
+Cosine similarity and positive-minus-contrast margin describe prompt alignment;
+neither is a probability or a musical-quality rating. Keep prompts, seeds, sound
+sources and render settings fixed across comparisons. See
+[the evaluation guide](../../docs/evaluation.md#audiotext-identity-with-laion-clap)
+for details and model-free tests.
+
 ## Local model tool and audio checks
 
 `agent_tools.ps1` tests saved project state through real MCP stdio and rig/Ollama

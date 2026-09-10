@@ -1,0 +1,25 @@
+# A fixed score-writing probe: short words, a shared verse, and unvoiced closures.
+# Render with the same dictionary and synthesizer on both sides of a comparison.
+style = "pop-band"
+title = "Vocal phrase probe"
+key = "C major"
+tempo = 108
+chords = "@axis"
+form = "verse chorus verse2 chorus2"
+
+[section.verse]
+bars = 4
+lyrics = "あさの ひかりが\nまどを たたくよ"
+
+[section.chorus]
+bars = 4
+lyrics = "きみの こえが\nそらへ とどくよ"
+
+[section.verse2]
+bars = 4
+melody_from = "verse"
+lyrics = "あさの ひかりが\nまどを たたくよ"
+
+[section.chorus2]
+bars = 4
+lyrics = "ずっと きみと\nあるいて いくよ"

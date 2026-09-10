@@ -455,7 +455,14 @@ impl Session {
             report.tracks += 1;
         }
         report.clips += sung_clips;
-        report.notes += sung;
+        // The actual vocal can thin or answer generated backing parts after installation.
+        report.notes = project
+            .tracks
+            .iter()
+            .filter_map(|track| track.kind.note_clips())
+            .flatten()
+            .map(|clip| clip.notes.len())
+            .sum();
         report.sung = sung;
         report.unsung = unsung;
 
