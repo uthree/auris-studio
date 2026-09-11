@@ -65,6 +65,7 @@ fn default_frame_rate() -> f64 {
 fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingError> {
     let mut score = score.clone();
     normalize_long_vowels(&mut score)?;
+    bridge_short_rests(&mut score)?;
     validate_note_boundaries(&score, padding)?;
     let rest = || SingerNote {
         key: None,
@@ -118,6 +119,36 @@ fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
     Ok(())
 }
 
+/// Bridge quantized one-frame gaps into the preceding note only for the Engine query.
+/// The next onset and total frame count stay fixed, as do the document and host curves.
+fn bridge_short_rests(score: &mut SingerScore) -> Result<(), SingError> {
+    let mut index = 1;
+    while index + 1 < score.notes.len() {
+        let note = &score.notes[index];
+        if note.key.is_none()
+            && note.lyric.is_empty()
+            && note.frame_length == 1
+            && score.notes[index - 1].key.is_some()
+            && score.notes[index - 1].frame_length > 0
+            && starts_with_consonant(&score.notes[index + 1])
+        {
+            let previous = &mut score.notes[index - 1];
+            previous.frame_length = previous.frame_length.checked_add(1).ok_or_else(|| {
+                SingError::Inference("VOICEVOX note before a short rest is too long".into())
+            })?;
+            score.notes.remove(index);
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
+}
+
+fn starts_with_consonant(note: &SingerNote) -> bool {
+    note.key.is_some()
+        && auris_vocal::kana_phonemes(&note.lyric).is_some_and(|phonemes| phonemes.len() > 1)
+}
+
 /// A consonant borrows frames from the preceding event. A single frame makes the
 /// Engine produce a zero-length consonant and fail with HTTP 500 (Engine 0.25.2).
 fn validate_note_boundaries(score: &SingerScore, padding: u32) -> Result<(), SingError> {
@@ -138,9 +169,7 @@ fn validate_note_boundaries(score: &SingerScore, padding: u32) -> Result<(), Sin
         if index == 1 && previous.key.is_none() && padding >= 2 {
             continue;
         }
-        let starts_with_consonant = note.key.is_some()
-            && auris_vocal::kana_phonemes(&note.lyric).is_some_and(|phonemes| phonemes.len() > 1);
-        if previous.frame_length == 1 && starts_with_consonant {
+        if previous.frame_length == 1 && starts_with_consonant(note) {
             return Err(SingError::Inference(format!(
                 "VOICEVOX: score event {} is only 1 frame before '{}'; lengthen that note or rest to at least 2 frames, or remove the short rest",
                 index, note.lyric
@@ -732,10 +761,67 @@ mod tests {
     }
 
     #[test]
-    fn short_internal_notes_and_rests_report_the_event_before_a_consonant() {
+    fn tempo_changes_keep_short_gaps_singable_without_moving_note_onsets() {
+        use auris_core::project::{ClipId, MidiClip, Note};
+        use auris_core::{PluginState, SingerTrack, TempoMap, Ticks};
+
+        // The ten-tick gap before "ひ" in the reported project crosses frame boundaries
+        // differently as tempo changes.
+        let mut clip = MidiClip::new(ClipId(1), "Verse", Ticks::ZERO, Ticks::from_beats(24.0));
+        for (start, length, lyric) in [(9120, 470, "の"), (9600, 520, "ひ")] {
+            let mut note = Note::new(64, Ticks(start), Ticks(length));
+            note.lyric = lyric.into();
+            clip.notes.push(note);
+        }
+        let track = SingerTrack {
+            instrument_id: "auris.synth.vocal".into(),
+            instrument_state: PluginState::empty(),
+            clips: vec![clip],
+            frame_hop: 1.0 / 93.75,
+            voice: None,
+            take: None,
+        };
+        let onsets = |score: &SingerScore| {
+            let mut at = 0_u64;
+            score
+                .notes
+                .iter()
+                .filter_map(|note| {
+                    let start = at;
+                    at += u64::from(note.frame_length);
+                    note.key.map(|key| (start, key, note.lyric.clone()))
+                })
+                .collect::<Vec<_>>()
+        };
+        for bpm in [60.0, 90.0, 120.0, 150.0, 180.0, 240.0] {
+            let score = auris_vocal::render_score(&track, &TempoMap::constant(bpm));
+            let outgoing = padded_score(&score, 94).unwrap();
+            let expected = onsets(&score)
+                .into_iter()
+                .map(|(at, key, lyric)| (at + 94, key, lyric))
+                .collect::<Vec<_>>();
+            assert_eq!(onsets(&outgoing), expected, "tempo {bpm}");
+            assert_eq!(
+                outgoing
+                    .notes
+                    .iter()
+                    .map(|n| u64::from(n.frame_length))
+                    .sum::<u64>(),
+                score
+                    .notes
+                    .iter()
+                    .map(|n| u64::from(n.frame_length))
+                    .sum::<u64>()
+                    + 188
+            );
+        }
+    }
+
+    #[test]
+    fn short_internal_notes_report_the_event_before_a_consonant() {
         for (events, index) in [
             (vec![(1, "ア"), (25, "カ")], 1),
-            (vec![(25, "ア"), (1, ""), (25, "カ")], 2),
+            (vec![(25, "ア"), (1, "イ"), (25, "カ")], 2),
         ] {
             let error = padded_score(&test_score(&events), 94)
                 .unwrap_err()
@@ -758,6 +844,33 @@ mod tests {
         ] {
             padded_score(&test_score(&events), 94).unwrap();
         }
+    }
+
+    #[test]
+    fn short_rests_are_bridged_only_before_consonants_in_the_outgoing_score() {
+        let original = test_score(&[
+            (25, "ア"),
+            (1, ""),
+            (25, "カ"),
+            (1, ""),
+            (25, "ア"),
+            (2, ""),
+            (25, "キ"),
+        ]);
+        let outgoing = padded_score(&original, 94).unwrap();
+        let expected = test_score(&[
+            (94, ""),
+            (26, "ア"),
+            (25, "カ"),
+            (1, ""),
+            (25, "ア"),
+            (2, ""),
+            (25, "キ"),
+            (94, ""),
+        ]);
+        assert_eq!(outgoing, expected);
+        assert_eq!(original.notes[0].frame_length, 25);
+        assert_eq!(original.notes[1].frame_length, 1);
     }
 
     #[test]
