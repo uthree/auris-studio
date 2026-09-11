@@ -265,16 +265,18 @@ fn parse_command(
 /// What the model is told once, before the conversation: the shared workflow, plus what only
 /// this frontend knows — where it is standing, and who it is talking to.
 fn preamble() -> String {
-    "You edit the document currently open in Auris Studio through edit_project.
-Answer in the user's language. Call edit_project with command.action inspect first,
-then make dependent edits one at a time using returned IDs.
-For a song request, use spec_reference and list_presets, then edit_project with
-command.action compose and inline spec or preset. This changes the open arrangement,
-including an unsaved empty document. Never replace existing tracks for a local edit.
-Use replace=true only for a user-requested replacement. Changes remain unsaved and undoable.
-Verify with inspect before claiming completion. Read notes with command.action read_notes.
-The live tool uses numeric stable IDs; add_note uses zero-based quarter-note beats
-relative to the clip. Use search_documentation for application questions."
+    "You edit the document currently open in Auris Studio. Answer in the user's language.
+Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
+without command or action wrappers. Use the numeric IDs returned by inspection and edits.
+For a song request, call list_presets then compose_song with the closest preset and optional
+musical choices matching the request. Use looped=true for loop background music.
+Do not write TOML or invent parts and roles.
+Do not add empty tracks before compose_song. If inspection shows existing tracks, preserve
+them unless the user explicitly requests replacement; only then pass replace=true.
+Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
+inspect_project before claiming completion. Use read_notes before changing existing notes.
+Note times are zero-based quarter-note beats relative to the clip. Use search_documentation
+only when a tool description does not answer an application question."
         .into()
 }
 
@@ -394,53 +396,7 @@ macro_rules! text_tool {
 }
 
 session_tool!(SearchDocumentation, search_documentation);
-text_tool!(SpecReference, spec_reference);
-text_tool!(ListProgressions, list_progressions);
-text_tool!(ListPresets, list_presets);
 text_tool!(ListInstruments, list_instruments);
-
-/// One live session command, wrapped in an object for provider tool schemas.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct EditProjectArgs {
-    /// Operation to execute on the document currently open in the desktop.
-    command: auris_session::live_agent::Command,
-}
-
-/// Editing is executed by the desktop in its current session.
-struct EditProject {
-    bridge: Option<Bridge>,
-}
-
-impl Tool for EditProject {
-    const NAME: &'static str = "edit_project";
-    type Args = EditProjectArgs;
-    type Output = String;
-    type Error = ToolFailed;
-    fn description(&self) -> String {
-        "Inspect or edit the currently open document. Edits appear immediately and are undoable. Use command.action inspect for numeric track/clip IDs. No project path is needed.".into()
-    }
-    fn parameters(&self) -> serde_json::Value {
-        schema::<EditProjectArgs>()
-    }
-    fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
-        ToolExecutionError::other(error.0)
-    }
-    async fn call(
-        &self,
-        _context: &mut ToolContext,
-        args: Self::Args,
-    ) -> Result<String, ToolFailed> {
-        let bridge = self.bridge.as_ref().ok_or_else(|| {
-            ToolFailed("Open the Agent Panel in Auris Studio to edit the current document".into())
-        })?;
-        let response = bridge
-            .exchange(serde_json::json!({"event":"edit", "command":args.command}))
-            .await
-            .map_err(ToolFailed)?;
-        edit_reply(response)
-    }
-}
 
 fn edit_reply(response: serde_json::Value) -> Result<String, ToolFailed> {
     if response["event"] != "edit_result" {
@@ -604,16 +560,49 @@ fn strip_markup(text: &str) -> String {
 
 /// File-free editing and reference tools for the rig agent.
 fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
-    builder
+    let mut builder = builder
         .preamble(&preamble())
-        .tool(EditProject { bridge })
         .tool(SearchDocumentation)
         .tool(InternetSearch)
-        .tool(SpecReference)
-        .tool(ListProgressions)
-        .tool(ListPresets)
-        .tool(ListInstruments)
-        .build()
+        .dynamic_tool(rig::tool::DynamicTool::new(
+            "list_presets", "List starting arrangements for compose_song. Pick the closest style and override only the musical choices the user requested.", schema::<NoArgs>(),
+            |_, _| Box::pin(async {
+                let text = auris_session::prelude::PRESETS.iter().map(|preset| format!("{}: {}", preset.name, preset.description)).collect::<Vec<_>>().join("\n");
+                Ok(ToolOutput::text(text))
+            }),
+        ))
+        .tool(ListInstruments);
+    for definition in toolbox::live_agent::definitions() {
+        let tool_name = definition.name.clone();
+        let bridge = bridge.clone();
+        builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
+            definition.name,
+            definition.description,
+            definition.parameters,
+            move |_, args| {
+                let bridge = bridge.clone();
+                let name = tool_name.clone();
+                Box::pin(async move {
+                    let command = toolbox::live_agent::command(&name, &args)
+                        .map_err(ToolExecutionError::other)?
+                        .ok_or_else(|| ToolExecutionError::other("Unknown live operation"))?;
+                    let bridge = bridge.ok_or_else(|| {
+                        ToolExecutionError::other(
+                            "Open the Agent Panel to edit the current document",
+                        )
+                    })?;
+                    let reply = bridge
+                        .exchange(serde_json::json!({"event":"edit", "command":command}))
+                        .await
+                        .map_err(ToolExecutionError::other)?;
+                    edit_reply(reply)
+                        .map(ToolOutput::text)
+                        .map_err(|e| ToolExecutionError::other(e.0))
+                })
+            },
+        ));
+    }
+    builder.build()
 }
 
 /// Builds the agent for whichever door the options chose.
@@ -1673,7 +1662,7 @@ mod tests {
 
     #[tokio::test]
     async fn repeated_invalid_calls_stop_before_a_third_execution() {
-        let call = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"edit_project","arguments":"{}"}}]}"#;
+        let call = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"set_level","arguments":"{}"}}]}"#;
         let (url, seen) = mock_server(vec![completion(call, "tool_calls"); 3]);
         let Command::Run(options) = parse(
             &format!("--provider openai --model mock --url {url}"),
@@ -1733,7 +1722,7 @@ mod tests {
         assert_eq!(requests.len(), 3);
         assert!(requests[1].contains("Tool 'list_preset' is unavailable"));
         assert!(requests[1].contains("No tool in this batch was executed"));
-        assert!(requests[2].contains("Styles `compose` and `check_spec` accept"));
+        assert!(requests[2].contains("orchestral: Strings, horns"));
     }
 
     #[tokio::test]
@@ -1771,7 +1760,8 @@ mod tests {
             let requests = seen.lock().unwrap();
             assert_eq!(requests.len(), 3);
             if tool == "set_level" {
-                assert!(requests[1].contains("unavailable"));
+                assert!(requests[1].contains("unknown field"));
+                assert!(requests[1].contains("project"));
             }
         }
     }
@@ -1954,18 +1944,13 @@ mod tests {
         let actual = agent.tool_definitions(None).await.unwrap();
         let mut names: Vec<_> = actual.iter().map(|tool| tool.name.as_str()).collect();
         names.sort_unstable();
-        assert_eq!(
-            names,
-            [
-                "edit_project",
-                "list_instruments",
-                "list_presets",
-                "list_progressions",
-                "search_documentation",
-                "search_internet",
-                "spec_reference"
-            ]
-        );
+        assert!(names.contains(&"compose_song"));
+        assert!(names.contains(&"inspect_project"));
+        assert!(names.contains(&"set_level"));
+        assert!(!names.contains(&"edit_project"));
+        assert!(!names.contains(&"spec_reference"));
+        assert!(!names.contains(&"list_progressions"));
+        assert_eq!(names.len(), 16);
         let catalog = toolbox::tool_catalog();
         for name in [
             "create_project",
@@ -1981,14 +1966,22 @@ mod tests {
             );
             assert!(!names.contains(&name));
         }
-        for expected in catalog.iter().filter(|tool| names.contains(&tool.name)) {
+        for expected in catalog.iter().filter(|tool| {
+            matches!(
+                tool.name,
+                "list_presets" | "list_instruments" | "search_documentation" | "search_internet"
+            )
+        }) {
             let exposed = actual
                 .iter()
                 .find(|tool| tool.name == expected.name)
                 .unwrap();
             assert_eq!(exposed.parameters, expected.parameters);
         }
-        let schema = schema::<EditProjectArgs>().to_string();
+        let schema = actual
+            .iter()
+            .map(|tool| tool.parameters.to_string())
+            .collect::<String>();
         for field in ["output", "project", "path", "stems", "midi_output"] {
             assert!(!schema.contains(&format!("\"{field}\":")));
         }

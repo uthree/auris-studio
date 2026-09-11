@@ -147,7 +147,7 @@ impl Session {
                     .collect();
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks,
                     "duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "can_compose_without_replacing":project.tracks.is_empty(), "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::ReadNotes { clip, offset } => {

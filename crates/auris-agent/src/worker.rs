@@ -205,9 +205,94 @@ mod tests {
 
     fn edit_response() -> String {
         completion(
-            r#"{"role":"assistant","tool_calls":[{"id":"edit","type":"function","function":{"name":"edit_project","arguments":"{\"command\":{\"action\":\"add_track\",\"name\":\"Lead\",\"kind\":\"instrument\"}}"}}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"id":"edit","type":"function","function":{"name":"add_track","arguments":"{\"name\":\"Lead\",\"kind\":\"instrument\"}"}}]}"#,
             "tool_calls",
         )
+    }
+
+    /// Opt-in real-provider check: exercises the same worker, permissions and session edits
+    /// as the desktop, with no display, audio device, project saving or replacement approval.
+    #[test]
+    #[ignore = "requires AURIS_AGENT_OLLAMA_MODEL and a running local Ollama server"]
+    fn local_ollama_composes_a_song_without_tool_failures() {
+        let model = std::env::var("AURIS_AGENT_OLLAMA_MODEL").expect("set the local model name");
+        let mut session = auris_session::Session::new(
+            auris_session::SessionOptions::headless().with_balance(false),
+        )
+        .unwrap();
+        let worker = Worker::spawn(
+            auris_session::AgentPreferences {
+                provider: "ollama".into(),
+                model,
+                context_tokens: Some(32768),
+                output_tokens: Some(4096),
+                thinking: Some(false),
+                ..Default::default()
+            },
+            None,
+            false,
+        )
+        .unwrap();
+        worker.send(&serde_json::json!({"say":"ゲームのボス戦みたいな緊張感のある重厚なオーケストラのループBGMを作ってください。"}).to_string()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(240);
+        let mut failures = 0;
+        let mut calls = 0;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = worker
+                .events
+                .recv_timeout(remaining)
+                .expect("model finished within four minutes");
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    let operation = auris_session::agent_policy::Operation::parse(
+                        event["tool"].as_str().unwrap(),
+                        &event["args"],
+                    )
+                    .unwrap();
+                    let allowed = matches!(
+                        auris_session::agent_policy::Policy::default().decide(&operation),
+                        auris_session::agent_policy::Decision::Allow
+                    );
+                    worker.send(&serde_json::json!({"event":"permission_result", "id":event["id"], "ok":allowed, "reason":"Replacement and network access are not authorized by this test"}).to_string()).unwrap();
+                }
+                "edit" => {
+                    let command = serde_json::from_value(event["command"].clone()).unwrap();
+                    let result = session.agent_command(command);
+                    let ok = result.is_ok();
+                    let text = result.unwrap_or_else(|e| e);
+                    worker
+                        .send(
+                            &serde_json::json!({"event":"edit_result", "ok":ok, "text":text})
+                                .to_string(),
+                        )
+                        .unwrap();
+                }
+                "call" => {
+                    calls += 1;
+                    println!("CALL {} {}", event["tool"], event["args"]);
+                }
+                "result" => {
+                    if event["ok"] == false {
+                        failures += 1;
+                    }
+                    println!("RESULT {} ok={}", event["tool"], event["ok"]);
+                }
+                "error" | "ended" => panic!("{event}"),
+                "answer" => {
+                    println!("ANSWER {}", event["text"]);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        println!(
+            "calls={calls}, failures={failures}, tracks={}",
+            session.project().tracks.len()
+        );
+        assert_eq!(failures, 0);
+        assert!(!session.project().tracks.is_empty());
+        assert!(session.path().is_none());
     }
 
     #[test]

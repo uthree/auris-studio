@@ -1,16 +1,30 @@
 # Live Agent Panel and MCP workflows
 
-The rig Agent Panel edits the currently open session through `edit_project`. It works before
-the first save: ask for a song and the composed tracks appear in the arrangement. Commands
-read the latest document, use stable track/clip IDs and record normal undo steps. Saving
-remains a user action. Whole-song composition requires `replace: true` for a nonempty song;
-local changes use track, clip and note commands instead.
+The rig Agent Panel edits the open session through small, flat tools. Start with
+`inspect_project`, then call `compose_song`, `add_track`, `set_level`, or another operation
+directly; do not wrap arguments in `command` or supply an `action` discriminator.
+
+For a song, `list_presets` lists starting arrangements. `compose_song` takes a preset and
+optional title, tempo, key, energy, tension, brightness, and `looped`. For example:
+
+```json
+{"preset":"orchestral","tempo":144,"key":"D minor","energy":0.9,"tension":0.8,"looped":true}
+```
+
+The host derives a valid specification from the preset, keeping its parts and sections
+consistent. It works before the first save, and changes remain undoable and unsaved.
+Inspect before composing: a nonempty arrangement requires an explicit replacement request
+and `replace: true`. For local changes, use track, clip and note tools instead. Do not add
+empty tracks before composing a whole song. Inspect again to verify completion.
+
+Permissions map these flat tools to the existing `edit_project.<action>` rules, so saved
+allow/deny rules and exact-command approvals continue to apply.
 
 MCP retains the full saved-file tool catalog. The file-based composition, rendering and
 listening workflows below describe MCP.
 
 
-The Agent Panel and MCP expose the same project commands through `auris-toolbox`.
+MCP exposes its saved-project commands through `auris-toolbox`.
 Start with `capabilities` to check the General MIDI library, voice library paths and
 project playback state. Registered sampler code is not a loaded SoundFont: when a
 composition cannot load its requested GM preset, the session substitutes a built-in

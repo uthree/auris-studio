@@ -129,6 +129,9 @@ claiming completion. Report failures and incomplete work honestly. checkpoints n
 restores alternatives; edits preserve the previous document automatically.
 Use search_documentation for application questions.";
 
+/// Flat file-free tools for the in-process agent.
+pub mod live_agent;
+
 /// Full-text search over the documentation shipped with this build.
 pub mod search_documentation {
     /// The tool's name at every door.

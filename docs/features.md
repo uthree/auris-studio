@@ -1456,7 +1456,10 @@ and API-key environment variable name are saved in shared settings. Secrets rema
 process environment. The transcript shows tool calls, results and the model's answer.
 
 The model edits the current session through live commands, including an unsaved empty
-project. Asking for a song adds the composed tracks to the open arrangement. Each successful
+project. `inspect_project` reads the current arrangement; `compose_song` accepts a preset and
+a few musical choices instead of a nested command containing a handwritten specification.
+Track and note tools also take flat arguments. Asking for a song adds the composed tracks
+to the open arrangement. Each successful
 editing command is undoable and appears before the model's final reply. Save the project
 normally when ready. Existing arrangements require an explicit replacement request before a
 whole-song composition replaces their tracks.
