@@ -22,6 +22,36 @@ use crate::history::Edit;
 use super::Session;
 
 impl Session {
+    /// Sets a generated clip's repeating rhythm and rewrites it as one undoable edit.
+    ///
+    /// Each character is one subdivision step (`x`, `X`, `o` or a rest `.` / `-` / `~`).
+    /// Spaces and bar separators are ignored. Empty input restores automatic generation.
+    /// Kit writers share the supplied pattern; fixed accents remain unchanged.
+    /// Invalid input is rejected before changing the document or undo history.
+    pub fn set_clip_rhythm(&mut self, clip: ClipId, text: &str) -> Result<usize, SessionError> {
+        let mut recipe = self.recipe_of(clip)?;
+        let text = text.trim();
+        let rhythm = if text.is_empty() {
+            None
+        } else {
+            Some(
+                auris_compose::rhythm::Pattern::parse(text)
+                    .ok_or(SessionError::InvalidRhythm)?
+                    .to_text(),
+            )
+        };
+        fn apply(recipe: &mut ClipRecipe, rhythm: &Option<String>) {
+            recipe.rhythm.clone_from(rhythm);
+            for voice in &mut recipe.drum_voices {
+                if let Some(writer) = &mut voice.recipe {
+                    apply(writer, rhythm);
+                }
+            }
+        }
+        apply(&mut recipe, &rhythm);
+        self.set_clip_recipe(clip, recipe)
+    }
+
     /// Writes into the free interval containing `at` on `track`.
     ///
     /// A named section with an end boundary supplies the interval. The final section uses the
@@ -220,15 +250,30 @@ impl Session {
         &mut self,
         clip: ClipId,
         voice: &str,
-        mut writer: ClipRecipe,
+        writer: ClipRecipe,
     ) -> Result<usize, SessionError> {
-        let previous = self.drum_voice_recipe(clip, voice)?;
+        self.set_drum_voice_recipe_in(clip, voice, writer, self.recipe_of(clip)?)
+    }
+
+    /// Rewrites a voice with a prepared kit recipe, keeping conversion and editing atomic.
+    pub(super) fn set_drum_voice_recipe_in(
+        &mut self,
+        clip: ClipId,
+        voice: &str,
+        mut writer: ClipRecipe,
+        mut recipe: ClipRecipe,
+    ) -> Result<usize, SessionError> {
+        let previous = recipe
+            .drum_voices
+            .iter()
+            .find(|part| part.name == voice)
+            .and_then(|part| part.recipe.as_deref())
+            .ok_or_else(|| SessionError::InvalidDrumRecipe(format!("unknown writer `{voice}`")))?;
         if writer.preset != previous.preset || !writer.drum_voices.is_empty() {
             return Err(SessionError::InvalidDrumRecipe(
                 "a voice must keep its drum writer".into(),
             ));
         }
-        let mut recipe = self.recipe_of(clip)?;
         let map = recipe.drum_map.clone();
         let component = recipe
             .drum_voices
@@ -567,6 +612,142 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, Scratch, session, with_a_progression};
     use auris_core::{ClipPreset, NoteTransform};
+
+    #[test]
+    fn set_clip_rhythm_preserves_authored_attacks_and_restores_automatic_generation() {
+        for preset in ClipPreset::ALL
+            .into_iter()
+            .filter(|preset| !preset.is_drums())
+        {
+            let (mut session, track) = with_a_progression();
+            let clip = session
+                .generate_clip(track, Ticks::ZERO, BAR * 4, ClipRecipe::new(preset, 1))
+                .unwrap();
+            let original = session.midi_clip(clip).unwrap().clone();
+            session.set_clip_rhythm(clip, " .x...... ").unwrap();
+            let authored = session.midi_clip(clip).unwrap().clone();
+            assert!(!authored.notes.is_empty(), "{preset:?}");
+            let step = Ticks::QUARTER.raw()
+                / i64::from(
+                    authored
+                        .recipe
+                        .as_ref()
+                        .unwrap()
+                        .subdivision
+                        .steps_per_beat(),
+                );
+            assert!(
+                authored
+                    .notes
+                    .iter()
+                    .all(|note| (note.start.raw() / step) % 8 == 1),
+                "{preset:?}"
+            );
+            session.regenerate_clip(clip).unwrap();
+            assert_eq!(session.midi_clip(clip).unwrap().notes, authored.notes);
+            session.set_clip_rhythm(clip, "   ").unwrap();
+            assert_eq!(session.midi_clip(clip), Some(&original), "{preset:?}");
+            session.undo().unwrap();
+            assert_eq!(session.midi_clip(clip), Some(&authored));
+            session.redo().unwrap();
+            assert_eq!(session.midi_clip(clip), Some(&original));
+        }
+    }
+
+    #[test]
+    fn set_clip_rhythm_rejects_invalid_input_without_changing_notes_or_history() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(track, Ticks::ZERO, BAR, ClipRecipe::new(ClipPreset::Arp, 1))
+            .unwrap();
+        let original = session.midi_clip(clip).unwrap().clone();
+        for text in ["x?", "|||", "リズム"] {
+            assert!(matches!(
+                session.set_clip_rhythm(clip, text),
+                Err(SessionError::InvalidRhythm)
+            ));
+            assert_eq!(session.midi_clip(clip), Some(&original));
+        }
+        session.undo().unwrap();
+        assert!(session.midi_clip(clip).is_none());
+    }
+
+    #[test]
+    fn set_clip_rhythm_all_rests_is_silent_and_survives_save_load() {
+        let (mut session, track) = with_a_progression();
+        let clip = session
+            .generate_clip(
+                track,
+                Ticks::ZERO,
+                BAR,
+                ClipRecipe::new(ClipPreset::Lead, 1),
+            )
+            .unwrap();
+        session.set_clip_rhythm(clip, "....").unwrap();
+        assert!(session.midi_clip(clip).unwrap().notes.is_empty());
+        let text = serde_json::to_string(session.project()).unwrap();
+        let restored: auris_core::Project = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            restored.midi_clip(clip).unwrap().1.recipe,
+            session.midi_clip(clip).unwrap().recipe
+        );
+    }
+
+    #[test]
+    fn set_clip_rhythm_updates_kit_writers_and_preserves_fixed_accents() {
+        let (mut session, track) = with_drum_progression();
+        let mut recipe = ClipRecipe::new(ClipPreset::Drums, 3);
+        for (name, role, preset, note) in [
+            ("kick", auris_core::DrumRole::Kick, ClipPreset::Kick, 36),
+            ("snare", auris_core::DrumRole::Snare, ClipPreset::Snare, 38),
+        ] {
+            recipe.drum_voices.push(auris_core::DrumVoiceRecipe {
+                name: name.into(),
+                role,
+                note,
+                recipe: Some(Box::new(ClipRecipe::new(preset, 3))),
+                fixed_notes: Vec::new(),
+            });
+        }
+        recipe.drum_voices.push(auris_core::DrumVoiceRecipe {
+            name: "accent".into(),
+            role: auris_core::DrumRole::Crash,
+            note: 49,
+            recipe: None,
+            fixed_notes: vec![Note::new(49, Ticks::ZERO, Ticks::QUARTER)],
+        });
+        let clip = session
+            .generate_clip(track, Ticks::ZERO, BAR, recipe)
+            .unwrap();
+        let original = session.midi_clip(clip).unwrap().clone();
+        session.set_clip_rhythm(clip, ".x......").unwrap();
+        let authored = session.midi_clip(clip).unwrap();
+        for voice in ["kick", "snare"] {
+            let starts: Vec<_> = authored
+                .notes
+                .iter()
+                .filter(|note| note.drum_voice == voice)
+                .map(|note| note.start)
+                .collect();
+            assert_eq!(
+                starts,
+                vec![
+                    Ticks(Ticks::QUARTER.raw() / 4),
+                    Ticks(Ticks::QUARTER.raw() * 9 / 4)
+                ]
+            );
+        }
+        let accents = |midi: &auris_core::MidiClip| {
+            midi.notes
+                .iter()
+                .filter(|note| note.drum_voice == "accent")
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(accents(authored), accents(&original));
+        session.set_clip_rhythm(clip, "").unwrap();
+        assert_eq!(session.midi_clip(clip), Some(&original));
+    }
 
     #[test]
     fn generation_here_fills_the_clicked_section_and_ignores_the_song_cycle() {

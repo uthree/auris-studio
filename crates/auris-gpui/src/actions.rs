@@ -833,6 +833,7 @@ pub fn is_valid_keystroke(keystroke: &str) -> bool {
 pub fn install_bindings(cx: &mut App, bindings: impl IntoIterator<Item = KeyBinding>) {
     cx.clear_key_bindings();
     cx.bind_keys(bindings);
+    cx.bind_keys(crate::ui::rhythm_grid::key_bindings());
 }
 
 #[cfg(test)]

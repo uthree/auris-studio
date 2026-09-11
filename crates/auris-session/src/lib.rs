@@ -192,6 +192,7 @@ pub fn midi_extensions() -> &'static [&'static str] {
 /// know that rule to tell which `Key` a line means, and one of the two would be wrong silently.
 pub mod prelude {
     pub use crate::session::{PlaybackReadiness, PlaybackState};
+    pub use crate::session::{RhythmGrid, RhythmRow};
     pub use crate::session::{TrackConversion, TrackConversionJob};
     pub use crate::{RenderedSpectrogramJob, SpectrogramJob};
     /// General MIDI: the programs a part can ask for, and the kits a drum part can.

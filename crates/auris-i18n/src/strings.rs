@@ -765,6 +765,14 @@ strings! {
     PartSwing { en: "Swing", ja: "スウィング" }
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }
     PartGroove { en: "Groove", ja: "グルーヴ" }
+    PartRhythm { en: "Rhythm", ja: "リズム" }
+    PartRhythmEdit { en: "Edit rhythm…", ja: "リズムを編集…" }
+    PartRhythmUnavailable { en: "This clip is no longer available for rhythm editing.", ja: "このクリップのリズムは編集できなくなりました。" }
+    PartRhythmAuto { en: "Automatic", ja: "自動生成" }
+    PartRhythmFixed { en: "Fixed accent", ja: "固定アクセント" }
+    PartRhythmGridHint { en: "Click a square to toggle a hit. The first bar repeats; Automatic lets each instrument choose its rhythm.", ja: "マスを押すと発音をオン／オフにします。1小節分のリズムを繰り返します。「自動生成」で楽器ごとにリズムをおまかせに戻せます。" }
+    PartRhythmNoVoices { en: "Assign drum sounds to edit their rhythms.", ja: "ドラムの音を割り当てると、楽器ごとのリズムを編集できます。" }
+    ErrorRhythm { en: "Use x, X, o for hits and . for rests, or leave empty for automatic generation.", ja: "発音は x・X・o、休符は . で入力してください。空欄にすると自動生成になります。" }
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }
     // Shown while a generated clip's notes differ from what its recipe last wrote, for as long

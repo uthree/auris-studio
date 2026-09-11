@@ -378,6 +378,16 @@ impl AurisApp {
             rows.push(self.group_heading(Key::PartPhrasing).into_any_element());
         }
 
+        rows.push(
+            self.picker_row(
+                "part-rhythm-edit",
+                Key::PartRhythm,
+                self.t(Key::PartRhythmEdit).to_string(),
+                cx.listener(move |this, _, _, cx| this.open_rhythm_window(clip, cx)),
+            )
+            .into_any_element(),
+        );
+
         if takes_a_subdivision(recipe.preset) {
             rows.push(
                 self.picker_row(

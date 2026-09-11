@@ -62,6 +62,7 @@ mod readiness;
 mod recognition;
 mod record;
 mod reference_match;
+mod rhythm;
 mod singer;
 mod spectrogram;
 mod timbre;
@@ -108,6 +109,7 @@ pub use reference_match::{
     ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
     ReferenceMatchSettings, ReferenceMatchStep,
 };
+pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{
     LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
     SingerVoiceInfo, SungFrames, take_fingerprint,
