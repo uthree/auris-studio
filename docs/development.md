@@ -27,7 +27,7 @@ FRONTEND
   crates/auris-gpui     the desktop application  (binary: auris-studio)
   crates/auris-cli      the command line tool    (binary: auris)
   crates/auris-mcp      the Model Context Protocol server (binary: auris-mcp)
-  crates/auris-agent    the model client: Ollama / OpenAI-compatible (binary: auris-agent)
+  crates/auris-agent    the model client: Ollama / OpenAI-compatible (library: background model worker)
 
 NOT THE WORKSPACE
   vendor/rustysynth     somebody else's crate, forked — see its own README
@@ -209,10 +209,12 @@ cargo fmt --all                           # formatting
 cargo doc --workspace --no-deps --open    # the API documentation
 ```
 
-The desktop application's agent panel runs `auris-agent` as a child process and looks for it
-beside its own executable, which is where the release archive puts it. `cargo run` builds only
-the desktop app (`default-members`), so after a fresh checkout the panel reports the binary as
-missing until a `cargo build -p auris-agent` in the same profile puts it there.
+The desktop links the `auris-agent` library and starts a cancellable background thread for
+its Agent Panel. `cargo run` builds everything the panel needs. The worker owns an async
+runtime and exchanges messages with the UI through channels; permissions and document edits
+are handled on the UI thread. Stopping or replacing a conversation cancels pending model and
+approval waits without blocking the UI. Provider model discovery also runs in a background
+thread with a timeout. Neither path starts a process or changes the process working directory.
 
 Every crate carries `#![warn(missing_docs)]` and CI builds the documentation with warnings denied,
 so a public item without a doc comment and a link that does not resolve are both build failures.

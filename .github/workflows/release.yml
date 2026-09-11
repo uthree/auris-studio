@@ -68,7 +68,7 @@ jobs:
       - name: Build both architectures
         run: |
           for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp -p auris-agent
+            cargo build --release --locked --target "$target" -p auris-gpui -p auris-cli -p auris-mcp
           done
           native_target="$(rustc -vV | sed -n 's/^host: //p')"
           echo "AURIS_CLI=$PWD/target/$native_target/release/auris" >> "$GITHUB_ENV"
@@ -97,7 +97,7 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "$plist"
 
-          for binary in auris-studio auris auris-mcp auris-agent; do
+          for binary in auris-studio auris auris-mcp; do
             lipo -create -output "$stage/$binary" \
               "target/aarch64-apple-darwin/release/$binary" \
               "target/x86_64-apple-darwin/release/$binary"
@@ -165,7 +165,7 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          $frontends = @('auris-gpui', 'auris-cli', 'auris-mcp', 'auris-agent')
+          $frontends = @('auris-gpui', 'auris-cli', 'auris-mcp')
           $metadataJson = cargo metadata --no-deps --format-version 1 --locked
           if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the checked-out Cargo workspace.' }
           $metadata = $metadataJson | ConvertFrom-Json
@@ -200,7 +200,7 @@ jobs:
         run: |
           stage="auris-studio-${RELEASE_NAME}-windows-x86_64"
           mkdir -p "$stage"
-          cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe target/release/auris-agent.exe "$stage/"
+          cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe "$stage/"
           # Beside the binaries, which is the first place `auris_session::library` looks.
           cp -R SoundFonts "$stage/SoundFonts"
           cp -R Dictionary "$stage/Dictionary"
@@ -321,8 +321,8 @@ jobs:
 
           | File | What it holds |
           | --- | --- |
-          | `…-macos-universal.tar.gz` | `Auris Studio.app`, `auris`, `auris-mcp`, and `auris-agent` — Apple Silicon and Intel universal binaries |
-          | `…-windows-x86_64.zip` | `auris-studio.exe`, `auris.exe`, `auris-mcp.exe`, and `auris-agent.exe` |
+          | `…-macos-universal.tar.gz` | `Auris Studio.app`, `auris`, and `auris-mcp` — Apple Silicon and Intel universal binaries |
+          | `…-windows-x86_64.zip` | `auris-studio.exe`, `auris.exe`, and `auris-mcp.exe` |
           | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
 
           Every archive carries **MuseScore General**, a General MIDI SoundFont under the MIT

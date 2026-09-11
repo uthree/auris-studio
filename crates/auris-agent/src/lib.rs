@@ -1,31 +1,11 @@
-//! `auris-agent` — the frontend that dials the model itself.
+//! Background language-model workers for Auris Studio.
 //!
-//! The fourth frontend, and the mirror of `auris-mcp`: there, a language model's harness
-//! connects to Auris; here, Auris connects to a language model — a local Ollama server or any
-//! OpenAI-compatible API — hands it the tools from [`auris_toolbox`], and runs the loop. The
-//! MCP exposes saved-file workflows; rig exposes edits to the desktop
-//! session and read-only reference tools.
-//!
-//! `rig` is the client library, and it stays inside this crate along with the `tokio` runtime
-//! it needs. Three decisions of this frontend's own:
-//!
-//! * **Two channels.** The model's words go to stdout, where a pipe can catch them; everything
-//!   this program says about the run — which tool was called, what it answered — goes to
-//!   stderr. `auris-agent "..." > answer.md` keeps the answer and shows the work. `--json`
-//!   collapses both into one machine-readable stream: JSON events on stdout, `{"say": ...}`
-//!   lines on stdin — the mode the desktop's agent panel drives this program in.
-//! * **English chrome, like the CLI.** The frame around the conversation is fixed English for
-//!   the same reason `auris` prints English: a terminal makes no promises about other scripts.
-//!   The conversation itself is the model's, and the preamble tells it to answer in the
-//!   language the user writes in.
-//! * **The key never rides the command line.** An API key is named by environment variable
-//!   (`--api-key-env`), because arguments are visible to every process listing on the machine.
+//! Each worker owns its async runtime and communicates with the desktop through channels.
+//! Document edits and permission decisions remain on the desktop's session thread.
 
 #![warn(missing_docs)]
 
-use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::path::PathBuf;
 
 use auris_toolbox as toolbox;
 
@@ -91,39 +71,6 @@ impl Options {
         (self.provider == Provider::Ollama).then_some(self.context_tokens)
     }
 }
-
-const USAGE: &str = "auris-agent — drive Auris Studio with a language model
-
-usage: auris-agent [options] [prompt]
-       auris-agent models [options]     list the provider's models as JSON
-
-With a prompt, asks once, prints the model's answer on stdout and leaves.
-Without one, opens a conversation; an empty line or end-of-file closes it.
-Tool calls are narrated on stderr either way.
-
-options:
-  --model <name>        the model to use (required) — e.g. qwen3:8b, gpt-5.2
-  --provider <name>     ollama (the default) or openai, meaning any
-                        OpenAI-compatible chat-completions API
-  --url <base>          the API's base URL; defaults to http://localhost:11434
-                        for ollama and https://api.openai.com/v1 for openai
-  --api-key-env <VAR>   environment variable holding the API key; OPENAI_API_KEY
-                        is used for openai when it is set and this is not given
-  --max-turns <n>       model-call budget per prompt (default 40)
-  --context-tokens <n>  Ollama context window (default 32768; minimum 16384)
-  --thinking <mode>     Ollama thinking: on, off or auto (model default)
-  --attach <file>       send an audio file with the prompt (wav, mp3, flac,
-                        ogg, aac, aiff, m4a); repeat for more than one.
-                        Needs --provider openai and a model that takes audio
-                        input; rig's Ollama adapter cannot send attachments
-  --json                speak JSON lines on stdin and stdout instead, for
-                        another program to drive — the desktop panel's mode
-  --live-session        require the live session protocol (desktop host only)
-  -h, --help            this text
-
---provider, --model, --url and --api-key-env fall back to the shared settings
-file when not given; the desktop application's agent settings write it.
-Internet search uses BRAVE_SEARCH_API_KEY from the environment.";
 
 /// Reads a provider name — the one vocabulary shared by the flag and the preference.
 fn provider_named(name: &str) -> Result<Provider, String> {
@@ -349,6 +296,9 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NoArgs {}
 
+mod worker;
+use worker::Bridge;
+pub use worker::{Worker, list_models_background};
 mod compaction;
 mod memory;
 mod permissions;
@@ -440,9 +390,6 @@ text_tool!(ListProgressions, list_progressions);
 text_tool!(ListPresets, list_presets);
 text_tool!(ListInstruments, list_instruments);
 
-/// Serializes exchanges even when a provider requests parallel tool calls.
-static LIVE_REQUEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 /// One live session command, wrapped in an object for provider tool schemas.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -452,7 +399,9 @@ struct EditProjectArgs {
 }
 
 /// Editing is executed by the desktop in its current session.
-struct EditProject;
+struct EditProject {
+    bridge: Option<Bridge>,
+}
 
 impl Tool for EditProject {
     const NAME: &'static str = "edit_project";
@@ -473,49 +422,26 @@ impl Tool for EditProject {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<String, ToolFailed> {
-        if std::env::var_os("AURIS_AGENT_LIVE_SESSION").is_none() {
-            return Err(ToolFailed(
-                "Open the Agent Panel in Auris Studio to edit the current document".into(),
-            ));
-        }
-        let _guard = LIVE_REQUEST.lock().await;
-        tokio::task::spawn_blocking(move || {
-            exchange_live_command(
-                args,
-                &mut std::io::stdin().lock(),
-                &mut std::io::stdout().lock(),
-            )
-        })
-        .await
-        .map_err(|e| ToolFailed(e.to_string()))?
+        let bridge = self.bridge.as_ref().ok_or_else(|| {
+            ToolFailed("Open the Agent Panel in Auris Studio to edit the current document".into())
+        })?;
+        let response = bridge
+            .exchange(serde_json::json!({"event":"edit", "command":args.command}))
+            .await
+            .map_err(ToolFailed)?;
+        edit_reply(response)
     }
 }
 
-/// One serialized exchange; the host acknowledges the edit before the model continues.
-fn exchange_live_command(
-    args: EditProjectArgs,
-    reader: &mut impl BufRead,
-    writer: &mut impl Write,
-) -> Result<String, ToolFailed> {
-    let request = serde_json::json!({"event":"edit", "command":args.command});
-    writeln!(writer, "{request}")
-        .and_then(|()| writer.flush())
-        .map_err(|e| ToolFailed(e.to_string()))?;
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| ToolFailed(e.to_string()))?;
-    let response: serde_json::Value =
-        serde_json::from_str(&line).map_err(|e| ToolFailed(e.to_string()))?;
-    if response.get("event").and_then(|v| v.as_str()) != Some("edit_result") {
+fn edit_reply(response: serde_json::Value) -> Result<String, ToolFailed> {
+    if response["event"] != "edit_result" {
         return Err(ToolFailed("The live session response was missing".into()));
     }
-    let text = response
-        .get("text")
-        .and_then(|v| v.as_str())
+    let text = response["text"]
+        .as_str()
         .ok_or_else(|| ToolFailed("Missing edit result text".into()))?
         .to_string();
-    if response.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+    if response["ok"] == true {
         Ok(text)
     } else {
         Err(ToolFailed(text))
@@ -600,7 +526,7 @@ async fn search_internet(args: &InternetSearchArgs) -> Result<String, String> {
         );
     }
     let key = std::env::var("BRAVE_SEARCH_API_KEY").map_err(|_| {
-        "internet search needs BRAVE_SEARCH_API_KEY in the auris-agent environment; create a \
+        "internet search needs BRAVE_SEARCH_API_KEY in the application environment; create a \
          Brave Search API key and restart the agent"
             .to_string()
     })?;
@@ -668,10 +594,10 @@ fn strip_markup(text: &str) -> String {
 }
 
 /// File-free editing and reference tools for the rig agent.
-fn armed(builder: AgentBuilder) -> Agent {
+fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
     builder
         .preamble(&preamble())
-        .tool(EditProject)
+        .tool(EditProject { bridge })
         .tool(SearchDocumentation)
         .tool(InternetSearch)
         .tool(SpecReference)
@@ -686,11 +612,19 @@ fn armed(builder: AgentBuilder) -> Agent {
 /// Both arms end in the same [`armed`] call; only the client construction differs, because the
 /// two dialects are two client types. An empty key means no key — both providers' key types
 /// treat it that way or tolerate it, and it saves an `Option` dance at each arm.
+#[cfg(test)]
 fn build_agent(options: &Options) -> Result<Agent, String> {
-    build_with(options, armed)
+    build_for_worker(options, None)
 }
 
-fn build_with(options: &Options, armed: fn(AgentBuilder) -> Agent) -> Result<Agent, String> {
+fn build_for_worker(options: &Options, bridge: Option<Bridge>) -> Result<Agent, String> {
+    build_with(options, |builder| armed(builder, bridge))
+}
+
+fn build_with(
+    options: &Options,
+    armed: impl FnOnce(AgentBuilder) -> Agent,
+) -> Result<Agent, String> {
     let key = options.key.clone().unwrap_or_default();
     let could_not = |error: rig::http_client::Error| format!("could not build a client: {error}");
     match options.provider {
@@ -742,7 +676,7 @@ const MODEL_LIST_PATIENCE: std::time::Duration = std::time::Duration::from_secs(
 const CONVERSATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 const MODEL_DETAIL_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The work behind `auris-agent models`: ask the provider what it serves, answer as one
+/// Ask the provider what models it serves, returning one
 /// JSON line — `{"models": [{"name", "context_length"}, …]}`.
 ///
 /// A machine-readable list because its one caller so far is the desktop's agent panel, which
@@ -879,85 +813,6 @@ async fn list_models(options: &Options) -> Result<String, String> {
     Ok(serde_json::json!({ "models": models }).to_string())
 }
 
-/// Narrates the tool loop on stderr while the model works.
-///
-/// The person at the terminal sees what the CLI would have shown them — which tool ran, on
-/// what, and whether it answered or refused — without any of it landing in stdout, which
-/// belongs to the model's words alone.
-struct Narrator;
-
-/// Resolves the nearest existing ancestor so a new output cannot escape through `..` or through
-/// a symlink that already exists below the working directory.
-fn confined_to_working_directory(path: &Path) -> bool {
-    let Ok(root) = std::env::current_dir().and_then(std::fs::canonicalize) else {
-        return false;
-    };
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let mut existing = candidate.as_path();
-    while !existing.exists() {
-        let Some(parent) = existing.parent() else {
-            return false;
-        };
-        existing = parent;
-    }
-    std::fs::canonicalize(existing).is_ok_and(|ancestor| ancestor.starts_with(&root))
-}
-
-/// The first line of a tool's answer, for the narration.
-fn first_line(output: &ToolOutput) -> Option<&str> {
-    output
-        .as_content()
-        .iter()
-        .find_map(|content| match content {
-            ToolResultContent::Text(text) => text.text.lines().next(),
-            _ => None,
-        })
-}
-
-impl AgentHook for Narrator {
-    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
-        // The arguments as the model wrote them, clipped: a whole spec in a compose call is
-        // legitimate and would drown the narration it is meant to serve.
-        let args: String = event.args.chars().take(120).collect();
-        let ellipsis = if args.len() < event.args.len() {
-            "…"
-        } else {
-            ""
-        };
-        eprintln!("→ {} {args}{ellipsis}", event.tool_name);
-        match permissions::authorize(event.tool_name, event.args).await {
-            Ok(()) => ToolCallAction::Run,
-            Err(reason) => ToolCallAction::Skip(reason),
-        }
-    }
-
-    async fn on_tool_result(
-        &self,
-        _ctx: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
-        let line = first_line(event.presentation).unwrap_or("done");
-        if event.raw_result.is_success() {
-            eprintln!("  {line}");
-        } else {
-            eprintln!("  refused: {line}");
-        }
-        ToolResultAction::Keep
-    }
-}
-
-/// Writes one event line and flushes it — a pipe is block-buffered, and a host on the other
-/// end is waiting on exactly this line.
-fn emit(event: serde_json::Value) {
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{event}");
-    let _ = stdout.flush();
-}
-
 /// A tool answer's whole text, for a host that will render it itself.
 fn full_text(output: &ToolOutput) -> String {
     output
@@ -1077,10 +932,12 @@ fn check_audio(provider: Provider, audio: &[String]) -> Result<(), String> {
 
 /// Reports the tool loop as JSON events on stdout, for a host program to render.
 ///
-/// The same moments the [`Narrator`] speaks at, in a shape a machine reads: `call` when a
+/// Reports `call` when a
 /// tool is asked, `result` when it answers, and `changed` when the answer means a project
 /// file on disk is no longer what the host last read.
-struct Reporter;
+struct Reporter {
+    bridge: Option<Bridge>,
+}
 
 /// A skipped or refused call is a failed result to the host, even without an execution error.
 fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
@@ -1093,10 +950,12 @@ fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
 
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
-        emit(serde_json::json!({
-            "event": "call", "tool": event.tool_name, "args": event.args,
-        }));
-        match permissions::authorize(event.tool_name, event.args).await {
+        if let Some(bridge) = &self.bridge {
+            bridge.emit(serde_json::json!({
+                "event": "call", "tool": event.tool_name, "args": event.args,
+            }));
+        }
+        match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
             Ok(()) => ToolCallAction::Run,
             Err(reason) => ToolCallAction::Skip(reason),
         }
@@ -1107,19 +966,21 @@ impl AgentHook for Reporter {
         _ctx: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
-        emit(result_event(event));
+        if let Some(bridge) = &self.bridge {
+            bridge.emit(result_event(event));
+        }
         ToolResultAction::Keep
     }
 }
 
 /// One prompt through the loop: ask, narrate, answer — and hand back the transcript so a
 /// conversation can keep it.
-async fn converse(
+async fn converse_with_bridge(
     agent: &Agent,
     prompt: Message,
     mut history: Vec<Message>,
     max_turns: usize,
-    json: bool,
+    bridge: Option<Bridge>,
     context_tokens: Option<u32>,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
     let guard = runtime::Guard::new(agent, context_tokens).await?;
@@ -1128,10 +989,8 @@ async fn converse(
         let message = format!(
             "Omitted {omitted} older conversation exchanges from this request to fit the model context. Saved conversation history is unchanged."
         );
-        if json {
-            emit(serde_json::json!({"event":"notice", "message":message}));
-        } else {
-            eprintln!("{message}");
+        if let Some(bridge) = &bridge {
+            bridge.emit(serde_json::json!({"event":"notice", "message":message}));
         }
     }
     let activity = guard.activity.clone();
@@ -1142,10 +1001,7 @@ async fn converse(
         .max_turns(max_turns)
         .max_invalid_tool_call_retries(2)
         .add_hook(guard);
-    let request = match json {
-        true => request.add_hook(Reporter),
-        false => request.add_hook(Narrator),
-    };
+    let request = request.add_hook(Reporter { bridge });
     let response = runtime::await_active(request.extended_details(), activity).await?;
     // The run's usage sums every model call; only the final request measures occupied context.
     let context_tokens = response
@@ -1184,93 +1040,22 @@ where
         .map_err(|error| error.to_string())
 }
 
-/// The conversation: read a line, run the loop, print the answer, remember everything.
-async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
-    let mut memory = memory::Memory::default();
-    let stdin = std::io::stdin();
-    loop {
-        eprint!("> ");
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
-            // A line that is not UTF-8 is a bad line, not a broken pipe: the bytes are
-            // already consumed, and the next line may well be fine.
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                eprintln!("that line was not UTF-8; try again");
-                continue;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            return Ok(());
-        }
-        let percent = auris_session::Settings::load()
-            .agent
-            .auto_compact_percent
-            .unwrap_or(85)
-            .min(99);
-        if line == "/compact" || compaction::needed(&memory, options.context_tokens, percent.into())
-        {
-            eprintln!("Summarizing earlier conversation…");
-            match compaction::compact(options, &mut memory).await {
-                Ok(message) | Err(message) => eprintln!("{message}"),
-            }
-            if line == "/compact" {
-                continue;
-            }
-        }
-        match converse(
-            agent,
-            Message::user(line),
-            memory.messages(),
-            options.max_turns,
-            false,
-            options.context_limit(),
-        )
-        .await
-        {
-            Ok((answer, ..)) => {
-                memory.push(line, &answer);
-                println!("{answer}\n");
-            }
-            Err(error) => {
-                memory.push_interrupted(line, &error);
-                eprintln!("{error}");
-            }
-        }
-    }
-}
-
-/// The conversation a program holds: JSON lines in, JSON events out.
-///
-/// `ready` opens the wire and names what answered the phone. Each `{"say": "..."}` runs one
-/// prompt through the loop — `call`, `result` and `changed` events as it works, then one
-/// `answer` — and a failure is an `error` event rather than an exit, because the host's
-/// window is still open and its next message may well work. End of stdin ends the
-/// conversation; a line that is not a `say` is answered with an `error` and skipped. A say
-/// may carry `"audio": ["file.wav", …]` — files sent along with the words, for a provider
-/// whose API has an audio field.
-async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), String> {
-    let memory_path = std::env::var_os("AURIS_AGENT_HISTORY").map(PathBuf::from);
-    if let Some(path) = &memory_path
-        && !confined_to_working_directory(path)
-    {
-        return Err("conversation history must stay inside the agent's working directory".into());
-    }
+async fn json_conversation(
+    agent: &Agent,
+    options: &Options,
+    bridge: &Bridge,
+    memory_path: Option<PathBuf>,
+    fresh_history: bool,
+) -> Result<(), String> {
     let mut memory = match &memory_path {
-        Some(path) if std::env::var_os("AURIS_AGENT_FRESH_HISTORY").is_none() => {
-            memory::Memory::load(path)?
-        }
+        Some(path) if !fresh_history => bridge.history(|| memory::Memory::load(path))?,
         _ => memory::Memory::default(),
     };
     if let Some(path) = &memory_path {
-        memory.save(path)?;
+        bridge.history(|| memory.save(path))?;
     }
-    emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
-    emit(serde_json::json!({
+    bridge.emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
+    bridge.emit(serde_json::json!({
         "event": "ready",
         "provider": match options.provider {
             Provider::Ollama => "ollama",
@@ -1279,24 +1064,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         "model": options.model,
     }));
     let mut history = memory.messages();
-    let stdin = std::io::stdin();
-    loop {
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
-            // A line that is not UTF-8 is a bad line, not a dead wire: the bytes are already
-            // consumed, so this keeps the promise above — an `error` event, and the host's
-            // next message may well work. Any other read error really is the wire.
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                emit(serde_json::json!({
-                    "event": "error",
-                    "message": "that line was not UTF-8; it was dropped",
-                }));
-                continue;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
+    while let Some(line) = bridge.receive().await {
         let line = line.trim();
         if line.is_empty() {
             continue;
@@ -1304,7 +1072,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         let wire: serde_json::Value = match serde_json::from_str(line) {
             Ok(wire) => wire,
             Err(error) => {
-                emit(serde_json::json!({"event":"error", "message":error.to_string()}));
+                bridge.emit(serde_json::json!({"event":"error", "message":error.to_string()}));
                 continue;
             }
         };
@@ -1315,14 +1083,14 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
             .unwrap_or(85)
             .min(99);
         if manual || compaction::needed(&memory, options.context_tokens, percent) {
-            emit(serde_json::json!({"event":"compacting"}));
+            bridge.emit(serde_json::json!({"event":"compacting"}));
             let result = compaction::compact(options, &mut memory).await;
             history = memory.messages();
             if result.is_ok()
                 && let Some(path) = &memory_path
-                && let Err(error) = memory.save(path)
+                && let Err(error) = bridge.history(|| memory.save(path))
             {
-                emit(
+                bridge.emit(
                     serde_json::json!({"event":"notice", "message":format!("Summary was not saved: {error}")}),
                 );
             }
@@ -1330,7 +1098,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 Ok(text) => (true, text),
                 Err(error) => (false, error),
             };
-            emit(
+            bridge.emit(
                 serde_json::json!({"event":"compacted", "ok":ok, "message":text, "manual":manual,
                 "context_tokens":compaction::tokens(&memory)}),
             );
@@ -1341,7 +1109,7 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         let (mut said, audio) = match parse_say(line) {
             Ok(parsed) => parsed,
             Err(message) => {
-                emit(serde_json::json!({ "event": "error", "message": message }));
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
                 continue;
             }
         };
@@ -1361,16 +1129,16 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         {
             Ok(message) => message,
             Err(message) => {
-                emit(serde_json::json!({ "event": "error", "message": message }));
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
                 continue;
             }
         };
-        match converse(
+        match converse_with_bridge(
             agent,
             message,
             history.clone(),
             options.max_turns,
-            true,
+            Some(bridge.clone()),
             options.context_limit(),
         )
         .await
@@ -1387,13 +1155,13 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 memory.push(&display, &answer);
                 history = memory.messages();
                 if let Some(path) = &memory_path
-                    && let Err(error) = memory.save(path)
+                    && let Err(error) = bridge.history(|| memory.save(path))
                 {
-                    emit(
+                    bridge.emit(
                         serde_json::json!({ "event": "notice", "message": format!("Conversation history was not saved: {error}") }),
                     );
                 }
-                emit(serde_json::json!({
+                bridge.emit(serde_json::json!({
                     "event": "answer",
                     "text": answer,
                     "input_tokens": context_tokens,
@@ -1405,114 +1173,29 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 memory.push_interrupted(&said, &message);
                 history = memory.messages();
                 if let Some(path) = &memory_path
-                    && let Err(error) = memory.save(path)
+                    && let Err(error) = bridge.history(|| memory.save(path))
                 {
-                    emit(
+                    bridge.emit(
                         serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}),
                     );
                 }
-                emit(serde_json::json!({ "event": "error", "message": message }));
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
             }
         }
     }
+    Ok(())
 }
 
-fn main() -> ExitCode {
-    if let Some(code) = auris_session::handle_drum_probe_worker() {
-        std::process::exit(code);
-    }
-    // Stderr by default already, and stderr it must stay: stdout carries the model's answer.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-
-    // Like the other frontends: this may be the first one to run on a machine, and an
-    // installation predating `~/.config/auris-studio` only has its settings carried across by
-    // whichever one does.
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let prefs = auris_session::Settings::load().agent;
-    let options = match parse_command(&args, &|name| std::env::var(name).ok(), &prefs) {
-        Ok(Command::Help) => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
-        Ok(Command::Models(options)) => {
-            // One JSON line either way, because the caller reading this is a program: the
-            // panel shows the error where it would have shown the list.
-            let answer = tokio::runtime::Runtime::new()
-                .map_err(|error| error.to_string())
-                .and_then(|runtime| {
-                    // Bounded, because the caller is a panel with a spinner: a host that
-                    // black-holes the connection would otherwise hang this process — and the
-                    // thread the panel parked on it — forever.
-                    runtime.block_on(async {
-                        match tokio::time::timeout(MODEL_LIST_PATIENCE, list_models(&options)).await
-                        {
-                            Ok(answer) => answer,
-                            Err(_) => Err(format!(
-                                "the server did not answer within {} seconds",
-                                MODEL_LIST_PATIENCE.as_secs()
-                            )),
-                        }
-                    })
-                });
-            match answer {
-                Ok(line) => {
-                    println!("{line}");
-                    return ExitCode::SUCCESS;
-                }
-                Err(message) => {
-                    println!("{}", serde_json::json!({ "error": message }));
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        Ok(Command::Run(options)) => options,
-        Err(message) => {
-            eprintln!("auris-agent: {message}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let outcome = tokio::runtime::Runtime::new()
-        .map_err(|error| error.to_string())
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                let agent = build_agent(&options)?;
-                runtime::preflight(&options).await?;
-                if options.json {
-                    return json_conversation(&agent, &options).await;
-                }
-                match &options.prompt {
-                    Some(prompt) => {
-                        check_audio(options.provider, &options.attachments)?;
-                        let message = framed_message(prompt, &options.attachments)?;
-                        let (answer, ..) = converse(
-                            &agent,
-                            message,
-                            Vec::new(),
-                            options.max_turns,
-                            false,
-                            options.context_limit(),
-                        )
-                        .await?;
-                        println!("{answer}");
-                        Ok(())
-                    }
-                    None => conversation(&agent, &options).await,
-                }
-            })
-        });
-
-    match outcome {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            if options.json {
-                emit(serde_json::json!({"event":"error","message":message}));
-            }
-            eprintln!("auris-agent: {message}");
-            ExitCode::FAILURE
-        }
-    }
+#[cfg(test)]
+async fn converse(
+    agent: &Agent,
+    prompt: Message,
+    history: Vec<Message>,
+    max_turns: usize,
+    _json: bool,
+    context: Option<u32>,
+) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
+    converse_with_bridge(agent, prompt, history, max_turns, None, context).await
 }
 
 #[cfg(test)]
@@ -1758,7 +1441,7 @@ mod tests {
     ///
     /// Real enough for the client (HTTP/1.1, `Content-Length`, `Connection: close`) and no
     /// more; what it captures is the request bodies, which is what the assertions read.
-    fn mock_server(
+    pub(super) fn mock_server(
         responses: Vec<String>,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         use std::io::{Read, Write};
@@ -1820,7 +1503,7 @@ mod tests {
     }
 
     /// One canned chat-completions response around the given `message` object.
-    fn completion(message: &str, finish_reason: &str) -> String {
+    pub(super) fn completion(message: &str, finish_reason: &str) -> String {
         format!(
             r#"{{"id":"chatcmpl-1","object":"chat.completion","created":0,"model":"mock","choices":[{{"index":0,"message":{message},"logprobs":null,"finish_reason":"{finish_reason}"}}],"usage":null}}"#
         )
@@ -2214,24 +1897,10 @@ mod tests {
     }
 
     #[test]
-    fn live_protocol_waits_for_the_host_result_and_preserves_refusals() {
+    fn live_reply_preserves_host_refusals() {
         for ok in [true, false] {
-            let response =
-                serde_json::json!({"event":"edit_result", "ok":ok, "text":"host answer"})
-                    .to_string();
-            let mut reader = std::io::Cursor::new(response);
-            let mut writer = Vec::new();
-            let result = exchange_live_command(
-                EditProjectArgs {
-                    command: auris_session::live_agent::Command::Inspect {},
-                },
-                &mut reader,
-                &mut writer,
-            );
-            let request: serde_json::Value = serde_json::from_slice(&writer).unwrap();
-            assert_eq!(
-                request,
-                serde_json::json!({"event":"edit", "command":{"action":"inspect"}})
+            let result = edit_reply(
+                serde_json::json!({"event":"edit_result", "ok":ok, "text":"host answer"}),
             );
             assert_eq!(result.is_ok(), ok);
             assert_eq!(result.unwrap_or_else(|e| e.to_string()), "host answer");

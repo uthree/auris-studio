@@ -1,4 +1,4 @@
-//! Bounded text memory between completed turns and across panel subprocesses.
+//! Bounded text memory between completed turns and across panel workers.
 //!
 //! The assistant's final answer is the turn summary. Tool traffic and encoded audio are
 //! deliberately absent from persisted history; live project tools recover the current state.

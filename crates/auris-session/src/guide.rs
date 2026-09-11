@@ -89,7 +89,7 @@ pub mod architecture {
     //!   auris-gpui      the desktop application  (binary: auris-studio)
     //!   auris-cli       the command line tool    (binary: auris)
     //!   auris-mcp       the Model Context Protocol server (binary: auris-mcp)
-    //!   auris-agent     the model client — Ollama or OpenAI-compatible (binary: auris-agent)
+    //!   auris-agent     the model client — Ollama or OpenAI-compatible (library: background model worker)
     //! ```
     //!
     //! Three rules carry most of the weight.
@@ -116,14 +116,19 @@ pub mod architecture {
     //! quietly stop being sufficient for anyone else's. [`crate::Session::new`] installs those
     //! packs into the registry through [`crate::default_registry`].
     //!
-    //! **A frontend depends on [`crate::Session`], on its own toolkit, and on the presentation
+    //! **A frontend depends on [`crate::Session`], on its own toolkit or transport library, and on the presentation
     //! crate for its reader — and on nothing else in the workspace.** There are two presentation
     //! crates because there are two kinds of reader: `auris-i18n` is every word said to a
     //! *person*, in their language; `auris-toolbox` is every word said to a *model* — tool
     //! names, descriptions, argument schemas and the work behind them, in English, because
     //! every model reads it and neither protocol has a language field. The window and the CLI
     //! take the first; `auris-mcp` and `auris-agent` take the second, and taking it from one
-    //! shared crate provides the file-based MCP catalog and the rig agent's reference tools. If
+    //! shared crate provides the file-based MCP catalog and the rig agent's reference tools.
+    //! The desktop also links `auris-agent`, its UI-free model transport library. Each chat owns
+    //! a cancellable worker thread with an async runtime; channels carry requests, permission
+    //! decisions and live-edit results. The worker never owns or edits the window's session.
+    //! Dropping a worker cancels its network/approval waits without joining on the UI thread.
+    //! Neither a child process nor a companion executable is needed. If
     //! `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io` directly, something
     //! that belongs in the session layer has leaked into the UI. Move it down rather than
     //! adding the dependency.
@@ -140,7 +145,7 @@ pub mod architecture {
     //! the identical session with no window and no audio device, so anything that leaks into the
     //! UI stops compiling there. `auris-mcp` is the same wager made a third time — the identical
     //! session behind the Model Context Protocol, over stdio, so a language model's harness can
-    //! compose, render and inspect projects as tools. `auris-agent` makes it a fourth, from the
+    //! compose, render and inspect projects as tools. The `auris-agent` library approaches it from the
     //! other direction: Auris itself dials a model — a local Ollama server or any
     //! OpenAI-compatible API — offers read-only toolbox references and live session commands.
     //! The desktop executes [`live_agent::Command`](crate::live_agent::Command) against the

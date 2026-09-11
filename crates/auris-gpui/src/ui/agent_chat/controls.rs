@@ -57,7 +57,7 @@ impl AurisApp {
         let wire =
             serde_json::json!({"event":"permission_result", "id":id, "ok":ok, "reason":reason});
         if let Some(link) = self.agent_chat.link.as_mut()
-            && let Err(error) = writeln!(link.to_child, "{wire}")
+            && let Err(error) = link.send(&wire.to_string())
         {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
@@ -226,7 +226,7 @@ impl AurisApp {
                 .push_entry(ChatEntry::Note(Key::AgentCompactEmpty));
             return;
         };
-        if let Err(error) = writeln!(link.to_child, "{{\"compact\":true}}") {
+        if let Err(error) = link.send(r#"{"compact":true}"#) {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
             return;

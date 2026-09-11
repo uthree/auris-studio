@@ -1,10 +1,8 @@
-# The agent frontend: Auris dials a language model directly — Ollama or any OpenAI-compatible
-# API — hands it the same tools the MCP server offers, and runs the loop itself. `rig` is the
-# LLM client library; it brings `tokio` and an HTTP stack with it, and all of it stays inside
-# this crate.
+# UI-free model runtime linked into the desktop. Rig, Tokio and the HTTP clients stay here;
+# the desktop exchanges channel messages with a cancellable background worker.
 [package]
 name = "auris-agent"
-description = "LLM agent frontend for Auris Studio"
+description = "Background LLM worker library for Auris Studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,14 +12,12 @@ rust-version.workspace = true
 [features]
 asio = ["auris-session/asio"]
 
-[[bin]]
-name = "auris-agent"
-path = "src/main.rs"
+[lib]
+path = "src/lib.rs"
 
 [dependencies]
 auris-session.workspace = true
 auris-toolbox.workspace = true
-env_logger.workspace = true
 log.workspace = true
 rig = "0.42"
 # Audio attachments ride the wire base64-encoded. The same version rig resolves, so no

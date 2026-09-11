@@ -1445,34 +1445,16 @@ Accepting the changes retains the previous window document on the undo stack; Sa
 also preserve it separately. Cooperating writers serialize the check and save with a project
 file lock.
 
-`auris-agent` connects to a local Ollama server or an OpenAI-compatible API and runs the
-model's tool loop. The Agent Panel provides the currently open session through `edit_project`;
-reference tools come from `auris-toolbox`. Configure the provider and model in the panel,
-then ask it to create or edit music in the open arrangement.
+The Agent Panel connects to a local Ollama server or an OpenAI-compatible API. Its model
+runtime lives in the UI-free `auris-agent` library, linked into `auris-studio`. A dedicated
+background thread handles the conversation while the UI remains responsive. `cargo run`
+builds the desktop and its agent together.
 
-The model's answer goes to stdout and the narration of the tool loop — each call, each
-result's first line — to stderr, so `auris-agent "..." > notes.md` keeps the answer and shows
-the work. An API key is only ever named by environment variable (`--api-key-env`), never typed
-into a command line. Without a prompt the program holds a conversation, carrying the whole
-transcript forward each turn. Editing requires the desktop Agent Panel connection.
+Choose a provider and model in the panel. Model discovery runs in the background too; the URL
+and API-key environment variable name are saved in shared settings. Secrets remain in the
+process environment. The transcript shows tool calls, results and the model's answer.
 
-A model that takes audio input can be handed the audio itself: `--attach mix.wav` sends the
-file base64-encoded as an OpenAI `input_audio` content part beside the prompt (wav, mp3,
-flac, ogg, aac, aiff, m4a — typed by extension; repeat the flag for more files), and on the
-JSON wire a say may carry `"audio": ["mix.wav"]`. This is the `openai` provider's territory —
-an audio-capable API, or a local OpenAI-compatible server that implements `input_audio` —
-because the agent's rig Ollama adapter cannot send direct audio attachments. Listening claims
-require actual audio input and remain distinct from numeric measurements.
-
-The same conversation lives in the desktop application as the **Agent panel** — View → Agent,
-on the right beside the inspector, the way an editor's chat sidebar sits. It spawns
-`auris-agent --json` beside its own binary and talks to it over stdin/stdout, so the window
-never learns what an LLM client is; provider and model are picked from dropdowns — the panel
-asks the provider what it serves via `auris-agent models` — and the URL and key variable are
-set beside them, all saved to the shared settings file, where the command line reads them as
-its defaults too. A context gauge over the input shows the last turn's prompt tokens against
-the chosen model's window, and each tool call's row opens on a click to the full answer the
-model saw. Commands operate directly on the current document, including an unsaved empty
+The model edits the current session through live commands, including an unsaved empty
 project. Asking for a song adds the composed tracks to the open arrangement. Each successful
 editing command is undoable and appears before the model's final reply. Save the project
 normally when ready. Existing arrangements require an explicit replacement request before a

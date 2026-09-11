@@ -894,7 +894,6 @@ dependencies = [
  "auris-session",
  "auris-toolbox",
  "base64 0.22.1",
- "env_logger",
  "log",
  "reqwest 0.13.4",
  "rig",
@@ -1004,6 +1003,7 @@ dependencies = [
 name = "auris-gpui"
 version = "0.7.0"
 dependencies = [
+ "auris-agent",
  "auris-i18n",
  "auris-session",
  "embed-resource",

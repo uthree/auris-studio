@@ -188,8 +188,7 @@ an effect also removes its lanes. Read and list operations do not trigger projec
 ## Ollama configuration and failure recovery
 
 The Agent Panel exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
-off, on). The CLI accepts `--context-tokens N` and `--thinking auto|off|on`; explicit
-flags override shared preferences. The default request sets `options.num_ctx=32768`,
+off, on), stored in shared preferences. The default request sets `options.num_ctx=32768`,
 caps each completion at `options.num_predict=4096`, and uses temperature zero for
 repeatable tool arguments rather than inheriting a
 model's chat sampling preset. These are request settings and do not change the

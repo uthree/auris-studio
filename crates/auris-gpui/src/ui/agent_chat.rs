@@ -1,18 +1,13 @@
 //! The agent panel: a conversation with a language model, beside the song it is about.
 //!
-//! The model itself lives in `auris-agent`, spawned here as a child process in its `--json`
-//! mode — the window writes `{"say": …}` lines to its stdin and reads events back off its
-//! stdout. Keeping it a process rather than a library is the frontend boundary doing its job:
-//! this crate never learns what an LLM client is, the agent never learns what a window is, and
-//! the pair that ships in the release archive is exactly the pair that talks here.
+//! The UI-free `auris-agent` library runs on a cancellable background thread. Channels carry
+//! requests, events and host replies; the window never blocks on model or network work.
 //!
 //! Editing commands execute against the window's current session. They do not save or
 //! reload a project; successful edits appear on repaint and use ordinary undo history.
 
-use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Receiver;
 
 use auris_i18n::Key;
 use auris_session::AgentPreferences;
@@ -52,7 +47,7 @@ pub(crate) enum ChatEntry {
         /// The whole answer, shown when the row is clicked open.
         detail: String,
     },
-    /// Something went wrong — the process, the provider, the wire.
+    /// Something went wrong — the worker, the provider, the channel.
     Error(String),
     /// A note from the panel itself, translated when drawn.
     Note(Key),
@@ -87,7 +82,7 @@ pub(crate) enum AgentEvent {
         /// What happened.
         message: String,
     },
-    /// The process is up, and named what answered the phone.
+    /// The worker is up, and named what answered the phone.
     Ready {
         /// The model the agent resolved to.
         model: String,
@@ -122,12 +117,12 @@ pub(crate) enum AgentEvent {
         /// Tokens the model wrote across the turn.
         output_tokens: u64,
     },
-    /// The turn failed; the process is still alive.
+    /// The turn failed; the worker is still alive.
     Error {
         /// What went wrong.
         message: String,
     },
-    /// The process's stdout closed: it is gone.
+    /// The background worker has finished.
     Ended,
 }
 
@@ -145,6 +140,7 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             .to_string()
     };
     Some(match parsed.get("event")?.as_str()? {
+        "ended" => AgentEvent::Ended,
         "permission" => AgentEvent::Permission {
             id: parsed.get("id")?.as_u64()?,
             tool: text("tool"),
@@ -290,7 +286,7 @@ pub(crate) struct ModelOption {
 /// Reads the one line `auris-agent models` prints into the picker's options.
 ///
 /// A free function because it is a decision — what counts as a model, what counts as the
-/// provider having failed — and the thread that runs the subprocess should carry none.
+/// provider having failed — and the worker thread should carry none.
 pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
     let parsed: serde_json::Value =
         serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
@@ -312,19 +308,14 @@ pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
         .collect())
 }
 
-/// The running child process and both ends of its wire.
+/// One cancellable worker owned by the panel. Dropping it stops the conversation.
 struct AgentLink {
-    child: Child,
-    to_child: ChildStdin,
-    from_child: Receiver<AgentEvent>,
+    worker: auris_agent::Worker,
 }
 
-impl Drop for AgentLink {
-    fn drop(&mut self) {
-        // Dropping the panel must not leave a model running unattended. Kill rather than wait:
-        // the child may be minutes into a render, and the window is going away now.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+impl AgentLink {
+    fn send(&self, wire: &str) -> Result<(), String> {
+        self.worker.send(wire)
     }
 }
 
@@ -370,7 +361,7 @@ pub(crate) struct AgentChat {
     /// Running tool rows by wire name, so a result never scans the transcript.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
-    models_rx: Option<Receiver<Result<Vec<ModelOption>, String>>>,
+    models_rx: Option<Receiver<Result<String, String>>>,
     /// Which field holds the keyboard, if any.
     pub(crate) focused: Option<AgentField>,
     /// Whether the settings section is showing.
@@ -700,173 +691,19 @@ impl AgentChat {
     }
 }
 
-/// Where the agent binary lives: beside this one.
-///
-/// The release archive ships them together, and a development build puts both in the same
-/// target directory — the one layout rule the whole feature leans on.
-fn agent_binary() -> Result<PathBuf, String> {
-    let name = match cfg!(windows) {
-        true => "auris-agent.exe",
-        false => "auris-agent",
-    };
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate the running executable: {error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "the running executable has no parent directory".to_string())?;
-    let candidate = directory.join(name);
-    candidate
-        .is_file()
-        .then_some(candidate.clone())
-        .ok_or_else(|| {
-            format!(
-                "the bundled agent binary was not found at {}",
-                candidate.display()
-            )
-        })
+/// Start a background worker with explicit settings and history location.
+fn spawn_link(
+    prefs: &AgentPreferences,
+    folder: Option<&Path>,
+    fresh_history: bool,
+) -> Result<AgentLink, String> {
+    auris_agent::Worker::spawn(prefs.clone(), folder.map(Path::to_path_buf), fresh_history)
+        .map(|worker| AgentLink { worker })
 }
 
-/// Starts the agent in its JSON mode and wires both ends.
-///
-/// `folder` becomes the child's working directory, so a model told nothing else puts files
-/// beside the song. The reader thread owns stdout for the child's whole life and speaks to the
-/// window only through the channel; the window polls that channel on its repaint tick, the
-/// same way it reads everything else another thread writes.
-fn spawn_link(folder: Option<&Path>, fresh_history: bool) -> Result<AgentLink, String> {
-    let binary = agent_binary()?;
-    let mut command = Command::new(&binary);
-    command
-        .arg("--json")
-        .arg("--live-session")
-        .arg("--permission-protocol")
-        .env("AURIS_AGENT_LIVE_SESSION", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(folder) = folder {
-        command.current_dir(folder);
-        command.env(
-            "AURIS_AGENT_HISTORY",
-            folder.join(".auris-conversation.json"),
-        );
-    }
-    command.env_remove("AURIS_AGENT_FRESH_HISTORY");
-    if fresh_history {
-        command.env("AURIS_AGENT_FRESH_HISTORY", "1");
-    }
-    // Windows-only API, not a `cfg!` choice: without this flag a windowless application
-    // spawning a console binary flashes a console window up over the music.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("could not start {}: {error}", binary.display()))?;
-    let to_child = child.stdin.take().ok_or("the child has no stdin")?;
-    let stdout = child.stdout.take().ok_or("the child has no stdout")?;
-    let stderr = child.stderr.take().ok_or("the child has no stderr")?;
-
-    let (sender, from_child): (Sender<AgentEvent>, Receiver<AgentEvent>) =
-        std::sync::mpsc::channel();
-    let stderr_sender = sender.clone();
-    let (stderr_done, stderr_finished) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        forward_agent_stderr(std::io::BufReader::new(stderr), &stderr_sender);
-        let _ = stderr_done.send(());
-    });
-    std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            if let Some(event) = parse_event(&line)
-                && sender.send(event).is_err()
-            {
-                return;
-            }
-        }
-        // A startup failure writes stderr and closes stdout at nearly the same instant. Wait for
-        // the stderr reader so its useful diagnosis is always queued before the generic EOF.
-        let _ = stderr_finished.recv();
-        let _ = sender.send(AgentEvent::Ended);
-    });
-
-    Ok(AgentLink {
-        child,
-        to_child,
-        from_child,
-    })
-}
-
-/// Carries startup diagnostics from the agent's ordinary error stream into the chat event wire.
-fn forward_agent_stderr(reader: impl BufRead, sender: &Sender<AgentEvent>) {
-    for line in reader.lines().map_while(Result::ok) {
-        let message = line.trim();
-        if !message.is_empty()
-            && sender
-                .send(AgentEvent::Error {
-                    message: message.to_string(),
-                })
-                .is_err()
-        {
-            return;
-        }
-    }
-}
-
-/// Asks `auris-agent models` what `prefs`' provider serves, off the window's thread.
-///
-/// One shot per question: the subprocess prints one JSON line and exits, the thread parses it
-/// and puts the verdict on the channel, and the repaint tick picks it up — the same wire shape
-/// as the conversation itself.
-fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOption>, String>> {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let binary = match agent_binary() {
-        Ok(binary) => binary,
-        Err(error) => {
-            let _ = sender.send(Err(error));
-            return receiver;
-        }
-    };
-    let mut command = Command::new(&binary);
-    command
-        .arg("models")
-        .arg("--provider")
-        .arg(match prefs.provider.trim() {
-            "openai" => "openai",
-            _ => "ollama",
-        })
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if !prefs.url.trim().is_empty() {
-        command.arg("--url").arg(prefs.url.trim());
-    }
-    command
-        .arg("--context-tokens")
-        .arg(prefs.context_tokens.unwrap_or(32768).to_string());
-    if !prefs.api_key_env.trim().is_empty() {
-        command.arg("--api-key-env").arg(prefs.api_key_env.trim());
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    std::thread::spawn(move || {
-        let answer = command
-            .output()
-            .map_err(|error| format!("could not run {}: {error}", binary.display()))
-            .and_then(|output| {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                parse_model_list(stdout.lines().next().unwrap_or_default())
-            });
-        let _ = sender.send(answer);
-    });
-    receiver
+/// Fetch provider models off the UI thread.
+fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<String, String>> {
+    auris_agent::list_models_background(prefs.clone())
 }
 
 impl AurisApp {
@@ -932,7 +769,7 @@ impl AurisApp {
         }
     }
 
-    /// Stops the subprocess and checks for completed writes, which remain undoable.
+    /// Stops the worker and checks for completed writes, which remain undoable.
     fn agent_stop(&mut self, cx: &mut gpui::Context<Self>) {
         self.agent_chat.controls.pending = None;
         self.agent_chat.controls.permits.clear();
@@ -1012,7 +849,11 @@ impl AurisApp {
                 .path()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
-            match spawn_link(folder.as_deref(), self.agent_chat.fresh_history) {
+            match spawn_link(
+                &self.settings.agent,
+                folder.as_deref(),
+                self.agent_chat.fresh_history,
+            ) {
                 Ok(link) => {
                     self.agent_chat.link = Some(link);
                     self.agent_chat.bound_project = self.session.path().map(Path::to_path_buf);
@@ -1033,7 +874,7 @@ impl AurisApp {
         let wire =
             serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments, "policy": self.settings.agent.policy, "auto_compact_percent": self.settings.agent.auto_compact_percent.unwrap_or(85) }).to_string();
         if let Some(link) = self.agent_chat.link.as_mut()
-            && let Err(error) = writeln!(link.to_child, "{wire}")
+            && let Err(error) = link.send(&wire.to_string())
         {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
@@ -1068,7 +909,7 @@ impl AurisApp {
         {
             self.agent_chat.models_rx = None;
             self.agent_chat.fetching_models = false;
-            match answer {
+            match answer.and_then(|line| parse_model_list(&line)) {
                 Ok(models) => {
                     // The chosen model's window rides in on its listing — the gauge has no
                     // other way to learn it.
@@ -1093,8 +934,11 @@ impl AurisApp {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
             };
-            let Ok(event) = link.from_child.try_recv() else {
+            let Ok(value) = link.worker.try_recv() else {
                 return;
+            };
+            let Some(event) = parse_event(&value.to_string()) else {
+                continue;
             };
             if let AgentEvent::Permission { id, tool, args } = event {
                 self.agent_permission(id, tool, args);
@@ -1108,7 +952,7 @@ impl AurisApp {
                 let text = result.unwrap_or_else(|error| error);
                 let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
                 if let Some(link) = self.agent_chat.link.as_mut()
-                    && let Err(error) = writeln!(link.to_child, "{wire}")
+                    && let Err(error) = link.send(&wire.to_string())
                 {
                     self.agent_chat
                         .push_entry(ChatEntry::Error(error.to_string()));
@@ -1142,7 +986,7 @@ impl AurisApp {
     /// Throws the model list away and asks the provider again, with the form as it stands.
     pub(crate) fn agent_refresh_models(&mut self) {
         // One question at a time: a second press while one is out would park another
-        // thread-and-subprocess pair behind the same server, and a server that is not
+        // worker thread behind the same server, and a server that is not
         // answering would collect one per click.
         if self.agent_chat.fetching_models {
             return;
@@ -2407,23 +2251,6 @@ mod tests {
         // A line this build does not know, and a line that is not JSON: skipped, not fatal.
         assert_eq!(parse_event(r#"{"event":"novel"}"#), None);
         assert_eq!(parse_event("garbage"), None);
-    }
-
-    #[test]
-    fn an_agent_startup_failure_reaches_the_chat_event_wire() {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        forward_agent_stderr(
-            std::io::Cursor::new("\nauris-agent: the API key variable 'MISSING_KEY' is not set\n"),
-            &sender,
-        );
-
-        assert_eq!(
-            receiver.recv().unwrap(),
-            AgentEvent::Error {
-                message: "auris-agent: the API key variable 'MISSING_KEY' is not set".to_string()
-            }
-        );
-        assert!(receiver.try_recv().is_err(), "blank stderr stays invisible");
     }
 
     #[test]
