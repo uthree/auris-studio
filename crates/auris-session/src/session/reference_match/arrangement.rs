@@ -552,6 +552,7 @@ fn rank(stage: &NoteTransform) -> usize {
         NoteTransform::Lean { .. } | NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Expression { .. } | NoteTransform::Humanize { .. } => 8,
         NoteTransform::Pitch { .. } => 9,
+        NoteTransform::Octaves { .. } => 10,
     }
 }
 

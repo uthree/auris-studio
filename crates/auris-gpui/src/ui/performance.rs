@@ -130,6 +130,7 @@ impl PerformDial {
 pub(super) fn rank(transform: &NoteTransform) -> usize {
     match transform {
         NoteTransform::Pitch { .. } => 9,
+        NoteTransform::Octaves { .. } => 10,
         NoteTransform::ForDrumVoice { .. } => 7,
         NoteTransform::Swing { .. } => 0,
         // The lean sits between: deterministic feel before random feel, and after the swing for

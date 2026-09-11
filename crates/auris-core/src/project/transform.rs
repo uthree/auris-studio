@@ -46,6 +46,13 @@ const VELOCITY_WANDER: f32 = 0.06;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NoteTransform {
+    /// Adds copies one octave above and/or below, preserving the original notes.
+    Octaves {
+        /// Relative velocity of upper copies in 0..=1; zero disables them.
+        above: f32,
+        /// Relative velocity of lower copies in 0..=1; zero disables them.
+        below: f32,
+    },
     /// Derived channel pitch gestures, evaluated after the note stages.
     Pitch {
         /// Scoop, vibrato, fall and bidirectional melodic connections.
@@ -184,6 +191,7 @@ pub fn performed(mut note: Note, transforms: &[NoteTransform], pass: u64, bpm: f
         note = match transform {
             NoteTransform::Stroke { .. }
             | NoteTransform::Pitch { .. }
+            | NoteTransform::Octaves { .. }
             | NoteTransform::Expression { .. }
             | NoteTransform::Strum { .. }
             | NoteTransform::Ghost { .. }

@@ -279,8 +279,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 26 adds non-destructive pitch-bend performance gestures.
-    pub const FORMAT_VERSION: u32 = 26;
+    /// Version 27 adds octave doubling and generated modulation/volume performance curves.
+    pub const FORMAT_VERSION: u32 = 27;
 
     /// An empty project.
     ///

@@ -110,6 +110,7 @@ pub struct Fm2 {
     bend: f32,
     /// Most recent modulation, 0 to 1.
     modulation: f32,
+    channel_volume: f32,
     /// How far the vibrato swings right now, in semitones.
     vibrato_depth: f32,
     output_gain: f32,
@@ -136,6 +137,7 @@ impl Fm2 {
             index_cycles: 0.0,
             bend: 0.0,
             modulation: 0.0,
+            channel_volume: 1.0,
             vibrato_depth: 0.0,
             output_gain: 1.0,
         };
@@ -285,6 +287,9 @@ impl SegmentRenderer for Fm2 {
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
             }
             NoteEvent::Controller { number, value, .. } => {
+                if number == 7 {
+                    self.channel_volume = finite_or(value, 1.0).clamp(0.0, 1.0).powi(2);
+                }
                 // Controller 1 opens the vibrato, and the others are ignored for the reason the
                 // chiptune voice ignores them: a reading nobody asked for is a surprise.
                 if number == CC_MODULATION {
@@ -345,7 +350,7 @@ impl SegmentRenderer for Fm2 {
             }
         }
 
-        let output_gain = self.output_gain;
+        let output_gain = self.output_gain * self.channel_volume;
         for sample in dst.iter_mut() {
             *sample *= output_gain;
         }
@@ -372,6 +377,7 @@ impl Instrument for Fm2 {
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         self.refresh();
     }
 
@@ -385,6 +391,7 @@ impl Instrument for Fm2 {
         self.allocator.clear();
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         // The vibrato depth is derived from the wheel and `refresh` is the only thing that
         // writes it, so zeroing the wheel without this leaves the swing latched at whatever the
         // last modulation asked for — and the next note played after a Stop wobbles at a wheel

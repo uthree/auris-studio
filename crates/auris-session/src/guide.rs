@@ -1971,6 +1971,12 @@ pub mod harmony {
     //! `MidiClip::performance_curves` and `sounding_performance_curve_events` are shared by
     //! the scheduler, MIDI writer and read-only preview. Freezing materialises the first
     //! pass's combined bend along with its notes; source curves remain untouched otherwise.
+    //! The same evaluator adds delayed CC1 modulation using vibrato's onset envelope and
+    //! multiplies CC7 volume by an early dip and late swell on single notes at least 600 ms long.
+    //! Controller generation is independent of pitch depth and freezing retains these curves.
+    //! Volume defaults and resets to full level; modulation defaults and resets to zero.
+    //! `NoteTransform::Octaves` adds independently weighted upper/lower octave copies, skipping
+    //! out-of-range pitches and resolving same-pitch collisions in favour of source notes.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,

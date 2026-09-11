@@ -436,6 +436,12 @@ impl MidiClip {
         let mut out = Vec::new();
         for (offset, span) in loop_passes(self.length, self.loop_end) {
             let mut pass = curve_events(self.curve(which), span, step);
+            if which == ClipCurve::Controller(7) && !pass.is_empty() {
+                pass.retain(|(at, _)| *at < span);
+                pass.push((span, 1.0));
+                out.extend(pass.into_iter().map(|(at, value)| (at + offset, value)));
+                continue;
+            }
             // A pass the loop cuts through has to let go of whatever it was holding, for the
             // reason `curve_events` releases a whole one: a curve is channel state, and the
             // release it writes is aimed at the clip's length rather than at this cut.

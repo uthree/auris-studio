@@ -88,3 +88,55 @@ mod sample_rate_tests {
         assert_eq!(sample_rate_f32(96_000.0), 96_000.0);
     }
 }
+
+#[cfg(test)]
+mod channel_volume_tests {
+    use super::*;
+    use crate::test_support::{Rig, rms};
+    use auris_core::{Instrument, NoteEvent};
+
+    #[test]
+    fn melodic_instruments_apply_channel_volume_and_reset_it() {
+        let instruments: [Box<dyn Instrument>; 3] = [
+            Box::new(Chiptune::new()),
+            Box::new(Fm2::new()),
+            Box::new(Vocal::new()),
+        ];
+        for instrument in instruments {
+            let mut rig = Rig::new(instrument, 48_000.0, 256, 2);
+            if rig.instrument.descriptor().id == Vocal::ID {
+                // Breath noise advances across resets; isolate the tone for a gain comparison.
+                rig.set_param("breath", 0.0);
+            }
+            let note = NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 69,
+                velocity: 0.8,
+            };
+            let full = rig.render(4096, &[note]);
+            rig.instrument.reset();
+            let quiet = rig.render(
+                4096,
+                &[
+                    NoteEvent::Controller {
+                        frame: 0,
+                        number: 7,
+                        value: 0.5,
+                    },
+                    note,
+                ],
+            );
+            assert!(rms(&full) > 0.0001);
+            assert!(
+                (rms(&quiet) / rms(&full) - 0.25).abs() < 0.001,
+                "{}: full={} quiet={}",
+                rig.instrument.descriptor().name,
+                rms(&full),
+                rms(&quiet)
+            );
+            rig.instrument.reset();
+            let reset = rig.render(4096, &[note]);
+            assert!((rms(&reset) / rms(&full) - 1.0).abs() < 0.001);
+        }
+    }
+}

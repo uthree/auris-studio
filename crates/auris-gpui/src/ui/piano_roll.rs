@@ -675,10 +675,10 @@ impl AurisApp {
         // builder below is already holding a borrow of it.
         let curve_lanes = if source {
             self.panels.curve_lanes()
-        } else if !performed_bend.is_empty() {
-            vec![ClipCurve::Bend]
         } else {
-            Vec::new()
+            self.selected_midi_clip()
+                .map(|clip| clip.performance_curves().collect())
+                .unwrap_or_default()
         };
         let lanes: Vec<gpui::AnyElement> = curve_lanes
             .into_iter()
@@ -1089,7 +1089,15 @@ impl AurisApp {
         let points = if source {
             clip.curve(which).to_vec()
         } else {
-            self.score_preview_bend().as_ref().clone()
+            clip.sounding_performance_curve_events(
+                which,
+                CURVE_STEP,
+                &self.project().tempo_map,
+                &self.project().signatures,
+            )
+            .into_iter()
+            .map(|(at, value)| CurvePoint { at, value })
+            .collect()
         };
         let recorded = self.canvas.curve(which).clone();
 

@@ -89,7 +89,7 @@ Generated-clip recipe freezing is a separate control.
 
 ## Automatic pitch gestures
 
-On an instrument clip, open **Pitch gestures** in Performance. Scoop and fall have separate
+On an instrument clip, open **Melodic expression** in Performance. Scoop and fall have separate
 depth and duration controls. Vibrato has depth, rate in Hz, and onset delay; it fades in over
 100 ms and fades out toward the release. Melodic connection controls the duration on each
 side of a note change: the outgoing note bends toward the midpoint of the two pitches, and
@@ -113,7 +113,27 @@ Built-in instruments and CLAP note-expression instruments receive bends in semit
 Live VST3 and MIDI-only CLAP playback retain the host's existing +/-2-semitone range;
 the deeper control range is audible with instruments that accept it.
 
-Saved projects use format version 26 for generated pitch gestures.
+**Auto modulation** sends CC1 with the same monophonic eligibility, delay, 100 ms fade-in,
+and release fade as vibrato. Its depth is independent of pitch vibrato, so pitch depth can
+remain zero while the instrument's modulation wheel opens. The instrument determines the
+wheel's effect. Authored modulation is retained and added to the generated motion.
+
+**Long-note volume** sends CC7 on monophonic notes lasting at least 600 ms. It holds the
+attack briefly, dips early, stays low through the middle, rises to a late peak, and softens
+the release. Strength blends this contour with the existing volume curve, or full volume
+when none is written. Gaps retain authored volume and clip/loop ends restore full volume.
+SoundFonts and the built-in melodic synths respond to CC7; hosted instruments must support
+MIDI channel volume. The read-only Performance lanes show both generated controllers.
+
+**Upper octave** and **Lower octave** independently add copies at +12 and -12 semitones.
+Their percentages set velocity relative to the original. Out-of-range copies are skipped;
+existing notes take priority over overlapping copies at the same pitch. Exact octave layers
+with matching starts and releases share the melody's pitch and controller gestures. Other
+overlapping voices still suppress automatic channel gestures.
+All four controls default to zero (off). Source notes and curves remain editable; **Keep
+the Performance** writes the heard notes and controllers, and Undo restores the settings.
+
+Saved projects use format version 27 for octave doubling and generated controllers.
 
 ## Starting from automatic composition
 
