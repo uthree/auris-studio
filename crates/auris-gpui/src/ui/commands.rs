@@ -701,6 +701,8 @@ impl AurisApp {
     /// no command for going back — the scroll is not part of the document, so nothing restored
     /// it either.
     pub(crate) fn reset_view(&mut self) {
+        // The observed editor closes on the next draw, before reused clip ids can be edited.
+        self.rhythm_window = None;
         self.spectrogram_tracks.clear();
         self.music_analysis.cancel();
         self.music_analysis.report = None;

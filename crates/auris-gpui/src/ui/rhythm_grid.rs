@@ -5,6 +5,113 @@ use crate::ui::widgets::{ButtonStyle, button};
 use auris_i18n::Key;
 use auris_session::prelude::*;
 use gpui::{AnyElement, IntoElement, div, prelude::*};
+use gpui::{
+    Bounds, Context, FocusHandle, Render, ScrollHandle, Subscription, WeakEntity, Window,
+    WindowBounds, WindowOptions, px, size,
+};
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
+
+/// A resizable editor for one generated clip, sharing the main window's session.
+pub(crate) struct RhythmWindow {
+    app: WeakEntity<AurisApp>,
+    clip: ClipId,
+    focus: FocusHandle,
+    horizontal: ScrollHandle,
+    ready: bool,
+    _observe: Subscription,
+}
+
+impl Render for RhythmWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // open_window draws synchronously while the owner is still leased by its click handler.
+        // Read the shared session only after that handler has returned.
+        if !self.ready {
+            self.ready = true;
+            cx.notify();
+            return div().into_any_element();
+        }
+        let Some(app) = self.app.upgrade() else {
+            window.remove_window();
+            return div().into_any_element();
+        };
+        if app.read(cx).rhythm_window.map(gpui::AnyWindowHandle::from)
+            != Some(window.window_handle())
+        {
+            window.remove_window();
+            return div().into_any_element();
+        }
+        let (theme, title, content) = app.update(cx, |app, cx| {
+            (
+                app.theme.clone(),
+                format!(
+                    "{} — {}",
+                    app.t(Key::PartRhythm),
+                    app.session
+                        .midi_clip(self.clip)
+                        .map_or("", |clip| clip.name.as_str())
+                ),
+                app.rhythm_grid(self.clip, &self.horizontal, cx),
+            )
+        });
+        window.set_window_title(&title);
+        if !self.focus.contains_focused(window, cx) {
+            window.focus(&self.focus);
+        }
+        let bar = crate::titlebar::titlebar(window, &theme)
+            .child(
+                crate::titlebar::drag_region("rhythm-title")
+                    .flex_1()
+                    .min_w_0()
+                    .px_3()
+                    .child(div().min_w_0().truncate().child(title)),
+            )
+            .child(crate::titlebar::controls(window, &theme, |_, window, _| {
+                window.remove_window()
+            }));
+        div()
+            .id("rhythm-window")
+            .size_full()
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .flex_col()
+            .bg(theme.background)
+            .text_color(theme.text)
+            .font(theme.font.clone())
+            .text_sm()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                let key = &event.keystroke;
+                if key.key == "escape" {
+                    window.remove_window();
+                    cx.stop_propagation();
+                } else if key.modifiers.secondary() && key.key == "z" {
+                    let _ = this.app.update(cx, |app, cx| {
+                        if key.modifiers.shift {
+                            app.redo()
+                        } else {
+                            app.undo()
+                        };
+                        cx.notify();
+                    });
+                    cx.stop_propagation();
+                }
+            }))
+            .child(bar)
+            .child(
+                div()
+                    .id("rhythm-window-body")
+                    .flex_1()
+                    .min_h_0()
+                    .min_w_0()
+                    .w_full()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .child(content),
+            )
+            .into_any_element()
+    }
+}
 
 gpui::actions!(
     rhythm_grid,
@@ -22,12 +129,64 @@ pub(crate) fn key_bindings() -> [gpui::KeyBinding; 2] {
 }
 
 impl AurisApp {
-    pub(crate) fn rhythm_grid(&self, clip: ClipId, cx: &mut gpui::Context<Self>) -> AnyElement {
+    /// Opens or retargets the shared rhythm editor for a generated clip.
+    pub(crate) fn open_rhythm_window(&mut self, clip: ClipId, cx: &mut Context<Self>) {
+        if let Some(handle) = self.rhythm_window
+            && handle
+                .update(cx, |view, window, cx| {
+                    if view.clip != clip {
+                        view.clip = clip;
+                        view.horizontal = ScrollHandle::new();
+                    }
+                    window.activate_window();
+                    cx.notify();
+                })
+                .is_ok()
+        {
+            return;
+        }
+        let app = cx.entity();
+        let weak = app.downgrade();
+        let bounds = Bounds::centered(None, size(px(760.0), px(460.0)), cx);
+        let opened = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(crate::titlebar::options(self.t(Key::PartRhythm))),
+                window_min_size: Some(size(px(480.0), px(260.0))),
+                focus: true,
+                ..Default::default()
+            },
+            |_, cx| {
+                cx.new(|cx| RhythmWindow {
+                    app: weak,
+                    clip,
+                    focus: cx.focus_handle(),
+                    horizontal: ScrollHandle::new(),
+                    ready: false,
+                    _observe: cx.observe(&app, |_, _, cx| cx.notify()),
+                })
+            },
+        );
+        match opened {
+            Ok(handle) => self.rhythm_window = Some(handle),
+            Err(error) => self.set_status(error.to_string()),
+        }
+    }
+
+    fn rhythm_grid(
+        &self,
+        clip: ClipId,
+        horizontal: &ScrollHandle,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         let Ok(grid) = self.session.clip_rhythm_grid(clip) else {
-            return div().into_any_element();
+            return div()
+                .child(self.t(Key::PartRhythmUnavailable))
+                .into_any_element();
         };
         let theme = self.theme.clone();
         let steps = grid.rows.first().map_or(0, |row| row.steps.len());
+        let matrix_height = gpui::rems(1.5 + grid.rows.len() as f32 * 3.25 + 1.0);
         let mut labels = div()
             .flex()
             .flex_col()
@@ -179,6 +338,7 @@ impl AurisApp {
             .flex()
             .flex_col()
             .gap_2()
+            .w_full()
             .min_w_0()
             .child(
                 div()
@@ -187,17 +347,34 @@ impl AurisApp {
                     .child(self.t(Key::PartRhythm)),
             )
             .child(
-                div().flex().gap_1().min_w_0().child(labels).child(
+                div().flex().gap_1().w_full().min_w_0().child(labels).child(
                     div()
-                        .id("rhythm-grid-scroll")
+                        .relative()
                         .flex_1()
                         .min_w_0()
-                        .overflow_x_scroll()
-                        .child(matrix),
+                        .h(matrix_height)
+                        .child(
+                            div()
+                                .id("rhythm-grid-scroll")
+                                .debug_selector(|| "rhythm-grid-scroll".to_string())
+                                .w_full()
+                                .min_w_0()
+                                .h(matrix_height)
+                                .pb_4()
+                                .overflow_x_scroll()
+                                .track_scroll(horizontal)
+                                .child(matrix),
+                        )
+                        .child(div().absolute().inset_0().child(
+                            Scrollbar::horizontal(horizontal).scrollbar_show(ScrollbarShow::Always),
+                        )),
                 ),
             )
             .child(
                 div()
+                    .w_full()
+                    .min_w_0()
+                    .whitespace_normal()
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(self.t(if steps == 0 {
@@ -261,6 +438,10 @@ mod tests {
             )
         });
         paint(&app, cx);
+        click("part-rhythm-edit", cx);
+        let handle = app.read_with(cx, |app, _| app.rhythm_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
         click("rhythm-cell-0", cx);
         app.read_with(cx, |this, _| {
             assert!(this.prompt.is_none());
@@ -283,6 +464,24 @@ mod tests {
             this.session.undo().unwrap();
             assert!(!this.session.clip_rhythm_grid(clip).unwrap().rows[0].automatic);
         });
+        app.update(cx, |app, cx| app.open_rhythm_window(clip, cx));
+        assert!(
+            app.read_with(cx, |app, _| gpui::AnyWindowHandle::from(
+                app.rhythm_window.unwrap()
+            )) == gpui::AnyWindowHandle::from(handle),
+            "reopening reuses the existing editor"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(handle.update(cx, |_, _, _| ()).is_err());
+        app.update(cx, |app, cx| app.open_rhythm_window(clip, cx));
+        cx.run_until_parked();
+        let reopened = app.read_with(cx, |app, _| app.rhythm_window.unwrap());
+        assert!(
+            reopened
+                .update(cx, |view, _, _| assert_eq!(view.clip, clip))
+                .is_ok()
+        );
     }
 
     #[gpui::test]
@@ -317,6 +516,10 @@ mod tests {
             (clip, this.session.midi_clip(clip).unwrap().clone())
         });
         paint(&app, cx);
+        click("part-rhythm-edit", cx);
+        let handle = app.read_with(cx, |app, _| app.rhythm_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
         click("rhythm-cell-16", cx);
         app.update(cx, |this, _| {
             let grid = this.session.clip_rhythm_grid(clip).unwrap();
@@ -337,5 +540,43 @@ mod tests {
             this.session.undo().unwrap();
             assert_eq!(this.session.midi_clip(clip), Some(&original));
         });
+        crate::harness::resize(&app, cx, size(px(480.0), px(300.0)));
+        let was_on = app.read_with(cx, |app, _| {
+            app.session.clip_rhythm_grid(clip).unwrap().rows[1].steps[15]
+        });
+        let viewport = cx.debug_bounds("rhythm-grid-scroll").unwrap();
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: viewport.center(),
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(-10000.0), px(0.0))),
+            ..Default::default()
+        });
+        paint(&app, cx);
+        click("rhythm-cell-31", cx);
+        app.read_with(cx, |app, _| {
+            assert_eq!(
+                app.session.clip_rhythm_grid(clip).unwrap().rows[1].steps[15],
+                !was_on
+            )
+        });
+        cx.simulate_keystrokes("secondary-z");
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.session.midi_clip(clip), Some(&original))
+        });
+        cx.simulate_keystrokes("secondary-shift-z");
+        app.read_with(cx, |app, _| {
+            assert_eq!(
+                app.session.clip_rhythm_grid(clip).unwrap().rows[1].steps[15],
+                !was_on
+            )
+        });
+        app.update(cx, |app, cx| {
+            app.new_project();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(
+            handle.update(cx, |_, _, _| ()).is_err(),
+            "a new document closes the old editor"
+        );
     }
 }

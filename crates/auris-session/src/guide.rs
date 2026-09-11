@@ -1312,7 +1312,7 @@ pub mod composition {
     //!
     //! # Every clip knows what it is
     //!
-    //! The inspector's Rhythm grid shows one bar of step buttons, with a separate row for each
+    //! The inspector opens a resizable Rhythm window with one bar of step buttons and a row for each
     //! drum instrument. The first manual click adopts the displayed rhythm and toggles one hit.
     //! [`Session::toggle_clip_rhythm_step`](crate::Session::toggle_clip_rhythm_step) changes only
     //! that writer; the other drum voices keep their stored notes. Each row's Automatic button

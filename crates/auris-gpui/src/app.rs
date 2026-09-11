@@ -1482,6 +1482,8 @@ pub struct AurisApp {
     pub(crate) pointer: PointerGestures,
     /// The settings window, while it is open.
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
+    /// The rhythm editor; invalidated when the document is replaced.
+    pub(crate) rhythm_window: Option<WindowHandle<crate::ui::rhythm_grid::RhythmWindow>>,
     /// The external singing-backend setup window, while it is open.
     pub(crate) voice_setup_window: Option<WindowHandle<VoiceSetupWindow>>,
     /// Where the drawn keyboard has been dragged to. See [`crate::ui::typing_panel`].
@@ -1733,6 +1735,7 @@ impl AurisApp {
             pointer: input.pointer,
             keymap,
             settings_window: None,
+            rhythm_window: None,
             typing_panel: TypingPanel::default(),
             clicked_key: None,
             _repaint: repaint,

@@ -763,6 +763,8 @@ strings! {
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartRhythm { en: "Rhythm", ja: "リズム" }
+    PartRhythmEdit { en: "Edit rhythm…", ja: "リズムを編集…" }
+    PartRhythmUnavailable { en: "This clip is no longer available for rhythm editing.", ja: "このクリップのリズムは編集できなくなりました。" }
     PartRhythmAuto { en: "Automatic", ja: "自動生成" }
     PartRhythmFixed { en: "Fixed accent", ja: "固定アクセント" }
     PartRhythmGridHint { en: "Click a square to toggle a hit. The first bar repeats; Automatic lets each instrument choose its rhythm.", ja: "マスを押すと発音をオン／オフにします。1小節分のリズムを繰り返します。「自動生成」で楽器ごとにリズムをおまかせに戻せます。" }
