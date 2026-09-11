@@ -6,12 +6,8 @@
 //! this crate never learns what an LLM client is, the agent never learns what a window is, and
 //! the pair that ships in the release archive is exactly the pair that talks here.
 //!
-//! The one genuinely new problem is that both ends hold the same file. The panel's answer:
-//! the window **saves before every message**, so the agent always reads the document as it
-//! stands — and at the end of a turn the window accepts the collected writes as one undoable edit,
-//! automatically while it has nothing unsaved and by an offered button when it does. The
-//! decisions behind that live in [`AgentChat::absorb`], which is plain data in and plain
-//! instruction out, so the whole policy is tested without a window.
+//! Editing commands execute against the window's current session. They do not save or
+//! reload a project; successful edits appear on repaint and use ordinary undo history.
 
 use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
@@ -61,6 +57,8 @@ pub(crate) enum ChatEntry {
 /// One event off the agent's wire, already parsed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AgentEvent {
+    /// A file-free command for the bound session.
+    Edit { command: serde_json::Value },
     /// Previously completed text turns recovered for this project.
     History {
         /// User and assistant text, oldest first.
@@ -129,6 +127,9 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             .to_string()
     };
     Some(match parsed.get("event")?.as_str()? {
+        "edit" => AgentEvent::Edit {
+            command: parsed.get("command")?.clone(),
+        },
         "history" => AgentEvent::History {
             turns: parsed
                 .get("turns")?
@@ -506,6 +507,7 @@ impl AgentChat {
         dirty: bool,
     ) -> Absorbed {
         match event {
+            AgentEvent::Edit { .. } => {}
             AgentEvent::History { turns } => {
                 let current = match self.entries.last() {
                     Some(ChatEntry::You(text)) => Some(text.clone()),
@@ -674,6 +676,8 @@ fn spawn_link(folder: Option<&Path>, fresh_history: bool) -> Result<AgentLink, S
     let mut command = Command::new(&binary);
     command
         .arg("--json")
+        .arg("--live-session")
+        .env("AURIS_AGENT_LIVE_SESSION", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -804,7 +808,7 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOpt
 }
 
 impl AurisApp {
-    /// Frames the selection using the same clip and note numbers as the model tools.
+    /// Frames the selection using live command IDs and zero-based note indices.
     fn agent_selection_context(&self) -> serde_json::Value {
         let project = self.project();
         let clips: Vec<_> = project
@@ -821,24 +825,27 @@ impl AurisApp {
                 }))
             })
             .collect();
-        let mut notes = Vec::new();
-        if let Some((_, clip)) = self.selected_clip.and_then(|id| project.midi_clip(id)) {
-            let mut ordered: Vec<_> = clip.notes.iter().enumerate().collect();
-            ordered.sort_by_key(|(index, note)| (note.start, note.pitch, *index));
-            notes = ordered
-                .iter()
-                .enumerate()
-                .filter(|(_, (index, _))| self.selected_notes.contains(index))
-                .map(|(number, _)| number + 1)
-                .collect();
-        }
+        let notes: Vec<_> = self
+            .selected_clip
+            .and_then(|id| project.midi_clip(id))
+            .map(|(_, clip)| {
+                clip.notes
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| self.selected_notes.contains(index))
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .unwrap_or_default();
         serde_json::json!({
             "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
-            "selected_clips": clips, "selected_note_numbers": notes,
+            "selected_track_id": self.selected_track.map(|id| id.0),
+            "selected_clip_id": self.selected_clip.map(|id| id.0),
+            "selected_clips": clips, "selected_note_indices": notes,
             "playhead_tick": self.session.playhead().raw(),
             "playhead_bar": project.signatures.bar_of(self.session.playhead()),
             "loop_region_ticks": project.loop_region.map(|(start, end)| (start.raw(), end.raw())),
-            "addressing": "Clip and note numbers are 1-based as describe and notes report. The selection is context, not authorization to change unselected material."
+            "addressing": "Use stable numeric track and clip IDs. Note indices are zero-based storage indices as read_notes reports. The selection is context, not authorization to change unselected material."
         })
     }
 
@@ -922,28 +929,11 @@ impl AurisApp {
             }
             return;
         }
-        if self.session.path().is_none() {
-            self.agent_chat
-                .push_entry(ChatEntry::Note(Key::AgentSaveFirst));
-            return;
-        }
         if self.agent_chat.link.is_some()
             && self.agent_chat.bound_project.as_deref() != self.session.path()
         {
             self.agent_reset_conversation();
         }
-        if self.session.is_dirty()
-            && self.session.path().is_some()
-            && let Err(error) = self.session.save_in_place()
-        {
-            self.agent_chat
-                .push_entry(ChatEntry::Error(crate::i18n::error_text(
-                    &error,
-                    self.language(),
-                )));
-            return;
-        }
-
         if self.agent_chat.link.is_none() {
             let folder = self
                 .session
@@ -984,6 +974,16 @@ impl AurisApp {
         self.agent_chat.attachments.clear();
     }
 
+    /// Apply one request to the bound document without touching its saved file.
+    fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
+        if self.agent_chat.bound_project.as_deref() != self.session.path() {
+            return Err("The open document changed; start a new conversation".into());
+        }
+        serde_json::from_value::<auris_session::live_agent::Command>(command)
+            .map_err(|error| error.to_string())
+            .and_then(|command| self.session.agent_command(command))
+    }
+
     /// Drains the agent's channel, obeying what each event asks for.
     ///
     /// Called from the repaint tick, beside `Session::poll` — the same shape as everything
@@ -1012,6 +1012,10 @@ impl AurisApp {
             }
             cx.notify();
         }
+        // A live command must not join or finish the user's in-progress undo transaction.
+        if self.drag.is_some() {
+            return;
+        }
         loop {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
@@ -1019,6 +1023,29 @@ impl AurisApp {
             let Ok(event) = link.from_child.try_recv() else {
                 return;
             };
+            if let AgentEvent::Edit { command } = event {
+                let revision = self.session.revision();
+                let result = self.agent_edit(command);
+                let ok = result.is_ok();
+                let text = result.unwrap_or_else(|error| error);
+                let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
+                if let Some(link) = self.agent_chat.link.as_mut()
+                    && let Err(error) = writeln!(link.to_child, "{wire}")
+                {
+                    self.agent_chat
+                        .push_entry(ChatEntry::Error(error.to_string()));
+                    self.agent_chat.link = None;
+                    self.agent_chat.busy = false;
+                }
+                if self.session.revision() != revision {
+                    self.resync_selection();
+                    self.cancel_auto_sing();
+                    self.invalidate_sung_previews();
+                    self.reset_drum_analysis();
+                }
+                cx.notify();
+                continue;
+            }
             let open = self.session.path().map(Path::to_path_buf);
             let dirty = self.session.is_dirty();
             match self.agent_chat.absorb(event, open.as_deref(), dirty) {
@@ -2025,6 +2052,39 @@ mod tests {
     use auris_session::prelude::{Note, Ticks};
 
     #[gpui::test]
+    fn live_agent_edits_an_unsaved_document_and_undo_restores_it(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let before = this.project().clone();
+            assert!(this.session.path().is_none());
+            let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
+            let AgentEvent::Edit { command } = event else { panic!() };
+            this.agent_edit(command).unwrap();
+            assert!(this.project().tracks.iter().any(|track| track.name == "Agent lead"));
+            assert!(this.session.is_dirty());
+            assert!(this.session.path().is_none());
+            this.session.undo();
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn live_agent_refuses_a_request_bound_to_a_different_document(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let before = this.project().clone();
+            this.agent_chat.bound_project = Some(PathBuf::from("previous.auris"));
+            assert!(
+                this.agent_edit(
+                    serde_json::json!({"action":"add_track", "name":"Wrong", "kind":"instrument"})
+                )
+                .is_err()
+            );
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
     fn pending_changes_block_send_before_saving_or_starting_a_model(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
@@ -2087,9 +2147,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn selection_context_numbers_notes_in_the_same_order_as_the_tool(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn selection_context_uses_live_command_note_indices(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             let track = this
@@ -2112,7 +2170,7 @@ mod tests {
             this.selected_notes.insert(0);
             let context = this.agent_selection_context();
             assert_eq!(context["selected_track"], "Selected lead");
-            assert_eq!(context["selected_note_numbers"], serde_json::json!([2]));
+            assert_eq!(context["selected_note_indices"], serde_json::json!([0]));
             assert_eq!(context["selected_clips"][0]["clip"], 1);
         });
     }

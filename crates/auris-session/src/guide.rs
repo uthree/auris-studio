@@ -123,7 +123,7 @@ pub mod architecture {
     //! names, descriptions, argument schemas and the work behind them, in English, because
     //! every model reads it and neither protocol has a language field. The window and the CLI
     //! take the first; `auris-mcp` and `auris-agent` take the second, and taking it from one
-    //! shared crate is what keeps the tool called `compose` identical at both doors. If
+    //! shared crate provides the file-based MCP catalog and the rig agent's reference tools. If
     //! `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io` directly, something
     //! that belongs in the session layer has leaked into the UI. Move it down rather than
     //! adding the dependency.
@@ -142,7 +142,9 @@ pub mod architecture {
     //! session behind the Model Context Protocol, over stdio, so a language model's harness can
     //! compose, render and inspect projects as tools. `auris-agent` makes it a fourth, from the
     //! other direction: Auris itself dials a model — a local Ollama server or any
-    //! OpenAI-compatible API — hands it the same `auris-toolbox` tools, and runs the loop.
+    //! OpenAI-compatible API — offers read-only toolbox references and live session commands.
+    //! The desktop executes [`live_agent::Command`](crate::live_agent::Command) against the
+    //! currently open session, so changes appear immediately and remain unsaved and undoable.
     //!
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
@@ -178,7 +180,7 @@ pub mod architecture {
     //! sends actual WAV excerpts to an audio-capable model through an OpenAI-compatible API.
     //! The toolbox's `listen` tool renders a short excerpt, optionally attaches an earlier
     //! preview for comparison, and returns the critic's observations to the controlling model.
-    //! Both MCP and the rig agent can therefore repeat listen, localized edit and listen,
+    //! MCP clients can therefore repeat listen, localized edit and listen,
     //! even when the controlling model accepts only text. The critic has no editing tools.
     //! An accepted upload is not proof of accurate hearing: observations remain fallible,
     //! refusals must stay visible, and numeric audio analysis remains separately identified.
@@ -1620,9 +1622,7 @@ pub mod documents {
     //! checks the last disk snapshot and refuses to overwrite another editor's changes.
     //! [`Session::reload_external_changes`](crate::Session::reload_external_changes) accepts
     //! the disk version as one undoable edit, retaining the window's previous edits. The agent
-    //! panel collects writes until the end of a turn before accepting them. When local edits
-    //! overlap a turn, accepting the disk version keeps the local version on the undo stack;
-    //! another prompt cannot save over the unresolved disk version.
+    //! panel applies commands directly to the live session through its normal undoable API.
     //!
     //! Headless editing tools call [`Session::save_with_checkpoint`](crate::Session::save_with_checkpoint)
     //! because their undo stack ends with the process. The preceding document is stored under

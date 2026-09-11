@@ -3,8 +3,8 @@
 //! The fourth frontend, and the mirror of `auris-mcp`: there, a language model's harness
 //! connects to Auris; here, Auris connects to a language model — a local Ollama server or any
 //! OpenAI-compatible API — hands it the tools from [`auris_toolbox`], and runs the loop. The
-//! two doors serve the same tools from the same crate, so a model that has learnt one has
-//! learnt the other.
+//! MCP exposes saved-file workflows; rig exposes edits to the desktop
+//! session and read-only reference tools.
 //!
 //! `rig` is the client library, and it stays inside this crate along with the `tokio` runtime
 //! it needs. Three decisions of this frontend's own:
@@ -118,6 +118,7 @@ options:
                         input; rig's Ollama adapter cannot send attachments
   --json                speak JSON lines on stdin and stdout instead, for
                         another program to drive — the desktop panel's mode
+  --live-session        require the live session protocol (desktop host only)
   -h, --help            this text
 
 --provider, --model, --url and --api-key-env fall back to the shared settings
@@ -156,6 +157,7 @@ fn parse_args(
     let mut context_tokens = prefs.context_tokens.unwrap_or(32768);
     let mut thinking = prefs.thinking;
     let mut json = false;
+    let mut live_session = false;
     let mut attachments: Vec<String> = Vec::new();
     let mut prompt_words: Vec<&str> = Vec::new();
 
@@ -180,6 +182,7 @@ fn parse_args(
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
             "--json" => json = true,
+            "--live-session" => live_session = true,
             "--context-tokens" => {
                 context_tokens = value_of("--context-tokens")?
                     .parse()
@@ -242,6 +245,9 @@ fn parse_args(
         true => None,
         false => Some(prompt_words.join(" ")),
     };
+    if live_session && !json {
+        return Err("--live-session requires --json and a desktop host".into());
+    }
     if json && prompt.is_some() {
         return Err("--json is driven over stdin; drop the prompt".to_string());
     }
@@ -303,15 +309,17 @@ fn parse_command(
 /// What the model is told once, before the conversation: the shared workflow, plus what only
 /// this frontend knows — where it is standing, and who it is talking to.
 fn preamble() -> String {
-    let here = std::env::current_dir()
-        .map(|dir| dir.display().to_string())
-        .unwrap_or_else(|_| "the current directory (unreadable)".to_string());
-    format!(
-        "{}\n\nYou are running on the user's machine; the working directory is {here}, and \
-         that is where files belong when the user does not say otherwise. Answer the user in \
-         the language they write in.",
-        toolbox::INSTRUCTIONS
-    )
+    "You edit the document currently open in Auris Studio through edit_project.
+Answer in the user's language. Call edit_project with command.action inspect first,
+then make dependent edits one at a time using returned IDs.
+For a song request, use spec_reference and list_presets, then edit_project with
+command.action compose and inline spec or preset. This changes the open arrangement,
+including an unsaved empty document. Never replace existing tracks for a local edit.
+Use replace=true only for a user-requested replacement. Changes remain unsaved and undoable.
+Verify with inspect before claiming completion. Read notes with command.action read_notes.
+The live tool uses numeric stable IDs; add_note uses zero-based quarter-note beats
+relative to the clip. Use search_documentation for application questions."
+        .into()
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -424,62 +432,93 @@ macro_rules! text_tool {
     };
 }
 
-session_tool!(AnalyzeMusic, analyze_music);
-session_tool!(AnalyzeChords, analyze_chords);
-session_tool!(AnalyzeAudio, analyze_audio);
-session_tool!(AnalyzeInstruments, analyze_instruments);
-session_tool!(TranscribeMixture, transcribe_mixture);
-session_tool!(TranscribeAudio, transcribe_audio);
-session_tool!(Effects, effects);
-session_tool!(Automation, automation);
-session_tool!(Capabilities, capabilities);
-session_tool!(ToolHelp, tool_help);
-session_tool!(Routing, routing);
-session_tool!(SetTrackState, set_track_state);
-session_tool!(ConvertTrackToAudio, convert_track_to_audio);
-session_tool!(SetInstrumentParam, set_instrument_param);
-session_tool!(CreateProject, create_project);
-session_tool!(ImportAudio, import_audio);
-session_tool!(ImportMidi, import_midi);
-session_tool!(ExportMidi, export_midi);
-session_tool!(Listen, listen);
-session_tool!(InspectComposition, inspect_composition);
-session_tool!(EditHarmony, edit_harmony);
-session_tool!(EditRecipe, edit_recipe);
-session_tool!(EditClip, edit_clip);
-session_tool!(Checkpoints, checkpoints);
-text_tool!(SpecReference, spec_reference);
 session_tool!(SearchDocumentation, search_documentation);
-session_tool!(CheckSpec, check_spec);
-session_tool!(Compose, compose);
-session_tool!(Render, render);
-session_tool!(Preview, preview);
-session_tool!(Describe, describe);
-session_tool!(Analyze, analyze);
-session_tool!(AnalyzeDrumKit, analyze_drum_kit);
-session_tool!(SetDrumAssignment, set_drum_assignment);
-session_tool!(Mixer, mixer);
-session_tool!(SetLevel, set_level);
-session_tool!(SetEffect, set_effect);
-session_tool!(SectionGain, section_gain);
-session_tool!(RegenerateClips, regenerate_clips);
-session_tool!(TeachProgression, teach_progression);
-session_tool!(ForgetProgression, forget_progression);
+text_tool!(SpecReference, spec_reference);
 text_tool!(ListProgressions, list_progressions);
 text_tool!(ListPresets, list_presets);
 text_tool!(ListInstruments, list_instruments);
-session_tool!(AddTrack, add_track);
-session_tool!(AddPart, add_part);
-session_tool!(SetInstrument, set_instrument);
-session_tool!(RenameTrack, rename_track);
-session_tool!(RemoveTrack, remove_track);
-session_tool!(AddClip, add_clip);
-session_tool!(Notes, notes);
-session_tool!(EditNotes, edit_notes);
-session_tool!(Accompany, accompany);
-session_tool!(WriteLyrics, write_lyrics);
-session_tool!(Sing, sing);
-session_tool!(ComposeLyrics, compose_lyrics);
+
+/// Serializes exchanges even when a provider requests parallel tool calls.
+static LIVE_REQUEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// One live session command, wrapped in an object for provider tool schemas.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct EditProjectArgs {
+    /// Operation to execute on the document currently open in the desktop.
+    command: auris_session::live_agent::Command,
+}
+
+/// Editing is executed by the desktop in its current session.
+struct EditProject;
+
+impl Tool for EditProject {
+    const NAME: &'static str = "edit_project";
+    type Args = EditProjectArgs;
+    type Output = String;
+    type Error = ToolFailed;
+    fn description(&self) -> String {
+        "Inspect or edit the currently open document. Edits appear immediately and are undoable. Use command.action inspect for numeric track/clip IDs. No project path is needed.".into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        schema::<EditProjectArgs>()
+    }
+    fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
+        ToolExecutionError::other(error.0)
+    }
+    async fn call(
+        &self,
+        _context: &mut ToolContext,
+        args: Self::Args,
+    ) -> Result<String, ToolFailed> {
+        if std::env::var_os("AURIS_AGENT_LIVE_SESSION").is_none() {
+            return Err(ToolFailed(
+                "Open the Agent Panel in Auris Studio to edit the current document".into(),
+            ));
+        }
+        let _guard = LIVE_REQUEST.lock().await;
+        tokio::task::spawn_blocking(move || {
+            exchange_live_command(
+                args,
+                &mut std::io::stdin().lock(),
+                &mut std::io::stdout().lock(),
+            )
+        })
+        .await
+        .map_err(|e| ToolFailed(e.to_string()))?
+    }
+}
+
+/// One serialized exchange; the host acknowledges the edit before the model continues.
+fn exchange_live_command(
+    args: EditProjectArgs,
+    reader: &mut impl BufRead,
+    writer: &mut impl Write,
+) -> Result<String, ToolFailed> {
+    let request = serde_json::json!({"event":"edit", "command":args.command});
+    writeln!(writer, "{request}")
+        .and_then(|()| writer.flush())
+        .map_err(|e| ToolFailed(e.to_string()))?;
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| ToolFailed(e.to_string()))?;
+    let response: serde_json::Value =
+        serde_json::from_str(&line).map_err(|e| ToolFailed(e.to_string()))?;
+    if response.get("event").and_then(|v| v.as_str()) != Some("edit_result") {
+        return Err(ToolFailed("The live session response was missing".into()));
+    }
+    let text = response
+        .get("text")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ToolFailed("Missing edit result text".into()))?
+        .to_string();
+    if response.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(text)
+    } else {
+        Err(ToolFailed(text))
+    }
+}
 
 /// Arguments to the agent-only internet search tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -626,67 +665,17 @@ fn strip_markup(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Every tool in the box, onto one agent — the one list to keep when a tool is added.
+/// File-free editing and reference tools for the rig agent.
 fn armed(builder: AgentBuilder) -> Agent {
     builder
         .preamble(&preamble())
-        .tool(AnalyzeMusic)
-        .tool(AnalyzeChords)
-        .tool(AnalyzeAudio)
-        .tool(AnalyzeInstruments)
-        .tool(TranscribeMixture)
-        .tool(TranscribeAudio)
-        .tool(InspectComposition)
-        .tool(EditHarmony)
-        .tool(EditRecipe)
-        .tool(Effects)
-        .tool(Automation)
-        .tool(Capabilities)
-        .tool(ToolHelp)
-        .tool(Routing)
-        .tool(SetTrackState)
-        .tool(ConvertTrackToAudio)
-        .tool(SetInstrumentParam)
-        .tool(CreateProject)
-        .tool(ImportAudio)
-        .tool(ImportMidi)
-        .tool(ExportMidi)
-        .tool(Listen)
-        .tool(EditClip)
-        .tool(Checkpoints)
+        .tool(EditProject)
         .tool(SearchDocumentation)
         .tool(InternetSearch)
         .tool(SpecReference)
-        .tool(CheckSpec)
-        .tool(Compose)
-        .tool(Render)
-        .tool(Preview)
-        .tool(Describe)
-        .tool(Analyze)
-        .tool(AnalyzeDrumKit)
-        .tool(SetDrumAssignment)
-        .tool(Mixer)
-        .tool(SetLevel)
-        .tool(SetEffect)
-        .tool(SectionGain)
-        .tool(RegenerateClips)
-        .tool(TeachProgression)
-        .tool(ForgetProgression)
         .tool(ListProgressions)
         .tool(ListPresets)
         .tool(ListInstruments)
-        .tool(AddTrack)
-        .tool(AddPart)
-        .tool(SetInstrument)
-        .tool(RenameTrack)
-        .tool(RemoveTrack)
-        .tool(AddClip)
-        .tool(Notes)
-        .tool(EditNotes)
-        .tool(Accompany)
-        .tool(WriteLyrics)
-        .tool(Sing)
-        .tool(ComposeLyrics)
         .build()
 }
 
@@ -912,70 +901,6 @@ fn confined_to_working_directory(path: &Path) -> bool {
     std::fs::canonicalize(existing).is_ok_and(|ancestor| ancestor.starts_with(&root))
 }
 
-/// Refuses model-selected write destinations outside the directory the user launched the agent
-/// in. Project contents are untrusted context; they must not be able to turn an inspection into
-/// an arbitrary filesystem write.
-fn write_destination(tool: &str, args: &str) -> Result<(), String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool)
-        && tool != toolbox::preview::NAME
-        && tool != toolbox::render::NAME
-        && tool != toolbox::export_midi::NAME
-        && tool != toolbox::listen::NAME
-    {
-        return Ok(());
-    }
-    let parsed: serde_json::Value = serde_json::from_str(args)
-        .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
-    if matches!(
-        tool,
-        toolbox::analyze_chords::NAME
-            | toolbox::transcribe_audio::NAME
-            | toolbox::transcribe_mixture::NAME
-    ) {
-        let mut fields = Vec::new();
-        if toolbox::writes_project(tool, &parsed) {
-            fields.push("project");
-        }
-        if matches!(
-            tool,
-            toolbox::transcribe_audio::NAME | toolbox::transcribe_mixture::NAME
-        ) {
-            fields.push("midi_output");
-        }
-        for field in fields {
-            if let Some(path) = parsed.get(field).and_then(|value| value.as_str())
-                && !confined_to_working_directory(Path::new(path))
-            {
-                return Err(format!(
-                    "refused `{field}` outside the agent's working directory: {path}"
-                ));
-            }
-        }
-        return Ok(());
-    }
-    if matches!(
-        tool,
-        toolbox::effects::NAME
-            | toolbox::automation::NAME
-            | toolbox::routing::NAME
-            | toolbox::analyze_drum_kit::NAME
-    ) && !toolbox::writes_project(tool, &parsed)
-    {
-        return Ok(());
-    }
-    for field in ["project", "output", "stems"] {
-        let Some(path) = parsed.get(field).and_then(|value| value.as_str()) else {
-            continue;
-        };
-        if !confined_to_working_directory(&PathBuf::from(path)) {
-            return Err(format!(
-                "refused `{field}` outside the agent's working directory: {path}"
-            ));
-        }
-    }
-    Ok(())
-}
-
 /// The first line of a tool's answer, for the narration.
 fn first_line(output: &ToolOutput) -> Option<&str> {
     output
@@ -998,10 +923,7 @@ impl AgentHook for Narrator {
             ""
         };
         eprintln!("→ {} {args}{ellipsis}", event.tool_name);
-        match write_destination(event.tool_name, event.args) {
-            Ok(()) => ToolCallAction::Run,
-            Err(reason) => ToolCallAction::Skip(reason),
-        }
+        ToolCallAction::Run
     }
 
     async fn on_tool_result(
@@ -1038,27 +960,6 @@ fn full_text(output: &ToolOutput) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The project file a successful tool call has just rewritten, if it rewrote one.
-///
-/// [`auris_toolbox::WRITES_PROJECTS`] names the tools; the path is in the call's own
-/// arguments, resolved the way every door resolves one — so a host holding that project open
-/// can compare like with like. `None` for a tool that writes no project, arguments that
-/// carry no path, and a path that resolves to nothing on disk.
-fn changed_project(tool: &str, args: &str) -> Option<String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool) {
-        return None;
-    }
-    let parsed: serde_json::Value = serde_json::from_str(args).ok()?;
-    if !toolbox::writes_project(tool, &parsed) {
-        return None;
-    }
-    let path = parsed
-        .get("project")
-        .or_else(|| parsed.get("output"))?
-        .as_str()?;
-    Some(toolbox::resolve_project(path).ok()?.display().to_string())
 }
 
 /// One line of the host's side of the wire: `{"say": "..."}`, with an optional `"audio"`
@@ -1186,10 +1087,7 @@ impl AgentHook for Reporter {
         emit(serde_json::json!({
             "event": "call", "tool": event.tool_name, "args": event.args,
         }));
-        match write_destination(event.tool_name, event.args) {
-            Ok(()) => ToolCallAction::Run,
-            Err(reason) => ToolCallAction::Skip(reason),
-        }
+        ToolCallAction::Run
     }
 
     async fn on_tool_result(
@@ -1198,11 +1096,6 @@ impl AgentHook for Reporter {
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
         emit(result_event(event));
-        if event.raw_result.is_success()
-            && let Some(project) = changed_project(event.tool_name, event.args)
-        {
-            emit(serde_json::json!({ "event": "changed", "project": project }));
-        }
         ToolResultAction::Keep
     }
 }
@@ -1750,36 +1643,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_writing_tool_reports_a_changed_project_and_only_a_real_one() {
-        // A file that exists, addressed the unnested way a model would.
-        let root = std::env::temp_dir().join(format!("auris-agent-changed-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("Song")).unwrap();
-        let real = root.join("Song").join("Song.auris");
-        std::fs::write(&real, "{}").unwrap();
-        let shorthand = root.join("Song.auris").display().to_string();
-        let args = serde_json::json!({ "project": shorthand }).to_string();
-
-        let changed = changed_project("set_level", &args).expect("a writing tool with a file");
-        assert_eq!(
-            changed,
-            real.display().to_string(),
-            "resolved like every door"
-        );
-        assert_eq!(
-            changed_project("analyze", &args),
-            None,
-            "a reading tool moves nothing"
-        );
-        assert_eq!(
-            changed_project("set_level", r#"{"track":"lead"}"#),
-            None,
-            "no path, no report"
-        );
-
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
     fn skipped_and_refused_tools_are_reported_as_unsuccessful() {
         use rig::tool::ToolResult;
 
@@ -1964,7 +1827,7 @@ mod tests {
 
     #[tokio::test]
     async fn repeated_invalid_calls_stop_before_a_third_execution() {
-        let call = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"set_level","arguments":"{}"}}]}"#;
+        let call = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"edit_project","arguments":"{}"}}]}"#;
         let (url, seen) = mock_server(vec![completion(call, "tool_calls"); 3]);
         let Command::Run(options) = parse(
             &format!("--provider openai --model mock --url {url}"),
@@ -1988,7 +1851,7 @@ mod tests {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert!(requests[1].contains("missing field"));
-        assert!(requests[1].contains("Read tool_help"));
+        assert!(requests[1].contains("Check the tool schema"));
     }
 
     #[tokio::test]
@@ -2062,7 +1925,7 @@ mod tests {
             let requests = seen.lock().unwrap();
             assert_eq!(requests.len(), 3);
             if tool == "set_level" {
-                assert!(requests[1].contains("outside the agent's working directory"));
+                assert!(requests[1].contains("unavailable"));
             }
         }
     }
@@ -2222,97 +2085,78 @@ mod tests {
         assert!(refused.contains("25 MB"), "{refused}");
     }
 
+    #[test]
+    fn live_protocol_waits_for_the_host_result_and_preserves_refusals() {
+        for ok in [true, false] {
+            let response =
+                serde_json::json!({"event":"edit_result", "ok":ok, "text":"host answer"})
+                    .to_string();
+            let mut reader = std::io::Cursor::new(response);
+            let mut writer = Vec::new();
+            let result = exchange_live_command(
+                EditProjectArgs {
+                    command: auris_session::live_agent::Command::Inspect {},
+                },
+                &mut reader,
+                &mut writer,
+            );
+            let request: serde_json::Value = serde_json::from_slice(&writer).unwrap();
+            assert_eq!(
+                request,
+                serde_json::json!({"event":"edit", "command":{"action":"inspect"}})
+            );
+            assert_eq!(result.is_ok(), ok);
+            assert_eq!(result.unwrap_or_else(|e| e.to_string()), "host answer");
+        }
+    }
+
     #[tokio::test]
-    async fn the_armed_agent_matches_every_shared_tool_name_description_and_schema() {
+    async fn rig_exposes_only_live_editing_and_read_only_references() {
         let Command::Run(options) = parse("--provider openai --model mock", &no_env).unwrap()
         else {
             panic!()
         };
         let agent = build_agent(&options).unwrap();
         let actual = agent.tool_definitions(None).await.unwrap();
-        let catalog = toolbox::tool_catalog();
+        let mut names: Vec<_> = actual.iter().map(|tool| tool.name.as_str()).collect();
+        names.sort_unstable();
         assert_eq!(
-            actual.len(),
-            catalog.len() + 1,
-            "shared tools and internet search"
+            names,
+            [
+                "edit_project",
+                "list_instruments",
+                "list_presets",
+                "list_progressions",
+                "search_documentation",
+                "search_internet",
+                "spec_reference"
+            ]
         );
-        for expected in catalog {
+        let catalog = toolbox::tool_catalog();
+        for name in [
+            "create_project",
+            "compose",
+            "render",
+            "export_midi",
+            "import_midi",
+            "listen",
+        ] {
+            assert!(
+                catalog.iter().any(|tool| tool.name == name),
+                "MCP retains {name}"
+            );
+            assert!(!names.contains(&name));
+        }
+        for expected in catalog.iter().filter(|tool| names.contains(&tool.name)) {
             let exposed = actual
                 .iter()
                 .find(|tool| tool.name == expected.name)
-                .unwrap_or_else(|| panic!("{} is missing from the agent", expected.name));
-            assert_eq!(
-                exposed.description, expected.description,
-                "{}",
-                expected.name
-            );
-            assert_eq!(exposed.parameters, expected.parameters, "{}", expected.name);
+                .unwrap();
+            assert_eq!(exposed.parameters, expected.parameters);
         }
-        assert!(actual.iter().any(|tool| tool.name == InternetSearch::NAME));
-
-        let compose = schema::<toolbox::compose::Args>();
-        let fields = compose["properties"].as_object().unwrap();
-        assert!(fields.contains_key("output"));
-        assert!(fields.contains_key("spec"), "the flattened spec triangle");
-        let none = schema::<NoArgs>();
-        assert_eq!(none["type"], "object");
-    }
-
-    #[test]
-    fn recognition_writes_stay_in_the_working_directory_and_reads_stay_read_only() {
-        let here = std::env::current_dir().unwrap();
-        let outside = here.parent().unwrap();
-        let project = here.join("analysis-inside.auris");
-        for tool in [
-            toolbox::analyze_audio::NAME,
-            toolbox::analyze_instruments::NAME,
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            let args = serde_json::json!({
-                "audio": outside.join("source.wav"),
-                "model": outside.join("decoder.onnx")
-            });
-            assert!(!toolbox::writes_project(tool, &args), "{tool}");
-            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-        }
-        let read = serde_json::json!({"project": outside.join("Song.auris"), "apply": false});
-        assert!(!toolbox::writes_project(
-            toolbox::analyze_chords::NAME,
-            &read
-        ));
-        assert!(write_destination(toolbox::analyze_chords::NAME, &read.to_string()).is_ok());
-
-        for tool in [
-            toolbox::analyze_chords::NAME,
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            let mut args =
-                serde_json::json!({"project": outside.join("Song.auris"), "apply": true});
-            assert!(toolbox::writes_project(tool, &args), "{tool}");
-            let error = write_destination(tool, &args.to_string()).unwrap_err();
-            assert!(error.contains("`project`"), "{tool}: {error}");
-            args["project"] = serde_json::json!(project);
-            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-        }
-        for tool in [
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            for apply in [false, true] {
-                let mut args = serde_json::json!({
-                    "midi_output": outside.join("draft.mid"), "apply": apply
-                });
-                if apply {
-                    args["project"] = serde_json::json!(project);
-                }
-                let error = write_destination(tool, &args.to_string()).unwrap_err();
-                assert!(error.contains("`midi_output`"), "{tool}: {error}");
-                args["midi_output"] = serde_json::json!(here.join("draft.mid"));
-                assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-                assert_eq!(toolbox::writes_project(tool, &args), apply, "{tool}");
-            }
+        let schema = schema::<EditProjectArgs>().to_string();
+        for field in ["output", "project", "path", "stems", "midi_output"] {
+            assert!(!schema.contains(&format!("\"{field}\":")));
         }
     }
 

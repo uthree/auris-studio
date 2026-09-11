@@ -1,4 +1,14 @@
-# Agent composition and revision
+# Live Agent Panel and MCP workflows
+
+The rig Agent Panel edits the currently open session through `edit_project`. It works before
+the first save: ask for a song and the composed tracks appear in the arrangement. Commands
+read the latest document, use stable track/clip IDs and record normal undo steps. Saving
+remains a user action. Whole-song composition requires `replace: true` for a nonempty song;
+local changes use track, clip and note commands instead.
+
+MCP retains the full saved-file tool catalog. The file-based composition, rendering and
+listening workflows below describe MCP.
+
 
 The Agent Panel and MCP expose the same project commands through `auris-toolbox`.
 Start with `capabilities` to check the General MIDI library, voice library paths and
@@ -204,7 +214,7 @@ to increase context or start a fresh conversation. OpenAI-compatible providers k
 their own context policy and do not receive Ollama-specific parameters.
 An Ollama response stopped by the generation limit is an incomplete turn, even if
 it contains text or a syntactically valid tool call. The agent reports that limit
-before executing those calls; previous saved edits remain available for a smaller
+before executing those calls; previous live edits remain available for a smaller
 follow-up request.
 
 The panel's context gauge uses input tokens from the last model request, rather than
@@ -216,4 +226,4 @@ allowed to finish, and active multi-step composition can exceed five minutes ove
 Two failures with identical tool arguments stop a third execution; changing arguments
 allows a correction. Successful calls clear that signature's failure count. Interrupted
 JSON conversations retain the request and interruption summary so a following turn can
-inspect saved work and resume. Completed tool edits remain on disk.
+inspect the current document and resume. Completed live edits remain in the session.

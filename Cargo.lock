@@ -1087,6 +1087,7 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "midir",
+ "schemars 1.2.2",
  "serde",
  "serde_json",
  "serde_yaml_ng",

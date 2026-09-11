@@ -429,7 +429,7 @@ impl AgentHook for Guard {
         self.mark(state.active_tools);
         if event.raw_result.is_error_kind(ToolErrorKind::InvalidArgs) {
             return ToolResultAction::rewrite(format!(
-                "{}\nRead tool_help with {{\"name\":\"{}\"}} for the exact argument fields and examples before trying again. Do not repeat unchanged arguments.",
+                "{}\nCheck the tool schema for {} and correct its argument fields before trying again. Do not repeat unchanged arguments.",
                 full_text(event.presentation),
                 event.tool_name
             ));
