@@ -156,17 +156,24 @@ impl PitchDial {
             Self::VolumeSwell => settings.volume_swell = value,
             Self::OctaveAbove | Self::OctaveBelow => unreachable!(),
         }
-        let mut out = stack.to_vec();
-        if let Some(stage) = out
-            .iter_mut()
-            .find(|t| matches!(t, NoteTransform::Pitch { .. }))
-        {
-            *stage = NoteTransform::Pitch { settings };
-        } else {
-            out.push(NoteTransform::Pitch { settings });
-        }
-        out
+        with_pitch_settings(stack, settings)
     }
+}
+
+pub(crate) fn with_pitch_settings(
+    stack: &[NoteTransform],
+    settings: PitchPerformance,
+) -> Vec<NoteTransform> {
+    let mut out = stack.to_vec();
+    if let Some(stage) = out
+        .iter_mut()
+        .find(|t| matches!(t, NoteTransform::Pitch { .. }))
+    {
+        *stage = NoteTransform::Pitch { settings };
+    } else {
+        out.push(NoteTransform::Pitch { settings });
+    }
+    out
 }
 
 pub(crate) fn pitch_settings(stack: &[NoteTransform]) -> PitchPerformance {
@@ -232,6 +239,9 @@ impl AurisApp {
                 PitchDial::OctaveBelow,
             ] {
                 rows.push(self.performance_slider(clip, PerformDial::Pitch(dial), stack, cx));
+                if dial == PitchDial::VolumeSwell {
+                    rows.extend(self.volume_contour_rows(clip, stack, cx));
+                }
             }
         }
         rows

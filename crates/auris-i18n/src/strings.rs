@@ -792,6 +792,17 @@ strings! {
     PerformPitchDelay { en: "Vibrato delay", ja: "ビブラート開始まで" }
     PerformModulation { en: "Auto modulation", ja: "自動モジュレーション" }
     PerformVolumeSwell { en: "Long-note volume", ja: "長音の音量変化" }
+    VolumeContourPreset { en: "Volume shape", ja: "音量カーブ" }
+    VolumeContourBowed { en: "Bowed", ja: "弓の抑揚" }
+    VolumeContourSwell { en: "Central swell", ja: "中央で膨らむ" }
+    VolumeContourCrescendo { en: "Crescendo", ja: "クレッシェンド" }
+    VolumeContourDecrescendo { en: "Decrescendo", ja: "デクレッシェンド" }
+    VolumeContourSoftAttack { en: "Soft attack", ja: "柔らかい立ち上がり" }
+    VolumeContourFlat { en: "Flat", ja: "一定" }
+    VolumeContourCustom { en: "Custom", ja: "カスタム" }
+    VolumeContourStart { en: "Start 0%", ja: "開始 0%" }
+    VolumeContourEnd { en: "End 100%", ja: "終端 100%" }
+    VolumeContourHint { en: "Click to add; drag to move; right-click to remove a point. Top = full volume. Strength is set above.", ja: "クリックで点を追加、ドラッグで移動、右クリックで削除。上端が最大音量です。強さは上の項目で調整します。" }
     PerformOctaveAbove { en: "Upper octave", ja: "上オクターブの強さ" }
     PerformOctaveBelow { en: "Lower octave", ja: "下オクターブの強さ" }
     PerformPitchFall { en: "Fall depth", ja: "フォールの深さ" }

@@ -46,8 +46,10 @@ pub use strum::{Strum, StrumClock};
 mod ornament;
 mod performance;
 mod pitch_performance;
+mod volume_contour;
 pub use ghost::{GhostNotes, GhostPattern};
 pub use pitch_performance::PitchPerformance;
+pub use volume_contour::{VolumeContour, VolumeContourPreset};
 mod recipe;
 mod routing;
 mod track;
@@ -279,8 +281,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 27 adds octave doubling and generated modulation/volume performance curves.
-    pub const FORMAT_VERSION: u32 = 27;
+    /// Version 28 adds editable per-note volume contours to performance settings.
+    pub const FORMAT_VERSION: u32 = 28;
 
     /// An empty project.
     ///

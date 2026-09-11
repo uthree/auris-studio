@@ -1302,6 +1302,13 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_perform_dial(clip, dial, start_fraction, delta);
             }
+            Drag::VolumeContourPoint {
+                clip,
+                index,
+                bounds,
+            } => {
+                self.drag_volume_contour_point(clip, index, bounds, event.position);
+            }
             Drag::SongDial {
                 target,
                 start_fraction,

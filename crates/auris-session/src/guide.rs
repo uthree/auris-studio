@@ -1695,7 +1695,9 @@ pub mod documents {
     //! # Versions
     //!
     //! [`Project::FORMAT_VERSION`](auris_core::Project::FORMAT_VERSION) is checked before the full
-    //! parse and must match this build. Asset paths use tagged `inside` or `external` objects.
+    //! parse. Version 27 is also accepted with the original bowed volume contour supplied by
+    //! default; other versions must match this build. Asset paths use tagged `inside` or
+    //! `external` objects.
 }
 
 pub mod timelines {
@@ -1975,6 +1977,9 @@ pub mod harmony {
     //! multiplies CC7 volume by an early dip and late swell on single notes at least 600 ms long.
     //! Controller generation is independent of pitch depth and freezing retains these curves.
     //! Volume defaults and resets to full level; modulation defaults and resets to zero.
+    //! `VolumeContour` stores normalized, ordered volume points independent of note duration.
+    //! Presets copy those points into an editable shape; their knot times are included in
+    //! sampling so the editor, scheduler, MIDI export and freezing use the same contour.
     //! `NoteTransform::Octaves` adds independently weighted upper/lower octave copies, skipping
     //! out-of-range pitches and resolving same-pitch collisions in favour of source notes.
     //!

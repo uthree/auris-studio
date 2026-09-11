@@ -125,6 +125,17 @@ when none is written. Gaps retain authored volume and clip/loop ends restore ful
 SoundFonts and the built-in melodic synths respond to CC7; hosted instruments must support
 MIDI channel volume. The read-only Performance lanes show both generated controllers.
 
+**Volume shape** offers Bowed (the original shape), Central swell, Crescendo, Decrescendo,
+Soft attack, and Flat. Choosing a preset copies its points into an editable graph. Click
+the graph to add a point, drag a point to move it, or right-click an interior point to
+remove it. The first and last points stay at the start and release, but their volume can
+be changed. Escape cancels a drag; Undo restores a whole gesture or preset selection.
+The horizontal axis spans 0–100% of each note's duration and the top is full volume.
+Edits turn the preset label into **Custom**. The shape is saved with the clip and is shared
+by playback, MIDI export, the Performance preview and Keep the Performance. The separate
+strength control still blends toward the shape; choosing or editing a shape does not
+turn a zero strength on. Older settings retain the Bowed shape.
+
 **Upper octave** and **Lower octave** independently add copies at +12 and -12 semitones.
 Their percentages set velocity relative to the original. Out-of-range copies are skipped;
 existing notes take priority over overlapping copies at the same pitch. Exact octave layers
@@ -133,7 +144,7 @@ overlapping voices still suppress automatic channel gestures.
 All four controls default to zero (off). Source notes and curves remain editable; **Keep
 the Performance** writes the heard notes and controllers, and Undo restores the settings.
 
-Saved projects use format version 27 for octave doubling and generated controllers.
+Saved projects use format version 28 for editable long-note volume contours.
 
 ## Starting from automatic composition
 

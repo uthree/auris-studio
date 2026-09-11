@@ -24,6 +24,8 @@ pub struct PitchPerformance {
     pub modulation: f32,
     /// Long-note volume contour strength in 0..=1; zero leaves channel volume untouched.
     pub volume_swell: f32,
+    /// Editable shape stretched over each long note; defaults to the bowed envelope.
+    pub volume_contour: super::VolumeContour,
     /// Fall depth below the release, in 0..=12 semitones.
     pub fall: f32,
     /// Fall duration in 10..=500 milliseconds, capped at half the note.
@@ -43,6 +45,7 @@ impl Default for PitchPerformance {
             vibrato_delay_ms: 300.0,
             modulation: 0.0,
             volume_swell: 0.0,
+            volume_contour: super::VolumeContour::default(),
             fall: 0.0,
             fall_ms: 150.0,
             glide_ms: 0.0,
@@ -203,6 +206,18 @@ impl MidiClip {
                 note.end() - Ticks(1),
                 note.end(),
             ]);
+            if which == ClipCurve::Controller(7) {
+                for (style, _) in &stages {
+                    ticks.extend(style.volume_contour.points().iter().map(|point| {
+                        let fraction =
+                            point.at.raw() as f64 / super::VolumeContour::END.raw() as f64;
+                        (tempo.seconds_to_ticks(Seconds(
+                            starts[i] + (ends[i] - starts[i]) * fraction,
+                        )) - base)
+                            .clamp(note.start, note.end())
+                    }));
+                }
+            }
             let mut time = starts[i] + 0.005;
             while time < ends[i] {
                 ticks.insert(
@@ -256,7 +271,9 @@ impl MidiClip {
                                     * vibrato_envelope(style, elapsed, length)
                             }
                             ClipCurve::Controller(7) if length >= 0.6 => {
-                                value *= volume_contour(elapsed / length, style.volume_swell)
+                                value *= 1.0
+                                    + style.volume_swell.clamp(0.0, 1.0)
+                                        * (style.volume_contour.level_at(elapsed / length) - 1.0)
                             }
                             _ => {}
                         }
@@ -323,29 +340,6 @@ fn vibrato_envelope(s: &PitchPerformance, at: f64, length: f64) -> f32 {
     smooth(after_delay / 0.1) * smooth((length - at) / 0.08)
 }
 
-fn volume_contour(position: f64, amount: f32) -> f32 {
-    // Attack, early dip, held trough, late swell, then a softened release.
-    let anchors = [
-        (0.0, 0.8),
-        (0.06, 0.8),
-        (0.12, 0.35),
-        (0.24, 0.3),
-        (0.48, 0.3),
-        (0.76, 0.85),
-        (0.9, 1.0),
-        (0.95, 0.98),
-        (1.0, 0.6),
-    ];
-    for pair in anchors.windows(2) {
-        if position <= pair[1].0 {
-            let mix = ((position - pair[0].0) / (pair[1].0 - pair[0].0)).clamp(0.0, 1.0) as f32;
-            let level = pair[0].1 + (pair[1].1 - pair[0].1) * mix;
-            return 1.0 + amount.clamp(0.0, 1.0) * (level - 1.0);
-        }
-    }
-    1.0
-}
-
 fn gesture(
     s: &PitchPerformance,
     at: f64,
@@ -374,6 +368,45 @@ mod tests {
     use super::*;
     use crate::ClipId;
     use crate::project::curve_at;
+    #[test]
+    fn custom_volume_knots_follow_note_length_and_are_sampled_exactly() {
+        let clip = clip(
+            vec![Note::new(60, Ticks::ZERO, Ticks(3840))],
+            PitchPerformance {
+                volume_swell: 1.0,
+                volume_contour: super::super::VolumeContour::new(vec![
+                    CurvePoint {
+                        at: Ticks::ZERO,
+                        value: 0.4,
+                    },
+                    CurvePoint {
+                        at: Ticks(2500),
+                        value: 0.9,
+                    },
+                    CurvePoint {
+                        at: Ticks(5000),
+                        value: 0.2,
+                    },
+                    CurvePoint {
+                        at: Ticks(10_000),
+                        value: 0.7,
+                    },
+                ]),
+                ..PitchPerformance::default()
+            },
+        );
+        let points = clip.performed_curve_points(
+            ClipCurve::Controller(7),
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+            0,
+            Ticks::ZERO,
+            clip.length,
+        );
+        assert!((curve_at(&points, Ticks(960)) - 0.9).abs() < 0.0001);
+        assert!((curve_at(&points, Ticks(1920)) - 0.2).abs() < 0.0001);
+        assert!(clip.controllers.is_empty());
+    }
     #[test]
     fn new_controls_default_off_in_old_settings_and_round_trip_when_enabled() {
         let old: PitchPerformance = serde_json::from_str(r#"{"vibrato":0.2}"#).unwrap();

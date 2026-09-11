@@ -239,6 +239,7 @@ pub mod prelude {
     };
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
+        VolumeContour, VolumeContourPreset,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;

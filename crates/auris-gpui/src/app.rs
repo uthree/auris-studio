@@ -636,6 +636,15 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Moving one point of a normalized long-note volume contour.
+    VolumeContourPoint {
+        /// Clip whose performance curve is edited.
+        clip: ClipId,
+        /// Index in the ordered point list.
+        index: usize,
+        /// Drawable graph bounds captured when the drag begins.
+        bounds: Bounds<Pixels>,
+    },
     /// Dragging the time-zoom slider.
     TimeZoom {
         /// Slider position when the drag began, from 0 to 1.
@@ -752,7 +761,9 @@ impl Drag {
                 Some(Edit::GenerateClip)
             }
             // One step for the sweep, named for the clip whose performance it shapes.
-            Drag::PerformDial { clip, .. } => Some(Edit::SetClipTransforms(*clip)),
+            Drag::PerformDial { clip, .. } | Drag::VolumeContourPoint { clip, .. } => {
+                Some(Edit::SetClipTransforms(*clip))
+            }
             // A dial on the song sheet turns nothing in the document: the sheet is a question
             // about a song that has not been written yet, and nothing it does belongs on the
             // undo stack until Write is pressed.
