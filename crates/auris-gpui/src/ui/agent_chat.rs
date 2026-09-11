@@ -2196,6 +2196,57 @@ mod tests {
     }
 
     #[gpui::test]
+    fn markdown_list_body_has_visible_bounds(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![ChatEntry::Agent(
+                "設定\n\n- **テンポ:** 150 BPM\n- **拍子:** 4/4\n\n改善点\n\n1. 弦楽器を強化\n2. ドラムを追加".into(),
+            )];
+        });
+        crate::harness::paint(&app, cx);
+        for selector in [
+            "agent-markdown-0-1-0-0-block",
+            "agent-markdown-0-1-1-0-block",
+            "agent-markdown-0-3-0-0-block",
+            "agent-markdown-0-3-1-0-block",
+        ] {
+            let body = cx.debug_bounds(selector).expect("list body is rendered");
+            let message = cx.debug_bounds("agent-line-0").unwrap();
+            assert!(
+                body.size.width > message.size.width / 2. && body.size.height > gpui::px(0.),
+                "list body collapsed: {selector}: {body:?}; message: {message:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn markdown_list_long_body_wraps(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![
+                ChatEntry::Agent("- **設定:** 短い本文".into()),
+                ChatEntry::Agent(format!(
+                    "- **設定:** {}",
+                    "弦楽器とドラムを強化します。".repeat(30)
+                )),
+            ];
+        });
+        crate::harness::paint(&app, cx);
+        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        assert!(
+            long > short * 3.,
+            "list text does not wrap: {short:?} -> {long:?}"
+        );
+    }
+
+    #[gpui::test]
     fn markdown_list_continuation_paragraphs_stack_vertically(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {

@@ -1,7 +1,8 @@
 //! Content-sized Markdown blocks for a transcript, with vertical list continuations.
 //!
 //! TextView 0.5 puts successive paragraphs of a list item in the same horizontal
-//! flex row and drops non-paragraph children. Own the block structure here while
+//! flex row, can collapse its clipped text body, and drops non-paragraph children.
+//! Own the block structure here while
 //! retaining its selectable rich text, links, tables and syntax highlighting.
 
 use std::sync::Arc;
@@ -209,7 +210,15 @@ fn render_blocks(
                 list.into_any_element()
             }
         };
-        column = column.child(div().w_full().min_w_0().flex_shrink_0().child(child));
+        let debug_id = format!("{id}-{index}-block");
+        column = column.child(
+            div()
+                .debug_selector(move || debug_id.clone())
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .child(child),
+        );
     }
     column.into_any_element()
 }
@@ -217,6 +226,22 @@ fn render_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compact_japanese_list_keeps_rich_text_bodies() {
+        let parsed = parse("- **テンポ:** 150 BPM\n- **拍子:** `4/4`");
+        let Block::List(items) = &parsed[0] else {
+            panic!("expected list")
+        };
+        let bodies: Vec<_> = items
+            .iter()
+            .map(|(_, children)| match &children[..] {
+                [Block::Text(text)] => text.as_ref(),
+                _ => panic!("expected one paragraph per item"),
+            })
+            .collect();
+        assert_eq!(bodies, ["**テンポ:** 150 BPM", "**拍子:** `4/4`"]);
+    }
 
     #[test]
     fn list_items_keep_paragraphs_code_and_nested_lists() {
