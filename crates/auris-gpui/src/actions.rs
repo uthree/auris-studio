@@ -212,6 +212,13 @@ actions!(
         OpenDrumAnalysis,
         /// Open analysis progress and results.
         OpenAnalysisResults,
+        ToggleVisualizer,
+        VisualizerSource,
+        VisualizerFreeze,
+        VisualizerAverage,
+        VisualizerPeaks,
+        VisualizerSave,
+        VisualizerReset,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -551,6 +558,13 @@ bindable! {
         "analysis.instruments", GroupAnalysis, MenuAnalyzeInstruments, "" => AnalyzeSelectedInstruments;
         "analysis.mixture", GroupAnalysis, MenuTranscribeMixture, "" => TranscribeSelectedMixture;
         "analysis.drums", GroupAnalysis, AnalysisDrums, "" => OpenDrumAnalysis;
+        "visualizer.toggle", GroupAnalysis, VisualizerTitle, "" => ToggleVisualizer;
+        "visualizer.source", GroupAnalysis, VisualizerSelected, "" => VisualizerSource;
+        "visualizer.freeze", GroupAnalysis, VisualizerFreeze, "" => VisualizerFreeze;
+        "visualizer.average", GroupAnalysis, VisualizerAverage, "" => VisualizerAverage;
+        "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
+        "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;
+        "visualizer.reset", GroupAnalysis, VisualizerReset, "" => VisualizerReset;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 

@@ -40,6 +40,20 @@ macro_rules! strings {
 }
 
 strings! {
+    VisualizerWaiting { en: "Waiting for audio", ja: "音声を待っています" }
+    VisualizerTitle { en: "Audio Visualizer…", ja: "オーディオビジュアライザー…" }
+    VisualizerSelected { en: "Follow selected track", ja: "選択トラックを追従" }
+    VisualizerFreeze { en: "Freeze", ja: "表示を停止" }
+    VisualizerAverage { en: "Average", ja: "平均表示" }
+    VisualizerPeaks { en: "Peak hold", ja: "ピーク保持" }
+    VisualizerSave { en: "Save comparison", ja: "比較カーブを保存" }
+    VisualizerReset { en: "Clear comparison / peaks", ja: "比較・ピークをクリア" }
+    VisualizerNoTrack { en: "Select a track to monitor", ja: "表示するトラックを選択してください" }
+    VisualizerSpectrum { en: "Spectrum · dBFS", ja: "スペクトラム · dBFS" }
+    VisualizerLegend { en: "Accent: current / average · thin gray: peak · thick gray: saved comparison", ja: "アクセント色：現在値／平均 · 細い灰線：ピーク · 太い灰線：保存した比較" }
+    VisualizerStereo { en: "Stereo scope · M / S", ja: "ステレオスコープ · M / S" }
+    VisualizerCorrelation { en: "Correlation (−1 … +1)", ja: "相関（−1 … +1）" }
+    VisualizerHint { en: "Vertical: mono · horizontal: opposite polarity. Negative correlation is a cue to check mono playback, not a quality score. — means one or both channels are silent.", ja: "縦：モノラル · 横：逆位相。負の相関はモノラル再生を確認する目安です。— は片側または両側が無音です。" }
     CmdMatchReference { en: "Adjust by Audio Evaluation…", ja: "音声評価で自動調整…" }
     EditMatchReference { en: "Adjust by Audio Evaluation", ja: "音声評価による調整" }
     AudioMatchObjective { en: "Evaluation target", ja: "評価の目標" }

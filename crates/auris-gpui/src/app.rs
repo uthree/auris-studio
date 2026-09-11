@@ -1326,6 +1326,7 @@ pub struct AurisApp {
     pub(crate) analysis_panel: bool,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
+    pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
@@ -1613,6 +1614,7 @@ impl AurisApp {
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
+                        this.poll_visualizer();
                         // Separate from `poll` on purpose: that is housekeeping and this writes
                         // to disk. A success says nothing: it is a private recovery snapshot, and
                         // announcing one every half minute would drown out useful status. A
@@ -1696,6 +1698,7 @@ impl AurisApp {
             drum_analysis: Default::default(),
             analysis_panel: false,
             music_analysis: Default::default(),
+            visualizer: Default::default(),
             timbre_map: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),

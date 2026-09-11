@@ -299,3 +299,6 @@ pub mod prelude {
         StemSummary, TakeReport, decode_audio, input_level_of, read_soundfont,
     };
 }
+
+/// A coherent stereo analysis snapshot.
+pub use session::VisualizerFrame;

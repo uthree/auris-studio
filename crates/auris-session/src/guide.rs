@@ -287,6 +287,13 @@ pub mod architecture {
     //! document revision, obsolete renders are cancelled, and results from older revisions are
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
     //!
+    //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
+    //! paired post-fader samples under one sequence counter, without allocation or waiting on
+    //! the audio thread. `Session::visualizer_frame` transforms the channels independently and
+    //! averages their power, preserving right-only and opposite-polarity signals. Undefined
+    //! correlation is explicit for silent channels. The frontend owns freeze, display history
+    //! and saved comparisons; none of these changes the document or rendered audio.
+    //!
     //! # The third thread, and why recording needed one
     //!
     //! Two threads is the whole story for playback and one short of it for recording. cpal has no

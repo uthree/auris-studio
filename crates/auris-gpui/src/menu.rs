@@ -658,6 +658,11 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
                     panels.is_detached(panel),
                 )
             })
+            .chain([command(
+                t(Key::VisualizerTitle),
+                actions::ToggleVisualizer,
+                "visualizer.toggle",
+            )])
             .collect(),
     });
 

@@ -69,7 +69,9 @@ mod timbre;
 mod tracks;
 mod transport;
 mod typing;
+mod visualizer;
 mod vst3;
+pub use visualizer::VisualizerFrame;
 
 #[cfg(test)]
 mod fixtures;
@@ -366,6 +368,7 @@ pub struct Session {
     /// rebuild happens on every structural edit and an open display must not be left reading a
     /// scope that nothing writes to any more.
     scope: Arc<auris_engine::Scope>,
+    visualizer_scope: Arc<auris_engine::Scope>,
     /// Turns the window the engine publishes into a spectrum.
     ///
     /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
@@ -614,6 +617,7 @@ impl Session {
             disk_stamp: None,
             disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
+            visualizer_scope: Arc::new(auris_engine::Scope::new()),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
@@ -834,15 +838,19 @@ impl Session {
     pub fn spectrum(&mut self, low_hz: f64, high_hz: f64, bands: &mut [f32]) {
         bands.fill(auris_dsp::SILENCE_DB);
         let mut samples = vec![0.0f32; self.analyzer.size()];
-        if !self.scope.read(&mut samples) {
+        let mut right = vec![0.0; samples.len()];
+        if !self.scope.read_stereo(&mut samples, &mut right) {
             return;
         }
-        let rate = self.scope.sample_rate();
-        self.analyzer.reset();
-        self.analyzer.push(&samples);
-        let mut bins = vec![0.0f32; self.analyzer.bin_count()];
-        self.analyzer.magnitudes(&mut bins);
-        auris_dsp::bands_from_bins(&bins, rate, low_hz, high_hz, bands);
+        visualizer::stereo_spectrum(
+            &mut self.analyzer,
+            &samples,
+            &right,
+            self.scope.sample_rate(),
+            low_hz,
+            high_hz,
+            bands,
+        );
     }
 
     /// Level a band with nothing in it reports, so a display knows where its floor is.
@@ -1198,6 +1206,7 @@ impl Session {
             rate,
         );
         graph.set_scope(Arc::clone(&self.scope));
+        graph.set_visualizer_scope(Arc::clone(&self.visualizer_scope));
         // Re-attached rather than remembered by the graph, for the same reason the scope is: this
         // runs on every structural edit, and a monitor that did not survive one would go quiet the
         // moment somebody added a track while playing.
