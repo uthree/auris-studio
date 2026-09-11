@@ -1456,13 +1456,11 @@ and API-key environment variable name are saved in shared settings. Secrets rema
 process environment. The transcript shows tool calls, results and the model's answer.
 
 The model edits the current session through live commands, including an unsaved empty
-project. `inspect_project` reads the current arrangement; `compose_song` accepts a preset and
-a few musical choices instead of a nested command containing a handwritten specification.
-Track and note tools also take flat arguments. Asking for a song adds the composed tracks
-to the open arrangement. Each successful
-editing command is undoable and appears before the model's final reply. Save the project
-normally when ready. Existing arrangements require an explicit replacement request before a
-whole-song composition replaces their tracks.
+project. `inspect_project` reads the current arrangement. The model chooses the musical
+parts and writes them through flat track, clip and note tools. `add_notes` inserts a phrase
+of up to 256 notes as one undoable edit; `set_tempo` and `set_loop` control tempo and looping.
+Changes appear before the model's final reply. Existing music is preserved unless its
+removal is explicitly requested. Save the project normally when ready.
 
 The panel can attach audio, stop a running turn and start a new conversation. Opening another
 document rebinds the agent. In saved projects, successful

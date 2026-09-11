@@ -1,21 +1,20 @@
 # Live Agent Panel and MCP workflows
 
 The rig Agent Panel edits the open session through small, flat tools. Start with
-`inspect_project`, then call `compose_song`, `add_track`, `set_level`, or another operation
-directly; do not wrap arguments in `command` or supply an `action` discriminator.
+`inspect_project`, then use `add_track`, `set_instrument`, `add_clip` and `add_notes`
+to construct the arrangement. Pass arguments directly without a command or action wrapper.
 
-For a song, `list_presets` lists starting arrangements. `compose_song` takes a preset and
-optional title, tempo, key, energy, tension, brightness, and `looped`. For example:
+The model chooses the harmony, melody and rhythm and writes notes explicitly.
+`add_notes` accepts up to 256 notes in one undoable edit. For example:
 
 ```json
-{"preset":"orchestral","tempo":144,"key":"D minor","energy":0.9,"tension":0.8,"looped":true}
+{"clip":1,"notes":[{"pitch":62,"start_beat":0,"duration_beats":1,"velocity":0.8},{"pitch":65,"start_beat":1,"duration_beats":0.5,"velocity":0.7}]}
 ```
 
-The host derives a valid specification from the preset, keeping its parts and sections
-consistent. It works before the first save, and changes remain undoable and unsaved.
-Inspect before composing: a nonempty arrangement requires an explicit replacement request
-and `replace: true`. For local changes, use track, clip and note tools instead. Do not add
-empty tracks before composing a whole song. Inspect again to verify completion.
+Times are quarter-note beats relative to the clip, starting at zero. Invalid batches leave
+the document unchanged. Use `set_tempo` for BPM and `set_loop` for a bar-based playback loop.
+Changes work before the first save and remain unsaved. Preserve existing music and inspect
+again to verify the arrangement before claiming completion.
 
 Permissions map these flat tools to the existing `edit_project.<action>` rules, so saved
 allow/deny rules and exact-command approvals continue to apply.

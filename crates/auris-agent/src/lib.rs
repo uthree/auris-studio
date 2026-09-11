@@ -268,11 +268,19 @@ fn preamble() -> String {
     "You edit the document currently open in Auris Studio. Answer in the user's language.
 Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
 without command or action wrappers. Use the numeric IDs returned by inspection and edits.
-For a song request, call list_presets then compose_song with the closest preset and optional
-musical choices matching the request. Use looped=true for loop background music.
-Do not write TOML or invent parts and roles.
-Do not add empty tracks before compose_song. If inspection shows existing tracks, preserve
-them unless the user explicitly requests replacement; only then pass replace=true.
+For a song request, choose the harmony, melody, rhythm and arrangement yourself.
+Use list_instruments, add_track, set_instrument, add_clip and add_notes to write your music.
+Batch a short phrase into one add_notes call. Each note has pitch, start_beat,
+duration_beats and velocity. start_beat is its position; duration_beats is its length.
+For example, two successive quarter notes:
+{\"clip\":1,\"notes\":[{\"pitch\":62,\"start_beat\":0,\"duration_beats\":1,\"velocity\":0.8},
+{\"pitch\":65,\"start_beat\":1,\"duration_beats\":1,\"velocity\":0.8}]}.
+Use short batches of up to 32 notes to keep each response manageable.
+Use multiple tracks for distinct musical parts and set_level to balance them.
+Track kind is lowercase: instrument for melody/harmony, drum for percussion.
+For set_instrument use the exact returned instrument ID, never a program number or sound field.
+Set the tempo with set_tempo and a loop region with set_loop for loop background music.
+Preserve existing tracks and notes unless the user explicitly requests their removal.
 Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
 inspect_project before claiming completion. Use read_notes before changing existing notes.
 Note times are zero-based quarter-note beats relative to the clip. Use search_documentation
@@ -356,47 +364,31 @@ macro_rules! session_tool {
     };
 }
 
-/// One [`rig::tool::Tool`] over an argument-less `auris-toolbox` module.
-///
-/// Through `spawn_blocking` all the same: the listings read the progression book off disk,
-/// and uniformity is cheaper than a judgement call per tool.
-macro_rules! text_tool {
-    ($tool:ident, $module:ident) => {
-        struct $tool;
+struct ListInstruments;
 
-        impl Tool for $tool {
-            const NAME: &'static str = toolbox::$module::NAME;
-            type Args = NoArgs;
-            type Output = String;
-            type Error = ToolFailed;
+impl Tool for ListInstruments {
+    const NAME: &'static str = "list_instruments";
+    type Args = NoArgs;
+    type Output = String;
+    type Error = ToolFailed;
 
-            fn description(&self) -> String {
-                toolbox::$module::DESCRIPTION.to_string()
-            }
-
-            fn parameters(&self) -> serde_json::Value {
-                schema::<NoArgs>()
-            }
-
-            fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
-                ToolExecutionError::other(error.0)
-            }
-
-            async fn call(
-                &self,
-                _context: &mut ToolContext,
-                _args: NoArgs,
-            ) -> Result<String, ToolFailed> {
-                tokio::task::spawn_blocking(|| Ok(toolbox::$module::run()))
-                    .await
-                    .map_err(|error| ToolFailed(error.to_string()))?
-            }
-        }
-    };
+    fn description(&self) -> String {
+        "List exact built-in instrument IDs for set_instrument. Use the returned ID in its instrument field.".into()
+    }
+    fn parameters(&self) -> serde_json::Value {
+        schema::<NoArgs>()
+    }
+    fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
+        ToolExecutionError::other(error.0)
+    }
+    async fn call(&self, _context: &mut ToolContext, _args: NoArgs) -> Result<String, ToolFailed> {
+        tokio::task::spawn_blocking(toolbox::live_agent::instruments)
+            .await
+            .map_err(|error| ToolFailed(error.to_string()))
+    }
 }
 
 session_tool!(SearchDocumentation, search_documentation);
-text_tool!(ListInstruments, list_instruments);
 
 fn edit_reply(response: serde_json::Value) -> Result<String, ToolFailed> {
     if response["event"] != "edit_result" {
@@ -564,13 +556,6 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
         .preamble(&preamble())
         .tool(SearchDocumentation)
         .tool(InternetSearch)
-        .dynamic_tool(rig::tool::DynamicTool::new(
-            "list_presets", "List starting arrangements for compose_song. Pick the closest style and override only the musical choices the user requested.", schema::<NoArgs>(),
-            |_, _| Box::pin(async {
-                let text = auris_session::prelude::PRESETS.iter().map(|preset| format!("{}: {}", preset.name, preset.description)).collect::<Vec<_>>().join("\n");
-                Ok(ToolOutput::text(text))
-            }),
-        ))
         .tool(ListInstruments);
     for definition in toolbox::live_agent::definitions() {
         let tool_name = definition.name.clone();
@@ -1575,7 +1560,7 @@ mod tests {
     async fn ollama_output_limit_stops_partial_answers_and_tool_turns() {
         for message in [
             serde_json::json!({"role":"assistant","content":"I have finished the first"}),
-            serde_json::json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"list_presets","arguments":{}}}]}),
+            serde_json::json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"list_instruments","arguments":{}}}]}),
         ] {
             let truncated = serde_json::json!({
                 "model":"mock", "created_at":"2026-09-06T00:00:00Z",
@@ -1592,7 +1577,7 @@ mod tests {
             let agent = build_agent(&options).unwrap();
             let error = converse_with_bridge(
                 &agent,
-                Message::user("List the presets"),
+                Message::user("List the instruments"),
                 Vec::new(),
                 2,
                 None,
@@ -1692,8 +1677,8 @@ mod tests {
     #[tokio::test]
     async fn unknown_tool_names_get_corrective_feedback_and_can_recover() {
         let bad = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"list_preset","arguments":"{}"}}]}"#;
-        let corrected = r#"{"role":"assistant","tool_calls":[{"id":"good","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
-        let done = r#"{"role":"assistant","content":"The presets are available."}"#;
+        let corrected = r#"{"role":"assistant","tool_calls":[{"id":"good","type":"function","function":{"name":"list_instruments","arguments":"{}"}}]}"#;
+        let done = r#"{"role":"assistant","content":"The instruments are available."}"#;
         let (url, seen) = mock_server(vec![
             completion(bad, "tool_calls"),
             completion(corrected, "tool_calls"),
@@ -1709,7 +1694,7 @@ mod tests {
         let agent = build_agent(&options).unwrap();
         let (answer, ..) = converse(
             &agent,
-            Message::user("List the presets"),
+            Message::user("List the instruments"),
             Vec::new(),
             5,
             false,
@@ -1717,12 +1702,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(answer, "The presets are available.");
+        assert_eq!(answer, "The instruments are available.");
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert!(requests[1].contains("Tool 'list_preset' is unavailable"));
         assert!(requests[1].contains("No tool in this batch was executed"));
-        assert!(requests[2].contains("orchestral: Strings, horns"));
+        assert!(requests[2].contains("Instrument IDs for set_instrument"));
     }
 
     #[tokio::test]
@@ -1766,13 +1751,13 @@ mod tests {
         }
     }
 
-    /// The whole loop against a scripted model: the "model" asks for `list_presets`, the tool
+    /// The whole loop against a scripted model: the "model" asks for `list_instruments`, the tool
     /// really runs, its answer really goes back over the wire, and the final text reaches the
     /// caller. No network, no key, no model — but every seam of this frontend crossed once.
     #[tokio::test]
     async fn the_tool_loop_runs_end_to_end_against_a_scripted_model() {
-        let call = r#"{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
-        let done = r#"{"role":"assistant","content":"The presets are listed above."}"#;
+        let call = r#"{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_instruments","arguments":"{}"}}]}"#;
+        let done = r#"{"role":"assistant","content":"The instruments are listed above."}"#;
         let with_usage = |response: String, input, output| {
             let mut response: serde_json::Value = serde_json::from_str(&response).unwrap();
             response["usage"] = serde_json::json!({"prompt_tokens":input,"completion_tokens":output,"total_tokens":input+output});
@@ -1808,7 +1793,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(answer, "The presets are listed above.");
+        assert_eq!(answer, "The instruments are listed above.");
         assert_eq!(usage.input_tokens, 30);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(
@@ -1825,13 +1810,13 @@ mod tests {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(
-            requests[0].contains("\"list_presets\""),
+            requests[0].contains("\"list_instruments\""),
             "the tool is offered to the model: {}",
             requests[0]
         );
         assert!(requests[1].contains("\"tool\""), "{}", requests[1]);
-        let listing = toolbox::list_presets::run();
-        let first_preset = listing
+        let listing = toolbox::live_agent::instruments();
+        let first_instrument = listing
             .lines()
             .nth(1)
             .unwrap()
@@ -1839,7 +1824,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            requests[1].contains(first_preset),
+            requests[1].contains(first_instrument),
             "the toolbox's own answer rode back to the model: {}",
             requests[1]
         );
@@ -1944,13 +1929,14 @@ mod tests {
         let actual = agent.tool_definitions(None).await.unwrap();
         let mut names: Vec<_> = actual.iter().map(|tool| tool.name.as_str()).collect();
         names.sort_unstable();
-        assert!(names.contains(&"compose_song"));
+        assert!(!names.contains(&"compose_song"));
+        assert!(names.contains(&"add_notes"));
         assert!(names.contains(&"inspect_project"));
         assert!(names.contains(&"set_level"));
         assert!(!names.contains(&"edit_project"));
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
-        assert_eq!(names.len(), 16);
+        assert_eq!(names.len(), 17);
         let catalog = toolbox::tool_catalog();
         for name in [
             "create_project",
@@ -1969,7 +1955,7 @@ mod tests {
         for expected in catalog.iter().filter(|tool| {
             matches!(
                 tool.name,
-                "list_presets" | "list_instruments" | "search_documentation" | "search_internet"
+                "list_instruments" | "search_documentation" | "search_internet"
             )
         }) {
             let exposed = actual

@@ -94,6 +94,25 @@ pub enum Command {
         /// Velocity, 0 through 1.
         velocity: f32,
     },
+    /// Add a phrase or chord as 1..256 notes in one undoable edit. All notes must fit the clip.
+    AddNotes {
+        /// Stable clip ID from add_clip or inspect_project.
+        clip: u64,
+        /// Notes with MIDI pitches and clip-relative quarter-note beats.
+        notes: Vec<NoteInput>,
+    },
+    /// Set the tempo at the beginning of the project.
+    SetTempo {
+        /// Tempo in BPM, 20 through 300.
+        bpm: f64,
+    },
+    /// Set and enable a playback loop using a 1-based start bar and duration.
+    SetLoop {
+        /// First bar, starting at 1.
+        start_bar: u32,
+        /// Loop duration in bars, 1 through 1024.
+        bars: u32,
+    },
     /// Remove notes using zero-based storage indices from read_notes.
     RemoveNotes {
         /// Stable clip ID.
@@ -101,6 +120,55 @@ pub enum Command {
         /// Zero-based note indices.
         indices: Vec<usize>,
     },
+}
+
+/// One explicitly authored note, expressed in clip-relative quarter-note beats.
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoteInput {
+    /// MIDI pitch, 0 through 127.
+    pub pitch: u8,
+    /// Start in quarter-note beats, starting at zero.
+    #[serde(rename = "start_beat")]
+    pub start: f64,
+    /// Positive duration in quarter-note beats.
+    #[serde(rename = "duration_beats")]
+    pub beats: f64,
+    /// Velocity, 0 through 1.
+    pub velocity: f32,
+}
+
+impl NoteInput {
+    fn validate(self, clip_length: Ticks) -> Result<Note, String> {
+        if self.pitch > 127
+            || !self.start.is_finite()
+            || self.start < 0.0
+            || !self.beats.is_finite()
+            || self.beats <= 0.0
+            || !(0.0..=1.0).contains(&self.velocity)
+            || self.start + self.beats > clip_length.as_beats()
+        {
+            return Err(
+                "Invalid note pitch, timing or velocity; notes must fit inside the clip".into(),
+            );
+        }
+        let start = Ticks::from_beats(self.start);
+        let length = Ticks::from_beats(self.beats);
+        if length.raw() < 1
+            || start
+                .raw()
+                .checked_add(length.raw())
+                .is_none_or(|end| end > clip_length.raw())
+        {
+            return Err(
+                "Note must fit inside the clip with a duration of at least one tick".into(),
+            );
+        }
+        Ok(Note {
+            velocity: self.velocity,
+            ..Note::new(self.pitch, start, length)
+        })
+    }
 }
 
 /// Types of empty tracks the agent can add.
@@ -147,7 +215,7 @@ impl Session {
                     .collect();
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks,
                     "duration_seconds":project.duration_seconds(), "harmony":project.harmony,
-                    "sections":project.sections, "can_compose_without_replacing":project.tracks.is_empty(), "ticks_per_quarter":Ticks::QUARTER.raw()})
+                    "sections":project.sections, "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
             }
             Command::ReadNotes { clip, offset } => {
@@ -277,39 +345,59 @@ impl Session {
                 beats,
                 velocity,
             } => {
-                if pitch > 127
-                    || !start.is_finite()
-                    || start < 0.0
-                    || !beats.is_finite()
-                    || beats <= 0.0
-                    || !(0.0..=1.0).contains(&velocity)
-                {
-                    return Err("Invalid note pitch, timing or velocity".into());
+                let (_, target) = self
+                    .project()
+                    .midi_clip(ClipId(clip))
+                    .ok_or("Unknown MIDI clip ID")?;
+                let note = NoteInput {
+                    pitch,
+                    start,
+                    beats,
+                    velocity,
+                }
+                .validate(target.length)?;
+                let index = self.add_note(ClipId(clip), note).map_err(error)?;
+                Ok(format!("Added note index {index}"))
+            }
+            Command::AddNotes { clip, notes } => {
+                if notes.is_empty() || notes.len() > 256 {
+                    return Err("Pass 1..256 notes per call".into());
                 }
                 let (_, target) = self
                     .project()
                     .midi_clip(ClipId(clip))
                     .ok_or("Unknown MIDI clip ID")?;
-                let start = Ticks::from_beats(start);
-                let length = Ticks::from_beats(beats);
-                if length.raw() < 1
-                    || start
-                        .raw()
-                        .checked_add(length.raw())
-                        .is_none_or(|end| end > target.length.raw())
-                {
-                    return Err("Note must fit inside the clip".into());
+                let first = target.notes.len();
+                let notes = notes
+                    .into_iter()
+                    .map(|note| note.validate(target.length))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let count = notes.len();
+                self.begin_transaction(crate::Edit::ExternalChanges);
+                let result = notes
+                    .into_iter()
+                    .try_for_each(|note| self.add_note(ClipId(clip), note).map(|_| ()));
+                self.end_transaction();
+                result.map_err(error)?;
+                Ok(format!("Added {count} notes, starting at index {first}"))
+            }
+            Command::SetTempo { bpm } => {
+                if !(20.0..=300.0).contains(&bpm) {
+                    return Err("bpm must be 20..300".into());
                 }
-                let index = self
-                    .add_note(
-                        ClipId(clip),
-                        Note {
-                            velocity,
-                            ..Note::new(pitch, start, length)
-                        },
-                    )
-                    .map_err(error)?;
-                Ok(format!("Added note index {index}"))
+                self.set_tempo_at(Ticks::ZERO, bpm);
+                Ok(format!("Set tempo to {bpm} BPM"))
+            }
+            Command::SetLoop { start_bar, bars } => {
+                if start_bar == 0 || !(1..=1024).contains(&bars) {
+                    return Err("Use start_bar >= 1 and bars 1..1024".into());
+                }
+                let end_bar = start_bar.checked_add(bars).ok_or("Bar range overflow")?;
+                let start = self.project().signatures.bar_start(start_bar);
+                let end = self.project().signatures.bar_start(end_bar);
+                self.set_loop_region(start, end);
+                self.set_loop_enabled(true);
+                Ok("Set playback loop".into())
             }
             Command::RemoveNotes { clip, indices } => {
                 let (_, target) = self
@@ -332,6 +420,85 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn note_batches_validate_before_writing_and_undo_together() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Strings").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::from_beats(8.0))
+            .unwrap();
+        let before = session.project().clone();
+        let note = |start| NoteInput {
+            pitch: 62,
+            start,
+            beats: 0.5,
+            velocity: 0.8,
+        };
+        for notes in [
+            vec![],
+            vec![note(0.0), note(8.0)],
+            (0..257).map(|_| note(0.0)).collect(),
+        ] {
+            assert!(
+                session
+                    .agent_command(Command::AddNotes {
+                        clip: clip.0,
+                        notes
+                    })
+                    .is_err()
+            );
+            assert_eq!(session.project(), &before);
+        }
+        session
+            .agent_command(Command::AddNotes {
+                clip: clip.0,
+                notes: vec![note(0.0), note(0.5), note(1.0)],
+            })
+            .unwrap();
+        assert_eq!(session.project().midi_clip(clip).unwrap().1.notes.len(), 3);
+        session.undo();
+        assert_eq!(session.project(), &before);
+        session.redo();
+        assert_eq!(session.project().midi_clip(clip).unwrap().1.notes.len(), 3);
+        assert!(session.path().is_none());
+    }
+
+    #[test]
+    fn musical_controls_validate_before_editing() {
+        let mut session = session();
+        let before = session.project().clone();
+        for command in [
+            Command::SetTempo { bpm: f64::NAN },
+            Command::SetLoop {
+                start_bar: 0,
+                bars: 8,
+            },
+            Command::SetLoop {
+                start_bar: u32::MAX,
+                bars: 8,
+            },
+        ] {
+            assert!(session.agent_command(command).is_err());
+            assert_eq!(session.project(), &before);
+        }
+        session
+            .agent_command(Command::SetTempo { bpm: 144.0 })
+            .unwrap();
+        session.undo();
+        assert_eq!(session.project(), &before);
+        session
+            .agent_command(Command::SetLoop {
+                start_bar: 3,
+                bars: 4,
+            })
+            .unwrap();
+        assert!(session.project().loop_enabled);
+        assert_eq!(
+            session.project().loop_region,
+            Some((Ticks::from_beats(8.0), Ticks::from_beats(24.0)))
+        );
     }
 
     #[test]

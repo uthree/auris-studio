@@ -1,7 +1,6 @@
 //! Flat model-facing operations, translated to the same permission-checked live commands.
 use auris_session::live_agent::Command;
-use auris_session::prelude::*;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// A small, flat tool definition derived from the live command contract.
 pub struct Definition {
@@ -13,30 +12,22 @@ pub struct Definition {
     pub parameters: Value,
 }
 
-/// A song starts from a valid arrangement; the model supplies only musical choices.
-#[derive(serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct Song {
-    /// Starting arrangement from list_presets. Preserves valid parts, roles and sections.
-    preset: String,
-    /// Optional song title.
-    title: Option<String>,
-    /// Optional tempo in BPM, 20 through 300.
-    tempo: Option<f64>,
-    /// Optional key, for example D minor or C major.
-    key: Option<String>,
-    /// Optional calm-to-driving energy, 0 through 1.
-    energy: Option<f32>,
-    /// Optional harmonic tension, 0 through 1.
-    tension: Option<f32>,
-    /// Optional dark-to-bright character, 0 through 1.
-    brightness: Option<f32>,
-    /// Make the ending return to the opening for background music. Default false.
-    #[serde(default)]
-    looped: bool,
-    /// Replace existing tracks only when the user explicitly requests replacement. Default false.
-    #[serde(default)]
-    replace: bool,
+/// List exact live instrument identifiers without saved-project-only arguments.
+pub fn instruments() -> String {
+    match super::headless() {
+        Ok(session) => {
+            let mut lines =
+                vec!["Instrument IDs for set_instrument's instrument field:".to_string()];
+            lines.extend(
+                session
+                    .registry()
+                    .instruments()
+                    .map(|instrument| format!("{}: {}", instrument.id, instrument.name)),
+            );
+            lines.join("\n")
+        }
+        Err(error) => format!("Cannot list instruments: {error}"),
+    }
 }
 
 fn inline(value: &Value, root: &Value) -> Value {
@@ -97,66 +88,17 @@ pub fn definitions() -> Vec<Definition> {
             });
         }
     }
-    let root = serde_json::to_value(schemars::schema_for!(Song)).expect("serializable schema");
-    let mut parameters = inline(&root, &root);
-    parameters["properties"]["preset"]["enum"] =
-        json!(PRESETS.iter().map(|p| p.name).collect::<Vec<_>>());
-    tools.push(Definition {
-        name: "compose_song".into(),
-        description: "Compose a complete song into the open document using a preset and a few musical choices. No TOML, part definitions or file paths. Inspect first; do not add empty tracks before composing. Existing tracks require explicit user-requested replacement.".into(),
-        parameters,
-    });
     tools
 }
 
 /// Translate a flat tool into a validated canonical command. `None` identifies a reference tool.
 /// Unknown fields and attempts to supply the action discriminator are rejected.
 pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
-    if tool == "compose_song" {
-        let song: Song = serde_json::from_value(args.clone()).map_err(|e| e.to_string())?;
-        let mut spec = preset(&song.preset)
-            .ok_or("Unknown preset; choose one from list_presets")?
-            .spec();
-        if let Some(title) = song.title {
-            spec.title = title;
-        }
-        if let Some(tempo) = song.tempo {
-            if !(20.0..=300.0).contains(&tempo) {
-                return Err("tempo must be 20..300 BPM".into());
-            }
-            spec.tempo = tempo;
-            for section in spec.sections.values_mut() {
-                section.tempo = None;
-            }
-        }
-        if let Some(key) = song.key {
-            spec.key = MusicalKey::parse(&key).ok_or("key must look like D minor or C major")?;
-        }
-        for (name, value, target) in [
-            ("energy", song.energy, &mut spec.mood.energy),
-            ("tension", song.tension, &mut spec.mood.tension),
-            ("brightness", song.brightness, &mut spec.mood.brightness),
-        ] {
-            if let Some(value) = value {
-                if !(0.0..=1.0).contains(&value) {
-                    return Err(format!("{name} must be 0..1"));
-                }
-                *target = value;
-            }
-        }
-        if song.looped {
-            spec.ending = Ending::Loop;
-        }
-        return Ok(Some(Command::Compose {
-            spec: Some(spec.to_toml()),
-            preset: None,
-            replace: song.replace,
-        }));
-    }
     let action = match tool {
         "inspect_project" => "inspect",
         "read_notes" | "add_track" | "rename_track" | "remove_track" | "set_instrument"
-        | "set_level" | "set_track_state" | "add_clip" | "add_note" | "remove_notes" => tool,
+        | "add_notes" | "set_tempo" | "set_loop" | "set_level" | "set_track_state" | "add_clip"
+        | "add_note" | "remove_notes" => tool,
         _ => return Ok(None),
     };
     let mut object = args
@@ -178,7 +120,12 @@ mod tests {
     #[test]
     fn flat_catalog_covers_commands_without_a_tagged_union_or_file_destinations() {
         let tools = definitions();
-        assert_eq!(tools.len(), 12);
+        assert_eq!(tools.len(), 14);
+        assert!(
+            command("compose_song", &serde_json::json!({}))
+                .unwrap()
+                .is_none()
+        );
         for tool in tools {
             assert_eq!(tool.parameters["type"], "object");
             assert!(tool.parameters.get("oneOf").is_none());
@@ -186,44 +133,6 @@ mod tests {
             assert!(tool.parameters["properties"].get("command").is_none());
             assert!(tool.parameters["properties"].get("spec").is_none());
             assert!(tool.parameters["properties"].get("path").is_none());
-        }
-    }
-    #[test]
-    fn short_orchestral_request_is_valid_loopable_undoable_and_never_replaces_implicitly() {
-        let args = json!({"preset":"orchestral", "tempo":144, "key":"D minor", "energy":0.9, "tension":0.8, "looped":true});
-        let cmd = command("compose_song", &args).unwrap().unwrap();
-        let Command::Compose {
-            spec: Some(source), ..
-        } = &cmd
-        else {
-            panic!()
-        };
-        let spec = SongSpec::parse(source).unwrap();
-        assert_eq!(spec.tempo, 144.0);
-        assert_eq!(spec.ending, Ending::Loop);
-        assert_eq!(spec.key.to_text(), "D minor");
-        let mut session = auris_session::Session::new(
-            auris_session::SessionOptions::headless().with_balance(false),
-        )
-        .unwrap();
-        let before = session.project().clone();
-        session.agent_command(cmd).unwrap();
-        assert!(!session.project().tracks.is_empty());
-        let composed = session.project().clone();
-        assert!(
-            session
-                .agent_command(command("compose_song", &args).unwrap().unwrap())
-                .is_err()
-        );
-        assert_eq!(session.project(), &composed);
-        session.undo();
-        assert_eq!(session.project(), &before);
-        for bad in [
-            json!({"preset":"orchestral", "spec":{}}),
-            json!({"preset":"orchestral", "energy":2}),
-            json!({"preset":"missing"}),
-        ] {
-            assert!(command("compose_song", &bad).is_err());
         }
     }
 }

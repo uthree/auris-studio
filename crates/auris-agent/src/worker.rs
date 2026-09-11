@@ -269,6 +269,8 @@ mod tests {
                         .unwrap();
                 }
                 "call" => {
+                    assert_ne!(event["tool"], "compose_song");
+                    assert_ne!(event["tool"], "compose");
                     calls += 1;
                     println!("CALL {} {}", event["tool"], event["args"]);
                 }
@@ -291,7 +293,14 @@ mod tests {
             session.project().tracks.len()
         );
         assert_eq!(failures, 0);
-        assert!(!session.project().tracks.is_empty());
+        assert!(session.project().tracks.len() >= 2);
+        assert!(session.project().tracks.iter().any(|track| {
+            track
+                .kind
+                .note_clips()
+                .is_some_and(|clips| clips.iter().any(|clip| !clip.notes.is_empty()))
+        }));
+        assert!(session.project().loop_enabled);
         assert!(session.path().is_none());
     }
 
