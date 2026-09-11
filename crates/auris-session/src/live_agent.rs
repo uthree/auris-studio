@@ -17,6 +17,17 @@ pub enum Command {
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
     },
+    /// List available built-in instruments, loaded SoundFont sounds, and installed CLAP/VST3 instruments. Copy a returned id into set_instrument. Results are paged; keep the same query when following next_offset.
+    ListInstruments {
+        /// Case-insensitive name, library, or vendor search; omit for all sounds.
+        query: Option<String>,
+        /// First result index, defaults to zero.
+        #[serde(default)]
+        offset: usize,
+        /// Rescan installed plugins; only use on the first page after installing a plugin.
+        #[serde(default)]
+        refresh: bool,
+    },
     /// Read a page of notes using zero-based storage indices.
     ReadNotes {
         /// Stable clip ID.
@@ -54,11 +65,11 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Choose a built-in instrument from list_instruments.
+    /// Replace a track sound using an exact id from list_instruments. Keeps notes, clips, mixer and effects. Replacing the instrument clears its old parameter automation.
     SetInstrument {
         /// Stable track ID.
         track: u64,
-        /// Built-in instrument identifier.
+        /// Exact id returned by list_instruments (built-in, SoundFont, CLAP or VST3).
         instrument: String,
     },
     /// Set a fader and pan using native units.
@@ -199,8 +210,22 @@ pub enum TrackKind {
 impl Session {
     /// Execute a file-free command against this session, preserving ordinary undo semantics.
     pub fn agent_command(&mut self, command: Command) -> Result<String, String> {
+        self.agent_command_with_plugin_paths(command, &[])
+    }
+
+    /// Run a live command using the frontend's additional plugin search folders.
+    pub fn agent_command_with_plugin_paths(
+        &mut self,
+        command: Command,
+        plugin_paths: &[std::path::PathBuf],
+    ) -> Result<String, String> {
         let error = |error: crate::SessionError| error.to_string();
         match command {
+            Command::ListInstruments {
+                query,
+                offset,
+                refresh,
+            } => self.agent_instrument_list(query.as_deref(), offset, refresh, plugin_paths),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -219,7 +244,9 @@ impl Session {
                             })
                             .collect();
                         serde_json::json!({"id":track.id.0, "name":track.name,
-                        "kind":track.kind.label(), "mixer":track.mixer, "clips":clips})
+                        "kind":track.kind.label(), "mixer":track.mixer, "clips":clips,
+                        "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
+                        "soundfont_preset":self.track_preset(track.id)})
                     })
                     .collect();
                 Ok(serde_json::json!({"title":project.name, "tracks":tracks,
@@ -310,8 +337,7 @@ impl Session {
                 Ok("Removed track".into())
             }
             Command::SetInstrument { track, instrument } => {
-                self.set_track_instrument(TrackId(track), &instrument)
-                    .map_err(error)?;
+                self.agent_set_instrument(TrackId(track), &instrument)?;
                 Ok("Changed instrument".into())
             }
             Command::SetLevel {

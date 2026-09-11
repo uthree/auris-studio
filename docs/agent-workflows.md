@@ -304,3 +304,20 @@ threshold (70% or 85%; default 85%), or after 16 completed exchanges. It can be
 turned off in Permissions. Counts are estimates, not tokenizer measurements;
 the existing per-request context guard remains the final budget check. Compression
 never runs in the middle of a tool operation or an approval request.
+
+### Live instrument library
+
+`list_instruments` reads the open session's built-in instruments, loaded SoundFont
+presets and installed CLAP/VST3 instruments, including the Studio settings' additional
+plugin folders. Effects are excluded. Use `query` to search names, libraries or vendors;
+follow `next_offset` with the same query for pages of 50 sounds. Plugin scan failures
+are reported separately. Use `refresh: true` on the first page after installation.
+
+Pass an exact returned `id` as `set_instrument`'s `instrument`, together with the
+numeric track ID from `inspect_project`. This changes the existing track through
+Undo-aware session commands, preserving its clips, notes, mixer and effect chain.
+Old instrument parameter automation is removed when changing instruments. Selecting
+another SoundFont preset on an existing sampler preserves its sampler controls.
+Unknown, unloaded or expired sounds fail without modifying the document. Plugin
+handles expire on rescan; no tool accepts an arbitrary plugin file path. No project
+or audio files are written. MCP's existing independent tool interface is unchanged.

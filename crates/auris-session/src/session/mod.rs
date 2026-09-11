@@ -31,6 +31,7 @@
 //! now share.
 
 mod accompany;
+mod agent_instruments;
 mod analysis;
 mod assets;
 mod audition;
@@ -297,6 +298,7 @@ pub struct Session {
     /// Shared with the registry, whose sampler factory captured it — which is the only way sample
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
+    agent_instruments: agent_instruments::PluginCatalog,
     /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
     /// [`Self::fonts`] is emptied whenever the document is replaced, because it is keyed by ids
@@ -630,6 +632,7 @@ impl Session {
             shipped_dictionary: options.shipped_dictionary,
             voices: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
+            agent_instruments: agent_instruments::PluginCatalog::default(),
             hosted: hosted::HostedPlugins::default(),
             vst3: vst3::Vst3Plugins::default(),
         };

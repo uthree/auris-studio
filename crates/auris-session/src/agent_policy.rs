@@ -115,6 +115,7 @@ impl Operation {
                 crate::live_agent::Command::Inspect {}
                     | crate::live_agent::Command::InspectAudio { .. }
                     | crate::live_agent::Command::ReadNotes { .. }
+                    | crate::live_agent::Command::ListInstruments { .. }
             );
             let confirm = matches!(
                 parsed,
@@ -123,7 +124,11 @@ impl Operation {
                     | crate::live_agent::Command::Compose { replace: true, .. }
             );
             Ok(Self {
-                name: format!("edit_project.{action}"),
+                name: if action == "list_instruments" {
+                    "list_instruments".into()
+                } else {
+                    format!("edit_project.{action}")
+                },
                 mutating,
                 confirm,
             })

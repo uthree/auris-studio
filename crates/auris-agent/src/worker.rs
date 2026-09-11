@@ -546,6 +546,41 @@ mod tests {
     }
 
     #[test]
+    fn instrument_listing_uses_the_permission_checked_live_session() {
+        let call = completion(
+            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"list_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,
+            "tool_calls",
+        );
+        let done = completion(
+            r#"{"role":"assistant","content":"Found the live library"}"#,
+            "stop",
+        );
+        let (url, requests) = mock_server(vec![call, done]);
+        let worker = Worker::spawn(prefs(url), None, false).unwrap();
+        worker.send(r#"{"say":"Find string instruments"}"#).unwrap();
+        let permission = until(&worker, "permission");
+        let operation = auris_session::agent_policy::Operation::parse(
+            permission["tool"].as_str().unwrap(),
+            &permission["args"],
+        )
+        .unwrap();
+        assert!(!operation.mutating);
+        assert_eq!(operation.name, "list_instruments");
+        worker
+            .send(
+                &serde_json::json!({"event":"permission_result","id":permission["id"],"ok":true})
+                    .to_string(),
+            )
+            .unwrap();
+        let edit = until(&worker, "edit");
+        assert_eq!(edit["command"]["action"], "list_instruments");
+        assert_eq!(edit["command"]["query"], "strings");
+        worker.send(&serde_json::json!({"event":"edit_result","ok":true,"text":"live-session-only-strings"}).to_string()).unwrap();
+        until(&worker, "answer");
+        assert!(requests.lock().unwrap()[1].contains("live-session-only-strings"));
+    }
+
+    #[test]
     fn concurrent_workers_keep_approval_and_live_edit_replies_separate() {
         let done = completion(r#"{"role":"assistant","content":"Done"}"#, "stop");
         let (first_url, first_log) = mock_server(vec![edit_response(), done.clone()]);

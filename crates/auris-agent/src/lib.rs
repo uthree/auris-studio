@@ -269,7 +269,7 @@ fn preamble() -> String {
 Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
 without command or action wrappers. Use the numeric IDs returned by inspection and edits.
 For a song request, choose the harmony, melody, rhythm and arrangement yourself.
-Use list_instruments, add_track, set_instrument, add_clip and add_notes to write your music.
+Use list_instruments (search by query and follow next_offset), add_track, set_instrument, add_clip and add_notes to write your music. Instrument IDs come from the live library, including SoundFont sounds and CLAP/VST3 instruments; never invent IDs.
 Batch a short phrase into one add_notes call. Each note has pitch, start_beat,
 duration_beats and velocity. start_beat is its position; duration_beats is its length.
 For example, two successive quarter notes:
@@ -315,10 +315,6 @@ impl std::error::Error for ToolFailed {}
 fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
     toolbox::parameter_schema::<T>()
 }
-
-/// No arguments, said as a schema — for the reference and listing tools.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
 
 mod worker;
 use worker::Bridge;
@@ -367,30 +363,6 @@ macro_rules! session_tool {
             }
         }
     };
-}
-
-struct ListInstruments;
-
-impl Tool for ListInstruments {
-    const NAME: &'static str = "list_instruments";
-    type Args = NoArgs;
-    type Output = String;
-    type Error = ToolFailed;
-
-    fn description(&self) -> String {
-        "List exact built-in instrument IDs for set_instrument. Use the returned ID in its instrument field.".into()
-    }
-    fn parameters(&self) -> serde_json::Value {
-        schema::<NoArgs>()
-    }
-    fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
-        ToolExecutionError::other(error.0)
-    }
-    async fn call(&self, _context: &mut ToolContext, _args: NoArgs) -> Result<String, ToolFailed> {
-        tokio::task::spawn_blocking(toolbox::live_agent::instruments)
-            .await
-            .map_err(|error| ToolFailed(error.to_string()))
-    }
 }
 
 session_tool!(SearchDocumentation, search_documentation);
@@ -560,8 +532,7 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
     let mut builder = builder
         .preamble(&preamble())
         .tool(SearchDocumentation)
-        .tool(InternetSearch)
-        .tool(ListInstruments);
+        .tool(InternetSearch);
     for definition in toolbox::live_agent::definitions() {
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
@@ -576,6 +547,12 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
                     let command = toolbox::live_agent::command(&name, &args)
                         .map_err(ToolExecutionError::other)?
                         .ok_or_else(|| ToolExecutionError::other("Unknown live operation"))?;
+                    if bridge.is_none() && name == "list_instruments" {
+                        return tokio::task::spawn_blocking(toolbox::live_agent::instruments)
+                            .await
+                            .map(ToolOutput::text)
+                            .map_err(|error| ToolExecutionError::other(error.to_string()));
+                    }
                     let bridge = bridge.ok_or_else(|| {
                         ToolExecutionError::other(
                             "Open the Agent Panel to edit the current document",
@@ -1967,12 +1944,10 @@ mod tests {
             );
             assert!(!names.contains(&name));
         }
-        for expected in catalog.iter().filter(|tool| {
-            matches!(
-                tool.name,
-                "list_instruments" | "search_documentation" | "search_internet"
-            )
-        }) {
+        for expected in catalog
+            .iter()
+            .filter(|tool| matches!(tool.name, "search_documentation" | "search_internet"))
+        {
             let exposed = actual
                 .iter()
                 .find(|tool| tool.name == expected.name)

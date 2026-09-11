@@ -925,7 +925,10 @@ impl AurisApp {
         self.check_agent_edit(&command)?;
         serde_json::from_value::<auris_session::live_agent::Command>(command)
             .map_err(|error| error.to_string())
-            .and_then(|command| self.session.agent_command(command))
+            .and_then(|command| {
+                self.session
+                    .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)
+            })
     }
 
     fn start_agent_inspection(&mut self, command: &serde_json::Value) -> Result<(), String> {

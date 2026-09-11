@@ -9,6 +9,16 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Live instrument discovery
+//!
+//! The live agent queries the owning session for built-in instruments, loaded SoundFont
+//! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
+//! search folders. Discovery caches plugin descriptors and issues opaque, session-local
+//! handles; rescanning expires them rather than silently redirecting a prior selection.
+//! SoundFont selections are validated against the loaded bank before any edit is recorded.
+//! All replacements use the existing session commands and their Undo behavior. The model
+//! never supplies a filesystem path, and the independent MCP interface is unchanged.
+//!
 //! # Visual audio inspection
 //!
 //! The live agent's `inspect_audio` command snapshots the open document through
