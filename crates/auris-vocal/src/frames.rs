@@ -182,7 +182,7 @@ struct TimedNote<'a> {
     end: f64,
     /// MIDI pitch.
     pitch: f32,
-    /// The lyric as written on the note.
+    /// A readable lyric, using saved pronunciation for non-kana and continuation notes.
     lyric: String,
     /// Attack strength, 0 to 1.
     velocity: f32,
@@ -341,19 +341,35 @@ pub fn render_frames_with_sources(
 
 /// Reduces a singer track to the note/rest score expected by score-based backends.
 ///
+/// Non-kana lyrics and continuation marks use their saved pronunciation when it can
+/// be represented in kana. The document's text and phonemes remain unchanged.
+///
 /// The first frame is always a rest. VOICEVOX requires that opening boundary, and keeping it
 /// in the common score avoids shifting the rest of the song in an individual adapter.
 pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap) -> SingerScore {
+    render_score_with_origins(track, tempo_map).0
+}
+
+/// The editable clip and note index that produced a score event.
+pub type ScoreNoteOrigin = (auris_core::ClipId, usize);
+
+/// Renders a score with one source location per event; rests have no source note.
+/// Loop repetitions and duplicate-note filtering retain the original editable index.
+pub fn render_score_with_origins(
+    track: &SingerTrack,
+    tempo_map: &TempoMap,
+) -> (SingerScore, Vec<Option<ScoreNoteOrigin>>) {
     let hop = match track.frame_hop.is_finite() {
         true => track.frame_hop.clamp(MIN_FRAME_HOP, MAX_FRAME_HOP),
         false => default_frame_hop(),
     };
-    let notes = timed_notes(track, tempo_map);
+    let (notes, origins) = timed_notes_with_origins(track, tempo_map);
     let Some(end) = notes.last().map(|note| note.end) else {
-        return SingerScore::default();
+        return (SingerScore::default(), Vec::new());
     };
     let count = (end / hop).ceil() as usize + 1;
     let mut score = SingerScore::default();
+    let mut sources = Vec::new();
     let mut walker = 0usize;
     let mut previous_identity = None;
     for frame in 0..count {
@@ -367,10 +383,7 @@ pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap) -> SingerScore {
         let identity = active.map(|_| walker);
         let (key, lyric) = match active {
             Some(note) => {
-                let lyric = match note.lyric.trim() {
-                    "" | "+" => "ア",
-                    lyric => lyric,
-                };
+                let lyric = note.lyric.as_str();
                 (Some(note.pitch.round().clamp(0.0, 127.0) as u8), lyric)
             }
             None => (None, ""),
@@ -383,25 +396,49 @@ pub fn render_score(track: &SingerTrack, tempo_map: &TempoMap) -> SingerScore {
             {
                 previous.frame_length = previous.frame_length.saturating_add(1);
             }
-            _ => score.notes.push(SingerNote {
-                key,
-                frame_length: 1,
-                lyric: lyric.to_string(),
-            }),
+            _ => {
+                sources.push(identity.map(|index| origins[index]));
+                score.notes.push(SingerNote {
+                    key,
+                    frame_length: 1,
+                    lyric: lyric.to_string(),
+                });
+            }
         }
         previous_identity = identity;
     }
-    score
+    (score, sources)
+}
+
+/// Resolve saved pronunciation without replacing an unreadable word by a placeholder vowel.
+fn score_lyric(lyric: &str, phonemes: &[String]) -> String {
+    let lyric = lyric.trim();
+    if lyric == "+" || lyric.is_empty() || (lyric != "ー" && crate::kana_phonemes(lyric).is_none())
+    {
+        crate::kana::phonemes_to_kana(phonemes).unwrap_or_else(|| match lyric {
+            "" | "+" => "ア".to_string(),
+            _ => lyric.to_string(),
+        })
+    } else {
+        lyric.to_string()
+    }
 }
 
 /// Every note of every unmuted clip, repeats included, flattened, sorted and made monophonic.
 fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNote<'a>> {
+    timed_notes_with_origins(track, tempo_map).0
+}
+
+fn timed_notes_with_origins<'a>(
+    track: &'a SingerTrack,
+    tempo_map: &TempoMap,
+) -> (Vec<TimedNote<'a>>, Vec<ScoreNoteOrigin>) {
     let widths = track
         .voice
         .as_ref()
         .and_then(|voice| voice.consonants.as_ref());
     let levels = track.voice.as_ref().and_then(|voice| voice.levels.as_ref());
-    let mut placed: Vec<(Ticks, Ticks, TimedNote<'a>)> = Vec::new();
+    let mut placed = Vec::new();
     for clip in &track.clips {
         if clip.muted {
             continue;
@@ -409,7 +446,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
         let expression = clip.curve(ClipCurve::Controller(CC_EXPRESSION));
         for (offset, span) in loop_passes(clip.length, clip.loop_end) {
             let base = clip.start + offset;
-            for note in clip.playable_notes() {
+            for (index, note) in clip.playable_notes_with_indices() {
                 if note.start >= span {
                     continue;
                 }
@@ -426,7 +463,7 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         start: 0.0,
                         end: 0.0,
                         pitch: f32::from(note.pitch),
-                        lyric: note.lyric.clone(),
+                        lyric: score_lyric(&note.lyric, &note.phonemes),
                         velocity: note.velocity.clamp(0.0, 1.0),
                         phonemes,
                         phoneme_seconds,
@@ -439,23 +476,24 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
                         widths,
                         levels,
                     },
+                    (clip.id, index),
                 ));
             }
         }
     }
 
-    placed.sort_by_key(|(start, end, _)| (start.raw(), end.raw()));
+    placed.sort_by_key(|(start, end, _, _)| (start.raw(), end.raw()));
     // Before assigning seconds, TimedNote compares only performance data. A shorter duplicate
     // must not invent a second syllable when the frame walker reaches the longer note.
     // Keep the last match: it has the longest end, and other simultaneous notes keep their order.
     let keep: Vec<bool> = placed
         .iter()
         .enumerate()
-        .map(|(at, (start, _, note))| {
+        .map(|(at, (start, _, note, _))| {
             !placed[at + 1..]
                 .iter()
-                .take_while(|(other_start, _, _)| other_start == start)
-                .any(|(_, _, other)| note == other)
+                .take_while(|(other_start, _, _, _)| other_start == start)
+                .any(|(_, _, other, _)| note == other)
         })
         .collect();
     let placed: Vec<_> = placed
@@ -466,9 +504,9 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
     let ends: Vec<Ticks> = placed
         .iter()
         .enumerate()
-        .map(|(at, (_, end, _))| match placed.get(at + 1) {
+        .map(|(at, (_, end, _, _))| match placed.get(at + 1) {
             // The later note cuts the earlier one off at its own start: one voice, one note.
-            Some((next_start, _, _)) if *next_start > placed[at].0 => (*end).min(*next_start),
+            Some((next_start, _, _, _)) if *next_start > placed[at].0 => (*end).min(*next_start),
             // Simultaneous starts are a tie, not a "later" note. Keep both timed notes; their
             // end ordering makes the shorter one sound first and hand over to the longer one.
             Some(_) => *end,
@@ -479,13 +517,13 @@ fn timed_notes<'a>(track: &'a SingerTrack, tempo_map: &TempoMap) -> Vec<TimedNot
     placed
         .into_iter()
         .zip(ends)
-        .filter(|((start, _, _), end)| *end > *start)
-        .map(|((start, _, mut note), end)| {
+        .filter(|((start, _, _, _), end)| *end > *start)
+        .map(|((start, _, mut note, origin), end)| {
             note.start = tempo_map.ticks_to_seconds(start).0;
             note.end = tempo_map.ticks_to_seconds(end).0;
-            note
+            (note, origin)
         })
-        .collect()
+        .unzip()
 }
 
 /// Which phoneme is sounding `t` seconds into the timeline, for a note known to contain `t`,
@@ -695,6 +733,66 @@ mod tests {
     /// 120 BPM: one beat is half a second, so beat arithmetic in tests stays mental.
     fn map() -> TempoMap {
         TempoMap::constant(120.0)
+    }
+
+    #[test]
+    fn score_uses_stored_readings_for_kanji_and_continuation_notes() {
+        let mut first = sung(60, 0.0, 1.0, &["h", "i"]);
+        first.lyric = "光".into();
+        let mut second = sung(62, 1.0, 1.0, &["k", "a"]);
+        second.lyric = "+".into();
+        let mut third = sung(64, 2.0, 1.0, &["ɾ", "i"]);
+        third.lyric = "+".into();
+        let track = track(vec![first, second, third]);
+        let score = render_score(&track, &map());
+        assert_eq!(
+            score
+                .notes
+                .iter()
+                .filter(|note| note.key.is_some())
+                .map(|note| note.lyric.as_str())
+                .collect::<Vec<_>>(),
+            ["ひ", "か", "り"]
+        );
+        assert_eq!(track.clips[0].notes[0].lyric, "光");
+        assert_eq!(track.clips[0].notes[1].lyric, "+");
+    }
+
+    #[test]
+    fn score_origins_survive_filtering_sorting_duplicates_and_loops() {
+        let outside = sung(50, -1.0, 0.5, &["a"]);
+        let later = sung(62, 1.0, 1.0, &["i"]);
+        let shorter = sung(60, 0.0, 0.5, &["a"]);
+        let longer = sung(60, 0.0, 1.0, &["a"]);
+        let mut track = track(vec![outside, later, shorter, longer]);
+        track.clips[0].length = Ticks::from_beats(2.0);
+        track.clips[0].loop_end = Ticks::from_beats(4.0);
+        let (score, origins) = render_score_with_origins(&track, &map());
+        assert_eq!(score.notes.len(), origins.len());
+        assert_eq!(
+            origins
+                .into_iter()
+                .flatten()
+                .map(|(_, index)| index)
+                .collect::<Vec<_>>(),
+            [3, 1, 3, 1]
+        );
+    }
+
+    #[test]
+    fn unreadable_lyrics_without_a_saved_pronunciation_are_not_replaced() {
+        let mut note = sung(60, 0.0, 1.0, &[]);
+        note.lyric = "🙂".into();
+        let score = render_score(&track(vec![note]), &map());
+        assert_eq!(
+            score
+                .notes
+                .iter()
+                .find(|note| note.key.is_some())
+                .unwrap()
+                .lyric,
+            "🙂"
+        );
     }
 
     #[test]

@@ -1084,6 +1084,8 @@ pub struct AutoSing {
 
 /// One track's failed render, held until its input changes or the person asks to retry.
 pub struct SingerFailure {
+    /// The editable note responsible for a lyric failure, when known.
+    pub note: Option<(ClipId, usize)>,
     /// The last document revision checked against this failure's input.
     pub revision: u64,
     /// The score and voice that failed.

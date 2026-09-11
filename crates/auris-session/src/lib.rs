@@ -147,8 +147,8 @@ pub use voice_setup::{
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
 pub use auris_singer::{
-    Acceleration, BackendKind, CurveSource, CurveSources, SingError, SingingBackend, SingingRender,
-    VoiceCapabilities, VoiceModel, VoicePortrait,
+    Acceleration, BackendKind, CurveSource, CurveSources, LyricIssue, SingError, SingingBackend,
+    SingingRender, VoiceCapabilities, VoiceModel, VoicePortrait,
 };
 
 pub use auris_clap::ClapPluginInfo;

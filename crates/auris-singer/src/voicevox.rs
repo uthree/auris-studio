@@ -21,6 +21,10 @@ const NAME: &str = "VOICEVOX";
 /// Gives consonants room before a first-beat note and the decoder context at both boundaries.
 const BOUNDARY_SECONDS: f64 = 1.0;
 
+pub(crate) fn validate_lyrics(score: &SingerScore) -> Result<(), SingError> {
+    padded_score(score, 2).map(|_| ())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct VoicevoxConfig {
@@ -64,9 +68,21 @@ fn default_frame_rate() -> f64 {
 /// VOICEVOX 0.25.2 rounds that consonant down to zero frames and fails its score query.
 fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingError> {
     let mut score = score.clone();
-    normalize_long_vowels(&mut score)?;
+    let origins = split_lyrics(&mut score)?;
+    normalize_long_vowels(&mut score).map_err(|error| match error {
+        SingError::InvalidLyric {
+            event,
+            lyric,
+            issue,
+        } => SingError::InvalidLyric {
+            event: origins[event],
+            lyric,
+            issue,
+        },
+        error => error,
+    })?;
     bridge_short_rests(&mut score)?;
-    validate_note_boundaries(&score, padding)?;
+    validate_score(&score)?;
     let rest = || SingerNote {
         key: None,
         frame_length: padding,
@@ -90,6 +106,127 @@ fn padded_score(score: &SingerScore, padding: u32) -> Result<SingerScore, SingEr
     Ok(score)
 }
 
+/// A score query accepts one mora per note, even when the editor holds a whole word.
+fn split_lyrics(score: &mut SingerScore) -> Result<Vec<usize>, SingError> {
+    let mut notes = Vec::new();
+    let mut origins = Vec::new();
+    for (index, note) in score.notes.iter().enumerate() {
+        let lyric: String = note.lyric.trim().nfkc().collect();
+        let moras = auris_vocal::split_kana_lyric(&lyric).unwrap_or_default();
+        if note.key.is_none() || moras.len() <= 1 {
+            notes.push(note.clone());
+            origins.push(index);
+            continue;
+        }
+        let count = u32::try_from(moras.len())
+            .map_err(|_| SingError::Inference("VOICEVOX lyric is too long".into()))?;
+        if note.frame_length < count {
+            return Err(SingError::InvalidLyric {
+                event: index,
+                lyric,
+                issue: crate::LyricIssue::TooShort,
+            });
+        }
+        for (at, (lyric, _)) in moras.into_iter().enumerate() {
+            origins.push(index);
+            notes.push(SingerNote {
+                key: note.key,
+                frame_length: note.frame_length / count
+                    + u32::from((at as u32) < note.frame_length % count),
+                lyric,
+            });
+        }
+    }
+    score.notes = notes;
+    Ok(origins)
+}
+
+/// Give the Engine's consonant predictor two frames before every consonant.
+/// Record only the inserted frames so the prediction can return to the original clock.
+fn query_score(score: &SingerScore, padding: u32) -> Result<(SingerScore, Vec<usize>), SingError> {
+    let mut score = padded_score(score, padding)?;
+    let mut removed = Vec::new();
+    let mut at = 0usize;
+    for index in 0..score.notes.len() {
+        if score.notes[index].frame_length == 1
+            && score
+                .notes
+                .get(index + 1)
+                .is_some_and(starts_with_consonant)
+        {
+            score.notes[index].frame_length = 2;
+            removed.push(at + 1);
+        }
+        at = at
+            .checked_add(score.notes[index].frame_length as usize)
+            .ok_or_else(|| SingError::Inference("VOICEVOX score is too long".into()))?;
+    }
+    Ok((score, removed))
+}
+
+/// Validate all three Engine timelines before decoding, then remove query-only frames.
+fn restore_query_timing(
+    query: &mut Value,
+    expected: usize,
+    removed: &[usize],
+) -> Result<(), SingError> {
+    let invalid = || {
+        SingError::Inference(
+            "VOICEVOX query has inconsistent phoneme, f0 or volume frame lengths".into(),
+        )
+    };
+    if removed.windows(2).any(|pair| pair[0] >= pair[1])
+        || removed.last().is_some_and(|last| *last >= expected)
+    {
+        return Err(invalid());
+    }
+    for field in ["f0", "volume"] {
+        if query[field]
+            .as_array()
+            .is_none_or(|values| values.len() != expected)
+        {
+            return Err(invalid());
+        }
+    }
+    let phonemes = query["phonemes"].as_array_mut().ok_or_else(invalid)?;
+    let mut at = 0usize;
+    for phoneme in phonemes.iter_mut() {
+        if phoneme["phoneme"].as_str().is_none_or(str::is_empty) {
+            return Err(invalid());
+        }
+        let length = phoneme["frame_length"]
+            .as_u64()
+            .and_then(|length| usize::try_from(length).ok())
+            .ok_or_else(invalid)?;
+        let end = at
+            .checked_add(length)
+            .filter(|end| *end <= expected)
+            .ok_or_else(invalid)?;
+        let omitted = removed.partition_point(|frame| *frame < end)
+            - removed.partition_point(|frame| *frame < at);
+        phoneme["frame_length"] = json!(length - omitted);
+        at = end;
+    }
+    if at != expected {
+        return Err(invalid());
+    }
+    phonemes.retain(|phoneme| phoneme["frame_length"].as_u64() != Some(0));
+    for field in ["f0", "volume"] {
+        let values = query[field].as_array_mut().ok_or_else(invalid)?;
+        let mut at = 0;
+        let mut omitted = removed.iter().copied().peekable();
+        values.retain(|_| {
+            let keep = omitted.peek() != Some(&at);
+            if !keep {
+                omitted.next();
+            }
+            at += 1;
+            keep
+        });
+    }
+    Ok(())
+}
+
 /// The Engine accepts vowel kana, but rejects a prolonged-sound mark as a standalone lyric.
 /// Keep the note boundaries and the stored score intact; only the outgoing spelling changes.
 fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
@@ -100,10 +237,37 @@ fn normalize_long_vowels(score: &mut SingerScore) -> Result<(), SingError> {
             continue;
         }
         if note.lyric.trim() == "ー" {
-            note.lyric = vowel.ok_or_else(|| SingError::Inference(format!(
-                "VOICEVOX: note {} has lyric 'ー' without a preceding vowel; enter ア, イ, ウ, エ or オ",
-                index + 1
-            )))?.to_string();
+            note.lyric = vowel
+                .ok_or_else(|| SingError::InvalidLyric {
+                    event: index,
+                    lyric: note.lyric.clone(),
+                    issue: crate::LyricIssue::MissingVowel,
+                })?
+                .to_string();
+        }
+        if auris_vocal::kana_phonemes(&note.lyric).is_none() || note.lyric.is_empty() {
+            return Err(SingError::InvalidLyric {
+                event: index,
+                lyric: note.lyric.clone(),
+                issue: crate::LyricIssue::Unreadable,
+            });
+        }
+        // Auris accepts phonetic spellings such as シァ and フゥ; the Engine only
+        // accepts their standard mora spellings (しゃ and ふ).
+        if let Some(canonical) = auris_vocal::kana_phonemes(&note.lyric)
+            .and_then(|phonemes| auris_vocal::kana::phonemes_to_kana(&phonemes))
+        {
+            let hiragana: String = note
+                .lyric
+                .chars()
+                .map(|c| match c {
+                    'ァ'..='ヶ' => char::from_u32(c as u32 - 0x60).unwrap_or(c),
+                    _ => c,
+                })
+                .collect();
+            if canonical != hiragana {
+                note.lyric = canonical;
+            }
         }
         vowel = auris_vocal::kana_phonemes(note.lyric.trim()).and_then(|phonemes| {
             match phonemes.last().map(String::as_str) {
@@ -149,9 +313,8 @@ fn starts_with_consonant(note: &SingerNote) -> bool {
         && auris_vocal::kana_phonemes(&note.lyric).is_some_and(|phonemes| phonemes.len() > 1)
 }
 
-/// A consonant borrows frames from the preceding event. A single frame makes the
-/// Engine produce a zero-length consonant and fail with HTTP 500 (Engine 0.25.2).
-fn validate_note_boundaries(score: &SingerScore, padding: u32) -> Result<(), SingError> {
+/// Reject malformed events before adapting the Engine's temporal constraints.
+fn validate_score(score: &SingerScore) -> Result<(), SingError> {
     for (index, note) in score.notes.iter().enumerate() {
         if note.frame_length == 0
             || note.key.is_some_and(|key| key > 127)
@@ -160,19 +323,6 @@ fn validate_note_boundaries(score: &SingerScore, padding: u32) -> Result<(), Sin
             return Err(SingError::Inference(format!(
                 "VOICEVOX: score event {} needs a positive duration and either a MIDI key (0–127) with a kana lyric, or a rest with no lyric",
                 index + 1
-            )));
-        }
-        let Some(previous) = index.checked_sub(1).map(|index| &score.notes[index]) else {
-            continue;
-        };
-        // The first rest is extended before transmission and already has enough room.
-        if index == 1 && previous.key.is_none() && padding >= 2 {
-            continue;
-        }
-        if previous.frame_length == 1 && starts_with_consonant(note) {
-            return Err(SingError::Inference(format!(
-                "VOICEVOX: score event {} is only 1 frame before '{}'; lengthen that note or rest to at least 2 frames, or remove the short rest",
-                index, note.lyric
             )));
         }
     }
@@ -391,12 +541,18 @@ impl CurveGenerator for VoicevoxBackend {
                 count: self.info.n_speakers,
             })?;
         let padding = (self.config.frame_rate * BOUNDARY_SECONDS).ceil() as u32;
-        let padded = padded_score(score, padding)?;
-        let query = self.post_json(
+        let (padded, removed) = query_score(score, padding)?;
+        let expected = padded
+            .notes
+            .iter()
+            .map(|note| note.frame_length as usize)
+            .sum();
+        let mut query = self.post_json(
             "/sing_frame_audio_query",
             style.query_style_id,
             json!({ "notes": padded.notes }),
         )?;
+        restore_query_timing(&mut query, expected, &removed)?;
         prediction_from_query(query, padding as usize)
     }
 }
@@ -607,7 +763,7 @@ mod tests {
             let response = json!({
                 "f0": predicted_pitch,
                 "volume": predicted_volume,
-                "phonemes": [],
+                "phonemes": [{"phoneme": "a", "frame_length": query_frames}],
                 "outputSamplingRate": 24000,
                 "outputStereo": false,
             });
@@ -745,6 +901,77 @@ mod tests {
     }
 
     #[test]
+    fn short_note_queries_restore_the_original_frame_clock() {
+        let original = test_score(&[(1, "ア"), (1, "キ"), (25, "カ")]);
+        let (outgoing, removed) = query_score(&original, 94).unwrap();
+        assert_eq!(removed, [95, 97]);
+        assert_eq!(outgoing.notes[1].frame_length, 2);
+        assert_eq!(outgoing.notes[2].frame_length, 2);
+        let mut query = json!({
+            "f0": [10.0, 20.0, 30.0, 40.0, 50.0],
+            "volume": [1.0, 2.0, 3.0, 4.0, 5.0],
+            "phonemes": [
+                {"phoneme": "a", "frame_length": 2},
+                {"phoneme": "k", "frame_length": 1},
+                {"phoneme": "i", "frame_length": 2}
+            ]
+        });
+        restore_query_timing(&mut query, 5, &[1, 2]).unwrap();
+        assert_eq!(query["f0"], json!([10.0, 40.0, 50.0]));
+        assert_eq!(query["volume"], json!([1.0, 4.0, 5.0]));
+        assert_eq!(
+            query["phonemes"],
+            json!([
+                {"phoneme": "a", "frame_length": 1},
+                {"phoneme": "i", "frame_length": 2}
+            ])
+        );
+    }
+
+    #[test]
+    fn multi_mora_notes_split_without_losing_lyrics_or_frames() {
+        let (outgoing, _) = query_score(&test_score(&[(25, "こーひー")]), 94).unwrap();
+        assert_eq!(
+            &outgoing.notes[1..5],
+            test_score(&[(7, "こ"), (6, "オ"), (6, "ひ"), (6, "イ")]).notes
+        );
+        assert!(query_score(&test_score(&[(1, "かな")]), 94).is_err());
+    }
+
+    #[test]
+    fn malformed_engine_phoneme_lengths_are_rejected_before_synthesis() {
+        for length in [json!(-1), json!(2), json!(1.5), json!(null)] {
+            let mut query = json!({"f0": [100.0], "volume": [1.0], "phonemes": [{"phoneme": "a", "frame_length": length}]});
+            assert!(restore_query_timing(&mut query, 1, &[]).is_err());
+        }
+    }
+
+    #[test]
+    fn lyric_errors_keep_original_event_indices_after_splitting() {
+        let error =
+            crate::validate_voicevox_score(&test_score(&[(1, ""), (25, "かな"), (25, "🙂")]))
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            SingError::InvalidLyric {
+                event: 2,
+                issue: crate::LyricIssue::Unreadable,
+                ..
+            }
+        ));
+        let error =
+            crate::validate_voicevox_score(&test_score(&[(25, "かん"), (25, "ー")])).unwrap_err();
+        assert!(matches!(
+            error,
+            SingError::InvalidLyric {
+                event: 1,
+                issue: crate::LyricIssue::MissingVowel,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn kana_spelling_is_normalized_only_in_the_outgoing_score() {
         let original = test_score(&[(25, " ｶﾞ "), (25, "ｰ"), (25, "か\u{3099}"), (25, " ー ")]);
         let outgoing = padded_score(&original, 94).unwrap();
@@ -818,19 +1045,13 @@ mod tests {
     }
 
     #[test]
-    fn short_internal_notes_report_the_event_before_a_consonant() {
-        for (events, index) in [
-            (vec![(1, "ア"), (25, "カ")], 1),
-            (vec![(25, "ア"), (1, "イ"), (25, "カ")], 2),
+    fn short_internal_notes_get_temporary_query_frames() {
+        for events in [
+            vec![(1, "ア"), (25, "カ")],
+            vec![(25, "ア"), (1, "イ"), (25, "カ")],
         ] {
-            let error = padded_score(&test_score(&events), 94)
-                .unwrap_err()
-                .to_string();
-            assert!(
-                error.contains(&format!("event {index} is only 1 frame")),
-                "{error}"
-            );
-            assert!(error.contains("at least 2 frames"), "{error}");
+            let (_, removed) = query_score(&test_score(&events), 94).unwrap();
+            assert_eq!(removed.len(), 1);
         }
         for events in [
             vec![(1, ""), (25, "カ")],
@@ -842,7 +1063,8 @@ mod tests {
             vec![(1, "カ")],
             vec![(25, "")],
         ] {
-            padded_score(&test_score(&events), 94).unwrap();
+            let (_, removed) = query_score(&test_score(&events), 94).unwrap();
+            assert!(removed.is_empty());
         }
     }
 
@@ -952,7 +1174,7 @@ mod tests {
                 normalize_long_vowels(&mut score)
                     .unwrap_err()
                     .to_string()
-                    .contains("without a preceding vowel")
+                    .contains("needs a preceding vowel")
             );
         }
     }
@@ -1138,5 +1360,35 @@ mod tests {
             "VOICEVOX live score: {} samples, RMS {rms:.6}",
             samples.len()
         );
+        for events in [
+            vec![(1, "ア"), (25, "カ")],
+            vec![(1, "カ"), (1, "キ"), (1, "ク"), (25, "ケ")],
+            vec![(25, "カ"), (1, ""), (25, "キ")],
+            vec![(25, "こーひー")],
+            vec![(25, "シァ"), (25, "フゥ"), (25, "じぃ")],
+            vec![(2, "かな")],
+            vec![(25, "ひ"), (25, "か"), (25, "り")],
+        ] {
+            let score = test_score(&events);
+            let count = score
+                .notes
+                .iter()
+                .map(|note| note.frame_length as usize)
+                .sum();
+            let frames = SingerFrames {
+                hop_seconds: 256.0 / 24000.0,
+                inventory: vec!["a".into()],
+                phonemes: vec![0; count],
+                f0_hz: vec![261.62555; count],
+                energy: vec![0.15; count],
+            };
+            let render = model
+                .sing_render_with(&frames, &score, 0, 0, |_, _| true)
+                .unwrap_or_else(|error| panic!("{events:?}: {error}"));
+            assert_eq!(render.samples.len(), count * 256, "{events:?}");
+            assert!(render.samples.iter().all(|sample| sample.is_finite()));
+            assert_eq!(render.backend_pitch.unwrap().hz.len(), count);
+            eprintln!("VOICEVOX live regression: {events:?}, {count} frames");
+        }
     }
 }

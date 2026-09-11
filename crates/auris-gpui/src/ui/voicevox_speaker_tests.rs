@@ -306,6 +306,7 @@ fn the_track_picker_fetches_real_engine_names_and_persists_the_clicked_style(
         this.sung_failures.insert(
             track,
             SingerFailure {
+                note: None,
                 revision: this.session.revision(),
                 fingerprint: 0,
                 folder: None,

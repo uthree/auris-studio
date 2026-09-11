@@ -1430,10 +1430,37 @@ impl AurisApp {
             return;
         }
         let message = self.failure(Key::CmdSing, error);
+        let failed_note = match error {
+            SessionError::SingerLyric { clip, note, .. } => Some((*clip, *note)),
+            _ => None,
+        };
+        if let Some((clip, index)) = failed_note
+            && let Some((start, pitch)) = self.project().midi_clip(clip).and_then(|(_, clip)| {
+                clip.notes
+                    .get(index)
+                    .map(|note| (clip.start + note.start, note.pitch))
+            })
+        {
+            self.select_track(track);
+            self.select_clip(Some(clip));
+            self.selected_notes = BTreeSet::from([index]);
+            self.score_layer = crate::ui::score_layer::ScoreLayer::Source;
+            self.timeline.scroll_ticks = start.max(Ticks::ZERO);
+            let height = self
+                .canvas
+                .roll
+                .get()
+                .map(|bounds| f32::from(bounds.size.height))
+                .filter(|height| *height > 0.0)
+                .unwrap_or(self.pitch.row_height);
+            self.pitch.center_on(pitch, gpui::px(height));
+            self.show_panel(crate::dock::Panel::PianoRoll);
+        }
         self.set_failed_status(message.clone());
         self.sung_failures.insert(
             track,
             SingerFailure {
+                note: failed_note,
                 revision: self.session.revision(),
                 fingerprint,
                 folder,

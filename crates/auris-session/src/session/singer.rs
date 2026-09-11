@@ -1029,7 +1029,8 @@ impl Session {
         let seed = seed
             .or(singer.take.as_ref().map(|take| take.seed))
             .unwrap_or(0);
-        let score = render_score(singer, &self.project.tempo_map);
+        let (score, origins) =
+            auris_vocal::frames::render_score_with_origins(singer, &self.project.tempo_map);
         if score.notes.is_empty() {
             return Err(SessionError::NothingToSing(track.0));
         }
@@ -1041,6 +1042,27 @@ impl Session {
             .resolve(Some(folder))
             .ok_or(SessionError::NoVoice(track.0))?;
         let loaded = self.loaded_voice_at(&resolved)?;
+        if loaded.backend == BackendKind::Voicevox {
+            auris_singer::validate_voicevox_score(&score).map_err(|error| {
+                if let auris_singer::SingError::InvalidLyric {
+                    event, ref issue, ..
+                } = error
+                    && let Some(Some((clip, note))) = origins.get(event)
+                    && let Some(source) = self
+                        .project
+                        .midi_clip(*clip)
+                        .and_then(|(_, clip)| clip.notes.get(*note))
+                {
+                    return SessionError::SingerLyric {
+                        clip: *clip,
+                        note: *note,
+                        lyric: source.lyric.clone(),
+                        issue: issue.clone(),
+                    };
+                }
+                SessionError::from(error)
+            })?;
+        }
         // Load before sampling: two native voices may have different optional predictors.
         let frames = auris_vocal::render_frames_with_sources(
             self.require_singer(track)?,
@@ -2230,7 +2252,7 @@ mod tests {
                         .iter()
                         .map(|note| note["frame_length"].as_u64().unwrap() as usize)
                         .sum();
-                    serde_json::json!({"f0": vec![0.0; count], "volume": vec![0.0; count]})
+                    serde_json::json!({"f0": vec![0.0; count], "volume": vec![0.0; count], "phonemes": [{"phoneme": "pau", "frame_length": count}]})
                         .to_string()
                 } else {
                     "{}".into()

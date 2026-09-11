@@ -1551,6 +1551,18 @@ strings! {
         en: "the voice model failed",
         ja: "声のモデルでエラーが発生しました"
     }
+    ErrorSingerLyricUnreadable {
+        en: "Enter the pronunciation in hiragana or katakana.",
+        ja: "読みをひらがな・カタカナで入力してください。"
+    }
+    ErrorSingerLyricMissingVowel {
+        en: "The long-vowel mark has no preceding vowel. Enter ア, イ, ウ, エ or オ.",
+        ja: "「ー」の前に伸ばす母音がありません。ア・イ・ウ・エ・オのいずれかを入力してください。"
+    }
+    ErrorSingerLyricTooShort {
+        en: "The note is too short for its lyric. Lengthen it or distribute the lyric across more notes.",
+        ja: "音符が短すぎて歌詞が入りません。音符を長くするか、歌詞を複数の音符に分けてください。"
+    }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }
     ErrorPlugin { en: "plugin error", ja: "プラグインのエラー" }

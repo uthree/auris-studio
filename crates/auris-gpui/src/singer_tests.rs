@@ -104,6 +104,52 @@ fn settle_debounce(app: &mut AurisApp) {
 }
 
 #[gpui::test]
+fn invalid_singer_lyrics_reveal_and_highlight_the_editable_note(cx: &mut TestAppContext) {
+    let scratch = Scratch::new("invalid-lyric");
+    let voice = scratch.voice("singer.voicevox.json");
+    let (app, cx) = open(cx);
+    let (track, clip) = app.update(cx, |this, cx| {
+        this.language = auris_i18n::Language::Japanese;
+        let (track, _) = add_singer(this, "Singer", &voice, false);
+        let clip = this
+            .session
+            .add_midi_clip(
+                track,
+                "Verse",
+                Ticks::from_beats(40.0),
+                Ticks::from_beats(8.0),
+            )
+            .unwrap();
+        let mut note = Note::new(30, Ticks::from_beats(3.0), Ticks::QUARTER);
+        note.lyric = "🙂".into();
+        this.session.add_note(clip, note).unwrap();
+        let revision = this.session.revision();
+        settle_debounce(this);
+        this.poll_auto_sing(cx);
+        assert_eq!(this.selected_clip, Some(clip));
+        assert_eq!(this.selected_notes, BTreeSet::from([0]));
+        assert_eq!(this.sung_failures[&track].note, Some((clip, 0)));
+        assert!(this.singer_failure(track).unwrap().contains("ひらがな"));
+        assert!(this.panels.is_open(crate::dock::Panel::PianoRoll));
+        assert!(this.timeline.scroll_ticks > Ticks::from_beats(40.0));
+        assert!(this.pitch.top_pitch >= 30 && this.pitch.top_pitch < 60);
+        assert_eq!(
+            this.session.revision(),
+            revision,
+            "error navigation never edits the score"
+        );
+        (track, clip)
+    });
+    crate::harness::paint(&app, cx);
+    app.update(cx, |this, cx| {
+        assert!(this.canvas.roll.get().is_some());
+        this.session.set_note_lyric(clip, 0, "あ").unwrap();
+        this.poll_auto_sing(cx);
+        assert!(!this.sung_failures.contains_key(&track));
+    });
+}
+
+#[gpui::test]
 fn previews_distinguish_speakers_and_same_named_voice_files(cx: &mut TestAppContext) {
     let scratch = Scratch::new("preview-identity");
     let one = scratch.voice("one.voicevox.json");

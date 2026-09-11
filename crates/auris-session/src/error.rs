@@ -187,6 +187,19 @@ pub enum SessionError {
     #[error(transparent)]
     Sing(#[from] auris_singer::SingError),
 
+    /// An editable singer note has a lyric that needs correction before synthesis.
+    #[error("invalid lyric '{lyric}' in clip {clip:?}, note {note}: {issue}")]
+    SingerLyric {
+        /// Clip containing the original note, including repeated passages.
+        clip: auris_core::ClipId,
+        /// Zero-based index of the original editable note.
+        note: usize,
+        /// The text shown in the editor.
+        lyric: String,
+        /// How the user can correct the lyric.
+        issue: auris_singer::LyricIssue,
+    },
+
     /// A singer command needs a voice model and the track names none.
     #[error("track {0} names no voice model; choose one first")]
     NoVoice(u64),
