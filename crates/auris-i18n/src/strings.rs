@@ -1780,6 +1780,8 @@ new のオプション
     AgentModelLabel { en: "Model", ja: "モデル" }
     AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
     AgentContextTokens { en: "Context tokens", ja: "文脈長" }
+    AgentModelInPanel { en: "Choose the model in the Agent Panel. Apply these settings to use them for the next request.", ja: "モデルはエージェントパネルで選択します。設定を適用すると、次の依頼から反映されます。" }
+    AgentSettingsApplied { en: "Agent settings applied", ja: "エージェント設定を適用しました" }
     AgentOutputTokens { en: "Output token limit", ja: "出力トークン上限" }
     AgentOutputTokensHelp { en: "Per response. Increasing output may raise the context window; reducing context may lower output. Applies to the next request.", ja: "1応答あたりの上限です。増やすと文脈長も増え、文脈長を減らすと上限も下がる場合があります。次の依頼から反映されます。" }
     AgentThinking { en: "Thinking", ja: "推論モード" }

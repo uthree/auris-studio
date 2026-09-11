@@ -5,6 +5,7 @@
 //! and applies every change through that, so there is still exactly one owner of the session.
 
 use auris_i18n::{Key, Language, messages};
+use auris_session::AgentPreferences;
 use auris_session::prelude::*;
 use auris_session::session::AudioStatus;
 use gpui::{
@@ -24,6 +25,7 @@ use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
 
+mod agent;
 mod appearance_editor;
 #[cfg(test)]
 mod appearance_tests;
@@ -42,6 +44,8 @@ pub enum SettingsTab {
     Audio,
     /// Key bindings.
     Keys,
+    /// Language-model connection and generation settings.
+    Agent,
 }
 
 /// The devices the host could see when the window opened.
@@ -71,6 +75,7 @@ pub struct SettingsWindow {
     appearance_editor: Option<appearance_editor::AppearanceEditor>,
     font_families: Vec<String>,
     tab: SettingsTab,
+    agent: agent::AgentSettings,
     /// What the host can see, refreshed on request or when the audio host changes.
     devices: AudioDevices,
     hosts: Vec<String>,
@@ -163,6 +168,7 @@ impl SettingsWindow {
         singer_acceleration: Acceleration,
         export: ExportPreferences,
         panels: PanelLayout,
+        agent: AgentPreferences,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut font_families = cx.text_system().all_font_names();
@@ -185,6 +191,7 @@ impl SettingsWindow {
             appearance_editor: None,
             font_families,
             tab: SettingsTab::General,
+            agent: agent::AgentSettings::new(agent, cx),
             devices,
             hosts: Session::audio_hosts(),
             audio,
@@ -362,6 +369,15 @@ impl SettingsWindow {
                 }),
             ))
             .child(button(
+                "tab-agent",
+                self.t(Key::AgentPanel),
+                ButtonStyle::Normal,
+                !self.searching() && tab == SettingsTab::Agent,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, window, cx| this.select_tab(SettingsTab::Agent, window, cx)),
+            ))
+            .child(button(
                 "tab-keys",
                 self.t(Key::TabKeys),
                 ButtonStyle::Normal,
@@ -386,6 +402,17 @@ impl SettingsWindow {
 
     /// Keeps the last text field active while a button or dropdown holds focus.
     fn sync_text_focus(&mut self, window: &Window) -> bool {
+        if let Some(index) = self
+            .agent
+            .focus
+            .iter()
+            .position(|focus| focus.is_focused(window))
+        {
+            self.agent.active = Some(index);
+            self.editing_search = false;
+            return true;
+        }
+        self.agent.active = None;
         let editor_focused = self.sync_editor_focus(window);
         if editor_focused {
             self.editing_search = false;
@@ -1465,7 +1492,14 @@ impl SettingsWindow {
         if self.dropdown_menu.is_some() && self.dropdown_key(event, cx) {
             return true;
         }
-        if self.sync_text_focus(window) && self.appearance_editor_key(event, cx) {
+        self.sync_text_focus(window);
+        if self.agent.active.is_some() && self.agent_key(event, cx) {
+            return true;
+        }
+        if self.agent.active.is_none()
+            && self.sync_text_focus(window)
+            && self.appearance_editor_key(event, cx)
+        {
             return true;
         }
         if self.capturing.is_some() {
@@ -1587,6 +1621,9 @@ impl HasTextField for SettingsWindow {
     }
 
     fn field(&mut self) -> Option<&mut TextField> {
+        if let Some(index) = self.agent.active {
+            return Some(&mut self.agent.fields[index]);
+        }
         if !self.editing_search {
             return self.appearance_editor.as_mut().map(|editor| editor.field());
         }
@@ -1596,6 +1633,9 @@ impl HasTextField for SettingsWindow {
     }
 
     fn readable_field(&self) -> Option<&TextField> {
+        if let Some(index) = self.agent.active {
+            return Some(&self.agent.fields[index]);
+        }
         if !self.editing_search {
             return self
                 .appearance_editor
@@ -1648,6 +1688,7 @@ impl Render for SettingsWindow {
                 SettingsTab::General => self.render_general(cx),
                 SettingsTab::Audio => self.render_audio(cx),
                 SettingsTab::Keys => self.render_keys(cx),
+                SettingsTab::Agent => self.render_agent(cx),
             }
         };
         let status = self.status.clone();
@@ -1810,6 +1851,7 @@ mod tests {
         for (id, expected) in [
             ("tab-audio", SettingsTab::Audio),
             ("tab-keys", SettingsTab::Keys),
+            ("tab-agent", SettingsTab::Agent),
             ("tab-general", SettingsTab::General),
         ] {
             let tab = cx.debug_bounds(id).unwrap();

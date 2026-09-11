@@ -187,7 +187,7 @@ an effect also removes its lanes. Read and list operations do not trigger projec
 
 ## Ollama configuration and failure recovery
 
-The Agent Panel exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
+Settings → Agent exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
 off, on), stored in shared preferences. Output token limit selects 4K, 8K, 16K,
 32K, or 64K per response and applies to the next request. Raising output also raises
 the context window when needed to leave room for input; lowering context can lower

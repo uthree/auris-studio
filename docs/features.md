@@ -1183,7 +1183,7 @@ what is currently on screen.
 
 ## Settings, where dotfiles can reach them
 
-The search field at the top of Settings searches General, Audio and key bindings together.
+The search field at the top of Settings searches General, Audio, Agent and key bindings together.
 Settings match Japanese and English labels and descriptions, regardless of the interface language;
 space-separated words narrow the results. Matching sections keep their controls, so changes can
 be made directly from the results. Clear the field, press Escape in it, or choose a tab to return
@@ -1445,12 +1445,13 @@ Accepting the changes retains the previous window document on the undo stack; Sa
 also preserve it separately. Cooperating writers serialize the check and save with a project
 file lock.
 
-The Agent Panel connects to a local Ollama server or an OpenAI-compatible API. Its model
-runtime lives in the UI-free `auris-agent` library, linked into `auris-studio`. A dedicated
+The Agent Panel connects to a local Ollama server or an OpenAI-compatible API. Connection and generation
+preferences live in Settings → Agent (Ctrl+, on Windows). The model picker and model-list
+refresh remain in the panel. Its model runtime lives in the UI-free `auris-agent` library, linked into `auris-studio`. A dedicated
 background thread handles the conversation while the UI remains responsive. `cargo run`
 builds the desktop and its agent together.
 
-Choose a provider and model in the panel. Model discovery runs in the background too; the URL
+Choose a provider in Settings and a model in the panel. Model discovery runs in the background too; the URL
 and API-key environment variable name are saved in shared settings. Secrets remain in the
 process environment. The transcript shows tool calls, results and the model's answer.
 

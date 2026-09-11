@@ -268,10 +268,6 @@ pub(crate) enum Absorbed {
 pub(crate) enum AgentField {
     /// The message being written.
     Chat,
-    /// The base URL, in the settings section.
-    Url,
-    /// The API key's environment variable, in the settings section.
-    KeyEnv,
 }
 
 /// One model a provider reported serving.
@@ -347,8 +343,6 @@ pub(crate) struct AgentChat {
     pub(crate) fetching_models: bool,
     /// What went wrong the last time it was asked, shown where the list would be.
     pub(crate) models_error: Option<String>,
-    /// Whether the provider picker is dropped open.
-    pub(crate) provider_menu: bool,
     /// Whether the model picker is dropped open.
     pub(crate) model_menu: bool,
     /// Prompt tokens the last turn carried — the context gauge's needle.
@@ -362,7 +356,7 @@ pub(crate) struct AgentChat {
     /// Running tool rows by wire name, so a result never scans the transcript.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
-    models_rx: Option<Receiver<Result<String, String>>>,
+    pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
     /// Which field holds the keyboard, if any.
     pub(crate) focused: Option<AgentField>,
     /// Whether the settings section is showing.
@@ -413,7 +407,6 @@ impl Default for AgentChat {
             models: Vec::new(),
             fetching_models: false,
             models_error: None,
-            provider_menu: false,
             model_menu: false,
             tokens_in: 0,
             tokens_out: 0,
@@ -472,8 +465,6 @@ impl AgentChat {
     pub(crate) fn field_mut(&mut self) -> Option<&mut TextField> {
         Some(match self.focused? {
             AgentField::Chat => &mut self.input,
-            AgentField::Url => &mut self.url_field,
-            AgentField::KeyEnv => &mut self.key_env_field,
         })
     }
 
@@ -481,8 +472,6 @@ impl AgentChat {
     pub(crate) fn field(&self) -> Option<&TextField> {
         Some(match self.focused? {
             AgentField::Chat => &self.input,
-            AgentField::Url => &self.url_field,
-            AgentField::KeyEnv => &self.key_env_field,
         })
     }
 
@@ -1136,13 +1125,6 @@ impl AurisApp {
                     self.agent_send();
                     return true;
                 }
-                // A finished URL or key name changes what the provider would answer, so the
-                // model list is asked again rather than left describing the old endpoint.
-                ("enter", _) => {
-                    self.agent_chat.focused = None;
-                    self.agent_refresh_models();
-                    return true;
-                }
                 _ => {}
             }
         }
@@ -1169,17 +1151,12 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let configured = self.settings.agent.is_configured();
-        let configuring = self.agent_chat.configuring || !configured;
-        if configuring && !configured {
-            // First opening on an unconfigured machine: start the form from what is saved.
-            self.agent_chat
-                .load_preferences_once(&self.settings.agent.clone());
-        }
-        // The first time the settings section is on screen, ask the provider what it serves —
+        // The persistent model picker uses the saved provider even before settings opens.
+        self.agent_chat
+            .load_preferences_once(&self.settings.agent.clone());
+        // When the panel first opens, ask the provider what it serves —
         // once, and only until an answer or a refusal lands; the refresh button asks again.
-        if configuring
-            && self.agent_chat.models.is_empty()
+        if self.agent_chat.models.is_empty()
             && self.agent_chat.models_error.is_none()
             && !self.agent_chat.fetching_models
             && self.agent_chat.models_rx.is_none()
@@ -1306,23 +1283,14 @@ impl AurisApp {
                         "agent-configure",
                         self.t(Key::AgentConfigure),
                         ButtonStyle::Normal,
-                        configuring,
+                        false,
                         theme.accent,
                         &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_chat.configuring = !this.agent_chat.configuring;
-                            if this.agent_chat.configuring {
-                                let prefs = this.settings.agent.clone();
-                                this.agent_chat.load_preferences(&prefs);
-                            } else {
-                                this.agent_chat.focused = None;
-                            }
-                            cx.notify();
-                        }),
+                        cx.listener(|this, _, _, cx| this.open_settings(cx)),
                     )),
             )
             .child(self.agent_controls(cx))
-            .when(configuring, |this| this.child(self.agent_settings(cx)))
+            .child(self.agent_model_picker(cx))
             .child(
                 self.scrolling(
                     ScrollPanel::Agent,
@@ -1349,18 +1317,15 @@ impl AurisApp {
                                 }),
                             ))
                         })
-                        .when(
-                            self.agent_chat.entries.is_empty() && !busy && !configuring,
-                            |this| {
-                                this.child(
-                                    div()
-                                        .p_2()
-                                        .text_xs()
-                                        .text_color(theme.text_faint)
-                                        .child(self.t(Key::AgentPlaceholder)),
-                                )
-                            },
-                        ),
+                        .when(self.agent_chat.entries.is_empty() && !busy, |this| {
+                            this.child(
+                                div()
+                                    .p_2()
+                                    .text_xs()
+                                    .text_color(theme.text_faint)
+                                    .child(self.t(Key::AgentPlaceholder)),
+                            )
+                        }),
                     cx,
                 ),
             )
@@ -1508,9 +1473,8 @@ impl AurisApp {
     }
 
     /// The settings section: provider, model, URL, key variable, apply.
-    fn agent_settings(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    fn agent_model_picker(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let openai = self.agent_chat.provider_openai;
         let labelled = |label: String, control: AnyElement, theme: &Theme| {
             div()
                 .flex()
@@ -1535,38 +1499,6 @@ impl AurisApp {
             .border_b_1()
             .border_color(theme.border)
             .child(labelled(
-                self.t(Key::AgentProviderLabel).to_string(),
-                self.dropdown(
-                    "agent-provider",
-                    match openai {
-                        true => "openai".to_string(),
-                        false => "ollama".to_string(),
-                    },
-                    self.agent_chat.provider_menu,
-                    &theme,
-                    |this, _| {
-                        this.agent_chat.provider_menu = !this.agent_chat.provider_menu;
-                        this.agent_chat.model_menu = false;
-                    },
-                    cx,
-                ),
-                &theme,
-            ))
-            .when(self.agent_chat.provider_menu, |this| {
-                this.child(self.option_rows(
-                    "agent-provider-option",
-                    &["ollama".to_string(), "openai".to_string()],
-                    &theme,
-                    |this, chosen, _| {
-                        this.agent_chat.provider_openai = chosen == 1;
-                        this.agent_chat.provider_menu = false;
-                        // A different provider serves a different list, so it is asked afresh.
-                        this.agent_refresh_models();
-                    },
-                    cx,
-                ))
-            })
-            .child(labelled(
                 self.t(Key::AgentModelLabel).to_string(),
                 div()
                     .flex()
@@ -1582,7 +1514,6 @@ impl AurisApp {
                         &theme,
                         |this, _| {
                             this.agent_chat.model_menu = !this.agent_chat.model_menu;
-                            this.agent_chat.provider_menu = false;
                         },
                         cx,
                     )))
@@ -1642,118 +1573,6 @@ impl AurisApp {
                     cx,
                 ))
             })
-            .child(labelled(
-                self.t(Key::AgentUrlLabel).to_string(),
-                self.agent_text_field("agent-url", AgentField::Url, cx),
-                &theme,
-            ))
-            .child(labelled(
-                self.t(Key::AgentKeyEnvLabel).to_string(),
-                self.agent_text_field("agent-key-env", AgentField::KeyEnv, cx),
-                &theme,
-            ))
-            .when(!self.agent_chat.provider_openai, |this| {
-                this.child(button(
-                    "agent-context-tokens",
-                    format!(
-                        "{}: {}k",
-                        self.t(Key::AgentContextTokens),
-                        self.agent_chat.context_tokens / 1024
-                    ),
-                    ButtonStyle::Normal,
-                    true,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.context_tokens = match this.agent_chat.context_tokens {
-                            32768 => 65536,
-                            65536 => 131072,
-                            131072 => 262144,
-                            _ => 32768,
-                        };
-                        this.agent_chat.output_tokens = this
-                            .agent_chat
-                            .output_tokens
-                            .min(this.agent_chat.context_tokens / 4);
-                        this.agent_chat.context_window =
-                            Some(u64::from(this.agent_chat.context_tokens));
-                        this.agent_write_through();
-                        cx.notify();
-                    }),
-                ))
-                .child(button(
-                    "agent-output-tokens",
-                    format!(
-                        "{}: {}k",
-                        self.t(Key::AgentOutputTokens),
-                        self.agent_chat.output_tokens / 1024
-                    ),
-                    ButtonStyle::Normal,
-                    true,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.output_tokens = match this.agent_chat.output_tokens {
-                            4096 => 8192,
-                            8192 => 16384,
-                            16384 => 32768,
-                            32768 => 65536,
-                            _ => 4096,
-                        };
-                        // Leave room for tools and input when raising the output budget.
-                        if this.agent_chat.output_tokens >= this.agent_chat.context_tokens / 2 {
-                            this.agent_chat.context_tokens = this.agent_chat.output_tokens * 4;
-                            this.agent_chat.context_window =
-                                Some(u64::from(this.agent_chat.context_tokens));
-                        }
-                        this.agent_write_through();
-                        cx.notify();
-                    }),
-                ))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(self.t(Key::AgentOutputTokensHelp).to_string()),
-                )
-                .child(button(
-                    "agent-thinking",
-                    format!(
-                        "{}: {}",
-                        self.t(Key::AgentThinking),
-                        self.t(match self.agent_chat.thinking {
-                            None => Key::AgentThinkingAuto,
-                            Some(true) => Key::AgentThinkingOn,
-                            Some(false) => Key::AgentThinkingOff,
-                        })
-                    ),
-                    ButtonStyle::Normal,
-                    true,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.thinking = match this.agent_chat.thinking {
-                            None => Some(false),
-                            Some(false) => Some(true),
-                            Some(true) => None,
-                        };
-                        this.agent_write_through();
-                        cx.notify();
-                    }),
-                ))
-            })
-            .child(div().flex().justify_end().child(button(
-                "agent-apply",
-                self.t(Key::AgentApply),
-                ButtonStyle::Normal,
-                true,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.agent_apply_settings();
-                    cx.notify();
-                }),
-            )))
             .into_any_element()
     }
 
@@ -1936,18 +1755,6 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// A settings-section text field.
-    fn agent_text_field(
-        &mut self,
-        id: &'static str,
-        field: AgentField,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme.clone();
-        let focused = self.agent_chat.focused == Some(field);
-        self.panel_field(id, field, focused, false, String::new(), &theme, cx)
-    }
-
     /// One of the panel's one-line fields, drawn the way the library's search box is.
     #[allow(clippy::too_many_arguments)]
     fn panel_field(
@@ -1962,8 +1769,6 @@ impl AurisApp {
     ) -> AnyElement {
         let value = match field {
             AgentField::Chat => &self.agent_chat.input,
-            AgentField::Url => &self.agent_chat.url_field,
-            AgentField::KeyEnv => &self.agent_chat.key_env_field,
         };
         let text = value.content().to_string();
         let selection = value.selection();
@@ -2035,6 +1840,8 @@ mod tests {
     fn live_agent_edits_an_unsaved_document_and_undo_restores_it(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
+            // This editing test must not inherit modes saved by settings-window tests.
+            this.settings.agent.policy = Default::default();
             let before = this.project().clone();
             assert!(this.session.path().is_none());
             let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
@@ -2177,7 +1984,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn agent_chat_and_connection_fields_accept_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {
+    fn agent_chat_accepts_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             this.panels = Default::default();
@@ -2187,11 +1994,9 @@ mod tests {
             this.panels.show(crate::dock::Panel::Agent);
         });
         crate::harness::paint(&app, cx);
-        for (selector, field, text) in [
-            ("agent-input", AgentField::Chat, "make the bass quieter"),
-            ("agent-url", AgentField::Url, "https://example.invalid/v1"),
-            ("agent-key-env", AgentField::KeyEnv, "MY_AGENT_KEY"),
-        ] {
+        {
+            let (selector, field, text) =
+                ("agent-input", AgentField::Chat, "make the bass quieter");
             crate::harness::click(selector, cx);
             crate::harness::paint(&app, cx);
             cx.update(|_, cx| {

@@ -2810,6 +2810,7 @@ impl AurisApp {
         let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
         let panels = self.panels.clone();
+        let agent = self.settings.agent.clone();
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -2837,6 +2838,7 @@ impl AurisApp {
                         singer_acceleration,
                         export,
                         panels,
+                        agent,
                         cx,
                     )
                 })
