@@ -1012,6 +1012,7 @@ dependencies = [
  "gpui-component",
  "image",
  "log",
+ "markdown",
  "rfd",
  "serde",
  "serde_json",

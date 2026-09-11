@@ -23,7 +23,6 @@ use auris_session::AgentPreferences;
 use gpui::{
     AnyElement, IntoElement, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
 };
-use gpui_component::text::TextView;
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
@@ -1162,18 +1161,7 @@ impl AurisApp {
                     return true;
                 }
                 ("enter", AgentField::Chat) => {
-                    self.agent_send();
-                    if self.session.path().is_none()
-                        && self.settings.agent.is_configured()
-                        && !self.agent_chat.input.content().trim().is_empty()
-                        && !self.agent_chat.busy
-                    {
-                        self.save_as_then(
-                            Some(crate::ui::prompt::PendingAction::AgentSend),
-                            window,
-                            cx,
-                        );
-                    }
+                    self.agent_submit(window, cx);
                     return true;
                 }
                 // A finished URL or key name changes what the provider would answer, so the
@@ -1192,6 +1180,26 @@ impl AurisApp {
             field.apply_key_with_clipboard(key, shift, secondary, false, cx)
                 != crate::ui::text_field::KeyEffect::Ignored
         })
+    }
+
+    /// The send button and Enter share validation and the unsaved-project flow.
+    fn agent_submit(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.agent_chat.input.marked().is_some() {
+            return;
+        }
+        self.agent_send();
+        if self.session.path().is_none()
+            && self.settings.agent.is_configured()
+            && !self.agent_chat.input.content().trim().is_empty()
+            && !self.agent_chat.busy
+            && self.agent_chat.pending_reload.is_none()
+        {
+            self.save_as_then(
+                Some(crate::ui::prompt::PendingAction::AgentSend),
+                window,
+                cx,
+            );
+        }
     }
 
     /// Puts the keyboard into one of the panel's fields.
@@ -1254,6 +1262,7 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .flex_shrink_0()
                     .min_h(Metrics::PANEL_HEADER_HEIGHT)
                     .flex_wrap()
                     .px_2()
@@ -1482,27 +1491,27 @@ impl AurisApp {
             _ => None,
         };
         let body: AnyElement = match entry {
-            // Match picocode's native GUI: finished model answers go through TextView rather
-            // than being handed to a div as literal text. That gives headings, emphasis, lists,
-            // links, tables and syntax-highlighted fenced code blocks their intended shape.
-            ChatEntry::Agent(_) => TextView::markdown(
+            ChatEntry::Agent(_) => super::agent_markdown::render(
                 SharedString::from(format!("agent-markdown-{index}")),
                 SharedString::from(text),
+                theme,
                 window,
                 cx,
-            )
-            .selectable(true)
-            .into_any_element(),
+            ),
             _ => div().child(text).into_any_element(),
         };
         div()
             .id(("agent-line", index))
+            .debug_selector(move || format!("agent-line-{index}"))
+            .w_full()
+            .min_w_0()
+            .flex_shrink_0()
             .px_1p5()
             .py_0p5()
             .text_xs()
             .text_color(colour)
             .when(bordered, |this| {
-                this.border_l_2().border_color(theme.accent).ml_1()
+                this.border_l_2().border_color(theme.accent)
             })
             .when(openable, |this| {
                 this.cursor_pointer().on_mouse_down(
@@ -1516,6 +1525,32 @@ impl AurisApp {
                 )
             })
             .child(body)
+            .when_some(
+                match entry {
+                    ChatEntry::Agent(text) => Some(text.clone()),
+                    _ => None,
+                },
+                |this, text| {
+                    this.child(
+                        div().flex().justify_end().mt_1().child(
+                            button(
+                                ("agent-copy", index),
+                                self.t(Key::AgentCopyMarkdown),
+                                ButtonStyle::Ghost,
+                                false,
+                                theme.accent,
+                                theme,
+                                cx.listener(move |_, _, _, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        text.clone(),
+                                    ));
+                                }),
+                            )
+                            .cursor_default(),
+                        ),
+                    )
+                },
+            )
             .when_some(detail, |this, detail| {
                 // Line by line rather than one string: a div's text collapses the newlines a
                 // tool's tables are drawn with.
@@ -1855,7 +1890,14 @@ impl AurisApp {
         let focused = self.agent_chat.focused == Some(AgentField::Chat);
         let empty = self.agent_chat.input.content().is_empty();
         let placeholder = self.t(Key::AgentPlaceholder).to_string();
+        let can_send = !self.agent_chat.busy
+            && !self.agent_chat.input.content().trim().is_empty()
+            && self.agent_chat.input.marked().is_none();
         div()
+            .flex()
+            .flex_col()
+            .flex_shrink_0()
+            .gap_1()
             .p_1()
             .border_t_1()
             .border_color(theme.border)
@@ -1917,15 +1959,46 @@ impl AurisApp {
                         )
                     })),
             )
-            .child(self.panel_field(
-                "agent-input",
-                AgentField::Chat,
-                focused,
-                empty,
-                placeholder,
-                &theme,
-                cx,
-            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(div().flex_1().min_w_0().child(self.panel_field(
+                        "agent-input",
+                        AgentField::Chat,
+                        focused,
+                        empty,
+                        placeholder,
+                        &theme,
+                        cx,
+                    )))
+                    .child(
+                        button(
+                            "agent-send",
+                            self.t(Key::AgentSend),
+                            if can_send {
+                                ButtonStyle::Primary
+                            } else {
+                                ButtonStyle::Normal
+                            },
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(move |this, _, window, cx| {
+                                if can_send {
+                                    this.agent_submit(window, cx);
+                                    cx.notify();
+                                }
+                            }),
+                        )
+                        .flex_shrink_0()
+                        .cursor_default()
+                        .when(!can_send, |this| {
+                            this.text_color(theme.text_faint).opacity(0.5)
+                        }),
+                    ),
+            )
             .into_any_element()
     }
 
@@ -2023,6 +2096,125 @@ impl AurisApp {
 mod tests {
     use super::*;
     use auris_session::prelude::{Note, Ticks};
+
+    #[gpui::test]
+    fn copy_answer_keeps_all_markdown_after_resizing(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let answer = "## 再生結果\n\n- **WAV:** `C:/Music/preview.wav`\n\n  次の段落。";
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(900.), px(600.)));
+        crate::harness::click("agent-copy-0", cx);
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .as_deref(),
+                Some(answer)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn send_button_preserves_drafts_and_opens_configuration(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent = Default::default();
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.input = TextField::new(" ");
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-send", cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.entries.is_empty()));
+
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("再生してみて。");
+            this.agent_chat.busy = true;
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-send", cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.entries.is_empty()));
+
+        app.update(cx, |this, _| this.agent_chat.busy = false);
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-send", cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "再生してみて。");
+            assert!(this.agent_chat.configuring);
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::Note(Key::AgentNotConfigured)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn markdown_transcript_keeps_long_answers_scrollable(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        let answer = "## 再生結果\n\n- **WAV:** `C:/Music/preview.wav`\n- 長さ 00:08、2ch\n\n説明の段落です。\n\n";
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
+        });
+        crate::harness::paint(&app, cx);
+        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        app.update(cx, |this, _| {
+            // A fresh identity avoids the Markdown renderer's asynchronous update debounce.
+            this.agent_chat.entries = vec![
+                ChatEntry::You("再生してみて。".into()),
+                ChatEntry::Agent(answer.repeat(40)),
+                ChatEntry::Tool {
+                    name: "preview".into(),
+                    ok: true,
+                    line: "finished".into(),
+                    detail: "Audio preview details".into(),
+                },
+            ];
+        });
+        crate::harness::paint(&app, cx);
+        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        // Structural overflow, not font metrics or a pixel snapshot: more content must
+        // occupy more space, and scrolling must make the following tool reachable.
+        assert!(
+            long > short * 10.,
+            "the answer was compressed: {short:?} -> {long:?}"
+        );
+        app.update(cx, |this, _| {
+            let view = this.scroll_view(ScrollPanel::Agent);
+            assert!(view.max_offset > view.viewport);
+            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset);
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-line-2", cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&2)));
+    }
+
+    #[gpui::test]
+    fn markdown_list_continuation_paragraphs_stack_vertically(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![
+                ChatEntry::Agent("- first".into()),
+                ChatEntry::Agent(format!("- first{}", "\n\n  next".repeat(30))),
+            ];
+        });
+        crate::harness::paint(&app, cx);
+        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        assert!(
+            long > short * 10.,
+            "list paragraphs share a horizontal row: {short:?} -> {long:?}"
+        );
+    }
 
     #[gpui::test]
     fn pending_changes_block_send_before_saving_or_starting_a_model(cx: &mut gpui::TestAppContext) {

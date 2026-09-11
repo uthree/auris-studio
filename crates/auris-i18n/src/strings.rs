@@ -1781,6 +1781,8 @@ new のオプション
     AgentSaveFirst { en: "Save this project before sending it to the agent.", ja: "エージェントに送る前にプロジェクトを保存してください。" }
     AgentNewConversation { en: "New conversation", ja: "新しい会話" }
     AgentStop { en: "Stop", ja: "停止" }
+    AgentSend { en: "Send", ja: "送信" }
+    AgentCopyMarkdown { en: "Copy Markdown", ja: "Markdownをコピー" }
     AgentAttachAudio { en: "Attach audio", ja: "音声を添付" }
     AgentOpenResult { en: "Open created project", ja: "生成した曲を開く" }
     AgentConversationReset { en: "Started a new conversation for this project.", ja: "このプロジェクトについて新しい会話を始めました。" }
