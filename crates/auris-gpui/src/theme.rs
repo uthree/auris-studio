@@ -25,8 +25,8 @@ pub struct GradientStop {
 /// unlike every other window on the screen.
 ///
 /// None of the three covers Japanese, so a Japanese track name or menu would come out as empty
-/// boxes without the fallbacks. They are listed for every platform at once because a family that
-/// is not installed is simply skipped, which makes an unused entry free.
+/// boxes without the fallbacks. Only list families for the current platform: Windows logs an
+/// error for every missing family while building its DirectWrite fallback mappings.
 pub fn ui_font() -> Font {
     ui_font_for(None)
 }
@@ -40,19 +40,17 @@ pub fn ui_font_for(family: Option<&str>) -> Font {
     } else {
         "DejaVu Sans"
     };
+    let fallbacks: &[&str] = if cfg!(target_os = "macos") {
+        &["Hiragino Sans", "Apple SD Gothic Neo"]
+    } else if cfg!(target_os = "windows") {
+        &["Segoe UI", "Yu Gothic UI", "Meiryo"]
+    } else {
+        &["Noto Sans CJK JP", "DejaVu Sans"]
+    };
     Font {
-        fallbacks: Some(FontFallbacks::from_fonts(vec![
-            // macOS
-            "Hiragino Sans".into(),
-            "Apple SD Gothic Neo".into(),
-            // Windows
-            "Segoe UI".into(),
-            "Yu Gothic UI".into(),
-            "Meiryo".into(),
-            // Linux
-            "Noto Sans CJK JP".into(),
-            "DejaVu Sans".into(),
-        ])),
+        fallbacks: Some(FontFallbacks::from_fonts(
+            fallbacks.iter().map(|family| (*family).into()).collect(),
+        )),
         ..gpui::font(family.unwrap_or(base).to_owned())
     }
 }
@@ -1635,11 +1633,29 @@ mod tests {
             "DejaVu Sans"
         };
         assert_eq!(font.family.as_ref(), expected);
-        assert!(
-            font.fallbacks
+    }
+
+    #[test]
+    fn fallback_families_belong_to_the_current_platform() {
+        let expected: &[&str] = if cfg!(target_os = "macos") {
+            &["Hiragino Sans", "Apple SD Gothic Neo"]
+        } else if cfg!(target_os = "windows") {
+            &["Segoe UI", "Yu Gothic UI", "Meiryo"]
+        } else {
+            &["Noto Sans CJK JP", "DejaVu Sans"]
+        };
+        // Custom interface families must use the same platform-specific CJK fallbacks.
+        for font in [ui_font(), ui_font_for(Some("Custom Interface"))] {
+            let fallbacks = font
+                .fallbacks
                 .as_ref()
-                .is_some_and(|fallbacks| fallbacks.fallback_list().len() >= 5),
-            "the Japanese fallbacks are what keep track names from being empty boxes"
-        );
+                .expect("CJK fallbacks are configured");
+            let families: Vec<_> = fallbacks
+                .fallback_list()
+                .iter()
+                .map(String::as_str)
+                .collect();
+            assert_eq!(families, expected);
+        }
     }
 }
