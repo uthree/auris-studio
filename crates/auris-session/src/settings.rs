@@ -161,6 +161,10 @@ impl ExportPreferences {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentPreferences {
+    /// Live agent mode and operation allow/deny rules. MCP is unaffected.
+    pub policy: crate::agent_policy::Policy,
+    /// Auto-compaction threshold in percent; absent means 85, zero disables it.
+    pub auto_compact_percent: Option<u8>,
     /// Ollama request context window. Absent uses 32768 tokens, independently of server defaults.
     pub context_tokens: Option<u32>,
     /// Ollama thinking override; absent keeps the model's default.

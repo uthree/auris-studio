@@ -1481,7 +1481,13 @@ whole-song composition replaces their tracks.
 The panel can attach audio, stop a running turn and start a new conversation. Opening another
 document rebinds the agent. In saved projects, successful
 user/answer pairs are saved locally in `.auris-conversation.json` and resumed on the next
-message. This text memory keeps at most 24 turns and 24,000 characters; old turns are dropped,
-long text is truncated, and tool payloads and encoded audio are not retained. The current
+message. Context compaction summarizes earlier exchanges while retaining the latest two
+verbatim, automatically or using Compact context. The text store has a final safety cap of
+256 turns and one million characters; tool payloads and encoded audio are not retained. The current
 selection is sent afresh with each message. New conversation clears the saved text memory.
+
+The panel offers Read-only, Edit, Plan and Bypass modes, operation allow/deny rules,
+and confirmation before operations that require approval. See
+[Agent permissions and context compaction](agent-workflows.md#agent-permissions-and-context-compaction)
+for mode semantics and keyboard commands.
 

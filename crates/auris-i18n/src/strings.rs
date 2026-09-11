@@ -1757,6 +1757,26 @@ new のオプション
     AgentConfigure { en: "Settings", ja: "設定" }
     AgentApply { en: "Apply", ja: "適用" }
     AgentProviderLabel { en: "Provider", ja: "プロバイダ" }
+    AgentReadOnly { en: "Read-only", ja: "読み取り専用" }
+    AgentEditMode { en: "Edit", ja: "編集" }
+    AgentPlanMode { en: "Plan", ja: "プラン" }
+    AgentBypassMode { en: "Bypass", ja: "バイパス" }
+    AgentPermissions { en: "Permissions…", ja: "操作の許可…" }
+    AgentPermissionHelp { en: "Deny rules always win. Plan blocks changes. Read-only asks before changes; Edit allows ordinary edits. Bypass skips confirmation. Click a rule to cycle Default → Allow → Deny. Keyboard: Shift+Tab changes mode; /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。プランは変更を禁止、読み取り専用は変更前に確認、編集は通常の編集を許可、バイパスは確認を省略します。ルールはクリックで 標準 → 許可 → 禁止。Shift+Tabでモード変更。/mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
+    AgentRuleDefault { en: "Default", ja: "標準" }
+    AgentRuleAllow { en: "Allow", ja: "許可" }
+    AgentRuleDeny { en: "Deny", ja: "禁止" }
+    AgentApprovalTitle { en: "Allow this operation?", ja: "この操作を許可しますか？" }
+    AgentApprovalKeys { en: "{once}: allow once · {always}: always allow this operation · Esc: deny", ja: "{once}：今回のみ許可 · {always}：この操作を常に許可 · Esc：拒否" }
+    AgentAllowOnce { en: "Allow once", ja: "今回のみ許可" }
+    AgentAllowAlways { en: "Always allow this operation", ja: "この操作を常に許可" }
+    AgentDenyOnce { en: "Deny", ja: "拒否" }
+    AgentAwaitingApproval { en: "Waiting for permission", ja: "操作の許可を待っています" }
+    AgentCompact { en: "Compact context", ja: "文脈を圧縮" }
+    AgentCompacting { en: "Summarizing earlier conversation…", ja: "以前の会話を要約しています…" }
+    AgentCompactEmpty { en: "Start a conversation before compacting. /compact summarizes earlier turns.", ja: "会話を始めてから圧縮できます。/compact でも以前の会話を要約できます。" }
+    AgentAutoCompact { en: "Auto-compact", ja: "自動圧縮" }
+    AgentCompactOff { en: "Off", ja: "オフ" }
     AgentModelLabel { en: "Model", ja: "モデル" }
     AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
     AgentContextTokens { en: "Context tokens", ja: "文脈長" }

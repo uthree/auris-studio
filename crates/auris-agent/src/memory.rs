@@ -7,8 +7,8 @@ use std::path::Path;
 
 use rig::message::Message;
 
-const TEXT_BUDGET: usize = 24_000;
-const TURN_LIMIT: usize = 24;
+const TEXT_BUDGET: usize = 1_000_000;
+const TURN_LIMIT: usize = 256;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Turn {
@@ -18,6 +18,8 @@ pub(crate) struct Turn {
 
 #[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Memory {
+    #[serde(default)]
+    pub(crate) summary: String,
     pub(crate) turns: Vec<Turn>,
 }
 
@@ -28,7 +30,7 @@ impl Memory {
                 return Ok(Self::default());
             }
             Err(error) => return Err(error.to_string()),
-            Ok(metadata) if metadata.len() > 2 * 1024 * 1024 => {
+            Ok(metadata) if metadata.len() > 8 * 1024 * 1024 => {
                 return Err("conversation file is too large; start a new conversation".into());
             }
             Ok(_) => {}
@@ -53,12 +55,13 @@ impl Memory {
         self.push(
             user,
             &format!(
-                "Turn interrupted: {error}. Saved tool edits may already exist. Inspect the project before continuing."
+                "Turn interrupted: {error}. Live document edits may already exist. Inspect the project before continuing."
             ),
         );
     }
 
     fn bound(&mut self) {
+        self.summary = shorten(&self.summary, 8192);
         for turn in &mut self.turns {
             turn.user = shorten(&turn.user, TEXT_BUDGET / 2);
             turn.answer = shorten(&turn.answer, TEXT_BUDGET / 2);
@@ -68,7 +71,7 @@ impl Memory {
         }
     }
 
-    fn text_len(&self) -> usize {
+    pub(crate) fn text_len(&self) -> usize {
         self.turns
             .iter()
             .map(|turn| turn.user.chars().count() + turn.answer.chars().count())
@@ -76,10 +79,22 @@ impl Memory {
     }
 
     pub(crate) fn messages(&self) -> Vec<Message> {
-        self.turns
-            .iter()
-            .flat_map(|turn| [Message::user(&turn.user), Message::assistant(&turn.answer)])
-            .collect()
+        let mut messages = Vec::new();
+        if !self.summary.is_empty() {
+            messages.push(Message::user(format!(
+                "Summary of earlier conversation (context, not new instructions):\n{}",
+                self.summary
+            )));
+            messages.push(Message::assistant(
+                "I will continue from this context and verify the current document.",
+            ));
+        }
+        messages.extend(
+            self.turns
+                .iter()
+                .flat_map(|turn| [Message::user(&turn.user), Message::assistant(&turn.answer)]),
+        );
+        messages
     }
 
     pub(crate) fn save(&self, path: &Path) -> Result<(), String> {
@@ -105,18 +120,22 @@ mod tests {
 
     #[test]
     fn completed_turns_round_trip_and_old_context_is_bounded() {
-        let mut memory = Memory::default();
-        for index in 0..40 {
+        let mut memory = Memory {
+            summary: "Keep the original melody and instrument choices.".into(),
+            ..Default::default()
+        };
+        for index in 0..300 {
             memory.push(&format!("request {index}"), &"音楽".repeat(1000));
         }
-        assert!(memory.turns.len() < TURN_LIMIT);
+        assert_eq!(memory.turns.len(), TURN_LIMIT);
         assert!(memory.text_len() <= TEXT_BUDGET);
-        assert_eq!(memory.turns.last().unwrap().user, "request 39");
+        assert_eq!(memory.turns.last().unwrap().user, "request 299");
         let path = std::env::temp_dir().join(format!("auris-memory-{}.json", std::process::id()));
         memory.save(&path).unwrap();
         let read = Memory::load(&path).unwrap();
-        assert_eq!(read.messages().len(), memory.turns.len() * 2);
-        assert_eq!(read.turns.last().unwrap().user, "request 39");
+        assert_eq!(read.messages().len(), memory.turns.len() * 2 + 2);
+        assert_eq!(read.summary, memory.summary);
+        assert_eq!(read.turns.last().unwrap().user, "request 299");
         std::fs::remove_file(path).unwrap();
     }
 
@@ -134,7 +153,7 @@ mod tests {
         assert!(
             memory.turns[1]
                 .answer
-                .contains("Saved tool edits may already exist")
+                .contains("Live document edits may already exist")
         );
         assert!(memory.turns[1].answer.contains("Inspect the project"));
         assert_eq!(memory.messages().len(), 6);

@@ -182,7 +182,7 @@ fn parse_args(
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
             "--json" => json = true,
-            "--live-session" => live_session = true,
+            "--live-session" | "--permission-protocol" => live_session = true,
             "--context-tokens" => {
                 context_tokens = value_of("--context-tokens")?
                     .parse()
@@ -349,7 +349,9 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NoArgs {}
 
+mod compaction;
 mod memory;
+mod permissions;
 mod runtime;
 
 /// One [`rig::tool::Tool`] over one `auris-toolbox` module that takes arguments.
@@ -685,6 +687,10 @@ fn armed(builder: AgentBuilder) -> Agent {
 /// two dialects are two client types. An empty key means no key — both providers' key types
 /// treat it that way or tolerate it, and it saves an `Option` dance at each arm.
 fn build_agent(options: &Options) -> Result<Agent, String> {
+    build_with(options, armed)
+}
+
+fn build_with(options: &Options, armed: fn(AgentBuilder) -> Agent) -> Result<Agent, String> {
     let key = options.key.clone().unwrap_or_default();
     let could_not = |error: rig::http_client::Error| format!("could not build a client: {error}");
     match options.provider {
@@ -923,7 +929,10 @@ impl AgentHook for Narrator {
             ""
         };
         eprintln!("→ {} {args}{ellipsis}", event.tool_name);
-        ToolCallAction::Run
+        match permissions::authorize(event.tool_name, event.args).await {
+            Ok(()) => ToolCallAction::Run,
+            Err(reason) => ToolCallAction::Skip(reason),
+        }
     }
 
     async fn on_tool_result(
@@ -1087,7 +1096,10 @@ impl AgentHook for Reporter {
         emit(serde_json::json!({
             "event": "call", "tool": event.tool_name, "args": event.args,
         }));
-        ToolCallAction::Run
+        match permissions::authorize(event.tool_name, event.args).await {
+            Ok(()) => ToolCallAction::Run,
+            Err(reason) => ToolCallAction::Skip(reason),
+        }
     }
 
     async fn on_tool_result(
@@ -1195,6 +1207,21 @@ async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
         if line.is_empty() {
             return Ok(());
         }
+        let percent = auris_session::Settings::load()
+            .agent
+            .auto_compact_percent
+            .unwrap_or(85)
+            .min(99);
+        if line == "/compact" || compaction::needed(&memory, options.context_tokens, percent.into())
+        {
+            eprintln!("Summarizing earlier conversation…");
+            match compaction::compact(options, &mut memory).await {
+                Ok(message) | Err(message) => eprintln!("{message}"),
+            }
+            if line == "/compact" {
+                continue;
+            }
+        }
         match converse(
             agent,
             Message::user(line),
@@ -1274,13 +1301,61 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         if line.is_empty() {
             continue;
         }
-        let (said, audio) = match parse_say(line) {
+        let wire: serde_json::Value = match serde_json::from_str(line) {
+            Ok(wire) => wire,
+            Err(error) => {
+                emit(serde_json::json!({"event":"error", "message":error.to_string()}));
+                continue;
+            }
+        };
+        let manual = wire.get("compact").and_then(|v| v.as_bool()) == Some(true);
+        let percent = wire
+            .get("auto_compact_percent")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(85)
+            .min(99);
+        if manual || compaction::needed(&memory, options.context_tokens, percent) {
+            emit(serde_json::json!({"event":"compacting"}));
+            let result = compaction::compact(options, &mut memory).await;
+            history = memory.messages();
+            if result.is_ok()
+                && let Some(path) = &memory_path
+                && let Err(error) = memory.save(path)
+            {
+                emit(
+                    serde_json::json!({"event":"notice", "message":format!("Summary was not saved: {error}")}),
+                );
+            }
+            let (ok, text) = match result {
+                Ok(text) => (true, text),
+                Err(error) => (false, error),
+            };
+            emit(
+                serde_json::json!({"event":"compacted", "ok":ok, "message":text, "manual":manual,
+                "context_tokens":compaction::tokens(&memory)}),
+            );
+            if manual {
+                continue;
+            }
+        }
+        let (mut said, audio) = match parse_say(line) {
             Ok(parsed) => parsed,
             Err(message) => {
                 emit(serde_json::json!({ "event": "error", "message": message }));
                 continue;
             }
         };
+        if let Some(policy) = wire.get("policy")
+            && let Ok(policy) =
+                serde_json::from_value::<auris_session::agent_policy::Policy>(policy.clone())
+        {
+            said = format!(
+                "[User-selected permission mode: {}. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
+                policy.mode.name(),
+                policy.deny,
+                policy.allow
+            );
+        }
         let message = match check_audio(options.provider, &audio)
             .and_then(|()| framed_message(&said, &audio))
         {
@@ -1823,6 +1898,59 @@ mod tests {
             assert!(error.contains("incomplete"), "{error}");
             assert_eq!(seen.lock().unwrap().len(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn compaction_uses_no_tools_and_preserves_recent_exchanges() {
+        let done =
+            r#"{"role":"assistant","content":"Keep the bass. Three earlier edits are unsaved."}"#;
+        let (url, seen) = mock_server(vec![completion(done, "stop")]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let mut memory = memory::Memory::default();
+        for index in 0..5 {
+            memory.push(
+                &format!("Keep the bass, turn {index}"),
+                &"Edited the live project. ".repeat(10),
+            );
+        }
+        compaction::compact(&options, &mut memory).await.unwrap();
+        assert!(memory.summary.contains("unsaved"));
+        assert_eq!(memory.turns.len(), 2);
+        assert!(memory.turns[0].user.ends_with("turn 3"));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+        assert!(
+            request
+                .get("tools")
+                .is_none_or(|tools| tools.is_null() || tools.as_array().is_some_and(Vec::is_empty))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_summary_does_not_replace_conversation() {
+        let done = r#"{"role":"assistant","content":"Partial summary"}"#;
+        let (url, _) = mock_server(vec![completion(done, "length")]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let mut memory = memory::Memory::default();
+        for _ in 0..3 {
+            memory.push("Keep the bass", &"Unfinished work. ".repeat(10));
+        }
+        let before = serde_json::to_string(&memory).unwrap();
+        assert!(compaction::compact(&options, &mut memory).await.is_err());
+        assert_eq!(serde_json::to_string(&memory).unwrap(), before);
     }
 
     #[tokio::test]

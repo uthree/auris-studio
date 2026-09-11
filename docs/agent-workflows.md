@@ -227,3 +227,48 @@ Two failures with identical tool arguments stop a third execution; changing argu
 allows a correction. Successful calls clear that signature's failure count. Interrupted
 JSON conversations retain the request and interruption summary so a following turn can
 inspect the current document and resume. Completed live edits remain in the session.
+
+
+## Agent permissions and context compaction
+
+The rig Agent Panel has four persistent modes, following the permission model in
+[Picocode](https://github.com/uthree/picocode):
+
+| Mode | Behavior |
+| --- | --- |
+| Read-only | Read immediately; request approval for edits and internet search unless allowed by a rule. |
+| Edit | Apply ordinary live edits; confirm removals, arrangement replacement, and internet search. |
+| Plan | Inspect and propose a plan; reject document changes, including allow-listed changes. |
+| Bypass | Skip confirmations while continuing to enforce deny rules. |
+
+Deny rules win over every mode and allow rule. The Permissions section offers
+Default, Allow, and Deny for each operation, `edit_project.*`, and `*`.
+An approval shows the project, operation and exact arguments. Allow once applies
+only to that command at the current document revision; edits made while awaiting
+approval invalidate it. Always allow saves an operation rule. Rejecting an operation
+returns a refusal to the model. Changing modes or rules cancels pending approvals.
+Stopping the agent cancels its pending work.
+
+Use the mode buttons or `/mode read_only|edit|plan|bypass`. Shift+Tab cycles the
+three ordinary modes; bypass requires an explicit choice. `/permissions` opens
+rules, and `/allow OPERATION`, `/deny OPERATION`, `/default OPERATION` edit them.
+While confirmation is pending, Escape denies, Ctrl+Enter (Command+Enter on macOS)
+allows once, and adding Shift always allows.
+
+These modes govern rig calls only. Even bypass edits only the open document;
+file creation, export, and saving remain outside its tool catalog. MCP retains its
+existing tools and does not apply the Agent Panel's policy.
+
+Compact context or `/compact` summarizes older exchanges with the configured model,
+without granting that model tools. The latest two completed exchanges are kept
+verbatim. The summary retains goals, constraints, decisions, identifiers, progress,
+failures and unfinished work. It is saved with conversation history and restored
+when that conversation resumes. An empty, oversized, or failed summary leaves the
+original history intact. Very large exchanges that cannot fit a summary request
+also remain intact.
+
+Automatic compaction runs between requests at the selected estimated history
+threshold (70% or 85%; default 85%), or after 16 completed exchanges. It can be
+turned off in Permissions. Counts are estimates, not tokenizer measurements;
+the existing per-request context guard remains the final budget check. Compression
+never runs in the middle of a tool operation or an approval request.

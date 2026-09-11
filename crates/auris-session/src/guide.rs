@@ -145,6 +145,14 @@ pub mod architecture {
     //! OpenAI-compatible API — offers read-only toolbox references and live session commands.
     //! The desktop executes [`live_agent::Command`](crate::live_agent::Command) against the
     //! currently open session, so changes appear immediately and remain unsaved and undoable.
+    //! The desktop owns [`agent_policy::Policy`](crate::agent_policy::Policy): every rig tool
+    //! asks it for a decision, and live edits are checked again immediately before execution.
+    //! Deny rules override every mode; plan mode forbids mutations even with an allow rule.
+    //! One-time approvals bind the exact command to the current document revision. MCP keeps
+    //! its independent file-based tool catalog and does not consult this policy.
+    //! Conversation compaction is presentation work in `auris-agent`: a tool-less model
+    //! summarizes older exchanges while the latest two completed exchanges remain verbatim.
+    //! Summary failures leave history intact, and summaries never grant tool permissions.
     //!
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**

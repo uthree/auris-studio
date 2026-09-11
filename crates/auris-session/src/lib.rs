@@ -42,6 +42,7 @@
 
 #![warn(missing_docs)]
 
+pub mod agent_policy;
 pub mod audio_evaluation;
 pub mod audio_review;
 pub mod clap_evaluation;

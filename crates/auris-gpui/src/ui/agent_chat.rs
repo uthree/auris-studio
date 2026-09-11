@@ -27,6 +27,8 @@ use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
 
+mod controls;
+
 /// Maximum transcript rows retained in the panel.
 const CHAT_CAPACITY: usize = 500;
 
@@ -37,6 +39,8 @@ pub(crate) enum ChatEntry {
     You(String),
     /// What the model answered.
     Agent(String),
+    /// Status produced by the agent runtime, not by the model.
+    Status(String),
     /// One tool call: running while `line` is empty, answered or refused once it is not.
     Tool {
         /// The tool's wire name.
@@ -57,8 +61,22 @@ pub(crate) enum ChatEntry {
 /// One event off the agent's wire, already parsed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AgentEvent {
+    Permission {
+        id: u64,
+        tool: String,
+        args: serde_json::Value,
+    },
+    Compacting,
+    Compacted {
+        ok: bool,
+        message: String,
+        manual: bool,
+        tokens: u64,
+    },
     /// A file-free command for the bound session.
-    Edit { command: serde_json::Value },
+    Edit {
+        command: serde_json::Value,
+    },
     /// Previously completed text turns recovered for this project.
     History {
         /// User and assistant text, oldest first.
@@ -127,6 +145,18 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             .to_string()
     };
     Some(match parsed.get("event")?.as_str()? {
+        "permission" => AgentEvent::Permission {
+            id: parsed.get("id")?.as_u64()?,
+            tool: text("tool"),
+            args: parsed.get("args")?.clone(),
+        },
+        "compacting" => AgentEvent::Compacting,
+        "compacted" => AgentEvent::Compacted {
+            ok: parsed["ok"] == true,
+            message: text("message"),
+            manual: parsed["manual"] == true,
+            tokens: parsed["context_tokens"].as_u64().unwrap_or(0),
+        },
         "edit" => AgentEvent::Edit {
             command: parsed.get("command")?.clone(),
         },
@@ -300,6 +330,9 @@ impl Drop for AgentLink {
 
 /// Everything the agent panel is, apart from its pixels.
 pub(crate) struct AgentChat {
+    controls: controls::Controls,
+    policy: auris_session::agent_policy::Policy,
+    auto_compact_percent: Option<u8>,
     /// Requested Ollama context, independent of the model's architectural maximum.
     pub(crate) context_tokens: u32,
     /// Ollama thinking override.
@@ -373,6 +406,9 @@ pub(crate) struct AgentChat {
 impl Default for AgentChat {
     fn default() -> Self {
         Self {
+            controls: controls::Controls::default(),
+            policy: Default::default(),
+            auto_compact_percent: None,
             context_tokens: 32768,
             thinking: None,
             entries: Vec::new(),
@@ -459,6 +495,8 @@ impl AgentChat {
 
     /// Copies the saved preferences into the settings section's fields.
     pub(crate) fn load_preferences(&mut self, prefs: &AgentPreferences) {
+        self.policy = prefs.policy.clone();
+        self.auto_compact_percent = prefs.auto_compact_percent;
         self.context_tokens = prefs.context_tokens.unwrap_or(32768);
         self.thinking = prefs.thinking;
         self.provider_openai = prefs.provider.trim() == "openai";
@@ -478,6 +516,8 @@ impl AgentChat {
     /// The settings section's fields, read back out as preferences.
     pub(crate) fn preferences(&self) -> AgentPreferences {
         AgentPreferences {
+            policy: self.policy.clone(),
+            auto_compact_percent: self.auto_compact_percent,
             context_tokens: Some(self.context_tokens),
             thinking: self.thinking,
             provider: match self.provider_openai {
@@ -507,7 +547,27 @@ impl AgentChat {
         dirty: bool,
     ) -> Absorbed {
         match event {
-            AgentEvent::Edit { .. } => {}
+            AgentEvent::Permission { .. } | AgentEvent::Edit { .. } => {}
+            AgentEvent::Compacting => {
+                self.controls.compacting = true;
+            }
+            AgentEvent::Compacted {
+                ok,
+                message,
+                manual,
+                tokens,
+            } => {
+                self.controls.compacting = false;
+                if manual {
+                    self.busy = false;
+                }
+                if ok {
+                    self.tokens_in = tokens;
+                    self.push_entry(ChatEntry::Status(message));
+                } else {
+                    self.push_entry(ChatEntry::Error(message));
+                }
+            }
             AgentEvent::History { turns } => {
                 let current = match self.entries.last() {
                     Some(ChatEntry::You(text)) => Some(text.clone()),
@@ -622,6 +682,7 @@ impl AgentChat {
                 return self.finish_reload(open, dirty);
             }
             AgentEvent::Ended => {
+                self.controls = Default::default();
                 self.busy = false;
                 self.link = None;
                 self.push_entry(ChatEntry::Note(Key::AgentEnded));
@@ -677,6 +738,7 @@ fn spawn_link(folder: Option<&Path>, fresh_history: bool) -> Result<AgentLink, S
     command
         .arg("--json")
         .arg("--live-session")
+        .arg("--permission-protocol")
         .env("AURIS_AGENT_LIVE_SESSION", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -851,6 +913,7 @@ impl AurisApp {
 
     /// Starts fresh model history and rebinds the next child to the current document.
     pub(crate) fn agent_reset_conversation(&mut self) {
+        self.agent_chat.controls = Default::default();
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
         self.agent_chat.bound_project = None;
@@ -871,6 +934,9 @@ impl AurisApp {
 
     /// Stops the subprocess and checks for completed writes, which remain undoable.
     fn agent_stop(&mut self, cx: &mut gpui::Context<Self>) {
+        self.agent_chat.controls.pending = None;
+        self.agent_chat.controls.permits.clear();
+        self.agent_chat.controls.compacting = false;
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
         if self.session.externally_modified()
@@ -896,7 +962,13 @@ impl AurisApp {
     /// of the bargain is in [`AgentChat::absorb`], where the model's writes come back.
     pub(crate) fn agent_send(&mut self) {
         let text = self.agent_chat.input.content().trim().to_string();
-        if text.is_empty() || self.agent_chat.busy {
+        if text.is_empty() {
+            return;
+        }
+        if self.agent_control_command(&text) {
+            return;
+        }
+        if self.agent_chat.busy {
             return;
         }
         if self.agent_chat.pending_reload.is_some() {
@@ -959,7 +1031,7 @@ impl AurisApp {
             framed_say(&text, self.session.path())
         );
         let wire =
-            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments }).to_string();
+            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments, "policy": self.settings.agent.policy, "auto_compact_percent": self.settings.agent.auto_compact_percent.unwrap_or(85) }).to_string();
         if let Some(link) = self.agent_chat.link.as_mut()
             && let Err(error) = writeln!(link.to_child, "{wire}")
         {
@@ -979,6 +1051,7 @@ impl AurisApp {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
+        self.check_agent_edit(&command)?;
         serde_json::from_value::<auris_session::live_agent::Command>(command)
             .map_err(|error| error.to_string())
             .and_then(|command| self.session.agent_command(command))
@@ -1023,6 +1096,11 @@ impl AurisApp {
             let Ok(event) = link.from_child.try_recv() else {
                 return;
             };
+            if let AgentEvent::Permission { id, tool, args } = event {
+                self.agent_permission(id, tool, args);
+                cx.notify();
+                continue;
+            }
             if let AgentEvent::Edit { command } = event {
                 let revision = self.session.revision();
                 let result = self.agent_edit(command);
@@ -1171,7 +1249,7 @@ impl AurisApp {
     pub(crate) fn agent_key(
         &mut self,
         event: &gpui::KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> bool {
         let Some(focused) = self.agent_chat.focused else {
@@ -1182,6 +1260,24 @@ impl AurisApp {
             .agent_chat
             .field()
             .is_some_and(|field| field.marked().is_some());
+        if !composing && self.agent_chat.controls.pending.is_some() {
+            if key == "escape" {
+                self.agent_approval(controls::Approval::Deny);
+                return true;
+            }
+            if key == "enter" && event.keystroke.modifiers.secondary() {
+                self.agent_approval(if event.keystroke.modifiers.shift {
+                    controls::Approval::Always
+                } else {
+                    controls::Approval::Once
+                });
+                return true;
+            }
+        }
+        if !composing && key == "tab" && event.keystroke.modifiers.shift {
+            self.agent_mode(self.settings.agent.policy.mode.next());
+            return true;
+        }
         if !composing {
             match (key, focused) {
                 ("escape", _) => {
@@ -1190,17 +1286,6 @@ impl AurisApp {
                 }
                 ("enter", AgentField::Chat) => {
                     self.agent_send();
-                    if self.session.path().is_none()
-                        && self.settings.agent.is_configured()
-                        && !self.agent_chat.input.content().trim().is_empty()
-                        && !self.agent_chat.busy
-                    {
-                        self.save_as_then(
-                            Some(crate::ui::prompt::PendingAction::AgentSend),
-                            window,
-                            cx,
-                        );
-                    }
                     return true;
                 }
                 // A finished URL or key name changes what the provider would answer, so the
@@ -1388,6 +1473,7 @@ impl AurisApp {
                         }),
                     )),
             )
+            .child(self.agent_controls(cx))
             .when(configuring, |this| this.child(self.agent_settings(cx)))
             .child(
                 self.scrolling(
@@ -1400,15 +1486,20 @@ impl AurisApp {
                         .p_1()
                         .gap_1()
                         .overflow_y_scroll()
+                        .when(self.agent_chat.controls.rules_open, |this| {
+                            this.child(self.agent_rules(cx))
+                        })
                         .children(rows)
                         .when(busy, |this| {
-                            this.child(
-                                div()
-                                    .px_1p5()
-                                    .text_xs()
-                                    .text_color(theme.text_faint)
-                                    .child(self.t(Key::AgentWorking)),
-                            )
+                            this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
+                                self.t(if self.agent_chat.controls.compacting {
+                                    Key::AgentCompacting
+                                } else if self.agent_chat.controls.pending.is_some() {
+                                    Key::AgentAwaitingApproval
+                                } else {
+                                    Key::AgentWorking
+                                }),
+                            ))
                         })
                         .when(
                             self.agent_chat.entries.is_empty() && !busy && !configuring,
@@ -1425,6 +1516,7 @@ impl AurisApp {
                     cx,
                 ),
             )
+            .child(self.agent_approval_view(cx))
             .child(self.agent_gauge_row(&theme))
             .child(self.agent_input_row(cx))
     }
@@ -1490,6 +1582,7 @@ impl AurisApp {
         let (colour, text): (gpui::Hsla, String) = match entry {
             ChatEntry::You(text) => (theme.accent_text, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
+            ChatEntry::Status(text) => (theme.text_muted, text.clone()),
             ChatEntry::Tool { name, ok, line, .. } => {
                 let mark = match (*ok, line.is_empty()) {
                     (_, true) => "…",
