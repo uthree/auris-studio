@@ -16,9 +16,64 @@ struct Channels {
     events: mpsc::Sender<serde_json::Value>,
     commands: Mutex<async_mpsc::UnboundedReceiver<String>>,
     exchange: Mutex<()>,
+    vision: AtomicBool,
+    visual: std::sync::Mutex<Option<Message>>,
+}
+
+pub(super) struct VisualTurn(Option<Bridge>);
+impl VisualTurn {
+    pub(super) fn new(bridge: Option<Bridge>) -> Self {
+        if let Some(bridge) = &bridge {
+            bridge.clear_visual();
+        }
+        Self(bridge)
+    }
+}
+impl Drop for VisualTurn {
+    fn drop(&mut self) {
+        if let Some(bridge) = &self.0 {
+            bridge.clear_visual();
+        }
+    }
 }
 
 impl Bridge {
+    pub(super) fn clear_visual(&self) {
+        *self.0.visual.lock().unwrap() = None;
+    }
+    pub(super) fn visual(&self) -> Option<Message> {
+        self.0.visual.lock().unwrap().clone()
+    }
+    pub(super) fn accept_inspection(
+        &self,
+        report: &auris_session::audio_inspection::Inspection,
+    ) -> Result<String, String> {
+        let presentation = toolbox::audio_inspection::present(report)?;
+        let mut text = presentation.text;
+        if self.0.vision.load(Ordering::Relaxed) {
+            let image = rig::message::UserContent::image_base64(
+                presentation.png,
+                Some(rig::message::ImageMediaType::PNG),
+                None,
+            );
+            let mut stored = self.0.visual.lock().unwrap();
+            let mut content: Vec<_> = match stored.take() {
+                Some(Message::User { content }) => content.into_iter().collect(),
+                _ => Vec::new(),
+            };
+            if content.len() >= 4 {
+                content.drain(..content.len() - 2);
+            }
+            content.push(rig::message::UserContent::text(format!("Historical inspection snapshot, revision {}: start_bar={}, bars={}, duration={} seconds. This may predate edits; inspect again to evaluate changed sound. Image 512x384: top 128 rows show mel power (high frequency at top, black=-90 dB, white=0 dB); bottom 256 rows show authored notes (MIDI 127 at top, 0 at bottom). Time runs left to right across the selected range. Refer to the matching inspect_audio tool result for measurements and score data.", report.revision, report.measurements["start_bar"], report.measurements["bars"], report.measurements["seconds"])));
+            content.push(image);
+            *stored = Some(Message::User { content });
+            text.push_str("\nThe host provides the image in this request's visual context.");
+        } else {
+            self.clear_visual();
+            text.push_str("\nImage not sent: this model has no confirmed vision capability. Use measurements and score data only.");
+        }
+        Ok(text)
+    }
     pub(super) fn history<T>(
         &self,
         operation: impl FnOnce() -> Result<T, String>,
@@ -81,6 +136,8 @@ impl Worker {
             events: events_out,
             commands: Mutex::new(incoming),
             exchange: Mutex::new(()),
+            vision: AtomicBool::new(false),
+            visual: std::sync::Mutex::new(None),
         }));
         let (cancel, cancelled) = oneshot::channel();
         std::thread::Builder::new().name("auris-agent".into()).spawn(move || {
@@ -92,7 +149,8 @@ impl Worker {
                         _ = cancelled => Ok(()),
                         result = async {
                             let agent = build_for_worker(&options, Some(bridge.clone()))?;
-                            runtime::preflight(&options).await?;
+                            let vision = runtime::preflight(&options).await?;
+                            bridge.0.vision.store(vision, Ordering::Relaxed);
                             json_conversation(&agent, &options, &bridge, folder.map(|folder| folder.join(".auris-conversation.json")), fresh).await
                         } => result,
                     }
@@ -201,6 +259,189 @@ mod tests {
             }
             assert_ne!(value["event"], "ended", "worker ended before {event}");
         }
+    }
+
+    #[test]
+    fn ollama_inspection_sends_images_as_user_context_only_for_vision_models() {
+        for vision in [false, true] {
+            let show = serde_json::json!({"capabilities":if vision {vec!["tools","vision"]} else {vec!["tools"]}}).to_string();
+            let call = serde_json::json!({"model":"mock","created_at":"2026-09-12T00:00:00Z","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"inspect_audio","arguments":{"start_bar":1,"bars":1}}}]},"done":true,"done_reason":"stop"}).to_string();
+            let done = serde_json::json!({"model":"mock","created_at":"2026-09-12T00:00:00Z","message":{"role":"assistant","content":"Measured the passage."},"done":true,"done_reason":"stop"}).to_string();
+            let (url, requests) = mock_server(vec![show, call, done]);
+            let mut preferences = prefs(url);
+            preferences.provider = "ollama".into();
+            let worker = Worker::spawn(preferences, None, false).unwrap();
+            until(&worker, "ready");
+            worker.send(r#"{"say":"Inspect one bar"}"#).unwrap();
+            let permission = until(&worker, "permission");
+            let operation = auris_session::agent_policy::Operation::parse(
+                permission["tool"].as_str().unwrap(),
+                &permission["args"],
+            )
+            .unwrap();
+            assert!(!operation.mutating);
+            worker.send(&serde_json::json!({"event":"permission_result","id":permission["id"],"ok":true}).to_string()).unwrap();
+            let edit = until(&worker, "edit");
+            assert_eq!(edit["command"]["action"], "inspect_audio");
+            let report = auris_session::audio_inspection::Inspection {
+                revision: 9,
+                measurements: serde_json::json!({"seconds":2.0,"silent":true}),
+                columns: 2,
+                frequencies: vec![1000.0; 64],
+                mel_db: vec![-90.0; 128],
+                notes: vec![],
+            };
+            worker
+                .send(
+                    &serde_json::json!({"event":"edit_result","ok":true,"inspection":report})
+                        .to_string(),
+                )
+                .unwrap();
+            until(&worker, "answer");
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 3);
+            let request: serde_json::Value = serde_json::from_str(&requests[2]).unwrap();
+            let messages = request["messages"].as_array().unwrap();
+            let images: Vec<_> = messages
+                .iter()
+                .filter(|m| m["images"].as_array().is_some_and(|v| !v.is_empty()))
+                .collect();
+            assert_eq!(images.len(), usize::from(vision));
+            if vision {
+                assert_eq!(images[0]["role"], "user");
+                assert!(
+                    images[0]["images"][0]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("iVBOR")
+                );
+                assert!(
+                    images[0]["content"]
+                        .as_str()
+                        .unwrap()
+                        .contains("revision 9")
+                );
+            }
+            assert!(
+                messages
+                    .iter()
+                    .filter(|m| m["role"] == "tool")
+                    .all(|m| m.get("images").is_none())
+            );
+        }
+    }
+
+    #[test]
+    fn visual_context_retains_two_snapshots_and_is_dropped_after_the_turn() {
+        let (events, _) = mpsc::channel();
+        let (_, incoming) = async_mpsc::unbounded_channel();
+        let bridge = Bridge(Arc::new(Channels {
+            stopped: Arc::new(AtomicBool::new(false)),
+            events,
+            commands: Mutex::new(incoming),
+            exchange: Mutex::new(()),
+            vision: AtomicBool::new(true),
+            visual: std::sync::Mutex::new(None),
+        }));
+        let scope = VisualTurn::new(Some(bridge.clone()));
+        for revision in 1..=3 {
+            bridge
+                .accept_inspection(&auris_session::audio_inspection::Inspection {
+                    revision,
+                    measurements: serde_json::json!({"seconds":2.0}),
+                    columns: 2,
+                    frequencies: vec![1000.0; 64],
+                    mel_db: vec![-90.0; 128],
+                    notes: vec![],
+                })
+                .unwrap();
+        }
+        let Message::User { content } = bridge.visual().unwrap() else {
+            panic!()
+        };
+        assert_eq!(content.len(), 4);
+        let text = serde_json::to_string(&content).unwrap();
+        assert!(!text.contains("revision 1"));
+        assert!(text.contains("revision 2"));
+        assert!(text.contains("revision 3"));
+        drop(scope);
+        assert!(bridge.visual().is_none());
+    }
+
+    #[test]
+    #[ignore = "requires AURIS_AGENT_VISION_MODEL and local Ollama"]
+    fn local_vision_model_inspects_rendered_audio() {
+        let model = std::env::var("AURIS_AGENT_VISION_MODEL").expect("vision model");
+        let mut preferences = prefs("http://127.0.0.1:11434".into());
+        preferences.provider = "ollama".into();
+        preferences.model = model;
+        preferences.thinking = Some(false);
+        let mut session = auris_session::Session::new(
+            auris_session::SessionOptions::headless().with_balance(false),
+        )
+        .unwrap();
+        use auris_session::prelude::*;
+        let track = session.add_default_instrument_track("Test tone").unwrap();
+        session
+            .set_track_instrument(track, "auris.synth.fm2")
+            .unwrap();
+        let clip = session
+            .add_midi_clip(track, "Test", Ticks::ZERO, Ticks::from_beats(4.0))
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::from_beats(2.0)))
+            .unwrap();
+        let before = session.project().clone();
+        let worker = Worker::spawn(preferences, None, false).unwrap();
+        worker.send(r#"{"say":"inspect_audioで1小節目だけを解析し、計測値と画像から分かることを短く説明してください。曲は変更しないでください。"}"#).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(180);
+        let mut inspected = false;
+        loop {
+            let event = worker
+                .events
+                .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+                .expect("model responded");
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    let op = auris_session::agent_policy::Operation::parse(
+                        event["tool"].as_str().unwrap(),
+                        &event["args"],
+                    )
+                    .unwrap();
+                    worker.send(&serde_json::json!({"event":"permission_result","id":event["id"],"ok":!op.mutating}).to_string()).unwrap();
+                }
+                "edit" => {
+                    let command: auris_session::live_agent::Command =
+                        serde_json::from_value(event["command"].clone()).unwrap();
+                    let wire = if let auris_session::live_agent::Command::InspectAudio {
+                        start_bar,
+                        bars,
+                        track,
+                    } = command
+                    {
+                        let report = session
+                            .audio_inspection_job(start_bar, bars, track)
+                            .unwrap()
+                            .run(&AtomicBool::new(false))
+                            .unwrap();
+                        inspected = true;
+                        serde_json::json!({"event":"edit_result","ok":true,"inspection":report})
+                    } else {
+                        serde_json::json!({"event":"edit_result","ok":true,"text":session.agent_command(command).unwrap()})
+                    };
+                    worker.send(&wire.to_string()).unwrap();
+                }
+                "error" | "ended" => panic!("{event}"),
+                "answer" => {
+                    println!("{event}");
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert!(inspected);
+        assert_eq!(session.project(), &before);
+        assert!(session.path().is_none());
     }
 
     fn edit_response() -> String {

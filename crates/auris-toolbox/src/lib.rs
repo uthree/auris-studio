@@ -4254,3 +4254,6 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
+
+/// Model-facing audio inspection images and captions.
+pub mod audio_inspection;

@@ -44,6 +44,7 @@
 
 pub mod agent_policy;
 pub mod audio_evaluation;
+pub mod audio_inspection;
 pub mod audio_review;
 pub mod clap_evaluation;
 pub mod live_agent;

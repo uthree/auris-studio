@@ -96,9 +96,9 @@ pub fn definitions() -> Vec<Definition> {
 pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
     let action = match tool {
         "inspect_project" => "inspect",
-        "read_notes" | "add_track" | "rename_track" | "remove_track" | "set_instrument"
-        | "add_notes" | "set_tempo" | "set_loop" | "set_level" | "set_track_state" | "add_clip"
-        | "add_note" | "remove_notes" => tool,
+        "inspect_audio" | "read_notes" | "add_track" | "rename_track" | "remove_track"
+        | "set_instrument" | "add_notes" | "set_tempo" | "set_loop" | "set_level"
+        | "set_track_state" | "add_clip" | "add_note" | "remove_notes" => tool,
         _ => return Ok(None),
     };
     let mut object = args
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn flat_catalog_covers_commands_without_a_tagged_union_or_file_destinations() {
         let tools = definitions();
-        assert_eq!(tools.len(), 14);
+        assert_eq!(tools.len(), 15);
         assert!(
             command("compose_song", &serde_json::json!({}))
                 .unwrap()

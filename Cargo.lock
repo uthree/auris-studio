@@ -1130,6 +1130,7 @@ version = "0.7.0"
 dependencies = [
  "auris-session",
  "base64 0.22.1",
+ "image",
  "schemars 1.2.2",
  "serde",
  "serde_json",

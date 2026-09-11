@@ -8,6 +8,15 @@ use crate::{Session, prelude::*};
 pub enum Command {
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
+    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Visual interpretation is not listening. Use the same range before and after editing.
+    InspectAudio {
+        /// First bar, starting at 1.
+        start_bar: u32,
+        /// Number of bars, 1..8; the range must fit in 30 seconds.
+        bars: u32,
+        /// Optional track ID for solo routing; omit for the mix.
+        track: Option<u64>,
+    },
     /// Read a page of notes using zero-based storage indices.
     ReadNotes {
         /// Stable clip ID.
@@ -217,6 +226,16 @@ impl Session {
                     "duration_seconds":project.duration_seconds(), "harmony":project.harmony,
                     "sections":project.sections, "tempo_map":project.tempo_map, "signatures":project.signatures, "loop_region":project.loop_region, "loop_enabled":project.loop_enabled, "ticks_per_quarter":Ticks::QUARTER.raw()})
                 .to_string())
+            }
+            Command::InspectAudio {
+                start_bar,
+                bars,
+                track,
+            } => {
+                let report = self
+                    .audio_inspection_job(start_bar, bars, track)?
+                    .run(&std::sync::atomic::AtomicBool::new(false))?;
+                serde_json::to_string(&report).map_err(|e| e.to_string())
             }
             Command::ReadNotes { clip, offset } => {
                 let (_, clip) = self

@@ -284,7 +284,12 @@ Preserve existing tracks and notes unless the user explicitly requests their rem
 Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
 inspect_project before claiming completion. Use read_notes before changing existing notes.
 Note times are zero-based quarter-note beats relative to the clip. Use search_documentation
-only when a tool description does not answer an application question."
+only when a tool description does not answer an application question.
+Use inspect_audio to check a short rendered passage before and after edits. It returns measured
+levels and score data, plus a mel/piano-roll image when vision is supported. Inspect the same
+range for comparisons. This is visual analysis, not listening: never claim you heard the music.
+Base numeric level claims on measurements; treat image interpretations as uncertain.
+The image is a snapshot: after edits inspect again before evaluating the changed sound."
         .into()
 }
 
@@ -580,6 +585,14 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
                         .exchange(serde_json::json!({"event":"edit", "command":command}))
                         .await
                         .map_err(ToolExecutionError::other)?;
+                    if name == "inspect_audio" && reply["ok"] == true {
+                        let report = serde_json::from_value(reply["inspection"].clone())
+                            .map_err(|e| ToolExecutionError::other(e.to_string()))?;
+                        return bridge
+                            .accept_inspection(&report)
+                            .map(ToolOutput::text)
+                            .map_err(ToolExecutionError::other);
+                    }
                     edit_reply(reply)
                         .map(ToolOutput::text)
                         .map_err(|e| ToolExecutionError::other(e.0))
@@ -967,7 +980,9 @@ async fn converse_with_bridge(
     context_tokens: Option<u32>,
     output_tokens: u32,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
-    let guard = runtime::Guard::new(agent, context_tokens, output_tokens).await?;
+    let mut guard = runtime::Guard::new(agent, context_tokens, output_tokens).await?;
+    let _visual_turn = worker::VisualTurn::new(bridge.clone());
+    guard.bridge = bridge.clone();
     let omitted = guard.fit_history(&prompt, &mut history);
     if omitted > 0 {
         let message = format!(
@@ -1936,7 +1951,7 @@ mod tests {
         assert!(!names.contains(&"edit_project"));
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
-        assert_eq!(names.len(), 17);
+        assert_eq!(names.len(), 18);
         let catalog = toolbox::tool_catalog();
         for name in [
             "create_project",

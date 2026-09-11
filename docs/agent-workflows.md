@@ -16,6 +16,23 @@ the document unchanged. Use `set_tempo` for BPM and `set_loop` for a bar-based p
 Changes work before the first save and remain unsaved. Preserve existing music and inspect
 again to verify the arrangement before claiming completion.
 
+Use `inspect_audio` with `{"start_bar":1,"bars":4}` to inspect the actual rendered mix.
+An optional `track` ID selects solo routing. Each request is limited to eight bars and
+30 seconds. It returns peak/RMS levels, full-scale sample counts, bar-start harmony and
+a bounded authored-note table. The score is before performance transforms and includes
+muted score parts; the rendered mix respects mute/solo. Silence has null dB levels.
+
+For an Ollama model advertising `vision`, the host also supplies an in-memory PNG:
+mel power above, a piano roll below. Use a vision-capable endpoint for OpenAI-compatible
+providers. Text-only Ollama models receive measurements without an image. The last two
+snapshots are retained only during the active turn, with their captured revisions.
+Compare the same range before and after a change; old images do not describe new edits.
+The colour scale is fixed at -90..0 dB, without automatic normalization. This is visual
+analysis with measured evidence, not an audio model listening to the music.
+
+Inspection runs off the UI thread, is cancelled when the conversation closes, and refuses
+results when the document revision changes during the render. No preview files are written.
+
 Permissions map these flat tools to the existing `edit_project.<action>` rules, so saved
 allow/deny rules and exact-command approvals continue to apply.
 

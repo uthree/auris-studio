@@ -9,6 +9,26 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Visual audio inspection
+//!
+//! The live agent's `inspect_audio` command snapshots the open document through
+//! [`crate::Session::audio_inspection_job`]. The UI checks permissions and creates the render;
+//! a cancellable worker renders at most eight bars/thirty seconds and measures mel power,
+//! sample peak/RMS and authored notes. A changed revision or a replaced conversation discards
+//! the result. Neither the document nor its files are written.
+//!
+//! `auris-toolbox` converts these measurements into an in-memory PNG and explicit captions.
+//! The agent sends numeric data to every model and adds the last two inspection images to
+//! ephemeral user-message context for vision-capable Ollama models (or a compatible vision
+//! endpoint). Images never occur inside tool results, where Rig's Ollama transport rejects
+//! them. Captured revisions remain explicit: old pictures are comparison evidence, not the
+//! current sound. Image interpretation must not be represented as listening.
+//!
+//! The score panel describes authored notes before performance transforms, while mel power
+//! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
+//! gain differences. These representations intentionally answer different questions.
+//!
+//!
 //! # Offline music recognition
 //!
 //! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events

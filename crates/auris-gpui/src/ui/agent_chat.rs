@@ -307,6 +307,39 @@ pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
 /// One cancellable worker owned by the panel. Dropping it stops the conversation.
 struct AgentLink {
     worker: auris_agent::Worker,
+    inspection: Option<PendingInspection>,
+}
+
+struct PendingInspection {
+    revision: u64,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    receiver: Receiver<Result<auris_session::audio_inspection::Inspection, String>>,
+}
+
+impl PendingInspection {
+    fn poll(
+        &self,
+        revision: u64,
+        same_document: bool,
+    ) -> Option<Result<auris_session::audio_inspection::Inspection, String>> {
+        if self.revision != revision || !same_document {
+            return Some(Err(
+                "The document changed during inspection; request a fresh inspection".into(),
+            ));
+        }
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(_) => Some(Err("Audio inspection worker stopped".into())),
+        }
+    }
+}
+
+impl Drop for PendingInspection {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl AgentLink {
@@ -690,8 +723,12 @@ fn spawn_link(
     folder: Option<&Path>,
     fresh_history: bool,
 ) -> Result<AgentLink, String> {
-    auris_agent::Worker::spawn(prefs.clone(), folder.map(Path::to_path_buf), fresh_history)
-        .map(|worker| AgentLink { worker })
+    auris_agent::Worker::spawn(prefs.clone(), folder.map(Path::to_path_buf), fresh_history).map(
+        |worker| AgentLink {
+            worker,
+            inspection: None,
+        },
+    )
 }
 
 /// Fetch provider models off the UI thread.
@@ -891,6 +928,66 @@ impl AurisApp {
             .and_then(|command| self.session.agent_command(command))
     }
 
+    fn start_agent_inspection(&mut self, command: &serde_json::Value) -> Result<(), String> {
+        if self.agent_chat.bound_project.as_deref() != self.session.path() {
+            return Err("The open document changed; start a new conversation".into());
+        }
+        self.check_agent_edit(command)?;
+        let auris_session::live_agent::Command::InspectAudio {
+            start_bar,
+            bars,
+            track,
+        } = serde_json::from_value(command.clone()).map_err(|e| e.to_string())?
+        else {
+            return Err("Expected inspect_audio".into());
+        };
+        let job = self.session.audio_inspection_job(start_bar, bars, track)?;
+        let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
+        if link.inspection.is_some() {
+            return Err("An inspection is already running".into());
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("auris-audio-inspection".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    job.run(&worker_cancel)
+                }))
+                .unwrap_or_else(|_| Err("Audio inspection worker panicked".into()));
+                let _ = sender.send(result);
+            })
+            .map_err(|e| e.to_string())?;
+        link.inspection = Some(PendingInspection {
+            revision: self.session.revision(),
+            cancel,
+            receiver,
+        });
+        Ok(())
+    }
+
+    fn poll_agent_inspection(&mut self) {
+        let Some(link) = self.agent_chat.link.as_mut() else {
+            return;
+        };
+        let Some(pending) = link.inspection.as_ref() else {
+            return;
+        };
+        let Some(result) = pending.poll(
+            self.session.revision(),
+            self.agent_chat.bound_project.as_deref() == self.session.path(),
+        ) else {
+            return;
+        };
+        link.inspection = None;
+        let wire = match result {
+            Ok(report) => serde_json::json!({"event":"edit_result","ok":true,"inspection":report}),
+            Err(error) => serde_json::json!({"event":"edit_result","ok":false,"text":error}),
+        };
+        let _ = link.send(&wire.to_string());
+    }
+
     /// Drains the agent's channel, obeying what each event asks for.
     ///
     /// Called from the repaint tick, beside `Session::poll` — the same shape as everything
@@ -923,6 +1020,7 @@ impl AurisApp {
         if self.drag.is_some() {
             return;
         }
+        self.poll_agent_inspection();
         loop {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
@@ -939,6 +1037,17 @@ impl AurisApp {
                 continue;
             }
             if let AgentEvent::Edit { command } = event {
+                if command["action"] == "inspect_audio" {
+                    if let Err(error) = self.start_agent_inspection(&command)
+                        && let Some(link) = &self.agent_chat.link
+                    {
+                        let _ = link.send(
+                            &serde_json::json!({"event":"edit_result","ok":false,"text":error})
+                                .to_string(),
+                        );
+                    }
+                    continue;
+                }
                 let revision = self.session.revision();
                 let result = self.agent_edit(command);
                 let ok = result.is_ok();
@@ -1888,6 +1997,22 @@ mod tests {
                 Some(&ChatEntry::Note(Key::AgentResolveFirst))
             );
         });
+    }
+
+    #[test]
+    fn inspection_discards_changed_documents_and_cancels_when_dropped() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pending = PendingInspection {
+            revision: 7,
+            receiver,
+            cancel: cancel.clone(),
+        };
+        assert!(pending.poll(7, true).is_none());
+        assert!(pending.poll(8, true).unwrap().is_err());
+        assert!(pending.poll(7, false).unwrap().is_err());
+        drop(pending);
+        assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

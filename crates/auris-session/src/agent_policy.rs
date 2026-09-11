@@ -75,6 +75,7 @@ pub struct Operation {
 /// Every operation exposed by the live agent, for rule editing and validation.
 pub const OPERATIONS: &[&str] = &[
     "edit_project.inspect",
+    "edit_project.inspect_audio",
     "edit_project.read_notes",
     "edit_project.compose",
     "edit_project.add_track",
@@ -112,6 +113,7 @@ impl Operation {
             let mutating = !matches!(
                 parsed,
                 crate::live_agent::Command::Inspect {}
+                    | crate::live_agent::Command::InspectAudio { .. }
                     | crate::live_agent::Command::ReadNotes { .. }
             );
             let confirm = matches!(

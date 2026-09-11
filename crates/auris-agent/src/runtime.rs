@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Confirms that the selected Ollama model supports tools and the requested context.
-pub(super) async fn preflight(options: &Options) -> Result<(), String> {
+pub(super) async fn preflight(options: &Options) -> Result<bool, String> {
     if options.provider != Provider::Ollama {
-        return Ok(());
+        return Ok(true);
     }
     let base = options
         .url
@@ -36,7 +36,10 @@ pub(super) async fn preflight(options: &Options) -> Result<(), String> {
         .json()
         .await
         .map_err(|e| e.to_string())?;
-    validate_model(&shown, options.context_tokens)
+    validate_model(&shown, options.context_tokens)?;
+    Ok(shown["capabilities"]
+        .as_array()
+        .is_some_and(|caps| caps.iter().any(|cap| cap == "vision")))
 }
 
 fn validate_model(shown: &serde_json::Value, context: u32) -> Result<(), String> {
@@ -101,6 +104,7 @@ pub(super) struct Guard {
     schema_tokens: usize,
     state: Mutex<State>,
     pub(super) activity: Activity,
+    pub(super) bridge: Option<Bridge>,
 }
 
 /// A tool can render for longer than a model timeout. Only provider inactivity is bounded.
@@ -140,6 +144,23 @@ fn opaque_tokens(value: &impl serde::Serialize) -> usize {
 
 fn text_tokens(text: &rig::message::Text) -> usize {
     estimated_tokens(&text.text) + text.additional_params.as_ref().map_or(0, opaque_tokens)
+}
+
+fn inspection_tokens(message: &Message) -> usize {
+    match message {
+        Message::User { content } => {
+            MESSAGE_FRAMING
+                + content
+                    .iter()
+                    .map(|part| match part {
+                        UserContent::Image(_) => OUTPUT_RESERVE,
+                        UserContent::Text(text) => text_tokens(text),
+                        _ => opaque_tokens(part),
+                    })
+                    .sum::<usize>()
+        }
+        _ => message_tokens(message),
+    }
 }
 
 fn result_tokens(part: &ToolResultContent) -> usize {
@@ -290,6 +311,7 @@ impl Guard {
         let serialized = serde_json::to_string(&definitions).map_err(|e| e.to_string())?;
         Ok(Self {
             context,
+            bridge: None,
             output_tokens: output_tokens as usize,
             schema_tokens: estimated_tokens(&serialized)
                 + estimated_tokens(&preamble())
@@ -335,8 +357,12 @@ impl AgentHook for Guard {
         event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
         self.mark(0);
+        let visual = self.bridge.as_ref().and_then(Bridge::visual);
         if let Some(limit) = self.context {
-            let estimate = self.context_estimate(event.prompt, event.history);
+            // Generated inspection images are fixed at 512x384; reserve image tokens rather
+            // than counting the base64 encoding as natural-language text.
+            let estimate = self.context_estimate(event.prompt, event.history)
+                + visual.as_ref().map_or(0, inspection_tokens);
             if estimate > limit as usize {
                 let reserve = self.output_tokens;
                 return CompletionCallAction::Stop(format!(
@@ -348,6 +374,17 @@ impl AgentHook for Guard {
                 .clone()
                 .all(has_only_known_text)
                 .then(|| request.cloned().collect());
+        }
+        if let Some(visual) = visual {
+            self.state.lock().unwrap().pending_request = None;
+            let mut history = event.history.to_vec();
+            // Preserve contiguous assistant-call/tool-result pairs. The extra context is
+            // ephemeral and tagged with the snapshot revision, never persisted as a user turn.
+            let index = history.iter().rposition(|message| matches!(message, Message::Assistant { content, .. } if content.iter().any(|part| matches!(part, AssistantContent::ToolCall(_))))).unwrap_or(history.len());
+            history.insert(index, visual);
+            return CompletionCallAction::Patch(
+                rig::agent::RequestPatch::default().history(history),
+            );
         }
         CompletionCallAction::Continue
     }
@@ -524,6 +561,7 @@ mod tests {
         };
         state.observe_context(22_000);
         let guard = Guard {
+            bridge: None,
             output_tokens: OUTPUT_RESERVE,
             context: Some(32768),
             schema_tokens: 32_768,
@@ -640,6 +678,7 @@ mod tests {
             Message::assistant("開きました"),
         ];
         let guard = Guard {
+            bridge: None,
             output_tokens: OUTPUT_RESERVE,
             context: Some((4096 + history_tokens(&prompt, &newest)) as u32),
             schema_tokens: 4096,
@@ -684,6 +723,7 @@ mod tests {
         ];
         let original = history.clone();
         let guard = Guard {
+            bridge: None,
             output_tokens: OUTPUT_RESERVE,
             context: Some(1),
             schema_tokens: 4096,
