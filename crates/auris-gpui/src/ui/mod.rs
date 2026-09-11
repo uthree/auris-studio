@@ -38,6 +38,7 @@ pub mod plugin_window;
 mod portrait_image;
 pub mod prompt;
 pub(crate) mod reference_match;
+pub(crate) mod rhythm_grid;
 pub mod root;
 pub(crate) mod score_layer;
 pub mod scrollbars;

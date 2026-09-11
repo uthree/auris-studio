@@ -763,9 +763,10 @@ strings! {
     PartHumanize { en: "Humanize", ja: "ゆらぎ" }
     PartGroove { en: "Groove", ja: "グルーヴ" }
     PartRhythm { en: "Rhythm", ja: "リズム" }
-    PartRhythmApply { en: "Apply rhythm", ja: "リズムを適用" }
-    PartRhythmAutomatic { en: "Automatic…", ja: "自動生成…" }
-    PartRhythmHint { en: "x: hit · X: strong · o: soft · .: rest. Example: x...x... · Repeats at the selected subdivision (drums: sixteenths). Empty restores automatic generation. For kits, this applies to all generated voices.", ja: "x：発音 · X：強く · o：弱く · .：休符。例：x...x...。選択した刻み（ドラムは16分音符）で繰り返します。空欄で自動生成に戻ります。キットでは自動演奏の全パートに適用します。" }
+    PartRhythmAuto { en: "Automatic", ja: "自動生成" }
+    PartRhythmFixed { en: "Fixed accent", ja: "固定アクセント" }
+    PartRhythmGridHint { en: "Click a square to toggle a hit. The first bar repeats; Automatic lets each instrument choose its rhythm.", ja: "マスを押すと発音をオン／オフにします。1小節分のリズムを繰り返します。「自動生成」で楽器ごとにリズムをおまかせに戻せます。" }
+    PartRhythmNoVoices { en: "Assign drum sounds to edit their rhythms.", ja: "ドラムの音を割り当てると、楽器ごとのリズムを編集できます。" }
     ErrorRhythm { en: "Use x, X, o for hits and . for rests, or leave empty for automatic generation.", ja: "発音は x・X・o、休符は . で入力してください。空欄にすると自動生成になります。" }
     PartSeed { en: "Seed", ja: "シード" }
     PartStraight { en: "straight", ja: "イーブン" }

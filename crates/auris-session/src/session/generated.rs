@@ -250,15 +250,30 @@ impl Session {
         &mut self,
         clip: ClipId,
         voice: &str,
-        mut writer: ClipRecipe,
+        writer: ClipRecipe,
     ) -> Result<usize, SessionError> {
-        let previous = self.drum_voice_recipe(clip, voice)?;
+        self.set_drum_voice_recipe_in(clip, voice, writer, self.recipe_of(clip)?)
+    }
+
+    /// Rewrites a voice with a prepared kit recipe, keeping conversion and editing atomic.
+    pub(super) fn set_drum_voice_recipe_in(
+        &mut self,
+        clip: ClipId,
+        voice: &str,
+        mut writer: ClipRecipe,
+        mut recipe: ClipRecipe,
+    ) -> Result<usize, SessionError> {
+        let previous = recipe
+            .drum_voices
+            .iter()
+            .find(|part| part.name == voice)
+            .and_then(|part| part.recipe.as_deref())
+            .ok_or_else(|| SessionError::InvalidDrumRecipe(format!("unknown writer `{voice}`")))?;
         if writer.preset != previous.preset || !writer.drum_voices.is_empty() {
             return Err(SessionError::InvalidDrumRecipe(
                 "a voice must keep its drum writer".into(),
             ));
         }
-        let mut recipe = self.recipe_of(clip)?;
         let map = recipe.drum_map.clone();
         let component = recipe
             .drum_voices
