@@ -842,6 +842,16 @@ impl AurisApp {
         if event.pressed_button.is_none() {
             self.release_typed_key();
         }
+        if let Some(Drag::NoteCopy {
+            pressed_at: Some(from),
+            ..
+        }) = &self.drag
+            && (event.pressed_button != Some(gpui::MouseButton::Left)
+                || !past_drag_threshold(*from, event.position)
+                || !self.start_note_copy())
+        {
+            return;
+        }
         let Some(drag) = self.drag.clone() else {
             return;
         };
@@ -1035,6 +1045,15 @@ impl AurisApp {
                 origin_pitch,
                 ref origins,
                 pressed_at,
+                ..
+            }
+            | Drag::NoteCopy {
+                clip,
+                origin_tick,
+                origin_pitch,
+                ref origins,
+                pressed_at,
+                ..
             } => {
                 // The same wobble guard the clips have. Rows are floor-binned, so a click
                 // drifting one pixel across a row boundary transposed the whole selection —
@@ -1070,13 +1089,7 @@ impl AurisApp {
                 let _ = self
                     .session
                     .move_notes(clip, origins, delta_ticks, delta_pitch);
-                // Sound where the note has landed, the way pressing one does. Dragging a note up
-                // a third was otherwise silent, so the pitch had to be counted off the keyboard
-                // at the side of the roll instead of simply heard. Only on a change, or every
-                // pointer move would retrigger the note and turn a drag into a stutter.
-                if !self.is_auditioning(pitch) {
-                    self.audition(pitch);
-                }
+                self.audition_moved_notes(clip, origins);
             }
             Drag::PhonemeDuration {
                 clip,
@@ -1186,11 +1199,10 @@ impl AurisApp {
                 clip,
                 index,
                 ref origins,
+                drawing,
                 pressed_at,
             } => {
-                // Guarded only for a grabbed existing note — `pressed_at` is `None` while
-                // drawing a new one — so a click wobble cannot snap an off-grid end onto the
-                // grid.
+                // A click wobble must preserve both existing ends and inherited durations.
                 if let Some(from) = pressed_at {
                     if !past_drag_threshold(from, event.position) {
                         return;
@@ -1209,7 +1221,8 @@ impl AurisApp {
                 else {
                     return;
                 };
-                let snap = self.settings.snap_note_lengths && !event.modifiers.secondary();
+                let snap =
+                    self.settings.snap_note_lengths && (drawing || !event.modifiers.secondary());
                 let end =
                     note_resize_end(tick - clip_start, *note_start, self.project().grid, snap);
                 let length = end - *note_start;
@@ -2837,7 +2850,10 @@ mod window_tests {
         // 640×480 is the smallest window `main` will open — see `fitted_size`.
         for viewport in [WINDOW, size(px(900.), px(600.)), size(px(640.), px(480.))] {
             for (panel, controls) in [
-                (Panel::PianoRoll, ["roll-lanes", "roll-zoom"].as_slice()),
+                (
+                    Panel::PianoRoll,
+                    ["roll-snap-length", "roll-lanes", "roll-zoom"].as_slice(),
+                ),
                 (Panel::Log, ["log-clear"].as_slice()),
             ] {
                 app.update(cx, |this, _| this.show_panel(panel));

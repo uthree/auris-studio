@@ -63,8 +63,32 @@ messages! {
 
     /// The line under the piano roll's heading, naming the gestures that are actually bound.
     fn piano_roll_hint(create: &str, delete: &str) {
-        en: "{create}: add note · drag: move · right edge: resize · {delete}: delete · right-click: menu",
-        ja: "{create}: ノート追加 · ドラッグ: 移動 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
+        en: "{create}: add note · drag: move · Alt/Option-drag: copy · right edge: resize · {delete}: delete · right-click: menu",
+        ja: "{create}: ノート追加 · ドラッグ: 移動 · Alt/Optionドラッグ: 複製 · 右端: 長さ変更 · {delete}: 削除 · 右クリック: メニュー"
+    }
+
+    /// Pitch and selection size beside a moved or resized note.
+    fn note_drag_title(pitch: &str, count: usize) {
+        en: "{pitch} · Notes: {count}",
+        ja: "{pitch} · {count}ノート"
+    }
+
+    /// Identifies a copied selection while its landing position is being chosen.
+    fn note_copy_title(pitch: &str, count: usize) {
+        en: "Copy · {pitch} · Notes: {count}",
+        ja: "複製 · {pitch} · {count}ノート"
+    }
+
+    /// One-based song position in bars, beats and MIDI ticks within the beat.
+    fn note_drag_position(bar: u32, beat: u32, tick: i64) {
+        en: "Position  {bar}:{beat}:{tick:03}",
+        ja: "位置  {bar}:{beat}:{tick:03}"
+    }
+
+    /// Zero-based duration in bars, beats and MIDI ticks, using the note's starting meter.
+    fn note_drag_length(bars: i64, beats: i64, ticks: i64) {
+        en: "Length  {bars}:{beats}:{ticks:03}",
+        ja: "長さ  {bars}:{beats}:{ticks:03}"
     }
 
     /// The same line while the velocity tool is in hand, which binds none of those gestures.

@@ -167,6 +167,39 @@ impl Session {
         let last = chosen.iter().map(Note::end).max().unwrap_or_default();
         let offset = last - first;
 
+        self.insert_note_copies(clip, chosen, offset)
+    }
+
+    /// Duplicates notes at a clip-relative offset, preserving all their performance data.
+    ///
+    /// Zero makes copies in place for a subsequent move in the same transaction. Missing
+    /// indices are ignored; negative positions stop at the beginning of the clip.
+    pub fn duplicate_notes_at_offset(
+        &mut self,
+        clip: ClipId,
+        indices: &[usize],
+        offset: Ticks,
+    ) -> Result<Vec<usize>, SessionError> {
+        let target = self
+            .midi_clip(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        let chosen = indices
+            .iter()
+            .filter_map(|index| target.notes.get(*index).cloned())
+            .collect();
+        self.insert_note_copies(clip, chosen, offset)
+    }
+
+    fn insert_note_copies(
+        &mut self,
+        clip: ClipId,
+        chosen: Vec<Note>,
+        offset: Ticks,
+    ) -> Result<Vec<usize>, SessionError> {
+        if chosen.is_empty() {
+            return Ok(Vec::new());
+        }
+
         self.record(Edit::DuplicateNotes);
         let grid = self.project.grid;
         let Some(target) = self.project.midi_clip_mut(clip) else {
@@ -175,7 +208,7 @@ impl Session {
         let base = target.notes.len();
         for note in chosen {
             target.notes.push(Note {
-                start: note.start + offset,
+                start: Ticks(note.start.raw().saturating_add(offset.raw())).max_zero(),
                 ..note
             });
         }
@@ -632,6 +665,43 @@ mod tests {
 
         assert!(!session.can_undo());
         assert!(!session.is_dirty());
+    }
+
+    #[test]
+    fn copying_in_place_preserves_note_data_and_clip_length_and_undoes_once() {
+        let (mut session, _, clip) = session_with_clip();
+        session.set_note_lyric(clip, 0, "ら").unwrap();
+        let original = session.midi_clip(clip).unwrap().clone();
+        session.forget_history();
+        let copies = session
+            .duplicate_notes_at_offset(clip, &[0, 1], Ticks::ZERO)
+            .unwrap();
+        let changed = session.midi_clip(clip).unwrap().clone();
+        assert_eq!(copies, vec![2, 3]);
+        assert_eq!(&changed.notes[2..], original.notes.as_slice());
+        assert_eq!(changed.length, original.length);
+        assert_eq!(session.undo(), Some(Edit::DuplicateNotes));
+        assert_eq!(session.midi_clip(clip).unwrap(), &original);
+        session.redo();
+        assert_eq!(session.midi_clip(clip).unwrap(), &changed);
+    }
+
+    #[test]
+    fn empty_copy_does_not_consume_history_and_invalid_clips_fail() {
+        let (mut session, _, clip) = session_with_clip();
+        session.forget_history();
+        assert!(
+            session
+                .duplicate_notes_at_offset(clip, &[99], Ticks::ZERO)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!session.can_undo());
+        assert!(
+            session
+                .duplicate_notes_at_offset(ClipId(u64::MAX), &[], Ticks::ZERO)
+                .is_err()
+        );
     }
 
     #[test]

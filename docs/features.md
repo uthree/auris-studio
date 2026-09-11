@@ -146,6 +146,35 @@ selected notes' ends, or **Alt+Shift** (**Option+Shift** on Mac) to give them th
 With the velocity tool, **Alt+Shift** gives the selected notes the same velocity. These modifiers
 can also be changed during the drag. Resizing a selection is one undo step, and Escape cancels it.
 
+New piano-roll notes reuse the length of the last note clicked, created or resized, including
+notes added through the context menu. Until a note has been handled, the current grid division
+supplies the length. A small pointer wobble preserves this length; dragging deliberately sets
+a new length. Cancelling a resize with Escape keeps the previous length for the next note.
+
+**Length Snap** in the piano-roll header controls duration snapping to the current editing grid
+and shares the setting in General preferences. It starts enabled. Drawing with the create
+modifier held still snaps; holding Ctrl (Command on Mac) while resizing an existing note allows
+fine adjustment. Set the grid to Free or turn Length Snap off for unsnapped drawing.
+
+Selected notes reverse their fill's luminance and gain a contrasting outline; their velocity
+bars and lyrics remain readable. Moving a selection auditions its pitches together on the
+track's instrument, updating when pitches change. Horizontal movement does not repeatedly
+strike the same pitches. Releasing the pointer or pressing Escape stops the preview.
+
+With the piano roll's pointer tool, **Alt-drag** (**Option-drag** on Mac) duplicates the
+selected notes and moves the copies. Grabbing an unselected note copies only that note. The
+copies retain lyrics, velocities and performance settings, and become the new selection.
+Copying starts after the drag threshold; releasing Alt/Option afterwards continues the same
+copy gesture. One Undo removes the copies; Escape cancels and restores the previous selection.
+When Alt/Option-click is configured to delete, deletion waits for release without dragging.
+Alt+Shift on a right edge continues to match note lengths.
+
+While drawing, moving, copying or resizing a note, a readout beside it shows the grabbed note's
+pitch, selection count, song position and duration. Values follow the written notes after
+snapping. Position is `bar:beat:tick` with bars and beats starting at one; duration uses the
+same units starting at zero and the meter at the note's start. The readout moves inside the
+visible piano roll near its edges and disappears when the gesture ends or is cancelled.
+
 Logic offers that gesture on ⌃⌥-drag as well as on the tool, and that half cannot be carried
 across: on macOS a ⌃-click becomes a right-click before the window sees it — ⌃ stripped off on
 the way — so it would arrive as a request for the context menu rather than as a drag.

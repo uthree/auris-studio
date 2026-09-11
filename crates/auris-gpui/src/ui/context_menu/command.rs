@@ -1338,10 +1338,18 @@ impl AurisApp {
                 let Some(clip) = self.selected_clip else {
                     return;
                 };
-                let length = Ticks(self.project().grid.raw().max(1));
+                let length = if self.editing_a_drum_clip() {
+                    Ticks(self.project().grid.raw().max(1))
+                } else {
+                    self.last_note_length
+                        .unwrap_or_else(|| Ticks(self.project().grid.raw().max(1)))
+                };
                 if let Ok(index) = self.session.add_note(clip, Note::new(pitch, start, length)) {
                     self.selected_notes.clear();
                     self.selected_notes.insert(index);
+                    if !self.editing_a_drum_clip() {
+                        self.last_note_length = Some(length);
+                    }
                 }
             }
 
