@@ -257,6 +257,16 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
+        SessionError::SingerLyric {
+            note, lyric, issue, ..
+        } => {
+            let key = match issue {
+                auris_session::LyricIssue::Unreadable => Key::ErrorSingerLyricUnreadable,
+                auris_session::LyricIssue::MissingVowel => Key::ErrorSingerLyricMissingVowel,
+                auris_session::LyricIssue::TooShort => Key::ErrorSingerLyricTooShort,
+            };
+            messages::singer_lyric_error(language, note + 1, lyric, key.get(language))
+        }
         SessionError::NoVoice(_) => Key::ErrorNoVoice.get(language).to_string(),
         // The names it offers are the model's own and read the same in every language; the
         // sentence joining them is ours and is translated here.

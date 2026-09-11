@@ -647,6 +647,21 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
     });
 
     sections.push(MenuSection {
+        name: t(Key::MenuWindow),
+        rows: Panel::ALL
+            .into_iter()
+            .map(|panel| {
+                toggle(
+                    t(panel.label()),
+                    crate::auxiliary_window::TogglePanelWindow { panel },
+                    "",
+                    panels.is_detached(panel),
+                )
+            })
+            .collect(),
+    });
+
+    sections.push(MenuSection {
         name: t(Key::GroupAnalysis),
         rows: vec![
             command(
@@ -870,14 +885,14 @@ mod tests {
     }
 
     #[test]
-    fn every_row_names_a_key_binding_that_exists() {
+    fn every_named_key_binding_exists() {
         // The in-window bar shows the keystroke beside each command by looking the id up. A
         // typo would silently leave the column blank rather than fail anywhere.
         for section in plain(Language::English) {
             for row in section.rows {
                 if let MenuRow::Command { label, binding, .. } = row {
                     assert!(
-                        actions::bindable(binding).is_some(),
+                        binding.is_empty() || actions::bindable(binding).is_some(),
                         "`{label}` names a binding `{binding}` that does not exist"
                     );
                 }
@@ -959,18 +974,23 @@ mod tests {
 
     #[test]
     fn no_command_appears_twice() {
-        let mut labels: Vec<String> = plain(Language::English)
+        let actions: Vec<Box<dyn Action>> = plain(Language::English)
             .into_iter()
             .flat_map(|section| section.rows)
             .filter_map(|row| match row {
-                MenuRow::Command { label, .. } => Some(label.to_string()),
+                MenuRow::Command { action, .. } => Some(action),
                 _ => None,
             })
             .collect();
-        labels.sort();
-        let count = labels.len();
-        labels.dedup();
-        assert_eq!(count, labels.len(), "a command is in two menus at once");
+        for (index, action) in actions.iter().enumerate() {
+            assert!(
+                !actions[..index]
+                    .iter()
+                    .any(|other| action.partial_eq(other.as_ref())),
+                "{} is in two menus at once",
+                action.name()
+            );
+        }
     }
 
     #[test]

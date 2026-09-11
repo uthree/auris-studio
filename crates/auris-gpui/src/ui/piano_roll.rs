@@ -641,6 +641,13 @@ impl AurisApp {
             .copied()
             .filter(|_| source)
             .collect();
+        let failed_note = self
+            .sung_failures
+            .values()
+            .filter_map(|failure| failure.note)
+            .find_map(|(clip, index)| {
+                (Some(clip) == self.selected_clip && source).then_some(index)
+            });
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
@@ -894,6 +901,7 @@ impl AurisApp {
                                                 bounds,
                                                 &notes,
                                                 &selected,
+                                                failed_note,
                                                 velocity_tag,
                                                 clip_start,
                                                 &view,
@@ -2164,6 +2172,7 @@ fn paint_notes(
     bounds: Bounds<Pixels>,
     notes: &[Note],
     selected: &[usize],
+    failed_note: Option<usize>,
     tag: Option<(usize, u8)>,
     clip_start: Ticks,
     view: &TimelineView,
@@ -2228,6 +2237,15 @@ fn paint_notes(
                 // selected. Deciding per note also stops the whole thing resting on hue, which
                 // is the one channel a red-green-deficient reader does not have.
                 theme.text_on(theme.velocity_color(note.velocity)),
+            );
+        }
+        if failed_note == Some(index) {
+            paint::rounded_outline(
+                window,
+                note_bounds,
+                Metrics::RADIUS_XS,
+                px(2.5),
+                theme.danger,
             );
         }
     }

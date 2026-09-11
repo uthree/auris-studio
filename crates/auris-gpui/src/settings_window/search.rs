@@ -208,10 +208,11 @@ impl SettingsWindow {
             }
             // Read the current placement so changes made through the main window's panel menu
             // also appear here. Moving a panel uses the same persistence path as that menu.
-            let current = self.panels.dock(panel);
+            let current = (!self.panels.is_detached(panel)).then_some(self.panels.dock(panel));
             let choices = Dock::ALL
                 .into_iter()
-                .map(|dock| (dock, self.t(dock.label()).to_owned(), String::new()))
+                .map(|dock| (Some(dock), self.t(dock.label()).to_owned(), String::new()))
+                .chain([(None, self.t(Key::DetachedWindow).to_owned(), String::new())])
                 .collect();
             let control = self.dropdown(
                 panel.command(),
@@ -219,10 +220,14 @@ impl SettingsWindow {
                 &current,
                 move |this, dock, cx| {
                     let _ = this.app.update(cx, |app, cx| {
-                        if app.panels.dock(panel) != dock {
-                            app.dock_panel(panel, dock);
-                            cx.notify();
+                        match dock {
+                            Some(dock) => app.dock_panel(panel, dock),
+                            None => {
+                                app.panels.set_detached(panel, true);
+                                app.remember_layout();
+                            }
                         }
+                        cx.notify();
                     });
                     cx.notify();
                 },
@@ -428,7 +433,7 @@ mod tests {
                 cx.simulate_keystrokes(match dock {
                     Dock::Left => "home enter",
                     Dock::Bottom => "home down enter",
-                    Dock::Right => "end enter",
+                    Dock::Right => "home down down enter",
                 });
                 cx.run_until_parked();
                 app.read_with(cx, |this, _| assert_eq!(this.panels.dock(panel), dock));

@@ -231,11 +231,8 @@ impl AurisApp {
                         false,
                         theme.accent_soft,
                         &theme,
-                        cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                            this.open_plugin_window(
-                                PluginSubject::Instrument(track_id),
-                                event.position(),
-                            );
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_plugin_window(PluginSubject::Instrument(track_id));
                             cx.notify();
                         }),
                     ))
@@ -363,14 +360,11 @@ impl AurisApp {
                         enabled,
                         theme.accent_soft,
                         &theme,
-                        cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
-                            this.open_plugin_window(
-                                PluginSubject::Insert {
-                                    track: Some(track_id),
-                                    slot: slot_id,
-                                },
-                                event.position(),
-                            );
+                        cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                            this.open_plugin_window(PluginSubject::Insert {
+                                track: Some(track_id),
+                                slot: slot_id,
+                            });
                             cx.notify();
                         }),
                     )))
@@ -437,6 +431,7 @@ impl AurisApp {
         descriptors
             .iter()
             .map(|descriptor| {
+                let param_id = descriptor.id.0;
                 let target = target_for(descriptor.id);
                 let value = self.session.param_value(target, descriptor);
                 let element_id = (id_prefix, target_element_key(target, descriptor.id));
@@ -470,6 +465,7 @@ impl AurisApp {
                             });
                         }),
                     )
+                    .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         Self::opens_menu(cx, move |this, at| {

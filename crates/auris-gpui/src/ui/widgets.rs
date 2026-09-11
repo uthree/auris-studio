@@ -252,8 +252,11 @@ where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    let id = id.into();
+    let selector = id.clone();
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || selector.to_string())
         .flex()
         .items_center()
         .justify_center()

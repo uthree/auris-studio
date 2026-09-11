@@ -167,14 +167,17 @@ impl AurisApp {
     /// Draws the bar, on the platforms that need one.
     pub(crate) fn render_menu_bar(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
         if !Self::wants_menu_bar() {
             return None;
         }
         let theme = self.theme.clone();
-        let open = self.menu_bar;
+        let open = self.menu_bar.filter(|_| {
+            self.event_window
+                .is_none_or(|id| id == window.window_handle().window_id())
+        });
         let sections = self.menu_model();
 
         Some(
@@ -651,7 +654,11 @@ mod window_tests {
         }
         app.read_with(cx, |this, _| assert!(this.analysis_panel));
         paint(&app, cx);
-        click("analysis-close", cx);
+        let handle = app.read_with(cx, |app, _| {
+            app.auxiliary_windows[&crate::auxiliary_window::Surface::Analysis]
+        });
+        let mut analysis = gpui::VisualTestContext::from_window(handle.into(), cx);
+        click("analysis-close", &mut analysis);
         app.read_with(cx, |this, _| assert!(!this.analysis_panel));
     }
 

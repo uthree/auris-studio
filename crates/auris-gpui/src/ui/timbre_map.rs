@@ -331,12 +331,7 @@ impl AurisApp {
         Some(
             div()
                 .id("timbre-map")
-                .absolute()
-                .top(px(65.0))
-                .left(px(25.0))
-                .w(px(830.0))
-                .max_w(relative(0.95))
-                .max_h(relative(0.88))
+                .size_full()
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -426,7 +421,14 @@ fn plot_positions(positions: &[[f64; 2]]) -> Vec<[f32; 2]> {
 mod tests {
     use super::*;
     use crate::harness::{click, open, paint};
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+
+    fn map_window(app: &Entity<AurisApp>, cx: &mut VisualTestContext) -> VisualTestContext {
+        let handle = app.read_with(cx, |app, _| {
+            app.auxiliary_windows[&crate::auxiliary_window::Surface::TimbreMap]
+        });
+        VisualTestContext::from_window(handle.into(), cx)
+    }
 
     #[gpui::test]
     fn browsing_is_read_only_and_adoption_is_undoable(cx: &mut TestAppContext) {
@@ -454,22 +456,23 @@ mod tests {
         });
         paint(&app, cx);
         // GPUI's debug selector API requires a static string, including for dynamic rows.
+        let mut utility = map_window(&app, cx);
         click(
             Box::leak(format!("timbre-all-{index}").into_boxed_str()),
-            cx,
+            &mut utility,
         );
         app.read_with(cx, |this, _| {
             assert_eq!(this.project(), &before);
             assert_eq!(this.timbre_map.selected, Some(index));
         });
         paint(&app, cx);
-        click("timbre-use", cx);
+        click("timbre-use", &mut utility);
         app.update(cx, |this, _| {
             assert_ne!(this.project(), &before);
             this.session.undo();
             assert_eq!(this.project(), &before);
         });
-        click("timbre-close", cx);
+        click("timbre-close", &mut utility);
         app.read_with(cx, |this, _| assert!(!this.timbre_map.open));
     }
 
@@ -482,7 +485,8 @@ mod tests {
             this.timbre_map.generation
         });
         paint(&app, cx);
-        click("timbre-close", cx);
+        let mut utility = map_window(&app, cx);
+        click("timbre-close", &mut utility);
         app.update(cx, |this, _| {
             assert_ne!(this.timbre_map.generation, generation);
             assert!(this.timbre_map.control.is_none());

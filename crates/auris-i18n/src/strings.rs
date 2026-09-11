@@ -633,6 +633,8 @@ strings! {
     // On the menu a right-click on a panel's status-bar icon opens. "Dock" is the verb, so the
     // Japanese is the instruction rather than the noun: 左に配置 is what the row does.
     DockLeft { en: "Dock Left", ja: "左に配置" }
+    MenuWindow { en: "Window", ja: "ウィンドウ" }
+    DetachedWindow { en: "Separate window", ja: "独立ウィンドウ" }
     DockBottom { en: "Dock Bottom", ja: "下に配置" }
     DockRight { en: "Dock Right", ja: "右に配置" }
     HidePanel { en: "Hide Panel", ja: "パネルを隠す" }
@@ -1550,6 +1552,18 @@ strings! {
     ErrorSing {
         en: "the voice model failed",
         ja: "声のモデルでエラーが発生しました"
+    }
+    ErrorSingerLyricUnreadable {
+        en: "Enter the pronunciation in hiragana or katakana.",
+        ja: "読みをひらがな・カタカナで入力してください。"
+    }
+    ErrorSingerLyricMissingVowel {
+        en: "The long-vowel mark has no preceding vowel. Enter ア, イ, ウ, エ or オ.",
+        ja: "「ー」の前に伸ばす母音がありません。ア・イ・ウ・エ・オのいずれかを入力してください。"
+    }
+    ErrorSingerLyricTooShort {
+        en: "The note is too short for its lyric. Lengthen it or distribute the lyric across more notes.",
+        ja: "音符が短すぎて歌詞が入りません。音符を長くするか、歌詞を複数の音符に分けてください。"
     }
     ErrorFile { en: "file error", ja: "ファイルエラー" }
     ErrorEngine { en: "audio engine error", ja: "オーディオエンジンのエラー" }

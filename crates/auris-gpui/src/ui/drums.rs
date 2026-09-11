@@ -364,7 +364,11 @@ mod tests {
         assert!(cx.debug_bounds("drum-measure").is_none());
         cx.dispatch_action(crate::actions::OpenDrumAnalysis);
         paint(&app, cx);
-        assert!(cx.debug_bounds("drum-measure").is_some());
+        let handle = app.read_with(cx, |app, _| {
+            app.auxiliary_windows[&crate::auxiliary_window::Surface::Analysis]
+        });
+        let mut analysis = gpui::VisualTestContext::from_window(handle.into(), cx);
+        assert!(analysis.debug_bounds("drum-measure").is_some());
     }
 
     fn measure_one(this: &mut AurisApp, track: TrackId, note: u8) -> DrumKitAnalysis {
@@ -445,7 +449,11 @@ mod tests {
             paint(&app, cx);
             cx.dispatch_action(crate::actions::OpenDrumAnalysis);
             paint(&app, cx);
-            click("drum-apply-future", cx);
+            let handle = app.read_with(cx, |app, _| {
+                app.auxiliary_windows[&crate::auxiliary_window::Surface::Analysis]
+            });
+            let mut analysis = gpui::VisualTestContext::from_window(handle.into(), cx);
+            click("drum-apply-future", &mut analysis);
             app.update(cx, |this, _| {
                 let instrument = this
                     .project()

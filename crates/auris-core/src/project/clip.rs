@@ -275,12 +275,23 @@ impl MidiClip {
     /// Positions stay relative to the clip. The caller knows whether it wants them on the
     /// timeline, and only it knows what to add.
     pub fn playable_notes(&self) -> impl Iterator<Item = Note> + '_ {
+        self.playable_notes_with_indices().map(|(_, note)| note)
+    }
+
+    /// Playable notes with their original editable indices, including after clipping.
+    pub fn playable_notes_with_indices(&self) -> impl Iterator<Item = (usize, Note)> + '_ {
         self.notes
             .iter()
-            .filter(move |note| note.start >= Ticks::ZERO && note.start < self.length)
-            .map(move |note| Note {
-                length: note.end().min(self.length) - note.start,
-                ..note.clone()
+            .enumerate()
+            .filter(move |(_, note)| note.start >= Ticks::ZERO && note.start < self.length)
+            .map(move |(index, note)| {
+                (
+                    index,
+                    Note {
+                        length: note.end().min(self.length) - note.start,
+                        ..note.clone()
+                    },
+                )
             })
     }
 

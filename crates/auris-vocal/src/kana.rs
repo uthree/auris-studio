@@ -12,6 +12,39 @@
 
 use crate::phoneme::VOWELS;
 
+/// Recover a backend-readable spelling from the pronunciation saved on a note.
+/// Unknown pronunciations remain explicit instead of being replaced by a vowel.
+pub fn phonemes_to_kana(phonemes: &[String]) -> Option<String> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static SPELLINGS: OnceLock<HashMap<Vec<String>, String>> = OnceLock::new();
+    let spellings = SPELLINGS.get_or_init(|| {
+        let mut spellings = HashMap::new();
+        for base in "あいうえおかきくけこがぎぐげござじずぜぞさしすせそたちつてとだでどなにぬねのはひふへほばびぶべぼぱぴぷぺぽまみむめもやゆよらりるれろわゔんっ".chars() {
+            if let Some(phonemes) = single(base) {
+                spellings.entry(phonemes).or_insert_with(|| base.to_string());
+            }
+            for small in SMALL {
+                if let Some(phonemes) = digraph(base, small) {
+                    spellings.entry(phonemes).or_insert_with(|| format!("{base}{small}"));
+                }
+            }
+        }
+        spellings
+    });
+    if phonemes.is_empty() {
+        return None;
+    }
+    let phonemes: Vec<String> = phonemes
+        .iter()
+        .map(|phoneme| phoneme.trim_end_matches('\u{0325}').to_string())
+        .collect();
+    crate::phoneme_moras(&phonemes)
+        .iter()
+        .map(|mora| spellings.get(mora).map(String::as_str))
+        .collect()
+}
+
 /// The phonemes of a kana lyric, or `None` where any of it is not kana.
 ///
 /// `None` rather than a partial answer: a lyric that is half readable is a lyric for the

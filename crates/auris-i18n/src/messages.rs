@@ -32,6 +32,11 @@ macro_rules! messages {
 }
 
 messages! {
+    /// An invalid singer lyric, with its editable note number and recovery instruction.
+    fn singer_lyric_error(note: usize, lyric: &str, reason: &str) {
+        en: "Cannot sing note {note}, “{lyric}”. {reason}",
+        ja: "音符{note}の歌詞「{lyric}」を歌えません。{reason}"
+    }
     /// The engine's line in the status bar.
     fn audio_status(device: &str, rate: f64, channels: usize) {
         en: "Audio: {device} · {rate:.0} Hz · {channels} ch",

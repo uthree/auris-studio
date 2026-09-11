@@ -7,32 +7,16 @@
 //! picture: the number row above, the two rows of letters laid out as a keyboard, and the octave
 //! and velocity keys below, with every control lit while it is in force.
 //!
-//! # Why it is a panel and not a second window
-//!
-//! For the reason [`crate::ui::plugin_window`] gives, and one more that is worse. A second
-//! operating-system window takes the platform's key events with it, so the keyboard would stop
-//! working the moment somebody clicked on the picture of it — which is the one thing a panel about
-//! playing must not do. Drawn inside the main window, the keys keep arriving where they always
-//! did, through `AurisApp::typing_key`, and nothing about focus changes at all.
-//!
-//! It floats, and is dragged by its title bar, because it is a *reference* rather than a place to
-//! work: it wants to sit next to whichever track is being played into, which is somewhere
-//! different every time.
-//!
-//! # Nothing here is state
-//!
-//! Every value drawn is read back out of `MusicalTyping` on each frame. The only thing the panel
-//! owns is where it was dragged to, and which key the *mouse* is holding — a pointer pressed on
-//! one key and let go over another still has to release the first.
+//! The native window shares the document's musical typing and gesture routing.
 
 use auris_i18n::{Key, Language};
 use auris_session::{LAYOUT, TypingRole};
 use gpui::{
     AnyElement, Context, Hsla, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels,
-    Point, SharedString, Size, div, point, prelude::*, px, relative, size,
+    SharedString, div, prelude::*, px, relative,
 };
 
-use crate::app::{AurisApp, Drag};
+use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::Icon;
 use crate::ui::widgets::chain_button;
@@ -180,81 +164,18 @@ impl KeyLook {
     }
 }
 
-/// The drawn keyboard, while the typing mode is on.
-#[derive(Copy, Clone, Debug, Default, PartialEq)]
-pub struct TypingPanel {
-    /// Top-left corner in window coordinates, once it has been dragged somewhere.
-    ///
-    /// `None` until then, rather than a position worked out when the mode went on: the window can
-    /// be resized while the panel is up, and a keyboard placed once against a viewport that no
-    /// longer exists would drift off the bottom of a shortened window.
-    pub anchor: Option<Point<Pixels>>,
-}
-
-impl TypingPanel {
-    /// Roughly how large the panel comes out.
-    ///
-    /// An *estimate*, and only ever used to decide where it will fit: the panel sizes itself to
-    /// its contents, whose width depends on how long the word for "modulation" is in the language
-    /// the interface is in. Being a few pixels out moves the keyboard a few pixels, which is the
-    /// same bargain [`crate::ui::plugin_window::PluginWindow::height`] makes.
-    pub fn frame() -> Size<Pixels> {
-        let keys = SUSTAIN_WIDTH + px(8.0) + KEY_WIDTH * white_key_count() as f32;
-        size(
-            keys + px(150.0),
-            Metrics::PANEL_HEADER_HEIGHT + WHITE_HEIGHT + CONTROL_HEIGHT * 2.0 + px(46.0),
-        )
-    }
-
-    /// Where the panel is drawn, given the viewport it has to fit in.
-    ///
-    /// Clamped rather than flipped, for the reason the plugin editor is: the title bar is the
-    /// thing a hand is reaching for, and moving it out from under that hand is worse than a panel
-    /// that overhangs. One larger than the viewport pins to the top-left, which is the corner the
-    /// title bar is in.
-    pub fn origin(&self, viewport: Size<Pixels>) -> Point<Pixels> {
-        let frame = Self::frame();
-        let wanted = self
-            .anchor
-            .unwrap_or_else(|| default_anchor(viewport, frame));
-        let clamp = |value: Pixels, room: Pixels| value.min(room.max(px(0.0))).max(px(0.0));
-        point(
-            clamp(wanted.x, viewport.width - frame.width),
-            clamp(wanted.y, viewport.height - frame.height),
-        )
-    }
-}
-
-/// Where a keyboard nobody has moved sits.
-///
-/// Centred across the window and along the bottom of it, clear of the status bar. That is where
-/// the hands are: the panel is looked at while the *arrangement* is being played into, so it
-/// belongs at the edge the eye is not working in, and the bottom edge is the one no dock takes
-/// the whole of.
-fn default_anchor(viewport: Size<Pixels>, frame: Size<Pixels>) -> Point<Pixels> {
-    point(
-        (viewport.width - frame.width) / 2.0,
-        viewport.height - frame.height - Metrics::STATUS_HEIGHT - px(12.0),
-    )
-}
-
 impl AurisApp {
     /// Draws the keyboard, when the typing mode is on.
     ///
     /// Asked for the mode rather than for a field of its own, because the two are one thing: the
     /// panel is what the mode *looks* like, and a mode that could be on with nothing on screen to
     /// say so is the state this panel exists to abolish.
-    pub(crate) fn render_typing_panel(
-        &mut self,
-        viewport: Size<Pixels>,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub(crate) fn render_typing_panel(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         if !self.session.musical_typing() {
             return None;
         }
         let theme = self.theme.clone();
         let language = self.language();
-        let origin = self.typing_panel.origin(viewport);
 
         let keys = self.session.typing_keyboard();
         let root = keys.root();
@@ -274,27 +195,20 @@ impl AurisApp {
             .map(|track| track.name.clone())
             .unwrap_or_else(|| self.t(Key::TypingNoTrack).to_string());
 
-        let header = self.typing_header(&track, origin, &theme, cx);
+        let header = self.typing_header(&track, &theme, cx);
         let wheels = self.typing_wheels(bend, wheel_step, language, &theme, cx);
         let board = self.typing_board(root, &sounding, sustain, language, &theme, cx);
         let steppers = self.typing_steppers(&octave_name, velocity, language, &theme, cx);
 
         Some(
             div()
-                .absolute()
-                .left(origin.x)
-                .top(origin.y)
+                .size_full()
                 .flex()
                 .flex_col()
-                .rounded(Metrics::RADIUS_LG)
                 .bg(theme.surface_raised)
                 .border_1()
                 .border_color(theme.border)
-                .shadow_lg()
-                // The same pair the plugin editor needs, and for the same two reasons: a floating
-                // panel that let the pointer through would press whatever was behind it as well,
-                // and one that occludes has to carry a drag begun inside it, because the hit test
-                // stops dead at the first blocking hitbox and the root never sees another move.
+                // Occluding content routes its own pointer moves and releases.
                 .occlude()
                 .on_mouse_move(cx.listener(AurisApp::on_mouse_move))
                 .on_mouse_up(gpui::MouseButton::Left, cx.listener(AurisApp::on_mouse_up))
@@ -315,14 +229,8 @@ impl AurisApp {
         )
     }
 
-    /// The title bar, which is also the handle the panel is dragged by.
-    fn typing_header(
-        &self,
-        track: &str,
-        origin: Point<Pixels>,
-        theme: &Theme,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    /// The selected instrument and musical-typing toggle.
+    fn typing_header(&self, track: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
             .items_center()
@@ -332,17 +240,6 @@ impl AurisApp {
             .flex_shrink_0()
             .border_b_1()
             .border_color(theme.border)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, event: &MouseDownEvent, _, _| {
-                    this.begin_drag(Drag::MoveTypingPanel {
-                        grab_offset: point(
-                            event.position.x - origin.x,
-                            event.position.y - origin.y,
-                        ),
-                    });
-                }),
-            )
             .child(
                 div()
                     .flex_1()
@@ -828,57 +725,5 @@ mod tests {
         );
         // The right button is not a way to play, whatever it is doing.
         assert!(!slides_onto_key(Some(MouseButton::Right), false, false));
-    }
-
-    #[test]
-    fn a_keyboard_nobody_has_moved_sits_along_the_bottom_of_the_window() {
-        let viewport = size(px(1400.0), px(900.0));
-        let frame = TypingPanel::frame();
-        let origin = TypingPanel::default().origin(viewport);
-
-        assert!(
-            origin.x > px(0.0) && origin.x + frame.width < viewport.width,
-            "not centred across the window"
-        );
-        assert!(
-            origin.y + frame.height <= viewport.height - Metrics::STATUS_HEIGHT,
-            "the status bar is drawn over the bottom of the keyboard"
-        );
-        assert!(
-            origin.y > viewport.height / 2.0,
-            "it belongs at the edge the eye is not working in"
-        );
-    }
-
-    #[test]
-    fn a_keyboard_dragged_off_the_edge_is_pushed_back_inside() {
-        let viewport = size(px(1000.0), px(700.0));
-        let frame = TypingPanel::frame();
-        let panel = TypingPanel {
-            anchor: Some(point(px(980.0), px(690.0))),
-        };
-        let origin = panel.origin(viewport);
-        assert!(origin.x + frame.width <= viewport.width);
-        assert!(origin.y + frame.height <= viewport.height);
-
-        // One that already fits is left exactly where it was put down.
-        let placed = TypingPanel {
-            anchor: Some(point(px(120.0), px(90.0))),
-        };
-        assert_eq!(placed.origin(viewport), point(px(120.0), px(90.0)));
-    }
-
-    #[test]
-    fn a_window_too_small_for_the_keyboard_keeps_the_title_bar_on_screen() {
-        // The corner the panel is dragged by. Pinning to any other one would put the handle off
-        // the edge, and there would be no way to get the keyboard back.
-        let tiny = size(px(200.0), px(150.0));
-        for anchor in [None, Some(point(px(400.0), px(400.0)))] {
-            assert_eq!(
-                TypingPanel { anchor }.origin(tiny),
-                point(px(0.0), px(0.0)),
-                "the handle went off the edge"
-            );
-        }
     }
 }

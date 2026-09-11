@@ -222,6 +222,18 @@ of the system cannot drift away from the system without the build saying so.
 
 ## Testing the window
 
+The Window menu switches each dock panel between the main window and a separate native window.
+The layout file preserves that choice, visibility and the return dock. Closing a detached panel
+hides it; the View menu reopens it, and clearing its Window-menu check returns it to its dock.
+Plugin controls, musical typing, analysis results and the timbre map also use native windows.
+All of these views share one `AurisApp` and session, including selection, edits and Undo.
+
+`auxiliary_window.rs` defers native window creation and removal until the current draw finishes.
+GPUI draws a new window synchronously, so opening it while the document entity is borrowed would
+re-enter that entity. Input routing is shared by every document window; transient menus and
+text editors belong to the window that opened them. Each panel is rendered in only one window,
+which also keeps its recorded gesture coordinates and text-input handlers unambiguous.
+
 The project, Settings and voice setup windows share GPUI title-bar chrome in
 `crates/auris-gpui/src/titlebar.rs`. Window options keep the native frame transparent, and each
 view supplies content from its current theme. Interactive controls must remain beside dedicated

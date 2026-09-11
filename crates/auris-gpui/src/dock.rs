@@ -223,8 +223,10 @@ pub struct PanelLayout {
     docks: [Dock; 6],
     /// Whether each panel is showing, in [`Panel::ALL`] order.
     ///
-    /// At most one is true per dock; [`Self::show`] is what keeps that so.
+    /// At most one docked panel is open per dock; detached panels are independent.
     open: [bool; 6],
+    /// Panels displayed in separate operating-system windows.
+    detached: [bool; 6],
     /// How large each dock is drawn, in [`Dock::ALL`] order: a width for the sides, a height for
     /// the bottom.
     sizes: [Pixels; 3],
@@ -312,6 +314,7 @@ impl Default for PanelLayout {
             // log: the panel is interesting on the day somebody wants a conversation, and a
             // model nobody has configured yet has nothing to say.
             open: [true, true, false, true, false, false],
+            detached: [false; 6],
             sizes: [
                 Metrics::LEFT_DOCK_WIDTH,
                 Metrics::BOTTOM_DOCK_HEIGHT,
@@ -354,11 +357,22 @@ impl PanelLayout {
         self.open[panel.index()]
     }
 
+    /// Whether this panel uses a separate window.
+    pub fn is_detached(&self, panel: Panel) -> bool {
+        self.detached[panel.index()]
+    }
+
+    /// Switches presentation while retaining the panel's return dock.
+    pub fn set_detached(&mut self, panel: Panel, detached: bool) {
+        self.detached[panel.index()] = detached;
+        self.show(panel);
+    }
+
     /// The panel `dock` is showing, if it is showing one.
     pub fn showing(&self, dock: Dock) -> Option<Panel> {
-        Panel::ALL
-            .into_iter()
-            .find(|panel| self.dock(*panel) == dock && self.is_open(*panel))
+        Panel::ALL.into_iter().find(|panel| {
+            self.dock(*panel) == dock && self.is_open(*panel) && !self.is_detached(*panel)
+        })
     }
 
     /// Every panel that lives in `dock`, open or not, in [`Panel::ALL`] order.
@@ -386,9 +400,13 @@ impl PanelLayout {
     /// One at a time is the whole reason a dock can hold several panels without any of them
     /// becoming unusable — two stacked in a 240-pixel column would be two half-panels.
     pub fn show(&mut self, panel: Panel) {
+        if self.is_detached(panel) {
+            self.open[panel.index()] = true;
+            return;
+        }
         let dock = self.dock(panel);
         for other in Panel::ALL {
-            if self.dock(other) == dock {
+            if self.dock(other) == dock && !self.is_detached(other) {
                 self.open[other.index()] = other == panel;
             }
         }
@@ -413,6 +431,7 @@ impl PanelLayout {
     /// Shown rather than merely moved: choosing where a panel should live and then seeing nothing
     /// happen reads as the choice not having taken.
     pub fn move_to(&mut self, panel: Panel, dock: Dock) {
+        self.detached[panel.index()] = false;
         self.docks[panel.index()] = dock;
         self.show(panel);
     }
@@ -551,6 +570,9 @@ impl PanelLayout {
 /// One panel's placement, as `layout.json` writes it.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct StoredPanel {
+    /// Whether the panel uses its own window.
+    #[serde(default)]
+    detached: bool,
     /// Which dock it lives in.
     dock: Dock,
     /// Whether it is the one that dock is showing.
@@ -588,6 +610,7 @@ impl From<&PanelLayout> for StoredLayout {
                     (
                         panel,
                         StoredPanel {
+                            detached: layout.is_detached(panel),
                             dock: layout.dock(panel),
                             open: layout.is_open(panel),
                         },
@@ -610,6 +633,7 @@ impl From<StoredLayout> for PanelLayout {
     fn from(stored: StoredLayout) -> Self {
         let mut layout = Self::default();
         for (panel, placement) in stored.panels {
+            layout.detached[panel.index()] = placement.detached;
             layout.docks[panel.index()] = placement.dock;
             layout.open[panel.index()] = placement.open;
         }
@@ -632,7 +656,7 @@ impl From<StoredLayout> for PanelLayout {
         for dock in Dock::ALL {
             let crowd: Vec<Panel> = layout
                 .panels_in(dock)
-                .filter(|panel| layout.is_open(*panel))
+                .filter(|panel| layout.is_open(*panel) && !layout.is_detached(*panel))
                 .collect();
             for extra in crowd.into_iter().skip(1) {
                 layout.hide(extra);
@@ -645,6 +669,30 @@ impl From<StoredLayout> for PanelLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detached_panels_do_not_compete_for_their_return_dock() {
+        let mut layout = PanelLayout::default();
+        layout.set_detached(Panel::Mixer, true);
+        layout.show(Panel::PianoRoll);
+        assert!(layout.is_open(Panel::Mixer));
+        assert_eq!(layout.showing(Dock::Bottom), Some(Panel::PianoRoll));
+        layout.set_detached(Panel::Mixer, false);
+        assert_eq!(layout.showing(Dock::Bottom), Some(Panel::Mixer));
+        assert!(!layout.is_open(Panel::PianoRoll));
+    }
+
+    #[test]
+    fn detached_visibility_and_return_docks_round_trip() {
+        let mut layout = PanelLayout::default();
+        for panel in Panel::ALL {
+            layout.set_detached(panel, true);
+        }
+        layout.hide(Panel::Library);
+        let json = serde_json::to_string(&StoredLayout::from(&layout)).unwrap();
+        let restored = PanelLayout::from(serde_json::from_str::<StoredLayout>(&json).unwrap());
+        assert_eq!(restored, layout);
+    }
 
     #[test]
     fn every_panel_switch_names_a_command_that_exists() {

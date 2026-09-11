@@ -52,9 +52,38 @@ pub use model::{Acceleration, NOISE_SCALE};
 pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
 
+/// Checks VOICEVOX lyrics before inference, retaining the original event index on failure.
+pub fn validate_voicevox_score(score: &auris_vocal::SingerScore) -> Result<(), SingError> {
+    voicevox::validate_lyrics(score)
+}
+
+/// A lyric problem the user can correct in the score editor.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum LyricIssue {
+    /// The stored lyric and pronunciation cannot be expressed as kana.
+    #[error("enter a readable kana lyric")]
+    Unreadable,
+    /// A prolonged-sound mark has no preceding vowel to extend.
+    #[error("the prolonged-sound mark needs a preceding vowel; enter ア, イ, ウ, エ or オ")]
+    MissingVowel,
+    /// The note cannot hold even one frame per mora.
+    #[error("lengthen the note or distribute its lyric across more notes")]
+    TooShort,
+}
+
 /// Why a voice could not be loaded, or frames could not be sung.
 #[derive(Debug, thiserror::Error)]
 pub enum SingError {
+    /// A lyric needs a user's correction; the index refers to the original score.
+    #[error("invalid lyric '{lyric}' at score event {event}: {issue}")]
+    InvalidLyric {
+        /// Zero-based event index before backend normalization or padding.
+        event: usize,
+        /// The lyric that needs correction.
+        lyric: String,
+        /// The actionable reason.
+        issue: LyricIssue,
+    },
     /// The file could not be opened as an ONNX model at all.
     #[error("could not open the voice model: {reason}")]
     Load {
