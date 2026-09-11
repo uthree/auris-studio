@@ -326,6 +326,7 @@ pub(crate) struct AgentChat {
     auto_compact_percent: Option<u8>,
     /// Requested Ollama context, independent of the model's architectural maximum.
     pub(crate) context_tokens: u32,
+    pub(crate) output_tokens: u32,
     /// Ollama thinking override.
     pub(crate) thinking: Option<bool>,
     /// The transcript, oldest first.
@@ -401,6 +402,7 @@ impl Default for AgentChat {
             policy: Default::default(),
             auto_compact_percent: None,
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             entries: Vec::new(),
             input: TextField::new(String::new()),
@@ -489,6 +491,7 @@ impl AgentChat {
         self.policy = prefs.policy.clone();
         self.auto_compact_percent = prefs.auto_compact_percent;
         self.context_tokens = prefs.context_tokens.unwrap_or(32768);
+        self.output_tokens = prefs.output_tokens.unwrap_or(4096);
         self.thinking = prefs.thinking;
         self.provider_openai = prefs.provider.trim() == "openai";
         self.chosen_model = prefs.model.trim().to_string();
@@ -510,6 +513,7 @@ impl AgentChat {
             policy: self.policy.clone(),
             auto_compact_percent: self.auto_compact_percent,
             context_tokens: Some(self.context_tokens),
+            output_tokens: Some(self.output_tokens),
             thinking: self.thinking,
             provider: match self.provider_openai {
                 true => "openai".to_string(),
@@ -1667,12 +1671,51 @@ impl AurisApp {
                             131072 => 262144,
                             _ => 32768,
                         };
+                        this.agent_chat.output_tokens = this
+                            .agent_chat
+                            .output_tokens
+                            .min(this.agent_chat.context_tokens / 4);
                         this.agent_chat.context_window =
                             Some(u64::from(this.agent_chat.context_tokens));
                         this.agent_write_through();
                         cx.notify();
                     }),
                 ))
+                .child(button(
+                    "agent-output-tokens",
+                    format!(
+                        "{}: {}k",
+                        self.t(Key::AgentOutputTokens),
+                        self.agent_chat.output_tokens / 1024
+                    ),
+                    ButtonStyle::Normal,
+                    true,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.agent_chat.output_tokens = match this.agent_chat.output_tokens {
+                            4096 => 8192,
+                            8192 => 16384,
+                            16384 => 32768,
+                            32768 => 65536,
+                            _ => 4096,
+                        };
+                        // Leave room for tools and input when raising the output budget.
+                        if this.agent_chat.output_tokens >= this.agent_chat.context_tokens / 2 {
+                            this.agent_chat.context_tokens = this.agent_chat.output_tokens * 4;
+                            this.agent_chat.context_window =
+                                Some(u64::from(this.agent_chat.context_tokens));
+                        }
+                        this.agent_write_through();
+                        cx.notify();
+                    }),
+                ))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(self.t(Key::AgentOutputTokensHelp).to_string()),
+                )
                 .child(button(
                     "agent-thinking",
                     format!(
@@ -2205,15 +2248,18 @@ mod tests {
         let mut chat = AgentChat::default();
         let preferences = AgentPreferences {
             context_tokens: Some(65536),
+            output_tokens: Some(16384),
             thinking: Some(false),
             model: "local-tools".into(),
             ..Default::default()
         };
         chat.load_preferences(&preferences);
         assert_eq!(chat.context_tokens, 65536);
+        assert_eq!(chat.output_tokens, 16384);
         assert_eq!(chat.thinking, Some(false));
         let saved = chat.preferences();
         assert_eq!(saved.context_tokens, preferences.context_tokens);
+        assert_eq!(saved.output_tokens, preferences.output_tokens);
         assert_eq!(saved.thinking, preferences.thinking);
         chat.load_preferences(&AgentPreferences::default());
         assert_eq!(chat.context_tokens, 32768);

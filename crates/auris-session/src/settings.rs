@@ -167,6 +167,8 @@ pub struct AgentPreferences {
     pub auto_compact_percent: Option<u8>,
     /// Ollama request context window. Absent uses 32768 tokens, independently of server defaults.
     pub context_tokens: Option<u32>,
+    /// Ollama output limit per response. Absent uses 4096 tokens.
+    pub output_tokens: Option<u32>,
     /// Ollama thinking override; absent keeps the model's default.
     pub thinking: Option<bool>,
     /// The API dialect: "ollama", or "openai" for any OpenAI-compatible endpoint. Empty means

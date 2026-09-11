@@ -34,6 +34,8 @@ enum Provider {
 struct Options {
     /// Explicit Ollama request context, including tools, history and output.
     context_tokens: u32,
+    /// Ollama output limit per response.
+    output_tokens: u32,
     /// Ollama thinking override.
     thinking: Option<bool>,
     /// The API dialect.
@@ -102,6 +104,7 @@ fn parse_args(
     let mut key_env = None;
     let mut max_turns = 40usize;
     let mut context_tokens = prefs.context_tokens.unwrap_or(32768);
+    let output_tokens = prefs.output_tokens.unwrap_or(4096);
     let mut thinking = prefs.thinking;
     let mut json = false;
     let mut live_session = false;
@@ -212,11 +215,17 @@ fn parse_args(
     if provider == Provider::Ollama && context_tokens < 16384 {
         return Err("Auris tools need at least 16384 context tokens; use --context-tokens 32768 or increase the Agent Panel context setting".into());
     }
+    if provider == Provider::Ollama && (output_tokens == 0 || output_tokens >= context_tokens) {
+        return Err(
+            "Output tokens must be positive and smaller than the Agent Panel context window".into(),
+        );
+    }
     if max_turns == 0 {
         return Err("--max-turns must be positive".into());
     }
     Ok(Command::Run(Options {
         context_tokens,
+        output_tokens,
         thinking,
         provider,
         url,
@@ -644,7 +653,7 @@ fn build_with(
                 client
                     .agent(&options.model)
                     .temperature(0.0)
-                    .max_tokens(runtime::OUTPUT_RESERVE as u64)
+                    .max_tokens(u64::from(options.output_tokens))
                     .additional_params(params),
             ))
         }
@@ -982,8 +991,9 @@ async fn converse_with_bridge(
     max_turns: usize,
     bridge: Option<Bridge>,
     context_tokens: Option<u32>,
+    output_tokens: u32,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
-    let guard = runtime::Guard::new(agent, context_tokens).await?;
+    let guard = runtime::Guard::new(agent, context_tokens, output_tokens).await?;
     let omitted = guard.fit_history(&prompt, &mut history);
     if omitted > 0 {
         let message = format!(
@@ -1140,6 +1150,7 @@ async fn json_conversation(
             options.max_turns,
             Some(bridge.clone()),
             options.context_limit(),
+            options.output_tokens,
         )
         .await
         {
@@ -1195,7 +1206,7 @@ async fn converse(
     _json: bool,
     context: Option<u32>,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
-    converse_with_bridge(agent, prompt, history, max_turns, None, context).await
+    converse_with_bridge(agent, prompt, history, max_turns, None, context, 4096).await
 }
 
 #[cfg(test)]
@@ -1509,19 +1520,41 @@ mod tests {
         )
     }
 
+    #[test]
+    fn output_limit_preferences_are_validated_and_defaulted() {
+        let mut prefs = auris_session::AgentPreferences {
+            model: "mock".into(),
+            ..Default::default()
+        };
+        let Command::Run(default) = parse_args(&[], &no_env, &prefs).unwrap() else {
+            panic!()
+        };
+        assert_eq!(default.output_tokens, 4096);
+        prefs.output_tokens = Some(8192);
+        let Command::Run(custom) = parse_args(&[], &no_env, &prefs).unwrap() else {
+            panic!()
+        };
+        assert_eq!(custom.output_tokens, 8192);
+        for limit in [0, 32768, u32::MAX] {
+            prefs.output_tokens = Some(limit);
+            assert!(parse_args(&[], &no_env, &prefs).is_err());
+        }
+    }
+
     #[tokio::test]
     async fn ollama_receives_the_requested_context_and_thinking_setting() {
         let (url, seen) = mock_server(vec![
             serde_json::json!({"capabilities":["tools"],"model_info":{"mock.context_length":262144}}).to_string(),
             serde_json::json!({"model":"mock","created_at":"2026-09-06T00:00:00Z","message":{"role":"assistant","content":"ready"},"done":true,"prompt_eval_count":100,"eval_count":1}).to_string(),
         ]);
-        let Command::Run(options) = parse(
+        let Command::Run(mut options) = parse(
             &format!("--model mock --url {url} --context-tokens 32768 --thinking off"),
             &no_env,
         )
         .unwrap() else {
             panic!()
         };
+        options.output_tokens = 8192;
         runtime::preflight(&options).await.unwrap();
         let agent = build_agent(&options).unwrap();
         let (answer, ..) = converse(
@@ -1540,7 +1573,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
         assert_eq!(body["options"]["num_ctx"], 32768);
         assert_eq!(body["options"]["temperature"], 0.0);
-        assert_eq!(body["options"]["num_predict"], runtime::OUTPUT_RESERVE);
+        assert_eq!(body["options"]["num_predict"], 8192);
         assert_eq!(body["think"], false);
         assert!(
             body["options"].get("options").is_none(),
@@ -1561,23 +1594,25 @@ mod tests {
                 "prompt_eval_count":100, "eval_count":runtime::OUTPUT_RESERVE,
             });
             let (url, seen) = mock_server(vec![truncated.to_string()]);
-            let Command::Run(options) =
+            let Command::Run(mut options) =
                 parse(&format!("--model mock --url {url}"), &no_env).unwrap()
             else {
                 panic!()
             };
+            options.output_tokens = 8192;
             let agent = build_agent(&options).unwrap();
-            let error = converse(
+            let error = converse_with_bridge(
                 &agent,
                 Message::user("List the presets"),
                 Vec::new(),
                 2,
-                false,
+                None,
                 options.context_limit(),
+                options.output_tokens,
             )
             .await
             .unwrap_err();
-            assert!(error.contains("4096-token output limit"), "{error}");
+            assert!(error.contains("8192-token output limit"), "{error}");
             assert!(error.contains("incomplete"), "{error}");
             assert_eq!(seen.lock().unwrap().len(), 1);
         }
@@ -1760,6 +1795,7 @@ mod tests {
 
         let agent = build_agent(&Options {
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),
@@ -1834,6 +1870,7 @@ mod tests {
 
         let agent = build_agent(&Options {
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),

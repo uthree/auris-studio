@@ -97,6 +97,7 @@ impl State {
 /// Successful calls reset that signature's failure count.
 pub(super) struct Guard {
     context: Option<u32>,
+    output_tokens: usize,
     schema_tokens: usize,
     state: Mutex<State>,
     pub(super) activity: Activity,
@@ -115,7 +116,7 @@ fn signature(tool: &str, args: &str) -> (String, String) {
     (tool.into(), normalized)
 }
 
-/// Ollama's per-response generation limit and the matching context reserve.
+/// Conservative minimum estimate for non-text payloads.
 pub(super) const OUTPUT_RESERVE: usize = 4096;
 const MESSAGE_FRAMING: usize = 16;
 
@@ -239,7 +240,12 @@ fn has_only_known_text(message: &Message) -> bool {
 }
 
 impl ObservedContext {
-    fn estimate(&self, prompt: &Message, history: &[Message]) -> Option<usize> {
+    fn estimate(
+        &self,
+        prompt: &Message,
+        history: &[Message],
+        output_tokens: usize,
+    ) -> Option<usize> {
         let request = history.iter().chain([prompt]);
         if !request.clone().all(has_only_known_text)
             || self.messages.len() > history.len() + 1
@@ -258,7 +264,7 @@ impl ObservedContext {
                         .map(message_tokens)
                         .sum::<usize>(),
                 )
-                .saturating_add(OUTPUT_RESERVE),
+                .saturating_add(output_tokens),
         )
     }
 }
@@ -272,7 +278,11 @@ fn completed_exchange(messages: &[Message]) -> bool {
 }
 
 impl Guard {
-    pub(super) async fn new(agent: &Agent, context: Option<u32>) -> Result<Self, String> {
+    pub(super) async fn new(
+        agent: &Agent,
+        context: Option<u32>,
+        output_tokens: u32,
+    ) -> Result<Self, String> {
         let definitions = agent
             .tool_definitions(None)
             .await
@@ -280,9 +290,10 @@ impl Guard {
         let serialized = serde_json::to_string(&definitions).map_err(|e| e.to_string())?;
         Ok(Self {
             context,
+            output_tokens: output_tokens as usize,
             schema_tokens: estimated_tokens(&serialized)
                 + estimated_tokens(&preamble())
-                + OUTPUT_RESERVE,
+                + output_tokens as usize,
             state: Mutex::new(State::default()),
             activity: Arc::new(Mutex::new((Instant::now(), 0))),
         })
@@ -297,7 +308,7 @@ impl Guard {
             .unwrap()
             .observed_context
             .as_ref()
-            .and_then(|observed| observed.estimate(prompt, history))
+            .and_then(|observed| observed.estimate(prompt, history, self.output_tokens))
             .unwrap_or_else(|| self.schema_tokens + history_tokens(prompt, history))
     }
 
@@ -327,8 +338,9 @@ impl AgentHook for Guard {
         if let Some(limit) = self.context {
             let estimate = self.context_estimate(event.prompt, event.history);
             if estimate > limit as usize {
+                let reserve = self.output_tokens;
                 return CompletionCallAction::Stop(format!(
-                    "estimated context budget {estimate} tokens (tools, history and 4096 output reserve) exceeds requested {limit}; increase Agent Panel context/--context-tokens or start a fresh conversation. Saved edits remain on disk."
+                    "estimated context budget {estimate} tokens (tools, history and {reserve} output reserve) exceeds requested {limit}; increase Agent Panel context/--context-tokens or start a fresh conversation. Saved edits remain on disk."
                 ));
             }
             let request = event.history.iter().chain([event.prompt]);
@@ -354,8 +366,9 @@ impl AgentHook for Guard {
                 .and_then(serde_json::Value::as_str)
                 == Some("length")
         {
+            let limit = self.output_tokens;
             return ObservationAction::Stop(format!(
-                "Ollama reached the {OUTPUT_RESERVE}-token output limit; the response is incomplete. Retry with a smaller task. Earlier saved edits remain on disk."
+                "Ollama reached the {limit}-token output limit; the response is incomplete. Increase the Agent Panel output token limit or retry with a smaller task. Earlier edits remain in the project."
             ));
         }
         // Ollama reports prompt_eval_count here, including tools and preamble. The measured
@@ -511,6 +524,7 @@ mod tests {
         };
         state.observe_context(22_000);
         let guard = Guard {
+            output_tokens: OUTPUT_RESERVE,
             context: Some(32768),
             schema_tokens: 32_768,
             state: Mutex::new(state),
@@ -521,6 +535,12 @@ mod tests {
             22_000 + message_tokens(&call) + message_tokens(&result) + OUTPUT_RESERVE
         );
         assert!(guard.context_estimate(&result, &history) < 32768);
+        let mut guard = guard;
+        guard.output_tokens = 8192;
+        assert_eq!(
+            guard.context_estimate(&result, &history),
+            22_000 + message_tokens(&call) + message_tokens(&result) + 8192
+        );
         assert!(guard.schema_tokens + history_tokens(&result, &history) > 32768);
 
         let oversized = Message::tool_result("call_1", "tool_help", "説明".repeat(10_000));
@@ -547,11 +567,19 @@ mod tests {
         state.observe_context(20_000);
         let observed = state.observed_context.as_ref().unwrap();
         let next = Message::user("Now lower the lead");
-        assert!(observed.estimate(&next, &original).is_some());
+        assert!(
+            observed
+                .estimate(&next, &original, OUTPUT_RESERVE)
+                .is_some()
+        );
         let mut changed = original.clone();
         changed[0] = Message::user("A different project");
-        assert!(observed.estimate(&next, &changed).is_none());
-        assert!(observed.estimate(&next, &original[1..]).is_none());
+        assert!(observed.estimate(&next, &changed, OUTPUT_RESERVE).is_none());
+        assert!(
+            observed
+                .estimate(&next, &original[1..], OUTPUT_RESERVE)
+                .is_none()
+        );
 
         let image = Message::User {
             content: vec![UserContent::Image(rig::message::Image {
@@ -561,7 +589,11 @@ mod tests {
                 ..Default::default()
             })],
         };
-        assert!(observed.estimate(&image, &original).is_none());
+        assert!(
+            observed
+                .estimate(&image, &original, OUTPUT_RESERVE)
+                .is_none()
+        );
         assert!(message_tokens(&image) >= OUTPUT_RESERVE);
         assert!(estimated_tokens("日本語の依頼") >= "日本語の依頼".chars().count());
 
@@ -608,6 +640,7 @@ mod tests {
             Message::assistant("開きました"),
         ];
         let guard = Guard {
+            output_tokens: OUTPUT_RESERVE,
             context: Some((4096 + history_tokens(&prompt, &newest)) as u32),
             schema_tokens: 4096,
             state: Mutex::new(State::default()),
@@ -651,6 +684,7 @@ mod tests {
         ];
         let original = history.clone();
         let guard = Guard {
+            output_tokens: OUTPUT_RESERVE,
             context: Some(1),
             schema_tokens: 4096,
             state: Mutex::new(State::default()),
