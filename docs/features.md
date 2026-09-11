@@ -1494,7 +1494,10 @@ undoable edit, or offered for acceptance when local edits overlap the turn. An u
 conflict blocks the next message from saving over those changes.
 
 The panel can attach audio, stop a running turn, open a newly created project and start a new
-conversation. Opening another document rebinds the agent to that project's folder. Successful
+conversation. Send a message with Enter or the Send button. Answers use selectable Markdown
+blocks with compact headings and indented lists; Copy Markdown copies the complete answer,
+including text outside the visible area. Opening another document rebinds the agent to that
+project's folder. Successful
 user/answer pairs are saved locally in `.auris-conversation.json` and resumed on the next
 message. This text memory keeps at most 24 turns and 24,000 characters; old turns are dropped,
 long text is truncated, and tool payloads and encoded audio are not retained. The current
