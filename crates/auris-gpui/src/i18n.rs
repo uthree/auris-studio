@@ -222,6 +222,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
     let with = |key: Key, detail: String| messages::detailed(language, key.get(language), &detail);
     match error {
         SessionError::EmptyGroove => Key::PerformGrooveEmpty.get(language).to_string(),
+        SessionError::InvalidRhythm => Key::ErrorRhythm.get(language).to_string(),
         SessionError::SongLyrics(detail) => with(Key::SongLyricsMatch, detail.clone()),
         SessionError::SongSource(detail) => with(Key::SongSourceUnavailable, detail.clone()),
         SessionError::StaleBalance => Key::BalanceChanged.get(language).to_string(),

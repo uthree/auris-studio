@@ -1312,6 +1312,14 @@ pub mod composition {
     //!
     //! # Every clip knows what it is
     //!
+    //! The inspector's Rhythm field edits the selected generated clip through
+    //! [`Session::set_clip_rhythm`](crate::Session::set_clip_rhythm). Each character is one
+    //! subdivision step: `x` is a hit, `X` an accent, `o` a soft hit and `.` a rest.
+    //! Patterns repeat within each bar; drum patterns use sixteenth-note steps. Empty input
+    //! restores automatic generation. The command validates before changing notes, stores
+    //! the pattern in the recipe, and supports Undo. For composite kits it updates generated
+    //! voices together while retaining fixed accents.
+    //!
     //! Rhythmic chord clips use one chord preset. Density above 75% fills the chosen subdivision;
     //! at 100% it strikes every step, while gate independently controls note length. The
     //! foreground-arrangement pass preserves this dense rhythm, and authored rests stay intact.

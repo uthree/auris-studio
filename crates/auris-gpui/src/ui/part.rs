@@ -378,6 +378,36 @@ impl AurisApp {
             rows.push(self.group_heading(Key::PartPhrasing).into_any_element());
         }
 
+        rows.push(
+            self.picker_row(
+                "part-rhythm",
+                Key::PartRhythm,
+                recipe.rhythm.as_ref().map_or_else(
+                    || self.t(Key::PartRhythmAutomatic).to_string(),
+                    |rhythm| format!("{}…", rhythm.replace('~', ".")),
+                ),
+                cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+                    let current = this
+                        .session
+                        .clip_recipe(clip)
+                        .and_then(|recipe| {
+                            recipe
+                                .rhythm
+                                .as_ref()
+                                .map(|rhythm| rhythm.replace('~', "."))
+                        })
+                        .unwrap_or_default();
+                    this.open_prompt(Prompt::new(
+                        this.t(Key::PartRhythm),
+                        PromptTarget::Rhythm(clip),
+                        current,
+                    ));
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+
         if takes_a_subdivision(recipe.preset) {
             rows.push(
                 self.picker_row(
@@ -957,6 +987,65 @@ mod tests {
 
     fn recipe(preset: ClipPreset) -> ClipRecipe {
         ClipRecipe::new(preset, 1)
+    }
+
+    #[gpui::test]
+    fn player_rhythm_input_applies_cancels_rejects_and_clears(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let (clip, original) = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session
+                .stamp_named_progression("axis", Ticks::ZERO, 4)
+                .unwrap();
+            let track = this.session.add_default_instrument_track("Player").unwrap();
+            let clip = this
+                .session
+                .generate_clip(
+                    track,
+                    Ticks::ZERO,
+                    Ticks::QUARTER * 16,
+                    recipe(ClipPreset::Arp),
+                )
+                .unwrap();
+            this.select_track(track);
+            this.select_clip(Some(clip));
+            (clip, this.session.midi_clip(clip).unwrap().clone())
+        });
+        paint(&app, cx);
+        click("part-rhythm", cx);
+        paint(&app, cx);
+        cx.simulate_input(".x......");
+        cx.simulate_keystrokes("enter");
+        let authored = app.update(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            let authored = this.session.midi_clip(clip).unwrap().clone();
+            assert_ne!(authored.notes, original.notes);
+            assert!(authored.recipe.as_ref().unwrap().rhythm.is_some());
+            authored
+        });
+        paint(&app, cx);
+        click("part-rhythm", cx);
+        paint(&app, cx);
+        cx.simulate_input("invalid");
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.prompt.as_ref().unwrap().field().unwrap().content(),
+                "invalid"
+            );
+            assert_eq!(this.session.midi_clip(clip), Some(&authored));
+        });
+        cx.simulate_keystrokes("escape");
+        paint(&app, cx);
+        click("part-rhythm", cx);
+        paint(&app, cx);
+        cx.simulate_keystrokes("secondary-a backspace enter");
+        app.update(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.session.midi_clip(clip), Some(&original));
+            this.session.undo().unwrap();
+            assert_eq!(this.session.midi_clip(clip), Some(&authored));
+        });
     }
 
     #[test]

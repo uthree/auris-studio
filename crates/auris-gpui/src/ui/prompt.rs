@@ -78,6 +78,8 @@ pub enum PromptTarget {
     /// the way back to a take somebody liked is to type the number it had. Undo reaches the same
     /// place while the take is still on the stack, and not afterwards.
     Seed(ClipId),
+    /// The repeating rhythm of a generated clip; empty restores automatic generation.
+    Rhythm(ClipId),
     /// The tempo of the stretch a position falls in, in beats per minute.
     ///
     /// The wheel and the drag are for finding a tempo by feel. This is for the case where the
@@ -165,6 +167,7 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             | PromptTarget::SongSectionTempo(_)
             // An unknown source tempo is a valid state and clearing the field is the way back.
             | PromptTarget::ClipSourceTempo(_)
+            | PromptTarget::Rhythm(_)
     )
 }
 
@@ -191,6 +194,8 @@ pub enum Notation {
     Signature,
     /// The number a take is drawn from.
     Seed,
+    /// A repeating pattern of hits and rests.
+    Rhythm,
     /// Beats per minute.
     Tempo,
     /// A level in decibels.
@@ -216,6 +221,7 @@ impl PromptTarget {
             | PromptTarget::SignatureFrom(_)
             | PromptTarget::SongMeter => Notation::Signature,
             PromptTarget::Seed(_) | PromptTarget::SongSeed => Notation::Seed,
+            PromptTarget::Rhythm(_) => Notation::Rhythm,
             PromptTarget::SongTempo
             | PromptTarget::SongSectionTempo(_)
             | PromptTarget::Tempo(_)
@@ -280,6 +286,7 @@ impl Notation {
             Notation::Section => Key::HintSection,
             Notation::Signature => Key::HintSignature,
             Notation::Seed => Key::HintSeed,
+            Notation::Rhythm => Key::PartRhythmHint,
             Notation::Tempo => Key::HintTempo,
             Notation::Gain => Key::HintClipGain,
             Notation::MidiNote => Key::HintMidiNote,
@@ -300,6 +307,7 @@ impl Notation {
             Notation::Signature => SIGNATURE_VOCABULARY,
             // Arbitrary numeric values have no completion catalogue.
             Notation::Seed
+            | Notation::Rhythm
             | Notation::Tempo
             | Notation::Gain
             | Notation::MidiNote
@@ -1002,6 +1010,9 @@ impl AurisApp {
                 ));
                 Ok(())
             }
+            PromptTarget::Rhythm(clip) => self.session.set_clip_rhythm(clip, &text).map(|_| {
+                self.forget_rewritten_notes(clip);
+            }),
             PromptTarget::Seed(clip) => match text.parse::<u64>() {
                 Ok(seed) => {
                     self.set_clip_seed(clip, seed);
@@ -1120,7 +1131,9 @@ impl AurisApp {
             }
         };
         if let Err(error) = outcome {
-            let action = if matches!(target, PromptTarget::DrumAssignment { .. }) {
+            let action = if matches!(target, PromptTarget::Rhythm(_)) {
+                Key::PartRhythm
+            } else if matches!(target, PromptTarget::DrumAssignment { .. }) {
                 Key::EditSetDrumAssignment
             } else {
                 Key::Rename
@@ -1389,6 +1402,7 @@ impl AurisApp {
                     match target {
                         PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
                         PromptTarget::AudioMatchText => self.t(Key::AudioMatchUsePrompt).into(),
+                        PromptTarget::Rhythm(_) => self.t(Key::PartRhythmApply).into(),
                         PromptTarget::DrumAssignment { .. } => {
                             self.t(Key::DrumApplyAssignment).into()
                         }
@@ -2041,6 +2055,7 @@ mod tests {
             PromptTarget::ComposeLyrics,
             PromptTarget::AudioMatchText,
             PromptTarget::Seed(ClipId(1)),
+            PromptTarget::Rhythm(ClipId(1)),
             PromptTarget::Tempo(AT),
             PromptTarget::TempoFrom(AT),
             PromptTarget::Signature(AT),
@@ -2075,6 +2090,7 @@ mod tests {
                 | PromptTarget::ComposeLyrics
                 | PromptTarget::AudioMatchText
                 | PromptTarget::Seed(_)
+                | PromptTarget::Rhythm(_)
                 | PromptTarget::Tempo(_)
                 | PromptTarget::TempoFrom(_)
                 | PromptTarget::Signature(_)
