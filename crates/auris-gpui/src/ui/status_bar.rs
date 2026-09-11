@@ -249,7 +249,7 @@ impl AurisApp {
                 menu.toggle(
                     self.t(dock.label()),
                     MenuCommand::DockPanel { panel, dock },
-                    dock == here,
+                    dock == here && !self.panels.is_detached(panel),
                 )
             },
         );

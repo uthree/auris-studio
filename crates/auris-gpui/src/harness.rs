@@ -62,7 +62,12 @@ pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<AurisApp>, &mut VisualTes
     // `main` installs the Markdown renderer before it opens the real window. Mirror that here so
     // a test which opens the agent panel exercises the same initialized component tree.
     cx.update(gpui_component::init);
-    let (app, cx) = cx.add_window_view(|_, cx| AurisApp::new(cx));
+    let (app, cx) = cx.add_window_view(|_, cx| {
+        let mut app = AurisApp::new(cx);
+        // Gesture fixtures start docked even while a concurrent settings test saves a layout.
+        app.panels = crate::dock::PanelLayout::default();
+        app
+    });
     // `main` focuses the arrangement before anything else, and a keystroke goes to whatever holds
     // the keyboard: without this, every binding scoped to a pane would be off the dispatch path
     // and the test would be checking a window nobody had clicked into yet.

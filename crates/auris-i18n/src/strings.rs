@@ -633,6 +633,8 @@ strings! {
     // On the menu a right-click on a panel's status-bar icon opens. "Dock" is the verb, so the
     // Japanese is the instruction rather than the noun: 左に配置 is what the row does.
     DockLeft { en: "Dock Left", ja: "左に配置" }
+    MenuWindow { en: "Window", ja: "ウィンドウ" }
+    DetachedWindow { en: "Separate window", ja: "独立ウィンドウ" }
     DockBottom { en: "Dock Bottom", ja: "下に配置" }
     DockRight { en: "Dock Right", ja: "右に配置" }
     HidePanel { en: "Hide Panel", ja: "パネルを隠す" }

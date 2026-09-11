@@ -38,7 +38,6 @@ use crate::ui::piano_roll::RollTool;
 use crate::ui::prompt::Prompt;
 use crate::ui::score_layer::{ScoreLayer, ScorePreview};
 use crate::ui::timeline::{PitchView, TimelineView};
-use crate::ui::typing_panel::TypingPanel;
 use crate::voice_setup_window::VoiceSetupWindow;
 
 /// What a press or a sweep at one position should do to whatever is already sounding.
@@ -649,19 +648,6 @@ pub enum Drag {
         /// Primary clip before the sweep started; it must not drift with intermediate results.
         primary_clip: Option<ClipId>,
     },
-    /// Moving the floating plugin editor by its title bar.
-    MovePluginWindow {
-        /// Distance from the window's own origin to the point that was grabbed, so it does not
-        /// jump under the pointer.
-        grab_offset: Point<Pixels>,
-        /// Where the button went down until the pointer has moved far enough to be a drag.
-        pressed_at: Option<Point<Pixels>>,
-    },
-    /// Moving the drawn typing keyboard by its title bar.
-    MoveTypingPanel {
-        /// Distance from the panel's own origin to the point that was grabbed.
-        grab_offset: Point<Pixels>,
-    },
     /// Dragging the divider between a dock and the arrangement.
     ResizeDock {
         /// Which dock is being resized.
@@ -759,10 +745,7 @@ impl Drag {
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.
-            Drag::ResizeDock { .. }
-            | Drag::ResizeHeaders { .. }
-            | Drag::MovePluginWindow { .. }
-            | Drag::MoveTypingPanel { .. } => None,
+            Drag::ResizeDock { .. } | Drag::ResizeHeaders { .. } => None,
             // The exception among the resizes, and the reason is where the number is kept: a
             // lane's height is a field of the track, so it travels with the project and belongs
             // on the stack with everything else about that track.
@@ -1386,6 +1369,19 @@ pub struct AurisApp {
     pub(crate) palette: Option<crate::ui::palette::Palette>,
     /// The open plugin editor, if any.
     pub(crate) plugin_window: Option<crate::ui::plugin_window::PluginWindow>,
+    /// Native utility and detached panel windows sharing this document.
+    pub(crate) auxiliary_windows: std::collections::BTreeMap<
+        crate::auxiliary_window::Surface,
+        WindowHandle<crate::auxiliary_window::AuxiliaryWindow>,
+    >,
+    /// Detect main-window deactivation without silencing another window's keyboard.
+    pub(crate) main_was_active: bool,
+    /// Window owning transient menus and text-entry overlays.
+    pub(crate) event_window: Option<gpui::WindowId>,
+    /// Surface to bring forward after its state has been updated.
+    pub(crate) raise_auxiliary: Option<crate::auxiliary_window::Surface>,
+    /// Native windows scheduled for creation after the current entity update.
+    pub(crate) pending_auxiliary: std::collections::BTreeSet<crate::auxiliary_window::Surface>,
     /// Which branches of the library are open.
     pub(crate) library: crate::ui::library::LibraryTree,
     /// A tree row that should be brought into view after search expands it.
@@ -1484,8 +1480,6 @@ pub struct AurisApp {
     pub(crate) settings_window: Option<WindowHandle<SettingsWindow>>,
     /// The external singing-backend setup window, while it is open.
     pub(crate) voice_setup_window: Option<WindowHandle<VoiceSetupWindow>>,
-    /// Where the drawn keyboard has been dragged to. See [`crate::ui::typing_panel`].
-    pub(crate) typing_panel: TypingPanel,
     /// The key the pointer is holding down on the drawn keyboard, if any.
     pub(crate) clicked_key: Option<&'static str>,
 
@@ -1702,6 +1696,11 @@ impl AurisApp {
             prompt: None,
             palette: None,
             plugin_window: None,
+            auxiliary_windows: Default::default(),
+            main_was_active: false,
+            event_window: None,
+            raise_auxiliary: None,
+            pending_auxiliary: Default::default(),
             library: crate::ui::library::LibraryTree::default(),
             library_reveal: None,
             clap_files: None,
@@ -1733,7 +1732,6 @@ impl AurisApp {
             pointer: input.pointer,
             keymap,
             settings_window: None,
-            typing_panel: TypingPanel::default(),
             clicked_key: None,
             _repaint: repaint,
         }
@@ -1867,6 +1865,10 @@ impl AurisApp {
 
     /// Puts the keyboard in `pane`, which is what clicking one does.
     pub(crate) fn focus_pane(&mut self, pane: Pane, window: &mut Window) {
+        let Some(pane) = self.local_pane(pane, window) else {
+            window.focus(&self.focus);
+            return;
+        };
         self.last_pane = pane;
         // Panel fields do not cover the rest of the window. Leaving their pane releases their
         // claim on the keyboard while preserving the draft for the next visit.
@@ -1937,8 +1939,9 @@ impl AurisApp {
         } else if self.focus.is_focused(window) {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
-            let pane = self.last_pane;
-            window.focus(self.panes.handle(pane));
+            if let Some(pane) = self.local_pane(self.last_pane, window) {
+                window.focus(self.panes.handle(pane));
+            }
         }
     }
 

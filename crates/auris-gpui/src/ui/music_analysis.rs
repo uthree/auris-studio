@@ -55,7 +55,14 @@ mod tests {
     use crate::harness::{
         CLIP_LENGTH, click, drag_to, lane_point, open, paint, press, release, with_a_clip,
     };
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+
+    fn analysis_window(app: &Entity<AurisApp>, cx: &mut VisualTestContext) -> VisualTestContext {
+        let handle = app.read_with(cx, |app, _| {
+            app.auxiliary_windows[&crate::auxiliary_window::Surface::Analysis]
+        });
+        VisualTestContext::from_window(handle.into(), cx)
+    }
 
     #[gpui::test]
     fn mixture_notice_is_required_each_time_and_cancel_starts_no_worker(cx: &mut TestAppContext) {
@@ -120,7 +127,8 @@ mod tests {
             assert_eq!(this.project(), &before);
         });
         paint(&app, cx);
-        click("music-apply", cx);
+        let mut analysis = analysis_window(&app, cx);
+        click("music-apply", &mut analysis);
         app.update(cx, |this, _| {
             assert!(this.music_analysis.report.is_none());
             assert_eq!(
@@ -135,7 +143,7 @@ mod tests {
             assert_eq!(this.project(), &before);
         });
         paint(&app, cx);
-        click("analysis-close", cx);
+        click("analysis-close", &mut analysis);
         app.read_with(cx, |this, _| assert!(!this.analysis_panel));
     }
 
@@ -210,29 +218,29 @@ mod tests {
                 "a later edit has its own undo step"
             );
         });
-        cx.simulate_keystrokes("escape");
+        let mut analysis = analysis_window(&app, cx);
+        analysis.simulate_keystrokes("escape");
         app.read_with(cx, |this, _| assert!(!this.analysis_panel));
     }
 
     #[gpui::test]
-    fn the_song_sheet_occludes_open_analysis_results(cx: &mut TestAppContext) {
+    fn the_song_sheet_and_analysis_results_use_separate_windows(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         cx.dispatch_action(crate::actions::OpenAnalysisResults);
         paint(&app, cx);
-        let close = cx
-            .debug_bounds("analysis-close")
-            .expect("the analysis panel is open")
-            .center();
+        assert!(cx.debug_bounds("analysis-close").is_none());
+        let mut analysis = analysis_window(&app, cx);
+        assert!(analysis.debug_bounds("analysis-close").is_some());
         cx.dispatch_action(crate::actions::ComposeSong);
         paint(&app, cx);
         app.read_with(cx, |this, _| assert!(this.song_sheet.is_some()));
 
-        cx.simulate_click(close, gpui::Modifiers::none());
+        click("song-sheet-cancel", cx);
         app.read_with(cx, |this, _| {
-            assert!(this.song_sheet.is_some());
+            assert!(this.song_sheet.is_none());
             assert!(
                 this.analysis_panel,
-                "a click on the modal sheet must not reach the analysis close button below it"
+                "closing a composition sheet must leave analysis results open"
             );
         });
     }
@@ -299,7 +307,8 @@ mod tests {
             assert_eq!(this.selected_clip, Some(previous_clip));
         });
         paint(&app, cx);
-        click("music-notes", cx);
+        let mut analysis = analysis_window(&app, cx);
+        click("music-notes", &mut analysis);
         app.update(cx, |this, _| {
             assert_eq!(this.project().tracks.len(), before.tracks.len() + 1);
             let selected_track = this.selected_track.unwrap();
@@ -379,6 +388,7 @@ impl AurisApp {
             return;
         }
         self.analysis_panel = true;
+        self.raise_auxiliary = Some(crate::auxiliary_window::Surface::Analysis);
         if let Some(action) = action {
             self.run_menu_command(action, cx);
         }
@@ -397,12 +407,7 @@ impl AurisApp {
         Some(
             div()
                 .id("analysis-panel")
-                .absolute()
-                .top(gpui::px(90.0))
-                .right(gpui::px(24.0))
-                .w(gpui::px(420.0))
-                .max_w_full()
-                .max_h(gpui::relative(0.75))
+                .size_full()
                 .flex()
                 .flex_col()
                 .gap_2()
@@ -433,6 +438,7 @@ impl AurisApp {
                 .child(
                     div()
                         .id("analysis-results-scroll")
+                        .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
                         .flex()
