@@ -8,7 +8,7 @@ and render singing voices. CLI, MCP and agent frontends share the desktop's edit
 ## Install
 
 Download binaries from the [releases page](https://github.com/uthree/auris-studio/releases):
-the desktop application, `auris`, `auris-mcp` and `auris-agent` for macOS and Windows,
+the desktop application, `auris` and `auris-mcp` for macOS and Windows,
 and `auris` for Linux. Release archives include the standard SoundFont.
 
 On macOS, drag `Auris Studio.app` to `/Applications`. The binaries are unsigned;

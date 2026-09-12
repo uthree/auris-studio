@@ -1,31 +1,11 @@
-//! `auris-agent` — the frontend that dials the model itself.
+//! Background language-model workers for Auris Studio.
 //!
-//! The fourth frontend, and the mirror of `auris-mcp`: there, a language model's harness
-//! connects to Auris; here, Auris connects to a language model — a local Ollama server or any
-//! OpenAI-compatible API — hands it the tools from [`auris_toolbox`], and runs the loop. The
-//! two doors serve the same tools from the same crate, so a model that has learnt one has
-//! learnt the other.
-//!
-//! `rig` is the client library, and it stays inside this crate along with the `tokio` runtime
-//! it needs. Three decisions of this frontend's own:
-//!
-//! * **Two channels.** The model's words go to stdout, where a pipe can catch them; everything
-//!   this program says about the run — which tool was called, what it answered — goes to
-//!   stderr. `auris-agent "..." > answer.md` keeps the answer and shows the work. `--json`
-//!   collapses both into one machine-readable stream: JSON events on stdout, `{"say": ...}`
-//!   lines on stdin — the mode the desktop's agent panel drives this program in.
-//! * **English chrome, like the CLI.** The frame around the conversation is fixed English for
-//!   the same reason `auris` prints English: a terminal makes no promises about other scripts.
-//!   The conversation itself is the model's, and the preamble tells it to answer in the
-//!   language the user writes in.
-//! * **The key never rides the command line.** An API key is named by environment variable
-//!   (`--api-key-env`), because arguments are visible to every process listing on the machine.
+//! Each worker owns its async runtime and communicates with the desktop through channels.
+//! Document edits and permission decisions remain on the desktop's session thread.
 
 #![warn(missing_docs)]
 
-use std::io::{BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::path::PathBuf;
 
 use auris_toolbox as toolbox;
 
@@ -54,6 +34,8 @@ enum Provider {
 struct Options {
     /// Explicit Ollama request context, including tools, history and output.
     context_tokens: u32,
+    /// Ollama output limit per response.
+    output_tokens: u32,
     /// Ollama thinking override.
     thinking: Option<bool>,
     /// The API dialect.
@@ -92,38 +74,6 @@ impl Options {
     }
 }
 
-const USAGE: &str = "auris-agent — drive Auris Studio with a language model
-
-usage: auris-agent [options] [prompt]
-       auris-agent models [options]     list the provider's models as JSON
-
-With a prompt, asks once, prints the model's answer on stdout and leaves.
-Without one, opens a conversation; an empty line or end-of-file closes it.
-Tool calls are narrated on stderr either way.
-
-options:
-  --model <name>        the model to use (required) — e.g. qwen3:8b, gpt-5.2
-  --provider <name>     ollama (the default) or openai, meaning any
-                        OpenAI-compatible chat-completions API
-  --url <base>          the API's base URL; defaults to http://localhost:11434
-                        for ollama and https://api.openai.com/v1 for openai
-  --api-key-env <VAR>   environment variable holding the API key; OPENAI_API_KEY
-                        is used for openai when it is set and this is not given
-  --max-turns <n>       model-call budget per prompt (default 40)
-  --context-tokens <n>  Ollama context window (default 32768; minimum 16384)
-  --thinking <mode>     Ollama thinking: on, off or auto (model default)
-  --attach <file>       send an audio file with the prompt (wav, mp3, flac,
-                        ogg, aac, aiff, m4a); repeat for more than one.
-                        Needs --provider openai and a model that takes audio
-                        input; rig's Ollama adapter cannot send attachments
-  --json                speak JSON lines on stdin and stdout instead, for
-                        another program to drive — the desktop panel's mode
-  -h, --help            this text
-
---provider, --model, --url and --api-key-env fall back to the shared settings
-file when not given; the desktop application's agent settings write it.
-Internet search uses BRAVE_SEARCH_API_KEY from the environment.";
-
 /// Reads a provider name — the one vocabulary shared by the flag and the preference.
 fn provider_named(name: &str) -> Result<Provider, String> {
     match name {
@@ -154,8 +104,10 @@ fn parse_args(
     let mut key_env = None;
     let mut max_turns = 40usize;
     let mut context_tokens = prefs.context_tokens.unwrap_or(32768);
+    let output_tokens = prefs.output_tokens.unwrap_or(4096);
     let mut thinking = prefs.thinking;
     let mut json = false;
+    let mut live_session = false;
     let mut attachments: Vec<String> = Vec::new();
     let mut prompt_words: Vec<&str> = Vec::new();
 
@@ -180,6 +132,7 @@ fn parse_args(
                     .map_err(|_| format!("--max-turns needs a number, not '{value}'"))?;
             }
             "--json" => json = true,
+            "--live-session" | "--permission-protocol" => live_session = true,
             "--context-tokens" => {
                 context_tokens = value_of("--context-tokens")?
                     .parse()
@@ -242,6 +195,9 @@ fn parse_args(
         true => None,
         false => Some(prompt_words.join(" ")),
     };
+    if live_session && !json {
+        return Err("--live-session requires --json and a desktop host".into());
+    }
     if json && prompt.is_some() {
         return Err("--json is driven over stdin; drop the prompt".to_string());
     }
@@ -259,11 +215,17 @@ fn parse_args(
     if provider == Provider::Ollama && context_tokens < 16384 {
         return Err("Auris tools need at least 16384 context tokens; use --context-tokens 32768 or increase the Agent Panel context setting".into());
     }
+    if provider == Provider::Ollama && (output_tokens == 0 || output_tokens >= context_tokens) {
+        return Err(
+            "Output tokens must be positive and smaller than the Agent Panel context window".into(),
+        );
+    }
     if max_turns == 0 {
         return Err("--max-turns must be positive".into());
     }
     Ok(Command::Run(Options {
         context_tokens,
+        output_tokens,
         thinking,
         provider,
         url,
@@ -303,15 +265,32 @@ fn parse_command(
 /// What the model is told once, before the conversation: the shared workflow, plus what only
 /// this frontend knows — where it is standing, and who it is talking to.
 fn preamble() -> String {
-    let here = std::env::current_dir()
-        .map(|dir| dir.display().to_string())
-        .unwrap_or_else(|_| "the current directory (unreadable)".to_string());
-    format!(
-        "{}\n\nYou are running on the user's machine; the working directory is {here}, and \
-         that is where files belong when the user does not say otherwise. Answer the user in \
-         the language they write in.",
-        toolbox::INSTRUCTIONS
-    )
+    "You edit the document currently open in Auris Studio. Answer in the user's language.
+Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
+without command or action wrappers. Use the numeric IDs returned by inspection and edits.
+For a song request, choose the harmony, melody, rhythm and arrangement yourself.
+Use list_instruments (search by query and follow next_offset), add_track, set_instrument, add_clip and add_notes to write your music. Instrument IDs come from the live library, including SoundFont sounds and CLAP/VST3 instruments; never invent IDs.
+Batch a short phrase into one add_notes call. Each note has pitch, start_beat,
+duration_beats and velocity. start_beat is its position; duration_beats is its length.
+For example, two successive quarter notes:
+{\"clip\":1,\"notes\":[{\"pitch\":62,\"start_beat\":0,\"duration_beats\":1,\"velocity\":0.8},
+{\"pitch\":65,\"start_beat\":1,\"duration_beats\":1,\"velocity\":0.8}]}.
+Use short batches of up to 32 notes to keep each response manageable.
+Use multiple tracks for distinct musical parts and set_level to balance them.
+Track kind is lowercase: instrument for melody/harmony, drum for percussion.
+For set_instrument use the exact returned instrument ID, never a program number or sound field.
+Set the tempo with set_tempo and a loop region with set_loop for loop background music.
+Preserve existing tracks and notes unless the user explicitly requests their removal.
+Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
+inspect_project before claiming completion. Use read_notes before changing existing notes.
+Note times are zero-based quarter-note beats relative to the clip. Use search_documentation
+only when a tool description does not answer an application question.
+Use inspect_audio to check a short rendered passage before and after edits. It returns measured
+levels and score data, plus a mel/piano-roll image when vision is supported. Inspect the same
+range for comparisons. This is visual analysis, not listening: never claim you heard the music.
+Base numeric level claims on measurements; treat image interpretations as uncertain.
+The image is a snapshot: after edits inspect again before evaluating the changed sound."
+        .into()
 }
 
 /// A tool's refusal, carried as an error the runtime can classify.
@@ -337,11 +316,12 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
     toolbox::parameter_schema::<T>()
 }
 
-/// No arguments, said as a schema — for the reference and listing tools.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-struct NoArgs {}
-
+mod worker;
+use worker::Bridge;
+pub use worker::{Worker, list_models_background};
+mod compaction;
 mod memory;
+mod permissions;
 mod runtime;
 
 /// One [`rig::tool::Tool`] over one `auris-toolbox` module that takes arguments.
@@ -385,101 +365,22 @@ macro_rules! session_tool {
     };
 }
 
-/// One [`rig::tool::Tool`] over an argument-less `auris-toolbox` module.
-///
-/// Through `spawn_blocking` all the same: the listings read the progression book off disk,
-/// and uniformity is cheaper than a judgement call per tool.
-macro_rules! text_tool {
-    ($tool:ident, $module:ident) => {
-        struct $tool;
-
-        impl Tool for $tool {
-            const NAME: &'static str = toolbox::$module::NAME;
-            type Args = NoArgs;
-            type Output = String;
-            type Error = ToolFailed;
-
-            fn description(&self) -> String {
-                toolbox::$module::DESCRIPTION.to_string()
-            }
-
-            fn parameters(&self) -> serde_json::Value {
-                schema::<NoArgs>()
-            }
-
-            fn map_error(&self, error: ToolFailed) -> ToolExecutionError {
-                ToolExecutionError::other(error.0)
-            }
-
-            async fn call(
-                &self,
-                _context: &mut ToolContext,
-                _args: NoArgs,
-            ) -> Result<String, ToolFailed> {
-                tokio::task::spawn_blocking(|| Ok(toolbox::$module::run()))
-                    .await
-                    .map_err(|error| ToolFailed(error.to_string()))?
-            }
-        }
-    };
-}
-
-session_tool!(AnalyzeMusic, analyze_music);
-session_tool!(AnalyzeChords, analyze_chords);
-session_tool!(AnalyzeAudio, analyze_audio);
-session_tool!(AnalyzeInstruments, analyze_instruments);
-session_tool!(TranscribeMixture, transcribe_mixture);
-session_tool!(TranscribeAudio, transcribe_audio);
-session_tool!(Effects, effects);
-session_tool!(Automation, automation);
-session_tool!(Capabilities, capabilities);
-session_tool!(ToolHelp, tool_help);
-session_tool!(Routing, routing);
-session_tool!(SetTrackState, set_track_state);
-session_tool!(ConvertTrackToAudio, convert_track_to_audio);
-session_tool!(SetInstrumentParam, set_instrument_param);
-session_tool!(CreateProject, create_project);
-session_tool!(ImportAudio, import_audio);
-session_tool!(ImportMidi, import_midi);
-session_tool!(ExportMidi, export_midi);
-session_tool!(Listen, listen);
-session_tool!(InspectComposition, inspect_composition);
-session_tool!(EditHarmony, edit_harmony);
-session_tool!(EditRecipe, edit_recipe);
-session_tool!(EditClip, edit_clip);
-session_tool!(Checkpoints, checkpoints);
-text_tool!(SpecReference, spec_reference);
 session_tool!(SearchDocumentation, search_documentation);
-session_tool!(CheckSpec, check_spec);
-session_tool!(Compose, compose);
-session_tool!(Render, render);
-session_tool!(Preview, preview);
-session_tool!(Describe, describe);
-session_tool!(Analyze, analyze);
-session_tool!(AnalyzeDrumKit, analyze_drum_kit);
-session_tool!(SetDrumAssignment, set_drum_assignment);
-session_tool!(Mixer, mixer);
-session_tool!(SetLevel, set_level);
-session_tool!(SetEffect, set_effect);
-session_tool!(SectionGain, section_gain);
-session_tool!(RegenerateClips, regenerate_clips);
-session_tool!(TeachProgression, teach_progression);
-session_tool!(ForgetProgression, forget_progression);
-text_tool!(ListProgressions, list_progressions);
-text_tool!(ListPresets, list_presets);
-text_tool!(ListInstruments, list_instruments);
-session_tool!(AddTrack, add_track);
-session_tool!(AddPart, add_part);
-session_tool!(SetInstrument, set_instrument);
-session_tool!(RenameTrack, rename_track);
-session_tool!(RemoveTrack, remove_track);
-session_tool!(AddClip, add_clip);
-session_tool!(Notes, notes);
-session_tool!(EditNotes, edit_notes);
-session_tool!(Accompany, accompany);
-session_tool!(WriteLyrics, write_lyrics);
-session_tool!(Sing, sing);
-session_tool!(ComposeLyrics, compose_lyrics);
+
+fn edit_reply(response: serde_json::Value) -> Result<String, ToolFailed> {
+    if response["event"] != "edit_result" {
+        return Err(ToolFailed("The live session response was missing".into()));
+    }
+    let text = response["text"]
+        .as_str()
+        .ok_or_else(|| ToolFailed("Missing edit result text".into()))?
+        .to_string();
+    if response["ok"] == true {
+        Ok(text)
+    } else {
+        Err(ToolFailed(text))
+    }
+}
 
 /// Arguments to the agent-only internet search tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -559,7 +460,7 @@ async fn search_internet(args: &InternetSearchArgs) -> Result<String, String> {
         );
     }
     let key = std::env::var("BRAVE_SEARCH_API_KEY").map_err(|_| {
-        "internet search needs BRAVE_SEARCH_API_KEY in the auris-agent environment; create a \
+        "internet search needs BRAVE_SEARCH_API_KEY in the application environment; create a \
          Brave Search API key and restart the agent"
             .to_string()
     })?;
@@ -626,68 +527,57 @@ fn strip_markup(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// Every tool in the box, onto one agent — the one list to keep when a tool is added.
-fn armed(builder: AgentBuilder) -> Agent {
-    builder
+/// File-free editing and reference tools for the rig agent.
+fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
+    let mut builder = builder
         .preamble(&preamble())
-        .tool(AnalyzeMusic)
-        .tool(AnalyzeChords)
-        .tool(AnalyzeAudio)
-        .tool(AnalyzeInstruments)
-        .tool(TranscribeMixture)
-        .tool(TranscribeAudio)
-        .tool(InspectComposition)
-        .tool(EditHarmony)
-        .tool(EditRecipe)
-        .tool(Effects)
-        .tool(Automation)
-        .tool(Capabilities)
-        .tool(ToolHelp)
-        .tool(Routing)
-        .tool(SetTrackState)
-        .tool(ConvertTrackToAudio)
-        .tool(SetInstrumentParam)
-        .tool(CreateProject)
-        .tool(ImportAudio)
-        .tool(ImportMidi)
-        .tool(ExportMidi)
-        .tool(Listen)
-        .tool(EditClip)
-        .tool(Checkpoints)
         .tool(SearchDocumentation)
-        .tool(InternetSearch)
-        .tool(SpecReference)
-        .tool(CheckSpec)
-        .tool(Compose)
-        .tool(Render)
-        .tool(Preview)
-        .tool(Describe)
-        .tool(Analyze)
-        .tool(AnalyzeDrumKit)
-        .tool(SetDrumAssignment)
-        .tool(Mixer)
-        .tool(SetLevel)
-        .tool(SetEffect)
-        .tool(SectionGain)
-        .tool(RegenerateClips)
-        .tool(TeachProgression)
-        .tool(ForgetProgression)
-        .tool(ListProgressions)
-        .tool(ListPresets)
-        .tool(ListInstruments)
-        .tool(AddTrack)
-        .tool(AddPart)
-        .tool(SetInstrument)
-        .tool(RenameTrack)
-        .tool(RemoveTrack)
-        .tool(AddClip)
-        .tool(Notes)
-        .tool(EditNotes)
-        .tool(Accompany)
-        .tool(WriteLyrics)
-        .tool(Sing)
-        .tool(ComposeLyrics)
-        .build()
+        .tool(InternetSearch);
+    for definition in toolbox::live_agent::definitions() {
+        let tool_name = definition.name.clone();
+        let bridge = bridge.clone();
+        builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
+            definition.name,
+            definition.description,
+            definition.parameters,
+            move |_, args| {
+                let bridge = bridge.clone();
+                let name = tool_name.clone();
+                Box::pin(async move {
+                    let command = toolbox::live_agent::command(&name, &args)
+                        .map_err(ToolExecutionError::other)?
+                        .ok_or_else(|| ToolExecutionError::other("Unknown live operation"))?;
+                    if bridge.is_none() && name == "list_instruments" {
+                        return tokio::task::spawn_blocking(toolbox::live_agent::instruments)
+                            .await
+                            .map(ToolOutput::text)
+                            .map_err(|error| ToolExecutionError::other(error.to_string()));
+                    }
+                    let bridge = bridge.ok_or_else(|| {
+                        ToolExecutionError::other(
+                            "Open the Agent Panel to edit the current document",
+                        )
+                    })?;
+                    let reply = bridge
+                        .exchange(serde_json::json!({"event":"edit", "command":command}))
+                        .await
+                        .map_err(ToolExecutionError::other)?;
+                    if name == "inspect_audio" && reply["ok"] == true {
+                        let report = serde_json::from_value(reply["inspection"].clone())
+                            .map_err(|e| ToolExecutionError::other(e.to_string()))?;
+                        return bridge
+                            .accept_inspection(&report)
+                            .map(ToolOutput::text)
+                            .map_err(ToolExecutionError::other);
+                    }
+                    edit_reply(reply)
+                        .map(ToolOutput::text)
+                        .map_err(|e| ToolExecutionError::other(e.0))
+                })
+            },
+        ));
+    }
+    builder.build()
 }
 
 /// Builds the agent for whichever door the options chose.
@@ -695,7 +585,19 @@ fn armed(builder: AgentBuilder) -> Agent {
 /// Both arms end in the same [`armed`] call; only the client construction differs, because the
 /// two dialects are two client types. An empty key means no key — both providers' key types
 /// treat it that way or tolerate it, and it saves an `Option` dance at each arm.
+#[cfg(test)]
 fn build_agent(options: &Options) -> Result<Agent, String> {
+    build_for_worker(options, None)
+}
+
+fn build_for_worker(options: &Options, bridge: Option<Bridge>) -> Result<Agent, String> {
+    build_with(options, |builder| armed(builder, bridge))
+}
+
+fn build_with(
+    options: &Options,
+    armed: impl FnOnce(AgentBuilder) -> Agent,
+) -> Result<Agent, String> {
     let key = options.key.clone().unwrap_or_default();
     let could_not = |error: rig::http_client::Error| format!("could not build a client: {error}");
     match options.provider {
@@ -715,7 +617,7 @@ fn build_agent(options: &Options) -> Result<Agent, String> {
                 client
                     .agent(&options.model)
                     .temperature(0.0)
-                    .max_tokens(runtime::OUTPUT_RESERVE as u64)
+                    .max_tokens(u64::from(options.output_tokens))
                     .additional_params(params),
             ))
         }
@@ -747,7 +649,7 @@ const MODEL_LIST_PATIENCE: std::time::Duration = std::time::Duration::from_secs(
 const CONVERSATION_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 const MODEL_DETAIL_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// The work behind `auris-agent models`: ask the provider what it serves, answer as one
+/// Ask the provider what models it serves, returning one
 /// JSON line — `{"models": [{"name", "context_length"}, …]}`.
 ///
 /// A machine-readable list because its one caller so far is the desktop's agent panel, which
@@ -884,149 +786,6 @@ async fn list_models(options: &Options) -> Result<String, String> {
     Ok(serde_json::json!({ "models": models }).to_string())
 }
 
-/// Narrates the tool loop on stderr while the model works.
-///
-/// The person at the terminal sees what the CLI would have shown them — which tool ran, on
-/// what, and whether it answered or refused — without any of it landing in stdout, which
-/// belongs to the model's words alone.
-struct Narrator;
-
-/// Resolves the nearest existing ancestor so a new output cannot escape through `..` or through
-/// a symlink that already exists below the working directory.
-fn confined_to_working_directory(path: &Path) -> bool {
-    let Ok(root) = std::env::current_dir().and_then(std::fs::canonicalize) else {
-        return false;
-    };
-    let candidate = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    let mut existing = candidate.as_path();
-    while !existing.exists() {
-        let Some(parent) = existing.parent() else {
-            return false;
-        };
-        existing = parent;
-    }
-    std::fs::canonicalize(existing).is_ok_and(|ancestor| ancestor.starts_with(&root))
-}
-
-/// Refuses model-selected write destinations outside the directory the user launched the agent
-/// in. Project contents are untrusted context; they must not be able to turn an inspection into
-/// an arbitrary filesystem write.
-fn write_destination(tool: &str, args: &str) -> Result<(), String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool)
-        && tool != toolbox::preview::NAME
-        && tool != toolbox::render::NAME
-        && tool != toolbox::export_midi::NAME
-        && tool != toolbox::listen::NAME
-    {
-        return Ok(());
-    }
-    let parsed: serde_json::Value = serde_json::from_str(args)
-        .map_err(|_| "the tool arguments were not valid JSON".to_string())?;
-    if matches!(
-        tool,
-        toolbox::analyze_chords::NAME
-            | toolbox::transcribe_audio::NAME
-            | toolbox::transcribe_mixture::NAME
-    ) {
-        let mut fields = Vec::new();
-        if toolbox::writes_project(tool, &parsed) {
-            fields.push("project");
-        }
-        if matches!(
-            tool,
-            toolbox::transcribe_audio::NAME | toolbox::transcribe_mixture::NAME
-        ) {
-            fields.push("midi_output");
-        }
-        for field in fields {
-            if let Some(path) = parsed.get(field).and_then(|value| value.as_str())
-                && !confined_to_working_directory(Path::new(path))
-            {
-                return Err(format!(
-                    "refused `{field}` outside the agent's working directory: {path}"
-                ));
-            }
-        }
-        return Ok(());
-    }
-    if matches!(
-        tool,
-        toolbox::effects::NAME
-            | toolbox::automation::NAME
-            | toolbox::routing::NAME
-            | toolbox::analyze_drum_kit::NAME
-    ) && !toolbox::writes_project(tool, &parsed)
-    {
-        return Ok(());
-    }
-    for field in ["project", "output", "stems"] {
-        let Some(path) = parsed.get(field).and_then(|value| value.as_str()) else {
-            continue;
-        };
-        if !confined_to_working_directory(&PathBuf::from(path)) {
-            return Err(format!(
-                "refused `{field}` outside the agent's working directory: {path}"
-            ));
-        }
-    }
-    Ok(())
-}
-
-/// The first line of a tool's answer, for the narration.
-fn first_line(output: &ToolOutput) -> Option<&str> {
-    output
-        .as_content()
-        .iter()
-        .find_map(|content| match content {
-            ToolResultContent::Text(text) => text.text.lines().next(),
-            _ => None,
-        })
-}
-
-impl AgentHook for Narrator {
-    async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
-        // The arguments as the model wrote them, clipped: a whole spec in a compose call is
-        // legitimate and would drown the narration it is meant to serve.
-        let args: String = event.args.chars().take(120).collect();
-        let ellipsis = if args.len() < event.args.len() {
-            "…"
-        } else {
-            ""
-        };
-        eprintln!("→ {} {args}{ellipsis}", event.tool_name);
-        match write_destination(event.tool_name, event.args) {
-            Ok(()) => ToolCallAction::Run,
-            Err(reason) => ToolCallAction::Skip(reason),
-        }
-    }
-
-    async fn on_tool_result(
-        &self,
-        _ctx: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
-        let line = first_line(event.presentation).unwrap_or("done");
-        if event.raw_result.is_success() {
-            eprintln!("  {line}");
-        } else {
-            eprintln!("  refused: {line}");
-        }
-        ToolResultAction::Keep
-    }
-}
-
-/// Writes one event line and flushes it — a pipe is block-buffered, and a host on the other
-/// end is waiting on exactly this line.
-fn emit(event: serde_json::Value) {
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{event}");
-    let _ = stdout.flush();
-}
-
 /// A tool answer's whole text, for a host that will render it itself.
 fn full_text(output: &ToolOutput) -> String {
     output
@@ -1038,27 +797,6 @@ fn full_text(output: &ToolOutput) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The project file a successful tool call has just rewritten, if it rewrote one.
-///
-/// [`auris_toolbox::WRITES_PROJECTS`] names the tools; the path is in the call's own
-/// arguments, resolved the way every door resolves one — so a host holding that project open
-/// can compare like with like. `None` for a tool that writes no project, arguments that
-/// carry no path, and a path that resolves to nothing on disk.
-fn changed_project(tool: &str, args: &str) -> Option<String> {
-    if !toolbox::WRITES_PROJECTS.contains(&tool) {
-        return None;
-    }
-    let parsed: serde_json::Value = serde_json::from_str(args).ok()?;
-    if !toolbox::writes_project(tool, &parsed) {
-        return None;
-    }
-    let path = parsed
-        .get("project")
-        .or_else(|| parsed.get("output"))?
-        .as_str()?;
-    Some(toolbox::resolve_project(path).ok()?.display().to_string())
 }
 
 /// One line of the host's side of the wire: `{"say": "..."}`, with an optional `"audio"`
@@ -1167,10 +905,12 @@ fn check_audio(provider: Provider, audio: &[String]) -> Result<(), String> {
 
 /// Reports the tool loop as JSON events on stdout, for a host program to render.
 ///
-/// The same moments the [`Narrator`] speaks at, in a shape a machine reads: `call` when a
+/// Reports `call` when a
 /// tool is asked, `result` when it answers, and `changed` when the answer means a project
 /// file on disk is no longer what the host last read.
-struct Reporter;
+struct Reporter {
+    bridge: Option<Bridge>,
+}
 
 /// A skipped or refused call is a failed result to the host, even without an execution error.
 fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
@@ -1183,10 +923,12 @@ fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
 
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
-        emit(serde_json::json!({
-            "event": "call", "tool": event.tool_name, "args": event.args,
-        }));
-        match write_destination(event.tool_name, event.args) {
+        if let Some(bridge) = &self.bridge {
+            bridge.emit(serde_json::json!({
+                "event": "call", "tool": event.tool_name, "args": event.args,
+            }));
+        }
+        match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
             Ok(()) => ToolCallAction::Run,
             Err(reason) => ToolCallAction::Skip(reason),
         }
@@ -1197,11 +939,8 @@ impl AgentHook for Reporter {
         _ctx: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> ToolResultAction {
-        emit(result_event(event));
-        if event.raw_result.is_success()
-            && let Some(project) = changed_project(event.tool_name, event.args)
-        {
-            emit(serde_json::json!({ "event": "changed", "project": project }));
+        if let Some(bridge) = &self.bridge {
+            bridge.emit(result_event(event));
         }
         ToolResultAction::Keep
     }
@@ -1209,24 +948,25 @@ impl AgentHook for Reporter {
 
 /// One prompt through the loop: ask, narrate, answer — and hand back the transcript so a
 /// conversation can keep it.
-async fn converse(
+async fn converse_with_bridge(
     agent: &Agent,
     prompt: Message,
     mut history: Vec<Message>,
     max_turns: usize,
-    json: bool,
+    bridge: Option<Bridge>,
     context_tokens: Option<u32>,
+    output_tokens: u32,
 ) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
-    let guard = runtime::Guard::new(agent, context_tokens).await?;
+    let mut guard = runtime::Guard::new(agent, context_tokens, output_tokens).await?;
+    let _visual_turn = worker::VisualTurn::new(bridge.clone());
+    guard.bridge = bridge.clone();
     let omitted = guard.fit_history(&prompt, &mut history);
     if omitted > 0 {
         let message = format!(
             "Omitted {omitted} older conversation exchanges from this request to fit the model context. Saved conversation history is unchanged."
         );
-        if json {
-            emit(serde_json::json!({"event":"notice", "message":message}));
-        } else {
-            eprintln!("{message}");
+        if let Some(bridge) = &bridge {
+            bridge.emit(serde_json::json!({"event":"notice", "message":message}));
         }
     }
     let activity = guard.activity.clone();
@@ -1237,10 +977,7 @@ async fn converse(
         .max_turns(max_turns)
         .max_invalid_tool_call_retries(2)
         .add_hook(guard);
-    let request = match json {
-        true => request.add_hook(Reporter),
-        false => request.add_hook(Narrator),
-    };
+    let request = request.add_hook(Reporter { bridge });
     let response = runtime::await_active(request.extended_details(), activity).await?;
     // The run's usage sums every model call; only the final request measures occupied context.
     let context_tokens = response
@@ -1279,78 +1016,22 @@ where
         .map_err(|error| error.to_string())
 }
 
-/// The conversation: read a line, run the loop, print the answer, remember everything.
-async fn conversation(agent: &Agent, options: &Options) -> Result<(), String> {
-    let mut memory = memory::Memory::default();
-    let stdin = std::io::stdin();
-    loop {
-        eprint!("> ");
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
-            // A line that is not UTF-8 is a bad line, not a broken pipe: the bytes are
-            // already consumed, and the next line may well be fine.
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                eprintln!("that line was not UTF-8; try again");
-                continue;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
-        let line = line.trim();
-        if line.is_empty() {
-            return Ok(());
-        }
-        match converse(
-            agent,
-            Message::user(line),
-            memory.messages(),
-            options.max_turns,
-            false,
-            options.context_limit(),
-        )
-        .await
-        {
-            Ok((answer, ..)) => {
-                memory.push(line, &answer);
-                println!("{answer}\n");
-            }
-            Err(error) => {
-                memory.push_interrupted(line, &error);
-                eprintln!("{error}");
-            }
-        }
-    }
-}
-
-/// The conversation a program holds: JSON lines in, JSON events out.
-///
-/// `ready` opens the wire and names what answered the phone. Each `{"say": "..."}` runs one
-/// prompt through the loop — `call`, `result` and `changed` events as it works, then one
-/// `answer` — and a failure is an `error` event rather than an exit, because the host's
-/// window is still open and its next message may well work. End of stdin ends the
-/// conversation; a line that is not a `say` is answered with an `error` and skipped. A say
-/// may carry `"audio": ["file.wav", …]` — files sent along with the words, for a provider
-/// whose API has an audio field.
-async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), String> {
-    let memory_path = std::env::var_os("AURIS_AGENT_HISTORY").map(PathBuf::from);
-    if let Some(path) = &memory_path
-        && !confined_to_working_directory(path)
-    {
-        return Err("conversation history must stay inside the agent's working directory".into());
-    }
+async fn json_conversation(
+    agent: &Agent,
+    options: &Options,
+    bridge: &Bridge,
+    memory_path: Option<PathBuf>,
+    fresh_history: bool,
+) -> Result<(), String> {
     let mut memory = match &memory_path {
-        Some(path) if std::env::var_os("AURIS_AGENT_FRESH_HISTORY").is_none() => {
-            memory::Memory::load(path)?
-        }
+        Some(path) if !fresh_history => bridge.history(|| memory::Memory::load(path))?,
         _ => memory::Memory::default(),
     };
     if let Some(path) = &memory_path {
-        memory.save(path)?;
+        bridge.history(|| memory.save(path))?;
     }
-    emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
-    emit(serde_json::json!({
+    bridge.emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
+    bridge.emit(serde_json::json!({
         "event": "ready",
         "provider": match options.provider {
             Provider::Ollama => "ollama",
@@ -1359,51 +1040,83 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
         "model": options.model,
     }));
     let mut history = memory.messages();
-    let stdin = std::io::stdin();
-    loop {
-        let mut line = String::new();
-        match stdin.lock().read_line(&mut line) {
-            Ok(0) => return Ok(()),
-            Ok(_) => {}
-            // A line that is not UTF-8 is a bad line, not a dead wire: the bytes are already
-            // consumed, so this keeps the promise above — an `error` event, and the host's
-            // next message may well work. Any other read error really is the wire.
-            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
-                emit(serde_json::json!({
-                    "event": "error",
-                    "message": "that line was not UTF-8; it was dropped",
-                }));
-                continue;
-            }
-            Err(error) => return Err(error.to_string()),
-        }
+    while let Some(line) = bridge.receive().await {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let (said, audio) = match parse_say(line) {
-            Ok(parsed) => parsed,
-            Err(message) => {
-                emit(serde_json::json!({ "event": "error", "message": message }));
+        let wire: serde_json::Value = match serde_json::from_str(line) {
+            Ok(wire) => wire,
+            Err(error) => {
+                bridge.emit(serde_json::json!({"event":"error", "message":error.to_string()}));
                 continue;
             }
         };
+        let manual = wire.get("compact").and_then(|v| v.as_bool()) == Some(true);
+        let percent = wire
+            .get("auto_compact_percent")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(85)
+            .min(99);
+        if manual || compaction::needed(&memory, options.context_tokens, percent) {
+            bridge.emit(serde_json::json!({"event":"compacting"}));
+            let result = compaction::compact(options, &mut memory).await;
+            history = memory.messages();
+            if result.is_ok()
+                && let Some(path) = &memory_path
+                && let Err(error) = bridge.history(|| memory.save(path))
+            {
+                bridge.emit(
+                    serde_json::json!({"event":"notice", "message":format!("Summary was not saved: {error}")}),
+                );
+            }
+            let (ok, text) = match result {
+                Ok(text) => (true, text),
+                Err(error) => (false, error),
+            };
+            bridge.emit(
+                serde_json::json!({"event":"compacted", "ok":ok, "message":text, "manual":manual,
+                "context_tokens":compaction::tokens(&memory)}),
+            );
+            if manual {
+                continue;
+            }
+        }
+        let (mut said, audio) = match parse_say(line) {
+            Ok(parsed) => parsed,
+            Err(message) => {
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
+                continue;
+            }
+        };
+        if let Some(policy) = wire.get("policy")
+            && let Ok(policy) =
+                serde_json::from_value::<auris_session::agent_policy::Policy>(policy.clone())
+        {
+            said = format!(
+                "[User-selected permission mode: {}. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
+                policy.mode.name(),
+                policy.deny,
+                policy.allow
+            );
+        }
         let message = match check_audio(options.provider, &audio)
             .and_then(|()| framed_message(&said, &audio))
         {
             Ok(message) => message,
             Err(message) => {
-                emit(serde_json::json!({ "event": "error", "message": message }));
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
                 continue;
             }
         };
-        match converse(
+        match converse_with_bridge(
             agent,
             message,
             history.clone(),
             options.max_turns,
-            true,
+            Some(bridge.clone()),
             options.context_limit(),
+            options.output_tokens,
         )
         .await
         {
@@ -1419,13 +1132,13 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 memory.push(&display, &answer);
                 history = memory.messages();
                 if let Some(path) = &memory_path
-                    && let Err(error) = memory.save(path)
+                    && let Err(error) = bridge.history(|| memory.save(path))
                 {
-                    emit(
+                    bridge.emit(
                         serde_json::json!({ "event": "notice", "message": format!("Conversation history was not saved: {error}") }),
                     );
                 }
-                emit(serde_json::json!({
+                bridge.emit(serde_json::json!({
                     "event": "answer",
                     "text": answer,
                     "input_tokens": context_tokens,
@@ -1437,114 +1150,29 @@ async fn json_conversation(agent: &Agent, options: &Options) -> Result<(), Strin
                 memory.push_interrupted(&said, &message);
                 history = memory.messages();
                 if let Some(path) = &memory_path
-                    && let Err(error) = memory.save(path)
+                    && let Err(error) = bridge.history(|| memory.save(path))
                 {
-                    emit(
+                    bridge.emit(
                         serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}),
                     );
                 }
-                emit(serde_json::json!({ "event": "error", "message": message }));
+                bridge.emit(serde_json::json!({ "event": "error", "message": message }));
             }
         }
     }
+    Ok(())
 }
 
-fn main() -> ExitCode {
-    if let Some(code) = auris_session::handle_drum_probe_worker() {
-        std::process::exit(code);
-    }
-    // Stderr by default already, and stderr it must stay: stdout carries the model's answer.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-
-    // Like the other frontends: this may be the first one to run on a machine, and an
-    // installation predating `~/.config/auris-studio` only has its settings carried across by
-    // whichever one does.
-
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let prefs = auris_session::Settings::load().agent;
-    let options = match parse_command(&args, &|name| std::env::var(name).ok(), &prefs) {
-        Ok(Command::Help) => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
-        Ok(Command::Models(options)) => {
-            // One JSON line either way, because the caller reading this is a program: the
-            // panel shows the error where it would have shown the list.
-            let answer = tokio::runtime::Runtime::new()
-                .map_err(|error| error.to_string())
-                .and_then(|runtime| {
-                    // Bounded, because the caller is a panel with a spinner: a host that
-                    // black-holes the connection would otherwise hang this process — and the
-                    // thread the panel parked on it — forever.
-                    runtime.block_on(async {
-                        match tokio::time::timeout(MODEL_LIST_PATIENCE, list_models(&options)).await
-                        {
-                            Ok(answer) => answer,
-                            Err(_) => Err(format!(
-                                "the server did not answer within {} seconds",
-                                MODEL_LIST_PATIENCE.as_secs()
-                            )),
-                        }
-                    })
-                });
-            match answer {
-                Ok(line) => {
-                    println!("{line}");
-                    return ExitCode::SUCCESS;
-                }
-                Err(message) => {
-                    println!("{}", serde_json::json!({ "error": message }));
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        Ok(Command::Run(options)) => options,
-        Err(message) => {
-            eprintln!("auris-agent: {message}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    let outcome = tokio::runtime::Runtime::new()
-        .map_err(|error| error.to_string())
-        .and_then(|runtime| {
-            runtime.block_on(async {
-                let agent = build_agent(&options)?;
-                runtime::preflight(&options).await?;
-                if options.json {
-                    return json_conversation(&agent, &options).await;
-                }
-                match &options.prompt {
-                    Some(prompt) => {
-                        check_audio(options.provider, &options.attachments)?;
-                        let message = framed_message(prompt, &options.attachments)?;
-                        let (answer, ..) = converse(
-                            &agent,
-                            message,
-                            Vec::new(),
-                            options.max_turns,
-                            false,
-                            options.context_limit(),
-                        )
-                        .await?;
-                        println!("{answer}");
-                        Ok(())
-                    }
-                    None => conversation(&agent, &options).await,
-                }
-            })
-        });
-
-    match outcome {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(message) => {
-            if options.json {
-                emit(serde_json::json!({"event":"error","message":message}));
-            }
-            eprintln!("auris-agent: {message}");
-            ExitCode::FAILURE
-        }
-    }
+#[cfg(test)]
+async fn converse(
+    agent: &Agent,
+    prompt: Message,
+    history: Vec<Message>,
+    max_turns: usize,
+    _json: bool,
+    context: Option<u32>,
+) -> Result<(String, Vec<Message>, rig::completion::Usage, u64), String> {
+    converse_with_bridge(agent, prompt, history, max_turns, None, context, 4096).await
 }
 
 #[cfg(test)]
@@ -1750,36 +1378,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_writing_tool_reports_a_changed_project_and_only_a_real_one() {
-        // A file that exists, addressed the unnested way a model would.
-        let root = std::env::temp_dir().join(format!("auris-agent-changed-{}", std::process::id()));
-        std::fs::create_dir_all(root.join("Song")).unwrap();
-        let real = root.join("Song").join("Song.auris");
-        std::fs::write(&real, "{}").unwrap();
-        let shorthand = root.join("Song.auris").display().to_string();
-        let args = serde_json::json!({ "project": shorthand }).to_string();
-
-        let changed = changed_project("set_level", &args).expect("a writing tool with a file");
-        assert_eq!(
-            changed,
-            real.display().to_string(),
-            "resolved like every door"
-        );
-        assert_eq!(
-            changed_project("analyze", &args),
-            None,
-            "a reading tool moves nothing"
-        );
-        assert_eq!(
-            changed_project("set_level", r#"{"track":"lead"}"#),
-            None,
-            "no path, no report"
-        );
-
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
     fn skipped_and_refused_tools_are_reported_as_unsuccessful() {
         use rig::tool::ToolResult;
 
@@ -1820,7 +1418,7 @@ mod tests {
     ///
     /// Real enough for the client (HTTP/1.1, `Content-Length`, `Connection: close`) and no
     /// more; what it captures is the request bodies, which is what the assertions read.
-    fn mock_server(
+    pub(super) fn mock_server(
         responses: Vec<String>,
     ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
         use std::io::{Read, Write};
@@ -1882,10 +1480,31 @@ mod tests {
     }
 
     /// One canned chat-completions response around the given `message` object.
-    fn completion(message: &str, finish_reason: &str) -> String {
+    pub(super) fn completion(message: &str, finish_reason: &str) -> String {
         format!(
             r#"{{"id":"chatcmpl-1","object":"chat.completion","created":0,"model":"mock","choices":[{{"index":0,"message":{message},"logprobs":null,"finish_reason":"{finish_reason}"}}],"usage":null}}"#
         )
+    }
+
+    #[test]
+    fn output_limit_preferences_are_validated_and_defaulted() {
+        let mut prefs = auris_session::AgentPreferences {
+            model: "mock".into(),
+            ..Default::default()
+        };
+        let Command::Run(default) = parse_args(&[], &no_env, &prefs).unwrap() else {
+            panic!()
+        };
+        assert_eq!(default.output_tokens, 4096);
+        prefs.output_tokens = Some(8192);
+        let Command::Run(custom) = parse_args(&[], &no_env, &prefs).unwrap() else {
+            panic!()
+        };
+        assert_eq!(custom.output_tokens, 8192);
+        for limit in [0, 32768, u32::MAX] {
+            prefs.output_tokens = Some(limit);
+            assert!(parse_args(&[], &no_env, &prefs).is_err());
+        }
     }
 
     #[tokio::test]
@@ -1894,13 +1513,14 @@ mod tests {
             serde_json::json!({"capabilities":["tools"],"model_info":{"mock.context_length":262144}}).to_string(),
             serde_json::json!({"model":"mock","created_at":"2026-09-06T00:00:00Z","message":{"role":"assistant","content":"ready"},"done":true,"prompt_eval_count":100,"eval_count":1}).to_string(),
         ]);
-        let Command::Run(options) = parse(
+        let Command::Run(mut options) = parse(
             &format!("--model mock --url {url} --context-tokens 32768 --thinking off"),
             &no_env,
         )
         .unwrap() else {
             panic!()
         };
+        options.output_tokens = 8192;
         runtime::preflight(&options).await.unwrap();
         let agent = build_agent(&options).unwrap();
         let (answer, ..) = converse(
@@ -1919,7 +1539,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&requests[1]).unwrap();
         assert_eq!(body["options"]["num_ctx"], 32768);
         assert_eq!(body["options"]["temperature"], 0.0);
-        assert_eq!(body["options"]["num_predict"], runtime::OUTPUT_RESERVE);
+        assert_eq!(body["options"]["num_predict"], 8192);
         assert_eq!(body["think"], false);
         assert!(
             body["options"].get("options").is_none(),
@@ -1932,7 +1552,7 @@ mod tests {
     async fn ollama_output_limit_stops_partial_answers_and_tool_turns() {
         for message in [
             serde_json::json!({"role":"assistant","content":"I have finished the first"}),
-            serde_json::json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"list_presets","arguments":{}}}]}),
+            serde_json::json!({"role":"assistant","content":"","tool_calls":[{"function":{"name":"list_instruments","arguments":{}}}]}),
         ] {
             let truncated = serde_json::json!({
                 "model":"mock", "created_at":"2026-09-06T00:00:00Z",
@@ -1940,26 +1560,81 @@ mod tests {
                 "prompt_eval_count":100, "eval_count":runtime::OUTPUT_RESERVE,
             });
             let (url, seen) = mock_server(vec![truncated.to_string()]);
-            let Command::Run(options) =
+            let Command::Run(mut options) =
                 parse(&format!("--model mock --url {url}"), &no_env).unwrap()
             else {
                 panic!()
             };
+            options.output_tokens = 8192;
             let agent = build_agent(&options).unwrap();
-            let error = converse(
+            let error = converse_with_bridge(
                 &agent,
-                Message::user("List the presets"),
+                Message::user("List the instruments"),
                 Vec::new(),
                 2,
-                false,
+                None,
                 options.context_limit(),
+                options.output_tokens,
             )
             .await
             .unwrap_err();
-            assert!(error.contains("4096-token output limit"), "{error}");
+            assert!(error.contains("8192-token output limit"), "{error}");
             assert!(error.contains("incomplete"), "{error}");
             assert_eq!(seen.lock().unwrap().len(), 1);
         }
+    }
+
+    #[tokio::test]
+    async fn compaction_uses_no_tools_and_preserves_recent_exchanges() {
+        let done =
+            r#"{"role":"assistant","content":"Keep the bass. Three earlier edits are unsaved."}"#;
+        let (url, seen) = mock_server(vec![completion(done, "stop")]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let mut memory = memory::Memory::default();
+        for index in 0..5 {
+            memory.push(
+                &format!("Keep the bass, turn {index}"),
+                &"Edited the live project. ".repeat(10),
+            );
+        }
+        compaction::compact(&options, &mut memory).await.unwrap();
+        assert!(memory.summary.contains("unsaved"));
+        assert_eq!(memory.turns.len(), 2);
+        assert!(memory.turns[0].user.ends_with("turn 3"));
+        let requests = seen.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+        assert!(
+            request
+                .get("tools")
+                .is_none_or(|tools| tools.is_null() || tools.as_array().is_some_and(Vec::is_empty))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_summary_does_not_replace_conversation() {
+        let done = r#"{"role":"assistant","content":"Partial summary"}"#;
+        let (url, _) = mock_server(vec![completion(done, "length")]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url}"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let mut memory = memory::Memory::default();
+        for _ in 0..3 {
+            memory.push("Keep the bass", &"Unfinished work. ".repeat(10));
+        }
+        let before = serde_json::to_string(&memory).unwrap();
+        assert!(compaction::compact(&options, &mut memory).await.is_err());
+        assert_eq!(serde_json::to_string(&memory).unwrap(), before);
     }
 
     #[tokio::test]
@@ -1988,14 +1663,14 @@ mod tests {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert!(requests[1].contains("missing field"));
-        assert!(requests[1].contains("Read tool_help"));
+        assert!(requests[1].contains("Check the tool schema"));
     }
 
     #[tokio::test]
     async fn unknown_tool_names_get_corrective_feedback_and_can_recover() {
         let bad = r#"{"role":"assistant","tool_calls":[{"id":"bad","type":"function","function":{"name":"list_preset","arguments":"{}"}}]}"#;
-        let corrected = r#"{"role":"assistant","tool_calls":[{"id":"good","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
-        let done = r#"{"role":"assistant","content":"The presets are available."}"#;
+        let corrected = r#"{"role":"assistant","tool_calls":[{"id":"good","type":"function","function":{"name":"list_instruments","arguments":"{}"}}]}"#;
+        let done = r#"{"role":"assistant","content":"The instruments are available."}"#;
         let (url, seen) = mock_server(vec![
             completion(bad, "tool_calls"),
             completion(corrected, "tool_calls"),
@@ -2011,7 +1686,7 @@ mod tests {
         let agent = build_agent(&options).unwrap();
         let (answer, ..) = converse(
             &agent,
-            Message::user("List the presets"),
+            Message::user("List the instruments"),
             Vec::new(),
             5,
             false,
@@ -2019,12 +1694,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(answer, "The presets are available.");
+        assert_eq!(answer, "The instruments are available.");
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 3);
         assert!(requests[1].contains("Tool 'list_preset' is unavailable"));
         assert!(requests[1].contains("No tool in this batch was executed"));
-        assert!(requests[2].contains("Styles `compose` and `check_spec` accept"));
+        assert!(requests[2].contains("Instrument IDs for set_instrument"));
     }
 
     #[tokio::test]
@@ -2062,18 +1737,19 @@ mod tests {
             let requests = seen.lock().unwrap();
             assert_eq!(requests.len(), 3);
             if tool == "set_level" {
-                assert!(requests[1].contains("outside the agent's working directory"));
+                assert!(requests[1].contains("unknown field"));
+                assert!(requests[1].contains("project"));
             }
         }
     }
 
-    /// The whole loop against a scripted model: the "model" asks for `list_presets`, the tool
+    /// The whole loop against a scripted model: the "model" asks for `list_instruments`, the tool
     /// really runs, its answer really goes back over the wire, and the final text reaches the
     /// caller. No network, no key, no model — but every seam of this frontend crossed once.
     #[tokio::test]
     async fn the_tool_loop_runs_end_to_end_against_a_scripted_model() {
-        let call = r#"{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_presets","arguments":"{}"}}]}"#;
-        let done = r#"{"role":"assistant","content":"The presets are listed above."}"#;
+        let call = r#"{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"list_instruments","arguments":"{}"}}]}"#;
+        let done = r#"{"role":"assistant","content":"The instruments are listed above."}"#;
         let with_usage = |response: String, input, output| {
             let mut response: serde_json::Value = serde_json::from_str(&response).unwrap();
             response["usage"] = serde_json::json!({"prompt_tokens":input,"completion_tokens":output,"total_tokens":input+output});
@@ -2086,6 +1762,7 @@ mod tests {
 
         let agent = build_agent(&Options {
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),
@@ -2108,7 +1785,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(answer, "The presets are listed above.");
+        assert_eq!(answer, "The instruments are listed above.");
         assert_eq!(usage.input_tokens, 30);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(
@@ -2125,13 +1802,13 @@ mod tests {
         let requests = seen.lock().unwrap();
         assert_eq!(requests.len(), 2);
         assert!(
-            requests[0].contains("\"list_presets\""),
+            requests[0].contains("\"list_instruments\""),
             "the tool is offered to the model: {}",
             requests[0]
         );
         assert!(requests[1].contains("\"tool\""), "{}", requests[1]);
-        let listing = toolbox::list_presets::run();
-        let first_preset = listing
+        let listing = toolbox::live_agent::instruments();
+        let first_instrument = listing
             .lines()
             .nth(1)
             .unwrap()
@@ -2139,7 +1816,7 @@ mod tests {
             .next()
             .unwrap();
         assert!(
-            requests[1].contains(first_preset),
+            requests[1].contains(first_instrument),
             "the toolbox's own answer rode back to the model: {}",
             requests[1]
         );
@@ -2160,6 +1837,7 @@ mod tests {
 
         let agent = build_agent(&Options {
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             provider: Provider::OpenAi,
             url: Some(url),
@@ -2222,97 +1900,66 @@ mod tests {
         assert!(refused.contains("25 MB"), "{refused}");
     }
 
+    #[test]
+    fn live_reply_preserves_host_refusals() {
+        for ok in [true, false] {
+            let result = edit_reply(
+                serde_json::json!({"event":"edit_result", "ok":ok, "text":"host answer"}),
+            );
+            assert_eq!(result.is_ok(), ok);
+            assert_eq!(result.unwrap_or_else(|e| e.to_string()), "host answer");
+        }
+    }
+
     #[tokio::test]
-    async fn the_armed_agent_matches_every_shared_tool_name_description_and_schema() {
+    async fn rig_exposes_only_live_editing_and_read_only_references() {
         let Command::Run(options) = parse("--provider openai --model mock", &no_env).unwrap()
         else {
             panic!()
         };
         let agent = build_agent(&options).unwrap();
         let actual = agent.tool_definitions(None).await.unwrap();
+        let mut names: Vec<_> = actual.iter().map(|tool| tool.name.as_str()).collect();
+        names.sort_unstable();
+        assert!(!names.contains(&"compose_song"));
+        assert!(names.contains(&"add_notes"));
+        assert!(names.contains(&"inspect_project"));
+        assert!(names.contains(&"set_level"));
+        assert!(!names.contains(&"edit_project"));
+        assert!(!names.contains(&"spec_reference"));
+        assert!(!names.contains(&"list_progressions"));
+        assert_eq!(names.len(), 18);
         let catalog = toolbox::tool_catalog();
-        assert_eq!(
-            actual.len(),
-            catalog.len() + 1,
-            "shared tools and internet search"
-        );
-        for expected in catalog {
+        for name in [
+            "create_project",
+            "compose",
+            "render",
+            "export_midi",
+            "import_midi",
+            "listen",
+        ] {
+            assert!(
+                catalog.iter().any(|tool| tool.name == name),
+                "MCP retains {name}"
+            );
+            assert!(!names.contains(&name));
+        }
+        for expected in catalog
+            .iter()
+            .filter(|tool| matches!(tool.name, "search_documentation" | "search_internet"))
+        {
             let exposed = actual
                 .iter()
                 .find(|tool| tool.name == expected.name)
-                .unwrap_or_else(|| panic!("{} is missing from the agent", expected.name));
-            assert_eq!(
-                exposed.description, expected.description,
-                "{}",
-                expected.name
-            );
-            assert_eq!(exposed.parameters, expected.parameters, "{}", expected.name);
+                .unwrap();
+            assert_eq!(exposed.parameters, expected.parameters);
         }
-        assert!(actual.iter().any(|tool| tool.name == InternetSearch::NAME));
-
-        let compose = schema::<toolbox::compose::Args>();
-        let fields = compose["properties"].as_object().unwrap();
-        assert!(fields.contains_key("output"));
-        assert!(fields.contains_key("spec"), "the flattened spec triangle");
-        let none = schema::<NoArgs>();
-        assert_eq!(none["type"], "object");
-    }
-
-    #[test]
-    fn recognition_writes_stay_in_the_working_directory_and_reads_stay_read_only() {
-        let here = std::env::current_dir().unwrap();
-        let outside = here.parent().unwrap();
-        let project = here.join("analysis-inside.auris");
-        for tool in [
-            toolbox::analyze_audio::NAME,
-            toolbox::analyze_instruments::NAME,
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            let args = serde_json::json!({
-                "audio": outside.join("source.wav"),
-                "model": outside.join("decoder.onnx")
-            });
-            assert!(!toolbox::writes_project(tool, &args), "{tool}");
-            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-        }
-        let read = serde_json::json!({"project": outside.join("Song.auris"), "apply": false});
-        assert!(!toolbox::writes_project(
-            toolbox::analyze_chords::NAME,
-            &read
-        ));
-        assert!(write_destination(toolbox::analyze_chords::NAME, &read.to_string()).is_ok());
-
-        for tool in [
-            toolbox::analyze_chords::NAME,
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            let mut args =
-                serde_json::json!({"project": outside.join("Song.auris"), "apply": true});
-            assert!(toolbox::writes_project(tool, &args), "{tool}");
-            let error = write_destination(tool, &args.to_string()).unwrap_err();
-            assert!(error.contains("`project`"), "{tool}: {error}");
-            args["project"] = serde_json::json!(project);
-            assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-        }
-        for tool in [
-            toolbox::transcribe_audio::NAME,
-            toolbox::transcribe_mixture::NAME,
-        ] {
-            for apply in [false, true] {
-                let mut args = serde_json::json!({
-                    "midi_output": outside.join("draft.mid"), "apply": apply
-                });
-                if apply {
-                    args["project"] = serde_json::json!(project);
-                }
-                let error = write_destination(tool, &args.to_string()).unwrap_err();
-                assert!(error.contains("`midi_output`"), "{tool}: {error}");
-                args["midi_output"] = serde_json::json!(here.join("draft.mid"));
-                assert!(write_destination(tool, &args.to_string()).is_ok(), "{tool}");
-                assert_eq!(toolbox::writes_project(tool, &args), apply, "{tool}");
-            }
+        let schema = actual
+            .iter()
+            .map(|tool| tool.parameters.to_string())
+            .collect::<String>();
+        for field in ["output", "project", "path", "stems", "midi_output"] {
+            assert!(!schema.contains(&format!("\"{field}\":")));
         }
     }
 

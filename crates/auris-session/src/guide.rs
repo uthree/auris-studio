@@ -9,6 +9,36 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Live instrument discovery
+//!
+//! The live agent queries the owning session for built-in instruments, loaded SoundFont
+//! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
+//! search folders. Discovery caches plugin descriptors and issues opaque, session-local
+//! handles; rescanning expires them rather than silently redirecting a prior selection.
+//! SoundFont selections are validated against the loaded bank before any edit is recorded.
+//! All replacements use the existing session commands and their Undo behavior. The model
+//! never supplies a filesystem path, and the independent MCP interface is unchanged.
+//!
+//! # Visual audio inspection
+//!
+//! The live agent's `inspect_audio` command snapshots the open document through
+//! [`crate::Session::audio_inspection_job`]. The UI checks permissions and creates the render;
+//! a cancellable worker renders at most eight bars/thirty seconds and measures mel power,
+//! sample peak/RMS and authored notes. A changed revision or a replaced conversation discards
+//! the result. Neither the document nor its files are written.
+//!
+//! `auris-toolbox` converts these measurements into an in-memory PNG and explicit captions.
+//! The agent sends numeric data to every model and adds the last two inspection images to
+//! ephemeral user-message context for vision-capable Ollama models (or a compatible vision
+//! endpoint). Images never occur inside tool results, where Rig's Ollama transport rejects
+//! them. Captured revisions remain explicit: old pictures are comparison evidence, not the
+//! current sound. Image interpretation must not be represented as listening.
+//!
+//! The score panel describes authored notes before performance transforms, while mel power
+//! measures the actual mix or a selected track's solo routing. A fixed colour scale preserves
+//! gain differences. These representations intentionally answer different questions.
+//!
+//!
 //! # Offline music recognition
 //!
 //! `auris-analysis` recognizes written chords, audio tempo/chords and monophonic note events
@@ -89,7 +119,7 @@ pub mod architecture {
     //!   auris-gpui      the desktop application  (binary: auris-studio)
     //!   auris-cli       the command line tool    (binary: auris)
     //!   auris-mcp       the Model Context Protocol server (binary: auris-mcp)
-    //!   auris-agent     the model client — Ollama or OpenAI-compatible (binary: auris-agent)
+    //!   auris-agent     the model client — Ollama or OpenAI-compatible (library: background model worker)
     //! ```
     //!
     //! Three rules carry most of the weight.
@@ -116,14 +146,19 @@ pub mod architecture {
     //! quietly stop being sufficient for anyone else's. [`crate::Session::new`] installs those
     //! packs into the registry through [`crate::default_registry`].
     //!
-    //! **A frontend depends on [`crate::Session`], on its own toolkit, and on the presentation
+    //! **A frontend depends on [`crate::Session`], on its own toolkit or transport library, and on the presentation
     //! crate for its reader — and on nothing else in the workspace.** There are two presentation
     //! crates because there are two kinds of reader: `auris-i18n` is every word said to a
     //! *person*, in their language; `auris-toolbox` is every word said to a *model* — tool
     //! names, descriptions, argument schemas and the work behind them, in English, because
     //! every model reads it and neither protocol has a language field. The window and the CLI
     //! take the first; `auris-mcp` and `auris-agent` take the second, and taking it from one
-    //! shared crate is what keeps the tool called `compose` identical at both doors. If
+    //! shared crate provides the file-based MCP catalog and the rig agent's reference tools.
+    //! The desktop also links `auris-agent`, its UI-free model transport library. Each chat owns
+    //! a cancellable worker thread with an async runtime; channels carry requests, permission
+    //! decisions and live-edit results. The worker never owns or edits the window's session.
+    //! Dropping a worker cancels its network/approval waits without joining on the UI thread.
+    //! Neither a child process nor a companion executable is needed. If
     //! `auris-gpui` ever needs `auris-engine`, `auris-core` or `auris-io` directly, something
     //! that belongs in the session layer has leaked into the UI. Move it down rather than
     //! adding the dependency.
@@ -140,9 +175,19 @@ pub mod architecture {
     //! the identical session with no window and no audio device, so anything that leaks into the
     //! UI stops compiling there. `auris-mcp` is the same wager made a third time — the identical
     //! session behind the Model Context Protocol, over stdio, so a language model's harness can
-    //! compose, render and inspect projects as tools. `auris-agent` makes it a fourth, from the
+    //! compose, render and inspect projects as tools. The `auris-agent` library approaches it from the
     //! other direction: Auris itself dials a model — a local Ollama server or any
-    //! OpenAI-compatible API — hands it the same `auris-toolbox` tools, and runs the loop.
+    //! OpenAI-compatible API — offers read-only toolbox references and live session commands.
+    //! The desktop executes [`live_agent::Command`](crate::live_agent::Command) against the
+    //! currently open session, so changes appear immediately and remain unsaved and undoable.
+    //! The desktop owns [`agent_policy::Policy`](crate::agent_policy::Policy): every rig tool
+    //! asks it for a decision, and live edits are checked again immediately before execution.
+    //! Deny rules override every mode; plan mode forbids mutations even with an allow rule.
+    //! One-time approvals bind the exact command to the current document revision. MCP keeps
+    //! its independent file-based tool catalog and does not consult this policy.
+    //! Conversation compaction is presentation work in `auris-agent`: a tool-less model
+    //! summarizes older exchanges while the latest two completed exchanges remain verbatim.
+    //! Summary failures leave history intact, and summaries never grant tool permissions.
     //!
     //! **New work that is a *command* — anything a user could ask for — goes in `auris-session` so
     //! every frontend gets it. New work that is *presentation* stays in the frontend.**
@@ -178,7 +223,7 @@ pub mod architecture {
     //! sends actual WAV excerpts to an audio-capable model through an OpenAI-compatible API.
     //! The toolbox's `listen` tool renders a short excerpt, optionally attaches an earlier
     //! preview for comparison, and returns the critic's observations to the controlling model.
-    //! Both MCP and the rig agent can therefore repeat listen, localized edit and listen,
+    //! MCP clients can therefore repeat listen, localized edit and listen,
     //! even when the controlling model accepts only text. The critic has no editing tools.
     //! An accepted upload is not proof of accurate hearing: observations remain fallible,
     //! refusals must stay visible, and numeric audio analysis remains separately identified.
@@ -286,6 +331,13 @@ pub mod architecture {
     //! the project view uses the current mix's mute and solo settings. The cache is keyed by
     //! document revision, obsolete renders are cancelled, and results from older revisions are
     //! discarded. Elapsed-time images are split at tempo changes to follow the musical ruler.
+    //!
+    //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
+    //! paired post-fader samples under one sequence counter, without allocation or waiting on
+    //! the audio thread. `Session::visualizer_frame` transforms the channels independently and
+    //! averages their power, preserving right-only and opposite-polarity signals. Undefined
+    //! correlation is explicit for silent channels. The frontend owns freeze, display history
+    //! and saved comparisons; none of these changes the document or rendered audio.
     //!
     //! # The third thread, and why recording needed one
     //!
@@ -1620,9 +1672,7 @@ pub mod documents {
     //! checks the last disk snapshot and refuses to overwrite another editor's changes.
     //! [`Session::reload_external_changes`](crate::Session::reload_external_changes) accepts
     //! the disk version as one undoable edit, retaining the window's previous edits. The agent
-    //! panel collects writes until the end of a turn before accepting them. When local edits
-    //! overlap a turn, accepting the disk version keeps the local version on the undo stack;
-    //! another prompt cannot save over the unresolved disk version.
+    //! panel applies commands directly to the live session through its normal undoable API.
     //!
     //! Headless editing tools call [`Session::save_with_checkpoint`](crate::Session::save_with_checkpoint)
     //! because their undo stack ends with the process. The preceding document is stored under
@@ -1695,7 +1745,9 @@ pub mod documents {
     //! # Versions
     //!
     //! [`Project::FORMAT_VERSION`](auris_core::Project::FORMAT_VERSION) is checked before the full
-    //! parse and must match this build. Asset paths use tagged `inside` or `external` objects.
+    //! parse. Version 27 is also accepted with the original bowed volume contour supplied by
+    //! default; other versions must match this build. Asset paths use tagged `inside` or
+    //! `external` objects.
 }
 
 pub mod timelines {
@@ -1971,6 +2023,15 @@ pub mod harmony {
     //! `MidiClip::performance_curves` and `sounding_performance_curve_events` are shared by
     //! the scheduler, MIDI writer and read-only preview. Freezing materialises the first
     //! pass's combined bend along with its notes; source curves remain untouched otherwise.
+    //! The same evaluator adds delayed CC1 modulation using vibrato's onset envelope and
+    //! multiplies CC7 volume by an early dip and late swell on single notes at least 600 ms long.
+    //! Controller generation is independent of pitch depth and freezing retains these curves.
+    //! Volume defaults and resets to full level; modulation defaults and resets to zero.
+    //! `VolumeContour` stores normalized, ordered volume points independent of note duration.
+    //! Presets copy those points into an editable shape; their knot times are included in
+    //! sampling so the editor, scheduler, MIDI export and freezing use the same contour.
+    //! `NoteTransform::Octaves` adds independently weighted upper/lower octave copies, skipping
+    //! out-of-range pitches and resolving same-pitch collisions in favour of source notes.
     //!
     //! Playback and MIDI export use [`sounding_notes_with_meter`](auris_core::MidiClip::sounding_notes_with_meter)
     //! with the project signature map: the brush's sixteenth-note grid starts at each bar line,

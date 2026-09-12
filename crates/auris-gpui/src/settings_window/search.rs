@@ -5,6 +5,7 @@ use crate::dock::{Dock, Panel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Section {
+    Agent,
     Appearance,
     Language,
     Pointer,
@@ -22,7 +23,8 @@ pub(super) enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
+        Self::Agent,
         Self::Appearance,
         Self::Language,
         Self::Pointer,
@@ -41,6 +43,7 @@ impl Section {
 
     fn tab(self) -> SettingsTab {
         match self {
+            Self::Agent => SettingsTab::Agent,
             Self::Host | Self::Output | Self::Input | Self::Rate | Self::Buffer | Self::Export => {
                 SettingsTab::Audio
             }
@@ -50,6 +53,15 @@ impl Section {
 
     fn keys(self) -> &'static [Key] {
         match self {
+            Self::Agent => &[
+                Key::AgentPanel,
+                Key::AgentProviderLabel,
+                Key::AgentUrlLabel,
+                Key::AgentKeyEnvLabel,
+                Key::AgentContextTokens,
+                Key::AgentOutputTokens,
+                Key::AgentThinking,
+            ],
             Self::Appearance => &[
                 Key::AppearanceHeading,
                 Key::UiFont,
@@ -158,7 +170,12 @@ impl SettingsWindow {
 
     pub(super) fn render_results(&mut self, cx: &mut Context<Self>) -> AnyElement {
         let mut rows = Vec::new();
-        for tab in [SettingsTab::General, SettingsTab::Audio, SettingsTab::Keys] {
+        for tab in [
+            SettingsTab::General,
+            SettingsTab::Audio,
+            SettingsTab::Agent,
+            SettingsTab::Keys,
+        ] {
             let found = if tab == SettingsTab::Keys {
                 !self.found_commands().is_empty()
             } else {
@@ -171,12 +188,14 @@ impl SettingsWindow {
                 SettingsTab::General => Key::TabGeneral,
                 SettingsTab::Audio => Key::TabAudio,
                 SettingsTab::Keys => Key::TabKeys,
+                SettingsTab::Agent => Key::AgentPanel,
             };
             rows.push(section_title(self.t(title), &self.theme));
             rows.push(match tab {
                 SettingsTab::General => self.render_general(cx),
                 SettingsTab::Audio => self.render_audio(cx),
                 SettingsTab::Keys => self.render_keys(cx),
+                SettingsTab::Agent => self.render_agent(cx),
             });
         }
         if rows.is_empty() {

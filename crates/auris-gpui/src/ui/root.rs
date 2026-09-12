@@ -450,6 +450,55 @@ impl AurisApp {
                             this.open_analysis_command(AnalysisCommand::Results, cx)
                         },
                     ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::ToggleVisualizer, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Toggle);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerSource, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Source);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerFreeze, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Freeze);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerAverage, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Average);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerPeaks, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Peaks);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerSave, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Save);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerReset, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Reset);
+                            cx.notify();
+                        },
+                    ))
                     .on_action(Self::window_listener(cx, Self::on_focus_next_pane))
                     .on_action(Self::window_listener(cx, Self::on_focus_previous_pane))
             })
@@ -1301,6 +1350,13 @@ impl AurisApp {
             } => {
                 let delta = f32::from(event.position.x - start_x);
                 self.drag_perform_dial(clip, dial, start_fraction, delta);
+            }
+            Drag::VolumeContourPoint {
+                clip,
+                index,
+                bounds,
+            } => {
+                self.drag_volume_contour_point(clip, index, bounds, event.position);
             }
             Drag::SongDial {
                 target,

@@ -184,6 +184,7 @@ pub struct RenderGraph {
     /// Shared with the UI rather than owned by it, because only the render path ever sees a
     /// strip's signal — the document holds parameter values, not audio.
     pub(crate) scope: Arc<crate::scope::Scope>,
+    pub(crate) visualizer_scope: Arc<crate::scope::Scope>,
     /// The live input, and the tracks it plays through, for everyone being monitored.
     ///
     /// A list rather than one, because a band monitors as a band. Walked once per track in the
@@ -586,6 +587,7 @@ impl RenderGraph {
             master_scratch,
             master_peak: [0.0, 0.0],
             scope: Arc::new(crate::scope::Scope::new()),
+            visualizer_scope: Arc::new(crate::scope::Scope::new()),
             monitors: Vec::new(),
         }
     }
@@ -597,6 +599,11 @@ impl RenderGraph {
     /// to any more.
     pub fn set_scope(&mut self, scope: Arc<crate::scope::Scope>) {
         self.scope = scope;
+    }
+
+    /// Attaches the independent stereo visualizer tap.
+    pub fn set_visualizer_scope(&mut self, scope: Arc<crate::scope::Scope>) {
+        self.visualizer_scope = scope;
     }
 
     /// Plays a live input through each named track, and stops doing so through every other.

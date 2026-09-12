@@ -5,8 +5,8 @@
 //! give — together with the work behind them. It exists because two frontends speak to models:
 //! `auris-mcp`, where a model's harness dials in over the Model Context Protocol, and
 //! `auris-agent`, where Auris dials out to a model API and runs the loop itself. A tool that
-//! existed twice would drift twice; here `compose` at one door and `compose` at the other are
-//! the same text, the same schema and the same code by construction.
+//! existed twice would drift twice. MCP exposes the saved-file catalog; the rig agent uses
+//! its read-only reference tools and delegates live editing to the desktop session.
 //!
 //! Three decisions, inherited by both doors:
 //!
@@ -128,6 +128,9 @@ Verify requested names, track kinds and values with describe, notes, mixer, rout
 claiming completion. Report failures and incomplete work honestly. checkpoints names and
 restores alternatives; edits preserve the previous document automatically.
 Use search_documentation for application questions.";
+
+/// Flat file-free tools for the in-process agent.
+pub mod live_agent;
 
 /// Full-text search over the documentation shipped with this build.
 pub mod search_documentation {
@@ -4251,3 +4254,6 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
+
+/// Model-facing audio inspection images and captions.
+pub mod audio_inspection;

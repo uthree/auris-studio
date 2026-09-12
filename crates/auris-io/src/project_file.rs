@@ -157,7 +157,8 @@ pub fn save_project(path: &Path, project: &mut Project) -> Result<()> {
 
 /// Reads a project from `path`.
 ///
-/// The format version must match this build before the document is parsed. After parsing, the
+/// The format version must match this build or version 27, whose volume contour is defaulted.
+/// After parsing, the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
 /// with ids already in the document, and so is the routing — a file whose buses feed each other
 /// in a circle has no order it can be rendered in, and repairing it beats refusing to open it.
@@ -165,7 +166,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
     let text = std::fs::read_to_string(path).map_err(|e| IoError::from_fs(path, e))?;
 
     let probe: FormatVersionProbe = serde_json::from_str(&text)?;
-    if probe.format_version != Project::FORMAT_VERSION {
+    if probe.format_version != Project::FORMAT_VERSION && probe.format_version != 27 {
         return Err(IoError::ProjectVersionMismatch {
             found: probe.format_version,
             supported: Project::FORMAT_VERSION,
@@ -173,6 +174,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
     }
 
     let mut project: Project = serde_json::from_str(&text)?;
+    project.format_version = Project::FORMAT_VERSION;
     if !project.repair_id_counter() {
         return Err(IoError::ProjectIdsExhausted);
     }
@@ -422,12 +424,7 @@ mod tests {
     #[test]
     fn different_format_versions_are_rejected_before_parsing_the_document() {
         let file = TempFile::new("version.auris");
-        for version in [
-            0,
-            1,
-            Project::FORMAT_VERSION - 1,
-            Project::FORMAT_VERSION + 1,
-        ] {
+        for version in [0, 1, 26, Project::FORMAT_VERSION + 1] {
             std::fs::write(
                 file.path(),
                 format!(r#"{{"format_version": {version}, "tracks": "unsupported shape"}}"#),
@@ -441,6 +438,52 @@ mod tests {
                 other => panic!("expected a version mismatch, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn version_27_loads_with_the_original_volume_shape() {
+        let file = TempFile::new("version-27.auris");
+        let mut expected = demo_project();
+        let track = expected.add_instrument_track("Strings", "auris.synth.pulse");
+        let clip = expected
+            .add_midi_clip(track, "Long note", Ticks::ZERO, Ticks(3840))
+            .unwrap();
+        expected
+            .midi_clip_mut(clip)
+            .unwrap()
+            .transforms
+            .push(auris_core::NoteTransform::Pitch {
+                settings: auris_core::PitchPerformance {
+                    volume_swell: 0.7,
+                    ..Default::default()
+                },
+            });
+        let mut value = serde_json::to_value(&expected).unwrap();
+        value["format_version"] = serde_json::json!(27);
+        fn remove_contours(value: &mut serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    fields.remove("volume_contour");
+                    for value in fields.values_mut() {
+                        remove_contours(value);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        remove_contours(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+        remove_contours(&mut value);
+        std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
+        let loaded = load_project(file.path()).unwrap();
+        assert_eq!(loaded.format_version, Project::FORMAT_VERSION);
+        assert_eq!(
+            loaded.midi_clip(clip).unwrap().1.transforms,
+            expected.midi_clip(clip).unwrap().1.transforms
+        );
     }
 
     #[test]

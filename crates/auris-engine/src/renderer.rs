@@ -126,6 +126,8 @@ fn render_segment(
     // while the tracks are being walked mutably.
     let scope = &graph.scope;
     let watching = scope.watching();
+    let visualizer_scope = &graph.visualizer_scope;
+    let visualizer_watching = visualizer_scope.watching();
 
     // Never offline, for the same reason the metronome is not: a live input is a thing happening
     // in the room, and an export is not happening in the room. It would also be *wrong* rather
@@ -217,7 +219,20 @@ fn render_segment(
         // to the bus — the chain applied, the fader applied. The check is one relaxed load per
         // block, hoisted out of the loop, so a graph nobody is looking at pays nothing.
         if watching == crate::scope::ScopeSource::Track(index) {
-            scope.publish(track.scratch.channel(0), ctx.sample_rate);
+            scope.publish_from(
+                crate::scope::ScopeSource::Track(index),
+                track.scratch.channel(0),
+                track.scratch.channel(1),
+                ctx.sample_rate,
+            );
+        }
+        if visualizer_watching == crate::scope::ScopeSource::Track(index) {
+            visualizer_scope.publish_from(
+                crate::scope::ScopeSource::Track(index),
+                track.scratch.channel(0),
+                track.scratch.channel(1),
+                ctx.sample_rate,
+            );
         }
         // The output edge's own delay, after both taps so that each copy carries its own: zero in
         // any graph where nothing looks ahead, which is why this is normally a return on the
@@ -239,9 +254,20 @@ fn render_segment(
     // One NaN out of a misbehaving plugin would otherwise reach the output device.
     master_scratch.sanitize();
     if watching == crate::scope::ScopeSource::Master {
-        graph
-            .scope
-            .publish(master_scratch.channel(0), ctx.sample_rate);
+        graph.scope.publish_from(
+            crate::scope::ScopeSource::Master,
+            master_scratch.channel(0),
+            master_scratch.channel(1),
+            ctx.sample_rate,
+        );
+    }
+    if visualizer_watching == crate::scope::ScopeSource::Master {
+        visualizer_scope.publish_from(
+            crate::scope::ScopeSource::Master,
+            master_scratch.channel(0),
+            master_scratch.channel(1),
+            ctx.sample_rate,
+        );
     }
     graph.master_peak[0] = graph.master_peak[0].max(master_scratch.channel_peak(0));
     graph.master_peak[1] = graph.master_peak[1].max(master_scratch.channel_peak(1));

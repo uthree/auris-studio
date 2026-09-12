@@ -1183,7 +1183,7 @@ what is currently on screen.
 
 ## Settings, where dotfiles can reach them
 
-The search field at the top of Settings searches General, Audio and key bindings together.
+The search field at the top of Settings searches General, Audio, Agent and key bindings together.
 Settings match Japanese and English labels and descriptions, regardless of the interface language;
 space-separated words narrow the results. Matching sections keep their controls, so changes can
 be made directly from the results. Clear the field, press Escape in it, or choose a tab to return
@@ -1445,61 +1445,32 @@ Accepting the changes retains the previous window document on the undo stack; Sa
 also preserve it separately. Cooperating writers serialize the check and save with a project
 file lock.
 
-`auris-agent` is the fourth frontend, and the mirror of the third: instead of waiting for a
-model's harness to dial in, Auris dials the model — a local [Ollama](https://ollama.com)
-server, or anything speaking the OpenAI chat-completions dialect (OpenAI itself, LM Studio,
-vLLM, OpenRouter) — hands it the identical tools, and runs the loop itself. Both doors serve
-the tools from one shared crate, [`auris-toolbox`](../crates/auris-toolbox), so a model that
-has learnt one has learnt the other.
+The Agent Panel connects to a local Ollama server or an OpenAI-compatible API. Connection and generation
+preferences live in Settings → Agent (Ctrl+, on Windows). The model picker and model-list
+refresh remain in the panel. Its model runtime lives in the UI-free `auris-agent` library, linked into `auris-studio`. A dedicated
+background thread handles the conversation while the UI remains responsive. `cargo run`
+builds the desktop and its agent together.
 
-```bash
-auris-agent --model qwen3:8b "write me a quiet piece in D dorian"
-auris-agent --provider openai --model gpt-5.2 "..."          # takes OPENAI_API_KEY
-auris-agent --provider openai --url http://localhost:1234/v1 --model local "..."
-auris-agent --model qwen3:8b                                 # no prompt: a conversation
-```
+Choose a provider in Settings and a model in the panel. Model discovery runs in the background too; the URL
+and API-key environment variable name are saved in shared settings. Secrets remain in the
+process environment. The transcript shows tool calls, results and the model's answer.
 
-The model's answer goes to stdout and the narration of the tool loop — each call, each
-result's first line — to stderr, so `auris-agent "..." > notes.md` keeps the answer and shows
-the work. An API key is only ever named by environment variable (`--api-key-env`), never typed
-into a command line. Without a prompt the program holds a conversation, carrying the whole
-transcript forward each turn, which is the improve loop with a person in it: ask for a piece,
-hear it, and say what to change.
+The model edits the current session through live commands, including an unsaved empty
+project. `inspect_project` reads the current arrangement. The model chooses the musical
+parts and writes them through flat track, clip and note tools. `add_notes` inserts a phrase
+of up to 256 notes as one undoable edit; `set_tempo` and `set_loop` control tempo and looping.
+Changes appear before the model's final reply. Existing music is preserved unless its
+removal is explicitly requested. Save the project normally when ready.
 
-A model that takes audio input can be handed the audio itself: `--attach mix.wav` sends the
-file base64-encoded as an OpenAI `input_audio` content part beside the prompt (wav, mp3,
-flac, ogg, aac, aiff, m4a — typed by extension; repeat the flag for more files), and on the
-JSON wire a say may carry `"audio": ["mix.wav"]`. This is the `openai` provider's territory —
-an audio-capable API, or a local OpenAI-compatible server that implements `input_audio` —
-because the agent's rig Ollama adapter cannot send direct audio attachments. The `listen`
-tool instead sends a rendered excerpt, optionally with a previous excerpt for comparison,
-to a separately configured audio-capable critic. Ollama 0.33.3 implements `input_audio`
-through its `/v1` endpoint, but successful upload does not establish reliable listening.
-`analyze` reads levels and peaks as numbers; it does not provide an auditory judgment.
-See [the listening workflow](agent-workflows.md#listen-revise-listen-again).
-
-The same conversation lives in the desktop application as the **Agent panel** — View → Agent,
-on the right beside the inspector, the way an editor's chat sidebar sits. It spawns
-`auris-agent --json` beside its own binary and talks to it over stdin/stdout, so the window
-never learns what an LLM client is; provider and model are picked from dropdowns — the panel
-asks the provider what it serves via `auris-agent models` — and the URL and key variable are
-set beside them, all saved to the shared settings file, where the command line reads them as
-its defaults too. A context gauge over the input shows the last turn's prompt tokens against
-the chosen model's window, and each tool call's row opens on a click to the full answer the
-model saw. The window saves the project before each message, asking for a location on the first
-message in an unsaved project. It includes selected tracks, clips and note numbers, the
-playhead and the loop range. Each tool call shows in the transcript as it runs, with its
-answer's first line when it lands. The turn's document changes are accepted together as one
-undoable edit, or offered for acceptance when local edits overlap the turn. An unresolved
-conflict blocks the next message from saving over those changes.
-
-The panel can attach audio, stop a running turn, open a newly created project and start a new
-conversation. Send a message with Enter or the Send button. Answers use selectable Markdown
-blocks with compact headings and indented lists; Copy Markdown copies the complete answer,
-including text outside the visible area. Opening another document rebinds the agent to that
-project's folder. Successful
+The panel can attach audio, stop a running turn and start a new conversation. Send with Enter or the Send button. Answers use selectable Markdown blocks with compact headings and indented lists; Copy Markdown copies the complete answer. Opening another
+document rebinds the agent. In saved projects, successful
 user/answer pairs are saved locally in `.auris-conversation.json` and resumed on the next
-message. This text memory keeps at most 24 turns and 24,000 characters; old turns are dropped,
-long text is truncated, and tool payloads and encoded audio are not retained. The current
+message. Context compaction summarizes earlier exchanges while retaining the latest two
+verbatim, automatically or using Compact context. The text store has a final safety cap of
+256 turns and one million characters; tool payloads and encoded audio are not retained. The current
 selection is sent afresh with each message. New conversation clears the saved text memory.
 
+The panel offers Read-only, Edit, Plan and Bypass modes, operation allow/deny rules,
+and confirmation before operations that require approval. See
+[Agent permissions and context compaction](agent-workflows.md#agent-permissions-and-context-compaction)
+for mode semantics and keyboard commands.

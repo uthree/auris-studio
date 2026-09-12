@@ -958,6 +958,7 @@ mod tests {
         paint(&app, cx);
         app.update(cx, |this, _| {
             this.settings.agent = Default::default();
+            this.settings.agent.url = "http://127.0.0.1:1".into();
             this.agent_chat.configuring = true;
             let prefs = this.settings.agent.clone();
             this.agent_chat.load_preferences(&prefs);
@@ -986,8 +987,8 @@ mod tests {
             );
             assert_eq!(
                 this.agent_chat.input.content(),
-                "make it louder",
-                "an unsaved document keeps the message for after Save As"
+                "",
+                "an unsaved document sends directly to the embedded worker"
             );
         });
     }
@@ -1002,7 +1003,7 @@ mod tests {
             this.panels.show(crate::dock::Panel::Agent);
             this.settings.agent = Default::default();
             this.agent_chat.configuring = true;
-            // What the provider would have answered, so no subprocess is involved.
+            // What the provider would have answered, so no provider request is involved.
             this.agent_chat.models = vec![crate::ui::agent_chat::ModelOption {
                 name: "qwen3.8:27b".to_string(),
                 context_length: Some(262_144),

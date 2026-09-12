@@ -1,4 +1,4 @@
-//! Derived channel pitch gestures, sampled off the audio thread from the performed phrase.
+//! Derived channel gestures, sampled off the audio thread from the performed phrase.
 use super::{
     ClipCurve, CurvePoint, MidiClip, Note, NoteTransform, PerformanceContext, performed_notes,
 };
@@ -6,7 +6,7 @@ use crate::{Seconds, SignatureMap, TempoMap, Ticks};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Automatic pitch bend for monophonic instrument phrases. Depths are semitones.
+/// Automatic pitch and controller gestures for monophonic instrument phrases.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PitchPerformance {
@@ -20,6 +20,12 @@ pub struct PitchPerformance {
     pub vibrato_hz: f32,
     /// Delay before vibrato, in 0..=1000 milliseconds.
     pub vibrato_delay_ms: f32,
+    /// Modulation-wheel depth in 0..=1, sharing vibrato's eligibility and onset envelope.
+    pub modulation: f32,
+    /// Long-note volume contour strength in 0..=1; zero leaves channel volume untouched.
+    pub volume_swell: f32,
+    /// Editable shape stretched over each long note; defaults to the bowed envelope.
+    pub volume_contour: super::VolumeContour,
     /// Fall depth below the release, in 0..=12 semitones.
     pub fall: f32,
     /// Fall duration in 10..=500 milliseconds, capped at half the note.
@@ -37,6 +43,9 @@ impl Default for PitchPerformance {
             vibrato: 0.0,
             vibrato_hz: 5.8,
             vibrato_delay_ms: 300.0,
+            modulation: 0.0,
+            volume_swell: 0.0,
+            volume_contour: super::VolumeContour::default(),
             fall: 0.0,
             fall_ms: 150.0,
             glide_ms: 0.0,
@@ -47,7 +56,12 @@ impl Default for PitchPerformance {
 impl PitchPerformance {
     /// Whether any gesture is enabled.
     pub fn is_active(&self) -> bool {
-        self.scoop > 0.0 || self.vibrato > 0.0 || self.fall > 0.0 || self.glide_ms > 0.0
+        self.scoop > 0.0
+            || self.vibrato > 0.0
+            || self.fall > 0.0
+            || self.glide_ms > 0.0
+            || self.modulation > 0.0
+            || self.volume_swell > 0.0
     }
 }
 
@@ -73,17 +87,35 @@ fn settings<'a>(
 impl MidiClip {
     /// Whether a derived pitch gesture is enabled anywhere in the stack.
     pub fn has_pitch_performance(&self) -> bool {
-        let mut stages = Vec::new();
-        settings(&self.transforms, None, &mut stages);
-        !stages.is_empty()
+        self.has_generated_curve(ClipCurve::Bend)
     }
 
-    /// Authored controllers and the bend, including an enabled generated bend.
+    /// Authored and generated controller/bend curves, each listed once.
     pub fn performance_curves(&self) -> impl Iterator<Item = ClipCurve> + '_ {
         (!self.bend.is_empty() || self.has_pitch_performance())
             .then_some(ClipCurve::Bend)
             .into_iter()
-            .chain(self.curves().filter(|which| *which != ClipCurve::Bend))
+            .chain(
+                [ClipCurve::MODULATION, ClipCurve::Controller(7)]
+                    .into_iter()
+                    .filter(|which| self.has_generated_curve(*which)),
+            )
+            .chain(
+                self.curves()
+                    .filter(|which| *which != ClipCurve::Bend && !self.has_generated_curve(*which)),
+            )
+    }
+
+    /// Whether this curve has an enabled non-destructive generator.
+    pub fn has_generated_curve(&self, which: ClipCurve) -> bool {
+        let mut stages = Vec::new();
+        settings(&self.transforms, None, &mut stages);
+        stages.iter().any(|(s, _)| match which {
+            ClipCurve::Bend => s.scoop > 0.0 || s.vibrato > 0.0 || s.fall > 0.0 || s.glide_ms > 0.0,
+            ClipCurve::Controller(1) => s.modulation > 0.0,
+            ClipCurve::Controller(7) => s.volume_swell > 0.0,
+            _ => false,
+        })
     }
 
     /// The first or repeated pass's combined authored and generated bend, relative to that pass.
@@ -97,10 +129,24 @@ impl MidiClip {
         offset: Ticks,
         span: Ticks,
     ) -> Vec<CurvePoint> {
+        self.performed_curve_points(ClipCurve::Bend, tempo, signatures, pass, offset, span)
+    }
+
+    /// Combined authored and generated curve for one performance pass.
+    /// Modulation adds to authored CC1; volume multiplies authored CC7 (default full volume).
+    pub fn performed_curve_points(
+        &self,
+        which: ClipCurve,
+        tempo: &TempoMap,
+        signatures: &SignatureMap,
+        pass: u64,
+        offset: Ticks,
+        span: Ticks,
+    ) -> Vec<CurvePoint> {
         let mut stages = Vec::new();
         settings(&self.transforms, None, &mut stages);
-        if stages.is_empty() {
-            return self.bend.clone();
+        if !self.has_generated_curve(which) {
+            return self.curve(which).to_vec();
         }
         let base = self.start + offset;
         let mut notes: Vec<Note> = performed_notes(
@@ -122,6 +168,16 @@ impl MidiClip {
         })
         .collect();
         notes.sort_by_key(|n| (n.start, n.pitch));
+        // Exact octave layers share one channel gesture. Other chords and overlapping
+        // voices remain in the eligibility scan, where they suppress unsafe channel motion.
+        if has_octaves(&self.transforms) {
+            notes.dedup_by(|b, a| {
+                a.start == b.start
+                    && a.end() == b.end()
+                    && a.pitch % 12 == b.pitch % 12
+                    && a.drum_voice == b.drum_voice
+            });
+        }
         let seconds = |at| tempo.ticks_to_seconds(base + at).0;
         let starts: Vec<_> = notes.iter().map(|n| seconds(n.start)).collect();
         let ends: Vec<_> = notes.iter().map(|n| seconds(n.end())).collect();
@@ -138,7 +194,7 @@ impl MidiClip {
             .collect();
         let mut ticks = BTreeSet::from([Ticks::ZERO, span]);
         ticks.extend(
-            self.bend
+            self.curve(which)
                 .iter()
                 .filter(|p| p.at >= Ticks::ZERO && p.at <= span)
                 .map(|p| p.at),
@@ -150,6 +206,18 @@ impl MidiClip {
                 note.end() - Ticks(1),
                 note.end(),
             ]);
+            if which == ClipCurve::Controller(7) {
+                for (style, _) in &stages {
+                    ticks.extend(style.volume_contour.points().iter().map(|point| {
+                        let fraction =
+                            point.at.raw() as f64 / super::VolumeContour::END.raw() as f64;
+                        (tempo.seconds_to_ticks(Seconds(
+                            starts[i] + (ends[i] - starts[i]) * fraction,
+                        )) - base)
+                            .clamp(note.start, note.end())
+                    }));
+                }
+            }
             let mut time = starts[i] + 0.005;
             while time < ends[i] {
                 ticks.insert(
@@ -163,7 +231,12 @@ impl MidiClip {
         ticks
             .into_iter()
             .map(|at| {
-                let mut value = super::curve_at(&self.bend, at);
+                let mut value = if which == ClipCurve::Controller(7) && self.curve(which).is_empty()
+                {
+                    1.0
+                } else {
+                    super::curve_at(self.curve(which), at)
+                };
                 if let Some(i) = notes.iter().position(|n| n.start <= at && at < n.end())
                     && eligible[i]
                 {
@@ -187,15 +260,37 @@ impl MidiClip {
                         let next =
                             (style.glide_ms > 0.0 && i + 1 < notes.len() && connects(i, i + 1))
                                 .then(|| f32::from(notes[i + 1].pitch) - f32::from(notes[i].pitch));
-                        value +=
-                            gesture(style, time - starts[i], ends[i] - starts[i], previous, next);
+                        let elapsed = time - starts[i];
+                        let length = ends[i] - starts[i];
+                        match which {
+                            ClipCurve::Bend => {
+                                value += gesture(style, elapsed, length, previous, next)
+                            }
+                            ClipCurve::Controller(1) => {
+                                value += style.modulation.clamp(0.0, 1.0)
+                                    * vibrato_envelope(style, elapsed, length)
+                            }
+                            ClipCurve::Controller(7) if length >= 0.6 => {
+                                value *= 1.0
+                                    + style.volume_swell.clamp(0.0, 1.0)
+                                        * (style.volume_contour.level_at(elapsed / length) - 1.0)
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 CurvePoint {
                     at,
                     // Keep the authored endpoint so interpolation cannot ramp it down.
                     // The event sampler appends the channel reset after the curve ends.
-                    value: value.clamp(-super::BEND_LIMIT, super::BEND_LIMIT),
+                    value: value.clamp(
+                        if which.is_bipolar() {
+                            -which.limit()
+                        } else {
+                            0.0
+                        },
+                        which.limit(),
+                    ),
                 }
             })
             .collect()
@@ -209,17 +304,19 @@ impl MidiClip {
         tempo: &TempoMap,
         signatures: &SignatureMap,
     ) -> Vec<(Ticks, f32)> {
-        if which != ClipCurve::Bend || !self.has_pitch_performance() {
+        if !self.has_generated_curve(which) {
             return self.sounding_curve_events(which, step);
         }
         let mut out = Vec::new();
         for (pass, (offset, span)) in super::loop_passes(self.length, self.loop_end).enumerate() {
-            let points = self.performed_bend_points(tempo, signatures, pass as u64, offset, span);
-            out.extend(
-                super::curve_events(&points, span, step)
-                    .into_iter()
-                    .map(|(at, value)| (at + offset, value)),
-            );
+            let points =
+                self.performed_curve_points(which, tempo, signatures, pass as u64, offset, span);
+            let mut events = super::curve_events(&points, span, step);
+            if which == ClipCurve::Controller(7) {
+                events.retain(|(at, _)| *at < span);
+                events.push((span, 1.0));
+            }
+            out.extend(events.into_iter().map(|(at, value)| (at + offset, value)));
         }
         out
     }
@@ -228,6 +325,19 @@ impl MidiClip {
 fn smooth(x: f64) -> f32 {
     let x = x.clamp(0.0, 1.0) as f32;
     x * x * (3.0 - 2.0 * x)
+}
+
+fn has_octaves(stack: &[NoteTransform]) -> bool {
+    stack.iter().any(|stage| match stage {
+        NoteTransform::Octaves { above, below } => *above > 0.0 || *below > 0.0,
+        NoteTransform::ForDrumVoice { transforms, .. } => has_octaves(transforms),
+        _ => false,
+    })
+}
+
+fn vibrato_envelope(s: &PitchPerformance, at: f64, length: f64) -> f32 {
+    let after_delay = (at - f64::from(s.vibrato_delay_ms.clamp(0.0, 1000.0)) / 1000.0).max(0.0);
+    smooth(after_delay / 0.1) * smooth((length - at) / 0.08)
 }
 
 fn gesture(
@@ -247,7 +357,7 @@ fn gesture(
         None => -s.fall.clamp(0.0, 12.0) * smooth(1.0 - (length - at) / reach(s.fall_ms, 500.0)),
     };
     let after_delay = (at - f64::from(s.vibrato_delay_ms.clamp(0.0, 1000.0)) / 1000.0).max(0.0);
-    let envelope = smooth(after_delay / 0.1) * smooth((length - at) / 0.08);
+    let envelope = vibrato_envelope(s, at, length);
     let sway = (after_delay * f64::from(s.vibrato_hz.clamp(2.0, 9.0)) * std::f64::consts::TAU).sin()
         as f32;
     incoming + outgoing + s.vibrato.clamp(0.0, 1.0) * envelope * sway
@@ -258,6 +368,228 @@ mod tests {
     use super::*;
     use crate::ClipId;
     use crate::project::curve_at;
+    #[test]
+    fn custom_volume_knots_follow_note_length_and_are_sampled_exactly() {
+        let clip = clip(
+            vec![Note::new(60, Ticks::ZERO, Ticks(3840))],
+            PitchPerformance {
+                volume_swell: 1.0,
+                volume_contour: super::super::VolumeContour::new(vec![
+                    CurvePoint {
+                        at: Ticks::ZERO,
+                        value: 0.4,
+                    },
+                    CurvePoint {
+                        at: Ticks(2500),
+                        value: 0.9,
+                    },
+                    CurvePoint {
+                        at: Ticks(5000),
+                        value: 0.2,
+                    },
+                    CurvePoint {
+                        at: Ticks(10_000),
+                        value: 0.7,
+                    },
+                ]),
+                ..PitchPerformance::default()
+            },
+        );
+        let points = clip.performed_curve_points(
+            ClipCurve::Controller(7),
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+            0,
+            Ticks::ZERO,
+            clip.length,
+        );
+        assert!((curve_at(&points, Ticks(960)) - 0.9).abs() < 0.0001);
+        assert!((curve_at(&points, Ticks(1920)) - 0.2).abs() < 0.0001);
+        assert!(clip.controllers.is_empty());
+    }
+    #[test]
+    fn new_controls_default_off_in_old_settings_and_round_trip_when_enabled() {
+        let old: PitchPerformance = serde_json::from_str(r#"{"vibrato":0.2}"#).unwrap();
+        assert_eq!(old.modulation, 0.0);
+        assert_eq!(old.volume_swell, 0.0);
+        let mut clip = clip(
+            vec![Note::new(60, Ticks::ZERO, Ticks(1920))],
+            PitchPerformance {
+                modulation: 0.7,
+                volume_swell: 0.8,
+                ..old
+            },
+        );
+        clip.transforms.push(NoteTransform::Octaves {
+            above: 0.6,
+            below: 0.4,
+        });
+        let saved = serde_json::to_string(&clip).unwrap();
+        let restored: MidiClip = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.transforms, clip.transforms);
+        assert_eq!(restored.notes, clip.notes);
+    }
+    #[test]
+    fn delayed_modulation_is_independent_of_pitch_and_resets_between_notes() {
+        let clip = clip(
+            vec![Note::new(60, Ticks(960), Ticks(1920))],
+            PitchPerformance {
+                modulation: 0.7,
+                ..PitchPerformance::default()
+            },
+        );
+        let points = clip.performed_curve_points(
+            ClipCurve::MODULATION,
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+            0,
+            Ticks::ZERO,
+            clip.length,
+        );
+        assert!(!clip.has_pitch_performance());
+        assert_eq!(curve_at(&points, Ticks(1200)), 0.0);
+        assert!((curve_at(&points, Ticks(1920)) - 0.7).abs() < 0.001);
+        assert_eq!(curve_at(&points, Ticks(2880)), 0.0);
+        assert!(clip.controllers.is_empty());
+    }
+
+    #[test]
+    fn exact_octave_layers_share_the_melodys_controller_gestures() {
+        let mut clip = clip(
+            vec![Note::new(60, Ticks::ZERO, Ticks(3840))],
+            PitchPerformance {
+                modulation: 0.8,
+                volume_swell: 1.0,
+                ..PitchPerformance::default()
+            },
+        );
+        let generate = |clip: &MidiClip, which| {
+            clip.performed_curve_points(
+                which,
+                &TempoMap::constant(120.0),
+                &SignatureMap::default(),
+                0,
+                Ticks::ZERO,
+                clip.length,
+            )
+        };
+        let expected = generate(&clip, ClipCurve::MODULATION);
+        clip.transforms.push(NoteTransform::Octaves {
+            above: 0.5,
+            below: 0.5,
+        });
+        assert_eq!(generate(&clip, ClipCurve::MODULATION), expected);
+        assert!(
+            generate(&clip, ClipCurve::Controller(7))
+                .iter()
+                .any(|p| p.value < 0.4)
+        );
+    }
+
+    #[test]
+    fn volume_dips_swells_and_resets_without_changing_authored_volume() {
+        let mut clip = clip(
+            vec![Note::new(60, Ticks::ZERO, Ticks(3840))],
+            PitchPerformance {
+                volume_swell: 1.0,
+                ..PitchPerformance::default()
+            },
+        );
+        let which = ClipCurve::Controller(7);
+        clip.controllers.insert(
+            7,
+            vec![CurvePoint {
+                at: Ticks::ZERO,
+                value: 0.8,
+            }],
+        );
+        let points = clip.performed_curve_points(
+            which,
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+            0,
+            Ticks::ZERO,
+            clip.length,
+        );
+        assert!((curve_at(&points, Ticks::ZERO) - 0.64).abs() < 0.001);
+        assert!(curve_at(&points, Ticks(1500)) < 0.25);
+        assert!(curve_at(&points, Ticks(3400)) > 0.75);
+        assert!(curve_at(&points, Ticks(3800)) < 0.6);
+        assert_eq!(curve_at(&points, Ticks(4000)), 0.8);
+        let events = clip.sounding_performance_curve_events(
+            which,
+            Ticks(20),
+            &TempoMap::constant(120.0),
+            &SignatureMap::default(),
+        );
+        assert_eq!(events.last(), Some(&(clip.length, 1.0)));
+        assert_eq!(clip.controllers[&7][0].value, 0.8);
+    }
+
+    #[test]
+    fn short_notes_and_overlapping_voices_receive_no_controller_gestures() {
+        let clip = clip(
+            vec![
+                Note::new(60, Ticks::ZERO, Ticks(100)),
+                Note::new(62, Ticks(960), Ticks(1920)),
+                Note::new(67, Ticks(960), Ticks(1920)),
+            ],
+            PitchPerformance {
+                modulation: 1.0,
+                volume_swell: 1.0,
+                ..PitchPerformance::default()
+            },
+        );
+        for (which, expected) in [
+            (ClipCurve::MODULATION, 0.0),
+            (ClipCurve::Controller(7), 1.0),
+        ] {
+            let points = clip.performed_curve_points(
+                which,
+                &TempoMap::constant(120.0),
+                &SignatureMap::default(),
+                0,
+                Ticks::ZERO,
+                clip.length,
+            );
+            assert!(points.iter().all(|p| p.value == expected));
+        }
+    }
+
+    #[test]
+    fn octave_copies_preserve_source_and_respect_pitch_bounds_and_existing_voices() {
+        let mut clip = clip(
+            vec![
+                Note::new(60, Ticks::ZERO, Ticks(960)),
+                Note::new(72, Ticks::ZERO, Ticks(960)),
+                Note::new(5, Ticks(960), Ticks(960)),
+            ],
+            PitchPerformance::default(),
+        );
+        clip.transforms = vec![NoteTransform::Octaves {
+            above: 0.5,
+            below: 1.0,
+        }];
+        let source = clip.notes.clone();
+        let notes = performed_notes(
+            source.clone(),
+            &clip.transforms,
+            PerformanceContext {
+                bpm: 120.0,
+                pass: 0,
+                start: Ticks::ZERO,
+                length: clip.length,
+                signatures: &SignatureMap::default(),
+            },
+        );
+        assert_eq!(clip.notes, source);
+        assert_eq!(notes.len(), 6);
+        assert_eq!(notes.iter().filter(|n| n.pitch == 60).count(), 1);
+        assert_eq!(notes.iter().filter(|n| n.pitch == 72).count(), 1);
+        let upper = notes.iter().find(|n| n.pitch == 84).unwrap();
+        assert_eq!(upper.velocity, source[1].velocity * 0.5);
+        assert_eq!(upper.length, source[1].length);
+    }
     fn clip(notes: Vec<Note>, style: PitchPerformance) -> MidiClip {
         MidiClip {
             notes,

@@ -28,6 +28,11 @@ pub enum MenuCommand {
     SetStrumSettings { clip: ClipId, settings: Strum },
     /// Updates one clip's non-destructive ghost-note settings.
     SetGhostSettings { clip: ClipId, settings: GhostNotes },
+    /// Copies an editable long-note volume preset into the clip's performance settings.
+    SetVolumeContour {
+        clip: ClipId,
+        preset: VolumeContourPreset,
+    },
     /// Voice model for the song sheet's vocal part.
     SongSinger(Option<String>),
     /// Speaker within the song sheet's selected voice file.
@@ -820,6 +825,12 @@ impl AurisApp {
                     let _ = self.session.set_clip_transforms(clip, next);
                     self.session.end_transaction();
                 }
+            }
+            MenuCommand::SetVolumeContour { clip, preset } => {
+                self.session
+                    .begin_transaction(auris_session::Edit::SetClipTransforms(clip));
+                self.set_volume_contour(clip, preset.contour());
+                self.session.end_transaction();
             }
             MenuCommand::AnalyzeChords(track) => self.begin_chord_analysis(track, cx),
             MenuCommand::AnalyzeAudio { clip, transcribe } => {

@@ -703,6 +703,8 @@ impl AurisApp {
     pub(crate) fn reset_view(&mut self) {
         // The observed editor closes on the next draw, before reused clip ids can be edited.
         self.rhythm_window = None;
+        self.close_visualizer();
+        self.visualizer = Default::default();
         self.spectrogram_tracks.clear();
         self.music_analysis.cancel();
         self.music_analysis.report = None;

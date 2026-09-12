@@ -107,6 +107,7 @@ pub struct Vocal {
     bend: f32,
     /// Most recent modulation wheel, 0 to 1 — extra vibrato.
     modulation: f32,
+    channel_volume: f32,
     /// Most recent expression pedal, 0 to 1 — the energy the frames also read.
     expression: f32,
     /// How far the vibrato swings right now, in semitones.
@@ -134,6 +135,7 @@ impl Vocal {
             sample_rate: 48_000.0,
             bend: 0.0,
             modulation: 0.0,
+            channel_volume: 1.0,
             expression: 1.0,
             vibrato_depth: 0.0,
             breath_gain: 0.0,
@@ -257,6 +259,9 @@ impl SegmentRenderer for Vocal {
                     finite_or(semitones, 0.0).clamp(-MAX_BEND_SEMITONES, MAX_BEND_SEMITONES);
             }
             NoteEvent::Controller { number, value, .. } => {
+                if number == 7 {
+                    self.channel_volume = finite_or(value, 1.0).clamp(0.0, 1.0).powi(2);
+                }
                 if number == CC_MODULATION {
                     self.modulation = finite_or(value, 0.0).clamp(0.0, 1.0);
                     self.refresh();
@@ -317,7 +322,7 @@ impl SegmentRenderer for Vocal {
             }
         }
 
-        let output_gain = self.output_gain * self.expression;
+        let output_gain = self.output_gain * self.expression * self.channel_volume;
         for sample in dst.iter_mut() {
             *sample *= output_gain;
         }
@@ -352,6 +357,7 @@ impl Instrument for Vocal {
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         self.expression = 1.0;
         self.refresh();
     }
@@ -367,6 +373,7 @@ impl Instrument for Vocal {
         self.allocator.clear();
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         self.expression = 1.0;
         self.refresh();
     }

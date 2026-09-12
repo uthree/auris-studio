@@ -1360,6 +1360,35 @@ mod tests {
     }
 
     #[test]
+    fn generated_controllers_and_octave_layers_survive_midi_export() {
+        let mut project = project_with(vec![Note::new(60, Ticks::ZERO, Ticks(3840))], Ticks(3840));
+        let clip = project.tracks[0].kind.as_instrument().unwrap().clips[0].id;
+        project.midi_clip_mut(clip).unwrap().transforms = vec![
+            auris_core::NoteTransform::Pitch {
+                settings: auris_core::PitchPerformance {
+                    modulation: 0.7,
+                    volume_swell: 1.0,
+                    ..auris_core::PitchPerformance::default()
+                },
+            },
+            auris_core::NoteTransform::Octaves {
+                above: 0.5,
+                below: 0.5,
+            },
+        ];
+        let imported = round_trip(&project);
+        let track = &imported.tracks[0];
+        let mut pitches: Vec<_> = track.notes.iter().map(|n| n.pitch).collect();
+        pitches.sort();
+        assert_eq!(pitches, [48, 60, 72]);
+        assert!(track.controllers[&1].iter().any(|p| p.value > 0.6));
+        assert_eq!(track.controllers[&1].last().unwrap().value, 0.0);
+        assert!(track.controllers[&7].iter().any(|p| p.value < 0.4));
+        assert_eq!(track.controllers[&7].last().unwrap().value, 1.0);
+        assert_eq!(project.midi_clip(clip).unwrap().1.notes.len(), 1);
+    }
+
+    #[test]
     fn tracks_sharing_a_midi_channel_use_the_same_bend_sensitivity() {
         // Channel 0 is reused by the sixteenth melodic track. RPN sensitivity belongs to
         // that channel, even when the two tracks never play at the same time.

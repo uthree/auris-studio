@@ -636,6 +636,15 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Moving one point of a normalized long-note volume contour.
+    VolumeContourPoint {
+        /// Clip whose performance curve is edited.
+        clip: ClipId,
+        /// Index in the ordered point list.
+        index: usize,
+        /// Drawable graph bounds captured when the drag begins.
+        bounds: Bounds<Pixels>,
+    },
     /// Dragging the time-zoom slider.
     TimeZoom {
         /// Slider position when the drag began, from 0 to 1.
@@ -752,7 +761,9 @@ impl Drag {
                 Some(Edit::GenerateClip)
             }
             // One step for the sweep, named for the clip whose performance it shapes.
-            Drag::PerformDial { clip, .. } => Some(Edit::SetClipTransforms(*clip)),
+            Drag::PerformDial { clip, .. } | Drag::VolumeContourPoint { clip, .. } => {
+                Some(Edit::SetClipTransforms(*clip))
+            }
             // A dial on the song sheet turns nothing in the document: the sheet is a question
             // about a song that has not been written yet, and nothing it does belongs on the
             // undo stack until Write is pressed.
@@ -1326,6 +1337,7 @@ pub struct AurisApp {
     pub(crate) analysis_panel: bool,
     /// CPU music-analysis jobs and their unapplied draft.
     pub(crate) music_analysis: crate::ui::music_analysis::MusicAnalysisState,
+    pub(crate) visualizer: crate::ui::visualizer::VisualizerState,
     pub(crate) timbre_map: crate::ui::timbre_map::TimbreMapState,
     /// Invalidates results started before a voice or its connection settings changed.
     pub(crate) sung_preview_generation: u64,
@@ -1613,6 +1625,7 @@ impl AurisApp {
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
                         this.sample_input_level();
+                        this.poll_visualizer();
                         // Separate from `poll` on purpose: that is housekeeping and this writes
                         // to disk. A success says nothing: it is a private recovery snapshot, and
                         // announcing one every half minute would drown out useful status. A
@@ -1696,6 +1709,7 @@ impl AurisApp {
             drum_analysis: Default::default(),
             analysis_panel: false,
             music_analysis: Default::default(),
+            visualizer: Default::default(),
             timbre_map: Default::default(),
             sung_preview_generation: 0,
             sung_geometry: std::collections::HashMap::new(),
@@ -2810,6 +2824,7 @@ impl AurisApp {
         let singer_acceleration = self.settings.singer_acceleration;
         let export = self.settings.export;
         let panels = self.panels.clone();
+        let agent = self.settings.agent.clone();
 
         let bounds = Bounds::centered(None, size(px(560.), px(620.)), cx);
         let opened = cx.open_window(
@@ -2837,6 +2852,7 @@ impl AurisApp {
                         singer_acceleration,
                         export,
                         panels,
+                        agent,
                         cx,
                     )
                 })

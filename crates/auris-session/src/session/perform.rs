@@ -70,6 +70,37 @@ impl Session {
         }
         let bpm = self.project.tempo_map.bpm_at(target.start);
         let transforms = target.transforms.clone();
+        let controllers: Vec<_> = [
+            auris_core::project::ClipCurve::MODULATION,
+            auris_core::project::ClipCurve::Controller(7),
+        ]
+        .into_iter()
+        .filter(|which| target.has_generated_curve(*which))
+        .map(|which| {
+            let mut points: Vec<_> = target
+                .curve(which)
+                .iter()
+                .filter(|p| p.at < auris_core::Ticks::ZERO)
+                .copied()
+                .collect();
+            points.extend(target.performed_curve_points(
+                which,
+                &self.project.tempo_map,
+                &self.project.signatures,
+                0,
+                auris_core::Ticks::ZERO,
+                target.length,
+            ));
+            points.extend(
+                target
+                    .curve(which)
+                    .iter()
+                    .filter(|p| p.at > target.length)
+                    .copied(),
+            );
+            (which, points)
+        })
+        .collect();
         let bend = target.has_pitch_performance().then(|| {
             let mut points: Vec<_> = target
                 .bend
@@ -132,6 +163,9 @@ impl Session {
         self.record(Edit::FreezeClipTransforms);
         if let Some(target) = self.project.midi_clip_mut(clip) {
             target.notes = notes;
+            for (which, points) in controllers {
+                *target.curve_mut(which) = points;
+            }
             if let Some(bend) = bend {
                 target.bend = bend;
             }
@@ -307,6 +341,56 @@ mod tests {
         session.undo();
         assert_eq!(session.midi_clip(clip).unwrap().bend, authored);
         assert!(session.midi_clip(clip).unwrap().has_pitch_performance());
+    }
+
+    #[test]
+    fn freezing_generated_controllers_preserves_playback_and_undo_restores_settings() {
+        let (mut session, _, clip) = session_with_clip();
+        session.project.midi_clip_mut(clip).unwrap().notes =
+            vec![auris_core::Note::new(60, Ticks::ZERO, Ticks(1920))];
+        session
+            .set_clip_transforms(
+                clip,
+                vec![NoteTransform::Pitch {
+                    settings: auris_core::PitchPerformance {
+                        modulation: 0.7,
+                        volume_swell: 0.8,
+                        ..auris_core::PitchPerformance::default()
+                    },
+                }],
+            )
+            .unwrap();
+        let curves = [
+            auris_core::project::ClipCurve::MODULATION,
+            auris_core::project::ClipCurve::Controller(7),
+        ];
+        let heard: Vec<_> = curves
+            .iter()
+            .map(|which| {
+                session
+                    .midi_clip(clip)
+                    .unwrap()
+                    .sounding_performance_curve_events(
+                        *which,
+                        auris_core::project::CURVE_STEP,
+                        &session.project.tempo_map,
+                        &session.project.signatures,
+                    )
+            })
+            .collect();
+        session.freeze_clip_transforms(clip).unwrap();
+        for (which, expected) in curves.into_iter().zip(heard) {
+            assert_eq!(
+                session
+                    .midi_clip(clip)
+                    .unwrap()
+                    .sounding_curve_events(which, auris_core::project::CURVE_STEP),
+                expected
+            );
+        }
+        session.undo();
+        assert!(session.midi_clip(clip).unwrap().controllers.is_empty());
+        assert_eq!(session.clip_transforms(clip).unwrap().len(), 1);
     }
 
     #[test]

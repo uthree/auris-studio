@@ -42,9 +42,12 @@
 
 #![warn(missing_docs)]
 
+pub mod agent_policy;
 pub mod audio_evaluation;
+pub mod audio_inspection;
 pub mod audio_review;
 pub mod clap_evaluation;
+pub mod live_agent;
 /// Headless composition search and its request/result types.
 ///
 /// This function-based command needs no session, audio device or UI. Frontends can prepare a
@@ -239,6 +242,7 @@ pub mod prelude {
     };
     pub use auris_core::{
         Expression, GroovePoint, GrooveTemplate, PitchPerformance, Strum, StrumClock,
+        VolumeContour, VolumeContourPreset,
     };
     /// Offline source analysis, prepared through [`Session::spectrogram_job`].
     pub use auris_dsp::Spectrogram;
@@ -299,3 +303,6 @@ pub mod prelude {
         StemSummary, TakeReport, decode_audio, input_level_of, read_soundfont,
     };
 }
+
+/// A coherent stereo analysis snapshot.
+pub use session::VisualizerFrame;

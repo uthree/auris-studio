@@ -64,9 +64,11 @@ impl ScopeSource {
 #[derive(Debug)]
 pub struct Scope {
     samples: Vec<AtomicU32>,
+    right: Vec<AtomicU32>,
     /// Bumped before and after a write, so an odd value means one is in progress.
     sequence: AtomicUsize,
     source: AtomicI64,
+    published_source: AtomicI64,
     rate: AtomicU32,
 }
 
@@ -81,8 +83,10 @@ impl Scope {
     pub fn new() -> Self {
         Self {
             samples: (0..SCOPE_WINDOW).map(|_| AtomicU32::new(0)).collect(),
+            right: (0..SCOPE_WINDOW).map(|_| AtomicU32::new(0)).collect(),
             sequence: AtomicUsize::new(0),
             source: AtomicI64::new(ScopeSource::Off.encode()),
+            published_source: AtomicI64::new(ScopeSource::Off.encode()),
             rate: AtomicU32::new(0.0f32.to_bits()),
         }
     }
@@ -111,9 +115,26 @@ impl Scope {
     /// block shorter than the window is padded from what came before it by leaving the rest of
     /// the ring alone, which is what makes the display continuous rather than strobing.
     pub fn publish(&self, samples: &[f32], sample_rate: f64) {
-        if matches!(self.watching(), ScopeSource::Off) {
+        self.publish_stereo(samples, samples, sample_rate);
+    }
+
+    /// Publishes paired channels without allocating or waiting on the audio thread.
+    pub fn publish_stereo(&self, samples: &[f32], right: &[f32], sample_rate: f64) {
+        self.publish_from(self.watching(), samples, right, sample_rate);
+    }
+
+    /// Publishes an explicitly identified strip, rejecting a concurrently changed selection.
+    pub fn publish_from(
+        &self,
+        source: ScopeSource,
+        samples: &[f32],
+        right: &[f32],
+        sample_rate: f64,
+    ) {
+        if source == ScopeSource::Off || source != self.watching() {
             return;
         }
+        let source = source.encode();
         // The odd count has to become visible before any store below it, and the even one
         // after every store — that ordering *is* the tear detection. With everything Relaxed
         // there was none: a weakly ordered machine was free to let the sample stores overtake
@@ -121,12 +142,25 @@ impl Scope {
         // never appeared to move. Fences on this side, acquire on the reader's.
         self.sequence.fetch_add(1, Ordering::Relaxed);
         std::sync::atomic::fence(Ordering::Release);
+        if self.published_source.load(Ordering::Relaxed) != source {
+            for sample in self.samples.iter().chain(&self.right) {
+                sample.store(0, Ordering::Relaxed);
+            }
+        }
         // Newest-last, so a reader can walk the slice forwards and get time's own order.
-        let taken = samples.len().min(SCOPE_WINDOW);
+        let taken = samples.len().min(right.len()).min(SCOPE_WINDOW);
         let keep = SCOPE_WINDOW - taken;
         for index in 0..keep {
             let carried = self.samples[index + taken].load(Ordering::Relaxed);
             self.samples[index].store(carried, Ordering::Relaxed);
+            self.right[index].store(
+                self.right[index + taken].load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+        }
+        for (offset, sample) in right[right.len() - taken..].iter().enumerate() {
+            let value = if sample.is_finite() { *sample } else { 0.0 };
+            self.right[keep + offset].store(value.to_bits(), Ordering::Relaxed);
         }
         for (offset, sample) in samples[samples.len() - taken..].iter().enumerate() {
             let value = if sample.is_finite() { *sample } else { 0.0 };
@@ -134,6 +168,7 @@ impl Scope {
         }
         self.rate
             .store((sample_rate as f32).to_bits(), Ordering::Relaxed);
+        self.published_source.store(source, Ordering::Relaxed);
         self.sequence.fetch_add(1, Ordering::Release);
     }
 
@@ -143,6 +178,11 @@ impl Scope {
     /// it drew last rather than draw a window with a seam in it. Retrying is not worth it: the
     /// next repaint is 16 ms away and will find a settled window.
     pub fn read(&self, out: &mut [f32]) -> bool {
+        self.read_stereo(out, &mut [])
+    }
+
+    /// Copies both channels under one sequence check; a torn pair must be discarded.
+    pub fn read_stereo(&self, out: &mut [f32], right: &mut [f32]) -> bool {
         let before = self.sequence.load(Ordering::Acquire);
         if before % 2 == 1 {
             return false;
@@ -154,16 +194,27 @@ impl Scope {
         for (offset, slot) in out.iter_mut().enumerate().take(count) {
             *slot = f32::from_bits(self.samples[start + offset].load(Ordering::Relaxed));
         }
+        let count = right.len().min(SCOPE_WINDOW);
+        for (offset, slot) in right.iter_mut().enumerate().take(count) {
+            *slot =
+                f32::from_bits(self.right[SCOPE_WINDOW - count + offset].load(Ordering::Relaxed));
+        }
         // The fence keeps the sample loads above from drifting past the re-check below — the
         // reader's half of the ordering the writer's fence promises.
         std::sync::atomic::fence(Ordering::Acquire);
         self.sequence.load(Ordering::Relaxed) == before
+            && self.published_source.load(Ordering::Relaxed) == self.source.load(Ordering::Relaxed)
     }
 
     /// Empties the window and stops following anything.
     pub fn reset(&self) {
         self.watch(ScopeSource::Off);
+        self.published_source
+            .store(ScopeSource::Off.encode(), Ordering::Relaxed);
         for slot in &self.samples {
+            slot.store(0, Ordering::Relaxed);
+        }
+        for slot in &self.right {
             slot.store(0, Ordering::Relaxed);
         }
     }
@@ -172,6 +223,27 @@ impl Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stereo_channels_share_a_window_and_source_changes_discard_history() {
+        let scope = Scope::new();
+        scope.watch(ScopeSource::Master);
+        scope.publish_stereo(&[1.; 1024], &[-1.; 1024], 48000.);
+        let (mut left, mut right) = ([0.; 1024], [0.; 1024]);
+        assert!(scope.read_stereo(&mut left, &mut right));
+        assert_eq!(left, [1.; 1024]);
+        assert_eq!(right, [-1.; 1024]);
+        scope.watch(ScopeSource::Track(0));
+        assert!(!scope.read_stereo(&mut left, &mut right));
+        scope.publish_from(ScopeSource::Master, &[1.; 1024], &[-1.; 1024], 48000.);
+        assert!(!scope.read_stereo(&mut left, &mut right));
+        scope.publish_stereo(&[0.25; 64], &[0.5; 64], 48000.);
+        assert!(scope.read_stereo(&mut left, &mut right));
+        assert_eq!(&left[..960], &[0.; 960]);
+        assert_eq!(&right[..960], &[0.; 960]);
+        assert_eq!(&left[960..], &[0.25; 64]);
+        assert_eq!(&right[960..], &[0.5; 64]);
+    }
 
     #[test]
     fn nothing_is_published_while_nothing_is_watching() {

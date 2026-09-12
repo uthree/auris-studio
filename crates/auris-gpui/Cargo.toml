@@ -14,10 +14,11 @@ asio = ["auris-session/asio"]
 name = "auris-studio"
 path = "src/main.rs"
 
-# The frontend talks to `auris-session` and to gpui, and to nothing else in the workspace.
+# The frontend uses the session, presentation libraries and UI-free agent transport.
 # If this list ever needs `auris-engine` or `auris-dsp` directly, something that belongs in the
 # session layer has leaked into the UI.
 [dependencies]
+auris-agent.workspace = true
 auris-i18n.workspace = true
 auris-session.workspace = true
 env_logger.workspace = true

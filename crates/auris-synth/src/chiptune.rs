@@ -110,6 +110,7 @@ pub struct Chiptune {
     bend: f32,
     /// Most recent modulation, 0 to 1.
     modulation: f32,
+    channel_volume: f32,
     /// How far the vibrato swings right now, in semitones: the patch's own depth plus whatever
     /// the modulation is asking for.
     vibrato_depth: f32,
@@ -146,6 +147,7 @@ impl Chiptune {
             pitch_offset: 0.0,
             bend: 0.0,
             modulation: 0.0,
+            channel_volume: 1.0,
             vibrato_depth: 0.0,
             vibrato_rate: 0.0,
             glide_coeff: 1.0,
@@ -389,9 +391,10 @@ impl SegmentRenderer for Chiptune {
                 self.refresh();
             }
             NoteEvent::Controller { number, value, .. } => {
-                // Controller 1 opens the vibrato. The rest are messages this instrument has no
-                // reading for, and are ignored rather than given one: a pedal that made a square
-                // wave do something surprising would be worse than a pedal that does nothing.
+                if number == 7 {
+                    self.channel_volume = finite_or(value, 1.0).clamp(0.0, 1.0).powi(2);
+                }
+                // Controller 1 opens vibrato; unsupported controllers leave the patch alone.
                 if number == CC_MODULATION {
                     self.modulation = finite_or(value, 0.0).clamp(0.0, 1.0);
                     self.refresh();
@@ -467,7 +470,7 @@ impl SegmentRenderer for Chiptune {
             }
         }
 
-        let output_gain = self.output_gain;
+        let output_gain = self.output_gain * self.channel_volume;
         for sample in dst.iter_mut() {
             *sample *= output_gain;
         }
@@ -495,6 +498,7 @@ impl Instrument for Chiptune {
         self.allocator.prepare(VOICE_COUNT);
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         self.last_voice = None;
         self.refresh();
     }
@@ -509,6 +513,7 @@ impl Instrument for Chiptune {
         self.allocator.clear();
         self.bend = 0.0;
         self.modulation = 0.0;
+        self.channel_volume = 1.0;
         self.last_voice = None;
         self.refresh();
     }

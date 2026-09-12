@@ -78,7 +78,7 @@ crates/auris-toolbox     the session's commands as tools for a language model;
 crates/auris-gpui        desktop frontend (binary `auris-studio`)
 crates/auris-cli         command line frontend (binary `auris`)
 crates/auris-mcp         Model Context Protocol frontend (binary `auris-mcp`)
-crates/auris-agent       LLM client frontend: Ollama / OpenAI-compatible (binary `auris-agent`)
+crates/auris-agent       UI-free LLM worker library: Ollama / OpenAI-compatible
 training/                Python: what trains the voice models auris-singer plays — see below
 ```
 
@@ -108,10 +108,14 @@ Dependency direction is strictly downhill and the frontend boundary matters:
   the two kinds of reader: `auris-i18n` is every word said to a person (the window and the
   CLI), `auris-toolbox` every word said to a model — tool names, descriptions, schemas and the
   work behind them, in English, since neither protocol has a language field. `auris-mcp` and
-  `auris-agent` both take the toolbox, which is what keeps the tool called `compose` identical
-  at both doors; each keeps its transport to itself (`rmcp`+`tokio`, `rig`+`tokio`). A frontend
+  the `auris-agent` library both take the toolbox for model-facing vocabulary and references;
+  each keeps its transport to itself (`rmcp`+`tokio`, `rig`+`tokio`). A frontend
   naming `auris-engine`, `auris-core` or `auris-io` means logic that belongs in the session
   layer has leaked upward — move it down instead of adding the dependency.
+
+The desktop links `auris-agent` as its model transport library. It runs on a cancellable
+background thread and exchanges channel messages with the UI; only the UI executes live edits
+and decides permissions. `cargo run` builds the desktop and agent together.
 
 New work that is a *command* (anything a user could ask for) goes in `auris-session` so every
 frontend gets it. New work that is *presentation* stays in the frontend.

@@ -75,6 +75,20 @@ pub fn performed_note_slots(
             continue;
         }
         match transform {
+            NoteTransform::Octaves { above, below } => {
+                let count = notes.len();
+                for i in 0..count {
+                    for (interval, amount) in [(12_i16, *above), (-12, *below)] {
+                        let pitch = i16::from(notes[i].pitch) + interval;
+                        if amount > 0.0 && (0..=127).contains(&pitch) {
+                            let mut copy = notes[i].clone();
+                            copy.pitch = pitch as u8;
+                            copy.velocity *= amount.clamp(0.0, 1.0);
+                            notes.push(copy);
+                        }
+                    }
+                }
+            }
             NoteTransform::Expression { settings } => {
                 super::expression::express(&mut notes, settings, context)
             }

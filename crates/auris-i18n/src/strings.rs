@@ -40,6 +40,20 @@ macro_rules! strings {
 }
 
 strings! {
+    VisualizerWaiting { en: "Waiting for audio", ja: "音声を待っています" }
+    VisualizerTitle { en: "Audio Visualizer…", ja: "オーディオビジュアライザー…" }
+    VisualizerSelected { en: "Follow selected track", ja: "選択トラックを追従" }
+    VisualizerFreeze { en: "Freeze", ja: "表示を停止" }
+    VisualizerAverage { en: "Average", ja: "平均表示" }
+    VisualizerPeaks { en: "Peak hold", ja: "ピーク保持" }
+    VisualizerSave { en: "Save comparison", ja: "比較カーブを保存" }
+    VisualizerReset { en: "Clear comparison / peaks", ja: "比較・ピークをクリア" }
+    VisualizerNoTrack { en: "Select a track to monitor", ja: "表示するトラックを選択してください" }
+    VisualizerSpectrum { en: "Spectrum · dBFS", ja: "スペクトラム · dBFS" }
+    VisualizerLegend { en: "Accent: current / average · thin gray: peak · thick gray: saved comparison", ja: "アクセント色：現在値／平均 · 細い灰線：ピーク · 太い灰線：保存した比較" }
+    VisualizerStereo { en: "Stereo scope · M / S", ja: "ステレオスコープ · M / S" }
+    VisualizerCorrelation { en: "Correlation (−1 … +1)", ja: "相関（−1 … +1）" }
+    VisualizerHint { en: "Vertical: mono · horizontal: opposite polarity. Negative correlation is a cue to check mono playback, not a quality score. — means one or both channels are silent.", ja: "縦：モノラル · 横：逆位相。負の相関はモノラル再生を確認する目安です。— は片側または両側が無音です。" }
     CmdMatchReference { en: "Adjust by Audio Evaluation…", ja: "音声評価で自動調整…" }
     EditMatchReference { en: "Adjust by Audio Evaluation", ja: "音声評価による調整" }
     AudioMatchObjective { en: "Evaluation target", ja: "評価の目標" }
@@ -784,12 +798,27 @@ strings! {
     PerformHeading { en: "Performance", ja: "演奏" }
     PerformStrumSettings { en: "Strum settings", ja: "ストロークの詳細" }
     PerformExpressionSettings { en: "Expression & groove", ja: "表情・グルーヴの詳細" }
-    PerformPitchSettings { en: "Pitch gestures", ja: "ピッチの表情" }
+    PerformPitchSettings { en: "Melodic expression", ja: "メロディーの表情" }
     PerformPitchScoop { en: "Scoop depth", ja: "しゃくりの深さ" }
     PerformPitchScoopTime { en: "Scoop duration", ja: "しゃくりの長さ" }
     PerformPitchVibrato { en: "Vibrato depth", ja: "ビブラートの深さ" }
     PerformPitchRate { en: "Vibrato rate", ja: "ビブラートの速さ" }
     PerformPitchDelay { en: "Vibrato delay", ja: "ビブラート開始まで" }
+    PerformModulation { en: "Auto modulation", ja: "自動モジュレーション" }
+    PerformVolumeSwell { en: "Long-note volume", ja: "長音の音量変化" }
+    VolumeContourPreset { en: "Volume shape", ja: "音量カーブ" }
+    VolumeContourBowed { en: "Bowed", ja: "弓の抑揚" }
+    VolumeContourSwell { en: "Central swell", ja: "中央で膨らむ" }
+    VolumeContourCrescendo { en: "Crescendo", ja: "クレッシェンド" }
+    VolumeContourDecrescendo { en: "Decrescendo", ja: "デクレッシェンド" }
+    VolumeContourSoftAttack { en: "Soft attack", ja: "柔らかい立ち上がり" }
+    VolumeContourFlat { en: "Flat", ja: "一定" }
+    VolumeContourCustom { en: "Custom", ja: "カスタム" }
+    VolumeContourStart { en: "Start 0%", ja: "開始 0%" }
+    VolumeContourEnd { en: "End 100%", ja: "終端 100%" }
+    VolumeContourHint { en: "Click to add; drag to move; right-click to remove a point. Top = full volume. Strength is set above.", ja: "クリックで点を追加、ドラッグで移動、右クリックで削除。上端が最大音量です。強さは上の項目で調整します。" }
+    PerformOctaveAbove { en: "Upper octave", ja: "上オクターブの強さ" }
+    PerformOctaveBelow { en: "Lower octave", ja: "下オクターブの強さ" }
     PerformPitchFall { en: "Fall depth", ja: "フォールの深さ" }
     PerformPitchFallTime { en: "Fall duration", ja: "フォールの長さ" }
     PerformPitchGlide { en: "Melodic connection", ja: "音程の滑らかなつなぎ" }
@@ -1757,9 +1786,33 @@ new のオプション
     AgentConfigure { en: "Settings", ja: "設定" }
     AgentApply { en: "Apply", ja: "適用" }
     AgentProviderLabel { en: "Provider", ja: "プロバイダ" }
+    AgentReadOnly { en: "Read-only", ja: "読み取り専用" }
+    AgentEditMode { en: "Edit", ja: "編集" }
+    AgentPlanMode { en: "Plan", ja: "プラン" }
+    AgentBypassMode { en: "Bypass", ja: "バイパス" }
+    AgentPermissions { en: "Permissions…", ja: "操作の許可…" }
+    AgentPermissionHelp { en: "Deny rules always win. Plan blocks changes. Read-only asks before changes; Edit allows ordinary edits. Bypass skips confirmation. Click a rule to cycle Default → Allow → Deny. Keyboard: Shift+Tab changes mode; /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。プランは変更を禁止、読み取り専用は変更前に確認、編集は通常の編集を許可、バイパスは確認を省略します。ルールはクリックで 標準 → 許可 → 禁止。Shift+Tabでモード変更。/mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
+    AgentRuleDefault { en: "Default", ja: "標準" }
+    AgentRuleAllow { en: "Allow", ja: "許可" }
+    AgentRuleDeny { en: "Deny", ja: "禁止" }
+    AgentApprovalTitle { en: "Allow this operation?", ja: "この操作を許可しますか？" }
+    AgentApprovalKeys { en: "{once}: allow once · {always}: always allow this operation · Esc: deny", ja: "{once}：今回のみ許可 · {always}：この操作を常に許可 · Esc：拒否" }
+    AgentAllowOnce { en: "Allow once", ja: "今回のみ許可" }
+    AgentAllowAlways { en: "Always allow this operation", ja: "この操作を常に許可" }
+    AgentDenyOnce { en: "Deny", ja: "拒否" }
+    AgentAwaitingApproval { en: "Waiting for permission", ja: "操作の許可を待っています" }
+    AgentCompact { en: "Compact context", ja: "文脈を圧縮" }
+    AgentCompacting { en: "Summarizing earlier conversation…", ja: "以前の会話を要約しています…" }
+    AgentCompactEmpty { en: "Start a conversation before compacting. /compact summarizes earlier turns.", ja: "会話を始めてから圧縮できます。/compact でも以前の会話を要約できます。" }
+    AgentAutoCompact { en: "Auto-compact", ja: "自動圧縮" }
+    AgentCompactOff { en: "Off", ja: "オフ" }
     AgentModelLabel { en: "Model", ja: "モデル" }
     AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
     AgentContextTokens { en: "Context tokens", ja: "文脈長" }
+    AgentModelInPanel { en: "Choose the model in the Agent Panel. Apply these settings to use them for the next request.", ja: "モデルはエージェントパネルで選択します。設定を適用すると、次の依頼から反映されます。" }
+    AgentSettingsApplied { en: "Agent settings applied", ja: "エージェント設定を適用しました" }
+    AgentOutputTokens { en: "Output token limit", ja: "出力トークン上限" }
+    AgentOutputTokensHelp { en: "Per response. Increasing output may raise the context window; reducing context may lower output. Applies to the next request.", ja: "1応答あたりの上限です。増やすと文脈長も増え、文脈長を減らすと上限も下がる場合があります。次の依頼から反映されます。" }
     AgentThinking { en: "Thinking", ja: "推論モード" }
     AgentThinkingAuto { en: "Model default", ja: "モデルの標準設定" }
     AgentThinkingOn { en: "On", ja: "有効" }

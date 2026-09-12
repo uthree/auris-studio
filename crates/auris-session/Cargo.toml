@@ -31,6 +31,7 @@ log.workspace = true
 midir.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+schemars = "1"
 serde_yaml_ng.workspace = true
 sha2.workspace = true
 tempfile.workspace = true

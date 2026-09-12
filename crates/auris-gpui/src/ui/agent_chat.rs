@@ -1,22 +1,13 @@
 //! The agent panel: a conversation with a language model, beside the song it is about.
 //!
-//! The model itself lives in `auris-agent`, spawned here as a child process in its `--json`
-//! mode — the window writes `{"say": …}` lines to its stdin and reads events back off its
-//! stdout. Keeping it a process rather than a library is the frontend boundary doing its job:
-//! this crate never learns what an LLM client is, the agent never learns what a window is, and
-//! the pair that ships in the release archive is exactly the pair that talks here.
+//! The UI-free `auris-agent` library runs on a cancellable background thread. Channels carry
+//! requests, events and host replies; the window never blocks on model or network work.
 //!
-//! The one genuinely new problem is that both ends hold the same file. The panel's answer:
-//! the window **saves before every message**, so the agent always reads the document as it
-//! stands — and at the end of a turn the window accepts the collected writes as one undoable edit,
-//! automatically while it has nothing unsaved and by an offered button when it does. The
-//! decisions behind that live in [`AgentChat::absorb`], which is plain data in and plain
-//! instruction out, so the whole policy is tested without a window.
+//! Editing commands execute against the window's current session. They do not save or
+//! reload a project; successful edits appear on repaint and use ordinary undo history.
 
-use std::io::{BufRead, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Receiver;
 
 use auris_i18n::Key;
 use auris_session::AgentPreferences;
@@ -30,6 +21,8 @@ use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
 
+mod controls;
+
 /// Maximum transcript rows retained in the panel.
 const CHAT_CAPACITY: usize = 500;
 
@@ -40,6 +33,8 @@ pub(crate) enum ChatEntry {
     You(String),
     /// What the model answered.
     Agent(String),
+    /// Status produced by the agent runtime, not by the model.
+    Status(String),
     /// One tool call: running while `line` is empty, answered or refused once it is not.
     Tool {
         /// The tool's wire name.
@@ -51,7 +46,7 @@ pub(crate) enum ChatEntry {
         /// The whole answer, shown when the row is clicked open.
         detail: String,
     },
-    /// Something went wrong — the process, the provider, the wire.
+    /// Something went wrong — the worker, the provider, the channel.
     Error(String),
     /// A note from the panel itself, translated when drawn.
     Note(Key),
@@ -60,6 +55,22 @@ pub(crate) enum ChatEntry {
 /// One event off the agent's wire, already parsed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum AgentEvent {
+    Permission {
+        id: u64,
+        tool: String,
+        args: serde_json::Value,
+    },
+    Compacting,
+    Compacted {
+        ok: bool,
+        message: String,
+        manual: bool,
+        tokens: u64,
+    },
+    /// A file-free command for the bound session.
+    Edit {
+        command: serde_json::Value,
+    },
     /// Previously completed text turns recovered for this project.
     History {
         /// User and assistant text, oldest first.
@@ -70,7 +81,7 @@ pub(crate) enum AgentEvent {
         /// What happened.
         message: String,
     },
-    /// The process is up, and named what answered the phone.
+    /// The worker is up, and named what answered the phone.
     Ready {
         /// The model the agent resolved to.
         model: String,
@@ -105,12 +116,12 @@ pub(crate) enum AgentEvent {
         /// Tokens the model wrote across the turn.
         output_tokens: u64,
     },
-    /// The turn failed; the process is still alive.
+    /// The turn failed; the worker is still alive.
     Error {
         /// What went wrong.
         message: String,
     },
-    /// The process's stdout closed: it is gone.
+    /// The background worker has finished.
     Ended,
 }
 
@@ -128,6 +139,22 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             .to_string()
     };
     Some(match parsed.get("event")?.as_str()? {
+        "ended" => AgentEvent::Ended,
+        "permission" => AgentEvent::Permission {
+            id: parsed.get("id")?.as_u64()?,
+            tool: text("tool"),
+            args: parsed.get("args")?.clone(),
+        },
+        "compacting" => AgentEvent::Compacting,
+        "compacted" => AgentEvent::Compacted {
+            ok: parsed["ok"] == true,
+            message: text("message"),
+            manual: parsed["manual"] == true,
+            tokens: parsed["context_tokens"].as_u64().unwrap_or(0),
+        },
+        "edit" => AgentEvent::Edit {
+            command: parsed.get("command")?.clone(),
+        },
         "history" => AgentEvent::History {
             turns: parsed
                 .get("turns")?
@@ -240,10 +267,6 @@ pub(crate) enum Absorbed {
 pub(crate) enum AgentField {
     /// The message being written.
     Chat,
-    /// The base URL, in the settings section.
-    Url,
-    /// The API key's environment variable, in the settings section.
-    KeyEnv,
 }
 
 /// One model a provider reported serving.
@@ -258,7 +281,7 @@ pub(crate) struct ModelOption {
 /// Reads the one line `auris-agent models` prints into the picker's options.
 ///
 /// A free function because it is a decision — what counts as a model, what counts as the
-/// provider having failed — and the thread that runs the subprocess should carry none.
+/// provider having failed — and the worker thread should carry none.
 pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
     let parsed: serde_json::Value =
         serde_json::from_str(line).map_err(|error| format!("not JSON: {error}"))?;
@@ -280,26 +303,58 @@ pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
         .collect())
 }
 
-/// The running child process and both ends of its wire.
+/// One cancellable worker owned by the panel. Dropping it stops the conversation.
 struct AgentLink {
-    child: Child,
-    to_child: ChildStdin,
-    from_child: Receiver<AgentEvent>,
+    worker: auris_agent::Worker,
+    inspection: Option<PendingInspection>,
 }
 
-impl Drop for AgentLink {
+struct PendingInspection {
+    revision: u64,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    receiver: Receiver<Result<auris_session::audio_inspection::Inspection, String>>,
+}
+
+impl PendingInspection {
+    fn poll(
+        &self,
+        revision: u64,
+        same_document: bool,
+    ) -> Option<Result<auris_session::audio_inspection::Inspection, String>> {
+        if self.revision != revision || !same_document {
+            return Some(Err(
+                "The document changed during inspection; request a fresh inspection".into(),
+            ));
+        }
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(_) => Some(Err("Audio inspection worker stopped".into())),
+        }
+    }
+}
+
+impl Drop for PendingInspection {
     fn drop(&mut self) {
-        // Dropping the panel must not leave a model running unattended. Kill rather than wait:
-        // the child may be minutes into a render, and the window is going away now.
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl AgentLink {
+    fn send(&self, wire: &str) -> Result<(), String> {
+        self.worker.send(wire)
     }
 }
 
 /// Everything the agent panel is, apart from its pixels.
 pub(crate) struct AgentChat {
+    controls: controls::Controls,
+    policy: auris_session::agent_policy::Policy,
+    auto_compact_percent: Option<u8>,
     /// Requested Ollama context, independent of the model's architectural maximum.
     pub(crate) context_tokens: u32,
+    pub(crate) output_tokens: u32,
     /// Ollama thinking override.
     pub(crate) thinking: Option<bool>,
     /// The transcript, oldest first.
@@ -320,8 +375,6 @@ pub(crate) struct AgentChat {
     pub(crate) fetching_models: bool,
     /// What went wrong the last time it was asked, shown where the list would be.
     pub(crate) models_error: Option<String>,
-    /// Whether the provider picker is dropped open.
-    pub(crate) provider_menu: bool,
     /// Whether the model picker is dropped open.
     pub(crate) model_menu: bool,
     /// Prompt tokens the last turn carried — the context gauge's needle.
@@ -335,7 +388,7 @@ pub(crate) struct AgentChat {
     /// Running tool rows by wire name, so a result never scans the transcript.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
-    models_rx: Option<Receiver<Result<Vec<ModelOption>, String>>>,
+    pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
     /// Which field holds the keyboard, if any.
     pub(crate) focused: Option<AgentField>,
     /// Whether the settings section is showing.
@@ -371,7 +424,11 @@ pub(crate) struct AgentChat {
 impl Default for AgentChat {
     fn default() -> Self {
         Self {
+            controls: controls::Controls::default(),
+            policy: Default::default(),
+            auto_compact_percent: None,
             context_tokens: 32768,
+            output_tokens: 4096,
             thinking: None,
             entries: Vec::new(),
             input: TextField::new(String::new()),
@@ -382,7 +439,6 @@ impl Default for AgentChat {
             models: Vec::new(),
             fetching_models: false,
             models_error: None,
-            provider_menu: false,
             model_menu: false,
             tokens_in: 0,
             tokens_out: 0,
@@ -441,8 +497,6 @@ impl AgentChat {
     pub(crate) fn field_mut(&mut self) -> Option<&mut TextField> {
         Some(match self.focused? {
             AgentField::Chat => &mut self.input,
-            AgentField::Url => &mut self.url_field,
-            AgentField::KeyEnv => &mut self.key_env_field,
         })
     }
 
@@ -450,14 +504,15 @@ impl AgentChat {
     pub(crate) fn field(&self) -> Option<&TextField> {
         Some(match self.focused? {
             AgentField::Chat => &self.input,
-            AgentField::Url => &self.url_field,
-            AgentField::KeyEnv => &self.key_env_field,
         })
     }
 
     /// Copies the saved preferences into the settings section's fields.
     pub(crate) fn load_preferences(&mut self, prefs: &AgentPreferences) {
+        self.policy = prefs.policy.clone();
+        self.auto_compact_percent = prefs.auto_compact_percent;
         self.context_tokens = prefs.context_tokens.unwrap_or(32768);
+        self.output_tokens = prefs.output_tokens.unwrap_or(4096);
         self.thinking = prefs.thinking;
         self.provider_openai = prefs.provider.trim() == "openai";
         self.chosen_model = prefs.model.trim().to_string();
@@ -476,7 +531,10 @@ impl AgentChat {
     /// The settings section's fields, read back out as preferences.
     pub(crate) fn preferences(&self) -> AgentPreferences {
         AgentPreferences {
+            policy: self.policy.clone(),
+            auto_compact_percent: self.auto_compact_percent,
             context_tokens: Some(self.context_tokens),
+            output_tokens: Some(self.output_tokens),
             thinking: self.thinking,
             provider: match self.provider_openai {
                 true => "openai".to_string(),
@@ -505,6 +563,27 @@ impl AgentChat {
         dirty: bool,
     ) -> Absorbed {
         match event {
+            AgentEvent::Permission { .. } | AgentEvent::Edit { .. } => {}
+            AgentEvent::Compacting => {
+                self.controls.compacting = true;
+            }
+            AgentEvent::Compacted {
+                ok,
+                message,
+                manual,
+                tokens,
+            } => {
+                self.controls.compacting = false;
+                if manual {
+                    self.busy = false;
+                }
+                if ok {
+                    self.tokens_in = tokens;
+                    self.push_entry(ChatEntry::Status(message));
+                } else {
+                    self.push_entry(ChatEntry::Error(message));
+                }
+            }
             AgentEvent::History { turns } => {
                 let current = match self.entries.last() {
                     Some(ChatEntry::You(text)) => Some(text.clone()),
@@ -619,6 +698,7 @@ impl AgentChat {
                 return self.finish_reload(open, dirty);
             }
             AgentEvent::Ended => {
+                self.controls = Default::default();
                 self.busy = false;
                 self.link = None;
                 self.push_entry(ChatEntry::Note(Key::AgentEnded));
@@ -636,174 +716,27 @@ impl AgentChat {
     }
 }
 
-/// Where the agent binary lives: beside this one.
-///
-/// The release archive ships them together, and a development build puts both in the same
-/// target directory — the one layout rule the whole feature leans on.
-fn agent_binary() -> Result<PathBuf, String> {
-    let name = match cfg!(windows) {
-        true => "auris-agent.exe",
-        false => "auris-agent",
-    };
-    let executable = std::env::current_exe()
-        .map_err(|error| format!("could not locate the running executable: {error}"))?;
-    let directory = executable
-        .parent()
-        .ok_or_else(|| "the running executable has no parent directory".to_string())?;
-    let candidate = directory.join(name);
-    candidate
-        .is_file()
-        .then_some(candidate.clone())
-        .ok_or_else(|| {
-            format!(
-                "the bundled agent binary was not found at {}",
-                candidate.display()
-            )
-        })
+/// Start a background worker with explicit settings and history location.
+fn spawn_link(
+    prefs: &AgentPreferences,
+    folder: Option<&Path>,
+    fresh_history: bool,
+) -> Result<AgentLink, String> {
+    auris_agent::Worker::spawn(prefs.clone(), folder.map(Path::to_path_buf), fresh_history).map(
+        |worker| AgentLink {
+            worker,
+            inspection: None,
+        },
+    )
 }
 
-/// Starts the agent in its JSON mode and wires both ends.
-///
-/// `folder` becomes the child's working directory, so a model told nothing else puts files
-/// beside the song. The reader thread owns stdout for the child's whole life and speaks to the
-/// window only through the channel; the window polls that channel on its repaint tick, the
-/// same way it reads everything else another thread writes.
-fn spawn_link(folder: Option<&Path>, fresh_history: bool) -> Result<AgentLink, String> {
-    let binary = agent_binary()?;
-    let mut command = Command::new(&binary);
-    command
-        .arg("--json")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(folder) = folder {
-        command.current_dir(folder);
-        command.env(
-            "AURIS_AGENT_HISTORY",
-            folder.join(".auris-conversation.json"),
-        );
-    }
-    command.env_remove("AURIS_AGENT_FRESH_HISTORY");
-    if fresh_history {
-        command.env("AURIS_AGENT_FRESH_HISTORY", "1");
-    }
-    // Windows-only API, not a `cfg!` choice: without this flag a windowless application
-    // spawning a console binary flashes a console window up over the music.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("could not start {}: {error}", binary.display()))?;
-    let to_child = child.stdin.take().ok_or("the child has no stdin")?;
-    let stdout = child.stdout.take().ok_or("the child has no stdout")?;
-    let stderr = child.stderr.take().ok_or("the child has no stderr")?;
-
-    let (sender, from_child): (Sender<AgentEvent>, Receiver<AgentEvent>) =
-        std::sync::mpsc::channel();
-    let stderr_sender = sender.clone();
-    let (stderr_done, stderr_finished) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        forward_agent_stderr(std::io::BufReader::new(stderr), &stderr_sender);
-        let _ = stderr_done.send(());
-    });
-    std::thread::spawn(move || {
-        let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines() {
-            let Ok(line) = line else { break };
-            if let Some(event) = parse_event(&line)
-                && sender.send(event).is_err()
-            {
-                return;
-            }
-        }
-        // A startup failure writes stderr and closes stdout at nearly the same instant. Wait for
-        // the stderr reader so its useful diagnosis is always queued before the generic EOF.
-        let _ = stderr_finished.recv();
-        let _ = sender.send(AgentEvent::Ended);
-    });
-
-    Ok(AgentLink {
-        child,
-        to_child,
-        from_child,
-    })
-}
-
-/// Carries startup diagnostics from the agent's ordinary error stream into the chat event wire.
-fn forward_agent_stderr(reader: impl BufRead, sender: &Sender<AgentEvent>) {
-    for line in reader.lines().map_while(Result::ok) {
-        let message = line.trim();
-        if !message.is_empty()
-            && sender
-                .send(AgentEvent::Error {
-                    message: message.to_string(),
-                })
-                .is_err()
-        {
-            return;
-        }
-    }
-}
-
-/// Asks `auris-agent models` what `prefs`' provider serves, off the window's thread.
-///
-/// One shot per question: the subprocess prints one JSON line and exits, the thread parses it
-/// and puts the verdict on the channel, and the repaint tick picks it up — the same wire shape
-/// as the conversation itself.
-fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<Vec<ModelOption>, String>> {
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let binary = match agent_binary() {
-        Ok(binary) => binary,
-        Err(error) => {
-            let _ = sender.send(Err(error));
-            return receiver;
-        }
-    };
-    let mut command = Command::new(&binary);
-    command
-        .arg("models")
-        .arg("--provider")
-        .arg(match prefs.provider.trim() {
-            "openai" => "openai",
-            _ => "ollama",
-        })
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if !prefs.url.trim().is_empty() {
-        command.arg("--url").arg(prefs.url.trim());
-    }
-    command
-        .arg("--context-tokens")
-        .arg(prefs.context_tokens.unwrap_or(32768).to_string());
-    if !prefs.api_key_env.trim().is_empty() {
-        command.arg("--api-key-env").arg(prefs.api_key_env.trim());
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    std::thread::spawn(move || {
-        let answer = command
-            .output()
-            .map_err(|error| format!("could not run {}: {error}", binary.display()))
-            .and_then(|output| {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                parse_model_list(stdout.lines().next().unwrap_or_default())
-            });
-        let _ = sender.send(answer);
-    });
-    receiver
+/// Fetch provider models off the UI thread.
+fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<String, String>> {
+    auris_agent::list_models_background(prefs.clone())
 }
 
 impl AurisApp {
-    /// Frames the selection using the same clip and note numbers as the model tools.
+    /// Frames the selection using live command IDs and zero-based note indices.
     fn agent_selection_context(&self) -> serde_json::Value {
         let project = self.project();
         let clips: Vec<_> = project
@@ -820,29 +753,33 @@ impl AurisApp {
                 }))
             })
             .collect();
-        let mut notes = Vec::new();
-        if let Some((_, clip)) = self.selected_clip.and_then(|id| project.midi_clip(id)) {
-            let mut ordered: Vec<_> = clip.notes.iter().enumerate().collect();
-            ordered.sort_by_key(|(index, note)| (note.start, note.pitch, *index));
-            notes = ordered
-                .iter()
-                .enumerate()
-                .filter(|(_, (index, _))| self.selected_notes.contains(index))
-                .map(|(number, _)| number + 1)
-                .collect();
-        }
+        let notes: Vec<_> = self
+            .selected_clip
+            .and_then(|id| project.midi_clip(id))
+            .map(|(_, clip)| {
+                clip.notes
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| self.selected_notes.contains(index))
+                    .map(|(index, _)| index)
+                    .collect()
+            })
+            .unwrap_or_default();
         serde_json::json!({
             "selected_track": self.selected_track.and_then(|id| project.track(id)).map(|track| &track.name),
-            "selected_clips": clips, "selected_note_numbers": notes,
+            "selected_track_id": self.selected_track.map(|id| id.0),
+            "selected_clip_id": self.selected_clip.map(|id| id.0),
+            "selected_clips": clips, "selected_note_indices": notes,
             "playhead_tick": self.session.playhead().raw(),
             "playhead_bar": project.signatures.bar_of(self.session.playhead()),
             "loop_region_ticks": project.loop_region.map(|(start, end)| (start.raw(), end.raw())),
-            "addressing": "Clip and note numbers are 1-based as describe and notes report. The selection is context, not authorization to change unselected material."
+            "addressing": "Use stable numeric track and clip IDs. Note indices are zero-based storage indices as read_notes reports. The selection is context, not authorization to change unselected material."
         })
     }
 
     /// Starts fresh model history and rebinds the next child to the current document.
     pub(crate) fn agent_reset_conversation(&mut self) {
+        self.agent_chat.controls = Default::default();
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
         self.agent_chat.bound_project = None;
@@ -861,8 +798,11 @@ impl AurisApp {
         }
     }
 
-    /// Stops the subprocess and checks for completed writes, which remain undoable.
+    /// Stops the worker and checks for completed writes, which remain undoable.
     fn agent_stop(&mut self, cx: &mut gpui::Context<Self>) {
+        self.agent_chat.controls.pending = None;
+        self.agent_chat.controls.permits.clear();
+        self.agent_chat.controls.compacting = false;
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
         if self.session.externally_modified()
@@ -888,7 +828,13 @@ impl AurisApp {
     /// of the bargain is in [`AgentChat::absorb`], where the model's writes come back.
     pub(crate) fn agent_send(&mut self) {
         let text = self.agent_chat.input.content().trim().to_string();
-        if text.is_empty() || self.agent_chat.busy {
+        if text.is_empty() {
+            return;
+        }
+        if self.agent_control_command(&text) {
+            return;
+        }
+        if self.agent_chat.busy {
             return;
         }
         if self.agent_chat.pending_reload.is_some() {
@@ -921,35 +867,22 @@ impl AurisApp {
             }
             return;
         }
-        if self.session.path().is_none() {
-            self.agent_chat
-                .push_entry(ChatEntry::Note(Key::AgentSaveFirst));
-            return;
-        }
         if self.agent_chat.link.is_some()
             && self.agent_chat.bound_project.as_deref() != self.session.path()
         {
             self.agent_reset_conversation();
         }
-        if self.session.is_dirty()
-            && self.session.path().is_some()
-            && let Err(error) = self.session.save_in_place()
-        {
-            self.agent_chat
-                .push_entry(ChatEntry::Error(crate::i18n::error_text(
-                    &error,
-                    self.language(),
-                )));
-            return;
-        }
-
         if self.agent_chat.link.is_none() {
             let folder = self
                 .session
                 .path()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
-            match spawn_link(folder.as_deref(), self.agent_chat.fresh_history) {
+            match spawn_link(
+                &self.settings.agent,
+                folder.as_deref(),
+                self.agent_chat.fresh_history,
+            ) {
                 Ok(link) => {
                     self.agent_chat.link = Some(link);
                     self.agent_chat.bound_project = self.session.path().map(Path::to_path_buf);
@@ -968,9 +901,9 @@ impl AurisApp {
             framed_say(&text, self.session.path())
         );
         let wire =
-            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments }).to_string();
+            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments, "policy": self.settings.agent.policy, "auto_compact_percent": self.settings.agent.auto_compact_percent.unwrap_or(85) }).to_string();
         if let Some(link) = self.agent_chat.link.as_mut()
-            && let Err(error) = writeln!(link.to_child, "{wire}")
+            && let Err(error) = link.send(&wire.to_string())
         {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
@@ -981,6 +914,80 @@ impl AurisApp {
         self.agent_chat.busy = true;
         self.agent_chat.input = TextField::new(String::new());
         self.agent_chat.attachments.clear();
+    }
+
+    /// Apply one request to the bound document without touching its saved file.
+    fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
+        if self.agent_chat.bound_project.as_deref() != self.session.path() {
+            return Err("The open document changed; start a new conversation".into());
+        }
+        self.check_agent_edit(&command)?;
+        serde_json::from_value::<auris_session::live_agent::Command>(command)
+            .map_err(|error| error.to_string())
+            .and_then(|command| {
+                self.session
+                    .agent_command_with_plugin_paths(command, &self.settings.plugin_paths)
+            })
+    }
+
+    fn start_agent_inspection(&mut self, command: &serde_json::Value) -> Result<(), String> {
+        if self.agent_chat.bound_project.as_deref() != self.session.path() {
+            return Err("The open document changed; start a new conversation".into());
+        }
+        self.check_agent_edit(command)?;
+        let auris_session::live_agent::Command::InspectAudio {
+            start_bar,
+            bars,
+            track,
+        } = serde_json::from_value(command.clone()).map_err(|e| e.to_string())?
+        else {
+            return Err("Expected inspect_audio".into());
+        };
+        let job = self.session.audio_inspection_job(start_bar, bars, track)?;
+        let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
+        if link.inspection.is_some() {
+            return Err("An inspection is already running".into());
+        }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("auris-audio-inspection".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    job.run(&worker_cancel)
+                }))
+                .unwrap_or_else(|_| Err("Audio inspection worker panicked".into()));
+                let _ = sender.send(result);
+            })
+            .map_err(|e| e.to_string())?;
+        link.inspection = Some(PendingInspection {
+            revision: self.session.revision(),
+            cancel,
+            receiver,
+        });
+        Ok(())
+    }
+
+    fn poll_agent_inspection(&mut self) {
+        let Some(link) = self.agent_chat.link.as_mut() else {
+            return;
+        };
+        let Some(pending) = link.inspection.as_ref() else {
+            return;
+        };
+        let Some(result) = pending.poll(
+            self.session.revision(),
+            self.agent_chat.bound_project.as_deref() == self.session.path(),
+        ) else {
+            return;
+        };
+        link.inspection = None;
+        let wire = match result {
+            Ok(report) => serde_json::json!({"event":"edit_result","ok":true,"inspection":report}),
+            Err(error) => serde_json::json!({"event":"edit_result","ok":false,"text":error}),
+        };
+        let _ = link.send(&wire.to_string());
     }
 
     /// Drains the agent's channel, obeying what each event asks for.
@@ -994,7 +1001,7 @@ impl AurisApp {
         {
             self.agent_chat.models_rx = None;
             self.agent_chat.fetching_models = false;
-            match answer {
+            match answer.and_then(|line| parse_model_list(&line)) {
                 Ok(models) => {
                     // The chosen model's window rides in on its listing — the gauge has no
                     // other way to learn it.
@@ -1011,13 +1018,60 @@ impl AurisApp {
             }
             cx.notify();
         }
+        // A live command must not join or finish the user's in-progress undo transaction.
+        if self.drag.is_some() {
+            return;
+        }
+        self.poll_agent_inspection();
         loop {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
             };
-            let Ok(event) = link.from_child.try_recv() else {
+            let Ok(value) = link.worker.try_recv() else {
                 return;
             };
+            let Some(event) = parse_event(&value.to_string()) else {
+                continue;
+            };
+            if let AgentEvent::Permission { id, tool, args } = event {
+                self.agent_permission(id, tool, args);
+                cx.notify();
+                continue;
+            }
+            if let AgentEvent::Edit { command } = event {
+                if command["action"] == "inspect_audio" {
+                    if let Err(error) = self.start_agent_inspection(&command)
+                        && let Some(link) = &self.agent_chat.link
+                    {
+                        let _ = link.send(
+                            &serde_json::json!({"event":"edit_result","ok":false,"text":error})
+                                .to_string(),
+                        );
+                    }
+                    continue;
+                }
+                let revision = self.session.revision();
+                let result = self.agent_edit(command);
+                let ok = result.is_ok();
+                let text = result.unwrap_or_else(|error| error);
+                let wire = serde_json::json!({"event": "edit_result", "ok": ok, "text": text});
+                if let Some(link) = self.agent_chat.link.as_mut()
+                    && let Err(error) = link.send(&wire.to_string())
+                {
+                    self.agent_chat
+                        .push_entry(ChatEntry::Error(error.to_string()));
+                    self.agent_chat.link = None;
+                    self.agent_chat.busy = false;
+                }
+                if self.session.revision() != revision {
+                    self.resync_selection();
+                    self.cancel_auto_sing();
+                    self.invalidate_sung_previews();
+                    self.reset_drum_analysis();
+                }
+                cx.notify();
+                continue;
+            }
             let open = self.session.path().map(Path::to_path_buf);
             let dirty = self.session.is_dirty();
             match self.agent_chat.absorb(event, open.as_deref(), dirty) {
@@ -1036,7 +1090,7 @@ impl AurisApp {
     /// Throws the model list away and asks the provider again, with the form as it stands.
     pub(crate) fn agent_refresh_models(&mut self) {
         // One question at a time: a second press while one is out would park another
-        // thread-and-subprocess pair behind the same server, and a server that is not
+        // worker thread behind the same server, and a server that is not
         // answering would collect one per click.
         if self.agent_chat.fetching_models {
             return;
@@ -1139,7 +1193,7 @@ impl AurisApp {
     /// Answers for a key while one of the agent panel's fields holds the keyboard.
     ///
     /// The characters come through the platform's input handler like every other field's; this
-    /// sees what that leaves out. Enter in the chat field sends; in a settings field it applies.
+    /// sees what that leaves out. Enter in the chat field sends.
     pub(crate) fn agent_key(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -1154,6 +1208,24 @@ impl AurisApp {
             .agent_chat
             .field()
             .is_some_and(|field| field.marked().is_some());
+        if !composing && self.agent_chat.controls.pending.is_some() {
+            if key == "escape" {
+                self.agent_approval(controls::Approval::Deny);
+                return true;
+            }
+            if key == "enter" && event.keystroke.modifiers.secondary() {
+                self.agent_approval(if event.keystroke.modifiers.shift {
+                    controls::Approval::Always
+                } else {
+                    controls::Approval::Once
+                });
+                return true;
+            }
+        }
+        if !composing && key == "tab" && event.keystroke.modifiers.shift {
+            self.agent_mode(self.settings.agent.policy.mode.next());
+            return true;
+        }
         if !composing {
             match (key, focused) {
                 ("escape", _) => {
@@ -1162,13 +1234,6 @@ impl AurisApp {
                 }
                 ("enter", AgentField::Chat) => {
                     self.agent_submit(window, cx);
-                    return true;
-                }
-                // A finished URL or key name changes what the provider would answer, so the
-                // model list is asked again rather than left describing the old endpoint.
-                ("enter", _) => {
-                    self.agent_chat.focused = None;
-                    self.agent_refresh_models();
                     return true;
                 }
                 _ => {}
@@ -1182,24 +1247,12 @@ impl AurisApp {
         })
     }
 
-    /// The send button and Enter share validation and the unsaved-project flow.
-    fn agent_submit(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+    /// The send button and Enter share validation before editing the live session.
+    fn agent_submit(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) {
         if self.agent_chat.input.marked().is_some() {
             return;
         }
         self.agent_send();
-        if self.session.path().is_none()
-            && self.settings.agent.is_configured()
-            && !self.agent_chat.input.content().trim().is_empty()
-            && !self.agent_chat.busy
-            && self.agent_chat.pending_reload.is_none()
-        {
-            self.save_as_then(
-                Some(crate::ui::prompt::PendingAction::AgentSend),
-                window,
-                cx,
-            );
-        }
     }
 
     /// Puts the keyboard into one of the panel's fields.
@@ -1217,17 +1270,12 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let configured = self.settings.agent.is_configured();
-        let configuring = self.agent_chat.configuring || !configured;
-        if configuring && !configured {
-            // First opening on an unconfigured machine: start the form from what is saved.
-            self.agent_chat
-                .load_preferences_once(&self.settings.agent.clone());
-        }
-        // The first time the settings section is on screen, ask the provider what it serves —
+        // The persistent model picker uses the saved provider even before settings opens.
+        self.agent_chat
+            .load_preferences_once(&self.settings.agent.clone());
+        // When the panel first opens, ask the provider what it serves —
         // once, and only until an answer or a refusal lands; the refresh button asks again.
-        if configuring
-            && self.agent_chat.models.is_empty()
+        if self.agent_chat.models.is_empty()
             && self.agent_chat.models_error.is_none()
             && !self.agent_chat.fetching_models
             && self.agent_chat.models_rx.is_none()
@@ -1355,22 +1403,14 @@ impl AurisApp {
                         "agent-configure",
                         self.t(Key::AgentConfigure),
                         ButtonStyle::Normal,
-                        configuring,
+                        false,
                         theme.accent,
                         &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_chat.configuring = !this.agent_chat.configuring;
-                            if this.agent_chat.configuring {
-                                let prefs = this.settings.agent.clone();
-                                this.agent_chat.load_preferences(&prefs);
-                            } else {
-                                this.agent_chat.focused = None;
-                            }
-                            cx.notify();
-                        }),
+                        cx.listener(|this, _, _, cx| this.open_settings(cx)),
                     )),
             )
-            .when(configuring, |this| this.child(self.agent_settings(cx)))
+            .child(self.agent_controls(cx))
+            .child(self.agent_model_picker(cx))
             .child(
                 self.scrolling(
                     ScrollPanel::Agent,
@@ -1382,31 +1422,34 @@ impl AurisApp {
                         .p_1()
                         .gap_1()
                         .overflow_y_scroll()
+                        .when(self.agent_chat.controls.rules_open, |this| {
+                            this.child(self.agent_rules(cx))
+                        })
                         .children(rows)
                         .when(busy, |this| {
+                            this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
+                                self.t(if self.agent_chat.controls.compacting {
+                                    Key::AgentCompacting
+                                } else if self.agent_chat.controls.pending.is_some() {
+                                    Key::AgentAwaitingApproval
+                                } else {
+                                    Key::AgentWorking
+                                }),
+                            ))
+                        })
+                        .when(self.agent_chat.entries.is_empty() && !busy, |this| {
                             this.child(
                                 div()
-                                    .px_1p5()
+                                    .p_2()
                                     .text_xs()
                                     .text_color(theme.text_faint)
-                                    .child(self.t(Key::AgentWorking)),
+                                    .child(self.t(Key::AgentPlaceholder)),
                             )
-                        })
-                        .when(
-                            self.agent_chat.entries.is_empty() && !busy && !configuring,
-                            |this| {
-                                this.child(
-                                    div()
-                                        .p_2()
-                                        .text_xs()
-                                        .text_color(theme.text_faint)
-                                        .child(self.t(Key::AgentPlaceholder)),
-                                )
-                            },
-                        ),
+                        }),
                     cx,
                 ),
             )
+            .child(self.agent_approval_view(cx))
             .child(self.agent_gauge_row(&theme))
             .child(self.agent_input_row(cx))
     }
@@ -1472,6 +1515,7 @@ impl AurisApp {
         let (colour, text): (gpui::Hsla, String) = match entry {
             ChatEntry::You(text) => (theme.accent_text, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
+            ChatEntry::Status(text) => (theme.text_muted, text.clone()),
             ChatEntry::Tool { name, ok, line, .. } => {
                 let mark = match (*ok, line.is_empty()) {
                     (_, true) => "…",
@@ -1575,9 +1619,8 @@ impl AurisApp {
     }
 
     /// The settings section: provider, model, URL, key variable, apply.
-    fn agent_settings(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    fn agent_model_picker(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
-        let openai = self.agent_chat.provider_openai;
         let labelled = |label: String, control: AnyElement, theme: &Theme| {
             div()
                 .flex()
@@ -1602,38 +1645,6 @@ impl AurisApp {
             .border_b_1()
             .border_color(theme.border)
             .child(labelled(
-                self.t(Key::AgentProviderLabel).to_string(),
-                self.dropdown(
-                    "agent-provider",
-                    match openai {
-                        true => "openai".to_string(),
-                        false => "ollama".to_string(),
-                    },
-                    self.agent_chat.provider_menu,
-                    &theme,
-                    |this, _| {
-                        this.agent_chat.provider_menu = !this.agent_chat.provider_menu;
-                        this.agent_chat.model_menu = false;
-                    },
-                    cx,
-                ),
-                &theme,
-            ))
-            .when(self.agent_chat.provider_menu, |this| {
-                this.child(self.option_rows(
-                    "agent-provider-option",
-                    &["ollama".to_string(), "openai".to_string()],
-                    &theme,
-                    |this, chosen, _| {
-                        this.agent_chat.provider_openai = chosen == 1;
-                        this.agent_chat.provider_menu = false;
-                        // A different provider serves a different list, so it is asked afresh.
-                        this.agent_refresh_models();
-                    },
-                    cx,
-                ))
-            })
-            .child(labelled(
                 self.t(Key::AgentModelLabel).to_string(),
                 div()
                     .flex()
@@ -1649,7 +1660,6 @@ impl AurisApp {
                         &theme,
                         |this, _| {
                             this.agent_chat.model_menu = !this.agent_chat.model_menu;
-                            this.agent_chat.provider_menu = false;
                         },
                         cx,
                     )))
@@ -1709,79 +1719,6 @@ impl AurisApp {
                     cx,
                 ))
             })
-            .child(labelled(
-                self.t(Key::AgentUrlLabel).to_string(),
-                self.agent_text_field("agent-url", AgentField::Url, cx),
-                &theme,
-            ))
-            .child(labelled(
-                self.t(Key::AgentKeyEnvLabel).to_string(),
-                self.agent_text_field("agent-key-env", AgentField::KeyEnv, cx),
-                &theme,
-            ))
-            .when(!self.agent_chat.provider_openai, |this| {
-                this.child(button(
-                    "agent-context-tokens",
-                    format!(
-                        "{}: {}k",
-                        self.t(Key::AgentContextTokens),
-                        self.agent_chat.context_tokens / 1024
-                    ),
-                    ButtonStyle::Normal,
-                    true,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.context_tokens = match this.agent_chat.context_tokens {
-                            32768 => 65536,
-                            65536 => 131072,
-                            131072 => 262144,
-                            _ => 32768,
-                        };
-                        this.agent_chat.context_window =
-                            Some(u64::from(this.agent_chat.context_tokens));
-                        this.agent_write_through();
-                        cx.notify();
-                    }),
-                ))
-                .child(button(
-                    "agent-thinking",
-                    format!(
-                        "{}: {}",
-                        self.t(Key::AgentThinking),
-                        self.t(match self.agent_chat.thinking {
-                            None => Key::AgentThinkingAuto,
-                            Some(true) => Key::AgentThinkingOn,
-                            Some(false) => Key::AgentThinkingOff,
-                        })
-                    ),
-                    ButtonStyle::Normal,
-                    true,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.agent_chat.thinking = match this.agent_chat.thinking {
-                            None => Some(false),
-                            Some(false) => Some(true),
-                            Some(true) => None,
-                        };
-                        this.agent_write_through();
-                        cx.notify();
-                    }),
-                ))
-            })
-            .child(div().flex().justify_end().child(button(
-                "agent-apply",
-                self.t(Key::AgentApply),
-                ButtonStyle::Normal,
-                true,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.agent_apply_settings();
-                    cx.notify();
-                }),
-            )))
             .into_any_element()
     }
 
@@ -2002,18 +1939,6 @@ impl AurisApp {
             .into_any_element()
     }
 
-    /// A settings-section text field.
-    fn agent_text_field(
-        &mut self,
-        id: &'static str,
-        field: AgentField,
-        cx: &mut gpui::Context<Self>,
-    ) -> AnyElement {
-        let theme = self.theme.clone();
-        let focused = self.agent_chat.focused == Some(field);
-        self.panel_field(id, field, focused, false, String::new(), &theme, cx)
-    }
-
     /// One of the panel's one-line fields, drawn the way the library's search box is.
     #[allow(clippy::too_many_arguments)]
     fn panel_field(
@@ -2028,8 +1953,6 @@ impl AurisApp {
     ) -> AnyElement {
         let value = match field {
             AgentField::Chat => &self.agent_chat.input,
-            AgentField::Url => &self.agent_chat.url_field,
-            AgentField::KeyEnv => &self.agent_chat.key_env_field,
         };
         let text = value.content().to_string();
         let selection = value.selection();
@@ -2196,6 +2119,57 @@ mod tests {
     }
 
     #[gpui::test]
+    fn markdown_list_body_has_visible_bounds(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![ChatEntry::Agent(
+                "設定\n\n- **テンポ:** 150 BPM\n- **拍子:** 4/4\n\n改善点\n\n1. 弦楽器を強化\n2. ドラムを追加".into(),
+            )];
+        });
+        crate::harness::paint(&app, cx);
+        for selector in [
+            "agent-markdown-0-1-0-0-block",
+            "agent-markdown-0-1-1-0-block",
+            "agent-markdown-0-3-0-0-block",
+            "agent-markdown-0-3-1-0-block",
+        ] {
+            let body = cx.debug_bounds(selector).expect("list body is rendered");
+            let message = cx.debug_bounds("agent-line-0").unwrap();
+            assert!(
+                body.size.width > message.size.width / 2. && body.size.height > gpui::px(0.),
+                "list body collapsed: {selector}: {body:?}; message: {message:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn markdown_list_long_body_wraps(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = vec![
+                ChatEntry::Agent("- **設定:** 短い本文".into()),
+                ChatEntry::Agent(format!(
+                    "- **設定:** {}",
+                    "弦楽器とドラムを強化します。".repeat(30)
+                )),
+            ];
+        });
+        crate::harness::paint(&app, cx);
+        let short = cx.debug_bounds("agent-line-0").unwrap().size.height;
+        let long = cx.debug_bounds("agent-line-1").unwrap().size.height;
+        assert!(
+            long > short * 3.,
+            "list text does not wrap: {short:?} -> {long:?}"
+        );
+    }
+
+    #[gpui::test]
     fn markdown_list_continuation_paragraphs_stack_vertically(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
@@ -2217,6 +2191,41 @@ mod tests {
     }
 
     #[gpui::test]
+    fn live_agent_edits_an_unsaved_document_and_undo_restores_it(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            // This editing test must not inherit modes saved by settings-window tests.
+            this.settings.agent.policy = Default::default();
+            let before = this.project().clone();
+            assert!(this.session.path().is_none());
+            let event = parse_event(r#"{"event":"edit","command":{"action":"add_track","name":"Agent lead","kind":"instrument"}}"#).unwrap();
+            let AgentEvent::Edit { command } = event else { panic!() };
+            this.agent_edit(command).unwrap();
+            assert!(this.project().tracks.iter().any(|track| track.name == "Agent lead"));
+            assert!(this.session.is_dirty());
+            assert!(this.session.path().is_none());
+            this.session.undo();
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn live_agent_refuses_a_request_bound_to_a_different_document(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            let before = this.project().clone();
+            this.agent_chat.bound_project = Some(PathBuf::from("previous.auris"));
+            assert!(
+                this.agent_edit(
+                    serde_json::json!({"action":"add_track", "name":"Wrong", "kind":"instrument"})
+                )
+                .is_err()
+            );
+            assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
     fn pending_changes_block_send_before_saving_or_starting_a_model(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
@@ -2233,6 +2242,22 @@ mod tests {
                 Some(&ChatEntry::Note(Key::AgentResolveFirst))
             );
         });
+    }
+
+    #[test]
+    fn inspection_discards_changed_documents_and_cancels_when_dropped() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pending = PendingInspection {
+            revision: 7,
+            receiver,
+            cancel: cancel.clone(),
+        };
+        assert!(pending.poll(7, true).is_none());
+        assert!(pending.poll(8, true).unwrap().is_err());
+        assert!(pending.poll(7, false).unwrap().is_err());
+        drop(pending);
+        assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -2279,9 +2304,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn selection_context_numbers_notes_in_the_same_order_as_the_tool(
-        cx: &mut gpui::TestAppContext,
-    ) {
+    fn selection_context_uses_live_command_note_indices(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             let track = this
@@ -2304,7 +2327,7 @@ mod tests {
             this.selected_notes.insert(0);
             let context = this.agent_selection_context();
             assert_eq!(context["selected_track"], "Selected lead");
-            assert_eq!(context["selected_note_numbers"], serde_json::json!([2]));
+            assert_eq!(context["selected_note_indices"], serde_json::json!([0]));
             assert_eq!(context["selected_clips"][0]["clip"], 1);
         });
     }
@@ -2331,7 +2354,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn agent_chat_and_connection_fields_accept_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {
+    fn agent_chat_accepts_clipboard_shortcuts(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             this.panels = Default::default();
@@ -2341,11 +2364,9 @@ mod tests {
             this.panels.show(crate::dock::Panel::Agent);
         });
         crate::harness::paint(&app, cx);
-        for (selector, field, text) in [
-            ("agent-input", AgentField::Chat, "make the bass quieter"),
-            ("agent-url", AgentField::Url, "https://example.invalid/v1"),
-            ("agent-key-env", AgentField::KeyEnv, "MY_AGENT_KEY"),
-        ] {
+        {
+            let (selector, field, text) =
+                ("agent-input", AgentField::Chat, "make the bass quieter");
             crate::harness::click(selector, cx);
             crate::harness::paint(&app, cx);
             cx.update(|_, cx| {
@@ -2402,15 +2423,18 @@ mod tests {
         let mut chat = AgentChat::default();
         let preferences = AgentPreferences {
             context_tokens: Some(65536),
+            output_tokens: Some(16384),
             thinking: Some(false),
             model: "local-tools".into(),
             ..Default::default()
         };
         chat.load_preferences(&preferences);
         assert_eq!(chat.context_tokens, 65536);
+        assert_eq!(chat.output_tokens, 16384);
         assert_eq!(chat.thinking, Some(false));
         let saved = chat.preferences();
         assert_eq!(saved.context_tokens, preferences.context_tokens);
+        assert_eq!(saved.output_tokens, preferences.output_tokens);
         assert_eq!(saved.thinking, preferences.thinking);
         chat.load_preferences(&AgentPreferences::default());
         assert_eq!(chat.context_tokens, 32768);
@@ -2448,23 +2472,6 @@ mod tests {
         // A line this build does not know, and a line that is not JSON: skipped, not fatal.
         assert_eq!(parse_event(r#"{"event":"novel"}"#), None);
         assert_eq!(parse_event("garbage"), None);
-    }
-
-    #[test]
-    fn an_agent_startup_failure_reaches_the_chat_event_wire() {
-        let (sender, receiver) = std::sync::mpsc::channel();
-        forward_agent_stderr(
-            std::io::Cursor::new("\nauris-agent: the API key variable 'MISSING_KEY' is not set\n"),
-            &sender,
-        );
-
-        assert_eq!(
-            receiver.recv().unwrap(),
-            AgentEvent::Error {
-                message: "auris-agent: the API key variable 'MISSING_KEY' is not set".to_string()
-            }
-        );
-        assert!(receiver.try_recv().is_err(), "blank stderr stays invisible");
     }
 
     #[test]

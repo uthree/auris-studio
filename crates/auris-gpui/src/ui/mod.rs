@@ -58,4 +58,6 @@ pub mod title_bar;
 pub mod tooltip;
 pub mod transport_bar;
 pub mod typing_panel;
+pub(crate) mod visualizer;
+pub(crate) mod volume_contour;
 pub mod widgets;

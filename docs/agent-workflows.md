@@ -1,6 +1,46 @@
-# Agent composition and revision
+# Live Agent Panel and MCP workflows
 
-The Agent Panel and MCP expose the same project commands through `auris-toolbox`.
+The rig Agent Panel edits the open session through small, flat tools. Start with
+`inspect_project`, then use `add_track`, `set_instrument`, `add_clip` and `add_notes`
+to construct the arrangement. Pass arguments directly without a command or action wrapper.
+
+The model chooses the harmony, melody and rhythm and writes notes explicitly.
+`add_notes` accepts up to 256 notes in one undoable edit. For example:
+
+```json
+{"clip":1,"notes":[{"pitch":62,"start_beat":0,"duration_beats":1,"velocity":0.8},{"pitch":65,"start_beat":1,"duration_beats":0.5,"velocity":0.7}]}
+```
+
+Times are quarter-note beats relative to the clip, starting at zero. Invalid batches leave
+the document unchanged. Use `set_tempo` for BPM and `set_loop` for a bar-based playback loop.
+Changes work before the first save and remain unsaved. Preserve existing music and inspect
+again to verify the arrangement before claiming completion.
+
+Use `inspect_audio` with `{"start_bar":1,"bars":4}` to inspect the actual rendered mix.
+An optional `track` ID selects solo routing. Each request is limited to eight bars and
+30 seconds. It returns peak/RMS levels, full-scale sample counts, bar-start harmony and
+a bounded authored-note table. The score is before performance transforms and includes
+muted score parts; the rendered mix respects mute/solo. Silence has null dB levels.
+
+For an Ollama model advertising `vision`, the host also supplies an in-memory PNG:
+mel power above, a piano roll below. Use a vision-capable endpoint for OpenAI-compatible
+providers. Text-only Ollama models receive measurements without an image. The last two
+snapshots are retained only during the active turn, with their captured revisions.
+Compare the same range before and after a change; old images do not describe new edits.
+The colour scale is fixed at -90..0 dB, without automatic normalization. This is visual
+analysis with measured evidence, not an audio model listening to the music.
+
+Inspection runs off the UI thread, is cancelled when the conversation closes, and refuses
+results when the document revision changes during the render. No preview files are written.
+
+Permissions map these flat tools to the existing `edit_project.<action>` rules, so saved
+allow/deny rules and exact-command approvals continue to apply.
+
+MCP retains the full saved-file tool catalog. The file-based composition, rendering and
+listening workflows below describe MCP.
+
+
+MCP exposes its saved-project commands through `auris-toolbox`.
 Start with `capabilities` to check the General MIDI library, voice library paths and
 project playback state. Registered sampler code is not a loaded SoundFont: when a
 composition cannot load its requested GM preset, the session substitutes a built-in
@@ -177,10 +217,12 @@ an effect also removes its lanes. Read and list operations do not trigger projec
 
 ## Ollama configuration and failure recovery
 
-The Agent Panel exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
-off, on). The CLI accepts `--context-tokens N` and `--thinking auto|off|on`; explicit
-flags override shared preferences. The default request sets `options.num_ctx=32768`,
-caps each completion at `options.num_predict=4096`, and uses temperature zero for
+Settings → Agent exposes context size (32K, 64K, 128K, 256K) and thinking (model default,
+off, on), stored in shared preferences. Output token limit selects 4K, 8K, 16K,
+32K, or 64K per response and applies to the next request. Raising output also raises
+the context window when needed to leave room for input; lowering context can lower
+the output limit. The default request sets `options.num_ctx=32768`,
+defaults each completion to `options.num_predict=4096`, and uses temperature zero for
 repeatable tool arguments rather than inheriting a
 model's chat sampling preset. These are request settings and do not change the
 installed model or Ollama server configuration. The requested context is
@@ -204,7 +246,7 @@ to increase context or start a fresh conversation. OpenAI-compatible providers k
 their own context policy and do not receive Ollama-specific parameters.
 An Ollama response stopped by the generation limit is an incomplete turn, even if
 it contains text or a syntactically valid tool call. The agent reports that limit
-before executing those calls; previous saved edits remain available for a smaller
+before executing those calls; previous live edits remain available for a smaller
 follow-up request.
 
 The panel's context gauge uses input tokens from the last model request, rather than
@@ -216,4 +258,66 @@ allowed to finish, and active multi-step composition can exceed five minutes ove
 Two failures with identical tool arguments stop a third execution; changing arguments
 allows a correction. Successful calls clear that signature's failure count. Interrupted
 JSON conversations retain the request and interruption summary so a following turn can
-inspect saved work and resume. Completed tool edits remain on disk.
+inspect the current document and resume. Completed live edits remain in the session.
+
+
+## Agent permissions and context compaction
+
+The rig Agent Panel has four persistent modes, following the permission model in
+[Picocode](https://github.com/uthree/picocode):
+
+| Mode | Behavior |
+| --- | --- |
+| Read-only | Read immediately; request approval for edits and internet search unless allowed by a rule. |
+| Edit | Apply ordinary live edits; confirm removals, arrangement replacement, and internet search. |
+| Plan | Inspect and propose a plan; reject document changes, including allow-listed changes. |
+| Bypass | Skip confirmations while continuing to enforce deny rules. |
+
+Deny rules win over every mode and allow rule. The Permissions section offers
+Default, Allow, and Deny for each operation, `edit_project.*`, and `*`.
+An approval shows the project, operation and exact arguments. Allow once applies
+only to that command at the current document revision; edits made while awaiting
+approval invalidate it. Always allow saves an operation rule. Rejecting an operation
+returns a refusal to the model. Changing modes or rules cancels pending approvals.
+Stopping the agent cancels its pending work.
+
+Use the mode buttons or `/mode read_only|edit|plan|bypass`. Shift+Tab cycles the
+three ordinary modes; bypass requires an explicit choice. `/permissions` opens
+rules, and `/allow OPERATION`, `/deny OPERATION`, `/default OPERATION` edit them.
+While confirmation is pending, Escape denies, Ctrl+Enter (Command+Enter on macOS)
+allows once, and adding Shift always allows.
+
+These modes govern rig calls only. Even bypass edits only the open document;
+file creation, export, and saving remain outside its tool catalog. MCP retains its
+existing tools and does not apply the Agent Panel's policy.
+
+Compact context or `/compact` summarizes older exchanges with the configured model,
+without granting that model tools. The latest two completed exchanges are kept
+verbatim. The summary retains goals, constraints, decisions, identifiers, progress,
+failures and unfinished work. It is saved with conversation history and restored
+when that conversation resumes. An empty, oversized, or failed summary leaves the
+original history intact. Very large exchanges that cannot fit a summary request
+also remain intact.
+
+Automatic compaction runs between requests at the selected estimated history
+threshold (70% or 85%; default 85%), or after 16 completed exchanges. It can be
+turned off in Permissions. Counts are estimates, not tokenizer measurements;
+the existing per-request context guard remains the final budget check. Compression
+never runs in the middle of a tool operation or an approval request.
+
+### Live instrument library
+
+`list_instruments` reads the open session's built-in instruments, loaded SoundFont
+presets and installed CLAP/VST3 instruments, including the Studio settings' additional
+plugin folders. Effects are excluded. Use `query` to search names, libraries or vendors;
+follow `next_offset` with the same query for pages of 50 sounds. Plugin scan failures
+are reported separately. Use `refresh: true` on the first page after installation.
+
+Pass an exact returned `id` as `set_instrument`'s `instrument`, together with the
+numeric track ID from `inspect_project`. This changes the existing track through
+Undo-aware session commands, preserving its clips, notes, mixer and effect chain.
+Old instrument parameter automation is removed when changing instruments. Selecting
+another SoundFont preset on an existing sampler preserves its sampler controls.
+Unknown, unloaded or expired sounds fail without modifying the document. Plugin
+handles expire on rescan; no tool accepts an arbitrary plugin file path. No project
+or audio files are written. MCP's existing independent tool interface is unchanged.

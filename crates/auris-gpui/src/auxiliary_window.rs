@@ -18,6 +18,7 @@ pub(crate) enum Surface {
     Typing,
     Analysis,
     TimbreMap,
+    Visualizer,
 }
 
 /// Toggles a panel between its dock and a native window.
@@ -35,6 +36,7 @@ impl Surface {
             Self::Typing => app.session.musical_typing(),
             Self::Analysis => app.analysis_panel,
             Self::TimbreMap => app.timbre_map.open,
+            Self::Visualizer => app.visualizer.open,
         }
     }
 
@@ -58,6 +60,7 @@ impl Surface {
             Self::Typing => app.t(Key::CmdMusicalTyping).to_owned(),
             Self::Analysis => app.t(Key::AnalysisTitle).to_owned(),
             Self::TimbreMap => app.t(Key::TimbreMap).to_owned(),
+            Self::Visualizer => app.t(Key::VisualizerTitle).to_owned(),
         }
     }
 
@@ -73,6 +76,7 @@ impl Surface {
             Self::Typing => app.stop_musical_typing(),
             Self::Analysis => app.analysis_panel = false,
             Self::TimbreMap => app.close_timbre_map(),
+            Self::Visualizer => app.close_visualizer(),
         }
     }
 }
@@ -104,6 +108,12 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
         Surface::Typing => size(px(680.), px(340.)),
         Surface::Analysis => size(px(540.), px(650.)),
         Surface::TimbreMap => size(px(900.), px(700.)),
+        Surface::Visualizer => {
+            let preferred = size(px(780.), px(820.));
+            cx.primary_display().map_or(preferred, |display| {
+                crate::fitted_size(preferred, display.bounds().size)
+            })
+        }
     };
     let bounds = Bounds::centered(None, dimensions, cx);
     let opened = cx.open_window(
@@ -234,6 +244,7 @@ impl AurisApp {
             Surface::Typing,
             Surface::Analysis,
             Surface::TimbreMap,
+            Surface::Visualizer,
         ]);
         let mut handles = std::mem::take(&mut self.auxiliary_windows);
         let mut kept = BTreeMap::new();
@@ -282,7 +293,11 @@ impl AurisApp {
             (handle.window_id() == window.window_handle().window_id()).then_some(*surface)
         });
         if let Some(
-            surface @ (Surface::Plugin | Surface::Typing | Surface::Analysis | Surface::TimbreMap),
+            surface @ (Surface::Plugin
+            | Surface::Typing
+            | Surface::Analysis
+            | Surface::TimbreMap
+            | Surface::Visualizer),
         ) = current
         {
             surface.close(self);
@@ -356,6 +371,7 @@ impl Render for AuxiliaryWindow {
                 Surface::Analysis => app
                     .render_analysis_panel(cx)
                     .unwrap_or_else(|| div().into_any_element()),
+                Surface::Visualizer => app.render_visualizer(window, cx),
                 Surface::TimbreMap => app
                     .render_timbre_map(cx)
                     .unwrap_or_else(|| div().into_any_element()),

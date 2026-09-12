@@ -12,6 +12,8 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64.workspace = true
 auris-session.workspace = true
 # The `JsonSchema` derive on every argument type: both frontends hand the same schema to their
 # protocol, so a field documented here is documented identically at both doors.
@@ -19,6 +21,3 @@ schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-
-[dev-dependencies]
-base64.workspace = true
