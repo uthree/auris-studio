@@ -12,7 +12,7 @@ use gpui::{
 
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    ButtonStyle, RowColumn, SliderFill, button, dragged, picker_row, value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, dragged, picker_row, value_slider,
 };
 
 /// Which control shape suits a parameter.
@@ -22,7 +22,7 @@ pub enum ParamControl {
     Slider,
     /// An on/off button.
     Toggle,
-    /// A button naming the position in force, which opens a menu of the rest.
+    /// A selection field naming the position in force, which opens a menu of the rest.
     Choice,
 }
 
@@ -87,7 +87,7 @@ pub fn slider_fill_for(descriptor: &ParamDescriptor) -> SliderFill {
 /// A column, so a plugin's rows line up down the panel however long their names are.
 const VALUE_WIDTH: Pixels = px(104.0);
 
-/// A button row for a toggle or choice parameter.
+/// A control row for a toggle or choice parameter.
 ///
 /// The shared [`picker_row`], plus the one thing that is the parameter's rather than the row's:
 /// a toggle in its on position is latched and lights up, where a choice merely names where it
@@ -106,13 +106,17 @@ where
     I: Into<ElementId>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let engaged = matches!(control_for(descriptor), ParamControl::Toggle) && value >= 0.5;
+    let behavior = match control_for(descriptor) {
+        ParamControl::Toggle => PickerBehavior::Toggle(value >= 0.5),
+        ParamControl::Choice => PickerBehavior::Menu,
+        ParamControl::Slider => PickerBehavior::Command,
+    };
     picker_row(
         id,
         label,
         value_text,
         RowColumn::Value(VALUE_WIDTH),
-        engaged,
+        behavior,
         theme,
         on_click,
     )

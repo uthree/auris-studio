@@ -8,6 +8,16 @@ use crate::harness::{choose, click, open, paint};
 use crate::ui::context_menu::MenuCommand;
 
 #[gpui::test]
+fn dropdown_fields_have_disclosure_indicators_while_commands_do_not(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, _| this.open_song_sheet());
+    paint(&app, cx);
+
+    assert!(cx.debug_bounds("song-style-dropdown-indicator").is_some());
+    assert!(cx.debug_bounds("song-title-dropdown-indicator").is_none());
+}
+
+#[gpui::test]
 fn sound_choices_generate_modal_songs_and_survive_mood_and_style_changes(cx: &mut TestAppContext) {
     let (app, cx) = open(cx);
     app.update(cx, |this, _| this.open_song_sheet());

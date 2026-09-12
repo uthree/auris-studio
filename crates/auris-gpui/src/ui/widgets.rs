@@ -330,6 +330,20 @@ pub enum RowColumn {
     Value(Pixels),
 }
 
+/// What activating the value in a [`picker_row`] does.
+///
+/// A menu is a selection field and carries a trailing disclosure indicator. Commands remain
+/// ordinary buttons, while toggles keep the latched treatment that communicates their value.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PickerBehavior {
+    /// Opens a compact list of alternative values.
+    Menu,
+    /// Runs a command, such as opening an editor or text prompt.
+    Command,
+    /// Switches a two-state value, with whether it is currently on.
+    Toggle(bool),
+}
+
 /// A single-line picker value, ellipsized at its final layout width without measuring the row.
 pub fn bounded_picker_label(value: impl Into<SharedString>) -> gpui::Div {
     let value = value.into();
@@ -392,21 +406,19 @@ fn shape_picker_label(
     (line, line_height)
 }
 
-/// A labelled row whose value is a button: this is what it is, press to choose another.
+/// A labelled row whose value either selects from a menu or acts as a button.
 ///
-/// Every picker in the application, from a plugin's discrete parameters to the song sheet's key.
-/// One shape deliberately: they all ask the same thing, and a second shape for the same idea
-/// would only be a second thing to learn.
+/// Selection fields use a sunken surface and a fixed trailing chevron, so they cannot be mistaken
+/// for the ordinary command buttons beside them. Commands and toggles retain button styling.
 ///
-/// `label` and `value` arrive already translated, as [`button`]'s do. `active` fills the button
-/// with the accent, for the rows that are a switch rather than a menu.
+/// `label` and `value` arrive already translated, as [`button`]'s do.
 /// Long values are ellipsized within their column, with the full value available on hover.
 pub fn picker_row<I, L, V, F>(
     id: I,
     label: L,
     value: V,
     column: RowColumn,
-    active: bool,
+    behavior: PickerBehavior,
     theme: &Theme,
     on_click: F,
 ) -> gpui::Div
@@ -424,15 +436,28 @@ where
         .truncate()
         .child(label.into());
     let value = value.into();
-    let control = button_with_content(
-        id,
-        bounded_picker_label(value.clone()),
-        ButtonStyle::Normal,
-        active,
-        theme.accent,
-        theme,
-        on_click,
-    )
+    let content = bounded_picker_label(value.clone());
+    let control = match behavior {
+        PickerBehavior::Menu => menu_picker(id, content, theme, on_click),
+        PickerBehavior::Command => button_with_content(
+            id,
+            content,
+            ButtonStyle::Normal,
+            false,
+            theme.accent,
+            theme,
+            on_click,
+        ),
+        PickerBehavior::Toggle(active) => button_with_content(
+            id,
+            content,
+            ButtonStyle::Normal,
+            active,
+            theme.accent,
+            theme,
+            on_click,
+        ),
+    }
     .w_full()
     .min_w_0()
     .tooltip(keyed_tip(value, "", theme));
@@ -450,6 +475,50 @@ where
             .child(caption.flex_1().min_w_0())
             .child(div().w(width).flex_shrink_0().child(control)),
     }
+}
+
+/// A select-like value field with a disclosure indicator in a stable trailing lane.
+fn menu_picker<I, L, F>(id: I, value: L, theme: &Theme, on_click: F) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: IntoElement,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let id: ElementId = id.into();
+    let selector = id.clone();
+    let indicator_selector = id.clone();
+    div()
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .flex()
+        .items_center()
+        .gap_1()
+        .h(Metrics::CONTROL_HEIGHT)
+        .px_1p5()
+        .rounded(Metrics::RADIUS_SM)
+        .border_1()
+        .border_color(theme.border_subtle)
+        .bg(theme.surface_sunken)
+        .text_xs()
+        .text_color(theme.text)
+        .hover(|this| this.bg(theme.surface_hover).border_color(theme.border))
+        .active(|this| this.opacity(0.8))
+        .child(div().flex_1().min_w_0().h_full().child(value))
+        .child(
+            div()
+                .debug_selector(move || format!("{indicator_selector}-dropdown-indicator"))
+                .flex()
+                .items_center()
+                .justify_end()
+                .w(Metrics::DROPDOWN_INDICATOR_WIDTH)
+                .flex_shrink_0()
+                .child(icon(
+                    Icon::ChevronDown,
+                    Metrics::DROPDOWN_INDICATOR_SIZE,
+                    theme.text_muted,
+                )),
+        )
+        .on_click(on_click)
 }
 
 /// A readout with a caption above it, as a hardware transport displays one.

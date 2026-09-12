@@ -17,6 +17,7 @@ use gpui::{
 
 use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
+use crate::ui::icons::{Icon, icon};
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
@@ -1745,14 +1746,24 @@ impl AurisApp {
             .h(Metrics::CONTROL_HEIGHT)
             .px_1p5()
             .rounded(Metrics::RADIUS_SM)
-            .bg(theme.surface_raised)
+            .bg(if open {
+                theme.surface_hover
+            } else {
+                theme.surface_sunken
+            })
             .border_1()
             .border_color(match open {
                 true => theme.accent,
                 false => theme.border_subtle,
             })
-            .cursor_pointer()
             .text_xs()
+            .hover(|this| {
+                this.bg(theme.surface_hover).border_color(if open {
+                    theme.accent
+                } else {
+                    theme.border
+                })
+            })
             .child(
                 div()
                     .flex_1()
@@ -1763,8 +1774,20 @@ impl AurisApp {
             )
             .child(
                 div()
-                    .text_color(theme.text_muted)
-                    .child(if open { "▴" } else { "▾" }),
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .w(Metrics::DROPDOWN_INDICATOR_WIDTH)
+                    .flex_shrink_0()
+                    .child(icon(
+                        if open {
+                            Icon::ChevronUp
+                        } else {
+                            Icon::ChevronDown
+                        },
+                        Metrics::DROPDOWN_INDICATOR_SIZE,
+                        theme.text_muted,
+                    )),
             )
             .on_mouse_down(
                 MouseButton::Left,
@@ -1806,7 +1829,7 @@ impl AurisApp {
                     .py_0p5()
                     .text_xs()
                     .text_color(theme.text)
-                    .cursor_pointer()
+                    .hover(|this| this.bg(theme.surface_hover))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
