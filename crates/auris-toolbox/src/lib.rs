@@ -144,10 +144,12 @@ pub mod search_documentation {
 
     /// A documentation search.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
-        /// Words or a short phrase to find in the Auris Studio documentation.
+        /// Non-blank words or a short phrase to find in the Auris Studio documentation.
+        #[schemars(length(min = 1))]
         pub query: String,
-        /// Maximum passages to return, from 1 to 10. Defaults to 5.
+        /// Maximum passages to return. Omitted or null defaults to 5; supplied values are clamped to 1..10.
         pub limit: Option<usize>,
     }
 

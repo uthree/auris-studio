@@ -546,6 +546,88 @@ mod tests {
     }
 
     #[test]
+    fn invalid_track_kind_gets_actionable_feedback_and_recovers_through_rig() {
+        let response = |kind: serde_json::Value| {
+            completion(
+            &serde_json::json!({"role":"assistant","tool_calls":[{"id":"track","type":"function","function":{"name":"add_track","arguments":serde_json::json!({"name":"Drums","kind":kind}).to_string()}}]}).to_string(),
+            "tool_calls",
+        )
+        };
+        let done = completion(
+            r#"{"role":"assistant","content":"Added the drum track"}"#,
+            "stop",
+        );
+        let (url, requests) = mock_server(vec![
+            response(serde_json::json!(["drum"])),
+            response(serde_json::json!("drum")),
+            done,
+        ]);
+        let worker = Worker::spawn(prefs(url), None, false).unwrap();
+        worker.send(r#"{"say":"Add a drum track"}"#).unwrap();
+        let mut permissions = 0;
+        let mut failures = 0;
+        let mut edits = 0;
+        let mut session = auris_session::Session::new(
+            auris_session::SessionOptions::headless().with_balance(false),
+        )
+        .unwrap();
+        loop {
+            let event = worker
+                .events
+                .recv_timeout(Duration::from_secs(10))
+                .expect("worker event");
+            match event["event"].as_str().unwrap_or_default() {
+                "permission" => {
+                    permissions += 1;
+                    assert_eq!(event["args"]["command"]["kind"], "drum");
+                    worker.send(&serde_json::json!({"event":"permission_result","id":event["id"],"ok":true}).to_string()).unwrap();
+                }
+                "edit" => {
+                    edits += 1;
+                    let command = serde_json::from_value(event["command"].clone()).unwrap();
+                    let text = session.agent_command(command).unwrap();
+                    worker
+                        .send(
+                            &serde_json::json!({"event":"edit_result","ok":true,"text":text})
+                                .to_string(),
+                        )
+                        .unwrap();
+                }
+                "result" if event["ok"] == false => {
+                    failures += 1;
+                    let error = event["text"].as_str().unwrap();
+                    assert!(
+                        error.contains("arguments.kind")
+                            && error.contains("string")
+                            && error.contains("drum"),
+                        "{error}"
+                    );
+                }
+                "answer" => break,
+                "error" | "ended" => panic!("{event}"),
+                _ => {}
+            }
+        }
+        assert_eq!((failures, permissions, edits), (1, 1, 1));
+        assert_eq!(session.project().tracks.len(), 1);
+        assert!(session.path().is_none());
+        let requests = requests.lock().unwrap();
+        assert!(requests[1].contains("arguments.kind"));
+        let request: serde_json::Value = serde_json::from_str(&requests[0]).unwrap();
+        let tool = request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["function"]["name"] == "add_track")
+            .unwrap();
+        assert_eq!(
+            tool["function"]["parameters"]["properties"]["kind"]["type"],
+            "string"
+        );
+        assert!(tool["function"]["parameters"]["properties"]["kind"]["enum"].is_array());
+    }
+
+    #[test]
     fn instrument_listing_uses_the_permission_checked_live_session() {
         let call = completion(
             r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"list_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,

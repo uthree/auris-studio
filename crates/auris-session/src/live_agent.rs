@@ -8,11 +8,13 @@ use crate::{Session, prelude::*};
 pub enum Command {
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
-    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Visual interpretation is not listening. Use the same range before and after editing.
+    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
     InspectAudio {
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Number of bars, 1..8; the range must fit in 30 seconds.
+        #[schemars(range(min = 1, max = 8))]
         bars: u32,
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
@@ -28,7 +30,7 @@ pub enum Command {
         #[serde(default)]
         refresh: bool,
     },
-    /// Read a page of notes using zero-based storage indices.
+    /// Read up to 128 notes with zero-based storage indices; follow next_offset for more. Returned note.start and note.length are ticks, not beats: divide by ticks_per_quarter when using add_note or add_notes. Indices may change after edits; read again before removing notes.
     ReadNotes {
         /// Stable clip ID.
         clip: u64,
@@ -46,18 +48,20 @@ pub enum Command {
         #[serde(default)]
         replace: bool,
     },
-    /// Add an empty named track. Use add_clip and add_note to write music by hand.
+    /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from list_instruments. Use add_clip followed by add_notes to write music. Edits affect the open document and remain unsaved.
     AddTrack {
-        /// The exact desired name.
+        /// The exact desired name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
-        /// Track type.
+        /// One string: instrument, drum, singer, audio or bus. Never an array or instrument ID.
         kind: TrackKind,
     },
-    /// Rename a track using its stable numeric ID from inspect.
+    /// Rename a track using its stable numeric ID from inspect_project or add_track.
     RenameTrack {
         /// Stable track ID.
         track: u64,
-        /// New name.
+        /// New name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
     },
     /// Remove one track and its clips.
@@ -65,7 +69,7 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Replace a track sound using an exact id from list_instruments. Keeps notes, clips, mixer and effects. Replacing the instrument clears its old parameter automation.
+    /// Replace the sound of an instrument or drum track using an exact id from list_instruments. Keeps notes, clips, mixer and effects. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; plugin IDs expire on rescan.
     SetInstrument {
         /// Stable track ID.
         track: u64,
@@ -76,12 +80,14 @@ pub enum Command {
     SetLevel {
         /// Stable track ID.
         track: u64,
-        /// Fader in decibels, -60 through 12.
+        /// Fader in decibels, -60 through 12. Required along with pan.
+        #[schemars(range(min = -60, max = 12))]
         gain_db: f32,
         /// Pan, -1 through 1.
+        #[schemars(range(min = -1, max = 1))]
         pan: f32,
     },
-    /// Set mute and solo for one track.
+    /// Set mute and solo for one track. Both booleans are required; use inspect_project to preserve the other state when changing only one.
     SetTrackState {
         /// Stable track ID.
         track: u64,
@@ -90,50 +96,61 @@ pub enum Command {
         /// Whether soloed.
         solo: bool,
     },
-    /// Add an empty MIDI clip at a 1-based bar position.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
-        /// Exact clip name.
+        /// Exact clip name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Duration in bars, 1 through 1024.
+        #[schemars(range(min = 1, max = 1024))]
         bars: u32,
     },
-    /// Add one note using quarter-note beats relative to the clip start (zero-based).
+    /// Add one note using start and beats in quarter-note beats relative to the clip start (zero-based). The note must fit inside the clip and last at least one tick. Unlike add_notes, this tool uses start and beats rather than start_beat and duration_beats. Velocity is 0..1, not MIDI 0..127.
     AddNote {
         /// Stable clip ID from inspect or add_clip.
         clip: u64,
         /// MIDI pitch, 0 through 127.
+        #[schemars(range(min = 0, max = 127))]
         pitch: u8,
         /// Start in quarter-note beats relative to the clip, starting at zero.
+        #[schemars(range(min = 0))]
         start: f64,
         /// Duration in quarter-note beats.
+        #[schemars(extend("exclusiveMinimum" = 0))]
         beats: f64,
         /// Velocity, 0 through 1.
+        #[schemars(range(min = 0, max = 1))]
         velocity: f32,
     },
-    /// Add a phrase or chord as 1..256 notes in one undoable edit. All notes must fit the clip.
+    /// Add 1..256 notes in one undoable edit. Each note uses pitch, start_beat, duration_beats and velocity, for example {"pitch":60,"start_beat":0,"duration_beats":1,"velocity":0.8}. Times are clip-relative quarter-note beats; all notes must fit the clip and last at least one tick. Velocity is 0..1, not MIDI 0..127. Validate the whole batch before writing; larger phrases need multiple calls.
     AddNotes {
         /// Stable clip ID from add_clip or inspect_project.
         clip: u64,
         /// Notes with MIDI pitches and clip-relative quarter-note beats.
+        #[schemars(length(min = 1, max = 256))]
         notes: Vec<NoteInput>,
     },
     /// Set the tempo at the beginning of the project.
     SetTempo {
         /// Tempo in BPM, 20 through 300.
+        #[schemars(range(min = 20, max = 300))]
         bpm: f64,
     },
     /// Set and enable a playback loop using a 1-based start bar and duration.
     SetLoop {
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Loop duration in bars, 1 through 1024.
+        #[schemars(range(min = 1, max = 1024))]
         bars: u32,
     },
-    /// Remove notes using zero-based storage indices from read_notes.
+    /// Remove notes using current zero-based storage indices from read_notes. Read again after edits that change indices. Duplicate indices are harmless; an empty array is a no-op.
     RemoveNotes {
         /// Stable clip ID.
         clip: u64,
@@ -147,14 +164,18 @@ pub enum Command {
 #[serde(deny_unknown_fields)]
 pub struct NoteInput {
     /// MIDI pitch, 0 through 127.
+    #[schemars(range(min = 0, max = 127))]
     pub pitch: u8,
     /// Start in quarter-note beats, starting at zero.
     #[serde(rename = "start_beat")]
+    #[schemars(range(min = 0))]
     pub start: f64,
     /// Positive duration in quarter-note beats.
     #[serde(rename = "duration_beats")]
+    #[schemars(extend("exclusiveMinimum" = 0))]
     pub beats: f64,
     /// Velocity, 0 through 1.
+    #[schemars(range(min = 0, max = 1))]
     pub velocity: f32,
 }
 

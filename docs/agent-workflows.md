@@ -4,6 +4,13 @@ The rig Agent Panel edits the open session through small, flat tools. Start with
 `inspect_project`, then use `add_track`, `set_instrument`, `add_clip` and `add_notes`
 to construct the arrangement. Pass arguments directly without a command or action wrapper.
 
+`add_track` takes a name and one string kind, for example
+`{"name":"Drums","kind":"drum"}`. Kinds are `instrument`, `drum`, `singer`, `audio`
+and `bus`. Copy the returned numeric track ID into `set_instrument` and `add_clip`;
+instrument IDs are separate strings returned by `list_instruments`. Instrument and drum
+tracks start with a default sound. MIDI clips can be added to instrument, drum and singer
+tracks. Bar positions start at 1 and follow the project meter.
+
 The model chooses the harmony, melody and rhythm and writes notes explicitly.
 `add_notes` accepts up to 256 notes in one undoable edit. For example:
 
@@ -13,6 +20,13 @@ The model chooses the harmony, melody and rhythm and writes notes explicitly.
 
 Times are quarter-note beats relative to the clip, starting at zero. Invalid batches leave
 the document unchanged. Use `set_tempo` for BPM and `set_loop` for a bar-based playback loop.
+The single-note `add_note` tool uses `start` and `beats`; `add_notes` uses `start_beat`
+and `duration_beats` within each note. Pitch is MIDI 0..127 and velocity is 0..1. Notes must
+fit inside the clip and last at least one tick. `read_notes` returns `start` and `length`
+in ticks: divide by its `ticks_per_quarter` before reusing those times in an addition.
+It pages up to 128 notes; follow `next_offset`, and read again after edits before using
+storage indices with `remove_notes`. `set_level` requires both `gain_db` (-60..12) and
+`pan` (-1..1); `set_track_state` requires both `mute` and `solo`.
 Changes work before the first save and remain unsaved. Preserve existing music and inspect
 again to verify the arrangement before claiming completion.
 
