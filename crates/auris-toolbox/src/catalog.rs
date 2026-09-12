@@ -212,6 +212,7 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<add_clip::Args>(add_clip::NAME, add_clip::DESCRIPTION),
         definition::<notes::Args>(notes::NAME, notes::DESCRIPTION),
         definition::<edit_notes::Args>(edit_notes::NAME, edit_notes::DESCRIPTION),
+        definition::<replace_notes::Args>(replace_notes::NAME, replace_notes::DESCRIPTION),
         definition::<accompany::Args>(accompany::NAME, accompany::DESCRIPTION),
         definition::<write_lyrics::Args>(write_lyrics::NAME, write_lyrics::DESCRIPTION),
         definition::<sing::Args>(sing::NAME, sing::DESCRIPTION),
@@ -308,6 +309,11 @@ pub mod tool_help {
             ]),
             "edit_notes" => serde_json::json!([
                 {"project":project,"track":"Lead","clip":1,"add":[{"pitch":"C4","bar":1,"beat":1,"beats":1,"velocity":0.75}]}
+            ]),
+            "replace_notes" => serde_json::json!([
+                {"project":project,"track":"Lead","clip":1,"source":"/absolute/path/lead.json"},
+                {"project":project,"track":"Lead","clip":1,"notes":[{"pitch":60,"bar":1,"beat":1,"beats":1}]},
+                {"project":project,"track":"Lead","clip":1,"notes":[]}
             ]),
             _ => serde_json::json!([]),
         };
@@ -620,6 +626,7 @@ mod tests {
         check::<routing::Args>("routing");
         check::<listen::Args>("listen");
         check::<edit_notes::Args>("edit_notes");
+        check::<replace_notes::Args>("replace_notes");
         check::<add_track::Args>("add_track");
         check::<add_clip::Args>("add_clip");
     }

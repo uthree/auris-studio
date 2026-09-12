@@ -87,6 +87,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.add_clip",
     "edit_project.add_note",
     "edit_project.add_notes",
+    "edit_project.replace_notes",
     "edit_project.set_tempo",
     "edit_project.set_loop",
     "edit_project.remove_notes",
@@ -121,6 +122,7 @@ impl Operation {
                 parsed,
                 crate::live_agent::Command::RemoveTrack { .. }
                     | crate::live_agent::Command::RemoveNotes { .. }
+                    | crate::live_agent::Command::ReplaceNotes { .. }
                     | crate::live_agent::Command::Compose { replace: true, .. }
             );
             Ok(Self {

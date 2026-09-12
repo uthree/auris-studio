@@ -529,6 +529,15 @@ impl AurisMcp {
         blocking(move || toolbox::edit_notes::run(&args)).await
     }
 
+    /// Replaces all authored notes in one clip. Supply exactly one of notes (an array) or source (an absolute path to a UTF-8 JSON array on the MCP server). Use source for script-generated scores instead of printing and copying large arrays into tool calls. Notes use pitch (60, "60", or "C4"), song-relative 1-based bar and beat, beats for duration, and optional velocity 0-1 (default 0.75). All notes are validated before changing the clip. Identical retries do not duplicate notes or create checkpoints; an empty array clears notes. Preserves clip length, curves, transforms and recipe; regeneration can overwrite authored notes. Maximum 65536 notes and 16 MiB per file. Saves with a checkpoint.
+    #[tool(input_schema = tool_schema("replace_notes"))]
+    async fn replace_notes(
+        &self,
+        Parameters(args): Parameters<toolbox::replace_notes::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::replace_notes::run(&args)).await
+    }
+
     /// Reads a melody clip and writes a key, a chord progression and backing tracks under it — the melody-first way around: place the tune with `edit_notes`, then derive the band. The melody itself is not touched. `parts` picks the band (bass, chords and drums when left out); the harmony it writes is a first draft to argue with — `regenerate_clips` re-derives any part after a correction. The change is saved.
     #[tool(input_schema = tool_schema("accompany"))]
     async fn accompany(

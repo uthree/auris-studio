@@ -1933,7 +1933,8 @@ mod tests {
         assert!(!names.contains(&"edit_project"));
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
-        assert_eq!(names.len(), 18);
+        assert!(names.contains(&"replace_notes"));
+        assert_eq!(names.len(), 19);
         for expected in toolbox::live_agent::definitions() {
             let exposed = actual
                 .iter()

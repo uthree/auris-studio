@@ -47,6 +47,7 @@ mod listening;
 mod mix_editing;
 mod project_files;
 mod recognition;
+pub mod replace_notes;
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
@@ -94,7 +95,10 @@ Do not replace the whole project to make a local edit.
 add_track requires an explicit kind: instrument, drum, singer, audio or bus. A name containing
 bus does not select kind bus. add_clip requires the intended clip name. Preserve exact
 names requested by the user. add_part generates a part from existing
-harmony; edit_notes writes individual notes. notes reads them back. set_instrument selects a
+harmony; edit_notes writes individual notes. replace_notes replaces a complete clip sequence
+without duplicating notes on retry. For script-generated scores, pass source with an absolute
+JSON-array file path instead of printing and copying the notes into tool arguments.
+notes reads them back. set_instrument selects a
 sound. automation with target kind instrument and operation action read discovers its
 parameters; set_instrument_param sets a static value. Use native parameter units.
 
@@ -405,6 +409,7 @@ pub const WRITES_PROJECTS: &[&str] = &[
     remove_track::NAME,
     add_clip::NAME,
     edit_notes::NAME,
+    replace_notes::NAME,
     accompany::NAME,
     write_lyrics::NAME,
     sing::NAME,
@@ -2335,18 +2340,25 @@ pub mod edit_notes {
 
     /// One note to place.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct NoteSpec {
         /// The pitch: a name in scientific notation ("C4", "F#3", "Bb2") or a MIDI number
         /// 0-127. C4 is middle C.
+        #[serde(deserialize_with = "auris_session::note_pitch::deserialize_string")]
+        #[schemars(with = "auris_session::note_pitch::Input")]
         pub pitch: String,
         /// The 1-based bar the note starts in.
+        #[schemars(range(min = 1))]
         pub bar: u32,
         /// The 1-based beat within that bar; fractions land between beats (1.5 is the "and"
         /// of one).
+        #[schemars(range(min = 1))]
         pub beat: f64,
         /// How long the note is held, in beats.
+        #[schemars(extend("exclusiveMinimum" = 0), range(max = 16384))]
         pub beats: f64,
         /// Attack strength 0-1. 0.75 when left out.
+        #[schemars(range(min = 0, max = 1))]
         pub velocity: Option<f32>,
     }
 
@@ -2365,13 +2377,88 @@ pub mod edit_notes {
         /// Note numbers to remove, as the `notes` listing counts them.
         pub remove: Option<Vec<usize>>,
         /// Notes to place.
+        #[serde(
+            default,
+            deserialize_with = "super::replace_notes::deserialize_optional_notes"
+        )]
+        #[schemars(length(max = 65536))]
         pub add: Option<Vec<NoteSpec>>,
+    }
+
+    pub(super) fn prepare(
+        session: &Session,
+        clip: &MidiClip,
+        additions: &[NoteSpec],
+    ) -> Result<Vec<Note>, String> {
+        additions.iter().enumerate().map(|(index, spec)| {
+            prepare_one(session, clip, spec).map_err(|error| format!(
+                "notes[{index}]: {error}. Example: {{\"pitch\":60,\"bar\":1,\"beat\":1,\"beats\":1,\"velocity\":0.75}}"
+            ))
+        }).collect()
+    }
+
+    fn prepare_one(session: &Session, clip: &MidiClip, spec: &NoteSpec) -> Result<Note, String> {
+        let clip_start = clip.start;
+        let clip_end = clip.start + clip.length;
+        let pitch = pitch_named(&spec.pitch).map_err(|e| format!("pitch: {e}"))?;
+        let tick = placed_at(session.project(), spec.bar, spec.beat)
+            .map_err(|e| format!("bar/beat: {e}"))?;
+        if tick < clip_start || tick >= clip_end {
+            let first = session.project().signatures.bar_of(clip_start);
+            let last = session
+                .project()
+                .signatures
+                .bar_of((clip_end - Ticks(1)).max_zero());
+            return Err(format!(
+                "bar {} beat {} is outside the clip, which covers bars {first}-{last}",
+                spec.bar, spec.beat
+            ));
+        }
+        if !spec.beats.is_finite() || spec.beats <= 0.0 || spec.beats > MAX_TOOL_BEATS {
+            return Err(format!(
+                "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
+            ));
+        }
+        // Refused rather than clamped, like every other bounded number at this door: the
+        // session would quietly pull it into range, and a success that placed a different
+        // velocity than the one asked for is a lie of omission.
+        if let Some(velocity) = spec.velocity
+            && !(0.0..=1.0).contains(&velocity)
+        {
+            return Err(format!("velocity runs 0-1; {velocity} is outside that"));
+        }
+        let per_beat = session
+            .project()
+            .signatures
+            .signature_at(tick)
+            .ticks_per_beat();
+        let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
+        if length.raw() < 1 {
+            return Err("beats must produce at least one tick".into());
+        }
+        if length > clip_end - tick {
+            let first = session.project().signatures.bar_of(clip_start);
+            let last = session
+                .project()
+                .signatures
+                .bar_of((clip_end - Ticks(1)).max_zero());
+            return Err(format!(
+                "a note at bar {} beat {} held for {} beats runs past the clip, which covers bars {first}-{last}",
+                spec.bar, spec.beat, spec.beats
+            ));
+        }
+        let mut note = Note::new(pitch, tick - clip_start, length);
+        note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
+        Ok(note)
     }
 
     /// Removes, places, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
         let removals = args.remove.as_deref().unwrap_or_default();
         let additions = args.add.as_deref().unwrap_or_default();
+        if additions.len() > 65_536 {
+            return Err("add must contain at most 65536 notes".into());
+        }
         if removals.is_empty() && additions.is_empty() {
             return Err("pass `remove`, `add`, or both — there is nothing else here to do".into());
         }
@@ -2379,8 +2466,6 @@ pub mod edit_notes {
         let track = track_by_name(session.project(), &args.track)?.id;
         let (id, clip) = clip_by_number(session.project(), track, args.clip)?;
         let generated = clip.recipe.is_some();
-        let clip_start = clip.start;
-        let clip_end = clip.start + clip.length;
 
         // The listing's numbers, translated back to storage order before anything moves.
         let ordered = time_ordered(clip);
@@ -2395,55 +2480,7 @@ pub mod edit_notes {
             doomed.push(*index);
         }
 
-        let mut placed = Vec::with_capacity(additions.len());
-        for spec in additions {
-            let pitch = pitch_named(&spec.pitch)?;
-            let tick = placed_at(session.project(), spec.bar, spec.beat)?;
-            if tick < clip_start || tick >= clip_end {
-                let first = session.project().signatures.bar_of(clip_start);
-                let last = session
-                    .project()
-                    .signatures
-                    .bar_of((clip_end - Ticks(1)).max_zero());
-                return Err(format!(
-                    "bar {} beat {} is outside the clip, which covers bars {first}-{last}",
-                    spec.bar, spec.beat
-                ));
-            }
-            if !spec.beats.is_finite() || spec.beats <= 0.0 || spec.beats > MAX_TOOL_BEATS {
-                return Err(format!(
-                    "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
-                ));
-            }
-            // Refused rather than clamped, like every other bounded number at this door: the
-            // session would quietly pull it into range, and a success that placed a different
-            // velocity than the one asked for is a lie of omission.
-            if let Some(velocity) = spec.velocity
-                && !(0.0..=1.0).contains(&velocity)
-            {
-                return Err(format!("velocity runs 0-1; {velocity} is outside that"));
-            }
-            let per_beat = session
-                .project()
-                .signatures
-                .signature_at(tick)
-                .ticks_per_beat();
-            let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
-            if length > clip_end - tick {
-                let first = session.project().signatures.bar_of(clip_start);
-                let last = session
-                    .project()
-                    .signatures
-                    .bar_of((clip_end - Ticks(1)).max_zero());
-                return Err(format!(
-                    "a note at bar {} beat {} held for {} beats runs past the clip, which covers bars {first}-{last}",
-                    spec.bar, spec.beat, spec.beats
-                ));
-            }
-            let mut note = Note::new(pitch, tick - clip_start, length);
-            note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
-            placed.push(note);
-        }
+        let placed = prepare(&session, clip, additions)?;
 
         session
             .remove_notes(id, &doomed)
@@ -3010,32 +3047,7 @@ fn time_ordered(clip: &MidiClip) -> Vec<(usize, &Note)> {
 
 /// A pitch, read as a MIDI number or a scientific name — "C4" is middle C.
 fn pitch_named(text: &str) -> Result<u8, String> {
-    let text = text.trim();
-    if let Ok(number) = text.parse::<i32>() {
-        if (0..=127).contains(&number) {
-            return Ok(number as u8);
-        }
-        return Err(format!("MIDI numbers run 0-127; {number} is outside that"));
-    }
-    let split = text
-        .find(|mark: char| mark.is_ascii_digit() || mark == '-')
-        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    let class = auris_session::prelude::PitchClass::parse(&text[..split])
-        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    let octave: i32 = text[split..]
-        .parse()
-        .map_err(|_| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    // `midi` is plain i32 arithmetic, and an octave in the hundreds of millions would overflow
-    // it before the 0-127 check below could answer. MIDI lives in octaves -1 to 9; a couple
-    // either side still falls through to the friendlier answer that names the number.
-    if !(-4..=12).contains(&octave) {
-        return Err(format!("{text} is far outside the MIDI range 0-127"));
-    }
-    let midi = class.midi(octave);
-    u8::try_from(midi)
-        .ok()
-        .filter(|midi| *midi <= 127)
-        .ok_or_else(|| format!("{text} is MIDI {midi}, outside 0-127"))
+    auris_session::note_pitch::parse(text)
 }
 
 /// The bar one past the last of a run `bars` long starting at 1-based `start_bar` — refused,

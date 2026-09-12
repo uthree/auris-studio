@@ -319,6 +319,48 @@ turned off in Permissions. Counts are estimates, not tokenizer measurements;
 the existing per-request context guard remains the final budget check. Compression
 never runs in the middle of a tool operation or an approval request.
 
+### Complete note batches
+
+For manual MCP composition, generate a UTF-8 JSON array with a script and pass its
+absolute path to `replace_notes`. The file must be readable on the MCP server.
+The response reports the resulting count without echoing the score. For example:
+
+```json
+{"project":"C:/Music/Song/Song.auris","track":"Lead","clip":1,"source":"C:/Music/lead.json"}
+```
+
+The source file contains notes directly, without an object wrapper:
+
+```json
+[
+  {"pitch":60,"bar":1,"beat":1,"beats":0.5,"velocity":0.8},
+  {"pitch":"D4","bar":1,"beat":1.5,"beats":0.5}
+]
+```
+
+MCP note timing uses song-relative, one-based bars and beats in the current meter.
+`beats` is the held duration, and omitted velocity defaults to 0.75. Pitches accept
+integer MIDI keys, decimal strings, or scientific names: `60`, `"60"`, and `"C4"`
+are equivalent. This also applies to `edit_notes`. Errors identify the zero-based
+array index and offending field with an example. Unknown fields such as `length`
+are rejected; use `beats`.
+
+Supply exactly one of `source` or `notes`. Inline `notes` follows the same format;
+`notes: []` explicitly clears the clip. A batch may contain at most 65,536 notes,
+and a source file at most 16 MiB. UTF-8 BOMs are accepted. The entire batch must
+validate and fit the selected clip before any change is saved. Repeating the same
+sequence creates neither duplicates nor another checkpoint. The source file is
+read once and is not stored as a project asset.
+
+In the live Agent Panel, `replace_notes` takes a stable numeric `clip` ID and an
+inline array of at most 4,096 notes using `start_beat`, `duration_beats`, and
+required `velocity`, just like `add_notes`. These times are zero-based,
+clip-relative quarter-note beats. Prefer short clips and bounded phrases. Live
+replacement uses the existing replacement permission policy and one ordinary Undo
+step; edits remain unsaved. Both interfaces preserve clip length, curves,
+transforms and recipe. Replacing notes discards the old notes, including their
+per-note lyrics and expression; later explicit regeneration can rewrite the score.
+
 ### Live instrument library
 
 `list_instruments` reads the open session's built-in instruments, loaded SoundFont

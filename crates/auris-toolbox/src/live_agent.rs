@@ -78,7 +78,8 @@ pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
         "inspect_project" => "inspect",
         "list_instruments" | "inspect_audio" | "read_notes" | "add_track" | "rename_track"
         | "remove_track" | "set_instrument" | "add_notes" | "set_tempo" | "set_loop"
-        | "set_level" | "set_track_state" | "add_clip" | "add_note" | "remove_notes" => tool,
+        | "set_level" | "set_track_state" | "add_clip" | "add_note" | "remove_notes"
+        | "replace_notes" => tool,
         _ => return Ok(None),
     };
     let mut object = args
@@ -104,7 +105,14 @@ pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
 // Serde's internally tagged enum buffers its fields, losing their paths on failure. These
 // schema-derived hints run only after deserialization fails; they are not a schema validator
 // or an alternative acceptance gate. Serde and the session remain authoritative.
-fn argument_hint(schema: &Value, value: &Value, path: &str) -> Option<String> {
+pub(crate) fn argument_hint(schema: &Value, value: &Value, path: &str) -> Option<String> {
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array)
+        && branches
+            .iter()
+            .all(|branch| argument_hint(branch, value, path).is_some())
+    {
+        return Some(format!("{path} must match one of {}", schema["anyOf"]));
+    }
     if let Some(kind) = schema.get("type") {
         let matches = |kind: &Value| match kind.as_str() {
             Some("string") => value.is_string(),
@@ -238,7 +246,8 @@ mod tests {
         assert_eq!(schema("add_notes")["properties"]["notes"]["minItems"], 1);
         assert_eq!(schema("add_notes")["properties"]["notes"]["maxItems"], 256);
         assert_eq!(
-            schema("add_notes")["properties"]["notes"]["items"]["properties"]["pitch"]["maximum"],
+            schema("add_notes")["properties"]["notes"]["items"]["properties"]["pitch"]["anyOf"][0]
+                ["maximum"],
             127
         );
         assert_eq!(schema("inspect_audio")["properties"]["bars"]["maximum"], 8);
@@ -259,7 +268,7 @@ mod tests {
                 "duration_beats",
             ),
         ] {
-            assert_eq!(note["pitch"]["maximum"], 127);
+            assert_eq!(note["pitch"]["anyOf"][0]["maximum"], 127);
             assert_eq!(note[start]["minimum"], 0.0);
             assert_eq!(note[duration]["exclusiveMinimum"], 0);
             assert_eq!(note["velocity"]["minimum"], 0.0);
@@ -313,6 +322,7 @@ mod tests {
             ("set_tempo", serde_json::json!({"bpm":120.0})),
             ("set_loop", serde_json::json!({"start_bar":1,"bars":4})),
             ("remove_notes", serde_json::json!({"clip":1,"indices":[0]})),
+            ("replace_notes", serde_json::json!({"clip":1,"notes":[]})),
         ];
         let tools = definitions();
         assert_eq!(tools.len(), fixtures.len());
@@ -369,7 +379,7 @@ mod tests {
     #[test]
     fn flat_catalog_covers_commands_without_a_tagged_union_or_file_destinations() {
         let tools = definitions();
-        assert_eq!(tools.len(), 16);
+        assert_eq!(tools.len(), 17);
         assert!(
             command("compose_song", &serde_json::json!({}))
                 .unwrap()

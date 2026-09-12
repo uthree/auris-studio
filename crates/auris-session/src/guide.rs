@@ -9,6 +9,17 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Authored note replacement
+//!
+//! [`crate::Session::replace_notes`] validates a complete note sequence before replacing
+//! only the authored notes of one clip. Clip timing, curves, transforms and recipe survive.
+//! The operation records one Undo step; identical sequences are no-ops, including an empty
+//! sequence on an empty clip. The live agent exposes this through the existing replacement
+//! permission policy with clip-relative quarter-note times and no filesystem access.
+//! MCP's toolbox translates song-relative bar/beat inputs, optionally read from a bounded
+//! JSON file, and checkpoints only changed documents. File paths refer to the MCP server;
+//! the source JSON is input, not a retained asset. Both doors share pitch notation parsing.
+//!
 //! # Live instrument discovery
 //!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont

@@ -227,6 +227,7 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::SongSource(detail) => with(Key::SongSourceUnavailable, detail.clone()),
         SessionError::StaleBalance => Key::BalanceChanged.get(language).to_string(),
         SessionError::InvalidDrumRecipe(detail)
+        | SessionError::InvalidNotes(detail)
         | SessionError::TrackConversion(detail)
         | SessionError::ReferenceMatch(detail)
         | SessionError::OutputPreview(detail)

@@ -48,6 +48,7 @@ pub mod audio_inspection;
 pub mod audio_review;
 pub mod clap_evaluation;
 pub mod live_agent;
+pub mod note_pitch;
 /// Headless composition search and its request/result types.
 ///
 /// This function-based command needs no session, audio device or UI. Frontends can prepare a

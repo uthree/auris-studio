@@ -75,6 +75,50 @@ pub fn quantized(note: &Note, grid: Ticks, what: Quantize) -> Note {
 }
 
 impl Session {
+    /// Replace only a clip's authored notes in one undoable edit.
+    /// Validates the entire batch before mutation; identical retries create no history.
+    /// Empty input clears notes. Clip curves, recipe, transforms and length are preserved.
+    pub fn replace_notes(&mut self, clip: ClipId, notes: Vec<Note>) -> Result<(), SessionError> {
+        let (_, target) = self
+            .project
+            .midi_clip(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        for (index, note) in notes.iter().enumerate() {
+            let field = if note.pitch > 127 {
+                Some("pitch must be 0..127")
+            } else if !(0.0..=1.0).contains(&note.velocity) {
+                Some("velocity must be 0..1")
+            } else if note.start.raw() < 0 {
+                Some("start must be nonnegative")
+            } else if note.length.raw() < 1 {
+                Some("length must be at least one tick")
+            } else if note
+                .start
+                .raw()
+                .checked_add(note.length.raw())
+                .is_none_or(|end| end > target.length.raw())
+            {
+                Some("length must fit inside the clip")
+            } else {
+                None
+            };
+            if let Some(field) = field {
+                return Err(SessionError::InvalidNotes(format!(
+                    "notes[{index}].{field}"
+                )));
+            }
+        }
+        if target.notes == notes {
+            return Ok(());
+        }
+        self.record(Edit::ExternalChanges);
+        if let Some(target) = self.project.midi_clip_mut(clip) {
+            target.notes = notes;
+        }
+        self.invalidate_graph();
+        Ok(())
+    }
+
     /// Adds a note to a MIDI clip, returning its index.
     pub fn add_note(&mut self, clip: ClipId, note: Note) -> Result<usize, SessionError> {
         if self.project.midi_clip(clip).is_none() {

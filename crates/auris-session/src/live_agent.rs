@@ -114,8 +114,9 @@ pub enum Command {
     AddNote {
         /// Stable clip ID from inspect or add_clip.
         clip: u64,
-        /// MIDI pitch, 0 through 127.
-        #[schemars(range(min = 0, max = 127))]
+        /// MIDI pitch 0..127 as an integer or string, or a name such as C4 (60).
+        #[serde(deserialize_with = "crate::note_pitch::deserialize")]
+        #[schemars(with = "crate::note_pitch::Input")]
         pitch: u8,
         /// Start in quarter-note beats relative to the clip, starting at zero.
         #[schemars(range(min = 0))]
@@ -133,6 +134,14 @@ pub enum Command {
         clip: u64,
         /// Notes with MIDI pitches and clip-relative quarter-note beats.
         #[schemars(length(min = 1, max = 256))]
+        notes: Vec<NoteInput>,
+    },
+    /// Replace all authored notes in one undoable edit; identical retries are no-ops and [] clears notes. Use pitch, start_beat, duration_beats and velocity as in add_notes, with clip-relative quarter-note beats. All notes must fit the clip. Preserves clip curves, recipe, transforms and length. Edits remain unsaved. Maximum 4096 notes; prefer short clips to avoid large tool arguments.
+    ReplaceNotes {
+        /// Stable clip ID from inspect_project or add_clip.
+        clip: u64,
+        /// Complete replacement sequence, or [] to clear the clip.
+        #[schemars(length(max = 4096))]
         notes: Vec<NoteInput>,
     },
     /// Set the tempo at the beginning of the project.
@@ -163,8 +172,9 @@ pub enum Command {
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteInput {
-    /// MIDI pitch, 0 through 127.
-    #[schemars(range(min = 0, max = 127))]
+    /// MIDI pitch 0..127 as an integer or string, or a name such as C4 (60).
+    #[serde(deserialize_with = "crate::note_pitch::deserialize")]
+    #[schemars(with = "crate::note_pitch::Input")]
     pub pitch: u8,
     /// Start in quarter-note beats, starting at zero.
     #[serde(rename = "start_beat")]
@@ -181,17 +191,23 @@ pub struct NoteInput {
 
 impl NoteInput {
     fn validate(self, clip_length: Ticks) -> Result<Note, String> {
-        if self.pitch > 127
-            || !self.start.is_finite()
-            || self.start < 0.0
-            || !self.beats.is_finite()
-            || self.beats <= 0.0
-            || !(0.0..=1.0).contains(&self.velocity)
-            || self.start + self.beats > clip_length.as_beats()
-        {
-            return Err(
-                "Invalid note pitch, timing or velocity; notes must fit inside the clip".into(),
-            );
+        let field = if self.pitch > 127 {
+            Some("pitch must be 0..127")
+        } else if !self.start.is_finite() || self.start < 0.0 {
+            Some("start_beat must be finite and >= 0")
+        } else if !self.beats.is_finite() || self.beats <= 0.0 {
+            Some("duration_beats must be finite and > 0")
+        } else if !(0.0..=1.0).contains(&self.velocity) {
+            Some("velocity must be 0..1")
+        } else if self.start + self.beats > clip_length.as_beats() {
+            Some("start_beat + duration_beats must fit inside the clip")
+        } else {
+            None
+        };
+        if let Some(field) = field {
+            return Err(format!(
+                "{field}. Example: {{\"pitch\":60,\"start_beat\":0,\"duration_beats\":1,\"velocity\":0.75}}"
+            ));
         }
         let start = Ticks::from_beats(self.start);
         let length = Ticks::from_beats(self.beats);
@@ -421,7 +437,11 @@ impl Session {
                     beats,
                     velocity,
                 }
-                .validate(target.length)?;
+                .validate(target.length)
+                .map_err(|e| {
+                    e.replace("start_beat", "start")
+                        .replace("duration_beats", "beats")
+                })?;
                 let index = self.add_note(ClipId(clip), note).map_err(error)?;
                 Ok(format!("Added note index {index}"))
             }
@@ -436,7 +456,11 @@ impl Session {
                 let first = target.notes.len();
                 let notes = notes
                     .into_iter()
-                    .map(|note| note.validate(target.length))
+                    .enumerate()
+                    .map(|(index, note)| {
+                        note.validate(target.length)
+                            .map_err(|error| format!("notes[{index}]: {error}"))
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let count = notes.len();
                 self.begin_transaction(crate::Edit::ExternalChanges);
@@ -446,6 +470,28 @@ impl Session {
                 self.end_transaction();
                 result.map_err(error)?;
                 Ok(format!("Added {count} notes, starting at index {first}"))
+            }
+            Command::ReplaceNotes { clip, notes } => {
+                if notes.len() > 4096 {
+                    return Err("Pass at most 4096 notes; use shorter clips".into());
+                }
+                let (_, target) = self
+                    .project()
+                    .midi_clip(ClipId(clip))
+                    .ok_or("Unknown MIDI clip ID")?;
+                let notes = notes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, note)| {
+                        note.validate(target.length)
+                            .map_err(|e| format!("notes[{index}]: {e}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let count = notes.len();
+                self.replace_notes(ClipId(clip), notes).map_err(error)?;
+                Ok(format!(
+                    "Clip now holds {count} authored notes; edits remain unsaved"
+                ))
             }
             Command::SetTempo { bpm } => {
                 if !(20.0..=300.0).contains(&bpm) {
@@ -486,6 +532,141 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn replacement_preserves_clip_state_is_atomic_and_undoes_once() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 8)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(48, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.set_curve_point(
+            clip,
+            auris_core::project::ClipCurve::Bend,
+            Ticks::ZERO,
+            0.25,
+        );
+        session
+            .set_clip_transforms(
+                clip,
+                vec![auris_core::NoteTransform::Transpose { semitones: 12 }],
+            )
+            .unwrap();
+        let before = session.project().clone();
+        let command = |notes| {
+            serde_json::from_value::<Command>(
+                serde_json::json!({"action":"replace_notes","clip":clip.0,"notes":notes}),
+            )
+            .unwrap()
+        };
+        let notes = serde_json::json!([
+            {"pitch":"C4","start_beat":0,"duration_beats":1,"velocity":0.7},
+            {"pitch":"64","start_beat":1,"duration_beats":1,"velocity":0.8}
+        ]);
+        session.agent_command(command(notes.clone())).unwrap();
+        let after = session.project().clone();
+        let target = after.midi_clip(clip).unwrap().1;
+        let mut expected = before.midi_clip(clip).unwrap().1.clone();
+        expected.notes = target.notes.clone();
+        assert_eq!(target, &expected);
+        assert_eq!(
+            target.notes.iter().map(|n| n.pitch).collect::<Vec<_>>(),
+            vec![60, 64]
+        );
+        session.agent_command(command(notes)).unwrap();
+        let error = session
+            .agent_command(command(serde_json::json!([
+                {"pitch":60,"start_beat":0,"duration_beats":1,"velocity":0.7},
+                {"pitch":61,"start_beat":7,"duration_beats":2,"velocity":0.7}
+            ])))
+            .unwrap_err();
+        assert!(
+            error.contains("notes[1]") && error.contains("duration_beats"),
+            "{error}"
+        );
+        assert_eq!(session.project(), &after);
+        session.undo();
+        assert_eq!(session.project(), &before);
+        session.redo();
+        assert_eq!(session.project(), &after);
+        session
+            .agent_command(command(serde_json::json!([])))
+            .unwrap();
+        assert!(
+            session
+                .project()
+                .midi_clip(clip)
+                .unwrap()
+                .1
+                .notes
+                .is_empty()
+        );
+        session.undo();
+        assert_eq!(session.project(), &after);
+        assert!(session.path().is_none());
+        let operation = crate::agent_policy::Operation::parse(
+            "edit_project",
+            &serde_json::json!({"command":{"action":"replace_notes","clip":clip.0,"notes":[]}}),
+        )
+        .unwrap();
+        assert!(operation.mutating && operation.confirm);
+    }
+
+    #[test]
+    fn direct_replacement_rejects_invalid_notes_without_recording_history() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        let note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        session.replace_notes(clip, vec![note.clone()]).unwrap();
+        let before = session.project().clone();
+        for bad in [
+            Note {
+                pitch: 128,
+                ..note.clone()
+            },
+            Note {
+                velocity: f32::NAN,
+                ..note.clone()
+            },
+            Note {
+                start: Ticks(-1),
+                ..note.clone()
+            },
+            Note {
+                length: Ticks::ZERO,
+                ..note.clone()
+            },
+            Note {
+                start: Ticks(i64::MAX),
+                ..note.clone()
+            },
+        ] {
+            assert!(
+                session
+                    .replace_notes(clip, vec![note.clone(), bad])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("notes[1]")
+            );
+            assert_eq!(session.project(), &before);
+        }
+        session.undo();
+        assert!(
+            session
+                .project()
+                .midi_clip(clip)
+                .unwrap()
+                .1
+                .notes
+                .is_empty()
+        );
     }
 
     #[test]
