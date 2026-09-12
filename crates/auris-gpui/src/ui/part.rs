@@ -18,7 +18,8 @@ use crate::theme::Metrics;
 use crate::ui::paint;
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
-    ButtonStyle, RowColumn, SliderFill, button, divider, dragged, picker_row, value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, divider, dragged, picker_row,
+    value_slider,
 };
 
 /// How wide the value button in one of this panel's rows is drawn.
@@ -379,7 +380,7 @@ impl AurisApp {
         }
 
         rows.push(
-            self.picker_row(
+            self.command_row(
                 "part-rhythm-edit",
                 Key::PartRhythm,
                 self.t(Key::PartRhythmEdit).to_string(),
@@ -468,7 +469,7 @@ impl AurisApp {
         // random one. That is what makes a take somebody liked reachable again — but only by
         // somebody who saw its number and can put it back.
         rows.push(
-            self.picker_row(
+            self.command_row(
                 "part-seed",
                 if drummer {
                     Key::PartSeed
@@ -901,11 +902,11 @@ impl AurisApp {
             .child(self.t(key))
     }
 
-    /// A labelled row whose value is a button opening a menu of the alternatives.
+    /// A labelled row whose value field opens a menu of the alternatives.
     ///
     /// The same shape as the instrument row above it and as a plugin's own choice parameters,
     /// deliberately: all of them are "this is what it is, press to choose another", and a second
-    /// shape for the same idea would only be a second thing to learn. Drawn by
+    /// selection treatment for the same idea would only be a second thing to learn. Drawn by
     /// [`crate::ui::widgets::picker_row`]; what is decided here is the panel's proportions and
     /// the language.
     pub(crate) fn picker_row<F>(
@@ -923,7 +924,29 @@ impl AurisApp {
             self.t(label),
             value,
             RowColumn::Value(VALUE_WIDTH),
-            false,
+            PickerBehavior::Menu,
+            &self.theme,
+            on_click,
+        )
+    }
+
+    /// A labelled row whose value runs a command instead of opening a choice list.
+    fn command_row<F>(
+        &self,
+        id: &'static str,
+        label: Key,
+        value: String,
+        on_click: F,
+    ) -> impl IntoElement + use<F>
+    where
+        F: Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    {
+        picker_row(
+            id,
+            self.t(label),
+            value,
+            RowColumn::Value(VALUE_WIDTH),
+            PickerBehavior::Command,
             &self.theme,
             on_click,
         )

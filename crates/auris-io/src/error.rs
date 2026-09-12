@@ -31,6 +31,18 @@ pub enum IoError {
     #[error("failed to write WAV file: {0}")]
     WavWrite(String),
 
+    /// Writing a FLAC file failed.
+    #[error("failed to write FLAC file: {0}")]
+    FlacWrite(String),
+
+    /// Writing an MP3 file failed.
+    #[error("failed to write MP3 file: {0}")]
+    Mp3Write(String),
+
+    /// An audio export was stopped by its caller.
+    #[error("audio export cancelled")]
+    ExportCancelled,
+
     /// A file was offered as a Standard MIDI File and would not parse as one.
     #[error("failed to read MIDI file: {0}")]
     MidiParse(String),

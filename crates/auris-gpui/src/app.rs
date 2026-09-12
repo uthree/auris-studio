@@ -1028,6 +1028,29 @@ pub enum ExportOutcome {
     Failed,
 }
 
+/// Which audio export the setup dialog will start.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AudioExportTarget {
+    /// The complete arrangement as one WAV file.
+    Mix,
+    /// The marked cycle region as one WAV file.
+    Cycle,
+    /// Each audible non-bus track as a separate WAV file.
+    Stems,
+}
+
+/// Choices being edited before an audio export starts.
+///
+/// Kept separate from saved preferences until Export is pressed, so cancelling the dialog is a
+/// true cancellation rather than a settings change with no file at the end of it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ExportDialog {
+    /// What will be written after the choices are confirmed.
+    pub target: AudioExportTarget,
+    /// The tentative audio choices shown in the dialog.
+    pub settings: ExportPreferences,
+}
+
 /// Progress of a running export.
 ///
 /// The render runs on a background thread, so progress travels through an atomic the UI polls
@@ -1280,6 +1303,8 @@ pub struct AurisApp {
     pub(crate) status: String,
     /// A first-launch library download, reported separately from command feedback.
     pub(crate) soundfont_download: Option<crate::startup_soundfonts::SoundFontDownload>,
+    /// Audio-export choices being edited before the destination picker opens.
+    pub(crate) export_dialog: Option<ExportDialog>,
     pub(crate) export: Option<ExportState>,
     /// Each singer track's take freshness, cached under the document revision it was read at.
     ///
@@ -1693,6 +1718,7 @@ impl AurisApp {
             panels: PanelLayout::load(),
             status,
             soundfont_download: None,
+            export_dialog: None,
             export: None,
             sung_badges: std::collections::HashMap::new(),
             sung_badges_revision: 0,
@@ -1810,13 +1836,14 @@ impl AurisApp {
 
     /// Whether something on top of the window has first claim on the keyboard.
     ///
-    /// A sheet, the palette, or either menu. Every binding goes out of reach while one is up: a
-    /// text field needs the keystrokes to be text, and a menu being walked with the arrow keys
-    /// must not also have `y` toggle the library away underneath it. Each of the four handles
-    /// Escape itself, since the binding that used to close them is one of the ones now out of
-    /// reach.
+    /// A sheet, the palette, an export dialog, or either menu. Every binding goes out of reach
+    /// while one is up: a text field needs the keystrokes to be text, and a menu being walked with
+    /// the arrow keys must not also have `y` toggle the library away underneath it. Each overlay
+    /// handles Escape itself, since the binding that used to close them is one of the ones now out
+    /// of reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
         self.compose_progress.is_some()
+            || self.export_dialog.is_some()
             || self.taking_text_input()
             || self.menu.is_some()
             || self.menu_bar.is_some()
@@ -2822,6 +2849,7 @@ impl AurisApp {
         let snap_note_lengths = self.settings.snap_note_lengths;
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
+        let voice_paths = self.settings.voice_paths.clone();
         let export = self.settings.export;
         let panels = self.panels.clone();
         let agent = self.settings.agent.clone();
@@ -2850,6 +2878,7 @@ impl AurisApp {
                         snap_note_lengths,
                         dictionary,
                         singer_acceleration,
+                        voice_paths,
                         export,
                         panels,
                         agent,

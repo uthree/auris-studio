@@ -132,7 +132,7 @@ impl<'a> RenderProgress<'a> {
     }
 
     /// Reports how far along the render is, from 0.0 to 1.0 — of its own window, not of the job.
-    fn report(&mut self, fraction: f32) {
+    pub fn report(&mut self, fraction: f32) {
         let (base, span) = self.window;
         if let Some(report) = self.report.as_mut() {
             report(base + fraction * span);
@@ -140,7 +140,7 @@ impl<'a> RenderProgress<'a> {
     }
 
     /// Whether the render has been asked to stop.
-    fn cancelled(&self) -> bool {
+    pub fn is_cancelled(&self) -> bool {
         self.cancel
             .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
     }
@@ -427,7 +427,7 @@ impl OfflineRender {
             progress.report(rendered as f32 / self.end as f32);
             // Between blocks, which is the only place a render can be interrupted — and cheap
             // enough that the check costs nothing next to the block that just ran.
-            if progress.cancelled() {
+            if progress.is_cancelled() {
                 return Err(EngineError::RenderCancelled);
             }
         }

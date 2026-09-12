@@ -71,6 +71,7 @@ impl SettingsWindow {
             .dropdown_menu
             .as_ref()
             .is_some_and(|menu| menu.id == id);
+        let hover_border = if opened { theme.accent } else { theme.border };
         div()
             .id(id)
             .debug_selector(move || id.to_string())
@@ -94,8 +95,7 @@ impl SettingsWindow {
                 theme.border_subtle
             })
             .focus(|this| this.border_color(theme.accent))
-            .cursor_pointer()
-            .hover(|this| this.border_color(theme.border))
+            .hover(|this| this.bg(theme.surface_hover).border_color(hover_border))
             .child(
                 canvas(
                     move |bounds, _, _| paint_bounds.set(bounds),
@@ -121,7 +121,15 @@ impl SettingsWindow {
                         )
                     }),
             )
-            .child(icon(Icon::ChevronDown, px(12.0), theme.text_muted))
+            .child(icon(
+                if opened {
+                    Icon::ChevronUp
+                } else {
+                    Icon::ChevronDown
+                },
+                Metrics::DROPDOWN_INDICATOR_SIZE,
+                theme.text_muted,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, window, cx| {

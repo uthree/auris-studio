@@ -346,6 +346,7 @@ impl SessionError {
             self,
             SessionError::Engine(auris_engine::EngineError::RenderCancelled)
                 | SessionError::Sing(auris_singer::SingError::Cancelled)
+                | SessionError::Io(auris_io::IoError::ExportCancelled)
         )
     }
 }

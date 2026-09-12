@@ -599,6 +599,8 @@ pub struct Theme {
     pub surface_raised: Hsla,
     /// Recessed surface, for timeline and piano-roll backgrounds.
     pub surface_sunken: Hsla,
+    /// Translucent recessed surface over the portion of a clip removed by a fade.
+    pub clip_fade_scrim: Hsla,
     /// Hover highlight.
     pub surface_hover: Hsla,
     /// Border between panels.
@@ -717,6 +719,10 @@ impl Theme {
             chord_palette: [accent; 7],
             font: ui_font(),
             surface_sunken: scheme.shade(-0.020),
+            clip_fade_scrim: Hsla {
+                a: 0.32,
+                ..scheme.shade(-0.020)
+            },
             background: scheme.shade(0.0),
             surface: scheme.shade(0.034),
             surface_raised: scheme.shade(0.074),
@@ -1069,6 +1075,14 @@ impl Metrics {
     pub const STATUS_HEIGHT: Pixels = px(22.0);
     /// Height of a control row inside the inspector.
     pub const CONTROL_HEIGHT: Pixels = px(22.0);
+    /// Width reserved for a dropdown's trailing disclosure indicator.
+    pub const DROPDOWN_INDICATOR_WIDTH: Pixels = px(14.0);
+    /// Size of the chevron inside a dropdown's trailing indicator lane.
+    pub const DROPDOWN_INDICATOR_SIZE: Pixels = px(11.0);
+    /// Width reserved for a disclosure's leading open-state indicator.
+    pub const DISCLOSURE_INDICATOR_WIDTH: Pixels = px(14.0);
+    /// Size of the chevron inside a disclosure's leading indicator lane.
+    pub const DISCLOSURE_INDICATOR_SIZE: Pixels = px(11.0);
 
     /// Corner radius for small controls: buttons, sliders, meters.
     pub const RADIUS_SM: Pixels = px(4.0);
@@ -1136,6 +1150,19 @@ mod tests {
                 (theme.grid_bar.l - theme.grid_beat.l) * toward > 0.0
                     && (theme.grid_beat.l - theme.grid_subdivision.l) * toward > 0.0,
                 "{}: the grid does not get brighter towards the downbeat",
+                entry.name
+            );
+        }
+    }
+
+    #[test]
+    fn clip_fade_scrim_follows_the_recessed_surface_in_every_scheme() {
+        for entry in SCHEMES {
+            let theme = Theme::from_scheme(entry);
+            assert_eq!(
+                theme.clip_fade_scrim,
+                Theme::translucent(theme.surface_sunken, 0.32),
+                "{}",
                 entry.name
             );
         }

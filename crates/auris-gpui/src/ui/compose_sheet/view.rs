@@ -3,7 +3,7 @@
 //! Basic controls and lyrics lead; detailed settings disclose the form and instrument roster.
 //! Both layouts reflow into fewer columns in smaller windows. A single scrolling
 //! body holds the fields and part cards, while the title and actions stay visible. The pickers
-//! the buttons open are in `menus`; the words' own rules and elements are in `lyrics`.
+//! the selection fields open are in `menus`; the words' own rules and elements are in `lyrics`.
 
 use gpui::{AnyElement, Context, IntoElement, MouseDownEvent, Window, div, prelude::*, px};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
@@ -15,7 +15,7 @@ use crate::app::{AurisApp, Drag};
 use crate::theme::{Metrics, Theme};
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
-    ButtonStyle, RowColumn, SliderFill, button, divider, picker_row, value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, divider, picker_row, value_slider,
 };
 
 use super::dials::*;
@@ -455,7 +455,7 @@ impl AurisApp {
             rows.push(portrait);
         }
         rows.push(
-            self.sheet_picker(
+            self.sheet_command(
                 "song-title",
                 Key::SongTitleField,
                 dials.title.clone(),
@@ -558,7 +558,7 @@ impl AurisApp {
                 .into_any_element(),
         ];
         rows.push(
-            self.sheet_picker(
+            self.sheet_command(
                 "song-key",
                 Key::SongKey,
                 dials.key.to_text(),
@@ -594,7 +594,7 @@ impl AurisApp {
             .into_any_element(),
         );
         rows.push(
-            self.sheet_picker(
+            self.sheet_command(
                 "song-seed",
                 Key::PartSeed,
                 dials.seed.to_string(),
@@ -987,7 +987,7 @@ impl AurisApp {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(self.sheet_picker(
+                    .child(div().flex_1().min_w_0().child(self.sheet_command(
                         "song-drum-kit",
                         Key::SongPartInstrument,
                         sound,
@@ -1298,12 +1298,12 @@ impl AurisApp {
             ))
     }
 
-    /// A row with a label at the start and a button holding the value.
+    /// A row with a label at the start and a selection field holding the value.
     ///
     /// The same control as the inspector's rows and a plugin's choice parameters — drawn by
     /// [`crate::ui::widgets::picker_row`] — turned the other way round. Its values can be long:
     /// a key, a groove, a whole progression. Pinning the label
-    /// instead of the button is what leaves them room.
+    /// instead of the field is what leaves them room.
     fn sheet_picker<I, F>(
         &self,
         id: I,
@@ -1320,7 +1320,30 @@ impl AurisApp {
             self.t(label),
             value,
             RowColumn::Label(LABEL_WIDTH),
-            false,
+            PickerBehavior::Menu,
+            &self.theme,
+            on_click,
+        )
+    }
+
+    /// A sheet row whose value runs a command rather than disclosing a list of choices.
+    fn sheet_command<I, F>(
+        &self,
+        id: I,
+        label: Key,
+        value: String,
+        on_click: F,
+    ) -> impl IntoElement + use<I, F>
+    where
+        I: Into<gpui::ElementId>,
+        F: Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    {
+        picker_row(
+            id,
+            self.t(label),
+            value,
+            RowColumn::Label(LABEL_WIDTH),
+            PickerBehavior::Command,
             &self.theme,
             on_click,
         )

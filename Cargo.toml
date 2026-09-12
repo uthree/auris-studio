@@ -50,6 +50,7 @@ clack-plugin = "0.1.1"
 bytemuck = { version = "1.16", features = ["derive"] }
 cpal = "0.18"
 crossbeam-channel = "0.5"
+flac-codec = "1.3"
 hound = "3.5"
 ureq = { version = "2.12", features = ["json"] }
 unicode-normalization = "0.1"
@@ -80,6 +81,7 @@ raw-window-handle = "0.6"
 realfft = "3.5"
 rubato = "4.0"
 rustfft = "6.4"
+rusty_mp3 = "0.6.1"
 # Reads SoundFont files *and* plays them. Named once here because two crates share the type:
 # `auris-io` hands out an `Arc<SoundFont>` and `auris-sampler` renders it, and two resolved
 # copies of the library would be two unrelated types with the same name.

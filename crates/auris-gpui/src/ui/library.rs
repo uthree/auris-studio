@@ -1131,7 +1131,6 @@ impl AurisApp {
         for (name, path) in voices {
             rows.push(self.voice_row(&name, path, cx));
         }
-        rows.extend(self.voice_path_rows(cx));
         rows
     }
 
@@ -1230,96 +1229,6 @@ impl AurisApp {
                 )
             })
             .into_any_element()
-    }
-
-    /// The folders voices are also looked for in, and the row that adds another — the
-    /// plugin-path arrangement, on the voice shelf.
-    fn voice_path_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
-        let theme = self.theme.clone();
-        let mut rows: Vec<AnyElement> = Vec::new();
-        for (index, path) in self.settings.voice_paths.clone().into_iter().enumerate() {
-            let shown = path.display().to_string();
-            rows.push(
-                div()
-                    .id(("voice-path", index))
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .pl(indent(1))
-                    .pr_1()
-                    .h(Metrics::CONTROL_HEIGHT)
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(div().flex_1().min_w_0().truncate().child(shown))
-                    .child(
-                        div()
-                            .id(("forget-voice-path", index))
-                            .cursor_pointer()
-                            .child(icon(Icon::Cross, px(10.0), theme.text_faint))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                    this.forget_voice_path(index);
-                                    cx.notify();
-                                }),
-                            ),
-                    )
-                    .into_any_element(),
-            );
-        }
-        rows.push(
-            div()
-                .pl(indent(1))
-                .pr_1()
-                .py_1()
-                .child(crate::ui::widgets::icon_label(
-                    "add-voice-path",
-                    Icon::Plus,
-                    self.t(Key::BrowserAddVoiceFolder),
-                    &theme,
-                    cx.listener(|this, _, _, cx| this.add_voice_path(cx)),
-                ))
-                .into_any_element(),
-        );
-        rows.push(
-            div()
-                .pl(indent(1))
-                .pr_1()
-                .py_1()
-                .child(crate::ui::widgets::icon_label(
-                    "setup-voicevox",
-                    Icon::Sliders,
-                    self.t(Key::BrowserSetupVoicevox),
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.open_voice_setup(
-                            crate::voice_setup_window::VoiceSetupTab::Voicevox,
-                            cx,
-                        )
-                    }),
-                ))
-                .into_any_element(),
-        );
-        rows.push(
-            div()
-                .pl(indent(1))
-                .pr_1()
-                .py_1()
-                .child(crate::ui::widgets::icon_label(
-                    "setup-diffsinger",
-                    Icon::Sliders,
-                    self.t(Key::BrowserSetupDiffSinger),
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.open_voice_setup(
-                            crate::voice_setup_window::VoiceSetupTab::DiffSinger,
-                            cx,
-                        )
-                    }),
-                ))
-                .into_any_element(),
-        );
-        rows
     }
 
     /// The extra places plugins are looked for, and the row that adds another.
