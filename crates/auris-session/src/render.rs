@@ -11,7 +11,10 @@ use auris_dsp::stretch::time_stretch;
 use auris_engine::{
     OfflineOptions, OfflineRender, PlacedEffects, PlacedInstruments, RenderProgress,
 };
-use auris_io::{WavExportSettings, resample_buffer, write_wav};
+use auris_io::{
+    AudioExportFormat, AudioExportSettings, WavExportSettings, resample_buffer,
+    write_audio_with_progress,
+};
 
 use crate::error::SessionError;
 
@@ -304,11 +307,42 @@ impl RenderJob {
         Ok(audio)
     }
 
-    /// Renders and writes a WAV file.
+    /// Renders and writes an audio file in the selected format.
     ///
     /// The file is written at the rate the project was rendered at, not at whatever the
     /// settings say, because the two disagreeing would resample the audio by accident: the
     /// header would claim a rate the samples were never produced at.
+    pub fn render_to_audio(
+        &mut self,
+        path: &Path,
+        settings: &AudioExportSettings,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<ExportSummary, SessionError> {
+        let buffer = progress.within(0.0, 0.9, |progress| self.render(options, progress))?;
+        let rendered_rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        let settings = AudioExportSettings {
+            sample_rate: rendered_rate.round().max(1.0) as u32,
+            ..*settings
+        };
+        progress.within(0.9, 0.1, |progress| {
+            let mut write_progress = |fraction| {
+                progress.report(fraction);
+                !progress.is_cancelled()
+            };
+            write_audio_with_progress(path, &buffer, &settings, &mut write_progress)
+        })?;
+        Ok(ExportSummary {
+            seconds: buffer.duration_seconds(),
+            frames: buffer.frame_count() as u64,
+            channels: buffer.channel_count(),
+            peak_db: gain_to_db(buffer.peak()),
+        })
+    }
+
+    /// Renders and writes a WAV file.
+    ///
+    /// Kept as the format-specific convenience used by command-line callers.
     pub fn render_to_wav(
         &mut self,
         path: &Path,
@@ -316,19 +350,7 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<ExportSummary, SessionError> {
-        let buffer = self.render(options, progress)?;
-        let rendered_rate = options.sample_rate.unwrap_or(self.project.sample_rate);
-        let settings = WavExportSettings {
-            sample_rate: rendered_rate.round().max(1.0) as u32,
-            ..*settings
-        };
-        write_wav(path, &buffer, &settings)?;
-        Ok(ExportSummary {
-            seconds: buffer.duration_seconds(),
-            frames: buffer.frame_count() as u64,
-            channels: buffer.channel_count(),
-            peak_db: gain_to_db(buffer.peak()),
-        })
+        self.render_to_audio(path, &(*settings).into(), options, progress)
     }
 }
 
@@ -378,12 +400,13 @@ pub fn stem_tracks(project: &Project) -> Vec<(TrackId, String)> {
 /// Two tracks may have the same name — nothing stops it and duplicating a track is how it usually
 /// happens — and two stems that agreed on a file name would leave one of them holding the other's
 /// audio. The second is numbered.
-fn stem_file_name(name: &str, taken: &mut HashSet<String>) -> String {
+fn stem_file_name(name: &str, format: AudioExportFormat, taken: &mut HashSet<String>) -> String {
     let base = sanitised_name(name);
-    let mut candidate = format!("{base}.wav");
+    let extension = format.extension();
+    let mut candidate = format!("{base}.{extension}");
     let mut number = 2;
     while !taken.insert(candidate.to_lowercase()) {
-        candidate = format!("{base} {number}.wav");
+        candidate = format!("{base} {number}.{extension}");
         number += 1;
     }
     candidate
@@ -446,7 +469,18 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<Vec<StemSummary>, SessionError> {
-        self.render_stems_with_partial(folder, settings, options, progress)
+        self.render_audio_stems(folder, &(*settings).into(), options, progress)
+    }
+
+    /// Renders one file per track using the selected audio format.
+    pub fn render_audio_stems(
+        &mut self,
+        folder: &Path,
+        settings: &AudioExportSettings,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<Vec<StemSummary>, SessionError> {
+        self.render_audio_stems_with_partial(folder, settings, options, progress)
             .map_err(|failure| failure.error)
     }
 
@@ -455,6 +489,17 @@ impl RenderJob {
         &mut self,
         folder: &Path,
         settings: &WavExportSettings,
+        options: &OfflineOptions,
+        progress: &mut RenderProgress<'_>,
+    ) -> Result<Vec<StemSummary>, StemRenderFailure> {
+        self.render_audio_stems_with_partial(folder, &(*settings).into(), options, progress)
+    }
+
+    /// Like [`Self::render_audio_stems`], retaining completed files after a later failure.
+    pub fn render_audio_stems_with_partial(
+        &mut self,
+        folder: &Path,
+        settings: &AudioExportSettings,
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<Vec<StemSummary>, StemRenderFailure> {
@@ -481,7 +526,7 @@ impl RenderJob {
             error: error.into(),
             written: Vec::new(),
         })?;
-        let settings = WavExportSettings {
+        let settings = AudioExportSettings {
             sample_rate: render.sample_rate().round().max(1.0) as u32,
             ..*settings
         };
@@ -491,21 +536,30 @@ impl RenderJob {
         let mut stems = Vec::with_capacity(tracks.len());
         for (index, (track, name)) in tracks.into_iter().enumerate() {
             render.set_audible(&self.project.soloed_alone(track));
-            if let Err(error) = progress.within(index as f32 * span, span, |progress| {
-                render.render(&mut out, progress)
+            let path = match progress.within(index as f32 * span, span, |progress| {
+                let rendered =
+                    progress.within(0.0, 0.9, |progress| render.render(&mut out, progress));
+                if let Err(error) = rendered {
+                    return Err(error.into());
+                }
+                let path = folder.join(stem_file_name(&name, settings.format, &mut taken));
+                let written = progress.within(0.9, 0.1, |progress| {
+                    let mut write_progress = |fraction| {
+                        progress.report(fraction);
+                        !progress.is_cancelled()
+                    };
+                    write_audio_with_progress(&path, &out, &settings, &mut write_progress)
+                });
+                written.map(|()| path).map_err(SessionError::from)
             }) {
-                return Err(StemRenderFailure {
-                    error: error.into(),
-                    written: stems,
-                });
-            }
-            let path = folder.join(stem_file_name(&name, &mut taken));
-            if let Err(error) = write_wav(&path, &out, &settings) {
-                return Err(StemRenderFailure {
-                    error: error.into(),
-                    written: stems,
-                });
-            }
+                Ok(path) => path,
+                Err(error) => {
+                    return Err(StemRenderFailure {
+                        error,
+                        written: stems,
+                    });
+                }
+            };
             stems.push(StemSummary {
                 track,
                 name,
@@ -674,13 +728,28 @@ mod tests {
         // Duplicating a track is how this happens, and it happens constantly. The second stem
         // would otherwise be written over the first and the export would come back one short.
         let mut taken = HashSet::new();
-        assert_eq!(stem_file_name("Gtr", &mut taken), "Gtr.wav");
-        assert_eq!(stem_file_name("Gtr", &mut taken), "Gtr 2.wav");
-        assert_eq!(stem_file_name("gtr", &mut taken), "gtr 3.wav");
+        assert_eq!(
+            stem_file_name("Gtr", AudioExportFormat::Wav, &mut taken),
+            "Gtr.wav"
+        );
+        assert_eq!(
+            stem_file_name("Gtr", AudioExportFormat::Wav, &mut taken),
+            "Gtr 2.wav"
+        );
+        assert_eq!(
+            stem_file_name("gtr", AudioExportFormat::Wav, &mut taken),
+            "gtr 3.wav"
+        );
         // A name a filesystem would refuse still makes a file, and one made of nothing still
         // makes one with a name.
-        assert_eq!(stem_file_name("Gtr/Bass", &mut taken), "Gtr-Bass.wav");
-        assert_eq!(stem_file_name("   ", &mut taken), "Track.wav");
+        assert_eq!(
+            stem_file_name("Gtr/Bass", AudioExportFormat::Flac, &mut taken),
+            "Gtr-Bass.flac"
+        );
+        assert_eq!(
+            stem_file_name("   ", AudioExportFormat::Mp3, &mut taken),
+            "Track.mp3"
+        );
     }
 
     #[test]

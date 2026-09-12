@@ -120,7 +120,12 @@ impl Section {
             Self::Buffer => &[Key::BufferSize, Key::RequestedBufferNote],
             Self::Export => &[
                 Key::ExportFormat,
+                Key::FormatWav,
+                Key::FormatFlac,
+                Key::FormatMp3,
+                Key::ExportBitDepth,
                 Key::ExportRate,
+                Key::ExportBitrate,
                 Key::ExportDither,
                 Key::ExportDitherNote,
             ],

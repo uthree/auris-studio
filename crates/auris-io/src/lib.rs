@@ -18,7 +18,7 @@
 //!
 //! * [`import`] decodes any container Symphonia understands into an
 //!   [`AudioBuffer`](auris_core::AudioBuffer), optionally resampling to the project rate.
-//! * [`export`] writes a rendered buffer out as 16-bit, 24-bit or 32-bit float WAV.
+//! * [`export`] writes a rendered buffer out as WAV, lossless FLAC or MP3.
 //! * [`record`] writes a WAV that does not exist yet, block by block, for as long as a take runs.
 //! * [`project_file`] saves and loads the [`Project`](auris_core::Project) document as JSON.
 //! * [`assets`] copies the files a project refers to into its folder, and finds them again when
@@ -35,7 +35,10 @@ pub mod soundfont;
 
 pub use assets::{byte_size, copy_into, find_named};
 pub use error::{IoError, Result};
-pub use export::{WavBitDepth, WavExportSettings, write_wav};
+pub use export::{
+    AudioExportFormat, AudioExportSettings, Mp3Bitrate, WavBitDepth, WavExportSettings,
+    write_audio, write_audio_with_progress, write_wav,
+};
 pub use import::{
     DecodedAudio, decode_audio_file, import_audio_file, resample_buffer, supported_extensions,
 };

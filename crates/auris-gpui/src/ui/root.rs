@@ -703,7 +703,47 @@ impl AurisApp {
             AudioExportTarget::Cycle => self.t(Key::CmdExportCycle),
             AudioExportTarget::Stems => self.t(Key::CmdExportStems),
         };
-        let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+        let project_rate = self.project().sample_rate;
+        let formats = [
+            AudioExportFormat::Wav,
+            AudioExportFormat::Flac,
+            AudioExportFormat::Mp3,
+        ]
+        .into_iter()
+        .map(|format| {
+            let id = match format {
+                AudioExportFormat::Wav => "export-format-wav",
+                AudioExportFormat::Flac => "export-format-flac",
+                AudioExportFormat::Mp3 => "export-format-mp3",
+            };
+            crate::ui::widgets::button(
+                id,
+                self.t(crate::i18n::audio_export_format_key(format)),
+                crate::ui::widgets::ButtonStyle::Normal,
+                dialog.settings.format == format,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, _, _, cx| {
+                    let project_rate = this.project().sample_rate;
+                    if let Some(dialog) = this.export_dialog.as_mut() {
+                        dialog.settings.format = format;
+                        dialog.settings.normalize_for_project_rate(project_rate);
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+        })
+        .collect::<Vec<_>>();
+
+        let depth_choices = match dialog.settings.format {
+            AudioExportFormat::Wav => {
+                vec![WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+            }
+            AudioExportFormat::Flac => vec![WavBitDepth::Int16, WavBitDepth::Int24],
+            AudioExportFormat::Mp3 => Vec::new(),
+        };
+        let depths = depth_choices
             .into_iter()
             .map(|depth| {
                 crate::ui::widgets::button(
@@ -724,14 +764,26 @@ impl AurisApp {
             })
             .collect::<Vec<_>>();
 
-        let mut rates = vec![None];
-        rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(Some));
+        let rate_choices: &[u32] = if matches!(dialog.settings.format, AudioExportFormat::Mp3) {
+            &ExportPreferences::MP3_RATE_CHOICES
+        } else {
+            &AudioPreferences::RATE_CHOICES
+        };
+        let mut rates = Vec::new();
+        if dialog
+            .settings
+            .format
+            .supports_sample_rate(project_rate.round().max(1.0) as u32)
+        {
+            rates.push(None);
+        }
+        rates.extend(rate_choices.iter().copied().map(Some));
         if let Some(custom) = dialog.settings.sample_rate
-            && !AudioPreferences::RATE_CHOICES.contains(&custom)
+            && dialog.settings.format.supports_sample_rate(custom)
+            && !rate_choices.contains(&custom)
         {
             rates.push(Some(custom));
         }
-        let project_rate = self.project().sample_rate;
         let rate_buttons = rates
             .into_iter()
             .map(|rate| {
@@ -763,6 +815,32 @@ impl AurisApp {
                 .into_any_element()
             })
             .collect::<Vec<_>>();
+
+        let bitrates = [
+            Mp3Bitrate::Kbps128,
+            Mp3Bitrate::Kbps192,
+            Mp3Bitrate::Kbps256,
+            Mp3Bitrate::Kbps320,
+        ]
+        .into_iter()
+        .map(|bitrate| {
+            crate::ui::widgets::button(
+                ("export-bitrate", u64::from(bitrate.kbps())),
+                format!("{} kbps", bitrate.kbps()),
+                crate::ui::widgets::ButtonStyle::Normal,
+                dialog.settings.mp3_bitrate == bitrate,
+                theme.accent,
+                &theme,
+                cx.listener(move |this, _, _, cx| {
+                    if let Some(dialog) = this.export_dialog.as_mut() {
+                        dialog.settings.mp3_bitrate = bitrate;
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+        })
+        .collect::<Vec<_>>();
 
         let dither = if dialog.settings.dither_applies() {
             crate::ui::widgets::button(
@@ -838,7 +916,25 @@ impl AurisApp {
                                         .text_color(theme.text_muted)
                                         .child(self.t(Key::ExportFormat)),
                                 )
-                                .child(div().flex().flex_wrap().gap_2().children(depths)),
+                                .child(div().flex().flex_wrap().gap_2().children(formats)),
+                        )
+                        .when(
+                            !matches!(dialog.settings.format, AudioExportFormat::Mp3),
+                            |dialog_view| {
+                                dialog_view.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.text_muted)
+                                                .child(self.t(Key::ExportBitDepth)),
+                                        )
+                                        .child(div().flex().flex_wrap().gap_2().children(depths)),
+                                )
+                            },
                         )
                         .child(
                             div()
@@ -853,24 +949,47 @@ impl AurisApp {
                                 )
                                 .child(div().flex().flex_wrap().gap_2().children(rate_buttons)),
                         )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .child(
+                        .when(
+                            matches!(dialog.settings.format, AudioExportFormat::Mp3),
+                            |dialog_view| {
+                                dialog_view.child(
                                     div()
-                                        .text_xs()
-                                        .text_color(theme.text_muted)
-                                        .child(self.t(Key::ExportDither)),
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.text_muted)
+                                                .child(self.t(Key::ExportBitrate)),
+                                        )
+                                        .child(div().flex().flex_wrap().gap_2().children(bitrates)),
                                 )
-                                .child(dither)
-                                .child(
+                            },
+                        )
+                        .when(
+                            !matches!(dialog.settings.format, AudioExportFormat::Mp3),
+                            |dialog_view| {
+                                dialog_view.child(
                                     div()
-                                        .text_xs()
-                                        .text_color(theme.text_faint)
-                                        .child(self.t(Key::ExportDitherNote)),
-                                ),
+                                        .flex()
+                                        .flex_col()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.text_muted)
+                                                .child(self.t(Key::ExportDither)),
+                                        )
+                                        .child(dither)
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.text_faint)
+                                                .child(self.t(Key::ExportDitherNote)),
+                                        ),
+                                )
+                            },
                         )
                         .child(
                             div()
@@ -3092,7 +3211,7 @@ mod window_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicU32};
 
-    use auris_session::prelude::{Ticks, WavBitDepth};
+    use auris_session::prelude::{AudioExportFormat, Mp3Bitrate, Ticks, WavBitDepth};
     use gpui::{TestAppContext, px, size};
 
     use super::note_resize_end;
@@ -3147,6 +3266,21 @@ mod window_tests {
             );
         });
 
+        click("export-format-mp3", cx);
+        paint(&app, cx);
+        assert!(cx.debug_bounds("export-bitrate-256").is_some());
+        click("export-bitrate-320", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let tentative = this.export_dialog.expect("the choices stay open").settings;
+            assert_eq!(tentative.format, AudioExportFormat::Mp3);
+            assert_eq!(tentative.mp3_bitrate, Mp3Bitrate::Kbps320);
+            assert_eq!(this.settings.export, saved, "nothing was committed yet");
+        });
+
+        click("export-format-wav", cx);
+        paint(&app, cx);
+
         click("export-depth-16", cx);
         paint(&app, cx);
         click("export-rate-44100", cx);
@@ -3174,7 +3308,7 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn every_wav_export_command_opens_the_same_choice_flow(cx: &mut TestAppContext) {
+    fn every_audio_export_command_opens_the_same_choice_flow(cx: &mut TestAppContext) {
         let (app, cx, _, _) = with_a_clip(cx);
 
         app.update(cx, |this, _| {

@@ -290,7 +290,10 @@ pub mod prelude {
     /// at the same rate as the ones beside it or it reads as a different instrument.
     pub use auris_engine::{AudioDeviceInfo, MeterBank, OfflineOptions, RenderProgress};
     pub use auris_gpu::WaveformPeaks;
-    pub use auris_io::{SoundFontPreset, WavBitDepth, WavExportSettings};
+    pub use auris_io::{
+        AudioExportFormat, AudioExportSettings, Mp3Bitrate, SoundFontPreset, WavBitDepth,
+        WavExportSettings,
+    };
     pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
 
     pub use crate::{

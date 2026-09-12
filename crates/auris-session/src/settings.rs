@@ -7,7 +7,9 @@
 use std::path::{Path, PathBuf};
 
 use auris_i18n::Language;
-use auris_io::{WavBitDepth, WavExportSettings};
+use auris_io::{
+    AudioExportFormat, AudioExportSettings, Mp3Bitrate, WavBitDepth, WavExportSettings,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
@@ -112,6 +114,8 @@ pub struct WindowPlacement {
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExportPreferences {
+    /// Container and codec used for the export.
+    pub format: AudioExportFormat,
     /// Sample format written to the file.
     pub bit_depth: WavBitDepth,
     /// Add TPDF dither before quantising. Only ever applied at an integer depth — see
@@ -123,16 +127,47 @@ pub struct ExportPreferences {
     /// this rate, so asking for 44.1 from a 48 kHz project resamples the whole mix rather than
     /// mislabelling it.
     pub sample_rate: Option<u32>,
+    /// Constant bitrate used for MP3 output.
+    pub mp3_bitrate: Mp3Bitrate,
 }
 
 impl ExportPreferences {
+    /// Common high-quality rates offered for MP3 output.
+    pub const MP3_RATE_CHOICES: [u32; 3] = [32_000, 44_100, 48_000];
+
     /// Whether dither can do anything at the chosen depth.
     ///
     /// A float file stores what the render produced, so there is nothing to dither *to*. The
     /// switch is shown greyed rather than hidden, because a control that disappears when a
     /// neighbour moves reads as a bug in the window.
     pub fn dither_applies(&self) -> bool {
-        self.bit_depth.is_integer()
+        !matches!(self.format, AudioExportFormat::Mp3) && self.bit_depth.is_integer()
+    }
+
+    /// Makes dependent choices valid after changing the output format.
+    pub fn normalize_for_project_rate(&mut self, project_rate: f64) {
+        if matches!(self.format, AudioExportFormat::Flac)
+            && matches!(self.bit_depth, WavBitDepth::Float32)
+        {
+            self.bit_depth = WavBitDepth::Int24;
+        }
+        let effective_rate = self
+            .sample_rate
+            .unwrap_or_else(|| project_rate.round().max(1.0) as u32);
+        if !self.format.supports_sample_rate(effective_rate) {
+            self.sample_rate = Some(44_100);
+        }
+    }
+
+    /// Settings for the selected encoder, at the rate the render actually ran at.
+    pub fn audio_settings(&self, rendered_rate: f64) -> AudioExportSettings {
+        AudioExportSettings {
+            format: self.format,
+            bit_depth: self.bit_depth,
+            sample_rate: rendered_rate.round().max(1.0) as u32,
+            dither: self.dither && self.dither_applies(),
+            mp3_bitrate: self.mp3_bitrate,
+        }
     }
 
     /// The settings a WAV writer should be given, at the rate the render actually ran at.
@@ -140,10 +175,11 @@ impl ExportPreferences {
     /// The rate is passed in rather than read from here because those two can disagree: a render
     /// that could not be run at the asked-for rate must not be labelled with it.
     pub fn wav_settings(&self, rendered_rate: f64) -> WavExportSettings {
+        let settings = self.audio_settings(rendered_rate);
         WavExportSettings {
-            bit_depth: self.bit_depth,
-            sample_rate: rendered_rate.round().max(1.0) as u32,
-            dither: self.dither && self.dither_applies(),
+            bit_depth: settings.bit_depth,
+            sample_rate: settings.sample_rate,
+            dither: settings.dither,
         }
     }
 }
@@ -491,6 +527,7 @@ mod tests {
             bit_depth: WavBitDepth::Float32,
             dither: true,
             sample_rate: None,
+            ..ExportPreferences::default()
         };
         assert!(!float.dither_applies());
         assert!(!float.wav_settings(48_000.0).dither);
@@ -511,8 +548,31 @@ mod tests {
             bit_depth: WavBitDepth::Int24,
             dither: false,
             sample_rate: Some(44_100),
+            ..ExportPreferences::default()
         };
         assert_eq!(asked.wav_settings(48_000.0).sample_rate, 48_000);
+    }
+
+    #[test]
+    fn changing_format_normalizes_only_incompatible_choices() {
+        let mut flac = ExportPreferences {
+            format: AudioExportFormat::Flac,
+            bit_depth: WavBitDepth::Float32,
+            ..ExportPreferences::default()
+        };
+        flac.normalize_for_project_rate(96_000.0);
+        assert_eq!(flac.bit_depth, WavBitDepth::Int24);
+        assert_eq!(flac.sample_rate, None);
+
+        let mut mp3 = ExportPreferences {
+            format: AudioExportFormat::Mp3,
+            sample_rate: None,
+            dither: true,
+            ..ExportPreferences::default()
+        };
+        mp3.normalize_for_project_rate(96_000.0);
+        assert_eq!(mp3.sample_rate, Some(44_100));
+        assert!(!mp3.audio_settings(44_100.0).dither);
     }
 
     #[test]

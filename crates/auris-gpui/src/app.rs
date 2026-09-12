@@ -1047,7 +1047,7 @@ pub(crate) enum AudioExportTarget {
 pub(crate) struct ExportDialog {
     /// What will be written after the choices are confirmed.
     pub target: AudioExportTarget,
-    /// The tentative WAV choices shown in the dialog.
+    /// The tentative audio choices shown in the dialog.
     pub settings: ExportPreferences,
 }
 

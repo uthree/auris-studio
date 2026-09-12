@@ -155,7 +155,7 @@ strings! {
     TimbreMapAudition { en: "Audition through track (including its mixer settings)", ja: "試聴先トラック（ミキサー設定も反映）" }
     TimbreMapEmpty { en: "No audible sounds. Load a SoundFont and rescan.", ja: "測定できる音色がありません。SoundFontを読み込んで再解析してください。" }
     // ------------------------------------------------------------------ transport bar
-    ExportWav { en: "Export WAV", ja: "WAV 書き出し" }
+    ExportWav { en: "Export Audio", ja: "オーディオ書き出し" }
     Grid { en: "Grid", ja: "グリッド" }
     Zoom { en: "Zoom", ja: "拡大" }
     GridFree { en: "free", ja: "自由" }
@@ -371,10 +371,15 @@ strings! {
     DeviceDefaultRate { en: "Device Default", ja: "デバイス標準" }
     BufferSize { en: "Buffer Size", ja: "バッファサイズ" }
     ExportFormat { en: "Export Format", ja: "書き出し形式" }
+    FormatWav { en: "WAV", ja: "WAV" }
+    FormatFlac { en: "FLAC", ja: "FLAC" }
+    FormatMp3 { en: "MP3", ja: "MP3" }
+    ExportBitDepth { en: "Bit Depth", ja: "ビット深度" }
     WavPcm16 { en: "16-bit PCM", ja: "16 bit PCM" }
     WavPcm24 { en: "24-bit PCM", ja: "24 bit PCM" }
     WavFloat32 { en: "32-bit float", ja: "32 bit 浮動小数点" }
     ExportRate { en: "Export Rate", ja: "書き出しサンプルレート" }
+    ExportBitrate { en: "MP3 Bitrate", ja: "MP3 ビットレート" }
     ProjectRate { en: "Project Rate", ja: "プロジェクトのレート" }
     ExportDither { en: "Dither", ja: "ディザ" }
     ExportDitherNote {
@@ -559,8 +564,8 @@ strings! {
     CmdImportMidi { en: "Import MIDI File…", ja: "MIDI ファイルを読み込む…" }
     CmdExportMidi { en: "Export MIDI File…", ja: "MIDI ファイルを書き出す…" }
     CmdCollectAssets { en: "Collect Assets", ja: "アセットを集める" }
-    CmdExportWav { en: "Export WAV", ja: "WAV を書き出す" }
-    CmdExportCycle { en: "Export Cycle as WAV", ja: "サイクル範囲を WAV に書き出す" }
+    CmdExportWav { en: "Export Audio", ja: "オーディオを書き出す" }
+    CmdExportCycle { en: "Export Cycle", ja: "サイクル範囲を書き出す" }
     CmdExportStems { en: "Export Stems", ja: "ステムを書き出す" }
     CmdExportSingerFrames { en: "Export Singer Frames…", ja: "シンガーフレームを書き出す…" }
     CmdQuit { en: "Quit", ja: "終了" }
@@ -641,7 +646,7 @@ strings! {
     MenuImportAudioItem { en: "Import Audio…", ja: "オーディオを読み込む…" }
     MenuImportSoundFontItem { en: "Import SoundFont…", ja: "サウンドフォントを読み込む…" }
     MenuCollectAssetsItem { en: "Collect Assets into Project", ja: "アセットをプロジェクトにまとめる" }
-    MenuExportWavItem { en: "Export WAV…", ja: "WAV を書き出す…" }
+    MenuExportWavItem { en: "Export Audio…", ja: "オーディオを書き出す…" }
     MenuExportCycleItem { en: "Export Cycle…", ja: "サイクル範囲を書き出す…" }
     MenuExportStemsItem { en: "Export Stems…", ja: "ステムを書き出す…" }
     DialogExportStems { en: "Choose a folder for the stems", ja: "ステムの書き出し先フォルダを選択" }
@@ -1193,7 +1198,7 @@ strings! {
     DialogImportMidi { en: "Import a MIDI file", ja: "MIDI ファイルを読み込む" }
     DialogExportMidi { en: "Export a MIDI file", ja: "MIDI ファイルを書き出す" }
     DialogExportFrames { en: "Export singer frames", ja: "シンガーフレームを書き出す" }
-    DialogExportWav { en: "Export WAV", ja: "WAV を書き出す" }
+    DialogExportWav { en: "Export Audio", ja: "オーディオを書き出す" }
     FilterProject { en: "Auris project", ja: "Auris プロジェクト" }
     FilterSpec { en: "Song specification", ja: "楽曲仕様書" }
     FilterAudio { en: "Audio", ja: "オーディオ" }
@@ -1205,6 +1210,8 @@ strings! {
         ja: "先にシンガートラックを選択してください。フレームは 1 トラック分の特徴量です"
     }
     FilterWav { en: "WAV audio", ja: "WAV オーディオ" }
+    FilterFlac { en: "FLAC audio", ja: "FLAC オーディオ" }
+    FilterMp3 { en: "MP3 audio", ja: "MP3 オーディオ" }
     FilterVoiceModel { en: "singing voice model", ja: "歌声モデル" }
     DialogChooseVoice { en: "Choose a voice model", ja: "声のモデルを選択" }
     CmdChooseVoice { en: "Choose Voice…", ja: "声を選ぶ…" }
@@ -1986,6 +1993,9 @@ mod tests {
             Key::MonitorInitial,
             Key::SubdivisionEighth,
             Key::SubdivisionSixteenth,
+            Key::FormatWav,
+            Key::FormatFlac,
+            Key::FormatMp3,
         ];
         for key in Key::ALL {
             if SHARED.contains(key) {

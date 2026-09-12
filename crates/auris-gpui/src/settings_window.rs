@@ -893,36 +893,92 @@ impl SettingsWindow {
             // Export preferences describe the file, independently of the output device's settings.
 
             rows.push(section_title(self.t(Key::ExportFormat), &theme));
-            let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
-                .into_iter()
-                .map(|depth| {
-                    (
-                        depth,
-                        crate::i18n::wav_bit_depth_key(depth)
-                            .get(self.language)
-                            .to_owned(),
-                        String::new(),
-                    )
-                })
-                .collect();
+            let formats = [
+                AudioExportFormat::Wav,
+                AudioExportFormat::Flac,
+                AudioExportFormat::Mp3,
+            ]
+            .into_iter()
+            .map(|format| {
+                (
+                    format,
+                    crate::i18n::audio_export_format_key(format)
+                        .get(self.language)
+                        .to_owned(),
+                    String::new(),
+                )
+            })
+            .collect();
             rows.push(self.dropdown(
-                "depth",
-                depths,
-                &export.bit_depth,
-                |this, bit_depth, cx| {
-                    this.apply_export(
-                        ExportPreferences {
-                            bit_depth,
-                            ..this.export
-                        },
-                        cx,
-                    );
+                "export-format",
+                formats,
+                &export.format,
+                |this, format, cx| {
+                    let mut export = ExportPreferences {
+                        format,
+                        ..this.export
+                    };
+                    if matches!(format, AudioExportFormat::Flac)
+                        && matches!(export.bit_depth, WavBitDepth::Float32)
+                    {
+                        export.bit_depth = WavBitDepth::Int24;
+                    }
+                    if let Some(rate) = export.sample_rate
+                        && !format.supports_sample_rate(rate)
+                    {
+                        export.sample_rate = Some(44_100);
+                    }
+                    this.apply_export(export, cx);
                 },
                 cx,
             ));
+
+            if !matches!(export.format, AudioExportFormat::Mp3) {
+                rows.push(section_title(self.t(Key::ExportBitDepth), &theme));
+                let depth_choices: &[WavBitDepth] = match export.format {
+                    AudioExportFormat::Wav => {
+                        &[WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+                    }
+                    AudioExportFormat::Flac => &[WavBitDepth::Int16, WavBitDepth::Int24],
+                    AudioExportFormat::Mp3 => &[],
+                };
+                let depths = depth_choices
+                    .iter()
+                    .copied()
+                    .map(|depth| {
+                        (
+                            depth,
+                            crate::i18n::wav_bit_depth_key(depth)
+                                .get(self.language)
+                                .to_owned(),
+                            String::new(),
+                        )
+                    })
+                    .collect();
+                rows.push(self.dropdown(
+                    "depth",
+                    depths,
+                    &export.bit_depth,
+                    |this, bit_depth, cx| {
+                        this.apply_export(
+                            ExportPreferences {
+                                bit_depth,
+                                ..this.export
+                            },
+                            cx,
+                        );
+                    },
+                    cx,
+                ));
+            }
             rows.push(section_title(self.t(Key::ExportRate), &theme));
             let mut export_rates = vec![(None, self.t(Key::ProjectRate).to_owned(), String::new())];
-            export_rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(|rate| {
+            let rate_choices: &[u32] = if matches!(export.format, AudioExportFormat::Mp3) {
+                &ExportPreferences::MP3_RATE_CHOICES
+            } else {
+                &AudioPreferences::RATE_CHOICES
+            };
+            export_rates.extend(rate_choices.iter().copied().map(|rate| {
                 (
                     Some(rate),
                     messages::rate_single(self.language, f64::from(rate) / 1000.0),
@@ -930,7 +986,8 @@ impl SettingsWindow {
                 )
             }));
             if let Some(rate) = export.sample_rate
-                && !AudioPreferences::RATE_CHOICES.contains(&rate)
+                && export.format.supports_sample_rate(rate)
+                && !rate_choices.contains(&rate)
             {
                 export_rates.push((
                     Some(rate),
@@ -953,44 +1010,72 @@ impl SettingsWindow {
                 },
                 cx,
             ));
-            rows.push(section_title(self.t(Key::ExportDither), &theme));
-            let dithers = export.dither_applies();
-            let on = export.dither && dithers;
-            if dithers {
-                rows.push(
-                    div()
-                        .flex()
-                        .gap_1()
-                        .child(button(
-                            "export-dither",
-                            self.t(if on { Key::ValueOn } else { Key::ValueOff }),
-                            ButtonStyle::Normal,
-                            on,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                this.apply_export(
-                                    ExportPreferences {
-                                        dither: !this.export.dither,
-                                        ..this.export
-                                    },
-                                    cx,
-                                );
-                            }),
-                        ))
-                        .into_any_element(),
-                );
+            if matches!(export.format, AudioExportFormat::Mp3) {
+                rows.push(section_title(self.t(Key::ExportBitrate), &theme));
+                let bitrates = [
+                    Mp3Bitrate::Kbps128,
+                    Mp3Bitrate::Kbps192,
+                    Mp3Bitrate::Kbps256,
+                    Mp3Bitrate::Kbps320,
+                ]
+                .into_iter()
+                .map(|bitrate| (bitrate, format!("{} kbps", bitrate.kbps()), String::new()))
+                .collect();
+                rows.push(self.dropdown(
+                    "export-bitrate",
+                    bitrates,
+                    &export.mp3_bitrate,
+                    |this, mp3_bitrate, cx| {
+                        this.apply_export(
+                            ExportPreferences {
+                                mp3_bitrate,
+                                ..this.export
+                            },
+                            cx,
+                        );
+                    },
+                    cx,
+                ));
             } else {
-                rows.push(
-                    div()
-                        .id("export-dither-disabled")
-                        .text_xs()
-                        .text_color(theme.text_faint)
-                        .child(self.t(Key::ValueOff))
-                        .into_any_element(),
-                );
+                rows.push(section_title(self.t(Key::ExportDither), &theme));
+                let dithers = export.dither_applies();
+                let on = export.dither && dithers;
+                if dithers {
+                    rows.push(
+                        div()
+                            .flex()
+                            .gap_1()
+                            .child(button(
+                                "export-dither",
+                                self.t(if on { Key::ValueOn } else { Key::ValueOff }),
+                                ButtonStyle::Normal,
+                                on,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.apply_export(
+                                        ExportPreferences {
+                                            dither: !this.export.dither,
+                                            ..this.export
+                                        },
+                                        cx,
+                                    );
+                                }),
+                            ))
+                            .into_any_element(),
+                    );
+                } else {
+                    rows.push(
+                        div()
+                            .id("export-dither-disabled")
+                            .text_xs()
+                            .text_color(theme.text_faint)
+                            .child(self.t(Key::ValueOff))
+                            .into_any_element(),
+                    );
+                }
+                rows.push(note(self.t(Key::ExportDitherNote), &theme));
             }
-            rows.push(note(self.t(Key::ExportDitherNote), &theme));
         }
         if !self.searching()
             && let Some(status) = live

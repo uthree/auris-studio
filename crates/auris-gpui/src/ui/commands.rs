@@ -2395,14 +2395,13 @@ impl AurisApp {
         }
         // A completed result is no longer the topmost decision once a new export is requested.
         self.export = None;
-        self.export_dialog = Some(ExportDialog {
-            target,
-            settings: self.settings.export,
-        });
+        let mut settings = self.settings.export;
+        settings.normalize_for_project_rate(self.project().sample_rate);
+        self.export_dialog = Some(ExportDialog { target, settings });
         cx.notify();
     }
 
-    /// Commits the visible WAV choices and opens the appropriate destination picker.
+    /// Commits the visible audio choices and opens the appropriate destination picker.
     pub(crate) fn confirm_export_dialog(&mut self, cx: &mut Context<Self>) {
         let Some(dialog) = self.export_dialog.take() else {
             return;
@@ -2415,7 +2414,7 @@ impl AurisApp {
         }
     }
 
-    /// Prompts for a folder and renders one WAV file per track into it.
+    /// Prompts for a folder and renders one audio file per track into it.
     ///
     /// The same flow as [`Self::start_export`] — one snapshot, one background render, one overlay
     /// with a bar and a Cancel — with a folder in place of a file name. It is a separate command
@@ -2439,7 +2438,7 @@ impl AurisApp {
             ..OfflineOptions::whole_project()
         };
         let settings =
-            export.wav_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
+            export.audio_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
         self.choosing_export = true;
         let language = self.language();
 
@@ -2474,7 +2473,7 @@ impl AurisApp {
                     let mut report = |fraction: f32| {
                         progress.store(fraction.to_bits(), Ordering::Relaxed);
                     };
-                    job.render_stems(
+                    job.render_audio_stems(
                         &render_folder,
                         &settings,
                         &options,
@@ -2556,10 +2555,10 @@ impl AurisApp {
         } else {
             whole
         };
-        // What the file will be labelled, which `render_to_wav` corrects if the render turns out
+        // What the file will be labelled, which `render_to_audio` corrects if the render turns out
         // to run at another rate.
         let settings =
-            export.wav_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
+            export.audio_settings(options.sample_rate.unwrap_or(job.project().sample_rate));
         // Which command failed, when one does — and a different suggested name, so a cycle
         // bounced next to a full export does not offer to overwrite it.
         let command = if cycle {
@@ -2569,18 +2568,24 @@ impl AurisApp {
         };
         self.choosing_export = true;
         let name = self.project().name.clone();
+        let extension = export.format.extension();
         let suggested = if cycle {
-            format!("{name} (cycle).wav")
+            format!("{name} (cycle).{extension}")
         } else {
-            format!("{name}.wav")
+            format!("{name}.{extension}")
         };
         let language = self.language();
+        let filter = match export.format {
+            AudioExportFormat::Wav => Key::FilterWav,
+            AudioExportFormat::Flac => Key::FilterFlac,
+            AudioExportFormat::Mp3 => Key::FilterMp3,
+        };
 
         cx.spawn(async move |this, cx| {
             let handle = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogExportWav.get(language))
                 .set_file_name(suggested)
-                .add_filter(Key::FilterWav.get(language), &["wav"])
+                .add_filter(filter.get(language), &[extension])
                 .save_file()
                 .await;
             let Some(handle) = handle else {
@@ -2609,7 +2614,7 @@ impl AurisApp {
                     let mut report = |fraction: f32| {
                         progress.store(fraction.to_bits(), Ordering::Relaxed);
                     };
-                    job.render_to_wav(
+                    job.render_to_audio(
                         &render_path,
                         &settings,
                         &options,

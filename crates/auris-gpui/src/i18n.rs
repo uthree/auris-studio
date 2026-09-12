@@ -100,6 +100,15 @@ pub fn wav_bit_depth_key(depth: WavBitDepth) -> Key {
     }
 }
 
+/// The localized label for one audio export format.
+pub fn audio_export_format_key(format: AudioExportFormat) -> Key {
+    match format {
+        AudioExportFormat::Wav => Key::FormatWav,
+        AudioExportFormat::Flac => Key::FormatFlac,
+        AudioExportFormat::Mp3 => Key::FormatMp3,
+    }
+}
+
 /// What an undo step is called.
 pub fn edit_key(edit: Edit) -> Key {
     match edit {
@@ -454,6 +463,18 @@ fn io_error_text(error: &IoError, language: Language) -> String {
         IoError::WavWrite(detail) => (
             format!("failed to write WAV file: {detail}"),
             format!("WAVファイルを書き込めませんでした: {detail}"),
+        ),
+        IoError::FlacWrite(detail) => (
+            format!("failed to write FLAC file: {detail}"),
+            format!("FLACファイルを書き込めませんでした: {detail}"),
+        ),
+        IoError::Mp3Write(detail) => (
+            format!("failed to write MP3 file: {detail}"),
+            format!("MP3ファイルを書き込めませんでした: {detail}"),
+        ),
+        IoError::ExportCancelled => (
+            "audio export cancelled".to_string(),
+            "オーディオの書き出しを中止しました".to_string(),
         ),
         IoError::MidiParse(detail) => (
             format!("failed to read MIDI file: {detail}"),
