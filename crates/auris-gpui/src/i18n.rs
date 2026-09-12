@@ -91,6 +91,15 @@ impl AurisApp {
     }
 }
 
+/// The localized label for one WAV sample format.
+pub fn wav_bit_depth_key(depth: WavBitDepth) -> Key {
+    match depth {
+        WavBitDepth::Int16 => Key::WavPcm16,
+        WavBitDepth::Int24 => Key::WavPcm24,
+        WavBitDepth::Float32 => Key::WavFloat32,
+    }
+}
+
 /// What an undo step is called.
 pub fn edit_key(edit: Edit) -> Key {
     match edit {

@@ -895,7 +895,15 @@ impl SettingsWindow {
             rows.push(section_title(self.t(Key::ExportFormat), &theme));
             let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
                 .into_iter()
-                .map(|depth| (depth, depth.label().to_owned(), String::new()))
+                .map(|depth| {
+                    (
+                        depth,
+                        crate::i18n::wav_bit_depth_key(depth)
+                            .get(self.language)
+                            .to_owned(),
+                        String::new(),
+                    )
+                })
                 .collect();
             rows.push(self.dropdown(
                 "depth",

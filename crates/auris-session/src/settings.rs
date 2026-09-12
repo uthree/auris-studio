@@ -106,9 +106,9 @@ pub struct WindowPlacement {
 ///
 /// Kept with the settings rather than in the document: the depth somebody masters at is a fact
 /// about them and their delivery, not about the song, and a project handed to somebody else
-/// should be exported the way *they* export. It is also why there is no dialog in front of the
-/// save sheet — an export that asks three questions every time is an export people stop using
-/// for a quick listen.
+/// should be exported the way *they* export. The desktop copies these values into its export
+/// dialog and saves the confirmed choices, so a quick bounce starts with the last delivery's
+/// settings without making them part of the project.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExportPreferences {

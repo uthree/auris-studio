@@ -15,7 +15,9 @@ use auris_session::SingerTakeState;
 use auris_session::prelude::*;
 use gpui::{Context, Window};
 
-use crate::app::{AurisApp, AutoSing, Drag, ExportState, SingerFailure};
+use crate::app::{
+    AudioExportTarget, AurisApp, AutoSing, Drag, ExportDialog, ExportState, SingerFailure,
+};
 use crate::i18n::{edit_key, error_text};
 use crate::ui::drop::{DropAction, DropKind, DropOutcome, Dropped, drop_action};
 
@@ -703,6 +705,7 @@ impl AurisApp {
     pub(crate) fn reset_view(&mut self) {
         // The observed editor closes on the next draw, before reused clip ids can be edited.
         self.rhythm_window = None;
+        self.export_dialog = None;
         self.close_visualizer();
         self.visualizer = Default::default();
         self.spectrogram_tracks.clear();
@@ -2350,14 +2353,66 @@ impl AurisApp {
         }
     }
 
-    /// Prompts for a destination and renders the project to a WAV file.
+    /// Opens the WAV choices for the complete arrangement.
     pub(crate) fn start_export(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.begin_export(false, cx);
+        self.open_export_dialog(AudioExportTarget::Mix, cx);
     }
 
-    /// Prompts for a destination and renders only the cycle region.
+    /// Opens the WAV choices for the marked cycle region.
     pub(crate) fn start_export_cycle(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.begin_export(true, cx);
+        self.open_export_dialog(AudioExportTarget::Cycle, cx);
+    }
+
+    /// Opens the WAV choices for one file per audible track.
+    pub(crate) fn start_export_stems(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_export_dialog(AudioExportTarget::Stems, cx);
+    }
+
+    /// Opens the short audio-export form after refusing targets that cannot be written.
+    fn open_export_dialog(&mut self, target: AudioExportTarget, cx: &mut Context<Self>) {
+        if self.export_dialog.is_some()
+            || self.choosing_export
+            || self.export.as_ref().is_some_and(|e| e.result.is_none())
+        {
+            self.set_status(self.t(Key::ExportAlreadyRunning));
+            return;
+        }
+        self.cancel_auto_sing();
+        if matches!(target, AudioExportTarget::Cycle)
+            && self
+                .project()
+                .loop_region
+                .is_none_or(|(start, end)| end.max_zero() <= start.max_zero())
+        {
+            self.set_failed_status(self.t(Key::NoCycleToExport));
+            return;
+        }
+        if matches!(target, AudioExportTarget::Stems)
+            && auris_session::stem_tracks(self.project()).is_empty()
+        {
+            self.set_failed_status(self.t(Key::ErrorNothingToStem));
+            return;
+        }
+        // A completed result is no longer the topmost decision once a new export is requested.
+        self.export = None;
+        self.export_dialog = Some(ExportDialog {
+            target,
+            settings: self.settings.export,
+        });
+        cx.notify();
+    }
+
+    /// Commits the visible WAV choices and opens the appropriate destination picker.
+    pub(crate) fn confirm_export_dialog(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.export_dialog.take() else {
+            return;
+        };
+        self.apply_export(dialog.settings);
+        match dialog.target {
+            AudioExportTarget::Mix => self.choose_export_destination(false, dialog.settings, cx),
+            AudioExportTarget::Cycle => self.choose_export_destination(true, dialog.settings, cx),
+            AudioExportTarget::Stems => self.choose_stems_destination(dialog.settings, cx),
+        }
     }
 
     /// Prompts for a folder and renders one WAV file per track into it.
@@ -2366,15 +2421,11 @@ impl AurisApp {
     /// with a bar and a Cancel — with a folder in place of a file name. It is a separate command
     /// rather than a checkbox on the export sheet because it answers a different question: an
     /// export is a piece to listen to, and stems are a session for somebody else to open.
-    pub(crate) fn start_export_stems(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.auto_sing.is_some()
-            || self.choosing_export
-            || self.export.as_ref().is_some_and(|e| e.result.is_none())
-        {
+    fn choose_stems_destination(&mut self, export: ExportPreferences, cx: &mut Context<Self>) {
+        if self.choosing_export || self.export.as_ref().is_some_and(|e| e.result.is_none()) {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
-        self.cancel_auto_sing();
         let mut job = self.session.render_job();
         // Refused before the dialog opens, for the reason a cycle export is: a folder chosen for
         // an export that cannot happen is a question asked for nothing.
@@ -2383,7 +2434,6 @@ impl AurisApp {
             self.set_failed_status(self.t(Key::ErrorNothingToStem));
             return;
         }
-        let export = self.settings.export;
         let options = OfflineOptions {
             sample_rate: export.sample_rate.map(f64::from),
             ..OfflineOptions::whole_project()
@@ -2471,7 +2521,12 @@ impl AurisApp {
     }
 
     /// The export flow behind both commands: the whole arrangement, or the cycle region.
-    fn begin_export(&mut self, cycle: bool, cx: &mut Context<Self>) {
+    fn choose_export_destination(
+        &mut self,
+        cycle: bool,
+        export: ExportPreferences,
+        cx: &mut Context<Self>,
+    ) {
         // `export` is not set until a path comes back, so the running check alone let a second
         // Export through while the picker was still up — two renders, and the summary of
         // whichever finished second.
@@ -2479,13 +2534,8 @@ impl AurisApp {
             self.set_status(self.t(Key::ExportAlreadyRunning));
             return;
         }
-        self.cancel_auto_sing();
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let mut job = self.session.render_job();
-        // The depth, the dither and the rate somebody masters at, from the settings rather than
-        // from a dialog in front of the save sheet: an export that asks three questions every
-        // time is one people stop using for a quick listen.
-        let export = self.settings.export;
         // Set before the cycle region is converted, because `loop_options` turns ticks into
         // frames against the rate the render will run at. A region measured at the project's
         // rate and rendered at another would start and end in the wrong places.

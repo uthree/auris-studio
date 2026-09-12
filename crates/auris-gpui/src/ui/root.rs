@@ -9,7 +9,7 @@ use gpui::{
 };
 
 use crate::actions;
-use crate::app::{AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
+use crate::app::{AudioExportTarget, AurisApp, Drag, ExportOutcome, OrnamentHandle, Pane};
 use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::past_drag_threshold;
 use crate::menu::MenuRow;
@@ -217,6 +217,7 @@ impl AurisApp {
             return Vec::new();
         }
         let export_overlay = self.render_export_overlay(cx);
+        let export_dialog = self.render_export_dialog(cx);
         let song_sheet = self.render_song_sheet(window, cx);
         let reference_match = self.render_reference_match(window, cx);
         let song_library = self.render_song_library_overlay(window, cx);
@@ -252,6 +253,9 @@ impl AurisApp {
         }
         if let Some(element) = export_overlay {
             overlays.push(element.into_any_element());
+        }
+        if let Some(element) = export_dialog {
+            overlays.push(element);
         }
         if let Some(element) = song_sheet {
             overlays.push(element.into_any_element());
@@ -690,6 +694,220 @@ impl AurisApp {
         cx.notify();
     }
 
+    /// The short form shown before the native destination picker.
+    fn render_export_dialog(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let dialog = *self.export_dialog.as_ref()?;
+        let theme = self.theme.clone();
+        let title = match dialog.target {
+            AudioExportTarget::Mix => self.t(Key::DialogExportWav),
+            AudioExportTarget::Cycle => self.t(Key::CmdExportCycle),
+            AudioExportTarget::Stems => self.t(Key::CmdExportStems),
+        };
+        let depths = [WavBitDepth::Int16, WavBitDepth::Int24, WavBitDepth::Float32]
+            .into_iter()
+            .map(|depth| {
+                crate::ui::widgets::button(
+                    ("export-depth", u64::from(depth.bits())),
+                    self.t(crate::i18n::wav_bit_depth_key(depth)),
+                    crate::ui::widgets::ButtonStyle::Normal,
+                    dialog.settings.bit_depth == depth,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        if let Some(dialog) = this.export_dialog.as_mut() {
+                            dialog.settings.bit_depth = depth;
+                        }
+                        cx.notify();
+                    }),
+                )
+                .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let mut rates = vec![None];
+        rates.extend(AudioPreferences::RATE_CHOICES.into_iter().map(Some));
+        if let Some(custom) = dialog.settings.sample_rate
+            && !AudioPreferences::RATE_CHOICES.contains(&custom)
+        {
+            rates.push(Some(custom));
+        }
+        let project_rate = self.project().sample_rate;
+        let rate_buttons = rates
+            .into_iter()
+            .map(|rate| {
+                let id = ("export-rate", u64::from(rate.unwrap_or(0)));
+                let label = rate.map_or_else(
+                    || {
+                        format!(
+                            "{} · {}",
+                            self.t(Key::ProjectRate),
+                            messages::rate_single(self.language(), project_rate / 1_000.0)
+                        )
+                    },
+                    |rate| messages::rate_single(self.language(), f64::from(rate) / 1_000.0),
+                );
+                crate::ui::widgets::button(
+                    id,
+                    label,
+                    crate::ui::widgets::ButtonStyle::Normal,
+                    dialog.settings.sample_rate == rate,
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        if let Some(dialog) = this.export_dialog.as_mut() {
+                            dialog.settings.sample_rate = rate;
+                        }
+                        cx.notify();
+                    }),
+                )
+                .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        let dither = if dialog.settings.dither_applies() {
+            crate::ui::widgets::button(
+                "export-dialog-dither",
+                self.t(if dialog.settings.dither {
+                    Key::ValueOn
+                } else {
+                    Key::ValueOff
+                }),
+                crate::ui::widgets::ButtonStyle::Normal,
+                dialog.settings.dither,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    if let Some(dialog) = this.export_dialog.as_mut() {
+                        dialog.settings.dither = !dialog.settings.dither;
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+        } else {
+            div()
+                .id("export-dialog-dither-disabled")
+                .debug_selector(|| "export-dialog-dither-disabled".to_string())
+                .flex()
+                .items_center()
+                .h(crate::theme::Metrics::CONTROL_HEIGHT)
+                .px_2()
+                .rounded(crate::theme::Metrics::RADIUS_SM)
+                .border_1()
+                .border_color(theme.border_subtle)
+                .text_xs()
+                .text_color(theme.text_faint)
+                .child(self.t(Key::ValueOff))
+                .into_any_element()
+        };
+
+        Some(
+            div()
+                .id("export-dialog-overlay")
+                .debug_selector(|| "export-dialog-overlay".to_string())
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(Theme::translucent(theme.background, 0.72))
+                .occlude()
+                .child(
+                    div()
+                        .id("export-dialog")
+                        .debug_selector(|| "export-dialog".to_string())
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .w(relative(0.88))
+                        .max_w(px(520.0))
+                        .p_4()
+                        .rounded(crate::theme::Metrics::RADIUS_LG)
+                        .bg(theme.surface_raised)
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(div().text_sm().text_color(theme.text).child(title))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .child(self.t(Key::ExportFormat)),
+                                )
+                                .child(div().flex().flex_wrap().gap_2().children(depths)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .child(self.t(Key::ExportRate)),
+                                )
+                                .child(div().flex().flex_wrap().gap_2().children(rate_buttons)),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_muted)
+                                        .child(self.t(Key::ExportDither)),
+                                )
+                                .child(dither)
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.text_faint)
+                                        .child(self.t(Key::ExportDitherNote)),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .pt_1()
+                                .child(crate::ui::widgets::button(
+                                    "export-dialog-cancel",
+                                    self.t(Key::Cancel),
+                                    crate::ui::widgets::ButtonStyle::Normal,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.export_dialog = None;
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(crate::ui::widgets::button(
+                                    "export-dialog-confirm",
+                                    self.t(Key::Export),
+                                    crate::ui::widgets::ButtonStyle::Primary,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.confirm_export_dialog(cx);
+                                    }),
+                                )),
+                        ),
+                )
+                .into_any_element(),
+        )
+    }
+
     /// A modal-ish overlay shown while an export runs.
     fn render_export_overlay(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let export = self.export.as_ref()?;
@@ -723,7 +941,8 @@ impl AurisApp {
                         .flex()
                         .flex_col()
                         .gap_2()
-                        .w(px(420.0))
+                        .w(relative(0.88))
+                        .max_w(px(420.0))
                         .p_4()
                         .rounded(crate::theme::Metrics::RADIUS_LG)
                         .bg(theme.surface_raised)
@@ -737,16 +956,28 @@ impl AurisApp {
                         )
                         .child(
                             div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
                                 .text_xs()
                                 .text_color(if failed {
                                     theme.danger
                                 } else {
                                     theme.text_muted
                                 })
-                                .child(message),
+                                .child(div().flex_1().min_w_0().truncate().child(message))
+                                .child(
+                                    div()
+                                        .id("export-progress-percentage")
+                                        .debug_selector(|| "export-progress-percentage".to_string())
+                                        .child(format!("{:.0}%", fraction * 100.0)),
+                                ),
                         )
                         .child(
                             div()
+                                .id("export-progress-bar")
+                                .debug_selector(|| "export-progress-bar".to_string())
                                 .h(px(6.0))
                                 .w_full()
                                 .rounded(crate::theme::Metrics::RADIUS_SM)
@@ -763,6 +994,8 @@ impl AurisApp {
                                     // colour: full and grey would claim a file, full and red
                                     // would claim a fault.
                                     div()
+                                        .id("export-progress-fill")
+                                        .debug_selector(|| "export-progress-fill".to_string())
                                         .h_full()
                                         .w(relative(match outcome {
                                             ExportOutcome::Wrote => 1.0,
@@ -1457,7 +1690,9 @@ impl AurisApp {
     ) {
         // Choose one owner before handling the key. An editor must leave character keys to
         // platform text input, without offering those unhandled keys to a covered control.
-        let handled = if self.compose_progress.is_some() || self.typing_key(event) {
+        let handled = if self.export_dialog.is_some() {
+            self.export_dialog_key(event, cx)
+        } else if self.compose_progress.is_some() || self.typing_key(event) {
             true
         } else if self.menu.is_some() {
             self.menu_key(event, window, cx)
@@ -1490,6 +1725,16 @@ impl AurisApp {
             cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    /// Owns the keyboard while the audio-export form is open.
+    fn export_dialog_key(&mut self, event: &gpui::KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        match event.keystroke.key.as_str() {
+            "escape" => self.export_dialog = None,
+            "enter" => self.confirm_export_dialog(cx),
+            _ => {}
+        }
+        true
     }
 
     /// Answers for a key while the library's search box holds the keyboard.
@@ -2577,6 +2822,10 @@ impl AurisApp {
             cx.notify();
             return;
         }
+        if self.export_dialog.take().is_some() {
+            cx.notify();
+            return;
+        }
         // A gesture in progress goes back where it started. Clearing the field alone would
         // leave the session's transaction open, and every edit after that inaudible.
         if self.abort_drag() {
@@ -2839,16 +3088,23 @@ impl AurisApp {
 /// off the bottom edge was to drag the window smaller and look.
 #[cfg(test)]
 mod window_tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU32};
+
+    use auris_session::prelude::{Ticks, WavBitDepth};
     use gpui::{TestAppContext, px, size};
 
     use super::note_resize_end;
+    use crate::actions;
+    use crate::app::{AudioExportTarget, ExportState};
     use crate::dock::Panel;
-    use crate::harness::{WINDOW, resize, with_a_clip};
+    use crate::harness::{WINDOW, click, open, paint, resize, with_a_clip};
 
     #[test]
     fn note_length_snapping_is_relative_to_the_notes_start() {
-        let grid = auris_session::prelude::Ticks(240);
-        let start = auris_session::prelude::Ticks(70);
+        let grid = Ticks(240);
+        let start = Ticks(70);
 
         assert_eq!(
             note_resize_end(auris_session::prelude::Ticks(430), start, grid, true),
@@ -2865,6 +3121,101 @@ mod window_tests {
             start + grid,
             "snapping never rounds a note away"
         );
+    }
+
+    #[gpui::test]
+    fn audio_export_choices_are_tentative_until_the_dialog_is_confirmed(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let saved = app.read_with(cx, |this, _| this.settings.export);
+
+        cx.dispatch_action(actions::ExportAudio);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let dialog = this.export_dialog.expect("the export choices are open");
+            assert_eq!(dialog.target, AudioExportTarget::Mix);
+            assert_eq!(dialog.settings, saved);
+        });
+        assert!(cx.debug_bounds("export-dialog").is_some());
+        assert!(cx.debug_bounds("export-dialog-confirm").is_some());
+        let looping = app.read_with(cx, |this, _| this.session.project().loop_enabled);
+        cx.simulate_keystrokes("secondary-l");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.session.project().loop_enabled,
+                looping,
+                "a shortcut did not reach the document behind the dialog"
+            );
+        });
+
+        click("export-depth-16", cx);
+        paint(&app, cx);
+        click("export-rate-44100", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let tentative = this.export_dialog.expect("the choices stay open").settings;
+            assert_eq!(tentative.bit_depth, WavBitDepth::Int16);
+            assert_eq!(tentative.sample_rate, Some(44_100));
+            assert_eq!(this.settings.export, saved, "nothing was committed yet");
+        });
+
+        click("export-dialog-cancel", cx);
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(this.export_dialog.is_none());
+            assert_eq!(this.settings.export, saved);
+        });
+
+        cx.dispatch_action(actions::ExportAudio);
+        paint(&app, cx);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(this.export_dialog.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn every_wav_export_command_opens_the_same_choice_flow(cx: &mut TestAppContext) {
+        let (app, cx, _, _) = with_a_clip(cx);
+
+        app.update(cx, |this, _| {
+            this.session.set_loop_region(Ticks::ZERO, Ticks::QUARTER);
+        });
+        cx.dispatch_action(actions::ExportCycle);
+        cx.run_until_parked();
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.export_dialog.map(|dialog| dialog.target),
+                Some(AudioExportTarget::Cycle)
+            );
+            this.export_dialog = None;
+        });
+
+        cx.dispatch_action(actions::ExportStems);
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.export_dialog.map(|dialog| dialog.target),
+                Some(AudioExportTarget::Stems)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_running_export_draws_a_bar_and_numeric_progress(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.export = Some(ExportState {
+                path: PathBuf::from("Song.wav"),
+                progress: Arc::new(AtomicU32::new(0.42f32.to_bits())),
+                result: None,
+                cancel: Arc::new(AtomicBool::new(false)),
+            });
+        });
+        paint(&app, cx);
+
+        assert!(cx.debug_bounds("export-progress-bar").is_some());
+        assert!(cx.debug_bounds("export-progress-fill").is_some());
+        assert!(cx.debug_bounds("export-progress-percentage").is_some());
     }
 
     /// Every surface the pointer works in, and where it was drawn.

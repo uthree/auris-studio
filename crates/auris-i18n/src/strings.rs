@@ -371,6 +371,9 @@ strings! {
     DeviceDefaultRate { en: "Device Default", ja: "デバイス標準" }
     BufferSize { en: "Buffer Size", ja: "バッファサイズ" }
     ExportFormat { en: "Export Format", ja: "書き出し形式" }
+    WavPcm16 { en: "16-bit PCM", ja: "16 bit PCM" }
+    WavPcm24 { en: "24-bit PCM", ja: "24 bit PCM" }
+    WavFloat32 { en: "32-bit float", ja: "32 bit 浮動小数点" }
     ExportRate { en: "Export Rate", ja: "書き出しサンプルレート" }
     ProjectRate { en: "Project Rate", ja: "プロジェクトのレート" }
     ExportDither { en: "Dither", ja: "ディザ" }
