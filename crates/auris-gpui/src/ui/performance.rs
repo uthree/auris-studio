@@ -23,7 +23,7 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
 use crate::ui::expression::{expression_settings, with_expression_settings};
 use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
 use crate::ui::strum::{strum_settings, with_strum_settings};
-use crate::ui::widgets::{ButtonStyle, SliderFill, button, divider, value_slider};
+use crate::ui::widgets::{ButtonStyle, SliderFill, button, disclosure, divider, value_slider};
 
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -572,12 +572,10 @@ impl AurisApp {
     ) -> Vec<AnyElement> {
         let theme = &self.theme;
         let mut rows = vec![
-            button(
+            disclosure(
                 "perform-ghost-details",
                 self.t(Key::PerformGhostSettings),
-                ButtonStyle::Ghost,
                 self.performance_details[0],
-                theme.accent_soft,
                 theme,
                 cx.listener(|this, _, _, cx| {
                     this.performance_details[0] = !this.performance_details[0];
@@ -978,6 +976,49 @@ mod tests {
     use super::*;
     use crate::harness::{choose, click, drag, paint, with_a_clip};
     use gpui::{TestAppContext, point, px};
+
+    #[gpui::test]
+    fn performance_detail_sections_show_their_disclosure_state(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.open_clip_in_editor(clip);
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(1920.0), px(3000.0)));
+        click("score-performed", cx);
+        paint(&app, cx);
+
+        for (section, indicator) in [
+            (
+                "perform-ghost-details",
+                "perform-ghost-details-disclosure-collapsed",
+            ),
+            (
+                "perform-strum-details",
+                "perform-strum-details-disclosure-collapsed",
+            ),
+            (
+                "perform-expression-details",
+                "perform-expression-details-disclosure-collapsed",
+            ),
+            (
+                "perform-pitch-details",
+                "perform-pitch-details-disclosure-collapsed",
+            ),
+        ] {
+            assert!(
+                cx.debug_bounds(indicator).is_some(),
+                "{section} should point right while its rows are hidden"
+            );
+        }
+
+        click("perform-ghost-details", cx);
+        paint(&app, cx);
+        assert!(
+            cx.debug_bounds("perform-ghost-details-disclosure-expanded")
+                .is_some()
+        );
+    }
 
     #[gpui::test]
     fn ghost_detail_controls_update_preview_without_changing_the_source(cx: &mut TestAppContext) {

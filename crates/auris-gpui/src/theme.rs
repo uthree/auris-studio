@@ -1073,6 +1073,10 @@ impl Metrics {
     pub const DROPDOWN_INDICATOR_WIDTH: Pixels = px(14.0);
     /// Size of the chevron inside a dropdown's trailing indicator lane.
     pub const DROPDOWN_INDICATOR_SIZE: Pixels = px(11.0);
+    /// Width reserved for a disclosure's leading open-state indicator.
+    pub const DISCLOSURE_INDICATOR_WIDTH: Pixels = px(14.0);
+    /// Size of the chevron inside a disclosure's leading indicator lane.
+    pub const DISCLOSURE_INDICATOR_SIZE: Pixels = px(11.0);
 
     /// Corner radius for small controls: buttons, sliders, meters.
     pub const RADIUS_SM: Pixels = px(4.0);

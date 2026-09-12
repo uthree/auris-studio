@@ -2,7 +2,7 @@
 use crate::app::AurisApp;
 use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::performance::{PerformDial, rank};
-use crate::ui::widgets::{ButtonStyle, button};
+use crate::ui::widgets::disclosure;
 use auris_i18n::Key;
 use auris_session::prelude::*;
 use gpui::{AnyElement, Context, IntoElement, prelude::*};
@@ -58,12 +58,10 @@ impl AurisApp {
     ) -> Vec<AnyElement> {
         let theme = &self.theme;
         let mut rows = vec![
-            button(
+            disclosure(
                 "perform-expression-details",
                 self.t(Key::PerformExpressionSettings),
-                ButtonStyle::Ghost,
                 self.performance_details[2],
-                theme.accent_soft,
                 theme,
                 cx.listener(|this, _, _, cx| {
                     this.performance_details[2] = !this.performance_details[2];

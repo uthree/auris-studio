@@ -1,10 +1,7 @@
 //! Automatic pitch controls for monophonic instrument clips.
 use crate::{
     app::AurisApp,
-    ui::{
-        performance::PerformDial,
-        widgets::{ButtonStyle, button},
-    },
+    ui::{performance::PerformDial, widgets::disclosure},
 };
 use auris_i18n::Key;
 use auris_session::prelude::*;
@@ -207,12 +204,10 @@ impl AurisApp {
             return Vec::new();
         }
         let mut rows = vec![
-            button(
+            disclosure(
                 "perform-pitch-details",
                 self.t(Key::PerformPitchSettings),
-                ButtonStyle::Ghost,
                 self.performance_details[3],
-                self.theme.accent_soft,
                 &self.theme,
                 cx.listener(|this, _, _, cx| {
                     this.performance_details[3] = !this.performance_details[3];

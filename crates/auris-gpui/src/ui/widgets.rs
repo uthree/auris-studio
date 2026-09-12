@@ -83,6 +83,80 @@ where
     button_with_content(id, label, style, active, active_color, theme, on_click)
 }
 
+/// A section heading that reveals or hides the rows following it.
+///
+/// The leading chevron points towards hidden content when closed and down through visible content
+/// when open. It deliberately has no button border or command fill: the row describes hierarchy
+/// and state rather than an action to apply.
+pub fn disclosure<I, L, F>(
+    id: I,
+    label: L,
+    expanded: bool,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let id: ElementId = id.into();
+    let selector = id.clone();
+    let indicator_selector = id.clone();
+    let label = label.into();
+    let text_color = if expanded {
+        theme.text
+    } else {
+        theme.text_muted
+    };
+
+    div()
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .flex()
+        .items_center()
+        .gap_1()
+        .w_full()
+        .h(Metrics::CONTROL_HEIGHT)
+        .px_1p5()
+        .rounded(Metrics::RADIUS_SM)
+        .bg(if expanded {
+            theme.surface_sunken
+        } else {
+            gpui::transparent_black()
+        })
+        .text_xs()
+        .text_color(text_color)
+        .hover(|this| this.bg(theme.surface_hover))
+        .active(|this| this.opacity(0.8))
+        .child(
+            div()
+                .debug_selector(move || {
+                    format!(
+                        "{indicator_selector}-disclosure-{}",
+                        if expanded { "expanded" } else { "collapsed" }
+                    )
+                })
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(Metrics::DISCLOSURE_INDICATOR_WIDTH)
+                .flex_shrink_0()
+                .child(icon(
+                    if expanded {
+                        Icon::ChevronDown
+                    } else {
+                        Icon::ChevronRight
+                    },
+                    Metrics::DISCLOSURE_INDICATOR_SIZE,
+                    theme.text_muted,
+                )),
+        )
+        .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+        .tooltip(keyed_tip(label, "", theme))
+        .on_click(on_click)
+}
+
 fn button_with_content<I, L, A, F>(
     id: I,
     label: L,
