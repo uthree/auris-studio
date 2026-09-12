@@ -445,9 +445,7 @@ mod tests {
             )
             .is_empty()
         );
-        let map = DrumMap {
-            voices: [(DrumRole::Kick, 73)].into_iter().collect(),
-        };
+        let map = DrumMap::from_voices([(DrumRole::Kick, 73)]);
         apply_drum_map(&mut recipe, &map);
         let notes = write_phrase(
             &harmony,

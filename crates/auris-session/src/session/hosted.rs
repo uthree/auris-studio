@@ -250,6 +250,15 @@ impl HostedPlugins {
         self.instruments.get(&track)?.plugin().map(name_of)
     }
 
+    /// The key names a hosted instrument publishes for its first note input port.
+    pub(super) fn instrument_note_names(&mut self, track: TrackId) -> Vec<(u8, String)> {
+        self.instruments
+            .get_mut(&track)
+            .and_then(HostedSlot::plugin_mut)
+            .map(ClapPlugin::note_names)
+            .unwrap_or_default()
+    }
+
     /// The state a hosted slot's plugin is carrying, for the document to save.
     ///
     /// Asks the instance that is rendering, because it is the one a preset or an on-screen knob
@@ -2029,6 +2038,25 @@ mod tests {
         assert_eq!(descriptor.name, "Level");
         session.set_param(target, 0.25);
         assert_eq!(session.param_value(target, &descriptor), 0.25);
+    }
+
+    #[test]
+    fn a_hosted_drum_instrument_supplies_its_editor_lane_names() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_drum_track("Kit").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+
+        let map = session.suggested_drum_map(track).unwrap();
+        assert_eq!(
+            map.lanes
+                .iter()
+                .map(|lane| (lane.note, lane.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(36, "Fixture Kick"), (38, "Fixture Snare")]
+        );
+        assert!(map.voices.is_empty(), "names do not invent generator roles");
     }
 
     #[test]

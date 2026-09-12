@@ -164,11 +164,14 @@ impl AurisApp {
             return;
         };
         match self.session.apply_drum_map(&report, remap_generated) {
-            Ok(_) => self.set_status(self.t(if remap_generated {
-                Key::EditApplyDrumMap
-            } else {
-                Key::MenuUseDrumMapForGeneration
-            })),
+            Ok(_) => {
+                self.remember_drum_map(track);
+                self.set_status(self.t(if remap_generated {
+                    Key::EditApplyDrumMap
+                } else {
+                    Key::MenuUseDrumMapForGeneration
+                }))
+            }
             Err(error) => self.set_failed_status(error.to_string()),
         }
     }

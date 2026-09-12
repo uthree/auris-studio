@@ -24,17 +24,48 @@ Editing one writer preserves the other voices and their saved assignments. Autho
 rhythms retain their rhythm while intensity remains adjustable. Freezing keeps the current
 notes and the drum track while removing the generation recipe.
 
-## Manual sound assignments
+## Manual programming and drum maps
 
-In the drum inspector, assign a MIDI note number from **0 to 127** to each role: kick, snare,
-closed hat, open hat, crash and tom. You can add an assignment, change its number or clear it.
-These are musical choices and can be edited before sound analysis completes.
+The drum editor's left side is an ordered map of named lanes. A lane can use any MIDI note from
+**0 to 127**, and manual lanes do not need to be one of the six sounds used by automatic drum
+generation. Use the map menu or a lane's context menu to add, rename, remove or reorder lanes,
+change their MIDI note, or assign an optional generation role. A full General MIDI template is
+available when it is a useful starting point. CLAP instruments that expose note names provide
+those names automatically; General MIDI percussion SoundFont banks use the standard names.
 
-Changes update the drum editor's assigned rows and the map used by newly generated clips.
-They support undo and redo. Existing notes and clip recipes stay unchanged, and existing
-recipes keep their saved assignments during regeneration. A cleared role remains unassigned
-for new clips; the generator does not substitute a conventional MIDI number. Existing hits
-remain visible in the editor even when their role's assignment is cleared.
+The three view buttons separate common jobs:
+
+- **Map** keeps the authored lane order and also shows unmapped notes already present in the clip.
+- **Used** shows only MIDI notes used by the current clip.
+- **All 128** exposes every physical MIDI note while discovering or mapping a kit.
+
+An empty map offers General MIDI, a saved map, MIDI Learn and a new blank lane as starting
+choices. MIDI Learn accepts the next note played through Musical Typing or the next row clicked
+in **All 128**. Double-click a lane name to rename it; its full name is also available in a
+tooltip when the fixed-width column truncates it.
+
+Clicking or dragging empty grid cells paints hits at the current grid interval, so one stroke can
+write a repeated pattern. Drag an existing hit to move it. The erase modifier paints an erase
+stroke, while the existing selection, velocity and keyboard commands remain available. Each
+stroke, lane reorder or mapping command is one undoable edit.
+
+Changing a lane's MIDI note has two explicit forms. **Mapping only** changes what future input and
+generation address without touching the score. **Move existing hits** also retargets every hit on
+the lane's old note. Removing a lane never deletes its hits; they remain visible as an unmapped
+MIDI row.
+
+Every mapping edit is automatically saved for the exact sound source: built-in instrument,
+hosted plug-in file, or SoundFont file, bank and patch. A new track or a source selected later
+restores that map without repeated setup. The user-level library is a convenience; the complete
+ordered map is also embedded in the project, so moving the project to another computer preserves
+its names, order and role choices.
+
+The six inspector assignments remain shortcuts for automatic generation: kick, snare, closed
+hat, open hat, crash and tom. Changing or clearing one updates the corresponding optional lane
+role. These are musical choices and can be edited before sound analysis completes. Existing
+notes and clip recipes stay unchanged, and existing recipes keep their saved assignments during
+regeneration. A cleared role remains unassigned for new clips; the generator does not substitute
+a conventional MIDI number.
 
 ## Drum sound measurement
 

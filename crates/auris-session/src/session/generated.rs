@@ -973,9 +973,7 @@ mod tests {
         use auris_core::{DrumMap, DrumRole, DrumVoiceRecipe};
         let (mut session, track) = with_drum_progression();
         let mut mapped = ClipRecipe::new(ClipPreset::Drums, 7);
-        mapped.drum_map = Some(DrumMap {
-            voices: [(DrumRole::Kick, 73)].into_iter().collect(),
-        });
+        mapped.drum_map = Some(DrumMap::from_voices([(DrumRole::Kick, 73)]));
         let mut single = ClipRecipe::new(ClipPreset::Kick, 7);
         single.drum_note = Some(84);
         let mut voiced = ClipRecipe::new(ClipPreset::Drums, 7);
@@ -1048,9 +1046,7 @@ mod tests {
     fn future_generation_uses_the_tracks_accepted_map_and_pins_it_for_regeneration() {
         use auris_core::project::{DrumMap, DrumRole};
         let (mut session, track) = with_drum_progression();
-        let map = DrumMap {
-            voices: [(DrumRole::Snare, 84)].into_iter().collect(),
-        };
+        let map = DrumMap::from_voices([(DrumRole::Snare, 84)]);
         map.store(
             &mut session
                 .project
@@ -1854,13 +1850,12 @@ mod tests {
             ("snare", DrumRole::Snare, ClipPreset::Snare, 91),
             ("hat", DrumRole::ClosedHat, ClipPreset::Hat, 18),
         ];
-        let map = DrumMap {
-            voices: voices
+        let map = DrumMap::from_voices(
+            voices
                 .iter()
                 .map(|(_, role, _, note)| (*role, *note))
-                .chain([(DrumRole::Crash, 49)])
-                .collect(),
-        };
+                .chain([(DrumRole::Crash, 49)]),
+        );
         map.store(
             &mut session
                 .project

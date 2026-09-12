@@ -44,6 +44,7 @@ use clack_extensions::audio_ports::{
 use clack_extensions::gui::{
     GuiApiType, GuiConfiguration, GuiSize, PluginGui, PluginGuiImpl, Window,
 };
+use clack_extensions::note_name::{NoteName, NoteNameWriter, PluginNoteName, PluginNoteNameImpl};
 use clack_extensions::note_ports::{
     NoteDialect, NoteDialects, NotePortInfo, NotePortInfoWriter, PluginNotePorts,
     PluginNotePortsImpl,
@@ -54,6 +55,7 @@ use clack_extensions::params::{
 };
 use clack_extensions::state::{PluginState, PluginStateImpl};
 use clack_extensions::timer::{HostTimer, PluginTimer, PluginTimerImpl, TimerId};
+use clack_plugin::events::Match;
 use clack_plugin::events::event_types::{
     MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
     ParamValueEvent,
@@ -610,6 +612,7 @@ impl Plugin for Tone {
         builder
             .register::<PluginAudioPorts>()
             .register::<PluginGui>()
+            .register::<PluginNoteName>()
             .register::<PluginNotePorts>()
             .register::<PluginParams>()
             .register::<PluginState>();
@@ -863,6 +866,26 @@ impl PluginNotePortsImpl for ToneMainThread<'_> {
             // events and still have somewhere to put a modulation wheel.
             supported_dialects: NoteDialects::CLAP | NoteDialects::MIDI,
             preferred_dialect: Some(NoteDialect::Clap),
+        });
+    }
+}
+
+impl PluginNoteNameImpl for ToneMainThread<'_> {
+    fn count(&mut self) -> u32 {
+        2
+    }
+
+    fn get(&mut self, index: u32, writer: &mut NoteNameWriter) {
+        let (key, name) = match index {
+            0 => (36, b"Fixture Kick".as_slice()),
+            1 => (38, b"Fixture Snare".as_slice()),
+            _ => return,
+        };
+        writer.write(&NoteName {
+            name,
+            port: Match::Specific(0),
+            channel: Match::All,
+            key: Match::Specific(key),
         });
     }
 }

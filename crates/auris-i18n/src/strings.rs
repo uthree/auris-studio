@@ -218,9 +218,24 @@ strings! {
     TrackKindInstrument { en: "Instrument", ja: "ソフト音源" }
     TrackKindDrum { en: "Drums", ja: "ドラム" }
     DrumEditor { en: "Drum Editor", ja: "ドラムエディター" }
-    DrumEditorHint { en: "Click to add a hit · Drag to move", ja: "クリックで打点を追加 · ドラッグで移動" }
-    DrumEditorAllNotes { en: "All MIDI notes", ja: "すべてのMIDIノート" }
-    DrumEditorMappedNotes { en: "Kit voices", ja: "キットの音色" }
+    DrumEditorHint { en: "Click or drag to paint hits · Drag a hit to move", ja: "クリック／ドラッグで打点を入力 · 打点をドラッグして移動" }
+    DrumEditorMap { en: "Map", ja: "マップ" }
+    DrumEditorUsed { en: "Used", ja: "使用中" }
+    DrumEditorAllNotes { en: "All 128", ja: "全128" }
+    DrumEditorMappedNotes { en: "Map", ja: "マップ" }
+    DrumEditorAddLane { en: "Add Lane…", ja: "レーンを追加…" }
+    DrumEditorEmpty { en: "This kit has no manual lanes yet.", ja: "このキットには手打ち用レーンがまだありません。" }
+    DrumEditorChooseSaved { en: "Saved Map…", ja: "保存済みマップ…" }
+    DrumEditorGmTemplate { en: "GM Template", ja: "GMテンプレート" }
+    DrumEditorMidiLearn { en: "MIDI Learn", ja: "MIDI入力を学習" }
+    DrumEditorLearning { en: "Play or click the MIDI note to learn. Esc cancels.", ja: "覚えさせるMIDIノートを演奏またはクリックしてください。Escで中止します。" }
+    DrumEditorAutoSaved { en: "Map auto-saved", ja: "マップは自動保存されます" }
+    DrumLaneName { en: "Lane Name", ja: "レーン名" }
+    DrumLaneMidi { en: "MIDI Note…", ja: "MIDIノート…" }
+    DrumLaneMidiMove { en: "MIDI Note + Move Hits…", ja: "MIDIノート変更＋打点を移動…" }
+    DrumLaneRoles { en: "Generation roles", ja: "自動演奏での役割" }
+    DrumLaneRemove { en: "Remove Lane", ja: "レーンを削除" }
+    DrumRepeatPaint { en: "Drag-paint repeats at the current grid interval.", ja: "ドラッグ入力は現在のグリッド間隔で連続配置します。" }
     DrummerHeading { en: "Drummer", ja: "ドラマー" }
     DrummerComplexity { en: "Complexity", ja: "複雑さ" }
     DrummerSimple { en: "Simple", ja: "シンプル" }

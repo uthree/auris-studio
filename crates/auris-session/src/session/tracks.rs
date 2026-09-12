@@ -75,18 +75,14 @@ impl Session {
         let id = self.project.add_drum_track(name, instrument_id);
         if instrument_id == auris_synth::DrumKit::ID {
             use auris_core::project::{DrumMap, DrumRole};
-            let map = DrumMap {
-                voices: [
-                    (DrumRole::Kick, 36),
-                    (DrumRole::Snare, 38),
-                    (DrumRole::ClosedHat, 42),
-                    (DrumRole::OpenHat, 46),
-                    (DrumRole::Crash, 49),
-                    (DrumRole::Tom, 47),
-                ]
-                .into_iter()
-                .collect(),
-            };
+            let map = DrumMap::from_voices([
+                (DrumRole::Kick, 36),
+                (DrumRole::Snare, 38),
+                (DrumRole::ClosedHat, 42),
+                (DrumRole::OpenHat, 46),
+                (DrumRole::Crash, 49),
+                (DrumRole::Tom, 47),
+            ]);
             map.store(
                 &mut self
                     .project

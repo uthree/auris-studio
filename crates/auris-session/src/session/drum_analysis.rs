@@ -782,7 +782,7 @@ fn propose_map(voices: &[DrumVoiceAnalysis], minimum_fitness: f64) -> DrumMap {
             proposed_map.voices.insert(role, voice.note);
         }
     }
-    proposed_map
+    DrumMap::from_voices(proposed_map.voices)
 }
 
 fn aggregate_samples(samples: &[DrumProbeSample]) -> (BTreeMap<DrumRole, f64>, f64, bool) {

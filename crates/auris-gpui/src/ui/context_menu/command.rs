@@ -93,6 +93,36 @@ pub enum MenuCommand {
     ApplyDrumMap(TrackId),
     /// Cancel this track's queued or active drum probe.
     CancelDrumAnalysis(TrackId),
+    /// Open the MIDI-note prompt for a new manual drum lane.
+    NewDrumLane(TrackId),
+    /// Apply the complete General MIDI percussion template.
+    ApplyGeneralMidiDrumMap(TrackId),
+    /// Apply one user-level saved map by picker position.
+    ApplySavedDrumMap { track: TrackId, index: usize },
+    /// Rename one manual drum lane.
+    RenameDrumLane { track: TrackId, lane: u64 },
+    /// Change a lane's MIDI key, optionally moving existing hits.
+    SetDrumLaneNote {
+        track: TrackId,
+        lane: u64,
+        move_existing_hits: bool,
+    },
+    /// Capture the next played or clicked MIDI note for a lane, or create one.
+    LearnDrumLane { track: TrackId, lane: Option<u64> },
+    /// Move a manual drum lane in presentation order.
+    MoveDrumLane {
+        track: TrackId,
+        lane: u64,
+        offset: i32,
+    },
+    /// Toggle one automatic-generation role on a lane.
+    ToggleDrumLaneRole {
+        track: TrackId,
+        lane: u64,
+        role: DrumRole,
+    },
+    /// Remove a manual drum lane without deleting its existing notes.
+    RemoveDrumLane { track: TrackId, lane: u64 },
     /// Choose a voice file for one explicit singer track.
     ChooseSingerVoice(TrackId),
     /// Apply one installed voice to the explicit singer track.
@@ -855,6 +885,31 @@ impl AurisApp {
             MenuCommand::ApplyDrumMap(track) => self.apply_measured_drums(track, true),
             MenuCommand::UseDrumMapForGeneration(track) => self.apply_measured_drums(track, false),
             MenuCommand::CancelDrumAnalysis(track) => self.cancel_drum_analysis(track),
+            MenuCommand::NewDrumLane(track) => self.prompt_for_new_drum_lane(track),
+            MenuCommand::ApplyGeneralMidiDrumMap(track) => {
+                self.apply_drum_map_template(track, DrumMap::general_midi())
+            }
+            MenuCommand::ApplySavedDrumMap { track, index } => {
+                self.apply_saved_drum_map(track, index)
+            }
+            MenuCommand::RenameDrumLane { track, lane } => {
+                self.prompt_to_rename_drum_lane(track, lane)
+            }
+            MenuCommand::SetDrumLaneNote {
+                track,
+                lane,
+                move_existing_hits,
+            } => self.prompt_for_drum_lane_note(track, lane, move_existing_hits),
+            MenuCommand::LearnDrumLane { track, lane } => self.begin_drum_learn(track, lane),
+            MenuCommand::MoveDrumLane {
+                track,
+                lane,
+                offset,
+            } => self.move_drum_lane(track, lane, offset),
+            MenuCommand::ToggleDrumLaneRole { track, lane, role } => {
+                self.toggle_drum_lane_role(track, lane, role)
+            }
+            MenuCommand::RemoveDrumLane { track, lane } => self.remove_drum_lane(track, lane),
             MenuCommand::ChooseSingerVoice(track) => {
                 self.select_track(track);
                 self.choose_singer_voice(cx);

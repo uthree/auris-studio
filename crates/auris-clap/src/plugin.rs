@@ -9,6 +9,7 @@ use auris_core::plugin::{PluginDescriptor, PrepareContext};
 use clack_extensions::audio_ports::PluginAudioPorts;
 use clack_extensions::gui::{GuiApiType, GuiConfiguration, GuiError, PluginGui, Window};
 use clack_extensions::latency::PluginLatency;
+use clack_extensions::note_name::{NoteNameBuffer, PluginNoteName};
 use clack_extensions::note_ports::{NotePortInfoBuffer, PluginNotePorts};
 use clack_extensions::params::{ParamInfoBuffer, ParamInfoFlags, PluginParams};
 use clack_extensions::state::PluginState;
@@ -586,6 +587,67 @@ impl ClapPlugin {
         let mut buffer = NotePortInfoBuffer::new();
         let info = ports.get(&mut handle, 0, true, &mut buffer)?;
         language_for(info.supported_dialects)
+    }
+
+    /// The names the plugin publishes for keys on its first note input port.
+    ///
+    /// CLAP lets a name apply to every port or channel. Auris has one note stream per track, so
+    /// port-independent names and names for the first input port are relevant; channel zero and
+    /// channel-independent names are relevant in the same way. Entries for every key are not
+    /// useful as piano-roll row labels and are ignored.
+    pub fn note_names(&mut self) -> Vec<(u8, String)> {
+        let Some(names) = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginNoteName>()
+        else {
+            return Vec::new();
+        };
+
+        let input_port = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginNotePorts>()
+            .and_then(|ports| {
+                let mut handle = self.instance.plugin_handle();
+                let mut buffer = NotePortInfoBuffer::new();
+                ports
+                    .get(&mut handle, 0, true, &mut buffer)
+                    .and_then(|info| u16::try_from(info.id.get()).ok())
+            });
+
+        let mut handle = self.instance.plugin_handle();
+        let count = names.count(&mut handle);
+        let mut found = std::collections::BTreeMap::new();
+        let mut buffer = NoteNameBuffer::new();
+        for index in 0..count {
+            let Some(name) = names.get(&mut handle, index as u32, &mut buffer) else {
+                continue;
+            };
+            let Some(key) = name
+                .key
+                .into_specific()
+                .and_then(|key| u8::try_from(key).ok())
+            else {
+                continue;
+            };
+            if name
+                .channel
+                .as_specific()
+                .is_some_and(|channel| *channel != 0)
+                || name
+                    .port
+                    .as_specific()
+                    .is_some_and(|port| Some(*port) != input_port)
+            {
+                continue;
+            }
+            let label = String::from_utf8_lossy(name.name).trim().to_string();
+            if !label.is_empty() {
+                found.entry(key).or_insert(label);
+            }
+        }
+        found.into_iter().collect()
     }
 
     /// The audio ports the plugin declares, or a stereo pair if it declares none.

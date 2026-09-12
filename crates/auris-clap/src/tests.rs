@@ -514,6 +514,18 @@ fn a_note_held_across_a_block_boundary_keeps_sounding() {
 }
 
 #[test]
+fn the_plugin_supplies_names_for_its_drum_keys() {
+    let mut plugin = tone();
+    assert_eq!(
+        plugin.note_names(),
+        [
+            (36, "Fixture Kick".to_string()),
+            (38, "Fixture Snare".to_string())
+        ]
+    );
+}
+
+#[test]
 fn the_bend_and_the_wheel_both_arrive_by_their_own_route() {
     // The two events with no single dialect between them: the bend goes as a CLAP tuning in
     // semitones, the wheel as MIDI, and the fixture records what it was actually sent.

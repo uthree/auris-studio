@@ -85,6 +85,7 @@ impl AurisApp {
                                 cx.listener(move |this, _, _, cx| {
                                     match this.session.set_drum_assignment(track, role, None) {
                                         Ok(_) => {
+                                            this.remember_drum_map(track);
                                             this.set_status(this.t(Key::EditSetDrumAssignment))
                                         }
                                         Err(error) => this.set_failed_status(

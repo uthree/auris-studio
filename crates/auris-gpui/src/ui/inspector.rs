@@ -678,8 +678,10 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        if let Err(error) = self.session.set_hosted_instrument(track, file, clap_id) {
-            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
+        self.remember_drum_map(track);
+        match self.session.set_hosted_instrument(track, file, clap_id) {
+            Ok(()) => self.restore_drum_map_for_source(track),
+            Err(error) => self.set_failed_status(self.failure(Key::EditChangeInstrument, &error)),
         }
     }
 
@@ -700,8 +702,10 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        if let Err(error) = self.session.set_vst3_instrument(track, file, class_id) {
-            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
+        self.remember_drum_map(track);
+        match self.session.set_vst3_instrument(track, file, class_id) {
+            Ok(()) => self.restore_drum_map_for_source(track),
+            Err(error) => self.set_failed_status(self.failure(Key::EditChangeInstrument, &error)),
         }
     }
 
@@ -710,8 +714,10 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        if let Err(error) = self.session.set_track_instrument(track, instrument_id) {
-            self.set_failed_status(self.failure(Key::EditChangeInstrument, &error));
+        self.remember_drum_map(track);
+        match self.session.set_track_instrument(track, instrument_id) {
+            Ok(()) => self.restore_drum_map_for_source(track),
+            Err(error) => self.set_failed_status(self.failure(Key::EditChangeInstrument, &error)),
         }
     }
 
@@ -723,8 +729,10 @@ impl AurisApp {
         let Some(track) = self.selected_track else {
             return;
         };
-        if let Err(error) = self.session.set_track_preset(track, preset) {
-            self.set_failed_status(self.failure(Key::EditChoosePreset, &error));
+        self.remember_drum_map(track);
+        match self.session.set_track_preset(track, preset) {
+            Ok(()) => self.restore_drum_map_for_source(track),
+            Err(error) => self.set_failed_status(self.failure(Key::EditChoosePreset, &error)),
         }
     }
 

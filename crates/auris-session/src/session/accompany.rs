@@ -202,12 +202,11 @@ impl Session {
 pub(super) fn backing_part_recipe(preset: ClipPreset, seed: u64) -> ClipRecipe {
     let mut recipe = ClipRecipe::new(preset, seed);
     if preset.is_drums() {
-        recipe.drum_map = Some(auris_core::DrumMap {
-            voices: auris_compose::roles_of(preset)
+        recipe.drum_map = Some(auris_core::DrumMap::from_voices(
+            auris_compose::roles_of(preset)
                 .iter()
-                .filter_map(|role| Some((role.drum_role()?, role.drum_voice()?.pitch())))
-                .collect(),
-        });
+                .filter_map(|role| Some((role.drum_role()?, role.drum_voice()?.pitch()))),
+        ));
     }
     recipe
 }
