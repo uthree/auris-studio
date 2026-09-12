@@ -66,7 +66,7 @@ pub use clip::{
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
 };
-pub use drum::{DrumMap, DrumRole};
+pub use drum::{DrumLane, DrumMap, DrumRole};
 pub use ornament::{Fall, Scoop, Vibrato};
 pub use performance::{PerformanceContext, performed_note_slots, performed_notes};
 pub use recipe::{ClipPreset, ClipRecipe, DrumVoiceRecipe, PerformanceStyle, Subdivision};
@@ -281,8 +281,8 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
-    /// Version 28 adds editable per-note volume contours to performance settings.
-    pub const FORMAT_VERSION: u32 = 28;
+    /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
+    pub const FORMAT_VERSION: u32 = 29;
 
     /// An empty project.
     ///

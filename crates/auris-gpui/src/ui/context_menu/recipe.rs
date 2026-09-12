@@ -505,9 +505,7 @@ mod tests {
         accent.name = "fixed-accent".into();
         accent.recipe = None;
         recipe.drum_voices.push(accent);
-        recipe.drum_map = Some(DrumMap {
-            voices: [(DrumRole::Snare, 73)].into_iter().collect(),
-        });
+        recipe.drum_map = Some(DrumMap::from_voices([(DrumRole::Snare, 73)]));
         let clip = ClipId(7);
         let menu = drum_voice_rows(
             ContextMenu::new(point(px(0.0), px(0.0)), "Drums"),

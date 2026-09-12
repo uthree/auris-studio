@@ -56,8 +56,10 @@ pub mod composition_search {
     pub use auris_compose::search::*;
 }
 
+pub mod drum_maps;
 mod drum_worker;
 pub mod error;
+pub use drum_maps::{DrumMapBook, DrumMapSoundFont, DrumMapSource, SavedDrumMap};
 pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};
 pub mod guide;
 pub mod history;

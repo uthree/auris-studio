@@ -305,14 +305,11 @@ mod tests {
         let (mut session, _) = with_a_progression();
         let track = session.project.add_drum_track("Kit", "auris.synth.drumkit");
         let mut recipe = ClipRecipe::new(ClipPreset::Drums, 2);
-        recipe.drum_map = Some(auris_core::DrumMap {
-            voices: [
-                (DrumRole::Kick, 36),
-                (DrumRole::Snare, 38),
-                (DrumRole::ClosedHat, 42),
-            ]
-            .into(),
-        });
+        recipe.drum_map = Some(auris_core::DrumMap::from_voices([
+            (DrumRole::Kick, 36),
+            (DrumRole::Snare, 38),
+            (DrumRole::ClosedHat, 42),
+        ]));
         let clip = session
             .generate_clip(track, Ticks::ZERO, BAR * 4, recipe)
             .unwrap();

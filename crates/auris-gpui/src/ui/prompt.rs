@@ -115,6 +115,24 @@ pub enum PromptTarget {
         /// The musical role being assigned.
         role: DrumRole,
     },
+    /// MIDI key for a new manual drum lane.
+    NewDrumLane(TrackId),
+    /// User-facing name of one manual drum lane.
+    DrumLaneName {
+        /// Drum track owning the lane.
+        track: TrackId,
+        /// Stable lane identity.
+        lane: u64,
+    },
+    /// Physical MIDI key of one manual drum lane.
+    DrumLaneNote {
+        /// Drum track owning the lane.
+        track: TrackId,
+        /// Stable lane identity.
+        lane: u64,
+        /// Whether existing hits on the old address move with the mapping.
+        move_existing_hits: bool,
+    },
     /// What tempo an audio clip's material was recorded at.
     ClipSourceTempo(ClipId),
     /// Where the playhead sits, as bar, beat and hundredth.
@@ -162,6 +180,8 @@ fn empty_prompt_is_meaningful(target: PromptTarget) -> bool {
             | PromptTarget::AudioMatchText
             // Let the numeric field report its own valid range for an empty answer.
             | PromptTarget::DrumAssignment { .. }
+            // Empty restores the lane's derived role or MIDI name.
+            | PromptTarget::DrumLaneName { .. }
             | PromptTarget::SongSectionTempo(_)
             // An unknown source tempo is a valid state and clearing the field is the way back.
             | PromptTarget::ClipSourceTempo(_)
@@ -222,10 +242,13 @@ impl PromptTarget {
             | PromptTarget::TempoFrom(_)
             | PromptTarget::ClipSourceTempo(_) => Notation::Tempo,
             PromptTarget::ClipGain(_) => Notation::Gain,
-            PromptTarget::DrumAssignment { .. } => Notation::MidiNote,
+            PromptTarget::DrumAssignment { .. }
+            | PromptTarget::NewDrumLane(_)
+            | PromptTarget::DrumLaneNote { .. } => Notation::MidiNote,
             PromptTarget::Position => Notation::Position,
             PromptTarget::Track(_)
             | PromptTarget::Clip(_)
+            | PromptTarget::DrumLaneName { .. }
             | PromptTarget::SongTitle
             | PromptTarget::SongPartName(_)
             | PromptTarget::KeepProgression(_)
@@ -1056,9 +1079,53 @@ impl AurisApp {
                     self.reject_prompt(self.t(Key::HintMidiNote));
                     return;
                 };
-                self.session
+                let result = self
+                    .session
                     .set_drum_assignment(track, role, Some(note))
-                    .map(|_| ())
+                    .map(|_| ());
+                if result.is_ok() {
+                    self.remember_drum_map(track);
+                }
+                result
+            }
+            PromptTarget::NewDrumLane(track) => {
+                let Some(note) = crate::ui::drum_assignments::parse_assignment_note(&text) else {
+                    self.reject_prompt(self.t(Key::HintMidiNote));
+                    return;
+                };
+                match self.session.add_drum_lane(track, note, String::new()) {
+                    Ok(lane) => {
+                        self.drum_editor.selected_lane = Some(lane);
+                        self.remember_drum_map(track);
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            PromptTarget::DrumLaneName { track, lane } => {
+                let result = self.session.rename_drum_lane(track, lane, text).map(|_| ());
+                if result.is_ok() {
+                    self.remember_drum_map(track);
+                }
+                result
+            }
+            PromptTarget::DrumLaneNote {
+                track,
+                lane,
+                move_existing_hits,
+            } => {
+                let Some(note) = crate::ui::drum_assignments::parse_assignment_note(&text) else {
+                    self.reject_prompt(self.t(Key::HintMidiNote));
+                    return;
+                };
+                let result = self
+                    .session
+                    .set_drum_lane_note(track, lane, note, move_existing_hits)
+                    .map(|_| ());
+                if result.is_ok() {
+                    self.remember_drum_map(track);
+                }
+                result
             }
             PromptTarget::ClipGain(clip) => match text.parse::<f32>() {
                 Ok(gain_db) if gain_db.is_finite() => self.session.set_clip_gain(clip, gain_db),
@@ -1118,7 +1185,13 @@ impl AurisApp {
             }
         };
         if let Err(error) = outcome {
-            let action = if matches!(target, PromptTarget::DrumAssignment { .. }) {
+            let action = if matches!(
+                target,
+                PromptTarget::DrumAssignment { .. }
+                    | PromptTarget::NewDrumLane(_)
+                    | PromptTarget::DrumLaneName { .. }
+                    | PromptTarget::DrumLaneNote { .. }
+            ) {
                 Key::EditSetDrumAssignment
             } else {
                 Key::Rename
@@ -1386,7 +1459,9 @@ impl AurisApp {
                     match target {
                         PromptTarget::ComposeLyrics => self.t(Key::PromptComposeLyrics).into(),
                         PromptTarget::AudioMatchText => self.t(Key::AudioMatchUsePrompt).into(),
-                        PromptTarget::DrumAssignment { .. } => {
+                        PromptTarget::DrumAssignment { .. }
+                        | PromptTarget::NewDrumLane(_)
+                        | PromptTarget::DrumLaneNote { .. } => {
                             self.t(Key::DrumApplyAssignment).into()
                         }
                         _ => self.t(Key::Rename).into(),
@@ -2048,6 +2123,16 @@ mod tests {
                 track: TrackId(1),
                 role: DrumRole::Kick,
             },
+            PromptTarget::NewDrumLane(TrackId(1)),
+            PromptTarget::DrumLaneName {
+                track: TrackId(1),
+                lane: 1,
+            },
+            PromptTarget::DrumLaneNote {
+                track: TrackId(1),
+                lane: 1,
+                move_existing_hits: false,
+            },
             PromptTarget::ClipSourceTempo(ClipId(1)),
             PromptTarget::Position,
             PromptTarget::SongTitle,
@@ -2079,6 +2164,9 @@ mod tests {
                 | PromptTarget::ClipGain(_)
                 | PromptTarget::Param(_)
                 | PromptTarget::DrumAssignment { .. }
+                | PromptTarget::NewDrumLane(_)
+                | PromptTarget::DrumLaneName { .. }
+                | PromptTarget::DrumLaneNote { .. }
                 | PromptTarget::ClipSourceTempo(_)
                 | PromptTarget::Position
                 | PromptTarget::SongTitle

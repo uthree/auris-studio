@@ -402,6 +402,24 @@ pub enum Drag {
         /// auditioned the wrong pitch — before the hand had decided anything.
         pressed_at: Option<Point<Pixels>>,
     },
+    /// Painting or erasing grid-aligned drum hits with one continuous gesture.
+    DrumPaint {
+        /// Clip receiving or losing hits.
+        clip: ClipId,
+        /// Whether this stroke removes rather than adds.
+        erase: bool,
+        /// Cells already handled by this stroke, so pointer jitter cannot retrigger them.
+        visited: BTreeSet<(u8, Ticks)>,
+        /// Last cell reached, used to fill every grid interval between pointer events.
+        last: Option<(u8, Ticks)>,
+    },
+    /// Reordering a named drum lane directly in the editor's label column.
+    DrumLaneReorder {
+        /// Drum track whose map is being edited.
+        track: TrackId,
+        /// Stable identity of the lane in hand.
+        lane: u64,
+    },
     /// Alt/Option-click waits for release to delete; dragging instead duplicates the selection.
     NoteCopy {
         /// Clip containing the source and copied notes.
@@ -727,6 +745,12 @@ impl Drag {
             Drag::AutomationPoint { target, .. } => Some(Edit::WriteAutomation(*target)),
             Drag::CurvePoint { clip, which, .. } => Some(Edit::write_curve(*which, *clip)),
             Drag::NoteMove { .. } => Some(Edit::MoveNotes),
+            Drag::DrumPaint { erase, .. } => Some(if *erase {
+                Edit::DeleteNotes
+            } else {
+                Edit::AddNote
+            }),
+            Drag::DrumLaneReorder { .. } => Some(Edit::SetDrumAssignment),
             Drag::NoteCopy { pressed_at, .. } => {
                 pressed_at.is_none().then_some(Edit::DuplicateNotes)
             }
@@ -1371,6 +1395,8 @@ pub struct AurisApp {
     /// Loaded once and held, because every chart picker lists it and reading a file per frame to
     /// draw a menu would be absurd. Written the moment one is kept.
     pub(crate) progressions: auris_session::progressions::ProgressionBook,
+    /// Drum maps remembered per sound source and copied into each project that uses them.
+    pub(crate) drum_maps: auris_session::DrumMapBook,
     /// Notes currently sounding because the user is holding a key, dragging one, or pressing a
     /// chord on the harmony lane.
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
@@ -1725,6 +1751,7 @@ impl AurisApp {
             lyrics_edit: None,
             song_lyrics_reveal: None,
             progressions: auris_session::progressions::ProgressionBook::load(),
+            drum_maps: auris_session::DrumMapBook::load(),
             auditioning: None,
             focus: cx.focus_handle(),
             panes: PaneFocus::new(cx),

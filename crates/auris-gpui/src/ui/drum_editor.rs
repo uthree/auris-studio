@@ -15,54 +15,89 @@ use gpui::{
 
 use crate::app::{AurisApp, BandSurface, Drag};
 use crate::theme::{Metrics, Theme};
+use crate::ui::context_menu::{ContextMenu, MenuCommand};
 use crate::ui::paint;
 use crate::ui::piano_roll::{RollTool, paint_clip_extent};
+use crate::ui::prompt::{Prompt, PromptTarget};
+use crate::ui::tooltip::keyed_tip;
 use crate::ui::widgets::{ButtonStyle, button};
 
 const ROW_HEIGHT: f32 = 28.0;
-const LABEL_WIDTH: f32 = 164.0;
+const LABEL_WIDTH: f32 = 220.0;
 const HIT_WIDTH: f32 = 12.0;
+
+/// Which lanes the drum editor presents.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum DrumRowsMode {
+    /// The authored map, plus otherwise hidden notes already used by the clip.
+    #[default]
+    Map,
+    /// Only MIDI keys used by this clip.
+    Used,
+    /// Every physical MIDI key.
+    All,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DrumLearn {
+    track: TrackId,
+    lane: Option<u64>,
+}
 
 /// Presentation state kept separately from the melodic editor's pitch and zoom.
 #[derive(Default)]
 pub(crate) struct DrumEditorState {
     scroll: f32,
-    all_notes: bool,
+    mode: DrumRowsMode,
     clip: Option<ClipId>,
+    pub(crate) selected_lane: Option<u64>,
+    learn: Option<DrumLearn>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct DrumRow {
     pitch: u8,
+    lane: Option<u64>,
+    name: String,
     roles: Vec<DrumRole>,
 }
 
+fn row_for(map: &DrumMap, pitch: u8) -> DrumRow {
+    match map.lanes.iter().find(|lane| lane.note == pitch) {
+        Some(lane) => DrumRow {
+            pitch,
+            lane: Some(lane.id),
+            name: lane.name.clone(),
+            roles: lane.roles.iter().copied().collect(),
+        },
+        None => DrumRow {
+            pitch,
+            lane: None,
+            name: String::new(),
+            roles: Vec::new(),
+        },
+    }
+}
+
 /// One row per physical key, even when multiple musical roles name the same sound.
-fn rows_for(map: &DrumMap, pitches: impl IntoIterator<Item = u8>, all: bool) -> Vec<DrumRow> {
-    let mut rows: Vec<DrumRow> = Vec::new();
-    for role in DrumRole::ALL {
-        if let Some(&pitch) = map.voices.get(&role) {
-            if let Some(row) = rows.iter_mut().find(|row| row.pitch == pitch) {
-                row.roles.push(role);
-            } else {
-                rows.push(DrumRow {
-                    pitch,
-                    roles: vec![role],
-                });
-            }
+fn rows_for(
+    map: &DrumMap,
+    pitches: impl IntoIterator<Item = u8>,
+    mode: DrumRowsMode,
+) -> Vec<DrumRow> {
+    let mut used: BTreeSet<u8> = pitches.into_iter().collect();
+    if mode == DrumRowsMode::All {
+        return (0..=127).map(|pitch| row_for(map, pitch)).collect();
+    }
+    let mut rows = Vec::new();
+    for lane in &map.lanes {
+        if mode == DrumRowsMode::Map || used.contains(&lane.note) {
+            rows.push(row_for(map, lane.note));
+            used.remove(&lane.note);
         }
     }
-    let mut extra: BTreeSet<u8> = pitches.into_iter().collect();
-    if all || (rows.is_empty() && extra.is_empty()) {
-        extra.extend(0..=127);
-    }
-    for pitch in extra {
-        if !rows.iter().any(|row| row.pitch == pitch) {
-            rows.push(DrumRow {
-                pitch,
-                roles: Vec::new(),
-            });
-        }
+    for pitch in used {
+        rows.push(row_for(map, pitch));
     }
     rows
 }
@@ -94,6 +129,453 @@ impl AurisApp {
             .is_some_and(|track| track.kind.is_drum())
     }
 
+    pub(crate) fn selected_drum_track(&self) -> Option<TrackId> {
+        let track = self
+            .selected_clip
+            .and_then(|clip| self.project().track_of_clip(clip))
+            .or(self.selected_track)?;
+        self.project()
+            .track(track)
+            .is_some_and(|entry| entry.kind.is_drum())
+            .then_some(track)
+    }
+
+    fn general_midi_drum_name(&self, pitch: u8) -> Option<String> {
+        let source = self
+            .selected_drum_track()
+            .and_then(|track| self.session.drum_map_source(track))?;
+        let font = source.soundfont?;
+        let known = font.bank == 128
+            && font.path.file_name().is_some_and(|name| {
+                name.to_string_lossy()
+                    .eq_ignore_ascii_case("MuseScore_General.sf2")
+            });
+        if !known {
+            return None;
+        }
+        static GM: std::sync::OnceLock<DrumMap> = std::sync::OnceLock::new();
+        GM.get_or_init(DrumMap::general_midi)
+            .lanes
+            .iter()
+            .find(|lane| lane.note == pitch)
+            .map(|lane| lane.name.clone())
+    }
+
+    fn drum_map_actions(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme.clone();
+        button(
+            "drum-map-actions",
+            self.t(Key::DrumEditorMappedNotes),
+            ButtonStyle::Normal,
+            false,
+            theme.accent,
+            &theme,
+            cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                let menu = this.drum_map_menu(event.position());
+                this.open_menu(menu);
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        )
+        .tooltip(keyed_tip(self.t(Key::DrumEditorAutoSaved), "", &theme))
+        .into_any_element()
+    }
+
+    fn drum_empty_state(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let Some(track) = self.selected_drum_track() else {
+            return div().into_any_element();
+        };
+        let theme = self.theme.clone();
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_2()
+                    .p_3()
+                    .rounded(Metrics::RADIUS_MD)
+                    .bg(theme.surface_raised)
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_sm()
+                    .text_color(theme.text)
+                    .child(self.t(Key::DrumEditorEmpty))
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(button(
+                                "drum-empty-gm",
+                                self.t(Key::DrumEditorGmTemplate),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.apply_drum_map_template(track, DrumMap::general_midi());
+                                    cx.notify();
+                                }),
+                            ))
+                            .when(!self.drum_maps.entries().is_empty(), |row| {
+                                row.child(button(
+                                    "drum-empty-saved",
+                                    self.t(Key::DrumEditorChooseSaved),
+                                    ButtonStyle::Normal,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, event: &gpui::ClickEvent, _, cx| {
+                                        let menu = this.drum_map_menu(event.position());
+                                        this.open_menu(menu);
+                                        cx.notify();
+                                    }),
+                                ))
+                            })
+                            .child(button(
+                                "drum-empty-learn",
+                                self.t(Key::DrumEditorMidiLearn),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.begin_drum_learn(track, None);
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(button(
+                                "drum-empty-add",
+                                self.t(Key::DrumEditorAddLane),
+                                ButtonStyle::Primary,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.prompt_for_new_drum_lane(track);
+                                    cx.notify();
+                                }),
+                            )),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn drum_map_menu(&self, at: Point<Pixels>) -> ContextMenu {
+        let Some(track) = self.selected_drum_track() else {
+            return ContextMenu::new(at, self.t(Key::DrumEditorMap));
+        };
+        let mut menu = ContextMenu::new(at, self.t(Key::DrumEditorMap))
+            .item(
+                self.t(Key::DrumEditorAddLane),
+                MenuCommand::NewDrumLane(track),
+            )
+            .item(
+                self.t(Key::DrumEditorMidiLearn),
+                MenuCommand::LearnDrumLane { track, lane: None },
+            )
+            .item(
+                self.t(Key::DrumEditorGmTemplate),
+                MenuCommand::ApplyGeneralMidiDrumMap(track),
+            );
+        if !self.drum_maps.entries().is_empty() {
+            menu = menu.separator();
+            for (index, saved) in self.drum_maps.entries().iter().enumerate() {
+                menu = menu.item(
+                    saved.name.clone(),
+                    MenuCommand::ApplySavedDrumMap { track, index },
+                );
+            }
+        }
+
+        let selected = self.drum_editor.selected_lane.and_then(|id| {
+            self.session
+                .drum_assignments(track)?
+                .lanes
+                .into_iter()
+                .find(|lane| lane.id == id)
+        });
+        if let Some(lane) = selected {
+            menu = menu
+                .separator()
+                .item(
+                    self.t(Key::DrumLaneName),
+                    MenuCommand::RenameDrumLane {
+                        track,
+                        lane: lane.id,
+                    },
+                )
+                .item(
+                    self.t(Key::DrumLaneMidi),
+                    MenuCommand::SetDrumLaneNote {
+                        track,
+                        lane: lane.id,
+                        move_existing_hits: false,
+                    },
+                )
+                .item(
+                    self.t(Key::DrumLaneMidiMove),
+                    MenuCommand::SetDrumLaneNote {
+                        track,
+                        lane: lane.id,
+                        move_existing_hits: true,
+                    },
+                )
+                .item(
+                    self.t(Key::DrumEditorMidiLearn),
+                    MenuCommand::LearnDrumLane {
+                        track,
+                        lane: Some(lane.id),
+                    },
+                )
+                .item(
+                    self.t(Key::MenuMoveUp),
+                    MenuCommand::MoveDrumLane {
+                        track,
+                        lane: lane.id,
+                        offset: -1,
+                    },
+                )
+                .item(
+                    self.t(Key::MenuMoveDown),
+                    MenuCommand::MoveDrumLane {
+                        track,
+                        lane: lane.id,
+                        offset: 1,
+                    },
+                )
+                .separator();
+            for role in DrumRole::ALL {
+                menu = menu.toggle(
+                    format!("{}: {}", self.t(Key::DrumLaneRoles), self.t(role_key(role))),
+                    MenuCommand::ToggleDrumLaneRole {
+                        track,
+                        lane: lane.id,
+                        role,
+                    },
+                    lane.roles.contains(&role),
+                );
+            }
+            menu = menu.separator().item(
+                self.t(Key::DrumLaneRemove),
+                MenuCommand::RemoveDrumLane {
+                    track,
+                    lane: lane.id,
+                },
+            );
+        }
+        menu
+    }
+
+    pub(crate) fn prompt_for_new_drum_lane(&mut self, track: TrackId) {
+        let used: BTreeSet<_> = self
+            .session
+            .drum_lanes(track)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|lane| lane.note)
+            .collect();
+        let Some(note) = (0..=127).find(|note| !used.contains(note)) else {
+            self.set_failed_status("Every MIDI note already has a lane".to_string());
+            return;
+        };
+        self.open_prompt(Prompt::new(
+            self.t(Key::DrumEditorAddLane),
+            PromptTarget::NewDrumLane(track),
+            note.to_string(),
+        ));
+    }
+
+    pub(crate) fn prompt_to_rename_drum_lane(&mut self, track: TrackId, lane: u64) {
+        let current = self
+            .session
+            .drum_lanes(track)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|candidate| candidate.id == lane)
+            .map(|lane| lane.name)
+            .unwrap_or_default();
+        self.open_prompt(Prompt::new(
+            self.t(Key::DrumLaneName),
+            PromptTarget::DrumLaneName { track, lane },
+            current,
+        ));
+    }
+
+    pub(crate) fn prompt_for_drum_lane_note(
+        &mut self,
+        track: TrackId,
+        lane: u64,
+        move_existing_hits: bool,
+    ) {
+        let current = self
+            .session
+            .drum_lanes(track)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|candidate| candidate.id == lane)
+            .map(|lane| lane.note.to_string())
+            .unwrap_or_default();
+        self.open_prompt(Prompt::new(
+            self.t(if move_existing_hits {
+                Key::DrumLaneMidiMove
+            } else {
+                Key::DrumLaneMidi
+            }),
+            PromptTarget::DrumLaneNote {
+                track,
+                lane,
+                move_existing_hits,
+            },
+            current,
+        ));
+    }
+
+    pub(crate) fn begin_drum_learn(&mut self, track: TrackId, lane: Option<u64>) {
+        self.drum_editor.learn = Some(DrumLearn { track, lane });
+        self.drum_editor.mode = DrumRowsMode::All;
+        self.session.set_musical_typing(true);
+        self.set_status(self.t(Key::DrumEditorLearning));
+    }
+
+    pub(crate) fn accept_drum_learn(&mut self, pitch: u8) -> bool {
+        let Some(target) = self.drum_editor.learn else {
+            return false;
+        };
+        let result = match target.lane {
+            Some(lane) => self
+                .session
+                .set_drum_lane_note(target.track, lane, pitch, false)
+                .map(|_| lane),
+            None => {
+                if let Some(lane) = self
+                    .session
+                    .drum_lanes(target.track)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .find(|lane| lane.note == pitch)
+                {
+                    Ok(lane.id)
+                } else {
+                    self.session
+                        .add_drum_lane(target.track, pitch, String::new())
+                }
+            }
+        };
+        match result {
+            Ok(lane) => {
+                self.drum_editor.selected_lane = Some(lane);
+                self.drum_editor.learn = None;
+                self.remember_drum_map(target.track);
+                self.set_status(self.t(Key::DrumEditorAutoSaved));
+            }
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+        true
+    }
+
+    pub(crate) fn cancel_drum_learn(&mut self) -> bool {
+        self.drum_editor.learn.take().is_some()
+    }
+
+    pub(crate) fn remember_drum_map(&mut self, track: TrackId) {
+        let Some(source) = self.session.drum_map_source(track) else {
+            return;
+        };
+        let Some(map) = self.session.drum_assignments(track) else {
+            return;
+        };
+        let name = self
+            .project()
+            .track(track)
+            .map(|entry| entry.name.clone())
+            .unwrap_or_else(|| self.t(Key::DrumEditorMap).to_string());
+        if !self
+            .drum_maps
+            .keep(name.clone(), source.clone(), map.clone())
+            || cfg!(test)
+        {
+            return;
+        }
+        match auris_session::DrumMapBook::keep_saved(name, source, map) {
+            Ok(_) => self.drum_maps = auris_session::DrumMapBook::load(),
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
+    /// Restores the user-level map for a newly selected sound source, when one exists.
+    pub(crate) fn restore_drum_map_for_source(&mut self, track: TrackId) {
+        let Some(source) = self.session.drum_map_source(track) else {
+            return;
+        };
+        let map = self
+            .drum_maps
+            .map_for(&source)
+            .map(|saved| saved.map.clone())
+            .or_else(|| self.session.suggested_drum_map(track));
+        let Some(map) = map else {
+            return;
+        };
+        if let Err(error) = self.session.set_drum_source_map(track, map) {
+            self.set_failed_status(error.to_string());
+        }
+    }
+
+    pub(crate) fn apply_drum_map_template(&mut self, track: TrackId, map: DrumMap) {
+        match self.session.set_drum_map(track, map) {
+            Ok(_) => {
+                self.drum_editor.mode = DrumRowsMode::Map;
+                self.drum_editor.selected_lane = None;
+                self.remember_drum_map(track);
+                self.set_status(self.t(Key::DrumEditorAutoSaved));
+            }
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
+    pub(crate) fn apply_saved_drum_map(&mut self, track: TrackId, index: usize) {
+        let Some(saved) = self.drum_maps.entries().get(index).cloned() else {
+            return;
+        };
+        self.apply_drum_map_template(track, saved.map);
+    }
+
+    pub(crate) fn move_drum_lane(&mut self, track: TrackId, lane: u64, offset: i32) {
+        match self.session.move_drum_lane(track, lane, offset) {
+            Ok(_) => self.remember_drum_map(track),
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
+    pub(crate) fn toggle_drum_lane_role(&mut self, track: TrackId, lane: u64, role: DrumRole) {
+        let enabled = self
+            .session
+            .drum_lanes(track)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|candidate| candidate.id == lane)
+            .is_none_or(|candidate| !candidate.roles.contains(&role));
+        match self.session.set_drum_lane_role(track, lane, role, enabled) {
+            Ok(_) => self.remember_drum_map(track),
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
+    pub(crate) fn remove_drum_lane(&mut self, track: TrackId, lane: u64) {
+        match self.session.remove_drum_lane(track, lane) {
+            Ok(_) => {
+                self.drum_editor.selected_lane = None;
+                self.remember_drum_map(track);
+            }
+            Err(error) => self.set_failed_status(error.to_string()),
+        }
+    }
+
     fn drum_rows(&self) -> Vec<DrumRow> {
         let Some(clip) = self.selected_midi_clip() else {
             return Vec::new();
@@ -117,7 +599,7 @@ impl AurisApp {
         if let Some(Drag::NoteMove { origins, .. }) = &self.drag {
             pitches.extend(origins.iter().map(|(_, _, pitch)| *pitch));
         }
-        rows_for(&map, pitches, self.drum_editor.all_notes)
+        rows_for(&map, pitches, self.drum_editor.mode)
     }
 
     /// Renders the percussion editor in the shared clip-editor dock.
@@ -129,6 +611,8 @@ impl AurisApp {
         if self.drum_editor.clip != self.selected_clip {
             self.drum_editor.clip = self.selected_clip;
             self.drum_editor.scroll = 0.0;
+            self.drum_editor.selected_lane = None;
+            self.drum_editor.learn = None;
         }
         let Some(clip) = self.selected_midi_clip() else {
             return div().into_any_element();
@@ -143,9 +627,6 @@ impl AurisApp {
         };
         let notes = self.score_notes();
         let rows = self.drum_rows();
-        if rows.len() == 128 && notes.is_empty() {
-            self.drum_editor.all_notes = true;
-        }
         let height = self
             .canvas
             .roll
@@ -156,11 +637,17 @@ impl AurisApp {
             .scroll
             .clamp(0.0, (rows.len() as f32 * ROW_HEIGHT - height).max(0.0));
         let scroll = self.drum_editor.scroll;
+        let theme = self.theme.clone();
         let labels: Vec<String> = rows
             .iter()
             .map(|row| {
-                if row.roles.is_empty() {
-                    format!("MIDI {}", row.pitch)
+                if !row.name.is_empty() {
+                    format!("{} · {}", row.name, row.pitch)
+                } else if row.roles.is_empty() {
+                    self.general_midi_drum_name(row.pitch).map_or_else(
+                        || format!("MIDI {}", row.pitch),
+                        |name| format!("{name} · {}", row.pitch),
+                    )
                 } else {
                     format!(
                         "{} · {}",
@@ -174,7 +661,109 @@ impl AurisApp {
                 }
             })
             .collect();
-        let theme = self.theme.clone();
+        let selected_lane = self.drum_editor.selected_lane;
+        let track = self.selected_drum_track();
+        let label_elements = rows
+            .iter()
+            .zip(labels.iter())
+            .enumerate()
+            .filter_map(|(index, (row, label))| {
+                let top = index as f32 * ROW_HEIGHT - scroll;
+                if top + ROW_HEIGHT < 0.0 || top > height {
+                    return None;
+                }
+                let pitch = row.pitch;
+                let lane = row.lane;
+                let label = label.clone();
+                let selected = lane.is_some() && lane == selected_lane;
+                let handle = match (track, lane) {
+                    (Some(track), Some(lane)) => Some(
+                        div()
+                            .id(("drum-lane-handle", lane))
+                            .w(px(14.0))
+                            .flex_shrink_0()
+                            .text_color(theme.text_muted)
+                            .child("≡")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.drum_editor.selected_lane = Some(lane);
+                                    this.begin_drag(Drag::DrumLaneReorder { track, lane });
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                            .into_any_element(),
+                    ),
+                    _ => None,
+                };
+                let mut element = div()
+                    .id(("drum-row", u64::from(pitch)))
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .top(px(top))
+                    .h(px(ROW_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .px_2()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .text_color(theme.text)
+                    .when(selected, |row| row.bg(theme.accent_soft))
+                    .children(handle)
+                    .child(div().flex_1().min_w_0().truncate().child(label.clone()))
+                    .tooltip(keyed_tip(label, "", &theme));
+                if let Some(track) = track {
+                    element = element
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                if this.accept_drum_learn(pitch) {
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                    return;
+                                }
+                                this.drum_editor.selected_lane = lane;
+                                if event.click_count >= 2 {
+                                    match lane {
+                                        Some(lane) => this.prompt_to_rename_drum_lane(track, lane),
+                                        None => this.open_prompt(Prompt::new(
+                                            this.t(Key::DrumEditorAddLane),
+                                            PromptTarget::NewDrumLane(track),
+                                            pitch.to_string(),
+                                        )),
+                                    }
+                                } else {
+                                    this.audition(pitch);
+                                }
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.drum_editor.selected_lane = lane;
+                                if lane.is_some() {
+                                    let menu = this.drum_map_menu(event.position);
+                                    this.open_menu(menu);
+                                } else {
+                                    this.open_prompt(Prompt::new(
+                                        this.t(Key::DrumEditorAddLane),
+                                        PromptTarget::NewDrumLane(track),
+                                        pitch.to_string(),
+                                    ));
+                                }
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        );
+                }
+                Some(element.into_any_element())
+            })
+            .collect::<Vec<_>>();
         let view = self.timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
@@ -187,6 +776,7 @@ impl AurisApp {
             .then(|| self.rubber_band(BandSurface::Roll))
             .flatten();
         let recorded = self.canvas.roll.clone();
+        let empty_state = (source && rows.is_empty()).then(|| self.drum_empty_state(cx));
 
         div()
             .flex()
@@ -227,18 +817,45 @@ impl AurisApp {
                         }
                     }))
                     .child(button(
-                        "drum-all-notes",
-                        self.t(Key::DrumEditorAllNotes),
+                        "drum-map-notes",
+                        self.t(Key::DrumEditorMap),
                         ButtonStyle::Ghost,
-                        self.drum_editor.all_notes,
+                        self.drum_editor.mode == DrumRowsMode::Map,
                         theme.accent_soft,
                         &theme,
                         cx.listener(|this, _, _, cx| {
-                            this.drum_editor.all_notes = !this.drum_editor.all_notes;
+                            this.drum_editor.mode = DrumRowsMode::Map;
                             this.drum_editor.scroll = 0.0;
                             cx.notify();
                         }),
                     ))
+                    .child(button(
+                        "drum-used-notes",
+                        self.t(Key::DrumEditorUsed),
+                        ButtonStyle::Ghost,
+                        self.drum_editor.mode == DrumRowsMode::Used,
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.drum_editor.mode = DrumRowsMode::Used;
+                            this.drum_editor.scroll = 0.0;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button(
+                        "drum-all-notes",
+                        self.t(Key::DrumEditorAllNotes),
+                        ButtonStyle::Ghost,
+                        self.drum_editor.mode == DrumRowsMode::All,
+                        theme.accent_soft,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.drum_editor.mode = DrumRowsMode::All;
+                            this.drum_editor.scroll = 0.0;
+                            cx.notify();
+                        }),
+                    ))
+                    .when(source, |row| row.child(self.drum_map_actions(cx)))
                     .child(self.zoom_slider("drum-zoom", cx)),
             )
             .child(
@@ -254,36 +871,9 @@ impl AurisApp {
                             .flex_shrink_0()
                             .h_full()
                             .overflow_hidden()
-                            .child({
-                                let theme = theme.clone();
-                                canvas(
-                                    |_, _, _| (),
-                                    move |bounds, _, window, cx| {
-                                        paint::clipped(window, bounds, |window| {
-                                            paint::rect(window, bounds, theme.surface_raised);
-                                            for (index, label) in labels.iter().enumerate() {
-                                                let y = bounds.origin.y
-                                                    + px(index as f32 * ROW_HEIGHT - scroll);
-                                                if y + px(ROW_HEIGHT) < bounds.origin.y
-                                                    || y > bounds.bottom()
-                                                {
-                                                    continue;
-                                                }
-                                                paint::hline(window, bounds, y, theme.border);
-                                                paint::label(
-                                                    window,
-                                                    cx,
-                                                    point(bounds.origin.x + px(8.0), y + px(6.0)),
-                                                    label.clone(),
-                                                    px(11.0),
-                                                    theme.text,
-                                                );
-                                            }
-                                        });
-                                    },
-                                )
-                                .size_full()
-                            })
+                            .relative()
+                            .bg(theme.surface_raised)
+                            .children(label_elements)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, event: &MouseDownEvent, _, cx| {
@@ -304,10 +894,12 @@ impl AurisApp {
                     .child(
                         div()
                             .id("drum-grid")
+                            .relative()
                             .flex_1()
                             .min_w_0()
                             .h_full()
                             .overflow_hidden()
+                            .tooltip(keyed_tip(self.t(Key::DrumRepeatPaint), "", &theme))
                             .when(source && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
@@ -432,6 +1024,7 @@ impl AurisApp {
                                 )
                                 .size_full(),
                             )
+                            .children(empty_state)
                             .on_mouse_down(MouseButton::Left, cx.listener(Self::press_drum_grid))
                             .on_mouse_down(MouseButton::Right, cx.listener(Self::open_drum_menu))
                             .on_scroll_wheel(cx.listener(Self::scroll_drums)),
@@ -487,9 +1080,27 @@ impl AurisApp {
                 self.begin_rubber_band(BandSurface::Roll, event.position, event.modifiers.shift);
             }
         } else if self.pointer.delete.matches(event) {
+            let mut visited = BTreeSet::new();
+            if let Some(index) = under
+                && let Some(note) = self
+                    .session
+                    .midi_clip(clip)
+                    .and_then(|clip| clip.notes.get(index))
+                    .cloned()
+            {
+                visited.insert((note.pitch, note.start));
+            }
+            self.begin_drag(Drag::DrumPaint {
+                clip,
+                erase: true,
+                visited,
+                last: None,
+            });
             if let Some(index) = under {
                 let _ = self.session.remove_notes(clip, &[index]);
                 self.selected_notes.clear();
+            } else {
+                self.paint_drum_hits(event.position);
             }
         } else if let Some(index) = under {
             if event.modifiers.shift && self.selected_notes.remove(&index) {
@@ -512,34 +1123,99 @@ impl AurisApp {
         } else if event.modifiers.shift {
             self.begin_rubber_band(BandSurface::Roll, event.position, true);
         } else {
-            let start = (tick.snap_nearest(self.project().grid) - clip_start).max_zero();
-            let length = Ticks(self.project().grid.raw().max(1));
-            self.begin_drag(Drag::NoteMove {
+            self.selected_notes.clear();
+            self.begin_drag(Drag::DrumPaint {
                 clip,
-                grabbed: 0,
-                origin_tick: tick - clip_start,
-                origin_pitch: pitch,
-                origins: Vec::new(),
-                pressed_at: Some(event.position),
+                erase: false,
+                visited: BTreeSet::new(),
+                last: None,
             });
-            match self.session.add_note(clip, Note::new(pitch, start, length)) {
-                Ok(index) => {
-                    self.selected_notes.clear();
-                    self.selected_notes.insert(index);
-                    self.drag = Some(Drag::NoteMove {
-                        clip,
-                        grabbed: index,
-                        origin_tick: tick - clip_start,
-                        origin_pitch: pitch,
-                        origins: self.selected_note_origins(clip),
-                        pressed_at: Some(event.position),
-                    });
-                    self.audition_note(index, pitch);
-                }
-                Err(_) => self.abandon_drag(),
-            }
+            self.paint_drum_hits(event.position);
         }
         cx.notify();
+    }
+
+    /// Fills every grid cell crossed by the active drum paint stroke.
+    pub(crate) fn paint_drum_hits(&mut self, at: Point<Pixels>) {
+        let Some(Drag::DrumPaint {
+            clip, erase, last, ..
+        }) = self.drag.clone()
+        else {
+            return;
+        };
+        let origin = self.roll_origin();
+        let Some(pitch) = self.drum_pitch_at(at.y - origin.y) else {
+            return;
+        };
+        let Some(clip_start) = self.session.midi_clip(clip).map(|clip| clip.start) else {
+            return;
+        };
+        let grid = Ticks(self.project().grid.raw().max(1));
+        let tick = self.timeline.x_to_tick(at.x - origin.x);
+        let current = (tick.snap_nearest(grid) - clip_start).max_zero();
+        let mut cells = Vec::new();
+        if let Some((last_pitch, previous)) = last
+            && last_pitch == pitch
+        {
+            let (from, to) = if previous <= current {
+                (previous, current)
+            } else {
+                (current, previous)
+            };
+            let mut at = from;
+            while at <= to {
+                cells.push(at);
+                at += grid;
+            }
+        } else {
+            cells.push(current);
+        }
+
+        for start in cells {
+            let seen = matches!(
+                &self.drag,
+                Some(Drag::DrumPaint { visited, .. }) if visited.contains(&(pitch, start))
+            );
+            if seen {
+                continue;
+            }
+            if erase {
+                let indices = self
+                    .session
+                    .midi_clip(clip)
+                    .map(|clip| {
+                        clip.notes
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, note)| note.pitch == pitch && note.start == start)
+                            .map(|(index, _)| index)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if !indices.is_empty() {
+                    let _ = self.session.remove_notes(clip, &indices);
+                    self.selected_notes.clear();
+                }
+            } else {
+                let exists = self.session.midi_clip(clip).is_some_and(|clip| {
+                    clip.notes
+                        .iter()
+                        .any(|note| note.pitch == pitch && note.start == start)
+                });
+                if !exists
+                    && let Ok(index) = self.session.add_note(clip, Note::new(pitch, start, grid))
+                {
+                    self.selected_notes.insert(index);
+                    self.audition_note(index, pitch);
+                }
+            }
+            if let Some(Drag::DrumPaint { visited, .. }) = &mut self.drag {
+                visited.insert((pitch, start));
+            }
+        }
+        if let Some(Drag::DrumPaint { last, .. }) = &mut self.drag {
+            *last = Some((pitch, current));
+        }
     }
 
     fn open_drum_menu(
@@ -633,6 +1309,33 @@ impl AurisApp {
         }
     }
 
+    /// Reorders the dragged lane to the mapped row currently under the pointer.
+    pub(crate) fn reorder_drum_lane_at(&mut self, track: TrackId, lane: u64, y: Pixels) {
+        let rows = self.drum_rows();
+        let Some(row) = row_at(y, self.drum_editor.scroll, rows.len()) else {
+            return;
+        };
+        let Some(target) = rows[row].lane else {
+            return;
+        };
+        let Some(map) = self.session.drum_assignments(track) else {
+            return;
+        };
+        let Some(from) = map.lanes.iter().position(|candidate| candidate.id == lane) else {
+            return;
+        };
+        let Some(to) = map
+            .lanes
+            .iter()
+            .position(|candidate| candidate.id == target)
+        else {
+            return;
+        };
+        let _ = self
+            .session
+            .move_drum_lane(track, lane, to as i32 - from as i32);
+    }
+
     /// Moves a keyboard or menu selection to neighbouring kit voices in one undo step.
     pub(crate) fn move_drum_selection(&mut self, offset: i32) {
         let Some(clip) = self.selected_clip else {
@@ -691,34 +1394,58 @@ mod tests {
 
     #[test]
     fn authored_rows_keep_arbitrary_addresses_and_merge_shared_roles() {
-        let map = DrumMap {
-            voices: [
-                (DrumRole::Kick, 73),
-                (DrumRole::Snare, 18),
-                (DrumRole::Tom, 18),
-            ]
-            .into_iter()
-            .collect(),
-        };
-        let rows = rows_for(&map, [91, 73], false);
+        let map = DrumMap::from_voices([
+            (DrumRole::Kick, 73),
+            (DrumRole::Snare, 18),
+            (DrumRole::Tom, 18),
+        ]);
+        let rows = rows_for(&map, [91, 73], DrumRowsMode::Map);
         assert_eq!(
             rows.iter().map(|row| row.pitch).collect::<Vec<_>>(),
             [73, 18, 91]
         );
         assert_eq!(rows[1].roles, [DrumRole::Snare, DrumRole::Tom]);
         assert!(rows[2].roles.is_empty());
-        assert_eq!(rows_for(&map, [], true).len(), 128);
+        assert_eq!(rows_for(&map, [], DrumRowsMode::All).len(), 128);
+    }
+
+    #[test]
+    fn map_and_used_views_preserve_authored_names_and_order() {
+        let mut map = DrumMap::default();
+        map.add_lane(73, "Short Guiro");
+        map.add_lane(18, "Machine rim");
+        let mapped = rows_for(&map, [91, 18], DrumRowsMode::Map);
+        assert_eq!(
+            mapped
+                .iter()
+                .map(|row| (row.pitch, row.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(73, "Short Guiro"), (18, "Machine rim"), (91, "")]
+        );
+        let used = rows_for(&map, [91, 18], DrumRowsMode::Used);
+        assert_eq!(
+            used.iter().map(|row| row.pitch).collect::<Vec<_>>(),
+            [18, 91]
+        );
     }
 
     #[test]
     fn missing_assignments_do_not_invent_kit_roles() {
-        let rows = rows_for(&DrumMap::default(), [36, 60], false);
+        let rows = rows_for(&DrumMap::default(), [36, 60], DrumRowsMode::Map);
         assert!(rows.iter().all(|row| row.roles.is_empty()));
         assert_eq!(
             rows.iter().map(|row| row.pitch).collect::<Vec<_>>(),
             [36, 60]
         );
-        assert_eq!(rows_for(&DrumMap::default(), [], false).len(), 128);
+        assert!(rows_for(&DrumMap::default(), [], DrumRowsMode::Map).is_empty());
+        assert_eq!(
+            rows_for(&DrumMap::default(), [36], DrumRowsMode::Used).len(),
+            1
+        );
+        assert_eq!(
+            rows_for(&DrumMap::default(), [], DrumRowsMode::All).len(),
+            128
+        );
         assert_eq!(row_at(px(-1.0), 0.0, 2), None);
         assert_eq!(row_at(px(0.0), ROW_HEIGHT, 2), Some(1));
         assert_eq!(row_at(px(ROW_HEIGHT * 2.0), 0.0, 2), None);
@@ -836,6 +1563,87 @@ mod window_tests {
         app.read_with(cx, |this, _| {
             assert!(this.session.midi_clip(clip).unwrap().notes.is_empty())
         });
+    }
+
+    #[gpui::test]
+    fn an_empty_grid_drag_paints_repeated_hits_as_one_edit(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = fixture(cx);
+        app.update(cx, |this, _| this.session.set_grid(Ticks::QUARTER));
+        paint(&app, cx);
+        let from = hit_point(&app, cx, Ticks::QUARTER, 36);
+        let to = hit_point(&app, cx, Ticks::QUARTER * 3, 36);
+        drag(cx, from, to);
+        app.update(cx, |this, _| {
+            assert_eq!(
+                this.session
+                    .midi_clip(clip)
+                    .unwrap()
+                    .notes
+                    .iter()
+                    .map(|note| (note.pitch, note.start, note.length))
+                    .collect::<Vec<_>>(),
+                [
+                    (36, Ticks::QUARTER, Ticks::QUARTER),
+                    (36, Ticks::QUARTER * 2, Ticks::QUARTER),
+                    (36, Ticks::QUARTER * 3, Ticks::QUARTER),
+                ]
+            );
+            this.session.undo();
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            this.session.redo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 3);
+        });
+        paint(&app, cx);
+        harness::drag_with(cx, from, to, deleting());
+        app.update(cx, |this, _| {
+            assert!(this.session.midi_clip(clip).unwrap().notes.is_empty());
+            this.session.undo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 3);
+        });
+    }
+
+    #[gpui::test]
+    fn midi_learn_adds_an_unassigned_lane_and_can_be_cancelled(cx: &mut TestAppContext) {
+        let (app, cx, track, _) = fixture(cx);
+        app.update(cx, |this, _| {
+            this.begin_drum_learn(track, None);
+            assert_eq!(this.drum_editor.mode, DrumRowsMode::All);
+            assert!(this.accept_drum_learn(73));
+            let lane = this
+                .session
+                .drum_lanes(track)
+                .unwrap()
+                .into_iter()
+                .find(|lane| lane.note == 73)
+                .expect("the learned key becomes a lane");
+            assert_eq!(this.drum_editor.selected_lane, Some(lane.id));
+            assert!(lane.roles.is_empty());
+            this.begin_drum_learn(track, Some(lane.id));
+            assert!(this.cancel_drum_learn());
+            assert!(!this.cancel_drum_learn());
+        });
+    }
+
+    #[gpui::test]
+    fn an_empty_map_offers_starters_and_all_three_row_views(cx: &mut TestAppContext) {
+        let (app, cx, track, _) = fixture(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .set_drum_map(track, DrumMap::default())
+                .unwrap();
+        });
+        paint(&app, cx);
+        assert!(cx.debug_bounds("drum-empty-gm").is_some());
+        assert!(cx.debug_bounds("drum-empty-learn").is_some());
+        assert!(cx.debug_bounds("drum-empty-add").is_some());
+        app.read_with(cx, |this, _| assert!(this.drum_rows().is_empty()));
+
+        harness::click("drum-all-notes", cx);
+        app.read_with(cx, |this, _| assert_eq!(this.drum_rows().len(), 128));
+        harness::click("drum-used-notes", cx);
+        app.read_with(cx, |this, _| assert!(this.drum_rows().is_empty()));
+        harness::click("drum-map-notes", cx);
+        app.read_with(cx, |this, _| assert!(this.drum_rows().is_empty()));
     }
 
     #[gpui::test]
@@ -1026,7 +1834,10 @@ mod window_tests {
         paint(&app, cx);
         app.read_with(cx, |this, _| {
             let rows = this.drum_rows();
-            assert_eq!((rows[0].pitch, &rows[0].roles), (73, &vec![DrumRole::Kick]));
+            assert!(
+                rows.iter()
+                    .any(|row| { row.pitch == 73 && row.roles == vec![DrumRole::Kick] })
+            );
             assert!(
                 rows.iter()
                     .any(|row| row.pitch == 36 && row.roles.is_empty())

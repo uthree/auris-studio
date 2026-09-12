@@ -256,10 +256,13 @@ impl AurisApp {
         let name = messages::new_drum_track_name(self.language(), count);
         match self.session.add_default_drum_track(name) {
             Ok(id) => {
+                self.restore_drum_map_for_source(id);
                 self.select_track(id);
                 self.reveal_track(id);
             }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdAddDrumTrack, &error)),
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdAddDrumTrack, &error));
+            }
         }
     }
 
@@ -519,6 +522,11 @@ impl AurisApp {
         match self.session.undo() {
             Some(edit) => {
                 self.resync_selection();
+                if edit == Edit::SetDrumAssignment
+                    && let Some(track) = self.selected_drum_track()
+                {
+                    self.remember_drum_map(track);
+                }
                 let what = self.t(edit_key(edit));
                 self.set_status(messages::undid(self.language(), what));
             }
@@ -531,6 +539,11 @@ impl AurisApp {
         match self.session.redo() {
             Some(edit) => {
                 self.resync_selection();
+                if edit == Edit::SetDrumAssignment
+                    && let Some(track) = self.selected_drum_track()
+                {
+                    self.remember_drum_map(track);
+                }
                 let what = self.t(edit_key(edit));
                 self.set_status(messages::redid(self.language(), what));
             }

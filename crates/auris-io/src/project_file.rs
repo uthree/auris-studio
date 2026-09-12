@@ -157,7 +157,8 @@ pub fn save_project(path: &Path, project: &mut Project) -> Result<()> {
 
 /// Reads a project from `path`.
 ///
-/// The format version must match this build or version 27, whose volume contour is defaulted.
+/// The format version must match this build, version 28 without named drum lanes, or version 27,
+/// whose volume contour is defaulted.
 /// After parsing, the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
 /// with ids already in the document, and so is the routing — a file whose buses feed each other
@@ -166,7 +167,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
     let text = std::fs::read_to_string(path).map_err(|e| IoError::from_fs(path, e))?;
 
     let probe: FormatVersionProbe = serde_json::from_str(&text)?;
-    if probe.format_version != Project::FORMAT_VERSION && probe.format_version != 27 {
+    if probe.format_version != Project::FORMAT_VERSION && !matches!(probe.format_version, 27 | 28) {
         return Err(IoError::ProjectVersionMismatch {
             found: probe.format_version,
             supported: Project::FORMAT_VERSION,
@@ -484,6 +485,46 @@ mod tests {
             loaded.midi_clip(clip).unwrap().1.transforms,
             expected.midi_clip(clip).unwrap().1.transforms
         );
+    }
+
+    #[test]
+    fn version_28_drum_maps_load_with_lanes_derived_from_their_roles() {
+        let file = TempFile::new("version-28.auris");
+        let mut expected = demo_project();
+        let track = expected.add_drum_track("Kit", "auris.synth.drumkit");
+        let map = auris_core::DrumMap::from_voices([(auris_core::DrumRole::Kick, 73)]);
+        map.store(
+            &mut expected
+                .track_mut(track)
+                .unwrap()
+                .kind
+                .as_instrument_mut()
+                .unwrap()
+                .instrument_state,
+        );
+        let mut value = serde_json::to_value(&expected).unwrap();
+        value["format_version"] = serde_json::json!(28);
+        value["tracks"]
+            .as_array_mut()
+            .unwrap()
+            .last_mut()
+            .unwrap()["kind"]["instrument_state"]["extra"][auris_core::DrumMap::STATE_KEY]
+            .as_object_mut()
+            .unwrap()
+            .remove("lanes");
+        std::fs::write(file.path(), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let loaded = load_project(file.path()).unwrap();
+        let state = &loaded
+            .track(track)
+            .unwrap()
+            .kind
+            .as_instrument()
+            .unwrap()
+            .instrument_state;
+        let loaded_map = auris_core::DrumMap::load(state).unwrap();
+        assert_eq!(loaded_map.lanes.len(), 1);
+        assert_eq!(loaded_map.lanes[0].note, 73);
     }
 
     #[test]

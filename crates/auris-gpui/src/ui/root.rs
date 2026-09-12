@@ -1088,6 +1088,12 @@ impl AurisApp {
                 let tick = self.timeline.x_to_tick(x);
                 self.drag_clip_fade(clip, edge, tick);
             }
+            Drag::DrumPaint { .. } => {
+                self.paint_drum_hits(event.position);
+            }
+            Drag::DrumLaneReorder { track, lane } => {
+                self.reorder_drum_lane_at(track, lane, event.position.y - self.roll_origin().y);
+            }
             Drag::NoteMove {
                 clip,
                 origin_tick,
@@ -1433,11 +1439,18 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let reordered = match &self.drag {
+            Some(Drag::DrumLaneReorder { track, .. }) => Some(*track),
+            _ => None,
+        };
         self.stop_audition();
         // A key of the drawn keyboard pressed with the pointer is let go of here rather than on
         // the key itself, because the pointer may well have left it — or the panel — by now.
         self.release_typed_key();
         self.end_drag(window, cx);
+        if let Some(track) = reordered {
+            self.remember_drum_map(track);
+        }
         cx.notify();
     }
 
@@ -1540,6 +1553,9 @@ impl AurisApp {
     /// listener in gpui, so there is nothing here that could have taken `k` back off the
     /// metronome by itself.
     fn typing_key(&mut self, event: &gpui::KeyDownEvent) -> bool {
+        if event.keystroke.key == "escape" && self.cancel_drum_learn() {
+            return true;
+        }
         // The same question the window's key context asked, so the letters are claimed here
         // exactly when their bindings were put out of reach — a keyboard that answered for a key
         // its context had left bound, or left one dead that nothing else would answer for, would
@@ -1562,7 +1578,19 @@ impl AurisApp {
         let Some(track) = self.session.audition_track(self.selected_track) else {
             return false;
         };
-        self.session.typing_press(track, key)
+        let before: std::collections::BTreeSet<_> =
+            self.session.typing_keyboard().sounding().collect();
+        let claimed = self.session.typing_press(track, key);
+        let learned = claimed.then(|| {
+            self.session
+                .typing_keyboard()
+                .sounding()
+                .find(|pitch| !before.contains(pitch))
+        });
+        if let Some(Some(pitch)) = learned {
+            self.accept_drum_learn(pitch);
+        }
+        claimed
     }
 
     /// Lets go of a key the typing keyboard was holding.
