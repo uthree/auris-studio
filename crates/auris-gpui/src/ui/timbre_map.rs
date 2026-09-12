@@ -2,6 +2,7 @@
 
 use crate::{
     app::AurisApp,
+    theme::Theme,
     ui::widgets::{ButtonStyle, button},
 };
 use auris_i18n::Key;
@@ -28,6 +29,10 @@ impl TimbreMapState {
         }
         self.generation = self.generation.wrapping_add(1);
     }
+}
+
+fn cluster_color(cluster: usize, theme: &Theme) -> gpui::Hsla {
+    theme.group_color(cluster as f32 * 0.618_034)
 }
 
 impl AurisApp {
@@ -194,12 +199,7 @@ impl AurisApp {
             for (i, position) in positions.iter().enumerate() {
                 let selected = self.timbre_map.selected == Some(i);
                 let nearby = neighbors.iter().any(|(index, _)| *index == i);
-                let color = gpui::hsla(
-                    (map.clusters()[i] as f32 * 0.618_034) % 1.0,
-                    0.65,
-                    0.55,
-                    1.0,
-                );
+                let color = cluster_color(map.clusters()[i], theme);
                 plot = plot.child(
                     div()
                         .id(("timbre-point", i))
@@ -421,6 +421,7 @@ fn plot_positions(positions: &[[f64; 2]]) -> Vec<[f32; 2]> {
 mod tests {
     use super::*;
     use crate::harness::{click, open, paint};
+    use crate::theme::{SCHEMES, Theme};
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     fn map_window(app: &Entity<AurisApp>, cx: &mut VisualTestContext) -> VisualTestContext {
@@ -428,6 +429,21 @@ mod tests {
             app.auxiliary_windows[&crate::auxiliary_window::Surface::TimbreMap]
         });
         VisualTestContext::from_window(handle.into(), cx)
+    }
+
+    #[test]
+    fn cluster_colours_follow_every_theme_group_palette() {
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            for cluster in 0..8 {
+                assert_eq!(
+                    cluster_color(cluster, &theme),
+                    theme.group_color(cluster as f32 * 0.618_034),
+                    "{} cluster {cluster}",
+                    scheme.name
+                );
+            }
+        }
     }
 
     #[gpui::test]

@@ -949,9 +949,7 @@ pub fn clip_fades(
     let bottom = bounds.origin.y + bounds.size.height;
     let left = bounds.origin.x;
     let right = bounds.origin.x + bounds.size.width;
-    // A black scrim rather than a theme surface: it has to read as "quieter" over the
-    // waveform in every scheme, light ones included.
-    let scrim = Theme::translucent(gpui::black(), 0.32);
+    let scrim = theme.clip_fade_scrim;
     let height = bottom - top;
 
     if fade_in > 0.5 {
