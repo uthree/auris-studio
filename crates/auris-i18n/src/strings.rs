@@ -1852,10 +1852,14 @@ new のオプション
     }
     BrowserVoices { en: "Voices", ja: "シンガーボイス" }
     BrowserNoVoices {
-        en: "Add an Auris, DiffSinger, VOICEVOX, or LeapSinger voice below",
-        ja: "下からAuris、DiffSinger、VOICEVOX、LeapSingerのボイスを追加してください"
+        en: "Add singing voices in Settings > Singing Synthesis",
+        ja: "設定の「歌声合成」からボイスを追加してください"
     }
     BrowserAddVoiceFolder { en: "Add Voice Folder…", ja: "ボイスフォルダを追加…" }
+    VoiceFoldersNote {
+        en: "Auris searches these folders for singing voices. Removing a folder here does not delete its files.",
+        ja: "歌声ボイスを検索するフォルダです。ここでフォルダを削除しても、中のファイルは削除されません。"
+    }
     BrowserSetupVoicevox { en: "Set Up VOICEVOX…", ja: "VOICEVOXを設定…" }
     BrowserSetupDiffSinger { en: "Set Up DiffSinger…", ja: "DiffSingerを設定…" }
     VoiceSetupTitle { en: "Singing Backend Setup", ja: "歌声合成バックエンド設定" }

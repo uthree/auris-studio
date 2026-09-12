@@ -1170,38 +1170,30 @@ impl AurisApp {
         cx.notify();
     }
 
-    /// Asks for a folder of voice models to put on the library shelf, and remembers it.
+    /// Adds a folder of voice models to the places shown on the library shelf.
     ///
     /// Remembered, never copied: a voice is hundreds of megabytes somebody keeps where they
-    /// keep it, and the shelf is a listing — the plugin-folder arrangement exactly.
-    pub(crate) fn add_voice_path(&mut self, cx: &mut Context<Self>) {
-        let language = self.language();
-        cx.spawn(async move |this, cx| {
-            let handle = rfd::AsyncFileDialog::new()
-                .set_title(Key::DialogVoiceFolder.get(language))
-                .pick_folder()
-                .await;
-            let Some(handle) = handle else { return };
-            let path = handle.path().to_path_buf();
-            let _ = this.update(cx, |this, cx| {
-                if !this.settings.voice_paths.contains(&path) {
-                    this.settings.voice_paths.push(path);
-                    this.save_voice_paths();
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+    /// keep it, and the shelf is only a listing.
+    pub(crate) fn remember_voice_path(&mut self, path: PathBuf) -> bool {
+        if self.settings.voice_paths.contains(&path) {
+            return false;
+        }
+        self.settings.voice_paths.push(path);
+        self.save_voice_paths();
+        true
     }
 
     /// Stops listing one of the added voice folders.
     ///
     /// The files are untouched and a track that names a voice there still names it — this is
     /// a shelf, not the document.
-    pub(crate) fn forget_voice_path(&mut self, index: usize) {
+    pub(crate) fn forget_voice_path(&mut self, index: usize) -> bool {
         if index < self.settings.voice_paths.len() {
             self.settings.voice_paths.remove(index);
             self.save_voice_paths();
+            true
+        } else {
+            false
         }
     }
 

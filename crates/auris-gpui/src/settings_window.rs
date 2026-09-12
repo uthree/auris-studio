@@ -24,6 +24,7 @@ use crate::ui::icons::Icon;
 use crate::ui::palette;
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
 use crate::ui::widgets::{ButtonStyle, button, chain_button, divider};
+use crate::voice_setup_window::VoiceSetupTab;
 
 mod agent;
 mod appearance_editor;
@@ -93,6 +94,8 @@ pub struct SettingsWindow {
     japanese_dictionary: Option<std::path::PathBuf>,
     /// Where singer voices run their inference.
     singer_acceleration: Acceleration,
+    /// Extra folders searched for singer voices.
+    voice_paths: Vec<std::path::PathBuf>,
     /// How a bounce is written.
     export: ExportPreferences,
     /// What a click creates and what deletes.
@@ -166,6 +169,7 @@ impl SettingsWindow {
         snap_note_lengths: bool,
         japanese_dictionary: Option<std::path::PathBuf>,
         singer_acceleration: Acceleration,
+        voice_paths: Vec<std::path::PathBuf>,
         export: ExportPreferences,
         panels: PanelLayout,
         agent: AgentPreferences,
@@ -176,9 +180,19 @@ impl SettingsWindow {
         font_families.dedup();
         if let Some(main) = app.upgrade() {
             cx.observe(&main, |this, main, cx| {
-                let panels = main.read(cx).panels.clone();
+                let main = main.read(cx);
+                let panels = main.panels.clone();
+                let voice_paths = main.settings.voice_paths.clone();
+                let mut changed = false;
                 if this.panels != panels {
                     this.panels = panels;
+                    changed = true;
+                }
+                if this.voice_paths != voice_paths {
+                    this.voice_paths = voice_paths;
+                    changed = true;
+                }
+                if changed {
                     cx.notify();
                 }
             })
@@ -203,6 +217,7 @@ impl SettingsWindow {
             snap_note_lengths,
             japanese_dictionary,
             singer_acceleration,
+            voice_paths,
             export,
             pointer,
             capturing: None,
@@ -619,6 +634,38 @@ impl SettingsWindow {
                     .child(section_title(self.t(Key::SingerComputeHeading), &theme))
                     .child(acceleration_control)
                     .child(note(self.t(Key::SingerComputeNote), &theme))
+                    .child(section_title(self.t(Key::BrowserVoices), &theme))
+                    .child(self.render_voice_paths(cx))
+                    .child(note(self.t(Key::VoiceFoldersNote), &theme))
+                    .child(section_title(self.t(Key::VoiceSetupTitle), &theme))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(button(
+                                "settings-setup-voicevox",
+                                self.t(Key::BrowserSetupVoicevox),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_voice_setup(VoiceSetupTab::Voicevox, cx);
+                                }),
+                            ))
+                            .child(button(
+                                "settings-setup-diffsinger",
+                                self.t(Key::BrowserSetupDiffSinger),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_voice_setup(VoiceSetupTab::DiffSinger, cx);
+                                }),
+                            )),
+                    )
             })
             .when(self.matches_section(Section::Panels), |view| {
                 view.child(divider(&theme))
@@ -634,6 +681,114 @@ impl SettingsWindow {
             .app
             .update(cx, |app, _| app.apply_singer_acceleration(acceleration));
         cx.notify();
+    }
+
+    /// The extra folders searched for singer voices, with one reversible row action per folder.
+    fn render_voice_paths(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let mut rows = Vec::new();
+        for (index, path) in self.voice_paths.iter().enumerate() {
+            rows.push(
+                div()
+                    .id(("settings-voice-path", index))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .text_color(theme.text)
+                            .child(path.display().to_string()),
+                    )
+                    .child(button(
+                        ("settings-forget-voice-path", index),
+                        self.t(Key::MenuRemove),
+                        ButtonStyle::Ghost,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.forget_voice_path(index, cx);
+                        }),
+                    ))
+                    .into_any_element(),
+            );
+        }
+        if rows.is_empty() {
+            rows.push(note(self.t(Key::ValueNotSet), &theme));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .children(rows)
+            .child(button(
+                "settings-add-voice-path",
+                self.t(Key::BrowserAddVoiceFolder),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| this.choose_voice_folder(cx)),
+            ))
+            .into_any_element()
+    }
+
+    /// Chooses and remembers another folder of voice models.
+    fn choose_voice_folder(&mut self, cx: &mut Context<Self>) {
+        let language = self.language;
+        cx.spawn(async move |this, cx| {
+            let handle = rfd::AsyncFileDialog::new()
+                .set_title(Key::DialogVoiceFolder.get(language))
+                .pick_folder()
+                .await;
+            let Some(handle) = handle else { return };
+            let path = handle.path().to_path_buf();
+            let _ = this.update(cx, |this, cx| {
+                let added = this
+                    .app
+                    .update(cx, |app, cx| {
+                        let added = app.remember_voice_path(path.clone());
+                        if added {
+                            cx.notify();
+                        }
+                        added
+                    })
+                    .unwrap_or(false);
+                if added {
+                    this.voice_paths.push(path);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Stops searching one voice folder without touching anything stored inside it.
+    fn forget_voice_path(&mut self, index: usize, cx: &mut Context<Self>) {
+        let removed = self
+            .app
+            .update(cx, |app, cx| {
+                let removed = app.forget_voice_path(index);
+                if removed {
+                    cx.notify();
+                }
+                removed
+            })
+            .unwrap_or(false);
+        if removed && index < self.voice_paths.len() {
+            self.voice_paths.remove(index);
+        }
+        cx.notify();
+    }
+
+    /// Opens the existing backend editor from its new home in Settings.
+    fn open_voice_setup(&mut self, tab: VoiceSetupTab, cx: &mut Context<Self>) {
+        let _ = self.app.update(cx, |app, cx| app.open_voice_setup(tab, cx));
     }
 
     /// Hands an autosave choice to the application, which installs and saves it.
@@ -1866,6 +2021,34 @@ mod tests {
             crate::harness::click("window-close", cx);
             assert!(handle.update(cx, |_, _, _| ()).is_err());
         }
+    }
+
+    #[gpui::test]
+    fn voice_management_opens_from_settings(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| this.open_settings(cx));
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.simulate_resize(gpui::size(px(560.0), px(900.0)));
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("settings-add-voice-path").is_some());
+        assert!(cx.debug_bounds("settings-setup-voicevox").is_some());
+        assert!(cx.debug_bounds("settings-setup-diffsinger").is_some());
+
+        crate::harness::click("settings-search", cx);
+        cx.simulate_input("VOICEVOX");
+        cx.run_until_parked();
+        crate::harness::click("settings-setup-voicevox", cx);
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.voice_setup_window.is_some(),
+                "opening the backend editor failed: {}",
+                this.status
+            );
+        });
     }
 
     #[test]

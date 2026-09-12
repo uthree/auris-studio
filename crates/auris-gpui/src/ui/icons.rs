@@ -47,8 +47,6 @@ pub enum Icon {
     Notes,
     /// The mixer: a bank of vertical faders.
     Faders,
-    /// Settings: a pair of horizontal sliders.
-    Sliders,
     /// The inspector: an information badge for the selected item's properties.
     Inspector,
     /// The log: a folded page with lines of text.
@@ -326,13 +324,6 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
             bar(window, 0.62, 0.16, 0.70, 0.84);
             knob(window, 0.34, 0.62, 0.30, 0.15);
             knob(window, 0.66, 0.38, 0.30, 0.15);
-        }
-        Icon::Sliders => {
-            // Generic settings keep their slider motif; the inspector has its own badge.
-            bar(window, 0.16, 0.30, 0.84, 0.38);
-            bar(window, 0.16, 0.62, 0.84, 0.70);
-            knob(window, 0.62, 0.34, 0.15, 0.30);
-            knob(window, 0.36, 0.66, 0.15, 0.30);
         }
         Icon::Inspector => {
             ring(window, 0.50, 0.50, 0.36, 0.085);

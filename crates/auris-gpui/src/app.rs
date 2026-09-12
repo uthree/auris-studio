@@ -2822,6 +2822,7 @@ impl AurisApp {
         let snap_note_lengths = self.settings.snap_note_lengths;
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
+        let voice_paths = self.settings.voice_paths.clone();
         let export = self.settings.export;
         let panels = self.panels.clone();
         let agent = self.settings.agent.clone();
@@ -2850,6 +2851,7 @@ impl AurisApp {
                         snap_note_lengths,
                         dictionary,
                         singer_acceleration,
+                        voice_paths,
                         export,
                         panels,
                         agent,

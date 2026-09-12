@@ -102,6 +102,12 @@ impl Section {
                 Key::SingerComputeHeading,
                 Key::SingerComputeNote,
                 Key::SingerComputeAuto,
+                Key::BrowserVoices,
+                Key::BrowserAddVoiceFolder,
+                Key::VoiceFoldersNote,
+                Key::VoiceSetupTitle,
+                Key::VoiceSetupVoicevox,
+                Key::VoiceSetupDiffSinger,
             ],
             Self::Panels => &[
                 Key::PanelPositions,
@@ -361,6 +367,31 @@ mod tests {
         crate::harness::click("clear-settings-search", cx);
         cx.run_until_parked();
         assert!(cx.debug_bounds("audio-host").is_some());
+    }
+
+    #[gpui::test]
+    fn search_finds_voice_management_in_settings(cx: &mut TestAppContext) {
+        let (_, handle, mut cx) = open_settings(cx);
+        let cx = &mut cx;
+        crate::harness::click("settings-search", cx);
+        cx.simulate_input("VOICEVOX");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("settings-setup-voicevox").is_some());
+
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("DiffSinger");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("settings-setup-diffsinger").is_some());
+
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("ボイスフォルダ");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("settings-add-voice-path").is_some());
+        handle
+            .update(cx, |this, _, _| {
+                assert!(this.matches_section(Section::Singer));
+            })
+            .unwrap();
     }
 
     #[gpui::test]
