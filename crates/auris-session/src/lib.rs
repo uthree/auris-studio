@@ -310,4 +310,4 @@ pub mod prelude {
 }
 
 /// A coherent stereo analysis snapshot.
-pub use session::VisualizerFrame;
+pub use session::{VisualizerFrame, VisualizerSpectrum};

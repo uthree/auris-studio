@@ -114,5 +114,5 @@ pub use offline::{
     render_project_with_progress,
 };
 pub use renderer::render_block;
-pub use scope::{SCOPE_WINDOW, Scope, ScopeSource};
+pub use scope::{SCOPE_HISTORY, SCOPE_WINDOW, Scope, ScopeSource};
 pub use transport::{CountIn, Transport};

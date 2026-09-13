@@ -284,18 +284,31 @@ find it by, from one line each. `debug_selector` compiles to nothing unless gpui
 
 ## Live audio visualizer
 
-Open **Window > Audio Visualizer** to inspect a post-fader signal. It follows the master
-by default; **Follow selected track** follows the selected track instead. The EQ editor
-has an independent tap, so both windows can remain open on different strips.
+Open **Window > Audio Visualizer** to inspect a post-fader signal. It follows the master by
+default; **Follow selected track** follows the selected track instead. The EQ editor has an
+independent tap, so both windows can remain open on different strips. Choose **Waveform**,
+**Spectrum**, **Stereo**, or the scrolling **All** view. Controls that affect only one meter stay
+inside that meter; all of them are also available through the command palette.
 
-The spectrum combines the power of both channels without cancelling opposite-polarity
-signals. **Average** smooths power over successive readings; **Peak hold** keeps the
-largest observed value per band. **Freeze** holds the current display. **Save comparison**
-retains the displayed spectrum across track changes, and **Clear comparison / peaks**
-starts a new comparison. These controls are also available through the command palette.
+The spectrum can show the equal-power stereo average, either channel, the larger L/R value in
+each bin, or the mono sum. **Average** smooths power with a time-based 200 ms response, so delayed
+repaints do not change its meaning. **Peak hold** keeps the largest observed value per band.
+**Freeze** holds the current display. **Save comparison** retains the displayed spectrum across
+track changes, and **Clear comparison / peaks** starts a new comparison. The FFT is skipped while
+only a waveform or stereo view is visible.
 
-The stereo scope plots side horizontally and mid vertically at unity scale. Mono signals
-form a vertical trace, opposite-polarity signals a horizontal trace. Correlation ranges
-from -1 to +1; an undefined value (one or both channels silent) is shown as a dash. Negative
-correlation is a reason to listen in mono, not an automatic assessment of musical quality.
-The scope measures a short 1024-frame window; it is not a loudness or true-peak meter.
+The oscilloscope draws the left and right sample amplitudes directly against time. Its automatic
+trigger aligns a rising zero crossing from the louder channel, keeping periodic signals stable
+without delaying or modifying playback. The audio thread writes only the new block into a
+2048-sample circular history; the display searches the older half for a trigger and draws at most
+the newest 1024 samples. **Time span** cycles through one quarter, one half, and the full display
+window. **Display gain** cycles through 1x, 2x, 4x, and automatic scaling. Both controls change
+only the display; values outside full scale are clipped only when painted.
+
+The stereo scope plots side horizontally and mid vertically. Mono signals form a vertical trace,
+opposite-polarity signals a horizontal trace. Optional automatic gain affects only the display,
+and five fading traces make motion visible without an unbounded history. Correlation ranges from
+-1 to +1 and shows the range seen in the last three seconds. The most negative value is held until
+**Reset correlation**; an undefined current value (one or both channels silent) is shown as a
+dash. Negative correlation is a reason to listen in mono, not an automatic assessment of musical
+quality. The visualizer is not a loudness or true-peak meter.

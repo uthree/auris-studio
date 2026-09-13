@@ -44,16 +44,36 @@ strings! {
     VisualizerTitle { en: "Audio Visualizer…", ja: "オーディオビジュアライザー…" }
     VisualizerSelected { en: "Follow selected track", ja: "選択トラックを追従" }
     VisualizerFreeze { en: "Freeze", ja: "表示を停止" }
+    VisualizerView { en: "Change visualizer view", ja: "ビジュアライザー表示を切り替え" }
+    VisualizerViewOscilloscope { en: "Waveform", ja: "波形" }
+    VisualizerViewSpectrum { en: "Spectrum", ja: "スペクトラム" }
+    VisualizerViewStereo { en: "Stereo", ja: "ステレオ" }
+    VisualizerViewAll { en: "All", ja: "すべて" }
     VisualizerAverage { en: "Average", ja: "平均表示" }
     VisualizerPeaks { en: "Peak hold", ja: "ピーク保持" }
     VisualizerSave { en: "Save comparison", ja: "比較カーブを保存" }
     VisualizerReset { en: "Clear comparison / peaks", ja: "比較・ピークをクリア" }
+    VisualizerTimebase { en: "Time span", ja: "表示時間" }
+    VisualizerDisplayGain { en: "Display gain", ja: "表示ゲイン" }
+    VisualizerAuto { en: "Auto", ja: "自動" }
+    VisualizerFullWindow { en: "full window", ja: "全幅" }
     VisualizerNoTrack { en: "Select a track to monitor", ja: "表示するトラックを選択してください" }
+    VisualizerOscilloscope { en: "Oscilloscope · amplitude / time", ja: "オシロスコープ · 振幅／時間" }
+    VisualizerOscilloscopeHint { en: "L: top · R: bottom · rising zero-crossing auto trigger · display gain does not change audio", ja: "L：上段 · R：下段 · 立ち上がりゼロクロスで自動トリガー · 表示ゲインは音声を変更しません" }
     VisualizerSpectrum { en: "Spectrum · dBFS", ja: "スペクトラム · dBFS" }
+    VisualizerSpectrumChannel { en: "Channel", ja: "チャンネル" }
+    VisualizerSpectrumAverage { en: "Stereo average", ja: "ステレオ平均" }
+    VisualizerSpectrumLeft { en: "Left", ja: "左" }
+    VisualizerSpectrumRight { en: "Right", ja: "右" }
+    VisualizerSpectrumMaximum { en: "L/R maximum", ja: "L/R最大" }
+    VisualizerSpectrumMono { en: "Mono", ja: "モノラル" }
     VisualizerLegend { en: "Accent: current / average · thin gray: peak · thick gray: saved comparison", ja: "アクセント色：現在値／平均 · 細い灰線：ピーク · 太い灰線：保存した比較" }
     VisualizerStereo { en: "Stereo scope · M / S", ja: "ステレオスコープ · M / S" }
+    VisualizerStereoAutoGain { en: "Auto gain", ja: "自動ゲイン" }
     VisualizerCorrelation { en: "Correlation (−1 … +1)", ja: "相関（−1 … +1）" }
-    VisualizerHint { en: "Vertical: mono · horizontal: opposite polarity. Negative correlation is a cue to check mono playback, not a quality score. — means one or both channels are silent.", ja: "縦：モノラル · 横：逆位相。負の相関はモノラル再生を確認する目安です。— は片側または両側が無音です。" }
+    VisualizerNegativePeak { en: "Negative peak", ja: "負側ピーク" }
+    VisualizerCorrelationReset { en: "Reset correlation", ja: "相関をリセット" }
+    VisualizerHint { en: "Vertical: mono · horizontal: opposite polarity. Auto gain changes the display only; recent traces fade behind the current one.", ja: "縦：モノラル · 横：逆位相。自動ゲインは表示だけを変更し、直近の軌跡は現在値の後ろに薄く残ります。" }
     CmdMatchReference { en: "Adjust by Audio Evaluation…", ja: "音声評価で自動調整…" }
     EditMatchReference { en: "Adjust by Audio Evaluation", ja: "音声評価による調整" }
     AudioMatchObjective { en: "Evaluation target", ja: "評価の目標" }
@@ -164,8 +184,9 @@ strings! {
     Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
     ScoreSource { en: "Source", ja: "元の楽譜" }
+    ScoreOverlay { en: "Overlay", ja: "オーバーレイ" }
     ScorePerformed { en: "Performance", ja: "演奏結果" }
-    ScorePerformedHint { en: "Adjust Performance in the inspector. Edit notes in Source.", ja: "インスペクターの演奏パラメータで調整。音符の編集は「元の楽譜」で。" }
+    ScorePerformedHint { en: "Adjust Performance in the inspector. Edit notes in Source or Overlay.", ja: "インスペクターの演奏パラメータで調整。音符の編集は「元の楽譜」または「オーバーレイ」で。" }
     PromptLyric { en: "Lyric", ja: "歌詞" }
     PromptPhonemes { en: "Phonemes (space-separated IPA)", ja: "音素(スペース区切りの IPA)" }
     PromptLyrics { en: "Write Lyrics Across Selection", ja: "選択ノートに歌詞を流し込む" }
@@ -646,6 +667,8 @@ strings! {
     CmdShowTempoMarks { en: "Tempo Changes", ja: "テンポの変化" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
+    CmdIncreaseTrackHeight { en: "Increase Track Height", ja: "トラックを高く" }
+    CmdDecreaseTrackHeight { en: "Decrease Track Height", ja: "トラックを低く" }
     CmdSettings { en: "Settings", ja: "設定" }
     CmdCommandPalette { en: "Command Palette", ja: "コマンドパレット" }
 

@@ -168,6 +168,10 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Make every track lane taller.
+        IncreaseTrackHeight,
+        /// Make every track lane shorter.
+        DecreaseTrackHeight,
         /// Show or hide the library panel.
         ToggleLibrary,
         /// Show or hide the inspector panel.
@@ -219,6 +223,12 @@ actions!(
         VisualizerPeaks,
         VisualizerSave,
         VisualizerReset,
+        VisualizerTimebase,
+        VisualizerView,
+        VisualizerSpectrumChannel,
+        VisualizerCorrelationReset,
+        VisualizerOscilloscopeGain,
+        VisualizerStereoAutoGain,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -542,6 +552,8 @@ bindable! {
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
+        "view.track_height_decrease", GroupView, CmdDecreaseTrackHeight, "" => DecreaseTrackHeight;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
         // What VS Code and Zed both use, and free here — `p` alone already shows the piano roll.
         "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;
@@ -565,6 +577,12 @@ bindable! {
         "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
         "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;
         "visualizer.reset", GroupAnalysis, VisualizerReset, "" => VisualizerReset;
+        "visualizer.timebase", GroupAnalysis, VisualizerTimebase, "" => VisualizerTimebase;
+        "visualizer.view", GroupAnalysis, VisualizerView, "" => VisualizerView;
+        "visualizer.spectrum_channel", GroupAnalysis, VisualizerSpectrumChannel, "" => VisualizerSpectrumChannel;
+        "visualizer.correlation_reset", GroupAnalysis, VisualizerCorrelationReset, "" => VisualizerCorrelationReset;
+        "visualizer.oscilloscope_gain", GroupAnalysis, VisualizerDisplayGain, "" => VisualizerOscilloscopeGain;
+        "visualizer.stereo_auto_gain", GroupAnalysis, VisualizerStereoAutoGain, "" => VisualizerStereoAutoGain;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 

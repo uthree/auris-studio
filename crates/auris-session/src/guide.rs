@@ -334,10 +334,12 @@ pub mod architecture {
     //!
     //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
     //! paired post-fader samples under one sequence counter, without allocation or waiting on
-    //! the audio thread. `Session::visualizer_frame` transforms the channels independently and
-    //! averages their power, preserving right-only and opposite-polarity signals. Undefined
-    //! correlation is explicit for silent channels. The frontend owns freeze, display history
-    //! and saved comparisons; none of these changes the document or rendered audio.
+    //! the audio thread. `Session::visualizer_frame` carries those channels and their sample rate
+    //! to the frontend for a triggered time-domain oscilloscope, then transforms the channels
+    //! independently and averages their power, preserving right-only and opposite-polarity
+    //! signals. Undefined correlation is explicit for silent channels. The frontend owns freeze,
+    //! display history and saved comparisons; none of these changes the document or rendered
+    //! audio.
     //!
     //! # The third thread, and why recording needed one
     //!
@@ -1981,9 +1983,11 @@ pub mod harmony {
     //! transpose, gate, applied in order as
     //! [`sounding_notes`](auris_core::MidiClip::sounding_notes) answers. The renderer and the
     //! MIDI writer both ask that one question, so what exports is what plays. The MIDI editors'
-    //! Source tab edits the stored text; their read-only Performance tab uses the same performed
-    //! notes as playback, including each loop pass, and refreshes during parameter gestures.
-    //! A document revision invalidates the preview cache, including on undo and redo.
+    //! Source tab edits the stored text by itself. The Overlay tab edits the same stored notes with
+    //! the performed notes added faintly for direct comparison, while the read-only Performance tab
+    //! shows that result by itself, including each loop pass. Both performed views refresh during
+    //! parameter gestures. A document revision invalidates the preview cache, including on undo and
+    //! redo.
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently

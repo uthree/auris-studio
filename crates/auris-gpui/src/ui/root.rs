@@ -392,6 +392,8 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_panic_stop))
                     .on_action(Self::window_listener(cx, Self::on_zoom_in))
                     .on_action(Self::window_listener(cx, Self::on_zoom_out))
+                    .on_action(Self::window_listener(cx, Self::on_increase_track_height))
+                    .on_action(Self::window_listener(cx, Self::on_decrease_track_height))
                     .on_action(Self::window_listener(cx, Self::on_toggle_library))
                     .on_action(Self::window_listener(cx, Self::on_toggle_inspector))
                     .on_action(Self::window_listener(cx, Self::on_toggle_piano_roll))
@@ -500,6 +502,56 @@ impl AurisApp {
                         cx,
                         |this, _: &actions::VisualizerReset, _, cx| {
                             this.visualizer_command(super::visualizer::VisualizerCommand::Reset);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerTimebase, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Timebase);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerView, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::ViewNext);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerSpectrumChannel, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::SpectrumChannel,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerCorrelationReset, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::CorrelationReset,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerOscilloscopeGain, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::OscilloscopeGain,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerStereoAutoGain, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::StereoAutoGain,
+                            );
                             cx.notify();
                         },
                     ))
@@ -3011,6 +3063,30 @@ impl AurisApp {
 
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_increase_track_height(
+        &mut self,
+        _: &actions::IncreaseTrackHeight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_track_height_fraction(
+            self.current_track_height_fraction() + crate::ui::commands::TRACK_HEIGHT_STEP,
+        );
+        cx.notify();
+    }
+
+    fn on_decrease_track_height(
+        &mut self,
+        _: &actions::DecreaseTrackHeight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_track_height_fraction(
+            self.current_track_height_fraction() - crate::ui::commands::TRACK_HEIGHT_STEP,
+        );
         cx.notify();
     }
 

@@ -24,6 +24,9 @@ use crate::ui::widgets::{ButtonStyle, Latch, button, db_to_meter_position, level
 /// pixel spent here is a pixel the pan fader does not get.
 const RESIZE_BAND: Pixels = px(4.0);
 
+/// Below the ordinary saved height there is not room for the header's three content rows.
+const COMPACT_TRACK_HEADER_BELOW: f32 = 72.0;
+
 /// How a track's arm button is latched.
 ///
 /// Three answers rather than two, because the button has two jobs: it says this track was armed
@@ -96,11 +99,27 @@ impl AurisApp {
                     .flex_1()
                     .w_full()
                     .overflow_hidden()
-                    // The wheel here moves the same column it moves over the clips. A user who
-                    // has run out of tracks on screen reaches for the list, not the canvas.
+                    // Ctrl-wheel changes the whole list's density while an ordinary wheel keeps
+                    // moving the same column it moves over the clips.
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         let delta = event.delta.pixel_delta(px(24.0));
-                        this.scroll_lanes_by(-delta.y);
+                        if event.modifiers.control {
+                            let step = if delta.y > px(0.0) {
+                                crate::ui::commands::TRACK_HEIGHT_STEP
+                            } else if delta.y < px(0.0) {
+                                -crate::ui::commands::TRACK_HEIGHT_STEP
+                            } else {
+                                0.0
+                            };
+                            if step != 0.0 {
+                                this.set_track_height_fraction(
+                                    this.current_track_height_fraction() + step,
+                                );
+                            }
+                            cx.stop_propagation();
+                        } else {
+                            this.scroll_lanes_by(-delta.y);
+                        }
                         cx.notify();
                     }))
                     // The list itself remains useful before it has a first row and below its
@@ -224,6 +243,151 @@ impl AurisApp {
 
                 let is_selected = selected == Some(id);
                 let is_dragging = dragging == Some(id);
+
+                if height < COMPACT_TRACK_HEADER_BELOW {
+                    let status = [
+                        muted.then(|| self.t(Key::MuteInitial).to_string()),
+                        soloed.then(|| self.t(Key::SoloInitial).to_string()),
+                        (armed == Latch::On).then(|| self.t(Key::RecordInitial).to_string()),
+                        monitored.then(|| self.t(Key::MonitorInitial).to_string()),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                    return div()
+                        .id(("track-header", index))
+                        .debug_selector(move || format!("track-header-compact-{index}"))
+                        .flex()
+                        .relative()
+                        .h(px(height))
+                        .pl(px(6.0))
+                        .pt(px(3.0))
+                        .pb(RESIZE_BAND)
+                        .pr(px(4.0))
+                        .gap(px(6.0))
+                        .overflow_hidden()
+                        .border_b_1()
+                        .border_color(theme.border_subtle)
+                        .bg(if is_selected {
+                            theme.surface_raised
+                        } else {
+                            theme.surface
+                        })
+                        .when(dimmed, |this| this.opacity(0.55))
+                        .when(is_dragging, |this| {
+                            this.bg(theme.surface_raised).opacity(0.8)
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                this.select_track(id);
+                                if this.drag.is_none() {
+                                    this.begin_drag(Drag::TrackReorder {
+                                        track: id,
+                                        pressed_at: Some(event.position),
+                                    });
+                                }
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Right,
+                            AurisApp::opens_menu(cx, move |this, at| {
+                                this.select_track(id);
+                                this.track_menu(at, id)
+                            }),
+                        )
+                        .child(
+                            div()
+                                .w(px(4.0))
+                                .h_full()
+                                .rounded(Metrics::RADIUS_XS)
+                                .bg(color),
+                        )
+                        .child(
+                            div()
+                                .id(("track-header-compact", index))
+                                .flex()
+                                .items_center()
+                                .flex_1()
+                                .min_w_0()
+                                .gap_1p5()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .w(px(16.0))
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .text_color(theme.text_faint)
+                                        .child(format!("{}", index + 1)),
+                                )
+                                .child(
+                                    div()
+                                        .id(("track-name", index))
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .text_color(theme.text)
+                                        .truncate()
+                                        .child(name)
+                                        .tooltip(self.tip(Key::MenuRename, ""))
+                                        .on_mouse_down(
+                                            MouseButton::Left,
+                                            cx.listener(
+                                                move |this, event: &MouseDownEvent, _, cx| {
+                                                    if event.click_count < 2 {
+                                                        return;
+                                                    }
+                                                    this.prompt_to_rename_track(id);
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                },
+                                            ),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .flex_shrink_0()
+                                        .text_xs()
+                                        .text_color(theme.text_faint)
+                                        .child(kind),
+                                )
+                                .when(!status.is_empty(), |this| {
+                                    this.child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_xs()
+                                            .text_color(theme.text)
+                                            .child(status),
+                                    )
+                                }),
+                        )
+                        .children(input.map(|(level, input_clipped)| {
+                            let db = gain_to_db(level);
+                            div().w(px(4.0)).h_full().py(px(1.0)).child(level_meter(
+                                db_to_meter_position(db),
+                                db_to_meter_position(db),
+                                input_clipped,
+                                Axis::Vertical,
+                                theme.meter_color(db),
+                                &theme,
+                            ))
+                        }))
+                        .child(div().w(px(7.0)).h_full().py(px(1.0)).child(level_meter(
+                            db_to_meter_position(level_db),
+                            db_to_meter_position(level_db),
+                            clipped,
+                            Axis::Vertical,
+                            theme.meter_color(level_db),
+                            &theme,
+                        )))
+                        .child(self.lane_resize_band(index, id, height, cx))
+                        .into_any_element();
+                }
 
                 div()
                     .id(("track-header", index))
@@ -524,12 +688,11 @@ impl AurisApp {
     /// a line drawn under every header would be a second border under the one already there, and
     /// the cursor changing is what says the edge can be taken hold of.
     ///
-    /// `occlude` is what makes it *the* thing a press in that strip lands on. The strip is the
-    /// header's own padding, so the header's hitbox covers it too, and without this a press
-    /// reached both: the band would begin a resize and the header would begin a reorder over the
-    /// top of it. Blocking rather than relying on the header's `drag.is_none()` guard, because
-    /// that guard depends on which listener gpui happens to run first, and a gesture that is
-    /// correct by accident of dispatch order is one that comes back.
+    /// `block_mouse_except_scroll` is what makes it *the* thing a press in that strip lands on.
+    /// The strip is the header's own padding, so the header's hitbox covers it too, and without
+    /// this a press reached both: the band would begin a resize and the header would begin a
+    /// reorder over the top of it. Scroll is deliberately allowed through so Ctrl-wheel works
+    /// anywhere in the track list, including on this narrow edge.
     ///
     /// Nothing selects the track on the way past, and that is deliberate: taking hold of an edge
     /// to resize it is not a request to change what the inspector is showing.
@@ -548,7 +711,7 @@ impl AurisApp {
             .right_0()
             .bottom_0()
             .h(RESIZE_BAND)
-            .occlude()
+            .block_mouse_except_scroll()
             .cursor(gpui::CursorStyle::ResizeUpDown)
             .hover(|this| this.bg(crate::theme::Theme::translucent(accent, 0.35)))
             .on_mouse_down(
@@ -618,7 +781,8 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{choose, right_press, with_a_clip};
+    use crate::actions;
+    use crate::harness::{choose, open, paint, right_press, with_a_clip};
     use crate::ui::context_menu::MenuCommand;
     use auris_session::session::MIN_TRACK_HEIGHT;
 
@@ -712,8 +876,7 @@ mod tests {
     #[test]
     fn the_resize_strip_leaves_a_header_worth_pressing() {
         // The strip is the header's bottom padding, so it comes out of the shortest lane there
-        // can be. At a third of that the header would be more grab handle than header, and the
-        // mute button under it would be the thing nobody could hit.
+        // can be. At a third of that the header would be more grab handle than track identity.
         assert!(
             f32::from(RESIZE_BAND) * 3.0 < MIN_TRACK_HEIGHT,
             "a {RESIZE_BAND:?} strip is most of a {MIN_TRACK_HEIGHT} pixel lane"
@@ -721,6 +884,171 @@ mod tests {
         // And it is worth pressing itself: a strip thinner than a couple of pixels is a target
         // the pointer has to be aimed at rather than moved towards.
         assert!(RESIZE_BAND >= px(3.0));
+    }
+
+    #[gpui::test]
+    fn control_wheel_over_the_track_list_resizes_every_lane_and_undo_restores_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            for index in 0..20 {
+                this.session.add_audio_track(format!("Track {index}"));
+            }
+        });
+        paint(&app, cx);
+        let at = app.read_with(cx, |this, _| {
+            let lanes = this
+                .canvas
+                .lanes
+                .get()
+                .expect("the clip lanes were painted");
+            gpui::point(
+                lanes.origin.x - this.panels.header_width / 2.0,
+                lanes.origin.y + px(12.0),
+            )
+        });
+        assert!(
+            cx.debug_bounds("track-height-control").is_none(),
+            "the old toolbar slider is no longer present"
+        );
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-120.0))),
+            modifiers: gpui::Modifiers {
+                control: true,
+                ..gpui::Modifiers::none()
+            },
+            ..Default::default()
+        });
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height < 72.0)
+            );
+        });
+
+        cx.dispatch_action(actions::Undo);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height == 72.0)
+            );
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(120.0))),
+            modifiers: gpui::Modifiers {
+                control: true,
+                ..gpui::Modifiers::none()
+            },
+            ..Default::default()
+        });
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height > 72.0)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn plain_wheel_over_the_track_list_scrolls_without_resizing(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            for index in 0..20 {
+                this.session.add_audio_track(format!("Track {index}"));
+            }
+        });
+        paint(&app, cx);
+        let at = app.read_with(cx, |this, _| {
+            let lanes = this
+                .canvas
+                .lanes
+                .get()
+                .expect("the clip lanes were painted");
+            gpui::point(
+                lanes.origin.x - this.panels.header_width / 2.0,
+                lanes.origin.y + px(12.0),
+            )
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-120.0))),
+            ..Default::default()
+        });
+
+        app.read_with(cx, |this, _| {
+            assert!(this.lane_scroll > px(0.0), "the list moved down");
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height == 72.0),
+                "plain wheel input did not change track height"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn the_track_height_command_compacts_the_list_without_a_pointer(cx: &mut gpui::TestAppContext) {
+        let (app, cx, track, _) = with_a_clip(cx);
+        let before = app.read_with(cx, |this, _| {
+            this.project()
+                .track(track)
+                .expect("the track exists")
+                .height
+        });
+
+        cx.dispatch_action(actions::DecreaseTrackHeight);
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .track(track)
+                    .expect("the track exists")
+                    .height
+                    < before,
+                "the View command is a keyboard-accessible path to the same control"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_short_track_header_switches_to_one_line_content(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = open(cx);
+        let track = app.update(cx, |this, cx| {
+            let track = this.project().tracks[0].id;
+            this.session
+                .set_track_height(track, MIN_TRACK_HEIGHT)
+                .unwrap();
+            cx.notify();
+            track
+        });
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.project()
+                    .track(track)
+                    .expect("the track exists")
+                    .height,
+                MIN_TRACK_HEIGHT
+            );
+        });
+
+        paint(&app, cx);
+
+        assert!(
+            cx.debug_bounds("track-header-compact-0").is_some(),
+            "the shortest lane keeps a one-line track identity"
+        );
     }
 
     #[test]

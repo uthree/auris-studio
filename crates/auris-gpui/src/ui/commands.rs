@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use auris_i18n::{Key, messages};
 use auris_session::SingerTakeState;
 use auris_session::prelude::*;
+use auris_session::session::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
 use gpui::{Context, Window};
 
 use crate::app::{
@@ -32,6 +33,25 @@ pub(crate) const AUTO_SING_DEBOUNCE: std::time::Duration = std::time::Duration::
 /// Each is under a second of mono audio; the cap is about bounding a marathon session, not
 /// about memory pressure, so wholesale clearing beats bookkeeping an eviction order.
 const SUNG_PREVIEW_CACHE: usize = 128;
+
+/// One menu, keyboard, or wheel step through the track-height range.
+pub(crate) const TRACK_HEIGHT_STEP: f32 = 0.08;
+
+/// Normalized position for a lane height.
+///
+/// Logarithmic so the useful compact range is not crushed into the first few pixels by the
+/// generous corrupted-document ceiling.
+fn track_height_fraction(height: f32) -> f32 {
+    let range = MAX_TRACK_HEIGHT / MIN_TRACK_HEIGHT;
+    ((height.clamp(MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT) / MIN_TRACK_HEIGHT).ln() / range.ln())
+        .clamp(0.0, 1.0)
+}
+
+/// Lane height at a normalized position.
+fn track_height_at(fraction: f32) -> f32 {
+    let range = MAX_TRACK_HEIGHT / MIN_TRACK_HEIGHT;
+    MIN_TRACK_HEIGHT * range.powf(fraction.clamp(0.0, 1.0))
+}
 
 /// Where the playhead lands after `direction` steps of `step` from `at`.
 ///
@@ -398,6 +418,22 @@ impl AurisApp {
         ))
     }
 
+    /// Normalized position representing the mean height of the current track list.
+    pub(crate) fn current_track_height_fraction(&self) -> f32 {
+        let tracks = &self.project().tracks;
+        if tracks.is_empty() {
+            return 0.0;
+        }
+        let mean = tracks.iter().map(|track| track.height).sum::<f32>() / tracks.len() as f32;
+        track_height_fraction(mean)
+    }
+
+    /// Applies one normalized track-height position to every lane.
+    pub(crate) fn set_track_height_fraction(&mut self, fraction: f32) {
+        self.session
+            .set_all_track_heights(track_height_at(fraction));
+    }
+
     /// Shifts a dragged selection by however many lanes the pointer has crossed.
     ///
     /// The whole selection moves by one delta rather than each clip landing under the pointer,
@@ -500,7 +536,7 @@ impl AurisApp {
 
     /// Deletes whatever the current selection covers.
     pub(crate) fn delete_selection(&mut self) {
-        if !self.source_score() && self.last_pane == crate::app::Pane::PianoRoll {
+        if !self.editable_score() && self.last_pane == crate::app::Pane::PianoRoll {
             return;
         }
         if let Some(clip) = self.selected_clip
@@ -2787,6 +2823,18 @@ fn press_keeps_selection(selected: &BTreeSet<ClipId>, clip: Option<ClipId>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_track_height_scale_covers_the_whole_lane_range() {
+        assert_eq!(track_height_at(0.0), MIN_TRACK_HEIGHT);
+        assert_eq!(track_height_at(1.0), MAX_TRACK_HEIGHT);
+    }
+
+    #[test]
+    fn the_track_height_scale_round_trips_a_normal_lane() {
+        let height = 72.0;
+        assert!((track_height_at(track_height_fraction(height)) - height).abs() < 1e-4);
+    }
 
     #[test]
     fn a_step_lands_on_the_grid_rather_than_carrying_an_offset_along() {

@@ -795,7 +795,7 @@ impl AurisApp {
 
     /// Carries out a menu choice.
     pub(crate) fn run_menu_command(&mut self, command: MenuCommand, cx: &mut Context<Self>) {
-        if !self.source_score()
+        if !self.editable_score()
             && matches!(
                 command,
                 MenuCommand::DuplicateNotes

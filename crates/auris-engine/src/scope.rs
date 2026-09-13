@@ -21,11 +21,17 @@
 
 use std::sync::atomic::{AtomicI64, AtomicU32, AtomicUsize, Ordering};
 
-/// How many samples one window holds.
+/// How many samples one spectrum or oscilloscope window displays.
 ///
 /// 1024 at 48 kHz is 21 ms and 47 Hz between bins: long enough to separate the notes of a chord
 /// in the lower midrange, short enough that the display follows a part rather than averaging it.
 pub const SCOPE_WINDOW: usize = 1024;
+
+/// How many recent samples a [`Scope`] retains for triggered displays.
+///
+/// The extra window is search space for a zero-crossing trigger. Readers that ask for only
+/// [`SCOPE_WINDOW`] samples still receive the newest display-sized slice.
+pub const SCOPE_HISTORY: usize = SCOPE_WINDOW * 2;
 
 /// Which strip a [`Scope`] is following.
 ///
@@ -67,6 +73,8 @@ pub struct Scope {
     right: Vec<AtomicU32>,
     /// Bumped before and after a write, so an odd value means one is in progress.
     sequence: AtomicUsize,
+    /// The next slot the audio thread writes; it is also the oldest retained sample.
+    write: AtomicUsize,
     source: AtomicI64,
     published_source: AtomicI64,
     rate: AtomicU32,
@@ -82,9 +90,10 @@ impl Scope {
     /// An empty scope, following nothing.
     pub fn new() -> Self {
         Self {
-            samples: (0..SCOPE_WINDOW).map(|_| AtomicU32::new(0)).collect(),
-            right: (0..SCOPE_WINDOW).map(|_| AtomicU32::new(0)).collect(),
+            samples: (0..SCOPE_HISTORY).map(|_| AtomicU32::new(0)).collect(),
+            right: (0..SCOPE_HISTORY).map(|_| AtomicU32::new(0)).collect(),
             sequence: AtomicUsize::new(0),
+            write: AtomicUsize::new(0),
             source: AtomicI64::new(ScopeSource::Off.encode()),
             published_source: AtomicI64::new(ScopeSource::Off.encode()),
             rate: AtomicU32::new(0.0f32.to_bits()),
@@ -142,30 +151,28 @@ impl Scope {
         // never appeared to move. Fences on this side, acquire on the reader's.
         self.sequence.fetch_add(1, Ordering::Relaxed);
         std::sync::atomic::fence(Ordering::Release);
-        if self.published_source.load(Ordering::Relaxed) != source {
+        let source_changed = self.published_source.load(Ordering::Relaxed) != source;
+        if source_changed {
             for sample in self.samples.iter().chain(&self.right) {
                 sample.store(0, Ordering::Relaxed);
             }
+            self.write.store(0, Ordering::Relaxed);
         }
-        // Newest-last, so a reader can walk the slice forwards and get time's own order.
-        let taken = samples.len().min(right.len()).min(SCOPE_WINDOW);
-        let keep = SCOPE_WINDOW - taken;
-        for index in 0..keep {
-            let carried = self.samples[index + taken].load(Ordering::Relaxed);
-            self.samples[index].store(carried, Ordering::Relaxed);
-            self.right[index].store(
-                self.right[index + taken].load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
-        }
+        // Only the new block is written on the audio thread. The reader starts from the cursor
+        // and reconstructs chronological order away from the realtime path.
+        let taken = samples.len().min(right.len()).min(SCOPE_HISTORY);
+        let write = self.write.load(Ordering::Relaxed);
         for (offset, sample) in right[right.len() - taken..].iter().enumerate() {
             let value = if sample.is_finite() { *sample } else { 0.0 };
-            self.right[keep + offset].store(value.to_bits(), Ordering::Relaxed);
+            self.right[(write + offset) % SCOPE_HISTORY].store(value.to_bits(), Ordering::Relaxed);
         }
         for (offset, sample) in samples[samples.len() - taken..].iter().enumerate() {
             let value = if sample.is_finite() { *sample } else { 0.0 };
-            self.samples[keep + offset].store(value.to_bits(), Ordering::Relaxed);
+            self.samples[(write + offset) % SCOPE_HISTORY]
+                .store(value.to_bits(), Ordering::Relaxed);
         }
+        self.write
+            .store((write + taken) % SCOPE_HISTORY, Ordering::Relaxed);
         self.rate
             .store((sample_rate as f32).to_bits(), Ordering::Relaxed);
         self.published_source.store(source, Ordering::Relaxed);
@@ -187,17 +194,22 @@ impl Scope {
         if before % 2 == 1 {
             return false;
         }
-        let count = out.len().min(SCOPE_WINDOW);
+        let write = self.write.load(Ordering::Relaxed);
+        let count = out.len().min(SCOPE_HISTORY);
         // The tail of the window, so a caller with a shorter buffer sees the most recent samples
         // rather than the oldest.
-        let start = SCOPE_WINDOW - count;
+        let start = (write + SCOPE_HISTORY - count) % SCOPE_HISTORY;
         for (offset, slot) in out.iter_mut().enumerate().take(count) {
-            *slot = f32::from_bits(self.samples[start + offset].load(Ordering::Relaxed));
+            *slot = f32::from_bits(
+                self.samples[(start + offset) % SCOPE_HISTORY].load(Ordering::Relaxed),
+            );
         }
-        let count = right.len().min(SCOPE_WINDOW);
+        let count = right.len().min(SCOPE_HISTORY);
+        let start = (write + SCOPE_HISTORY - count) % SCOPE_HISTORY;
         for (offset, slot) in right.iter_mut().enumerate().take(count) {
-            *slot =
-                f32::from_bits(self.right[SCOPE_WINDOW - count + offset].load(Ordering::Relaxed));
+            *slot = f32::from_bits(
+                self.right[(start + offset) % SCOPE_HISTORY].load(Ordering::Relaxed),
+            );
         }
         // The fence keeps the sample loads above from drifting past the re-check below — the
         // reader's half of the ordering the writer's fence promises.
@@ -211,6 +223,7 @@ impl Scope {
         self.watch(ScopeSource::Off);
         self.published_source
             .store(ScopeSource::Off.encode(), Ordering::Relaxed);
+        self.write.store(0, Ordering::Relaxed);
         for slot in &self.samples {
             slot.store(0, Ordering::Relaxed);
         }
@@ -270,6 +283,18 @@ mod tests {
         assert_eq!(out.first().copied(), Some(0.0));
         assert_eq!(out.last().copied(), Some((SCOPE_WINDOW - 1) as f32));
         assert_eq!(scope.sample_rate(), 48_000.0);
+    }
+
+    #[test]
+    fn a_history_reader_gets_trigger_search_space_before_the_display_window() {
+        let scope = Scope::new();
+        scope.watch(ScopeSource::Master);
+        scope.publish(&vec![1.0; SCOPE_WINDOW], 48_000.0);
+
+        let mut out = vec![0.0; SCOPE_HISTORY];
+        assert!(scope.read(&mut out));
+        assert_eq!(&out[..SCOPE_WINDOW], &[0.0; SCOPE_WINDOW]);
+        assert_eq!(&out[SCOPE_WINDOW..], &[1.0; SCOPE_WINDOW]);
     }
 
     #[test]

@@ -565,6 +565,16 @@ pub fn model(language: Language, panels: &PanelLayout, state: MenuState) -> Vec<
             MenuRow::Separator,
             command(t(Key::CmdZoomIn), actions::ZoomIn, "view.zoom_in"),
             command(t(Key::CmdZoomOut), actions::ZoomOut, "view.zoom_out"),
+            command(
+                t(Key::CmdIncreaseTrackHeight),
+                actions::IncreaseTrackHeight,
+                "view.track_height_increase",
+            ),
+            command(
+                t(Key::CmdDecreaseTrackHeight),
+                actions::DecreaseTrackHeight,
+                "view.track_height_decrease",
+            ),
             MenuRow::Separator,
             // Not a Help menu of its own for one row. What people are looking for when they
             // reach for Help in an application with no manual is the version number, and this
