@@ -510,6 +510,49 @@ impl AurisApp {
                             cx.notify();
                         },
                     ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerView, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::ViewNext);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerSpectrumChannel, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::SpectrumChannel,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerCorrelationReset, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::CorrelationReset,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerOscilloscopeGain, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::OscilloscopeGain,
+                            );
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
+                        |this, _: &actions::VisualizerStereoAutoGain, _, cx| {
+                            this.visualizer_command(
+                                super::visualizer::VisualizerCommand::StereoAutoGain,
+                            );
+                            cx.notify();
+                        },
+                    ))
                     .on_action(Self::window_listener(cx, Self::on_focus_next_pane))
                     .on_action(Self::window_listener(cx, Self::on_focus_previous_pane))
             })

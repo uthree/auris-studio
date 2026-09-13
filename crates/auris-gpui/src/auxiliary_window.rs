@@ -109,7 +109,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
         Surface::Analysis => size(px(540.), px(650.)),
         Surface::TimbreMap => size(px(900.), px(700.)),
         Surface::Visualizer => {
-            let preferred = size(px(780.), px(820.));
+            let preferred = size(px(780.), px(620.));
             cx.primary_display().map_or(preferred, |display| {
                 crate::fitted_size(preferred, display.bounds().size)
             })
@@ -122,6 +122,7 @@ fn open_surface(app: WeakEntity<AurisApp>, surface: Surface, cx: &mut App) {
             titlebar: Some(titlebar::options(title)),
             window_min_size: Some(match surface {
                 Surface::Typing => size(px(640.), px(340.)),
+                Surface::Visualizer => size(px(480.), px(520.)),
                 _ => size(px(320.), px(240.)),
             }),
             focus: true,

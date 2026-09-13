@@ -72,7 +72,7 @@ mod transport;
 mod typing;
 mod visualizer;
 mod vst3;
-pub use visualizer::VisualizerFrame;
+pub use visualizer::{VisualizerFrame, VisualizerSpectrum};
 
 #[cfg(test)]
 mod fixtures;
@@ -850,8 +850,11 @@ impl Session {
             &samples,
             &right,
             self.scope.sample_rate(),
-            low_hz,
-            high_hz,
+            visualizer::SpectrumRequest {
+                low_hz,
+                high_hz,
+                mode: VisualizerSpectrum::Average,
+            },
             bands,
         );
     }
