@@ -19,7 +19,36 @@ pub(crate) enum VisualizerCommand {
     Peaks,
     Save,
     Reset,
+    Timebase,
 }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum OscilloscopeSpan {
+    Short,
+    Medium,
+    #[default]
+    Full,
+}
+
+impl OscilloscopeSpan {
+    fn sample_count(self, available: usize) -> usize {
+        match self {
+            Self::Short => available / 4,
+            Self::Medium => available / 2,
+            Self::Full => available,
+        }
+        .clamp(2, available)
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Self::Short => Self::Medium,
+            Self::Medium => Self::Full,
+            Self::Full => Self::Short,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct VisualizerState {
     pub open: bool,
@@ -28,11 +57,13 @@ pub(crate) struct VisualizerState {
     frozen: bool,
     average: bool,
     peaks: bool,
+    oscilloscope_span: OscilloscopeSpan,
     frame: Option<VisualizerFrame>,
     mean: Vec<f32>,
     peak: Vec<f32>,
     reference: Vec<f32>,
     spectrum_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    oscilloscope_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     stereo_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
 }
 
@@ -108,6 +139,9 @@ impl AurisApp {
                     .unwrap_or_default();
                 self.visualizer.peak = spectrum.clone();
                 self.visualizer.mean = spectrum;
+            }
+            VisualizerCommand::Timebase => {
+                self.visualizer.oscilloscope_span = self.visualizer.oscilloscope_span.next();
             }
         }
     }
@@ -188,6 +222,39 @@ impl AurisApp {
                 .cursor_default(),
             );
         }
+        let oscilloscope_span = self.visualizer.oscilloscope_span;
+        let oscilloscope_span_label = self
+            .visualizer
+            .frame
+            .as_ref()
+            .and_then(|frame| {
+                oscilloscope_window(frame, oscilloscope_span).map(|window| (frame, window))
+            })
+            .map_or_else(
+                || self.t(Key::VisualizerFullWindow).to_owned(),
+                |(frame, window)| {
+                    format!("{:.1} ms", window.len as f64 * 1000.0 / frame.sample_rate)
+                },
+            );
+        controls = controls.child(
+            button(
+                "visualizer-timebase",
+                format!(
+                    "{}: {}",
+                    self.t(Key::VisualizerTimebase),
+                    oscilloscope_span_label
+                ),
+                ButtonStyle::Normal,
+                false,
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.visualizer_command(VisualizerCommand::Timebase);
+                    cx.notify();
+                }),
+            )
+            .cursor_default(),
+        );
         let source = if self.visualizer.selected {
             self.selected_track
                 .and_then(|id| self.session.project().track(id))
@@ -218,9 +285,12 @@ impl AurisApp {
             Vec::new()
         };
         let reference = self.visualizer.reference.clone();
+        let oscilloscope_frame = frame.clone();
         let spectral_theme = theme.clone();
+        let oscilloscope_theme = theme.clone();
         let stereo_theme = theme.clone();
         let spectrum_bounds = Rc::clone(&self.visualizer.spectrum_bounds);
+        let oscilloscope_bounds = Rc::clone(&self.visualizer.oscilloscope_bounds);
         let stereo_bounds = Rc::clone(&self.visualizer.stereo_bounds);
         div()
             .id("visualizer")
@@ -242,6 +312,31 @@ impl AurisApp {
                 this.child(self.t(Key::VisualizerWaiting))
             })
             .child(div().child(source))
+            .child(div().child(self.t(Key::VisualizerOscilloscope)))
+            .child(
+                div().w_full().h(px(220.)).flex_shrink_0().child(
+                    canvas(
+                        move |bounds, _, _| oscilloscope_bounds.set(Some(bounds)),
+                        move |bounds, _, window, cx| {
+                            paint_oscilloscope(
+                                window,
+                                cx,
+                                bounds,
+                                oscilloscope_frame.as_ref(),
+                                oscilloscope_span,
+                                &oscilloscope_theme,
+                            );
+                        },
+                    )
+                    .size_full(),
+                ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::VisualizerOscilloscopeHint)),
+            )
             .child(div().child(self.t(Key::VisualizerSpectrum)))
             .child(
                 div().w_full().h(px(220.)).flex_shrink_0().child(
@@ -292,6 +387,167 @@ impl AurisApp {
                     .child(self.t(Key::VisualizerHint)),
             )
             .into_any_element()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OscilloscopeWindow {
+    start: usize,
+    len: usize,
+    trigger_offset: usize,
+}
+
+fn oscilloscope_window(
+    frame: &VisualizerFrame,
+    span: OscilloscopeSpan,
+) -> Option<OscilloscopeWindow> {
+    let available = frame.left.len().min(frame.right.len());
+    if available < 2 || !frame.sample_rate.is_finite() || frame.sample_rate <= 0.0 {
+        return None;
+    }
+    let len = span.sample_count(available);
+    let trigger_offset = len / 5;
+    let maximum_crossing = available - len + trigger_offset;
+    let minimum_crossing = trigger_offset.max(1);
+    let left_power: f32 = frame.left.iter().map(|sample| sample * sample).sum();
+    let right_power: f32 = frame.right.iter().map(|sample| sample * sample).sum();
+    let trigger_channel = if right_power > left_power {
+        &frame.right
+    } else {
+        &frame.left
+    };
+    let has_signal = trigger_channel.iter().any(|sample| sample.abs() >= 1.0e-4);
+    let crossing = has_signal.then(|| {
+        (minimum_crossing..=maximum_crossing)
+            .rev()
+            .find(|&index| trigger_channel[index - 1] <= 0.0 && trigger_channel[index] > 0.0)
+    });
+    let start = crossing.flatten().map_or(available - len, |index| {
+        index.saturating_sub(trigger_offset)
+    });
+    Some(OscilloscopeWindow {
+        start,
+        len,
+        trigger_offset,
+    })
+}
+
+fn paint_oscilloscope(
+    window: &mut Window,
+    cx: &mut gpui::App,
+    bounds: Bounds<Pixels>,
+    frame: Option<&VisualizerFrame>,
+    span: OscilloscopeSpan,
+    theme: &Theme,
+) {
+    paint::rect(window, bounds, theme.surface_sunken);
+    let left = bounds.origin.x + px(38.);
+    let top = bounds.origin.y + px(8.);
+    let width = (bounds.size.width - px(46.)).max(px(1.));
+    let height = (bounds.size.height - px(28.)).max(px(1.));
+    let plot = Bounds {
+        origin: point(left, top),
+        size: size(width, height),
+    };
+    let lane_height = height / 2.;
+    for unit in [0.0, 0.25, 0.5, 0.75, 1.0] {
+        let x = left + width * unit;
+        paint::polyline(
+            window,
+            &[point(x, top), point(x, top + height)],
+            px(1.),
+            theme.border_subtle,
+        );
+    }
+    for (lane, label) in [(0, "L"), (1, "R")] {
+        let lane_top = top + lane_height * lane as f32;
+        let center = lane_top + lane_height / 2.;
+        for (value, color) in [
+            (lane_top, theme.border_subtle),
+            (center, theme.border),
+            (lane_top + lane_height, theme.border_subtle),
+        ] {
+            paint::hline(window, plot, value, color);
+        }
+        paint::label(
+            window,
+            cx,
+            point(bounds.origin.x + px(4.), center - px(6.)),
+            label,
+            px(11.),
+            theme.text,
+        );
+        for (value, text) in [
+            (lane_top, "+1"),
+            (center, "0"),
+            (lane_top + lane_height, "−1"),
+        ] {
+            paint::label(
+                window,
+                cx,
+                point(bounds.origin.x + px(18.), value - px(5.)),
+                text,
+                px(9.),
+                theme.text_muted,
+            );
+        }
+    }
+    let visible = frame.and_then(|frame| oscilloscope_window(frame, span));
+    let trigger_fraction = visible.map_or(0.2, |visible| {
+        visible.trigger_offset as f32 / (visible.len - 1) as f32
+    });
+    let trigger_x = left + width * trigger_fraction;
+    paint::polyline(
+        window,
+        &[point(trigger_x, top), point(trigger_x, top + height)],
+        px(1.),
+        theme.accent_soft,
+    );
+    let Some((frame, visible)) = frame.zip(visible) else {
+        return;
+    };
+    let before_ms = visible.trigger_offset as f64 * 1000.0 / frame.sample_rate;
+    let after_ms = (visible.len - 1 - visible.trigger_offset) as f64 * 1000.0 / frame.sample_rate;
+    for (x, label) in [
+        (left, format!("−{before_ms:.1}")),
+        (trigger_x, "0".to_owned()),
+        (left + width, format!("+{after_ms:.1} ms")),
+    ] {
+        paint::label(
+            window,
+            cx,
+            point(x.min(left + width - px(38.)), top + height + px(2.)),
+            label,
+            px(10.),
+            theme.text_muted,
+        );
+    }
+    let end = visible.start + visible.len;
+    for (samples, center, color) in [
+        (
+            &frame.left[visible.start..end],
+            top + lane_height / 2.,
+            theme.accent,
+        ),
+        (
+            &frame.right[visible.start..end],
+            top + lane_height * 1.5,
+            theme.track_palette[1],
+        ),
+    ] {
+        let points: Vec<_> = samples
+            .iter()
+            .enumerate()
+            .map(|(index, &sample)| {
+                point(
+                    left + width * index as f32 / (visible.len - 1) as f32,
+                    center - lane_height * 0.45 * sample.clamp(-1.0, 1.0),
+                )
+            })
+            .collect();
+        paint::clipped(window, plot, |window| {
+            paint::polyline(window, &points, px(1.), color)
+        });
     }
 }
 
@@ -467,12 +723,34 @@ mod tests {
     use crate::{actions, auxiliary_window::Surface, harness};
 
     fn frame(db: f32) -> VisualizerFrame {
+        let waveform: Vec<_> = (0..1024)
+            .map(|index| (std::f32::consts::TAU * index as f32 * 10. / 1024.).sin() * 0.5)
+            .collect();
         VisualizerFrame {
-            left: vec![0.5, -0.5],
-            right: vec![0.5, -0.5],
+            left: waveform.clone(),
+            right: waveform,
+            sample_rate: 48_000.,
             spectrum: vec![db; 96],
             correlation: Some(1.),
         }
+    }
+
+    #[test]
+    fn oscilloscope_span_uses_sample_rate_and_aligns_a_rising_crossing() {
+        let mut frame = frame(-12.);
+        frame.sample_rate = 1_000.;
+        frame.left = vec![-1.; 1_000];
+        frame.right = vec![0.; 1_000];
+        frame.left[800..].fill(1.);
+
+        assert_eq!(
+            oscilloscope_window(&frame, OscilloscopeSpan::Short),
+            Some(OscilloscopeWindow {
+                start: 750,
+                len: 250,
+                trigger_offset: 50,
+            })
+        );
     }
 
     #[test]
@@ -493,22 +771,24 @@ mod tests {
         harness::paint(&app, cx);
         let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
         app.read_with(cx, |app, _| {
+            let oscilloscope = app
+                .visualizer
+                .oscilloscope_bounds
+                .get()
+                .expect("oscilloscope painted");
             let spectrum = app
                 .visualizer
                 .spectrum_bounds
                 .get()
                 .expect("spectrum painted");
-            let stereo = app
-                .visualizer
-                .stereo_bounds
-                .get()
-                .expect("stereo scope painted");
             assert!(spectrum.size.width > px(600.), "{spectrum:?}");
-            assert_eq!(spectrum.size.width, stereo.size.width);
-            assert_eq!(spectrum.origin.x, stereo.origin.x);
+            assert_eq!(spectrum.size.width, oscilloscope.size.width);
+            assert_eq!(spectrum.origin.x, oscilloscope.origin.x);
+            assert_eq!(oscilloscope.size.height, px(220.));
             assert_eq!(spectrum.size.height, px(220.));
         });
         app.update(cx, |app, _| app.visualizer.accept(frame(-12.)));
+        harness::paint(&app, cx);
         cx.dispatch_action(actions::VisualizerFreeze);
         cx.dispatch_action(actions::VisualizerSave);
         app.read_with(cx, |app, _| {
@@ -523,6 +803,10 @@ mod tests {
         });
         cx.dispatch_action(actions::VisualizerReset);
         app.read_with(cx, |app, _| assert!(app.visualizer.reference.is_empty()));
+        cx.dispatch_action(actions::VisualizerTimebase);
+        app.read_with(cx, |app, _| {
+            assert_eq!(app.visualizer.oscilloscope_span, OscilloscopeSpan::Short)
+        });
         cx.dispatch_action(actions::ToggleVisualizer);
         harness::paint(&app, cx);
         assert!(handle.read_with(cx, |_, _| ()).is_err());

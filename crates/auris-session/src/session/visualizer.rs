@@ -10,6 +10,8 @@ pub struct VisualizerFrame {
     pub left: Vec<f32>,
     /// Right samples, oldest first.
     pub right: Vec<f32>,
+    /// Sample rate of both channels, used to map the oscilloscope's time axis.
+    pub sample_rate: f64,
     /// Equal-power average of channel spectra, in dBFS.
     pub spectrum: Vec<f32>,
     /// Normalized channel correlation; absent when either channel is silent.
@@ -65,6 +67,7 @@ impl Session {
         Some(VisualizerFrame {
             left,
             right,
+            sample_rate: rate,
             spectrum,
             correlation,
         })
@@ -130,6 +133,7 @@ mod tests {
         assert_eq!(frame.correlation, Some(-1.));
         assert_eq!(frame.left, vec![1.; 1024]);
         assert_eq!(frame.right, vec![-1.; 1024]);
+        assert_eq!(frame.sample_rate, 48000.);
         session.stop_visualizer();
         assert!(session.visualizer_frame(30., 18000., 64).is_none());
     }

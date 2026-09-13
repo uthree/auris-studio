@@ -219,6 +219,7 @@ actions!(
         VisualizerPeaks,
         VisualizerSave,
         VisualizerReset,
+        VisualizerTimebase,
         /// Move keyboard focus to the next panel.
         FocusNextPane,
         /// Move keyboard focus to the previous panel.
@@ -565,6 +566,7 @@ bindable! {
         "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
         "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;
         "visualizer.reset", GroupAnalysis, VisualizerReset, "" => VisualizerReset;
+        "visualizer.timebase", GroupAnalysis, VisualizerTimebase, "" => VisualizerTimebase;
         "analysis.results", GroupAnalysis, AnalysisResults, "" => OpenAnalysisResults;
     }
 

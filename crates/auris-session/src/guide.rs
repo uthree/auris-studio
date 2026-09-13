@@ -334,10 +334,12 @@ pub mod architecture {
     //!
     //! The live visualizer has a separate stereo scope from the plugin editor. Each tap copies
     //! paired post-fader samples under one sequence counter, without allocation or waiting on
-    //! the audio thread. `Session::visualizer_frame` transforms the channels independently and
-    //! averages their power, preserving right-only and opposite-polarity signals. Undefined
-    //! correlation is explicit for silent channels. The frontend owns freeze, display history
-    //! and saved comparisons; none of these changes the document or rendered audio.
+    //! the audio thread. `Session::visualizer_frame` carries those channels and their sample rate
+    //! to the frontend for a triggered time-domain oscilloscope, then transforms the channels
+    //! independently and averages their power, preserving right-only and opposite-polarity
+    //! signals. Undefined correlation is explicit for silent channels. The frontend owns freeze,
+    //! display history and saved comparisons; none of these changes the document or rendered
+    //! audio.
     //!
     //! # The third thread, and why recording needed one
     //!

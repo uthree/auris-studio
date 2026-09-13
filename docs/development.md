@@ -294,6 +294,14 @@ largest observed value per band. **Freeze** holds the current display. **Save co
 retains the displayed spectrum across track changes, and **Clear comparison / peaks**
 starts a new comparison. These controls are also available through the command palette.
 
+The oscilloscope draws the left and right sample amplitudes directly against time. Its
+automatic trigger aligns a rising zero crossing from the louder channel, keeping periodic
+signals stable without delaying or modifying playback. **Time span** cycles through one
+quarter, one half and all of the captured 1024 samples; its button and axis show the exact
+duration at the current sample rate. The trigger marker is one fifth of the way across the
+plot. The vertical scale is the engine's floating-point full scale, -1 to +1, and values
+outside it are clipped only in the display.
+
 The stereo scope plots side horizontally and mid vertically at unity scale. Mono signals
 form a vertical trace, opposite-polarity signals a horizontal trace. Correlation ranges
 from -1 to +1; an undefined value (one or both channels silent) is shown as a dash. Negative

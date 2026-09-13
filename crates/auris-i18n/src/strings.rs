@@ -48,7 +48,11 @@ strings! {
     VisualizerPeaks { en: "Peak hold", ja: "ピーク保持" }
     VisualizerSave { en: "Save comparison", ja: "比較カーブを保存" }
     VisualizerReset { en: "Clear comparison / peaks", ja: "比較・ピークをクリア" }
+    VisualizerTimebase { en: "Time span", ja: "表示時間" }
+    VisualizerFullWindow { en: "full window", ja: "全幅" }
     VisualizerNoTrack { en: "Select a track to monitor", ja: "表示するトラックを選択してください" }
+    VisualizerOscilloscope { en: "Oscilloscope · amplitude / time", ja: "オシロスコープ · 振幅／時間" }
+    VisualizerOscilloscopeHint { en: "L: top · R: bottom · rising zero-crossing auto trigger · full scale: ±1.0", ja: "L：上段 · R：下段 · 立ち上がりゼロクロスで自動トリガー · フルスケール：±1.0" }
     VisualizerSpectrum { en: "Spectrum · dBFS", ja: "スペクトラム · dBFS" }
     VisualizerLegend { en: "Accent: current / average · thin gray: peak · thick gray: saved comparison", ja: "アクセント色：現在値／平均 · 細い灰線：ピーク · 太い灰線：保存した比較" }
     VisualizerStereo { en: "Stereo scope · M / S", ja: "ステレオスコープ · M / S" }
