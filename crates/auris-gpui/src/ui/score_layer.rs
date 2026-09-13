@@ -55,14 +55,11 @@ impl AurisApp {
             .map(|preview| preview.notes.as_slice())
     }
 
-    /// Uses the same tempo, meter and loop expansion as the playback scheduler.
-    pub(crate) fn score_notes(&mut self) -> Arc<Vec<Note>> {
+    /// Builds or reuses the same tempo, meter and loop expansion as the playback scheduler.
+    fn performed_score_notes(&mut self) -> Arc<Vec<Note>> {
         let Some(clip) = self.selected_midi_clip() else {
             return Arc::default();
         };
-        if self.source_score() {
-            return Arc::new(clip.notes.clone());
-        }
         let revision = self.session.revision();
         if let Some(preview) = &self.score_preview
             && preview.revision == revision
@@ -97,6 +94,32 @@ impl AurisApp {
             bend,
         });
         notes
+    }
+
+    /// The notes that the active editor treats as its primary layer.
+    pub(crate) fn score_notes(&mut self) -> Arc<Vec<Note>> {
+        let Some(clip) = self.selected_midi_clip() else {
+            return Arc::default();
+        };
+        if self.source_score() {
+            return Arc::new(clip.notes.clone());
+        }
+        self.performed_score_notes()
+    }
+
+    /// Playback notes faintly superimposed on the editable source score.
+    ///
+    /// An identity performance adds no information, so an ordinary unlooped clip stays visually
+    /// quiet. The returned notes are still only paint data: hit testing continues to read the
+    /// source clip, which is what keeps this comparison non-destructive.
+    pub(crate) fn score_performance_overlay(&mut self) -> Arc<Vec<Note>> {
+        let has_performance = self
+            .selected_midi_clip()
+            .is_some_and(|clip| clip.is_looped() || !clip.transforms.is_empty());
+        if !self.source_score() || !has_performance {
+            return Arc::default();
+        }
+        self.performed_score_notes()
     }
 
     pub(crate) fn score_layer_tabs(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -319,6 +342,37 @@ mod tests {
             assert_eq!(held.notes[0].pitch, 62);
             assert_eq!(held.notes[0].start, Ticks::QUARTER);
             assert!(!held.transforms.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn source_piano_roll_prepares_a_non_interactive_performance_overlay(cx: &mut TestAppContext) {
+        let (app, cx, _, clip) = with_a_clip(cx);
+        let original = app.update(cx, |this, _| {
+            this.panels = crate::dock::PanelLayout::default();
+            this.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            this.session
+                .set_clip_transforms(clip, vec![NoteTransform::Transpose { semitones: 7 }])
+                .unwrap();
+            this.open_clip_in_editor(clip);
+            this.selected_notes.insert(0);
+            this.session.midi_clip(clip).unwrap().notes.clone()
+        });
+
+        paint(&app, cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.source_score(),
+                "the comparison stays in the editable layer"
+            );
+            assert_eq!(this.selected_notes, [0].into_iter().collect());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            let overlay = this.score_preview_notes().unwrap();
+            assert_eq!(overlay.len(), 1);
+            assert_eq!(overlay[0].pitch, 67);
         });
     }
 }

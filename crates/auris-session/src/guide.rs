@@ -1981,9 +1981,10 @@ pub mod harmony {
     //! transpose, gate, applied in order as
     //! [`sounding_notes`](auris_core::MidiClip::sounding_notes) answers. The renderer and the
     //! MIDI writer both ask that one question, so what exports is what plays. The MIDI editors'
-    //! Source tab edits the stored text; their read-only Performance tab uses the same performed
-    //! notes as playback, including each loop pass, and refreshes during parameter gestures.
-    //! A document revision invalidates the preview cache, including on undo and redo.
+    //! Source tab edits the stored text and faintly overlays those same performed notes for direct
+    //! comparison; their read-only Performance tab shows the performed score by itself, including
+    //! each loop pass. Both refresh during parameter gestures. A document revision invalidates the
+    //! preview cache, including on undo and redo.
     //! Every wander draws from a seed
     //! the transform stores, through the same named streams the composer draws from
     //! ([`auris_core::rng`]), and it draws per loop pass — a repeated bar is loose differently

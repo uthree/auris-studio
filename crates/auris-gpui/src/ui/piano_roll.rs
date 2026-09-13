@@ -625,6 +625,7 @@ impl AurisApp {
         };
         let clip_name = clip.name.clone();
         let notes = self.score_notes();
+        let performance_overlay = self.score_performance_overlay();
         let performed_bend = self.score_preview_bend();
         let singing = self.editing_a_singer_clip();
         let manual_phonemes = self
@@ -934,6 +935,17 @@ impl AurisApp {
                                                 singing,
                                                 geometry.is_some() || !manual_phonemes,
                                             );
+                                            if source {
+                                                paint_performance_overlay(
+                                                    window,
+                                                    bounds,
+                                                    &performance_overlay,
+                                                    clip_start,
+                                                    &view,
+                                                    &pitch_view,
+                                                    &theme,
+                                                );
+                                            }
                                             if !source && !singing {
                                                 paint_performed_pitch(
                                                     window,
@@ -2150,6 +2162,46 @@ pub(super) fn paint_clip_extent(
 /// enough to make out a phrase against the rows behind it.
 const GHOST_ALPHA: f32 = 0.34;
 
+/// How solid the performed score is over its editable source.
+///
+/// Lower than neighbouring ghosts because this layer sits *over* opaque source notes. Where a
+/// transform moves or adds a note it remains legible against the lane; where the result overlaps
+/// its source it stays subordinate and leaves the editable note's velocity colour visible.
+const PERFORMANCE_OVERLAY_ALPHA: f32 = 0.28;
+
+fn paint_flat_notes(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    clip_start: Ticks,
+    notes: &[Note],
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    colour: gpui::Hsla,
+) {
+    for note in notes {
+        let x = bounds.origin.x + view.tick_to_x(clip_start + note.start);
+        let width = view.duration_to_width(note.length).max(px(2.0));
+        if x + width < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
+            continue;
+        }
+        let y = bounds.origin.y + pitch_view.pitch_to_y(note.pitch);
+        if y + px(pitch_view.row_height) < bounds.origin.y
+            || y > bounds.origin.y + bounds.size.height
+        {
+            continue;
+        }
+        paint::rounded_rect(
+            window,
+            Bounds {
+                origin: point(x, y + px(1.0)),
+                size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
+            },
+            Metrics::RADIUS_XS,
+            colour,
+        );
+    }
+}
+
 /// The notes of the clips either side, drawn flat and faint.
 ///
 /// No velocity in the fill and no selection outline, both of which the clip in hand has: these
@@ -2166,29 +2218,29 @@ fn paint_ghost_notes(
 ) {
     let colour = Theme::translucent(theme.text_muted, GHOST_ALPHA);
     for (clip_start, notes) in ghosts {
-        for note in notes {
-            let x = bounds.origin.x + view.tick_to_x(*clip_start + note.start);
-            let width = view.duration_to_width(note.length).max(px(2.0));
-            if x + width < bounds.origin.x || x > bounds.origin.x + bounds.size.width {
-                continue;
-            }
-            let y = bounds.origin.y + pitch_view.pitch_to_y(note.pitch);
-            if y + px(pitch_view.row_height) < bounds.origin.y
-                || y > bounds.origin.y + bounds.size.height
-            {
-                continue;
-            }
-            paint::rounded_rect(
-                window,
-                Bounds {
-                    origin: point(x, y + px(1.0)),
-                    size: size(width, px((pitch_view.row_height - 2.0).max(2.0))),
-                },
-                Metrics::RADIUS_XS,
-                colour,
-            );
-        }
+        paint_flat_notes(window, bounds, *clip_start, notes, view, pitch_view, colour);
     }
+}
+
+/// Draws the heard notes over their editable source without adding hit targets or edit chrome.
+fn paint_performance_overlay(
+    window: &mut Window,
+    bounds: Bounds<Pixels>,
+    notes: &[Note],
+    clip_start: Ticks,
+    view: &TimelineView,
+    pitch_view: &PitchView,
+    theme: &Theme,
+) {
+    paint_flat_notes(
+        window,
+        bounds,
+        clip_start,
+        notes,
+        view,
+        pitch_view,
+        Theme::translucent(theme.accent, PERFORMANCE_OVERLAY_ALPHA),
+    );
 }
 
 /// Distance from a note's ends to the velocity bar inside it.
