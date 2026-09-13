@@ -500,7 +500,7 @@ impl AurisApp {
 
     /// Deletes whatever the current selection covers.
     pub(crate) fn delete_selection(&mut self) {
-        if !self.source_score() && self.last_pane == crate::app::Pane::PianoRoll {
+        if !self.editable_score() && self.last_pane == crate::app::Pane::PianoRoll {
             return;
         }
         if let Some(clip) = self.selected_clip

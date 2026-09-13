@@ -618,6 +618,7 @@ impl AurisApp {
 
         let clip_start = clip.start;
         let source = self.source_score();
+        let editable = self.editable_score();
         let overlay = self.overlay_score();
         let performed = self.performed_score();
         let clip_length = if source {
@@ -633,50 +634,50 @@ impl AurisApp {
         let manual_phonemes = self
             .selected_clip
             .is_some_and(|clip| self.clip_accepts_phonemes(clip));
-        let ghosts = if source {
+        let ghosts = if editable {
             self.neighbouring_notes()
         } else {
             Vec::new()
         };
-        let mut note_ends = if source {
+        let mut note_ends = if editable {
             self.note_end_zones(clip_start, &notes)
         } else {
             Vec::new()
         };
         // The phoneme boundaries wear the same arrow: both zones drag a vertical edge.
-        if source {
+        if editable {
             note_ends.extend(self.phoneme_divider_zones(clip_start, &notes));
         }
         let selected: Vec<usize> = self
             .selected_notes
             .iter()
             .copied()
-            .filter(|_| source)
+            .filter(|_| editable)
             .collect();
         let failed_note = self
             .sung_failures
             .values()
             .filter_map(|failure| failure.note)
             .find_map(|(clip, index)| {
-                (Some(clip) == self.selected_clip && source).then_some(index)
+                (Some(clip) == self.selected_clip && editable).then_some(index)
             });
         // After the last read of `clip`, whose borrow the cache lookup cannot share. What
         // the voice will sing, drawn over the notes: the pitch contour so a drawn slide
         // reads as the slide it is, and the phoneme cuts so the sixty milliseconds a
         // consonant takes is sixty milliseconds on screen.
-        let geometry = match singing && source {
+        let geometry = match singing && editable {
             true => self.singer_sung_geometry(),
             false => None,
         };
-        let band = source
+        let band = editable
             .then(|| self.rubber_band(crate::app::BandSurface::Roll))
             .flatten();
-        let velocity_tag = source.then(|| self.velocity_tag()).flatten();
-        let edit_tag = source.then(|| self.note_edit_tag()).flatten();
+        let velocity_tag = editable.then(|| self.velocity_tag()).flatten();
+        let edit_tag = editable.then(|| self.note_edit_tag()).flatten();
         let tempo = self.project().tempo_map.clone();
         // Built before the chain rather than inside it: each one needs `&mut self`, and the
         // builder below is already holding a borrow of it.
-        let curve_lanes = if source {
+        let curve_lanes = if editable {
             self.panels.curve_lanes()
         } else {
             self.selected_midi_clip()
@@ -729,7 +730,7 @@ impl AurisApp {
                             .truncate()
                             .child(messages::piano_roll_title(self.language(), &clip_name)),
                     )
-                    .when(source, |row| row.child(self.tool_strip(cx)))
+                    .when(editable, |row| row.child(self.tool_strip(cx)))
                     .when(
                         geometry
                             .as_ref()
@@ -759,21 +760,27 @@ impl AurisApp {
                     // The first thing to be given up, and the right one: it is a reminder of a
                     // gesture rather than a way of making one, so a hand that cannot see all of
                     // it has lost nothing it needs.
-                    .child(div().flex_shrink().min_w_0().truncate().child(if !source {
-                        self.t(Key::ScorePerformedHint).to_string()
-                    } else {
-                        match self.tool {
-                            RollTool::Pointer => messages::piano_roll_hint(
-                                self.language(),
-                                self.t(self.pointer.create.label()),
-                                self.t(self.pointer.delete.label()),
-                            ),
-                            RollTool::Velocity => {
-                                messages::piano_roll_velocity_hint(self.language())
-                            }
-                        }
-                    }))
-                    .when(source, |row| {
+                    .child(
+                        div()
+                            .flex_shrink()
+                            .min_w_0()
+                            .truncate()
+                            .child(if !editable {
+                                self.t(Key::ScorePerformedHint).to_string()
+                            } else {
+                                match self.tool {
+                                    RollTool::Pointer => messages::piano_roll_hint(
+                                        self.language(),
+                                        self.t(self.pointer.create.label()),
+                                        self.t(self.pointer.delete.label()),
+                                    ),
+                                    RollTool::Velocity => {
+                                        messages::piano_roll_velocity_hint(self.language())
+                                    }
+                                }
+                            }),
+                    )
+                    .when(editable, |row| {
                         row.child(button(
                             "roll-snap-length",
                             self.t(Key::SnapNoteLengthsShort),
@@ -787,7 +794,7 @@ impl AurisApp {
                             }),
                         ))
                     })
-                    .when(source, |row| {
+                    .when(editable, |row| {
                         row.child(button(
                             "roll-lanes",
                             self.t(Key::CurveLanes),
@@ -859,7 +866,7 @@ impl AurisApp {
                             // The grid says which tool is in hand under the pointer as well as in
                             // the header. A mode is only dangerous while it is invisible, and the
                             // header is the one place the eye is not while editing notes.
-                            .when(source && self.tool == RollTool::Velocity, |this| {
+                            .when(editable && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
                             .child({
@@ -1088,19 +1095,19 @@ impl AurisApp {
         let theme = self.theme.clone();
         let view = self.timeline.clone();
         let playhead = self.playhead_ticks();
-        let source = self.source_score();
+        let editable = self.editable_score();
         let Some(clip) = self.selected_midi_clip() else {
             return div().into_any_element();
         };
         let (start, length) = (
             clip.start,
-            if source {
+            if editable {
                 clip.length
             } else {
                 clip.sounding_length()
             },
         );
-        let points = if source {
+        let points = if editable {
             clip.curve(which).to_vec()
         } else {
             clip.sounding_performance_curve_events(
@@ -1141,7 +1148,7 @@ impl AurisApp {
                     // The way back out of a lane, beside the lane. The menu closes one too, but a
                     // strip somebody opened by accident should not have to be found in a menu to
                     // be put away again.
-                    .when(source, |lane| {
+                    .when(editable, |lane| {
                         lane.child(button(
                             ("curve-lane-close", lane_id(which)),
                             "×",
@@ -1179,7 +1186,7 @@ impl AurisApp {
                         )
                         .size_full()
                     })
-                    .when(source, |lane| {
+                    .when(editable, |lane| {
                         lane.cursor_pointer()
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -1305,7 +1312,7 @@ impl AurisApp {
 
     /// Starts a note gesture, using the configured create gesture on empty space.
     fn begin_note_drag(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        if !self.source_score() {
+        if !self.editable_score() {
             return;
         }
         let Some(clip_id) = self.selected_clip else {
@@ -2048,7 +2055,7 @@ impl AurisApp {
 
     /// Opens the menu for whatever is under the pointer in the note grid.
     fn open_roll_menu(&mut self, event: &MouseDownEvent, cx: &mut gpui::Context<Self>) {
-        if !self.source_score() {
+        if !self.editable_score() {
             return;
         }
         let origin = self.roll_origin();
@@ -2843,7 +2850,7 @@ impl AurisApp {
         event: &MouseDownEvent,
         cx: &mut gpui::Context<Self>,
     ) {
-        if !self.source_score() {
+        if !self.editable_score() {
             return;
         }
         let (Some(bounds), Some(clip)) = (self.canvas.curve(which).get(), self.selected_clip)
@@ -3839,7 +3846,7 @@ mod window_tests {
         // Source offered its close button and check the actual handler's effect instead.
         click_at(cx, source_close, gpui::Modifiers::none());
         app.read_with(cx, |this, _| {
-            assert!(!this.source_score());
+            assert!(!this.editable_score());
             assert!(
                 this.panels.curve_lane(ClipCurve::Bend),
                 "the performed lane must not close the source lane"

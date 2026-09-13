@@ -626,6 +626,7 @@ impl AurisApp {
         let name = clip.name.clone();
         let clip_start = clip.start;
         let source = self.source_score();
+        let editable = self.editable_score();
         let clip_length = if source {
             clip.length
         } else {
@@ -774,16 +775,16 @@ impl AurisApp {
         let view = self.timeline.clone();
         let signatures = self.project().signatures.spans();
         let playhead = self.playhead_ticks();
-        let selected = if source {
+        let selected = if editable {
             self.selected_notes.clone()
         } else {
             BTreeSet::new()
         };
-        let band = source
+        let band = editable
             .then(|| self.rubber_band(BandSurface::Roll))
             .flatten();
         let recorded = self.canvas.roll.clone();
-        let empty_state = (source && rows.is_empty()).then(|| self.drum_empty_state(cx));
+        let empty_state = (editable && rows.is_empty()).then(|| self.drum_empty_state(cx));
 
         div()
             .flex()
@@ -812,8 +813,8 @@ impl AurisApp {
                             .truncate()
                             .child(format!("{} — {name}", self.t(Key::DrumEditor))),
                     )
-                    .when(source, |row| row.child(self.tool_strip(cx)))
-                    .child(div().flex_1().min_w_0().truncate().child(if !source {
+                    .when(editable, |row| row.child(self.tool_strip(cx)))
+                    .child(div().flex_1().min_w_0().truncate().child(if !editable {
                         self.t(Key::ScorePerformedHint).to_string()
                     } else {
                         match self.tool {
@@ -862,7 +863,7 @@ impl AurisApp {
                             cx.notify();
                         }),
                     ))
-                    .when(source, |row| row.child(self.drum_map_actions(cx)))
+                    .when(editable, |row| row.child(self.drum_map_actions(cx)))
                     .child(self.zoom_slider("drum-zoom", cx)),
             )
             .child(
@@ -907,7 +908,7 @@ impl AurisApp {
                             .h_full()
                             .overflow_hidden()
                             .tooltip(keyed_tip(self.t(Key::DrumRepeatPaint), "", &theme))
-                            .when(source && self.tool == RollTool::Velocity, |this| {
+                            .when(editable && self.tool == RollTool::Velocity, |this| {
                                 this.cursor(gpui::CursorStyle::ResizeUpDown)
                             })
                             .child(
@@ -1092,7 +1093,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.source_score() {
+        if !self.editable_score() {
             return;
         }
         let Some(clip) = self.selected_clip else {
@@ -1258,7 +1259,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.source_score() {
+        if !self.editable_score() {
             return;
         }
         let Some(pitch) = self.drum_pitch_at(event.position.y - self.roll_origin().y) else {
@@ -1532,7 +1533,7 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn drum_score_layers_show_the_expected_rows_and_reject_preview_edits(cx: &mut TestAppContext) {
+    fn drum_overlay_edits_source_while_performance_rejects_note_edits(cx: &mut TestAppContext) {
         let (app, cx, _, clip) = fixture(cx);
         app.update(cx, |this, _| {
             this.drum_editor.mode = DrumRowsMode::Used;
@@ -1555,38 +1556,53 @@ mod window_tests {
             assert!(this.score_preview.is_none());
             assert!(this.drum_rows().iter().any(|row| row.pitch == 36));
         });
-        for layer in ["score-overlay", "score-performed"] {
-            harness::click(layer, cx);
-            paint(&app, cx);
-            app.read_with(cx, |this, _| {
-                assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
-                assert!(this.score_preview_notes().unwrap().len() > 1);
-                assert_eq!(
-                    this.drum_rows().iter().any(|row| row.pitch == 36),
-                    this.overlay_score(),
-                    "only the comparison keeps the stored row beside the performed row"
-                );
-            });
-            let from = hit_point(&app, cx, Ticks::ZERO, 91);
-            let to = hit_point(&app, cx, Ticks::QUARTER * 2, 91);
-            drag(cx, from, to);
-            click_at(cx, to, Modifiers::none());
-            harness::right_press(cx, from);
-            cx.simulate_keystrokes("backspace");
-            app.read_with(cx, |this, _| {
-                assert!(this.menu.is_none());
-                let notes = &this.session.midi_clip(clip).unwrap().notes;
-                assert_eq!(notes.len(), 1);
-                assert_eq!(notes[0].pitch, 36);
-                assert_eq!(notes[0].start, Ticks::ZERO);
-            });
-        }
-        harness::click("score-source", cx);
+
+        harness::click("score-overlay", cx);
         paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.editable_score());
+            assert!(this.drum_rows().iter().any(|row| row.pitch == 36));
+            assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
+            assert!(this.score_preview_notes().unwrap().len() > 1);
+        });
         let at = hit_point(&app, cx, Ticks::QUARTER * 2, 36);
         click_at(cx, at, Modifiers::none());
+        paint(&app, cx);
+        let after_overlay = app.read_with(cx, |this, _| {
+            let notes = this.session.midi_clip(clip).unwrap().notes.clone();
+            assert_eq!(notes.len(), 2);
+            assert!(
+                notes
+                    .iter()
+                    .any(|note| { note.pitch == 36 && note.start == Ticks::QUARTER * 2 })
+            );
+            notes
+        });
+
+        harness::click("score-performed", cx);
+        paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 2)
+            assert!(!this.editable_score());
+            assert!(!this.drum_rows().iter().any(|row| row.pitch == 36));
+            assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
+        });
+        let from = hit_point(&app, cx, Ticks::ZERO, 91);
+        let to = hit_point(&app, cx, Ticks::QUARTER * 2, 91);
+        drag(cx, from, to);
+        click_at(cx, to, Modifiers::none());
+        harness::right_press(cx, from);
+        cx.simulate_keystrokes("backspace");
+        app.read_with(cx, |this, _| {
+            assert!(this.menu.is_none());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, after_overlay);
+        });
+
+        harness::click("score-source", cx);
+        paint(&app, cx);
+        let at = hit_point(&app, cx, Ticks::QUARTER * 3, 36);
+        click_at(cx, at, Modifiers::none());
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes.len(), 3)
         });
     }
 

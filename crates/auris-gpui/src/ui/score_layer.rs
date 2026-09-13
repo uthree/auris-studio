@@ -16,7 +16,7 @@ pub(crate) enum ScoreLayer {
     /// Stored notes, with all editing gestures available.
     #[default]
     Source,
-    /// Stored notes with playback notes layered over them for comparison.
+    /// Editable stored notes with playback notes layered over them for comparison.
     Overlay,
     /// Playback notes, including generated articulations and loop passes.
     Performed,
@@ -44,6 +44,11 @@ impl AurisApp {
     }
     pub(crate) fn source_score(&self) -> bool {
         self.score_layer == ScoreLayer::Source
+    }
+
+    /// Whether note and curve editing gestures act on the stored score.
+    pub(crate) fn editable_score(&self) -> bool {
+        !self.performed_score()
     }
 
     /// Whether the primary layer contains the stored notes.
@@ -171,8 +176,12 @@ impl AurisApp {
                         theme,
                         cx.listener(move |this, _, window, cx| {
                             if this.score_layer != layer {
+                                let preserve_selection =
+                                    this.editable_score() && layer != ScoreLayer::Performed;
                                 this.end_drag(window, cx);
-                                this.selected_notes.clear();
+                                if !preserve_selection {
+                                    this.selected_notes.clear();
+                                }
                                 this.menu = None;
                                 this.score_layer = layer;
                             }
@@ -309,7 +318,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn preview_is_read_only_and_source_remains_editable(cx: &mut TestAppContext) {
+    fn overlay_and_source_are_editable_while_performance_is_read_only(cx: &mut TestAppContext) {
         let (app, cx, _, clip) = with_a_clip(cx);
         let original = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
@@ -325,48 +334,71 @@ mod tests {
         });
         paint(&app, cx);
         show_pitch(&app, cx, 60);
-        for layer in ["score-overlay", "score-performed"] {
-            click(layer, cx);
-            paint(&app, cx);
-            app.read_with(cx, |this, _| {
-                assert!(this.selected_notes.is_empty());
-                assert!(this.score_preview_notes().unwrap().len() > original.len());
-            });
-            let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER / 2), 60);
-            let to = roll_point(&app, cx, Ticks::QUARTER * 2, 62);
-            drag(cx, from, to);
-            click_at(cx, to, creating());
-            right_press(cx, from);
-            cx.simulate_keystrokes("backspace");
-            app.update(cx, |this, cx| {
-                assert!(this.menu.is_none());
-                for command in [
-                    MenuCommand::SelectAllNotes,
-                    MenuCommand::TransposeNotes(12),
-                    MenuCommand::DeleteNotes,
-                    MenuCommand::PasteNotes,
-                ] {
-                    this.run_menu_command(command, cx);
-                }
-                assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
-            });
-        }
-        click("score-source", cx);
+
+        click("score-overlay", cx);
         paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.editable_score());
+            assert_eq!(this.selected_notes, [0].into_iter().collect());
+            assert!(this.score_preview_notes().unwrap().len() > original.len());
+        });
         let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER / 2), 60);
         let to = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER * 3 / 2), 62);
+        drag(cx, from, to);
+        paint(&app, cx);
+        let after_overlay = app.update(cx, |this, _| {
+            let held = this.session.midi_clip(clip).unwrap().notes.clone();
+            assert_eq!(held.len(), 1);
+            assert_eq!(held[0].pitch, 62);
+            assert_eq!(held[0].start, Ticks::QUARTER);
+            this.undo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            this.redo();
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, held);
+            held
+        });
+
+        click("score-performed", cx);
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.editable_score());
+            assert!(this.selected_notes.is_empty());
+        });
+        let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER * 3 / 2), 62);
+        let to = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER * 5 / 2), 64);
+        drag(cx, from, to);
+        click_at(cx, to, creating());
+        right_press(cx, from);
+        cx.simulate_keystrokes("backspace");
+        app.update(cx, |this, cx| {
+            assert!(this.menu.is_none());
+            for command in [
+                MenuCommand::SelectAllNotes,
+                MenuCommand::TransposeNotes(12),
+                MenuCommand::DeleteNotes,
+                MenuCommand::PasteNotes,
+            ] {
+                this.run_menu_command(command, cx);
+            }
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, after_overlay);
+        });
+
+        click("score-source", cx);
+        paint(&app, cx);
+        let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER * 3 / 2), 62);
+        let to = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER * 5 / 2), 64);
         drag(cx, from, to);
         app.read_with(cx, |this, _| {
             let held = this.session.midi_clip(clip).unwrap();
             assert_eq!(held.notes.len(), 1);
-            assert_eq!(held.notes[0].pitch, 62);
-            assert_eq!(held.notes[0].start, Ticks::QUARTER);
+            assert_eq!(held.notes[0].pitch, 64);
+            assert_eq!(held.notes[0].start, Ticks::QUARTER * 2);
             assert!(!held.transforms.is_empty());
         });
     }
 
     #[gpui::test]
-    fn source_is_plain_and_overlay_prepares_a_non_interactive_comparison(cx: &mut TestAppContext) {
+    fn source_is_plain_and_overlay_prepares_an_editable_comparison(cx: &mut TestAppContext) {
         let (app, cx, _, clip) = with_a_clip(cx);
         let original = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
@@ -398,8 +430,8 @@ mod tests {
 
         app.read_with(cx, |this, _| {
             assert!(this.overlay_score());
-            assert!(!this.source_score(), "the comparison layer is read-only");
-            assert!(this.selected_notes.is_empty());
+            assert!(this.editable_score());
+            assert_eq!(this.selected_notes, [0].into_iter().collect());
             assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
             let overlay = this.score_preview_notes().unwrap();
             assert_eq!(overlay.len(), 1);
