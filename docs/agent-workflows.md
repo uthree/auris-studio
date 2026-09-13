@@ -425,3 +425,21 @@ another SoundFont preset on an existing sampler preserves its sampler controls.
 Unknown, unloaded or expired sounds fail without modifying the document. Plugin
 handles expire on rescan; no tool accepts an arbitrary plugin file path. No project
 or audio files are written by live selection. MCP operates on saved project files.
+
+### Bounded score and mixer reads
+
+`notes` returns up to 128 notes per call. Pass the returned `next_offset` with the
+same track and clip. Note numbers remain global in time order; re-read after edits.
+`mixer` pages strips with `offset` and `limit` (default 16, maximum 32), including
+master as the final strip. Gain points, section midpoints, effect parameters and
+choices are limited previews of 16 entries each.
+
+Use `automation` for details. `operation: {"action":"read"}` returns parameter
+summaries, with `next_offset` for the next parameter page. Add an exact `param`
+to read its points and choices. Follow `lane.next_offset` using `offset`, and
+`next_choice_offset` using `choice_offset`. Pages default to 32 and cap at 128.
+Parameter summaries contain point/choice counts without their arrays; set/clear
+returns only the selected key, saved status and resulting point count.
+
+Live `inspect_project` returns effect identity and enabled state, never the
+plugin's opaque restoration state or full saved parameter map.

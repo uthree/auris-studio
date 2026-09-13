@@ -909,13 +909,18 @@ pub mod mixer {
     pub const DESCRIPTION: &str = "Reads the mixer as it stands: every track's fader, pan, \
         mute and solo, its sends, and each effect's parameters with key, value and range — the \
         vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` \
-        is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.";
+        is driven by its lane, not its stored value. Strip pages default to 16 (max 32). Gain points, section midpoints, effect parameters and choices are previews of at most 16 each; use automation for paged parameter, point and choice details. Follow next_offset for more strips.";
 
     /// Arguments to `mixer`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
         /// The project to read — an absolute path to a `.auris` file.
         pub project: String,
+        /// Zero-based strip offset, including master as the final strip.
+        #[serde(default)]
+        pub offset: usize,
+        /// Strip page size, default 16, clamped to 1-32.
+        pub limit: Option<usize>,
     }
 
     /// One strip's worth of structure, copied out so the parameter pass can borrow the
@@ -984,7 +989,12 @@ pub mod mixer {
         };
 
         let mut text = String::new();
-        for row in rows {
+        let total = rows.len();
+        if args.offset > total {
+            return Err("offset exceeds strip count".into());
+        }
+        let limit = args.limit.unwrap_or(16).clamp(1, 32);
+        for row in rows.into_iter().skip(args.offset).take(limit) {
             let (gain_target, pan_target) = match row.track {
                 Some(id) => (ParamTarget::TrackGain(id), ParamTarget::TrackPan(id)),
                 None => (ParamTarget::MasterGain, ParamTarget::MasterPan),
@@ -1014,8 +1024,8 @@ pub mod mixer {
                 text.push_str(&format!("  selector id:{}\n", id.0));
             }
             if let Some(lane) = session.project().automation.lane(gain_target) {
-                text.push_str(&format!("  gain envelope {:?} (dB):\n", lane.curve));
-                for point in lane.points() {
+                text.push_str(&format!("  gain envelope {:?} (dB), {} points; first 16 below. Use automation for paged detail:\n", lane.curve, lane.points().len()));
+                for point in lane.points().iter().take(16) {
                     let bar = session.project().signatures.bar_of(point.tick);
                     let beat = 1.0
                         + (point.tick - session.project().signatures.bar_start(bar)).raw() as f64
@@ -1029,6 +1039,8 @@ pub mod mixer {
                     .project()
                     .sections
                     .spans_in(Ticks::ZERO, session.project().end_tick())
+                    .into_iter()
+                    .take(16)
                 {
                     let midpoint = span.start + Ticks((span.end - span.start).raw() / 2);
                     let value = session
@@ -1078,14 +1090,28 @@ pub mod mixer {
                             .choices
                             .iter()
                             .enumerate()
+                            .take(16)
                             .map(|(index, label)| format!("{index}={label}"))
                             .collect();
                         text.push_str(&format!("    {:<14} {}\n", "", listed.join(" ")));
                     }
                     index += 1;
+                    if index == 16 {
+                        text.push_str("    Parameter preview limited to 16; use automation for paged detail.\n");
+                        break;
+                    }
                 }
             }
         }
+        let next = args.offset + limit.min(total - args.offset);
+        text.push_str(&format!(
+            "strips_total: {total}; next_offset: {}\n",
+            if next < total {
+                next.to_string()
+            } else {
+                "null".into()
+            }
+        ));
         Ok(text.trim_end().to_string())
     }
 }
@@ -2295,7 +2321,7 @@ pub mod notes {
     pub const DESCRIPTION: &str = "Reads one clip's notes, numbered in time order — pitch, bar, \
         beat, length in beats, velocity and, where a note carries one, its lyric. The numbers \
         are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` \
-        and the clip number `describe` shows.";
+        and the clip number `describe` shows. Returns at most 128 notes; follow next_offset without editing between pages. Note numbers remain global within the clip.";
 
     /// Arguments to `notes`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2307,6 +2333,11 @@ pub mod notes {
         pub track: String,
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
+        /// Zero-based offset in time order; follow next_offset without editing between pages.
+        #[serde(default)]
+        pub offset: usize,
+        /// Page size, default 128, clamped to 1-128.
+        pub limit: Option<usize>,
     }
 
     /// Answers with the numbered listing.
@@ -2327,7 +2358,16 @@ pub mod notes {
             origin,
             clip.notes.len()
         );
-        for (number, (_, note)) in time_ordered(clip).into_iter().enumerate() {
+        if args.offset > clip.notes.len() {
+            return Err("offset exceeds note count".into());
+        }
+        let limit = args.limit.unwrap_or(128).clamp(1, 128);
+        for (number, (_, note)) in time_ordered(clip)
+            .into_iter()
+            .enumerate()
+            .skip(args.offset)
+            .take(limit)
+        {
             let tick = clip.start + note.start;
             let bar = project.signatures.bar_of(tick);
             let within = tick - project.signatures.bar_start(bar);
@@ -2347,6 +2387,15 @@ pub mod notes {
                 trimmed(note.velocity),
             ));
         }
+        let next = args.offset + limit.min(clip.notes.len() - args.offset);
+        text.push_str(&format!(
+            "next_offset: {}\n",
+            if next < clip.notes.len() {
+                next.to_string()
+            } else {
+                "null".into()
+            }
+        ));
         let _ = id;
         Ok(text.trim_end().to_string())
     }
@@ -3541,6 +3590,8 @@ mod tests {
         }
         let read = || {
             mixer::run(&mixer::Args {
+                offset: 0,
+                limit: None,
                 project: path.clone(),
             })
         };
@@ -3941,6 +3992,8 @@ mod tests {
         assert!(placed.contains("placed 4"), "{placed}");
 
         let listing = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -3952,11 +4005,25 @@ mod tests {
             "time order, not placement order: {listing}"
         );
         assert!(listing.contains("[3] bar 2 beat 1 — G4"), "{listing}");
+        let page = notes::run(&notes::Args {
+            offset: 2,
+            limit: Some(1),
+            project: path.clone(),
+            track: "Lead".into(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(page.contains("[3] bar 2 beat 1 — G4"));
+        assert!(!page.contains("[1] bar"));
+        assert!(!page.contains("[4] bar"));
+        assert!(page.contains("next_offset: 3"));
 
         // The correction: the D was wrong, an E belongs there. Numbers are the listing's.
         let corrected = place(vec![note("E4", 2, 3.0)], Some(vec![4])).unwrap();
         assert!(corrected.contains("Removed 1, placed 1"), "{corrected}");
         let after = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -4013,6 +4080,8 @@ mod tests {
         assert!(band.contains("Key:"), "{band}");
         assert!(band.contains("Bass"), "{band}");
         let unchanged = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -4315,6 +4384,8 @@ mod tests {
         .unwrap();
         assert!(laid.contains("3 notes"), "{laid}");
         let listing = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Vocal".to_string(),
             clip: 1,

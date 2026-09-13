@@ -156,7 +156,7 @@ impl AurisMcp {
         blocking(move || toolbox::capabilities::run(&args)).await
     }
 
-    /// Reads or edits parameter automation. target and operation are objects: target {"kind":"mixer"}, operation {"action":"read"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {"action":"set","param":"gain","points":[{"beat":0,"value":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Changes are validated, checkpointed and saved.
+    /// Reads or edits parameter automation. target and operation are objects: target {"kind":"mixer"}, operation {"action":"read"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {"action":"set","param":"gain","points":[{"beat":0,"value":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Read pages default to 32 (max 128): omit param for parameter summaries, or supply param for points and choices. Follow top-level next_offset for parameters, lane.next_offset for points, and next_choice_offset with choice_offset for choices. Set/clear returns only saved status and point count. Changes are validated, checkpointed and saved.
     #[tool(input_schema = tool_schema("automation"))]
     async fn automation(
         &self,
@@ -376,7 +376,7 @@ impl AurisMcp {
         blocking(move || toolbox::set_drum_assignment::run(&args)).await
     }
 
-    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.
+    /// Reads the mixer as it stands: every track's fader, pan, mute and solo, its sends, and each effect's parameters with key, value and range — the vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` is driven by its lane, not its stored value. Strip pages default to 16 (max 32). Gain points, section midpoints, effect parameters and choices are previews of at most 16 each; use automation for paged parameter, point and choice details. Follow next_offset for more strips.
     #[tool(input_schema = tool_schema("mixer"))]
     async fn mixer(
         &self,
@@ -529,7 +529,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_clip::run(&args)).await
     }
 
-    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats, velocity and, where a note carries one, its lyric. The numbers are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number `describe` shows.
+    /// Reads one clip's notes, numbered in time order — pitch, bar, beat, length in beats, velocity and, where a note carries one, its lyric. The numbers are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` and the clip number `describe` shows. Returns at most 128 notes; follow next_offset without editing between pages. Note numbers remain global within the clip.
     #[tool(input_schema = tool_schema("notes"))]
     async fn notes(
         &self,

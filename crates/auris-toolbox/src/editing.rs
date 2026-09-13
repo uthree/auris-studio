@@ -735,6 +735,25 @@ mod tests {
         };
         let read = automate(json!({"action":"set","points":[{"beat":0,"value":-6},{"beat":16,"value":-24}],"curve":"linear"})).unwrap();
         let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(read["point_count"], 2);
+        assert!(read.get("parameters").is_none());
+        let page: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read","limit":1})).unwrap()).unwrap();
+        assert_eq!(
+            page["parameters"][0]["lane"]["points"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(page["parameters"][0]["lane"]["next_offset"], 1);
+        let last: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read","offset":1,"limit":1})).unwrap())
+                .unwrap();
+        assert_eq!(last["parameters"][0]["lane"]["points"][0]["value"], -24.0);
+        assert!(last["parameters"][0]["lane"]["next_offset"].is_null());
+        let read: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read"})).unwrap()).unwrap();
         assert_eq!(read["parameters"][0]["lane"]["points"][1]["value"], -24.0);
         assert_eq!(read["parameters"][0]["lane"]["curve"], "linear");
         let saved = std::fs::read(&fixture.path).unwrap();

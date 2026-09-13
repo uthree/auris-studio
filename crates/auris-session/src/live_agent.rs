@@ -5,6 +5,16 @@ fn sound_search_limit() -> usize {
     10
 }
 
+fn mixer_summary(mixer: &auris_core::project::MixerStrip) -> serde_json::Value {
+    serde_json::json!({
+        "gain_db":mixer.gain_db, "pan":mixer.pan,
+        "mute":mixer.mute, "solo":mixer.solo,
+        "effects":mixer.effects.iter().map(|slot| serde_json::json!({
+            "id":slot.id, "effect_id":slot.effect_id, "enabled":slot.enabled
+        })).collect::<Vec<_>>()
+    })
+}
+
 /// An operation on the current document. No operation accepts a filesystem destination.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
@@ -324,7 +334,7 @@ impl Session {
                             })
                             .collect();
                         serde_json::json!({"id":track.id.0, "name":track.name,
-                        "kind":track.kind.label(), "mixer":track.mixer, "clips":clips,
+                        "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,
                         "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
                         "soundfont_preset":self.track_preset(track.id)})
                     })
@@ -579,6 +589,22 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn inspection_size_does_not_depend_on_hosted_effect_state() {
+        let mut mixer = MixerStrip::default();
+        mixer.effects.push(auris_core::project::EffectSlot::new(
+            EffectSlotId(1),
+            "test.fx",
+        ));
+        let before = mixer_summary(&mixer);
+        mixer.effects[0]
+            .state
+            .set_hosted_bytes(&vec![42; 1_000_000]);
+        mixer.effects[0].state.params.insert("hidden".into(), 0.5);
+        assert_eq!(mixer_summary(&mixer), before);
+        assert!(before.to_string().len() < 256);
     }
 
     #[test]

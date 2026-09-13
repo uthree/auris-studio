@@ -709,7 +709,7 @@ mod tests {
             .unwrap();
         assert_eq!(listed["steps"], choice.steps.unwrap());
         assert_eq!(
-            listed["choices"].as_array().unwrap().len(),
+            listed["choice_count"].as_u64().unwrap() as usize,
             choice.choices.len()
         );
         let descriptor = descriptors
