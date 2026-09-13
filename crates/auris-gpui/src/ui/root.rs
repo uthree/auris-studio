@@ -1742,14 +1742,6 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x) / travel;
                 self.timeline.set_zoom_fraction(start_fraction + delta);
             }
-            Drag::TrackHeight {
-                start_fraction,
-                start_x,
-            } => {
-                let travel = f32::from(crate::ui::widgets::ZOOM_SLIDER_WIDTH).max(1.0);
-                let delta = f32::from(event.position.x - start_x) / travel;
-                self.set_track_height_fraction(start_fraction + delta);
-            }
             Drag::Tempo {
                 at,
                 start_bpm,

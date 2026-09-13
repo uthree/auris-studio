@@ -158,7 +158,6 @@ strings! {
     ExportWav { en: "Export Audio", ja: "オーディオ書き出し" }
     Grid { en: "Grid", ja: "グリッド" }
     Zoom { en: "Zoom", ja: "拡大" }
-    TrackHeight { en: "Track Height", ja: "トラックの高さ" }
     GridFree { en: "free", ja: "自由" }
     Position { en: "Position", ja: "位置" }
     Tempo { en: "Tempo", ja: "テンポ" }

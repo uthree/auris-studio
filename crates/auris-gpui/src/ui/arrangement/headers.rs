@@ -14,7 +14,6 @@ use crate::app::{AurisApp, Drag};
 use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
-use crate::ui::icons::{Icon, icon};
 use crate::ui::widgets::{ButtonStyle, Latch, button, db_to_meter_position, level_meter};
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
@@ -100,11 +99,27 @@ impl AurisApp {
                     .flex_1()
                     .w_full()
                     .overflow_hidden()
-                    // The wheel here moves the same column it moves over the clips. A user who
-                    // has run out of tracks on screen reaches for the list, not the canvas.
+                    // Ctrl-wheel changes the whole list's density while an ordinary wheel keeps
+                    // moving the same column it moves over the clips.
                     .on_scroll_wheel(cx.listener(|this, event: &gpui::ScrollWheelEvent, _, cx| {
                         let delta = event.delta.pixel_delta(px(24.0));
-                        this.scroll_lanes_by(-delta.y);
+                        if event.modifiers.control {
+                            let step = if delta.y > px(0.0) {
+                                crate::ui::commands::TRACK_HEIGHT_STEP
+                            } else if delta.y < px(0.0) {
+                                -crate::ui::commands::TRACK_HEIGHT_STEP
+                            } else {
+                                0.0
+                            };
+                            if step != 0.0 {
+                                this.set_track_height_fraction(
+                                    this.current_track_height_fraction() + step,
+                                );
+                            }
+                            cx.stop_propagation();
+                        } else {
+                            this.scroll_lanes_by(-delta.y);
+                        }
                         cx.notify();
                     }))
                     // The list itself remains useful before it has a first row and below its
@@ -673,12 +688,11 @@ impl AurisApp {
     /// a line drawn under every header would be a second border under the one already there, and
     /// the cursor changing is what says the edge can be taken hold of.
     ///
-    /// `occlude` is what makes it *the* thing a press in that strip lands on. The strip is the
-    /// header's own padding, so the header's hitbox covers it too, and without this a press
-    /// reached both: the band would begin a resize and the header would begin a reorder over the
-    /// top of it. Blocking rather than relying on the header's `drag.is_none()` guard, because
-    /// that guard depends on which listener gpui happens to run first, and a gesture that is
-    /// correct by accident of dispatch order is one that comes back.
+    /// `block_mouse_except_scroll` is what makes it *the* thing a press in that strip lands on.
+    /// The strip is the header's own padding, so the header's hitbox covers it too, and without
+    /// this a press reached both: the band would begin a resize and the header would begin a
+    /// reorder over the top of it. Scroll is deliberately allowed through so Ctrl-wheel works
+    /// anywhere in the track list, including on this narrow edge.
     ///
     /// Nothing selects the track on the way past, and that is deliberate: taking hold of an edge
     /// to resize it is not a request to change what the inspector is showing.
@@ -697,7 +711,7 @@ impl AurisApp {
             .right_0()
             .bottom_0()
             .h(RESIZE_BAND)
-            .occlude()
+            .block_mouse_except_scroll()
             .cursor(gpui::CursorStyle::ResizeUpDown)
             .hover(|this| this.bg(crate::theme::Theme::translucent(accent, 0.35)))
             .on_mouse_down(
@@ -720,36 +734,13 @@ impl AurisApp {
     /// alignment with the ruler and any open automation strips opposite it.
     fn track_header_toolbar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
-        let has_tracks = !self.project().tracks.is_empty();
-        let height_control = has_tracks.then(|| {
-            div()
-                .id("track-height-control")
-                .debug_selector(|| "track-height-control".to_string())
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(icon(Icon::TrackHeight, px(12.0), theme.text_muted))
-                .child(self.track_height_slider(cx))
-                .tooltip(self.tip(Key::TrackHeight, ""))
-        });
         div()
             // Matches the ruler and whichever strips are showing opposite. See the method.
             .h(self.panels.lanes.header_height())
-            .flex()
-            .flex_col()
             .flex_shrink_0()
             .bg(theme.surface_raised)
             .border_b_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .h(Metrics::RULER_HEIGHT)
-                    .w_full()
-                    .children(height_control),
-            )
             .on_mouse_down(
                 MouseButton::Right,
                 AurisApp::opens_menu(cx, |this, at| this.arrangement_menu(at)),
@@ -790,9 +781,9 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{choose, drag, open, paint, right_press, with_a_clip};
+    use crate::actions;
+    use crate::harness::{choose, open, paint, right_press, with_a_clip};
     use crate::ui::context_menu::MenuCommand;
-    use crate::{actions, ui::widgets::ZOOM_SLIDER_WIDTH};
     use auris_session::session::MIN_TRACK_HEIGHT;
 
     #[gpui::test]
@@ -896,7 +887,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn the_track_height_slider_compacts_every_lane_and_undo_restores_them(
+    fn control_wheel_over_the_track_list_resizes_every_lane_and_undo_restores_them(
         cx: &mut gpui::TestAppContext,
     ) {
         let (app, cx) = open(cx);
@@ -906,19 +897,36 @@ mod tests {
             }
         });
         paint(&app, cx);
-        let slider = cx
-            .debug_bounds("track-height-slider")
-            .expect("the populated track list draws its height slider");
-        let from = slider.center();
-        let to = gpui::point(from.x - ZOOM_SLIDER_WIDTH, from.y);
-
-        drag(cx, from, to);
+        let at = app.read_with(cx, |this, _| {
+            let lanes = this
+                .canvas
+                .lanes
+                .get()
+                .expect("the clip lanes were painted");
+            gpui::point(
+                lanes.origin.x - this.panels.header_width / 2.0,
+                lanes.origin.y + px(12.0),
+            )
+        });
+        assert!(
+            cx.debug_bounds("track-height-control").is_none(),
+            "the old toolbar slider is no longer present"
+        );
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-120.0))),
+            modifiers: gpui::Modifiers {
+                control: true,
+                ..gpui::Modifiers::none()
+            },
+            ..Default::default()
+        });
         app.read_with(cx, |this, _| {
             assert!(
                 this.project()
                     .tracks
                     .iter()
-                    .all(|track| track.height == MIN_TRACK_HEIGHT)
+                    .all(|track| track.height < 72.0)
             );
         });
 
@@ -929,6 +937,63 @@ mod tests {
                     .tracks
                     .iter()
                     .all(|track| track.height == 72.0)
+            );
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(120.0))),
+            modifiers: gpui::Modifiers {
+                control: true,
+                ..gpui::Modifiers::none()
+            },
+            ..Default::default()
+        });
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height > 72.0)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn plain_wheel_over_the_track_list_scrolls_without_resizing(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            for index in 0..20 {
+                this.session.add_audio_track(format!("Track {index}"));
+            }
+        });
+        paint(&app, cx);
+        let at = app.read_with(cx, |this, _| {
+            let lanes = this
+                .canvas
+                .lanes
+                .get()
+                .expect("the clip lanes were painted");
+            gpui::point(
+                lanes.origin.x - this.panels.header_width / 2.0,
+                lanes.origin.y + px(12.0),
+            )
+        });
+
+        cx.simulate_event(gpui::ScrollWheelEvent {
+            position: at,
+            delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.0), px(-120.0))),
+            ..Default::default()
+        });
+
+        app.read_with(cx, |this, _| {
+            assert!(this.lane_scroll > px(0.0), "the list moved down");
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height == 72.0),
+                "plain wheel input did not change track height"
             );
         });
     }

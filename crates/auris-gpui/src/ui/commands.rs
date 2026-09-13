@@ -34,10 +34,10 @@ pub(crate) const AUTO_SING_DEBOUNCE: std::time::Duration = std::time::Duration::
 /// about memory pressure, so wholesale clearing beats bookkeeping an eviction order.
 const SUNG_PREVIEW_CACHE: usize = 128;
 
-/// One menu or keyboard step through the track-height slider.
+/// One menu, keyboard, or wheel step through the track-height range.
 pub(crate) const TRACK_HEIGHT_STEP: f32 = 0.08;
 
-/// Slider position for a lane height.
+/// Normalized position for a lane height.
 ///
 /// Logarithmic so the useful compact range is not crushed into the first few pixels by the
 /// generous corrupted-document ceiling.
@@ -47,7 +47,7 @@ fn track_height_fraction(height: f32) -> f32 {
         .clamp(0.0, 1.0)
 }
 
-/// Lane height at a slider position.
+/// Lane height at a normalized position.
 fn track_height_at(fraction: f32) -> f32 {
     let range = MAX_TRACK_HEIGHT / MIN_TRACK_HEIGHT;
     MIN_TRACK_HEIGHT * range.powf(fraction.clamp(0.0, 1.0))
@@ -418,23 +418,7 @@ impl AurisApp {
         ))
     }
 
-    /// The track-list height slider shown above the headers.
-    pub(crate) fn track_height_slider(&self, cx: &mut gpui::Context<Self>) -> gpui::AnyElement {
-        let theme = self.theme.clone();
-        gpui::IntoElement::into_any_element(crate::ui::widgets::zoom_slider(
-            "track-height-slider",
-            self.current_track_height_fraction(),
-            &theme,
-            cx.listener(move |this, event: &gpui::MouseDownEvent, _, _| {
-                this.begin_drag(Drag::TrackHeight {
-                    start_fraction: this.current_track_height_fraction(),
-                    start_x: event.position.x,
-                });
-            }),
-        ))
-    }
-
-    /// Slider position representing the mean height of the current track list.
+    /// Normalized position representing the mean height of the current track list.
     pub(crate) fn current_track_height_fraction(&self) -> f32 {
         let tracks = &self.project().tracks;
         if tracks.is_empty() {
@@ -444,7 +428,7 @@ impl AurisApp {
         track_height_fraction(mean)
     }
 
-    /// Applies one track-height slider position to every lane.
+    /// Applies one normalized track-height position to every lane.
     pub(crate) fn set_track_height_fraction(&mut self, fraction: f32) {
         self.session
             .set_all_track_heights(track_height_at(fraction));
@@ -2841,13 +2825,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_track_height_slider_covers_the_whole_lane_range() {
+    fn the_track_height_scale_covers_the_whole_lane_range() {
         assert_eq!(track_height_at(0.0), MIN_TRACK_HEIGHT);
         assert_eq!(track_height_at(1.0), MAX_TRACK_HEIGHT);
     }
 
     #[test]
-    fn the_track_height_slider_round_trips_a_normal_lane() {
+    fn the_track_height_scale_round_trips_a_normal_lane() {
         let height = 72.0;
         assert!((track_height_at(track_height_fraction(height)) - height).abs() < 1e-4);
     }
