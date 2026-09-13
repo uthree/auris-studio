@@ -151,6 +151,7 @@ struct NoArgs {}
 /// Complete project-tool catalog. Transport tests compare their registrations to this list.
 pub fn tool_catalog() -> Vec<ToolDefinition> {
     vec![
+        definition::<read_report::Args>(read_report::NAME, read_report::DESCRIPTION),
         definition::<listen::Args>(listen::NAME, listen::DESCRIPTION),
         definition::<create_project::Args>(create_project::NAME, create_project::DESCRIPTION),
         definition::<import_audio::Args>(import_audio::NAME, import_audio::DESCRIPTION),

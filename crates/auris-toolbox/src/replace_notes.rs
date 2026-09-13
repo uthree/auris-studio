@@ -5,7 +5,7 @@ use std::io::Read;
 /// The tool's wire name.
 pub const NAME: &str = "replace_notes";
 /// The tool's model-facing description.
-pub const DESCRIPTION: &str = "Replaces all authored notes in one clip. Supply exactly one of notes (an array) or source (an absolute path to a UTF-8 JSON array on the MCP server). Use source for script-generated scores instead of printing and copying large arrays into tool calls. Notes use pitch (60, \"60\", or \"C4\"), song-relative 1-based bar and beat, beats for duration, and optional velocity 0-1 (default 0.75). All notes are validated before changing the clip. Identical retries do not duplicate notes or create checkpoints; an empty array clears notes. Preserves clip length, curves, transforms and recipe; regeneration can overwrite authored notes. Maximum 65536 notes and 16 MiB per file. Saves with a checkpoint.";
+pub const DESCRIPTION: &str = "Replaces all authored notes in one clip. Supply exactly one of notes (an array) or source (an absolute path to a UTF-8 JSON array on the MCP server). Use source for script-generated scores instead of printing and copying large arrays into tool calls. Notes use pitch (60, \"60\", or \"C4\"), song-relative 1-based bar and beat, beats for duration, and optional velocity 0-1 (default 0.75). All notes are validated before changing the clip. Identical retries do not duplicate notes or create checkpoints; an empty array clears notes. Preserves clip length, curves, transforms and recipe; regeneration can overwrite authored notes. Inline notes allow at most 256 entries; larger scores require source (maximum 65536 notes and 16 MiB per file). Saves with a checkpoint.";
 
 const MAX_NOTES: usize = 65_536;
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
@@ -28,7 +28,7 @@ pub struct Args {
     pub clip: usize,
     /// Complete note array, including [] to clear; omit when using source.
     #[serde(default, deserialize_with = "deserialize_optional_notes")]
-    #[schemars(length(max = 65536))]
+    #[schemars(length(max = 256))]
     pub notes: Option<Vec<edit_notes::NoteSpec>>,
     /// Absolute path on the MCP server to a UTF-8 JSON array, not a wrapper object.
     /// Omit when using notes. The file is read once and is not retained as a project asset.
@@ -40,7 +40,10 @@ pub(crate) fn deserialize_optional_notes<'de, D: serde::Deserializer<'de>>(
 ) -> Result<Option<Vec<edit_notes::NoteSpec>>, D::Error> {
     use serde::Deserialize;
     Option::<serde_json::Value>::deserialize(d)?
-        .map(parse_notes)
+        .map(|value| {
+            if value.as_array().is_some_and(|v| v.len() > 256) { return Err("Inline notes must contain at most 256 entries; use source with an absolute JSON file path for larger scores".into()); }
+            parse_notes(value)
+        })
         .transpose()
         .map_err(serde::de::Error::custom)
 }
@@ -96,7 +99,12 @@ fn read_notes(source: &str) -> Result<Vec<edit_notes::NoteSpec>, String> {
 pub fn run(args: &Args) -> Result<String, String> {
     let loaded;
     let notes = match (&args.notes, &args.source) {
-        (Some(notes), None) => notes.as_slice(),
+        (Some(notes), None) => {
+            if notes.len() > 256 {
+                return Err("Inline notes must contain at most 256 entries; use source with an absolute JSON file path for larger scores".into());
+            }
+            notes.as_slice()
+        }
         (None, Some(source)) => {
             loaded = read_notes(source)?;
             &loaded
@@ -211,6 +219,27 @@ mod tests {
                 .is_empty()
         );
         assert!(run(&file_args).unwrap().starts_with("Unchanged"));
+    }
+
+    #[test]
+    fn large_inline_batches_require_source_but_files_keep_full_capacity() {
+        let notes = json!(vec![json!({"pitch":60,"bar":1,"beat":1,"beats":1}); 257]);
+        let error = serde_json::from_value::<Args>(
+            json!({"project":"missing.auris","track":"Lead","clip":1,"notes":notes}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("256") && error.contains("source"));
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("notes.json");
+        std::fs::write(&path, notes.to_string()).unwrap();
+        assert_eq!(read_notes(path.to_str().unwrap()).unwrap().len(), 257);
+        let error = serde_json::from_value::<edit_notes::Args>(
+            json!({"project":"missing.auris","track":"Lead","clip":1,"add":notes}),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("256"));
     }
 
     #[test]

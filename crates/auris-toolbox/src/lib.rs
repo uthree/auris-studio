@@ -47,6 +47,8 @@ mod listening;
 mod mix_editing;
 mod project_files;
 mod recognition;
+mod reports;
+pub use reports::read_report;
 pub mod replace_notes;
 mod sound_input;
 mod sound_search;
@@ -75,7 +77,7 @@ pub use track_editing::{convert_track_to_audio, routing, set_instrument_param, s
 /// a spec is actually being written rather than sitting in every exchange.
 pub const INSTRUCTIONS: &str = "You control Auris Studio projects through saved files. Respond in the user's language.
 Use absolute paths and copy the actual saved project path returned by creation tools.
-Make dependent edits one at a time: wait for each result before using its IDs or paths.
+Large reports return report_id: use read_report with report_path and next_offset to inspect the immutable snapshot without re-running a write.\nMake dependent edits one at a time: wait for each result before using its IDs or paths.
 
 Use search_instruments with a focused query to choose sounds; never fetch the full library by default.
 Use similar_instruments with a returned ID for acoustic alternatives, and sound_id to select a result.
@@ -698,7 +700,7 @@ pub mod describe {
     pub const NAME: &str = "describe";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Describes a project on disk: tempo, meter, duration, and \
-        every track with its instrument, clip count, effects and routing.";
+        every track with its instrument, clip count, effects and routing. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
 
     /// Arguments to `describe`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -849,7 +851,7 @@ pub mod describe {
             }
             None => {}
         }
-        Ok(text.trim_end().to_string())
+        reports::publish_text(text.trim_end().to_string())
     }
 }
 
@@ -864,7 +866,7 @@ pub mod analyze {
         nothing: length, integrated loudness and peaks for the whole mix, the same per named \
         section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. \
         This is the ears of the improve loop: render, analyze, edit the spec or rewrite one \
-        clip, and ask again.";
+        clip, and ask again. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
 
     /// Arguments to `analyze`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -895,7 +897,7 @@ pub mod analyze {
             ));
         }
         text.push_str(&analysis_text(&report));
-        Ok(text.trim_end().to_string())
+        reports::publish_text(text.trim_end().to_string())
     }
 }
 
@@ -2412,7 +2414,7 @@ pub mod edit_notes {
         takes the numbers `notes` lists, `add` takes notes as pitch (a name like \"F#4\" or a \
         MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 \
         (0.75 when left out). Removals happen first. The change is saved. On a generated clip \
-        the edit sticks until `regenerate_clips` rewrites the clip whole.";
+        the edit sticks until `regenerate_clips` rewrites the clip whole. Inline add and remove each allow at most 256 entries. For a complete larger score, use replace_notes with source pointing to a JSON file.";
 
     /// One note to place.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2452,13 +2454,14 @@ pub mod edit_notes {
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
         /// Note numbers to remove, as the `notes` listing counts them.
+        #[schemars(length(max = 256))]
         pub remove: Option<Vec<usize>>,
         /// Notes to place.
         #[serde(
             default,
             deserialize_with = "super::replace_notes::deserialize_optional_notes"
         )]
-        #[schemars(length(max = 65536))]
+        #[schemars(length(max = 256))]
         pub add: Option<Vec<NoteSpec>>,
     }
 
@@ -2533,8 +2536,8 @@ pub mod edit_notes {
     pub fn run(args: &Args) -> Result<String, String> {
         let removals = args.remove.as_deref().unwrap_or_default();
         let additions = args.add.as_deref().unwrap_or_default();
-        if additions.len() > 65_536 {
-            return Err("add must contain at most 65536 notes".into());
+        if additions.len() > 256 || removals.len() > 256 {
+            return Err("add/remove must each contain at most 256 entries. For a complete larger score, use replace_notes with source pointing to a JSON file; do not print the array into a tool call".into());
         }
         if removals.is_empty() && additions.is_empty() {
             return Err("pass `remove`, `add`, or both — there is nothing else here to do".into());

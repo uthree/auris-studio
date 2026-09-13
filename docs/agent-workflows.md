@@ -443,3 +443,29 @@ returns only the selected key, saved status and resulting point count.
 
 Live `inspect_project` returns effect identity and enabled state, never the
 plugin's opaque restoration state or full saved parameter map.
+
+### Large analysis and composition reports
+
+`describe`, `inspect_composition`, `analyze_music`, `analyze`, and the audio/chord/
+instrument analysis and transcription tools preserve their original result shape
+when the compact response fits in 8 KiB. Larger results return `report_id`, `data`,
+`total`, and `next_offset`. Use `read_report` with that ID; copy a nested
+`report_path` into `path` to select that part of the immutable snapshot. Array
+and object offsets count entries; string offsets count Unicode characters.
+Pages contain at most 32 entries or 1024 string characters and remain within
+8 KiB. A page may return fewer entries to fit the byte budget.
+
+Reading a snapshot does not repeat inference, project edits, or MIDI export.
+Snapshots live in temporary files and expire on server restart or eviction.
+The process retains at most eight reports and evicts older reports when their
+combined size would exceed 128 MiB; a single larger report is kept on its own.
+After expiry, recreate reports with read-only arguments (`apply:false`, without
+MIDI output). After edits, deliberately run the analysis again for current data.
+These limits bound model-facing data, not analysis runtime or temporary storage
+for a single report. Snapshot files are removed when their cache entries drop.
+
+Inline `replace_notes.notes` and `edit_notes.add`/`remove` are limited to 256
+entries. For a larger complete score, generate a JSON array file and pass its
+absolute server path as `replace_notes.source`; the file limit remains 65536
+notes and 16 MiB. Do not split a replacement into multiple replacement calls,
+since each call replaces the previous complete clip.

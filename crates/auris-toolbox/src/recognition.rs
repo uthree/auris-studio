@@ -16,7 +16,7 @@ pub mod analyze_instruments {
     /// Wire name.
     pub const NAME: &str = "analyze_instruments";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits.";
+    pub const DESCRIPTION: &str = "Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// Audio input and an explicitly prepared model.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -36,7 +36,7 @@ pub mod analyze_instruments {
             &AnalysisControl::default(),
         )
         .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+        reports::publish(&report)
     }
 }
 
@@ -46,7 +46,7 @@ pub mod transcribe_mixture {
     /// Wire name.
     pub const NAME: &str = "transcribe_mixture";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.";
+    pub const DESCRIPTION: &str = "Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// Local inference and optional write destinations.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -93,6 +93,7 @@ pub mod transcribe_mixture {
             &AnalysisControl::default(),
         )
         .map_err(|e| e.to_string())?;
+        let response = reports::publish(&report)?;
         if let Some(path) = &args.midi_output {
             let mut output = Session::new(SessionOptions::headless()).map_err(|e| e.to_string())?;
             output
@@ -109,7 +110,7 @@ pub mod transcribe_mixture {
                 .map_err(|e| e.to_string())?;
             output.save_with_checkpoint().map_err(|e| e.to_string())?;
         }
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+        Ok(response)
     }
 }
 
@@ -119,7 +120,7 @@ pub mod analyze_chords {
     /// Wire name.
     pub const NAME: &str = "analyze_chords";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint.";
+    pub const DESCRIPTION: &str = "Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// Track selection, time range and optional acceptance.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -159,13 +160,14 @@ pub mod analyze_chords {
             .chord_analysis_job(&tracks, from, to, options)
             .and_then(|j| j.run(&AnalysisControl::default()))
             .map_err(|e| e.to_string())?;
+        let response = reports::publish(&report)?;
         if args.apply {
             session
                 .apply_chord_analysis(&report)
                 .map_err(|e| e.to_string())?;
             session.save_with_checkpoint().map_err(|e| e.to_string())?;
         }
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+        Ok(response)
     }
 }
 
@@ -175,7 +177,7 @@ pub mod analyze_audio {
     /// Wire name.
     pub const NAME: &str = "analyze_audio";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments.";
+    pub const DESCRIPTION: &str = "Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// Audio input.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -190,7 +192,7 @@ pub mod analyze_audio {
             &AnalysisControl::default(),
         )
         .map_err(|e| e.to_string())?;
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+        reports::publish(&report)
     }
 }
 
@@ -200,7 +202,7 @@ pub mod transcribe_audio {
     /// Wire name.
     pub const NAME: &str = "transcribe_audio";
     /// Model-facing command description.
-    pub const DESCRIPTION: &str = "Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved.";
+    pub const DESCRIPTION: &str = "Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// Input, optional destination, and explicit acceptance.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
@@ -238,6 +240,7 @@ pub mod transcribe_audio {
         )
         .map_err(|e| e.to_string())?;
         let name = args.name.as_deref().unwrap_or("Transcription");
+        let response = reports::publish(&report)?;
         if let Some(path) = &args.midi_output {
             let mut output = Session::new(SessionOptions::headless()).map_err(|e| e.to_string())?;
             output
@@ -254,7 +257,7 @@ pub mod transcribe_audio {
                 .map_err(|e| e.to_string())?;
             session.save_with_checkpoint().map_err(|e| e.to_string())?;
         }
-        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())
+        Ok(response)
     }
 }
 

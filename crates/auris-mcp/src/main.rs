@@ -66,6 +66,15 @@ impl AurisMcp {
         blocking(move || toolbox::listen::run(&args)).await
     }
 
+    /// Reads a cached immutable report snapshot without repeating analysis or edits. Copy report_id and report_path from a large report response. path is a JSON pointer (empty for root); offset follows next_offset. Arrays/objects page entries; strings page Unicode characters. Snapshots expire on server restart or eviction and may predate project edits.
+    #[tool(input_schema = tool_schema("read_report"))]
+    async fn read_report(
+        &self,
+        Parameters(args): Parameters<toolbox::read_report::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::read_report::run(&args)).await
+    }
+
     /// Creates an empty project with one default instrument track and no clips. Optional tempo and meter set its clock. Output must be a new absolute .auris path; choosing Song.auris writes Song/Song.auris. Returns the actual project path to use in later calls. Use add_clip and edit_notes for manual notes, import_audio for recordings, or add_track for more parts.
     #[tool(input_schema = tool_schema("create_project"))]
     async fn create_project(
@@ -202,7 +211,7 @@ impl AurisMcp {
             Err(error) => finished(Err(error)),
         }
     }
-    /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.
+    /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze_music"))]
     async fn analyze_music(
         &self,
@@ -211,7 +220,7 @@ impl AurisMcp {
         blocking(move || toolbox::analyze_music::run(&args)).await
     }
 
-    /// Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint.
+    /// Recognizes chords from written notes on the CPU without rendering or models. Reports absolute-tick intervals, alternate chord symbols and unknown/silent regions. Known percussion is excluded. Apply explicitly replaces recognized harmony and clears silence while preserving unknown intervals and outside harmony; saves a checkpoint. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze_chords"))]
     async fn analyze_chords(
         &self,
@@ -219,7 +228,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze_chords::run(&args)).await
     }
-    /// Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments.
+    /// Analyzes an audio file on the CPU without models or GPU: constant BPM alternatives, beat timestamps and half-second major/minor chord windows. Scores are template/periodicity agreement, not calibrated probabilities. No project is changed. Does not identify instruments. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze_audio"))]
     async fn analyze_audio(
         &self,
@@ -227,7 +236,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze_audio::run(&args)).await
     }
-    /// Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits.
+    /// Estimates instrument and singing presence with an explicitly supplied local YAMNet ONNX export on CPU. Returns overlapping source-second windows, multiple candidate labels, raw event scores and model hash. Empty candidates mean unknown. Scores are not calibrated probabilities. No downloads, GPU, source separation, note assignment or project edits. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze_instruments"))]
     async fn analyze_instruments(
         &self,
@@ -235,7 +244,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::analyze_instruments::run(&args)).await
     }
-    /// Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved.
+    /// Transcribes an isolated monophonic audio file using CPU YIN, without models or GPU. Supports approximately 65-1000 Hz; does not separate mixed instruments or produce engraved staff notation. Returns source-second note estimates. Optional MIDI output creates a new file; apply adds an editable note track to a project and saves a checkpoint. Existing notes and tempo are preserved. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("transcribe_audio"))]
     async fn transcribe_audio(
         &self,
@@ -243,7 +252,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::transcribe_audio::run(&args)).await
     }
-    /// Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review.
+    /// Uses user-converted MuScriptor Small ONNX on CPU for instrument-labeled note drafts. Its model is CC BY-NC 4.0, noncommercial only; present this restriction and obtain explicit user acknowledgement for this invocation before setting acknowledge_noncommercial=true. Acknowledgement does not grant commercial rights. Auris itself remains Apache-2.0. Select decoder.onnx beside audio.onnx and muscriptor.json, prepared with export_muscriptor.py. Runtime requires no Python or downloads. Defaults to read-only JSON. Optional MIDI creates a new file; apply adds instrument tracks and saves a checkpoint. Notes and playback patches need review. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("transcribe_mixture"))]
     async fn transcribe_mixture(
         &self,
@@ -251,7 +260,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::transcribe_mixture::run(&args)).await
     }
-    /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.
+    /// Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("inspect_composition"))]
     async fn inspect_composition(
         &self,
@@ -340,7 +349,7 @@ impl AurisMcp {
         blocking(move || toolbox::render::run(&args)).await
     }
 
-    /// Describes a project on disk: tempo, meter, duration, and every track with its instrument, clip count, effects and routing.
+    /// Describes a project on disk: tempo, meter, duration, and every track with its instrument, clip count, effects and routing. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("describe"))]
     async fn describe(
         &self,
@@ -349,7 +358,7 @@ impl AurisMcp {
         blocking(move || toolbox::describe::run(&args)).await
     }
 
-    /// Listens to a project and reports what it measured, changing nothing: length, integrated loudness and peaks for the whole mix, the same per named section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. This is the ears of the improve loop: render, analyze, edit the spec or rewrite one clip, and ask again.
+    /// Listens to a project and reports what it measured, changing nothing: length, integrated loudness and peaks for the whole mix, the same per named section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. This is the ears of the improve loop: render, analyze, edit the spec or rewrite one clip, and ask again. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze"))]
     async fn analyze(
         &self,
@@ -538,7 +547,7 @@ impl AurisMcp {
         blocking(move || toolbox::notes::run(&args)).await
     }
 
-    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `regenerate_clips` rewrites the clip whole.
+    /// Adds and removes notes in one clip, in one call: `remove` takes the numbers `notes` lists, `add` takes notes as pitch (a name like "F#4" or a MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 (0.75 when left out). Removals happen first. The change is saved. On a generated clip the edit sticks until `regenerate_clips` rewrites the clip whole. Inline add and remove each allow at most 256 entries. For a complete larger score, use replace_notes with source pointing to a JSON file.
     #[tool(input_schema = tool_schema("edit_notes"))]
     async fn edit_notes(
         &self,
@@ -547,7 +556,7 @@ impl AurisMcp {
         blocking(move || toolbox::edit_notes::run(&args)).await
     }
 
-    /// Replaces all authored notes in one clip. Supply exactly one of notes (an array) or source (an absolute path to a UTF-8 JSON array on the MCP server). Use source for script-generated scores instead of printing and copying large arrays into tool calls. Notes use pitch (60, "60", or "C4"), song-relative 1-based bar and beat, beats for duration, and optional velocity 0-1 (default 0.75). All notes are validated before changing the clip. Identical retries do not duplicate notes or create checkpoints; an empty array clears notes. Preserves clip length, curves, transforms and recipe; regeneration can overwrite authored notes. Maximum 65536 notes and 16 MiB per file. Saves with a checkpoint.
+    /// Replaces all authored notes in one clip. Supply exactly one of notes (an array) or source (an absolute path to a UTF-8 JSON array on the MCP server). Use source for script-generated scores instead of printing and copying large arrays into tool calls. Notes use pitch (60, "60", or "C4"), song-relative 1-based bar and beat, beats for duration, and optional velocity 0-1 (default 0.75). All notes are validated before changing the clip. Identical retries do not duplicate notes or create checkpoints; an empty array clears notes. Preserves clip length, curves, transforms and recipe; regeneration can overwrite authored notes. Inline notes allow at most 256 entries; larger scores require source (maximum 65536 notes and 16 MiB per file). Saves with a checkpoint.
     #[tool(input_schema = tool_schema("replace_notes"))]
     async fn replace_notes(
         &self,
