@@ -164,6 +164,7 @@ strings! {
     Signature { en: "Signature", ja: "拍子" }
     PianoRoll { en: "Piano Roll", ja: "ピアノロール" }
     ScoreSource { en: "Source", ja: "元の楽譜" }
+    ScoreOverlay { en: "Overlay", ja: "オーバーレイ" }
     ScorePerformed { en: "Performance", ja: "演奏結果" }
     ScorePerformedHint { en: "Adjust Performance in the inspector. Edit notes in Source.", ja: "インスペクターの演奏パラメータで調整。音符の編集は「元の楽譜」で。" }
     PromptLyric { en: "Lyric", ja: "歌詞" }

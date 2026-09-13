@@ -618,6 +618,8 @@ impl AurisApp {
 
         let clip_start = clip.start;
         let source = self.source_score();
+        let overlay = self.overlay_score();
+        let performed = self.performed_score();
         let clip_length = if source {
             clip.length
         } else {
@@ -935,7 +937,7 @@ impl AurisApp {
                                                 singing,
                                                 geometry.is_some() || !manual_phonemes,
                                             );
-                                            if source {
+                                            if overlay {
                                                 paint_performance_overlay(
                                                     window,
                                                     bounds,
@@ -946,7 +948,7 @@ impl AurisApp {
                                                     &theme,
                                                 );
                                             }
-                                            if !source && !singing {
+                                            if performed && !singing {
                                                 paint_performed_pitch(
                                                     window,
                                                     bounds,

@@ -1,4 +1,4 @@
-//! Editable source and a cached, read-only view of the notes sent to playback.
+//! Editable source, layered comparison, and a cached view of notes sent to playback.
 
 use std::sync::Arc;
 
@@ -16,6 +16,8 @@ pub(crate) enum ScoreLayer {
     /// Stored notes, with all editing gestures available.
     #[default]
     Source,
+    /// Stored notes with playback notes layered over them for comparison.
+    Overlay,
     /// Playback notes, including generated articulations and loop passes.
     Performed,
 }
@@ -42,6 +44,21 @@ impl AurisApp {
     }
     pub(crate) fn source_score(&self) -> bool {
         self.score_layer == ScoreLayer::Source
+    }
+
+    /// Whether the primary layer contains the stored notes.
+    pub(crate) fn shows_source_score(&self) -> bool {
+        matches!(self.score_layer, ScoreLayer::Source | ScoreLayer::Overlay)
+    }
+
+    /// Whether the editor is showing its layered comparison.
+    pub(crate) fn overlay_score(&self) -> bool {
+        self.score_layer == ScoreLayer::Overlay
+    }
+
+    /// Whether the primary layer contains only the performed notes.
+    pub(crate) fn performed_score(&self) -> bool {
+        self.score_layer == ScoreLayer::Performed
     }
 
     /// The last painted performance, for drum row hit testing and scrolling.
@@ -101,13 +118,13 @@ impl AurisApp {
         let Some(clip) = self.selected_midi_clip() else {
             return Arc::default();
         };
-        if self.source_score() {
+        if self.shows_source_score() {
             return Arc::new(clip.notes.clone());
         }
         self.performed_score_notes()
     }
 
-    /// Playback notes faintly superimposed on the editable source score.
+    /// Playback notes faintly superimposed on the stored score in the comparison layer.
     ///
     /// An identity performance adds no information, so an ordinary unlooped clip stays visually
     /// quiet. The returned notes are still only paint data: hit testing continues to read the
@@ -116,7 +133,7 @@ impl AurisApp {
         let has_performance = self
             .selected_midi_clip()
             .is_some_and(|clip| clip.is_looped() || !clip.transforms.is_empty());
-        if !self.source_score() || !has_performance {
+        if !self.overlay_score() || !has_performance {
             return Arc::default();
         }
         self.performed_score_notes()
@@ -137,6 +154,7 @@ impl AurisApp {
             .children(
                 [
                     (ScoreLayer::Source, "score-source", Key::ScoreSource),
+                    (ScoreLayer::Overlay, "score-overlay", Key::ScoreOverlay),
                     (
                         ScoreLayer::Performed,
                         "score-performed",
@@ -307,30 +325,32 @@ mod tests {
         });
         paint(&app, cx);
         show_pitch(&app, cx, 60);
-        click("score-performed", cx);
-        paint(&app, cx);
-        app.read_with(cx, |this, _| {
-            assert!(this.selected_notes.is_empty());
-            assert!(this.score_preview_notes().unwrap().len() > original.len());
-        });
-        let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER / 2), 60);
-        let to = roll_point(&app, cx, Ticks::QUARTER * 2, 62);
-        drag(cx, from, to);
-        click_at(cx, to, creating());
-        right_press(cx, from);
-        cx.simulate_keystrokes("backspace");
-        app.update(cx, |this, cx| {
-            assert!(this.menu.is_none());
-            for command in [
-                MenuCommand::SelectAllNotes,
-                MenuCommand::TransposeNotes(12),
-                MenuCommand::DeleteNotes,
-                MenuCommand::PasteNotes,
-            ] {
-                this.run_menu_command(command, cx);
-            }
-            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
-        });
+        for layer in ["score-overlay", "score-performed"] {
+            click(layer, cx);
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert!(this.selected_notes.is_empty());
+                assert!(this.score_preview_notes().unwrap().len() > original.len());
+            });
+            let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER / 2), 60);
+            let to = roll_point(&app, cx, Ticks::QUARTER * 2, 62);
+            drag(cx, from, to);
+            click_at(cx, to, creating());
+            right_press(cx, from);
+            cx.simulate_keystrokes("backspace");
+            app.update(cx, |this, cx| {
+                assert!(this.menu.is_none());
+                for command in [
+                    MenuCommand::SelectAllNotes,
+                    MenuCommand::TransposeNotes(12),
+                    MenuCommand::DeleteNotes,
+                    MenuCommand::PasteNotes,
+                ] {
+                    this.run_menu_command(command, cx);
+                }
+                assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            });
+        }
         click("score-source", cx);
         paint(&app, cx);
         let from = roll_point(&app, cx, Ticks(TICKS_PER_QUARTER / 2), 60);
@@ -346,7 +366,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn source_piano_roll_prepares_a_non_interactive_performance_overlay(cx: &mut TestAppContext) {
+    fn source_is_plain_and_overlay_prepares_a_non_interactive_comparison(cx: &mut TestAppContext) {
         let (app, cx, _, clip) = with_a_clip(cx);
         let original = app.update(cx, |this, _| {
             this.panels = crate::dock::PanelLayout::default();
@@ -364,11 +384,22 @@ mod tests {
         paint(&app, cx);
 
         app.read_with(cx, |this, _| {
-            assert!(
-                this.source_score(),
-                "the comparison stays in the editable layer"
-            );
+            assert!(this.source_score());
             assert_eq!(this.selected_notes, [0].into_iter().collect());
+            assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
+            assert!(
+                this.score_preview.is_none(),
+                "the source tab does not prepare or paint a performed overlay"
+            );
+        });
+
+        click("score-overlay", cx);
+        paint(&app, cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(this.overlay_score());
+            assert!(!this.source_score(), "the comparison layer is read-only");
+            assert!(this.selected_notes.is_empty());
             assert_eq!(this.session.midi_clip(clip).unwrap().notes, original);
             let overlay = this.score_preview_notes().unwrap();
             assert_eq!(overlay.len(), 1);

@@ -25,6 +25,7 @@ use crate::ui::widgets::{ButtonStyle, button};
 const ROW_HEIGHT: f32 = 28.0;
 const LABEL_WIDTH: f32 = 220.0;
 const HIT_WIDTH: f32 = 12.0;
+const PERFORMANCE_OVERLAY_ALPHA: f32 = 0.28;
 
 /// Which lanes the drum editor presents.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -587,12 +588,17 @@ impl AurisApp {
             .and_then(|track| track.kind.as_instrument())
             .and_then(|instrument| DrumMap::load(&instrument.instrument_state))
             .unwrap_or_default();
-        let notes = if self.source_score() {
+        let notes = if self.shows_source_score() {
             clip.notes.as_slice()
         } else {
             self.score_preview_notes().unwrap_or(&clip.notes)
         };
         let mut pitches: Vec<u8> = notes.iter().map(|note| note.pitch).collect();
+        if self.overlay_score()
+            && let Some(performed) = self.score_preview_notes()
+        {
+            pitches.extend(performed.iter().map(|note| note.pitch));
+        }
         // Keep an unmapped source row in place for the entire gesture, including after its
         // last note has moved to a different row. Otherwise every following move would be
         // interpreted against a different vertical axis.
@@ -626,6 +632,7 @@ impl AurisApp {
             clip.sounding_length()
         };
         let notes = self.score_notes();
+        let performance_overlay = self.score_performance_overlay();
         let rows = self.drum_rows();
         let height = self
             .canvas
@@ -1009,6 +1016,33 @@ impl AurisApp {
                                                         );
                                                     }
                                                 }
+                                            }
+                                            for note in performance_overlay.iter() {
+                                                let Some(row) = rows
+                                                    .iter()
+                                                    .position(|row| row.pitch == note.pitch)
+                                                else {
+                                                    continue;
+                                                };
+                                                let x = bounds.origin.x
+                                                    + view.tick_to_x(clip_start + note.start);
+                                                let y = bounds.origin.y
+                                                    + px(row as f32 * ROW_HEIGHT - scroll + 4.0);
+                                                paint::rounded_rect(
+                                                    window,
+                                                    Bounds {
+                                                        origin: point(x + px(1.0), y),
+                                                        size: size(
+                                                            px(HIT_WIDTH),
+                                                            px(ROW_HEIGHT - 8.0),
+                                                        ),
+                                                    },
+                                                    px(3.0),
+                                                    Theme::translucent(
+                                                        theme.accent,
+                                                        PERFORMANCE_OVERLAY_ALPHA,
+                                                    ),
+                                                );
                                             }
                                             paint::playhead(
                                                 window,
@@ -1498,9 +1532,10 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn performed_drum_rows_follow_transforms_and_reject_note_edits(cx: &mut TestAppContext) {
+    fn drum_score_layers_show_the_expected_rows_and_reject_preview_edits(cx: &mut TestAppContext) {
         let (app, cx, _, clip) = fixture(cx);
         app.update(cx, |this, _| {
+            this.drum_editor.mode = DrumRowsMode::Used;
             this.session
                 .add_note(clip, Note::new(36, Ticks::ZERO, Ticks::QUARTER))
                 .unwrap();
@@ -1515,25 +1550,37 @@ mod window_tests {
                 .unwrap();
         });
         paint(&app, cx);
-        harness::click("score-performed", cx);
-        paint(&app, cx);
         app.read_with(cx, |this, _| {
-            assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
-            assert!(this.score_preview_notes().unwrap().len() > 1);
+            assert!(this.source_score());
+            assert!(this.score_preview.is_none());
+            assert!(this.drum_rows().iter().any(|row| row.pitch == 36));
         });
-        let from = hit_point(&app, cx, Ticks::ZERO, 91);
-        let to = hit_point(&app, cx, Ticks::QUARTER * 2, 91);
-        drag(cx, from, to);
-        click_at(cx, to, Modifiers::none());
-        harness::right_press(cx, from);
-        cx.simulate_keystrokes("backspace");
-        app.read_with(cx, |this, _| {
-            assert!(this.menu.is_none());
-            let notes = &this.session.midi_clip(clip).unwrap().notes;
-            assert_eq!(notes.len(), 1);
-            assert_eq!(notes[0].pitch, 36);
-            assert_eq!(notes[0].start, Ticks::ZERO);
-        });
+        for layer in ["score-overlay", "score-performed"] {
+            harness::click(layer, cx);
+            paint(&app, cx);
+            app.read_with(cx, |this, _| {
+                assert!(this.drum_rows().iter().any(|row| row.pitch == 91));
+                assert!(this.score_preview_notes().unwrap().len() > 1);
+                assert_eq!(
+                    this.drum_rows().iter().any(|row| row.pitch == 36),
+                    this.overlay_score(),
+                    "only the comparison keeps the stored row beside the performed row"
+                );
+            });
+            let from = hit_point(&app, cx, Ticks::ZERO, 91);
+            let to = hit_point(&app, cx, Ticks::QUARTER * 2, 91);
+            drag(cx, from, to);
+            click_at(cx, to, Modifiers::none());
+            harness::right_press(cx, from);
+            cx.simulate_keystrokes("backspace");
+            app.read_with(cx, |this, _| {
+                assert!(this.menu.is_none());
+                let notes = &this.session.midi_clip(clip).unwrap().notes;
+                assert_eq!(notes.len(), 1);
+                assert_eq!(notes[0].pitch, 36);
+                assert_eq!(notes[0].start, Ticks::ZERO);
+            });
+        }
         harness::click("score-source", cx);
         paint(&app, cx);
         let at = hit_point(&app, cx, Ticks::QUARTER * 2, 36);
