@@ -155,11 +155,25 @@ For example, eight bars starting at bar 1 resize with
 `start_bar:1,bars:4`. Note beats follow the meter; automation uses absolute
 quarter-note beats starting at zero.
 
+For MCP note input, `bar` is at least 1 and `beat` stays within that bar's meter:
+`1 <= beat < 5` in 4/4 and `1 <= beat < 7` in 6/8. Fractional positions such as
+4.75 in 4/4 are valid; advance `bar` instead of using beat 5. Neither bar 0 nor
+out-of-bar beats are silently corrected. Each note is an object with named fields,
+including in a `replace_notes` source file. Positional arrays are rejected with an example.
+
+MCP `list_instruments` lists usable built-in IDs and the shipped GM library's loaded
+bank-0 melodic presets and bank-128 kits. Copy its `sound` number (zero-based) or an
+explicitly listed GM name into `add_track` or `set_instrument`; both `81` and `"81"`
+select the sawtooth lead. Font preset display names are not necessarily GM aliases.
+Use `kind:"drum"` when adding a kit track or `drums:true` when changing its sound.
+For manual composition, add a clip with `add_clip`, then fill it with `replace_notes`;
+`add_part` generates music automatically.
+
 `create_project` starts with one empty instrument track. `import_audio` copies an
 audio file onto a new track in an existing project; `import_midi` creates a new
 project retaining the MIDI clock. `export_midi` writes a new MIDI file. Creation
 and export refuse replacement; always copy the returned actual project path.
-`add_track` requires an explicit `kind` (`instrument`, `singer`, `audio`, `bus`),
+`add_track` requires an explicit `kind` (`instrument`, `drum`, `singer`, `audio`, `bus`),
 and `add_clip` requires a `name`. A track named Reverb is a bus only when its kind
 is `bus`. Read back exact requested names and types along with musical values.
 

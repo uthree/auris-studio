@@ -48,11 +48,12 @@ mod mix_editing;
 mod project_files;
 mod recognition;
 pub mod replace_notes;
+mod sound_input;
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
-pub use catalog::{ToolDefinition, parameter_schema, tool_catalog, tool_help};
+pub use catalog::{ToolDefinition, argument_error_hint, parameter_schema, tool_catalog, tool_help};
 pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
@@ -1774,7 +1775,8 @@ pub mod list_instruments {
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
         `add_track` and `set_instrument` take. Reports whether the General MIDI library is \
-        loaded; when available, select a GM name or program number using sound.";
+        loaded and lists its available bank-0 melodic programs and bank-128 drum kits with \
+        exact sound values. Pass sound as an integer program or the listed GM name.";
 
     /// Every registered instrument, one line each.
     pub fn run() -> String {
@@ -1783,17 +1785,73 @@ pub mod list_instruments {
             Ok(session) => {
                 text.push_str(&format!("General MIDI library loaded: {}. The sampler requires a loaded font and preset.\n", session.general_midi_available()));
                 for descriptor in session.registry().instruments() {
+                    if descriptor.id == SAMPLER_ID {
+                        continue;
+                    }
                     text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
                 }
+                text.push_str(&gm_listing(&session.general_midi_presets()));
             }
             Err(error) => text.push_str(&format!("  (unlisted: {error})\n")),
         }
         text.push_str(
-            "\nOr pass `sound` instead of `instrument`: any General MIDI sound by name \
-             (\"Electric Piano 1\", \"Fretless Bass\") or program number 0-127, with \
+            "\nWhen the GM library is loaded, pass a listed `sound` instead of `instrument`: \
+             a GM name or integer/string program number 0-127, with \
              `kind: drum` in add_track, or `drums: true` in set_instrument, for a drum kit.",
         );
         text.trim_end().to_string()
+    }
+
+    fn gm_listing(presets: &[SoundFontPreset]) -> String {
+        let mut text = String::from(
+            "\nAvailable GM sound values (programs are zero-based; use kind: drum or drums: true for bank 128):\n",
+        );
+        let mut presets = presets.iter().collect::<Vec<_>>();
+        presets.sort_by_key(|preset| (preset.bank, preset.patch));
+        for preset in presets {
+            if !matches!(preset.bank, 0 | 128) || !(0..=127).contains(&preset.patch) {
+                continue;
+            }
+            let program = gm::Program(preset.patch as u8);
+            let label = program.label(preset.bank == 128);
+            let alias = if gm::Program::parse(label) == Some(program) {
+                format!("; GM name: {label}")
+            } else {
+                String::new()
+            };
+            text.push_str(&format!(
+                "  sound: {}, bank: {}{alias}; font preset: {}\n",
+                preset.patch, preset.bank, preset.name
+            ));
+        }
+        text
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn gm_listing_only_offers_loaded_selectable_addresses_and_exact_aliases() {
+            let presets = [
+                (0, 81, "Saw"),
+                (128, 0, "Drums"),
+                (128, 1, "Alternate"),
+                (8, 81, "Variation"),
+                (0, 128, "Invalid"),
+            ]
+            .map(|(bank, patch, name)| SoundFontPreset {
+                bank,
+                patch,
+                name: name.into(),
+            });
+            let text = gm_listing(&presets);
+            assert!(text.contains("sound: 81, bank: 0; GM name: Lead 2 (sawtooth)"));
+            assert!(text.contains("sound: 0, bank: 128; GM name: Standard Kit"));
+            assert!(text.contains("sound: 1, bank: 128; font preset: Alternate"));
+            assert!(!text.contains("Variation"));
+            assert!(!text.contains("Invalid"));
+        }
     }
 }
 
@@ -1847,6 +1905,8 @@ pub mod add_track {
         pub instrument: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
+        #[serde(default, deserialize_with = "sound_input::deserialize")]
+        #[schemars(with = "Option<sound_input::Input>")]
         pub sound: Option<String>,
         /// The track type. Use bus for a mixer bus; the track name does not determine its type.
         pub kind: Kind,
@@ -1912,7 +1972,7 @@ pub mod add_track {
             .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if matches!(kind, Kind::Instrument | Kind::Drum) {
-            text.push_str(" The track holds no clips yet; `add_part` writes one.");
+            text.push_str(" The track holds no clips yet. For authored notes, use `add_clip` then `replace_notes` (inline notes or a JSON source file); `add_part` generates a part automatically.");
         }
         if kind == Kind::Singer {
             text.push_str(
@@ -1942,7 +2002,7 @@ pub mod add_track {
             let program = gm::Program::parse(wanted).ok_or_else(|| {
                 format!(
                     "no General MIDI sound answers to '{wanted}' — give a name like \
-                     \"Electric Piano 1\" or a program number 0-127"
+                     \"Electric Piano 1\" or a program number 0-127. Call list_instruments and copy an exact sound value; do not guess preset names"
                 )
             })?;
             let chosen = program.sound(drums);
@@ -2090,6 +2150,8 @@ pub mod set_instrument {
         pub instrument: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
+        #[serde(default, deserialize_with = "sound_input::deserialize")]
+        #[schemars(with = "Option<sound_input::Input>")]
         pub sound: Option<String>,
         /// Read `sound`'s number as a drum kit rather than a melodic program.
         #[serde(default)]
@@ -2351,7 +2413,8 @@ pub mod edit_notes {
         #[schemars(range(min = 1))]
         pub bar: u32,
         /// The 1-based beat within that bar; fractions land between beats (1.5 is the "and"
-        /// of one).
+        /// of one). Must be less than numerator + 1 in the current meter (1 <= beat < 5
+        /// in 4/4, 1 <= beat < 7 in 6/8). Advance bar instead of overflowing beat.
         #[schemars(range(min = 1))]
         pub beat: f64,
         /// How long the note is held, in beats.
@@ -3078,17 +3141,28 @@ fn bounded_bars(bars: u32, subject: &str) -> Result<u32, String> {
 
 /// Where 1-based `bar` and `beat` land on the timeline.
 fn placed_at(project: &Project, bar: u32, beat: f64) -> Result<Ticks, String> {
-    if !beat.is_finite() || !(1.0..=MAX_TOOL_BEATS).contains(&beat) {
+    if bar == 0 {
+        return Err("bar must be at least 1; bar 0 is not a musical position".into());
+    }
+    let start = project.signatures.bar_start(bar);
+    let signature = project.signatures.signature_at(start);
+    let end = f64::from(signature.numerator) + 1.0;
+    if !beat.is_finite() || !(1.0..end).contains(&beat) {
         return Err(format!(
-            "beats count from 1 and stop at {MAX_TOOL_BEATS}; {beat} is outside that range"
+            "beat must satisfy 1 <= beat < {end} in {}/{} at bar {bar}; got {beat}. Advance bar for the next bar; fractional beats such as 1.5 are valid",
+            signature.numerator, signature.denominator
         ));
     }
-    let start = project.signatures.bar_start(bar.max(1));
-    let per_beat = project.signatures.signature_at(start).ticks_per_beat();
-    Ok(start + Ticks((per_beat.raw() as f64 * (beat - 1.0)).round() as i64))
+    let offset = Ticks((signature.ticks_per_beat().raw() as f64 * (beat - 1.0)).round() as i64);
+    if offset >= signature.ticks_per_bar() {
+        return Err(
+            "beat rounds to the next bar at tick resolution; advance bar and use beat 1".into(),
+        );
+    }
+    Ok(start + offset)
 }
 
-/// Largest beat position or note duration accepted at the model-facing door.
+/// Largest note duration accepted at the model-facing door, in notated beats.
 ///
 /// This is 4,096 bars of common time: far beyond an ordinary clip, while still keeping every
 /// conversion and subsequent timeline calculation comfortably inside `Ticks`.
@@ -3311,6 +3385,42 @@ fn analysis_text(report: &auris_session::MixAnalysis) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn note_positions_respect_each_bars_notated_meter_without_clamping() {
+        let mut project = Project::new("Meter", 48_000.0);
+        for (bar, beat) in [
+            (0, 1.0),
+            (1, 0.0),
+            (1, 5.0),
+            (1, f64::NAN),
+            (1, f64::INFINITY),
+            (1, 4.99999999),
+        ] {
+            assert!(
+                placed_at(&project, bar, beat).is_err(),
+                "bar {bar} beat {beat}"
+            );
+        }
+        assert_eq!(
+            placed_at(&project, 1, 4.75).unwrap(),
+            Ticks::from_beats(3.75)
+        );
+        let change = Ticks::QUARTER * 4;
+        project
+            .signatures
+            .set_point(change, TimeSignature::new(6, 8));
+        assert_eq!(
+            placed_at(&project, 2, 6.5).unwrap(),
+            change + Ticks::from_beats(2.75)
+        );
+        assert!(placed_at(&project, 2, 7.0).is_err());
+        project
+            .signatures
+            .set_point(change + Ticks::QUARTER * 3, TimeSignature::new(3, 4));
+        assert!(placed_at(&project, 3, 4.0).is_err());
+        assert_eq!(placed_at(&project, 3, 1.0).unwrap(), Ticks::QUARTER * 7);
+    }
 
     #[test]
     fn documentation_search_finds_a_named_feature_and_limits_its_answer() {
@@ -3916,7 +4026,7 @@ mod tests {
         assert!(too_long.contains("at most"), "refused safely: {too_long}");
         let too_late = place(vec![note("C4", 1, 1e18)], None).unwrap_err();
         assert!(
-            too_late.contains("outside that range"),
+            too_late.contains("1 <= beat < 5"),
             "refused safely: {too_late}"
         );
 

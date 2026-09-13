@@ -451,7 +451,7 @@ impl AurisMcp {
         finished(Ok(toolbox::list_presets::run()))
     }
 
-    /// Lists the built-in instruments a track can play, by the id `add_track` and `set_instrument` take. Reports whether the General MIDI library is loaded; when available, select a GM name or program number using sound.
+    /// Lists the built-in instruments a track can play, by the id `add_track` and `set_instrument` take. Reports whether the General MIDI library is loaded and lists its available bank-0 melodic programs and bank-128 drum kits with exact sound values. Pass sound as an integer program or the listed GM name.
     #[tool(input_schema = tool_schema("list_instruments"))]
     async fn list_instruments(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_instruments::run())).await
@@ -585,8 +585,9 @@ impl ServerHandler for AurisMcp {
         let name = request.name.to_string();
         let router = Self::tool_router();
         let known = router.has_route(&name);
+        let arguments = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        recover_argument_error(router.call(call).await, &name, known)
+        recover_argument_error(router.call(call).await, &name, known, Some(&arguments))
     }
 
     async fn list_resources(
@@ -638,12 +639,41 @@ fn recover_argument_error(
     result: Result<rmcp::model::CallToolResponse, ErrorData>,
     name: &str,
     known: bool,
+    arguments: Option<&serde_json::Value>,
 ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+    let guidance = || {
+        let hint = arguments
+            .and_then(|args| toolbox::argument_error_hint(name, args))
+            .map(|hint| format!("{hint}. "))
+            .unwrap_or_default();
+        format!(
+            "{hint}Call tool_help with name '{name}' for exact fields and examples, then correct the arguments."
+        )
+    };
     match result {
         Err(error) if known && error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {
             Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                "Invalid arguments for {name}: {}. Call tool_help with name '{name}' for exact fields and examples, then correct the arguments.", error.message
-            ))]).into())
+                "Invalid arguments for {name}: {}. {}",
+                error.message,
+                guidance()
+            ))])
+            .into())
+        }
+        Ok(rmcp::model::CallToolResponse::Complete(mut result))
+            if known
+                && result.is_error == Some(true)
+                && result
+                    .content
+                    .iter()
+                    .filter_map(|content| content.as_text())
+                    .any(|content| {
+                        content.text.starts_with("failed to deserialize parameters")
+                    }) =>
+        {
+            // The SDK converts Parameters failures into tool content before they reach us.
+            // Preserve its detail and add the same recovery advice as protocol-level errors.
+            result.content.push(ContentBlock::text(guidance()));
+            Ok(result.into())
         }
         other => other,
     }
@@ -696,12 +726,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn routed_parameter_failures_include_field_and_recovery_guidance() {
+        let (server_transport, client_transport) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            AurisMcp::default()
+                .serve(server_transport)
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
+        let client = ().serve(client_transport).await.unwrap();
+        let result = client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("add_track").with_arguments(
+                    serde_json::json!({
+                        "project":"unused.auris", "name":"Lead", "kind":["instrument"]
+                    })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.is_error, Some(true));
+        let text = result
+            .content
+            .iter()
+            .filter_map(|content| content.as_text())
+            .map(|content| content.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("arguments.kind"), "{text}");
+        assert!(text.contains("string"), "{text}");
+        assert!(text.contains("tool_help"), "{text}");
+        client.cancel().await.unwrap();
+        server.await.unwrap();
+    }
+
     #[test]
     fn bad_arguments_are_tool_feedback_but_protocol_errors_keep_their_codes() {
         let result = recover_argument_error(
             Err(ErrorData::invalid_params("missing end_bar", None)),
             "edit_clip",
             true,
+            None,
         )
         .unwrap();
         let rmcp::model::CallToolResponse::Complete(result) = result else {
@@ -713,6 +785,7 @@ mod tests {
             Err(ErrorData::invalid_params("unknown tool", None)),
             "invented",
             false,
+            None,
         )
         .unwrap_err();
         assert_eq!(unknown.code, rmcp::model::ErrorCode::INVALID_PARAMS);
@@ -720,6 +793,7 @@ mod tests {
             Err(ErrorData::internal_error("worker failed", None)),
             "edit_clip",
             true,
+            None,
         )
         .unwrap_err();
         assert_eq!(internal.code, rmcp::model::ErrorCode::INTERNAL_ERROR);

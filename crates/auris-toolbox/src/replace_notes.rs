@@ -57,6 +57,9 @@ fn parse_notes(value: serde_json::Value) -> Result<Vec<edit_notes::NoteSpec>, St
         .iter()
         .enumerate()
         .map(|(index, value)| {
+            if !value.is_object() {
+                return Err(format!("notes[{index}] must be an object with named fields, not a positional array. {EXAMPLE}"));
+            }
             serde_json::from_value(value.clone()).map_err(|error| {
                 let path = format!("notes[{index}]");
                 let hint = super::live_agent::argument_hint(&schema, value, &path).unwrap_or(path);
@@ -178,6 +181,9 @@ mod tests {
             json!([{"pitch":60,"bar":2,"beat":1,"length":1}]),
             json!([{"pitch":60,"bar":2,"beat":1,"beats":0.00000001}]),
             json!([{"pitch":128,"bar":2,"beat":1,"beats":1}]),
+            json!([{"pitch":60,"bar":2,"beat":1,"beats":1},{"pitch":61,"bar":0,"beat":1,"beats":1}]),
+            json!([{"pitch":60,"bar":2,"beat":1,"beats":1},{"pitch":61,"bar":2,"beat":5,"beats":1}]),
+            json!([[60, 2, 1, 1, 0.75]]),
         ] {
             std::fs::write(&source, serde_json::to_vec(&bad).unwrap()).unwrap();
             let error = run(&file_args).unwrap_err();

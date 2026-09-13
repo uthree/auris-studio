@@ -1,6 +1,13 @@
 //! Shared wire schemas and on-demand help for model clients.
 use super::*;
 
+/// Explain a likely field mismatch after a saved-project tool rejects its arguments.
+/// This is diagnostic help, not a substitute for deserialization or session validation.
+pub fn argument_error_hint(name: &str, arguments: &serde_json::Value) -> Option<String> {
+    let definition = tool_catalog().into_iter().find(|tool| tool.name == name)?;
+    super::live_agent::argument_hint(&definition.parameters, arguments, "arguments")
+}
+
 /// A model-facing tool definition, shared by both transports.
 pub struct ToolDefinition {
     /// Exact callable name.
