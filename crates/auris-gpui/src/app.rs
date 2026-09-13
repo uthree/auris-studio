@@ -670,6 +670,13 @@ pub enum Drag {
         /// Pointer x when the drag began.
         start_x: Pixels,
     },
+    /// Dragging the track-height slider.
+    TrackHeight {
+        /// Slider position when the drag began, from 0 to 1.
+        start_fraction: f32,
+        /// Pointer x when the drag began.
+        start_x: Pixels,
+    },
     /// Dragging the tempo readout.
     Tempo {
         /// Where the playhead sat when the drag began. The gesture turns the tempo of the
@@ -801,6 +808,9 @@ impl Drag {
             Drag::SectionLabel { .. } => Some(Edit::MoveSection),
             // How far in the view is zoomed is a property of the window, like a panel's width.
             Drag::TimeZoom { .. } => None,
+            // Unlike timeline zoom, lane height is stored in the project so the layout travels
+            // with the song and Undo can put heterogeneous lane heights back.
+            Drag::TrackHeight { .. } => Some(Edit::SetTrackHeight),
             // Panel and window geometry is a property of the window, not the document: resizing
             // a panel or moving the plugin editor is not an edit and must never land on the undo
             // stack.

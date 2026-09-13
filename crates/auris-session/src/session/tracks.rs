@@ -566,6 +566,30 @@ impl Session {
         Ok(())
     }
 
+    /// Sets every track lane to the same height.
+    ///
+    /// Recorded once for the whole list, so a frontend can expose one track-density control
+    /// without making Undo walk through the tracks one at a time.
+    pub fn set_all_track_heights(&mut self, height: f32) {
+        let height = if height.is_finite() {
+            height.clamp(MIN_TRACK_HEIGHT, MAX_TRACK_HEIGHT)
+        } else {
+            MIN_TRACK_HEIGHT
+        };
+        if self
+            .project
+            .tracks
+            .iter()
+            .all(|track| track.height == height)
+        {
+            return;
+        }
+        self.record(Edit::SetTrackHeight);
+        for track in &mut self.project.tracks {
+            track.height = height;
+        }
+    }
+
     pub(super) fn require_track(&self, id: TrackId) -> Result<usize, SessionError> {
         self.project
             .track_index(id)
@@ -1289,5 +1313,40 @@ mod tests {
         let depth = undo_depth(&mut session);
         session.set_track_height(track, MIN_TRACK_HEIGHT).unwrap();
         assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn resizing_the_track_list_changes_every_lane_in_one_undo_step() {
+        let mut session = session();
+        let first = session.add_audio_track("Vocals");
+        session.add_audio_track("Guitar");
+        session.set_track_height(first, 120.0).unwrap();
+        let before: Vec<f32> = session
+            .project()
+            .tracks
+            .iter()
+            .map(|track| track.height)
+            .collect();
+        session.forget_history();
+
+        session.set_all_track_heights(32.0);
+        assert!(
+            session
+                .project()
+                .tracks
+                .iter()
+                .all(|track| track.height == 32.0)
+        );
+
+        assert_eq!(session.undo(), Some(Edit::SetTrackHeight));
+        assert_eq!(
+            session
+                .project()
+                .tracks
+                .iter()
+                .map(|track| track.height)
+                .collect::<Vec<_>>(),
+            before
+        );
     }
 }

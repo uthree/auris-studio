@@ -168,6 +168,10 @@ actions!(
         ZoomIn,
         /// Zoom the timeline out.
         ZoomOut,
+        /// Make every track lane taller.
+        IncreaseTrackHeight,
+        /// Make every track lane shorter.
+        DecreaseTrackHeight,
         /// Show or hide the library panel.
         ToggleLibrary,
         /// Show or hide the inspector panel.
@@ -542,6 +546,8 @@ bindable! {
         "view.modulation_lane", GroupView,      CmdShowModulationLane, "secondary-alt-w" => ToggleModulationLane;
         "view.zoom_in",         GroupView,      CmdZoomIn,             "secondary-=" => ZoomIn;
         "view.zoom_out",        GroupView,      CmdZoomOut,            "secondary--" => ZoomOut;
+        "view.track_height_increase", GroupView, CmdIncreaseTrackHeight, "" => IncreaseTrackHeight;
+        "view.track_height_decrease", GroupView, CmdDecreaseTrackHeight, "" => DecreaseTrackHeight;
         "view.settings",        GroupView,      CmdSettings,           "secondary-," => OpenSettings;
         // What VS Code and Zed both use, and free here — `p` alone already shows the piano roll.
         "view.palette",         GroupView,      CmdCommandPalette,     "secondary-shift-p" => OpenCommandPalette;

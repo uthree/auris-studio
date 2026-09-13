@@ -35,6 +35,8 @@ pub enum Icon {
     ChevronUp,
     /// Move down in a list.
     ChevronDown,
+    /// Make the rows in the track list taller or shorter.
+    TrackHeight,
     /// A branch of a tree that is shut. Points at what opening it would reveal.
     ChevronRight,
     /// Remove something.
@@ -262,6 +264,27 @@ pub fn paint_icon(window: &mut Window, bounds: Bounds<Pixels>, icon: Icon, color
                 at(0.26, 0.38),
                 at(0.74, 0.38),
                 at(0.50, 0.66),
+                color,
+            );
+        }
+        Icon::TrackHeight => {
+            // Two lane edges around a double-ended vertical arrow. The arrow owns the empty
+            // space between the rows, so this reads as height rather than as list reordering.
+            bar(window, 0.28, 0.16, 0.88, 0.25);
+            bar(window, 0.28, 0.75, 0.88, 0.84);
+            bar(window, 0.12, 0.32, 0.20, 0.68);
+            triangle(
+                window,
+                at(0.05, 0.34),
+                at(0.27, 0.34),
+                at(0.16, 0.18),
+                color,
+            );
+            triangle(
+                window,
+                at(0.05, 0.66),
+                at(0.27, 0.66),
+                at(0.16, 0.82),
                 color,
             );
         }

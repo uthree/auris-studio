@@ -14,6 +14,7 @@ use crate::app::{AurisApp, Drag};
 use crate::i18n::track_kind_key;
 use crate::theme::Metrics;
 use crate::ui::automation;
+use crate::ui::icons::{Icon, icon};
 use crate::ui::widgets::{ButtonStyle, Latch, button, db_to_meter_position, level_meter};
 
 /// How tall the strip along the bottom of a header that resizes its lane is.
@@ -571,13 +572,36 @@ impl AurisApp {
     /// alignment with the ruler and any open automation strips opposite it.
     fn track_header_toolbar(&self, cx: &mut gpui::Context<Self>) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let has_tracks = !self.project().tracks.is_empty();
+        let height_control = has_tracks.then(|| {
+            div()
+                .id("track-height-control")
+                .debug_selector(|| "track-height-control".to_string())
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(icon(Icon::TrackHeight, px(12.0), theme.text_muted))
+                .child(self.track_height_slider(cx))
+                .tooltip(self.tip(Key::TrackHeight, ""))
+        });
         div()
             // Matches the ruler and whichever strips are showing opposite. See the method.
             .h(self.panels.lanes.header_height())
+            .flex()
+            .flex_col()
             .flex_shrink_0()
             .bg(theme.surface_raised)
             .border_b_1()
             .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(Metrics::RULER_HEIGHT)
+                    .w_full()
+                    .children(height_control),
+            )
             .on_mouse_down(
                 MouseButton::Right,
                 AurisApp::opens_menu(cx, |this, at| this.arrangement_menu(at)),
@@ -618,8 +642,9 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::harness::{choose, right_press, with_a_clip};
+    use crate::harness::{choose, drag, open, paint, right_press, with_a_clip};
     use crate::ui::context_menu::MenuCommand;
+    use crate::{actions, ui::widgets::ZOOM_SLIDER_WIDTH};
     use auris_session::session::MIN_TRACK_HEIGHT;
 
     #[gpui::test]
@@ -721,6 +746,68 @@ mod tests {
         // And it is worth pressing itself: a strip thinner than a couple of pixels is a target
         // the pointer has to be aimed at rather than moved towards.
         assert!(RESIZE_BAND >= px(3.0));
+    }
+
+    #[gpui::test]
+    fn the_track_height_slider_compacts_every_lane_and_undo_restores_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            for index in 0..20 {
+                this.session.add_audio_track(format!("Track {index}"));
+            }
+        });
+        paint(&app, cx);
+        let slider = cx
+            .debug_bounds("track-height-slider")
+            .expect("the populated track list draws its height slider");
+        let from = slider.center();
+        let to = gpui::point(from.x - ZOOM_SLIDER_WIDTH, from.y);
+
+        drag(cx, from, to);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height == MIN_TRACK_HEIGHT)
+            );
+        });
+
+        cx.dispatch_action(actions::Undo);
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .tracks
+                    .iter()
+                    .all(|track| track.height == 72.0)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn the_track_height_command_compacts_the_list_without_a_pointer(cx: &mut gpui::TestAppContext) {
+        let (app, cx, track, _) = with_a_clip(cx);
+        let before = app.read_with(cx, |this, _| {
+            this.project()
+                .track(track)
+                .expect("the track exists")
+                .height
+        });
+
+        cx.dispatch_action(actions::DecreaseTrackHeight);
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.project()
+                    .track(track)
+                    .expect("the track exists")
+                    .height
+                    < before,
+                "the View command is a keyboard-accessible path to the same control"
+            );
+        });
     }
 
     #[test]

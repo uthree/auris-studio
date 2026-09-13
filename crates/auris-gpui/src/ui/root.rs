@@ -392,6 +392,8 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_panic_stop))
                     .on_action(Self::window_listener(cx, Self::on_zoom_in))
                     .on_action(Self::window_listener(cx, Self::on_zoom_out))
+                    .on_action(Self::window_listener(cx, Self::on_increase_track_height))
+                    .on_action(Self::window_listener(cx, Self::on_decrease_track_height))
                     .on_action(Self::window_listener(cx, Self::on_toggle_library))
                     .on_action(Self::window_listener(cx, Self::on_toggle_inspector))
                     .on_action(Self::window_listener(cx, Self::on_toggle_piano_roll))
@@ -1740,6 +1742,14 @@ impl AurisApp {
                 let delta = f32::from(event.position.x - start_x) / travel;
                 self.timeline.set_zoom_fraction(start_fraction + delta);
             }
+            Drag::TrackHeight {
+                start_fraction,
+                start_x,
+            } => {
+                let travel = f32::from(crate::ui::widgets::ZOOM_SLIDER_WIDTH).max(1.0);
+                let delta = f32::from(event.position.x - start_x) / travel;
+                self.set_track_height_fraction(start_fraction + delta);
+            }
             Drag::Tempo {
                 at,
                 start_bpm,
@@ -3011,6 +3021,30 @@ impl AurisApp {
 
     fn on_zoom_out(&mut self, _: &actions::ZoomOut, _window: &mut Window, cx: &mut Context<Self>) {
         self.timeline.zoom_by(1.0 / 1.3, px(0.0));
+        cx.notify();
+    }
+
+    fn on_increase_track_height(
+        &mut self,
+        _: &actions::IncreaseTrackHeight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_track_height_fraction(
+            self.current_track_height_fraction() + crate::ui::commands::TRACK_HEIGHT_STEP,
+        );
+        cx.notify();
+    }
+
+    fn on_decrease_track_height(
+        &mut self,
+        _: &actions::DecreaseTrackHeight,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_track_height_fraction(
+            self.current_track_height_fraction() - crate::ui::commands::TRACK_HEIGHT_STEP,
+        );
         cx.notify();
     }
 

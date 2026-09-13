@@ -158,6 +158,7 @@ strings! {
     ExportWav { en: "Export Audio", ja: "オーディオ書き出し" }
     Grid { en: "Grid", ja: "グリッド" }
     Zoom { en: "Zoom", ja: "拡大" }
+    TrackHeight { en: "Track Height", ja: "トラックの高さ" }
     GridFree { en: "free", ja: "自由" }
     Position { en: "Position", ja: "位置" }
     Tempo { en: "Tempo", ja: "テンポ" }
@@ -646,6 +647,8 @@ strings! {
     CmdShowTempoMarks { en: "Tempo Changes", ja: "テンポの変化" }
     CmdZoomIn { en: "Zoom In", ja: "拡大" }
     CmdZoomOut { en: "Zoom Out", ja: "縮小" }
+    CmdIncreaseTrackHeight { en: "Increase Track Height", ja: "トラックを高く" }
+    CmdDecreaseTrackHeight { en: "Decrease Track Height", ja: "トラックを低く" }
     CmdSettings { en: "Settings", ja: "設定" }
     CmdCommandPalette { en: "Command Palette", ja: "コマンドパレット" }
 
