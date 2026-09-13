@@ -92,6 +92,8 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.set_loop",
     "edit_project.remove_notes",
     "list_instruments",
+    "search_instruments",
+    "similar_instruments",
     "list_presets",
     "list_progressions",
     "spec_reference",
@@ -117,6 +119,8 @@ impl Operation {
                     | crate::live_agent::Command::InspectAudio { .. }
                     | crate::live_agent::Command::ReadNotes { .. }
                     | crate::live_agent::Command::ListInstruments { .. }
+                    | crate::live_agent::Command::SearchInstruments { .. }
+                    | crate::live_agent::Command::SimilarInstruments { .. }
             );
             let confirm = matches!(
                 parsed,
@@ -126,8 +130,11 @@ impl Operation {
                     | crate::live_agent::Command::Compose { replace: true, .. }
             );
             Ok(Self {
-                name: if action == "list_instruments" {
-                    "list_instruments".into()
+                name: if matches!(
+                    action,
+                    "list_instruments" | "search_instruments" | "similar_instruments"
+                ) {
+                    action.into()
                 } else {
                     format!("edit_project.{action}")
                 },

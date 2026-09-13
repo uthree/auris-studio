@@ -32,6 +32,8 @@
 
 mod accompany;
 mod agent_instruments;
+mod sound_search;
+pub use sound_search::{SoundLibraryJob, SoundSearch};
 mod analysis;
 mod assets;
 mod audition;

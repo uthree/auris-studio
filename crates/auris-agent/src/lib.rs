@@ -269,7 +269,7 @@ fn preamble() -> String {
 Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
 without command or action wrappers. Use the numeric IDs returned by inspection and edits.
 For a song request, choose the harmony, melody, rhythm and arrangement yourself.
-Use list_instruments (search by query and follow next_offset), add_track, set_instrument, add_clip and add_notes to write your music. Instrument IDs come from the live library, including SoundFont sounds and CLAP/VST3 instruments; never invent IDs.
+Use search_instruments with focused query words (default 10 results), then set_instrument with the returned id. Use similar_instruments for acoustic alternatives; while status is indexing, continue other work and retry later. Do not fetch the whole library by default. IDs include SoundFont sounds and advertised CLAP/VST3 presets; never invent IDs. Use add_track, add_clip and add_notes to write your music.
 Batch a short phrase into one add_notes call. Each note has pitch, start_beat,
 duration_beats and velocity. start_beat is its position; duration_beats is its length.
 For example, two successive quarter notes:
@@ -1934,7 +1934,9 @@ mod tests {
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
         assert!(names.contains(&"replace_notes"));
-        assert_eq!(names.len(), 19);
+        assert!(names.contains(&"search_instruments"));
+        assert!(names.contains(&"similar_instruments"));
+        assert_eq!(names.len(), 21);
         for expected in toolbox::live_agent::definitions() {
             let exposed = actual
                 .iter()

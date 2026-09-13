@@ -1087,6 +1087,7 @@ dependencies = [
  "auris-vocal",
  "auris-vst3",
  "base64 0.22.1",
+ "dirs 6.0.0",
  "log",
  "midir",
  "schemars 1.2.2",

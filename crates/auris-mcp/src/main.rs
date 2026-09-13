@@ -451,13 +451,31 @@ impl AurisMcp {
         finished(Ok(toolbox::list_presets::run()))
     }
 
-    /// Lists the built-in instruments a track can play, by the id `add_track` and `set_instrument` take. Reports whether the General MIDI library is loaded and lists its available bank-0 melodic programs and bank-128 drum kits with exact sound values. Pass sound as an integer program or the listed GM name.
+    /// Legacy compact built-in summary. Use search_instruments with a focused query to discover selectable sounds and plugin presets; use similar_instruments for acoustic alternatives.
     #[tool(input_schema = tool_schema("list_instruments"))]
     async fn list_instruments(&self) -> Result<CallToolResult, ErrorData> {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
+    /// Search sounds by name, library, vendor or preset tags. All query words must match (case-insensitive). Includes loaded SoundFonts, built-ins, CLAP provider presets and VST3 advertised programs/standard preset files. Returns at most 50 exact sound IDs, never the full library. Pass a returned id as sound_id to add_track/set_instrument for the same project. Unsupported plugin preset discovery is reported. Prefer this over list_instruments.
+    #[tool(input_schema = tool_schema("search_instruments"))]
+    async fn search_instruments(
+        &self,
+        Parameters(args): Parameters<toolbox::search_instruments::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::search_instruments::run(&args)).await
+    }
+
+    /// Find up to n acoustic alternatives to a sound ID from search_instruments. Uses full standardized timbre vectors, not 2D map positions or names. Includes measurable built-ins, melodic SoundFonts and discovered CLAP/VST3 presets; excludes the reference. First call starts background indexing and returns status indexing with progress; continue other work then retry with the same id. Lower distance is closer, not a quality rating. Silent/failed sources are reported, drum kits are excluded.
+    #[tool(input_schema = tool_schema("similar_instruments"))]
+    async fn similar_instruments(
+        &self,
+        Parameters(args): Parameters<toolbox::similar_instruments::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::similar_instruments::run(&args)).await
+    }
+
+    /// Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting all three uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
     #[tool(input_schema = tool_schema("add_track"))]
     async fn add_track(
         &self,
@@ -475,7 +493,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_part::run(&args)).await
     }
 
-    /// Re-voices an instrument track: `instrument` names a built-in from `list_instruments`, or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a kit). The previous instrument's dial positions and the automation that drove them go with it. The change is saved.
+    /// Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Re-voices an instrument track: `instrument` names a built-in from `list_instruments`, or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a kit). The previous instrument's dial positions and the automation that drove them go with it. The change is saved.
     #[tool(input_schema = tool_schema("set_instrument"))]
     async fn set_instrument(
         &self,

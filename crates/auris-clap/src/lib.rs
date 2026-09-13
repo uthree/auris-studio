@@ -58,6 +58,8 @@ mod library;
 pub mod notes;
 mod plugin;
 mod ports;
+mod presets;
+pub use presets::{ClapPreset, PresetDiscovery};
 pub mod timers;
 pub(crate) mod window;
 

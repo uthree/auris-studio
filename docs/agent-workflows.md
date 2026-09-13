@@ -161,10 +161,14 @@ For MCP note input, `bar` is at least 1 and `beat` stays within that bar's meter
 out-of-bar beats are silently corrected. Each note is an object with named fields,
 including in a `replace_notes` source file. Positional arrays are rejected with an example.
 
-MCP `list_instruments` lists usable built-in IDs and the shipped GM library's loaded
-bank-0 melodic presets and bank-128 kits. Copy its `sound` number (zero-based) or an
-explicitly listed GM name into `add_track` or `set_instrument`; both `81` and `"81"`
-select the sawtooth lead. Font preset display names are not necessarily GM aliases.
+Use `search_instruments` with the saved `project` and focused `query` words instead
+of fetching the library. Results default to 10 (maximum 50), with `next_offset` for
+additional matches. Copy a returned `id` into `sound_id` on `add_track` or
+`set_instrument` for the same project. Pass only one of `sound_id`, `instrument`, or
+`sound`. Search covers loaded SoundFonts, built-ins, CLAP provider presets and VST3
+advertised programs/standard `.vstpreset` files. The legacy `list_instruments` now
+returns only a compact built-in summary. General MIDI `sound` still accepts a
+zero-based program or GM name; both `81` and `"81"` select the sawtooth lead.
 Use `kind:"drum"` when adding a kit track or `drums:true` when changing its sound.
 For manual composition, add a clip with `add_clip`, then fill it with `replace_notes`;
 `add_part` generates music automatically.
@@ -377,6 +381,36 @@ per-note lyrics and expression; later explicit regeneration can rewrite the scor
 
 ### Live instrument library
 
+Prefer `search_instruments` with focused words such as `piano` or `Surge bass`.
+All words must occur in the sound name, library/vendor, or published preset tags,
+case-insensitively. Empty queries are rejected. Results default to 10, with a hard
+maximum of 50; continue with the same query and `next_offset`. Search is performed
+on a worker so native preset discovery does not block the window. Returned IDs go
+into `set_instrument.instrument`. This includes exact CLAP provider presets and
+VST3 unit programs/standard files, rather than just a plugin's default patch.
+
+`similar_instruments` takes an `id` from that search and `limit` (default 10,
+maximum 50). It excludes the reference and returns other measurable sources by
+Euclidean distance in the full standardized timbre feature space. It shares the
+map's MIDI 48/60/72, velocity 0.45/0.85 reference recordings with a 600 ms hold and
+400 ms release. It does not rank by PCA coordinates, sound names, or musical quality.
+Drum kits are excluded from melodic comparisons; silent and failed sources are
+reported. Only feature vectors are retained, not every preset's audio buffers.
+
+The first similarity request returns `status: indexing` and starts background
+measurement. Continue other work and retry later with the same ID; do not refresh
+while indexing. Completed indexes are reused for that library snapshot. IDs are
+process-local and tied to the project/session; search again after restarting the
+server, replacing libraries, cache eviction, or explicit `refresh: true`. Refresh
+is allowed only at offset 0 and invalidates the old acoustic index and IDs.
+
+CLAP requires the plugin to advertise discovery and preset-load support. VST3
+programs require a published program list, or standard `.vstpreset` files in the
+platform preset folders. A plugin's private browser and proprietary file format
+are not automatically accessible. Missing discovery support is reported; the
+plugin's default patch can still be selected. Native preset selection stores the
+actual plugin state in the project so reopening does not depend on an index handle.
+
 `list_instruments` reads the open session's built-in instruments, loaded SoundFont
 presets and installed CLAP/VST3 instruments, including the Studio settings' additional
 plugin folders. Effects are excluded. Use `query` to search names, libraries or vendors;
@@ -390,4 +424,4 @@ Old instrument parameter automation is removed when changing instruments. Select
 another SoundFont preset on an existing sampler preserves its sampler controls.
 Unknown, unloaded or expired sounds fail without modifying the document. Plugin
 handles expire on rescan; no tool accepts an arbitrary plugin file path. No project
-or audio files are written. MCP's existing independent tool interface is unchanged.
+or audio files are written by live selection. MCP operates on saved project files.

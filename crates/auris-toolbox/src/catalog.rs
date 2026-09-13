@@ -211,6 +211,14 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<NoArgs>(list_progressions::NAME, list_progressions::DESCRIPTION),
         definition::<NoArgs>(list_presets::NAME, list_presets::DESCRIPTION),
         definition::<NoArgs>(list_instruments::NAME, list_instruments::DESCRIPTION),
+        definition::<search_instruments::Args>(
+            search_instruments::NAME,
+            search_instruments::DESCRIPTION,
+        ),
+        definition::<similar_instruments::Args>(
+            similar_instruments::NAME,
+            similar_instruments::DESCRIPTION,
+        ),
         definition::<add_track::Args>(add_track::NAME, add_track::DESCRIPTION),
         definition::<add_part::Args>(add_part::NAME, add_part::DESCRIPTION),
         definition::<set_instrument::Args>(set_instrument::NAME, set_instrument::DESCRIPTION),

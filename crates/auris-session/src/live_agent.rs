@@ -1,6 +1,9 @@
 //! File-free commands for the agent attached to an open session.
 
 use crate::{Session, prelude::*};
+fn sound_search_limit() -> usize {
+    10
+}
 
 /// An operation on the current document. No operation accepts a filesystem destination.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -30,6 +33,30 @@ pub enum Command {
         #[serde(default)]
         refresh: bool,
     },
+    /// Search sounds by name, library, vendor or preset tags. All query words must match. Returns bounded exact IDs for set_instrument, including CLAP provider presets and VST3 programs/standard preset files. Prefer this over listing the library.
+    SearchInstruments {
+        /// Nonempty case-insensitive search words.
+        query: String,
+        /// Maximum results, 1..50; defaults to 10.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 50))]
+        limit: usize,
+        /// First matching result; follow next_offset with the same query.
+        #[serde(default)]
+        offset: usize,
+        /// Rescan changed presets, only at offset 0. Invalidates acoustic measurements.
+        #[serde(default)]
+        refresh: bool,
+    },
+    /// Find acoustic alternatives to a searched sound ID using full standardized timbre features. Returns at most limit neighbors and excludes the reference. First use starts background indexing; continue other work and retry later when status is indexing. Silent/failed sources are reported; drum kits are excluded. Distance is not a quality score.
+    SimilarInstruments {
+        /// Exact ID returned by search_instruments.
+        id: String,
+        /// Maximum neighbors, 1..50; defaults to 10.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 50))]
+        limit: usize,
+    },
     /// Read up to 128 notes with zero-based storage indices; follow next_offset for more. Returned note.start and note.length are ticks, not beats: divide by ticks_per_quarter when using add_note or add_notes. Indices may change after edits; read again before removing notes.
     ReadNotes {
         /// Stable clip ID.
@@ -48,7 +75,7 @@ pub enum Command {
         #[serde(default)]
         replace: bool,
     },
-    /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from list_instruments. Use add_clip followed by add_notes to write music. Edits affect the open document and remain unsaved.
+    /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from search_instruments. Use add_clip followed by add_notes to write music. Edits affect the open document and remain unsaved.
     AddTrack {
         /// The exact desired name; must contain non-whitespace text.
         #[schemars(length(min = 1))]
@@ -69,11 +96,11 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Replace the sound of an instrument or drum track using an exact id from list_instruments. Keeps notes, clips, mixer and effects. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; plugin IDs expire on rescan.
+    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Native preset state is retained in the document. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh or cache eviction.
     SetInstrument {
         /// Stable track ID.
         track: u64,
-        /// Exact id returned by list_instruments (built-in, SoundFont, CLAP or VST3).
+        /// Exact id returned by search_instruments/similar_instruments, or legacy list_instruments.
         instrument: String,
     },
     /// Set a fader and pan using native units.
@@ -263,6 +290,22 @@ impl Session {
                 offset,
                 refresh,
             } => self.agent_instrument_list(query.as_deref(), offset, refresh, plugin_paths),
+            Command::SearchInstruments {
+                query,
+                limit,
+                offset,
+                refresh,
+            } => self.sound_library_job(plugin_paths).run(
+                crate::SoundSearch::Text {
+                    query,
+                    limit,
+                    offset,
+                },
+                refresh,
+            ),
+            Command::SimilarInstruments { id, limit } => self
+                .sound_library_job(plugin_paths)
+                .run(crate::SoundSearch::Similar { id, limit }, false),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -374,7 +417,11 @@ impl Session {
                 Ok("Removed track".into())
             }
             Command::SetInstrument { track, instrument } => {
-                self.agent_set_instrument(TrackId(track), &instrument)?;
+                if instrument.starts_with("sound:") {
+                    self.use_library_sound(TrackId(track), &instrument, plugin_paths)?;
+                } else {
+                    self.agent_set_instrument(TrackId(track), &instrument)?;
+                }
                 Ok("Changed instrument".into())
             }
             Command::SetLevel {

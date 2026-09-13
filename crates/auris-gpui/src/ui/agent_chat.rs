@@ -307,6 +307,7 @@ pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
 struct AgentLink {
     worker: auris_agent::Worker,
     inspection: Option<PendingInspection>,
+    sound_search: Option<(u64, Receiver<Result<String, String>>)>,
 }
 
 struct PendingInspection {
@@ -726,6 +727,7 @@ fn spawn_link(
         |worker| AgentLink {
             worker,
             inspection: None,
+            sound_search: None,
         },
     )
 }
@@ -969,6 +971,75 @@ impl AurisApp {
         Ok(())
     }
 
+    fn start_agent_sound_search(&mut self, command: &serde_json::Value) -> Result<(), String> {
+        use auris_session::{SoundSearch, live_agent::Command};
+        if self.agent_chat.bound_project.as_deref() != self.session.path() {
+            return Err("The open document changed; start a new conversation".into());
+        }
+        self.check_agent_edit(command)?;
+        let (request, refresh) =
+            match serde_json::from_value(command.clone()).map_err(|e| e.to_string())? {
+                Command::SearchInstruments {
+                    query,
+                    limit,
+                    offset,
+                    refresh,
+                } => (
+                    SoundSearch::Text {
+                        query,
+                        limit,
+                        offset,
+                    },
+                    refresh,
+                ),
+                Command::SimilarInstruments { id, limit } => {
+                    (SoundSearch::Similar { id, limit }, false)
+                }
+                _ => return Err("Expected a sound search command".into()),
+            };
+        let job = self.session.sound_library_job(&self.settings.plugin_paths);
+        let link = self.agent_chat.link.as_mut().ok_or("The agent stopped")?;
+        if link.sound_search.is_some() {
+            return Err("A sound search is already running".into());
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("auris-sound-search".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    job.run(request, refresh)
+                }))
+                .unwrap_or_else(|_| Err("Sound search worker panicked".into()));
+                let _ = sender.send(result);
+            })
+            .map_err(|e| e.to_string())?;
+        link.sound_search = Some((self.session.revision(), receiver));
+        Ok(())
+    }
+
+    fn poll_agent_sound_search(&mut self) {
+        let Some(link) = self.agent_chat.link.as_mut() else {
+            return;
+        };
+        let Some((revision, receiver)) = link.sound_search.as_ref() else {
+            return;
+        };
+        let result = if *revision != self.session.revision()
+            || self.agent_chat.bound_project.as_deref() != self.session.path()
+        {
+            Err("The document changed during sound search; search again".into())
+        } else {
+            match receiver.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(_) => Err("Sound search worker stopped".into()),
+            }
+        };
+        link.sound_search = None;
+        let wire = serde_json::json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|e|e)});
+        let _ = link.send(&wire.to_string());
+    }
+
     fn poll_agent_inspection(&mut self) {
         let Some(link) = self.agent_chat.link.as_mut() else {
             return;
@@ -1023,6 +1094,7 @@ impl AurisApp {
             return;
         }
         self.poll_agent_inspection();
+        self.poll_agent_sound_search();
         loop {
             let Some(link) = self.agent_chat.link.as_ref() else {
                 return;
@@ -1039,6 +1111,20 @@ impl AurisApp {
                 continue;
             }
             if let AgentEvent::Edit { command } = event {
+                if matches!(
+                    command["action"].as_str(),
+                    Some("search_instruments" | "similar_instruments")
+                ) {
+                    if let Err(error) = self.start_agent_sound_search(&command)
+                        && let Some(link) = &self.agent_chat.link
+                    {
+                        let _ = link.send(
+                            &serde_json::json!({"event":"edit_result","ok":false,"text":error})
+                                .to_string(),
+                        );
+                    }
+                    continue;
+                }
                 if command["action"] == "inspect_audio" {
                     if let Err(error) = self.start_agent_inspection(&command)
                         && let Some(link) = &self.agent_chat.link

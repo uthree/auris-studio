@@ -22,13 +22,29 @@
 //!
 //! # Live instrument discovery
 //!
+//! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin paths for a
+//! worker-owned search catalog. `search_instruments` requires query words and returns at most
+//! 50 exact, process-local preset IDs; `similar_instruments` starts or queries a reusable
+//! background acoustic index. Both MCP and Rig use the same session implementation. MCP
+//! resolves IDs against the named saved project and passes them as `sound_id`; Rig resolves
+//! against the unsaved document and passes them as `set_instrument.instrument`.
+//!
+//! CLAP discovery providers supply locations and opaque load keys. VST3 supplies unit programs
+//! and standard preset files. Only published preset interfaces are searchable; a private plugin
+//! browser is not a preset API. Applying a native preset prepares a separate instance first,
+//! snapshots its state, then records one undoable edit. No preset path is supplied by the model.
+//! Acoustic indexing uses the timbre map's six reference triggers and full standardized feature
+//! space, without its PCA display limit or cached audition buffers. Each failed/silent source is
+//! reported. Libraries are cached by snapshot; explicit refresh and cache eviction invalidate IDs
+//! and cancel the old index. Neither discovery nor measurement edits the document.
+//!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont
 //! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
 //! search folders. Discovery caches plugin descriptors and issues opaque, session-local
 //! handles; rescanning expires them rather than silently redirecting a prior selection.
 //! SoundFont selections are validated against the loaded bank before any edit is recorded.
 //! All replacements use the existing session commands and their Undo behavior. The model
-//! never supplies a filesystem path, and the independent MCP interface is unchanged.
+//! never supplies a plugin filesystem path; MCP supplies its saved project path independently.
 //!
 //! # Visual audio inspection
 //!

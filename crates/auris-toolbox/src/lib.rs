@@ -26,7 +26,7 @@
 //!
 //! One public module per tool. Tools that take arguments expose [`compose::NAME`],
 //! [`compose::DESCRIPTION`], [`compose::Args`] and [`compose::run`]. The four argument-less
-//! catalogue tools expose `NAME`, `DESCRIPTION`, and `run() -> String`; frontends bind that small
+//! reference tools expose `NAME`, `DESCRIPTION`, and `run() -> String`; frontends bind that small
 //! group separately.
 
 #![warn(missing_docs)]
@@ -49,6 +49,8 @@ mod project_files;
 mod recognition;
 pub mod replace_notes;
 mod sound_input;
+mod sound_search;
+pub use sound_search::{search_instruments, similar_instruments};
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
@@ -75,6 +77,8 @@ pub const INSTRUCTIONS: &str = "You control Auris Studio projects through saved 
 Use absolute paths and copy the actual saved project path returned by creation tools.
 Make dependent edits one at a time: wait for each result before using its IDs or paths.
 
+Use search_instruments with a focused query to choose sounds; never fetch the full library by default.
+Use similar_instruments with a returned ID for acoustic alternatives, and sound_id to select a result.
 Read first: capabilities checks installed sounds and voices. describe lists tracks and clip
 numbers; inspect_composition reads current harmony and recipes. Track selectors can be names
 or id:<number>. Prefer IDs for edits; they survive renames. Re-read clip numbers after arrangement edits.
@@ -1769,92 +1773,31 @@ pub mod list_presets {
 /// The instruments a track can be voiced with.
 pub mod list_instruments {
     use super::*;
-
     /// The tool's wire name.
     pub const NAME: &str = "list_instruments";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
-        `add_track` and `set_instrument` take. Reports whether the General MIDI library is \
-        loaded and lists its available bank-0 melodic programs and bank-128 drum kits with \
-        exact sound values. Pass sound as an integer program or the listed GM name.";
-
-    /// Every registered instrument, one line each.
+    pub const DESCRIPTION: &str = "Legacy compact built-in summary. Use search_instruments with a focused query to discover selectable sounds and plugin presets; use similar_instruments for acoustic alternatives.";
+    /// A compact summary; never expands the SoundFont or plugin preset libraries.
     pub fn run() -> String {
-        let mut text = String::from("Instruments `add_track` and `set_instrument` accept:\n");
         match headless() {
             Ok(session) => {
-                text.push_str(&format!("General MIDI library loaded: {}. The sampler requires a loaded font and preset.\n", session.general_midi_available()));
-                for descriptor in session.registry().instruments() {
-                    if descriptor.id == SAMPLER_ID {
-                        continue;
-                    }
-                    text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
-                }
-                text.push_str(&gm_listing(&session.general_midi_presets()));
+                let names = session
+                    .registry()
+                    .instruments()
+                    .filter(|p| p.id != SAMPLER_ID)
+                    .take(10)
+                    .map(|p| format!("{}: {}", p.id, p.name))
+                    .collect::<Vec<_>>();
+                format!(
+                    "Built-ins (up to 10):\n{}\nGeneral MIDI library loaded: {}.\nUse search_instruments with project and a focused query for selectable sounds, including SoundFonts and plugin presets. Pass the returned id as sound_id.",
+                    names.join("\n"),
+                    session.general_midi_available()
+                )
             }
-            Err(error) => text.push_str(&format!("  (unlisted: {error})\n")),
-        }
-        text.push_str(
-            "\nWhen the GM library is loaded, pass a listed `sound` instead of `instrument`: \
-             a GM name or integer/string program number 0-127, with \
-             `kind: drum` in add_track, or `drums: true` in set_instrument, for a drum kit.",
-        );
-        text.trim_end().to_string()
-    }
-
-    fn gm_listing(presets: &[SoundFontPreset]) -> String {
-        let mut text = String::from(
-            "\nAvailable GM sound values (programs are zero-based; use kind: drum or drums: true for bank 128):\n",
-        );
-        let mut presets = presets.iter().collect::<Vec<_>>();
-        presets.sort_by_key(|preset| (preset.bank, preset.patch));
-        for preset in presets {
-            if !matches!(preset.bank, 0 | 128) || !(0..=127).contains(&preset.patch) {
-                continue;
-            }
-            let program = gm::Program(preset.patch as u8);
-            let label = program.label(preset.bank == 128);
-            let alias = if gm::Program::parse(label) == Some(program) {
-                format!("; GM name: {label}")
-            } else {
-                String::new()
-            };
-            text.push_str(&format!(
-                "  sound: {}, bank: {}{alias}; font preset: {}\n",
-                preset.patch, preset.bank, preset.name
-            ));
-        }
-        text
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use super::*;
-
-        #[test]
-        fn gm_listing_only_offers_loaded_selectable_addresses_and_exact_aliases() {
-            let presets = [
-                (0, 81, "Saw"),
-                (128, 0, "Drums"),
-                (128, 1, "Alternate"),
-                (8, 81, "Variation"),
-                (0, 128, "Invalid"),
-            ]
-            .map(|(bank, patch, name)| SoundFontPreset {
-                bank,
-                patch,
-                name: name.into(),
-            });
-            let text = gm_listing(&presets);
-            assert!(text.contains("sound: 81, bank: 0; GM name: Lead 2 (sawtooth)"));
-            assert!(text.contains("sound: 0, bank: 128; GM name: Standard Kit"));
-            assert!(text.contains("sound: 1, bank: 128; font preset: Alternate"));
-            assert!(!text.contains("Variation"));
-            assert!(!text.contains("Invalid"));
+            Err(error) => format!("Cannot inspect instruments: {error}"),
         }
     }
 }
-
 /// A track, added to a project that already exists.
 pub mod add_track {
     use super::*;
@@ -1862,7 +1805,7 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
+    pub const DESCRIPTION: &str = "Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting all three uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
 
     /// The explicit type of track to create.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
@@ -1903,6 +1846,9 @@ pub mod add_track {
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`, not both;
         /// with neither, the default instrument plays.
         pub instrument: Option<String>,
+        /// Exact ID from search_instruments or similar_instruments for this project.
+        /// Mutually exclusive with instrument and sound; includes native plugin presets.
+        pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         #[serde(default, deserialize_with = "sound_input::deserialize")]
@@ -1916,6 +1862,9 @@ pub mod add_track {
     pub fn run(args: &Args) -> Result<String, String> {
         if args.name.trim().is_empty() {
             return Err("the track needs a name — a blank one no tool can address again".into());
+        }
+        if args.sound_id.is_some() && (args.instrument.is_some() || args.sound.is_some()) {
+            return Err("Pass sound_id, instrument, or sound, not more than one".into());
         }
         let mut session = opened(&args.project)?;
         let kind = args.kind;
@@ -1938,16 +1887,21 @@ pub mod add_track {
                         .add_default_instrument_track(&args.name)
                         .map_err(|error| error.to_string())?,
                 };
-                voice(
-                    &mut session,
-                    id,
-                    &args.sound,
-                    kind == Kind::Drum,
-                    &args.instrument,
-                )?
+                if let Some(sound_id) = &args.sound_id {
+                    session.use_library_sound(id, sound_id, &[])?;
+                    sound_id.clone()
+                } else {
+                    voice(
+                        &mut session,
+                        id,
+                        &args.sound,
+                        kind == Kind::Drum,
+                        &args.instrument,
+                    )?
+                }
             }
             Kind::Singer | Kind::Audio | Kind::Bus => {
-                if args.instrument.is_some() || args.sound.is_some() {
+                if args.instrument.is_some() || args.sound.is_some() || args.sound_id.is_some() {
                     return Err(format!(
                         "a {} track plays no instrument — drop it",
                         kind.label()
@@ -2002,7 +1956,7 @@ pub mod add_track {
             let program = gm::Program::parse(wanted).ok_or_else(|| {
                 format!(
                     "no General MIDI sound answers to '{wanted}' — give a name like \
-                     \"Electric Piano 1\" or a program number 0-127. Call list_instruments and copy an exact sound value; do not guess preset names"
+                     \"Electric Piano 1\" or a program number 0-127. Use search_instruments and pass a returned id as sound_id instead of guessing preset names"
                 )
             })?;
             let chosen = program.sound(drums);
@@ -2133,7 +2087,7 @@ pub mod set_instrument {
     /// The tool's wire name.
     pub const NAME: &str = "set_instrument";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Re-voices an instrument track: `instrument` names a built-in \
+    pub const DESCRIPTION: &str = "Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Re-voices an instrument track: `instrument` names a built-in \
         from `list_instruments`, or `sound` names a General MIDI sound (a name or a program \
         number, `drums: true` for a kit). The previous instrument's dial positions and the \
         automation that drove them go with it. The change is saved.";
@@ -2148,6 +2102,9 @@ pub mod set_instrument {
         pub track: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`.
         pub instrument: Option<String>,
+        /// Exact ID from search_instruments or similar_instruments for this project.
+        /// Mutually exclusive with instrument and sound; includes native plugin presets.
+        pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         #[serde(default, deserialize_with = "sound_input::deserialize")]
@@ -2160,11 +2117,19 @@ pub mod set_instrument {
 
     /// Changes the voice, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
-        if args.instrument.is_none() && args.sound.is_none() {
+        if args.sound_id.is_some() && (args.instrument.is_some() || args.sound.is_some()) {
+            return Err("Pass sound_id, instrument, or sound, not more than one".into());
+        }
+        if args.instrument.is_none() && args.sound.is_none() && args.sound_id.is_none() {
             return Err("pass `instrument` or `sound` — there is nothing else here to set".into());
         }
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
+        if let Some(sound_id) = &args.sound_id {
+            session.use_library_sound(track, sound_id, &[])?;
+            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            return Ok(format!("{} — now {sound_id}. Saved.", args.track));
+        }
         if let Some(id) = &args.instrument {
             if args.sound.is_some() {
                 return Err(
@@ -3724,6 +3689,7 @@ mod tests {
 
         // A plain instrument track lands on the default voice and says what to do next.
         let added = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Keys".to_string(),
             instrument: None,
@@ -3737,6 +3703,7 @@ mod tests {
         // The General MIDI door: the sound where the library is installed, the honest
         // refusal where it is not — never a silent substitution.
         let voiced = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "EP".to_string(),
             instrument: None,
@@ -3748,6 +3715,7 @@ mod tests {
             Err(text) => assert!(text.contains("library"), "{text}"),
         }
         let nonsense = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "X".to_string(),
             instrument: None,
@@ -3794,6 +3762,7 @@ mod tests {
 
         // Re-voicing refuses an id nothing answers to, pointing at the list.
         let wrong = set_instrument::run(&set_instrument::Args {
+            sound_id: None,
             project: path.clone(),
             track: "Keys".to_string(),
             instrument: Some("auris.not.a.thing".to_string()),
@@ -3803,6 +3772,7 @@ mod tests {
         .unwrap_err();
         assert!(wrong.contains("list_instruments"), "{wrong}");
         let revoiced = set_instrument::run(&set_instrument::Args {
+            sound_id: None,
             project: path.clone(),
             track: "Keys".to_string(),
             instrument: Some(default_id.clone()),
@@ -3922,6 +3892,7 @@ mod tests {
         let path = root.join("Tune").join("Tune.auris").display().to_string();
 
         add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Lead".to_string(),
             instrument: None,
@@ -4300,6 +4271,7 @@ mod tests {
 
         // The track arrives through the same door as every other kind, with directions on.
         let added = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Vocal".to_string(),
             instrument: None,

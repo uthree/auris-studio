@@ -27,6 +27,7 @@ auris-synth.workspace = true
 auris-vocal.workspace = true
 auris-vst3.workspace = true
 base64.workspace = true
+dirs = "6"
 log.workspace = true
 midir.workspace = true
 serde = { workspace = true, features = ["derive"] }

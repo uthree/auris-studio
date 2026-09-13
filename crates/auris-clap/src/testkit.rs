@@ -612,6 +612,7 @@ impl Plugin for Tone {
             .register::<PluginGui>()
             .register::<PluginNotePorts>()
             .register::<PluginParams>()
+            .register::<clack_extensions::preset_discovery::PluginPresetLoad>()
             .register::<PluginState>();
     }
 }
@@ -964,6 +965,24 @@ impl PluginStateImpl for ToneMainThread<'_> {
         self.shared
             .level
             .store(u32::from_le_bytes(bytes), Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+impl clack_extensions::preset_discovery::PluginPresetLoadImpl for ToneMainThread<'_> {
+    fn load_from_location(
+        &mut self,
+        location: clack_extensions::preset_discovery::preset_data::Location,
+        key: Option<&CStr>,
+    ) -> Result<(), PluginError> {
+        if location != clack_extensions::preset_discovery::preset_data::Location::Plugin
+            || key != Some(c"quiet")
+        {
+            return Err(PluginError::Message("Unknown fixture preset"));
+        }
+        self.shared
+            .level
+            .store(0.125f32.to_bits(), Ordering::Relaxed);
         Ok(())
     }
 }

@@ -23,6 +23,7 @@ clack-extensions = { workspace = true, features = [
     "latency",
     "note-ports",
     "params",
+    "preset-discovery",
     "state",
     "timer",
     # So a parent window can be named by the handle the platform already gave the frontend,

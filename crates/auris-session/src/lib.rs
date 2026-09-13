@@ -130,6 +130,7 @@ pub use session::{
     ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
     ReferenceMatchSettings, ReferenceMatchStep,
 };
+pub use session::{SoundLibraryJob, SoundSearch};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
