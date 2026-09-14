@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,14 @@ _spec.loader.exec_module(check)
 def test_reference_condition_comes_first_and_is_unmodified():
     conditions = check.build_conditions([3.0], [2.0])
     assert conditions[0] == ("reference", 1.0, 1.0)
+
+
+def test_source_control_check_rejects_a_dataset_on_another_clock():
+    corpus = SimpleNamespace(sample_rate=44_100, hop_length=441)
+    module = SimpleNamespace(sample_rate=48_000, hop_length=480)
+
+    with pytest.raises(ValueError, match="do not share a clock"):
+        check._require_matching_clock(corpus, module)
 
 
 def test_semitone_shifts_become_frequency_ratios():

@@ -7,6 +7,7 @@ into those curves is the DAW front-end's job.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,7 @@ import torch
 
 from auris_singer.lightning_module import AurisSingerModule
 from auris_singer.text import DEFAULT_PHONEME_TABLE, PhonemeTable, is_voiceless
+from auris_singer.utils.durations import validated_duration_array
 
 __all__ = ["Synthesizer", "frame_voicing"]
 
@@ -28,9 +30,39 @@ def frame_voicing(
     as a contour across consonants, so ``f0 > 0`` alone would voice every
     /k/ and /s/; the f0 term only clears frames with no pitch at all.
     """
+    durations = validated_duration_array(durations, len(phonemes))
     per_phoneme = np.asarray([0.0 if is_voiceless(p) else 1.0 for p in phonemes])
-    expanded = np.repeat(per_phoneme, np.asarray(durations, dtype=np.int64))
-    return (expanded * (np.asarray(f0, dtype=np.float32) > 0.0)).astype(np.float32)
+    expanded = np.repeat(per_phoneme, durations)
+    f0 = np.asarray(f0, dtype=np.float32)
+    if f0.ndim != 1 or f0.size != expanded.size:
+        raise ValueError(f"f0 has {f0.size} frames but durations require {expanded.size}")
+    return (expanded * (f0 > 0.0)).astype(np.float32)
+
+
+def _frame_curve(
+    name: str,
+    values: list[float] | np.ndarray,
+    expected_frames: int,
+    *,
+    upper: float | None = None,
+) -> np.ndarray:
+    """Return one finite, non-negative float32 curve of the exact frame count."""
+    raw = np.asarray(values)
+    if raw.ndim != 1 or raw.size != expected_frames:
+        raise ValueError(
+            f"{name} must be a 1D curve with sum(durations) = {expected_frames} frames; "
+            f"got shape {raw.shape}"
+        )
+    try:
+        curve = raw.astype(np.float32)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"{name} must contain finite numbers") from error
+    if not np.isfinite(curve).all():
+        raise ValueError(f"{name} must contain finite numbers")
+    if (curve < 0.0).any() or (upper is not None and (curve > upper).any()):
+        range_description = f"between 0 and {upper:g}" if upper is not None else "non-negative"
+        raise ValueError(f"{name} values must be {range_description}")
+    return curve
 
 
 class Synthesizer:
@@ -61,32 +93,37 @@ class Synthesizer:
             symbols = metadata.get("symbols")
             phoneme_table = PhonemeTable(symbols) if symbols else DEFAULT_PHONEME_TABLE
         self.phoneme_table = phoneme_table
-        self.speaker_to_id: dict[str, int] = speaker_to_id or metadata.get(
-            "speaker_to_id", {}
-        )
+        self.speaker_to_id: dict[str, int] = speaker_to_id or metadata.get("speaker_to_id", {})
 
     @classmethod
     def from_checkpoint(
         cls, path: str | Path, device: str | torch.device = "cpu", **kwargs
     ) -> Synthesizer:
         """Load a Lightning checkpoint written by ``scripts/train.py``."""
-        module = AurisSingerModule.load_from_checkpoint(str(path), map_location="cpu")
+        module = AurisSingerModule.load_from_checkpoint(
+            str(path), map_location="cpu", weights_only=True
+        )
         return cls(module, device=device, **kwargs)
 
     def resolve_speaker(self, speaker: str | int | None) -> int:
         """Map a speaker name (or index) to a speaker id."""
         if speaker is None:
-            return 0
-        if isinstance(speaker, bool):
+            resolved = 0
+        elif isinstance(speaker, bool):
             raise TypeError("speaker must be a name or integer id, not bool")
-        if isinstance(speaker, int):
-            return speaker
-        if speaker not in self.speaker_to_id:
-            raise KeyError(
-                f"unknown speaker {speaker!r}; known speakers: "
-                f"{sorted(self.speaker_to_id)}"
+        elif isinstance(speaker, int):
+            resolved = speaker
+        else:
+            if speaker not in self.speaker_to_id:
+                raise KeyError(
+                    f"unknown speaker {speaker!r}; known speakers: {sorted(self.speaker_to_id)}"
+                )
+            resolved = self.speaker_to_id[speaker]
+        if type(resolved) is not int or not 0 <= resolved < self.model.n_speakers:
+            raise ValueError(
+                f"speaker id must be between 0 and {self.model.n_speakers - 1}, got {resolved!r}"
             )
-        return self.speaker_to_id[speaker]
+        return resolved
 
     @torch.inference_mode()
     def synthesize(
@@ -118,20 +155,13 @@ class Synthesizer:
         Returns:
             A 1D float32 waveform at ``self.sample_rate``.
         """
-        if len(durations) != len(phonemes):
-            raise ValueError(
-                f"durations has {len(durations)} entries but there are "
-                f"{len(phonemes)} phonemes"
-            )
-        durations_t = torch.as_tensor(np.asarray(durations), dtype=torch.long)
+        durations = validated_duration_array(durations, len(phonemes))
+        durations_t = torch.from_numpy(durations)
         total_frames = int(durations_t.sum().item())
-        f0_t = torch.as_tensor(np.asarray(f0), dtype=torch.float32)
-        energy_t = torch.as_tensor(np.asarray(energy), dtype=torch.float32)
-        if f0_t.numel() != total_frames or energy_t.numel() != total_frames:
-            raise ValueError(
-                f"f0 ({f0_t.numel()}) and energy ({energy_t.numel()}) must both "
-                f"have sum(durations) = {total_frames} frames"
-            )
+        f0_array = _frame_curve("f0", f0, total_frames)
+        energy_array = _frame_curve("energy", energy, total_frames)
+        f0_t = torch.from_numpy(f0_array)
+        energy_t = torch.from_numpy(energy_array)
 
         unknown = self.phoneme_table.unknown_symbols(phonemes)
         if unknown:
@@ -145,12 +175,11 @@ class Synthesizer:
         f0_t = f0_t.unsqueeze(0).to(self.device)
         energy_t = energy_t.unsqueeze(0).to(self.device)
         if voiced is None:
-            voiced = frame_voicing(phonemes, durations, f0)
-        voiced_t = (
-            torch.as_tensor(np.asarray(voiced), dtype=torch.float32)
-            .unsqueeze(0)
-            .to(self.device)
-        )
+            voiced = frame_voicing(phonemes, durations, f0_array)
+        voiced_t = torch.from_numpy(_frame_curve("voiced", voiced, total_frames, upper=1.0))
+        voiced_t = voiced_t.unsqueeze(0).to(self.device)
+        if not math.isfinite(noise_scale) or noise_scale < 0.0:
+            raise ValueError("noise_scale must be a finite non-negative number")
         speaker_t = torch.tensor(
             [self.resolve_speaker(speaker)], dtype=torch.long, device=self.device
         )

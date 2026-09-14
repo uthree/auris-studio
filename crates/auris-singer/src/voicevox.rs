@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Cursor, Read};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 
 use auris_vocal::{SingerFrames, SingerNote, SingerScore};
@@ -10,6 +11,10 @@ use serde_json::{Value, json};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::backend::{BackendKind, SingingBackend};
+use crate::limits::{
+    MAX_COLLECTION_ITEMS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TEXT_BYTES, bounded_bytes,
+    checked_sample_count, read_text_file, try_copy_f64, validate_audio_dimensions,
+};
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
 use crate::{
     Acceleration, CurveGenerator, CurvePrediction, CurveSource, CurveSources, SingError,
@@ -20,6 +25,7 @@ const NAME: &str = "VOICEVOX";
 
 /// Gives consonants room before a first-beat note and the decoder context at both boundaries.
 const BOUNDARY_SECONDS: f64 = 1.0;
+const WAV_HEADER_ALLOWANCE: usize = 64 * 1024;
 
 pub(crate) fn validate_lyrics(score: &SingerScore) -> Result<(), SingError> {
     padded_score(score, 2).map(|_| ())
@@ -344,6 +350,46 @@ fn output_hop(sample_rate: u32, frame_rate: f64) -> Result<u32, SingError> {
     Ok(hop.round() as u32)
 }
 
+pub(crate) fn loopback_url(url: &str) -> bool {
+    let Some(remainder) = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+    else {
+        return false;
+    };
+    let authority = remainder.split(['/', '?', '#']).next().unwrap_or_default();
+    if authority.is_empty() || authority.contains('@') {
+        return false;
+    }
+    let host = if let Some(bracketed) = authority.strip_prefix('[') {
+        let Some((host, suffix)) = bracketed.split_once(']') else {
+            return false;
+        };
+        if !suffix.is_empty()
+            && suffix.strip_prefix(':').is_none_or(|port| {
+                port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            return false;
+        }
+        host
+    } else {
+        let (host, port) = authority
+            .split_once(':')
+            .map_or((authority, None), |(host, port)| (host, Some(port)));
+        if host.contains(':')
+            || port.is_some_and(|port| {
+                port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit())
+            })
+        {
+            return false;
+        }
+        host
+    };
+    host.parse::<IpAddr>()
+        .is_ok_and(|address| address.is_loopback())
+}
+
 /// Keep the Engine's explanation: a bare HTTP 400 hides which lyric it refused.
 fn request_error(endpoint: &str, error: ureq::Error) -> SingError {
     let reason = match error {
@@ -368,17 +414,21 @@ fn request_error(endpoint: &str, error: ureq::Error) -> SingError {
 }
 
 pub(crate) struct VoicevoxBackend {
+    agent: ureq::Agent,
     config: VoicevoxConfig,
     info: VoiceInfo,
     path: PathBuf,
     acceleration: Acceleration,
+    automatic_access_safe: bool,
 }
 
 impl VoicevoxBackend {
-    pub(crate) fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
-        let raw = std::fs::read_to_string(path).map_err(|error| SingError::Load {
-            reason: error.to_string(),
-        })?;
+    pub(crate) fn load(
+        path: &Path,
+        acceleration: Acceleration,
+        automatic: bool,
+    ) -> Result<Self, SingError> {
+        let raw = read_text_file(path, "VOICEVOX connection manifest")?;
         let mut config: VoicevoxConfig =
             serde_json::from_str(&raw).map_err(|error| SingError::Metadata(error.to_string()))?;
         if config.format_version != 1 {
@@ -388,22 +438,46 @@ impl VoicevoxBackend {
             )));
         }
         config.url = config.url.trim_end_matches('/').to_string();
+        if config.name.trim().is_empty()
+            || config.name.len() > MAX_NAME_BYTES
+            || config.url.len() > MAX_PATH_BYTES
+            || config.styles.is_empty()
+            || config.styles.len() > MAX_COLLECTION_ITEMS
+            || config
+                .styles
+                .iter()
+                .any(|style| style.name.trim().is_empty() || style.name.len() > MAX_NAME_BYTES)
+        {
+            return Err(SingError::Metadata(
+                "VOICEVOX names, URL, or style list exceed their practical limits".into(),
+            ));
+        }
         if !config.url.starts_with("http://") && !config.url.starts_with("https://") {
             return Err(SingError::Metadata(
                 "VOICEVOX url must begin with http:// or https://".into(),
             ));
         }
-        if config.sample_rate == 0 || !config.frame_rate.is_finite() || config.frame_rate <= 0.0 {
+        if !config.frame_rate.is_finite() || config.frame_rate <= 0.0 {
             return Err(SingError::Metadata(
                 "VOICEVOX sample_rate and frame_rate must be positive".into(),
             ));
         }
-        if config.styles.is_empty() {
-            return Err(SingError::Metadata(
-                "VOICEVOX connection has no singing styles".into(),
-            ));
-        }
         let hop_length = output_hop(config.sample_rate, config.frame_rate)?;
+        validate_audio_dimensions(config.sample_rate, hop_length, NAME)?;
+        let automatic_access_safe = loopback_url(&config.url);
+        if automatic && !automatic_access_safe {
+            return Err(SingError::UnsafeAutomaticAccess {
+                reason: "automatic VOICEVOX synthesis requires a numeric loopback URL".into(),
+            });
+        }
+        // A loopback manifest remains loopback only if an Engine response cannot redirect the
+        // request elsewhere. Explicitly loaded remote connections retain ureq's compatibility
+        // behaviour, but are marked unsafe for cache reuse by automatic work.
+        let agent = if automatic_access_safe {
+            ureq::AgentBuilder::new().redirects(0).build()
+        } else {
+            ureq::Agent::new()
+        };
         let speaker_to_id: BTreeMap<String, u32> = config
             .styles
             .iter()
@@ -432,37 +506,68 @@ impl VoicevoxBackend {
             }),
         };
         Ok(Self {
+            agent,
             config,
             info,
             path: path.to_path_buf(),
             acceleration,
+            automatic_access_safe,
         })
     }
 
     fn post_json(&self, endpoint: &str, style: u32, body: Value) -> Result<Value, SingError> {
         let url = format!("{}{endpoint}?speaker={style}", self.config.url);
-        let response = ureq::post(&url)
+        let response = self
+            .agent
+            .post(&url)
             .send_json(body)
             .map_err(|error| request_error(endpoint, error))?;
-        response
-            .into_json()
+        if !(200..300).contains(&response.status()) {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX {endpoint}: HTTP {} redirect refused",
+                response.status()
+            )));
+        }
+        let bytes = bounded_bytes(
+            response.into_reader(),
+            MAX_TEXT_BYTES,
+            "VOICEVOX JSON response",
+        )?;
+        serde_json::from_slice(&bytes)
             .map_err(|error| SingError::Inference(format!("VOICEVOX {endpoint}: {error}")))
     }
 
-    fn synthesize(&self, style: u32, query: Value) -> Result<Vec<u8>, SingError> {
+    fn synthesize(
+        &self,
+        style: u32,
+        query: Value,
+        expected_samples: usize,
+    ) -> Result<Vec<u8>, SingError> {
         let url = format!("{}/frame_synthesis?speaker={style}", self.config.url);
-        let response = ureq::post(&url)
+        let response = self
+            .agent
+            .post(&url)
             .send_json(query)
             .map_err(|error| request_error("/frame_synthesis", error))?;
-        let mut bytes = Vec::new();
-        response
-            .into_reader()
-            .read_to_end(&mut bytes)
-            .map_err(|error| SingError::Inference(format!("VOICEVOX audio response: {error}")))?;
-        Ok(bytes)
+        if !(200..300).contains(&response.status()) {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX /frame_synthesis: HTTP {} redirect refused",
+                response.status()
+            )));
+        }
+        let limit = expected_samples
+            .checked_mul(std::mem::size_of::<f32>())
+            .and_then(|bytes| bytes.checked_add(WAV_HEADER_ALLOWANCE))
+            .ok_or_else(|| SingError::TooLarge {
+                resource: "VOICEVOX WAV response",
+                observed: None,
+                limit: crate::limits::MAX_OUTPUT_SAMPLES * std::mem::size_of::<f32>()
+                    + WAV_HEADER_ALLOWANCE,
+            })?;
+        bounded_bytes(response.into_reader(), limit, "VOICEVOX WAV response")
     }
 
-    fn decode_wav(&self, bytes: Vec<u8>) -> Result<Vec<f32>, SingError> {
+    fn decode_wav(&self, bytes: Vec<u8>, expected_samples: usize) -> Result<Vec<f32>, SingError> {
         let mut reader = hound::WavReader::new(Cursor::new(bytes)).map_err(|error| {
             SingError::Inference(format!("VOICEVOX returned invalid WAV: {error}"))
         })?;
@@ -473,20 +578,53 @@ impl VoicevoxBackend {
                 spec.channels, spec.sample_rate, self.info.sample_rate
             )));
         }
+        if reader.duration() as usize != expected_samples {
+            return Err(SingError::Inference(format!(
+                "VOICEVOX WAV declares {} samples; expected {expected_samples}",
+                reader.duration()
+            )));
+        }
+        let mut samples = Vec::new();
+        samples
+            .try_reserve_exact(expected_samples)
+            .map_err(|_| SingError::Allocation {
+                resource: "VOICEVOX decoded audio",
+            })?;
         match spec.sample_format {
-            hound::SampleFormat::Float => reader
-                .samples::<f32>()
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| SingError::Inference(format!("VOICEVOX WAV: {error}"))),
+            hound::SampleFormat::Float if spec.bits_per_sample == 32 => {
+                for sample in reader.samples::<f32>() {
+                    let sample = sample
+                        .map_err(|error| SingError::Inference(format!("VOICEVOX WAV: {error}")))?;
+                    if !sample.is_finite() {
+                        return Err(SingError::Inference(
+                            "VOICEVOX WAV contains non-finite audio".into(),
+                        ));
+                    }
+                    samples.push(sample);
+                }
+            }
             hound::SampleFormat::Int => {
+                if !(1..=32).contains(&spec.bits_per_sample) {
+                    return Err(SingError::Inference(format!(
+                        "VOICEVOX WAV has unsupported {}-bit integer samples",
+                        spec.bits_per_sample
+                    )));
+                }
                 let scale = (1_u64 << spec.bits_per_sample.saturating_sub(1)) as f32;
-                reader
-                    .samples::<i32>()
-                    .map(|sample| sample.map(|value| value as f32 / scale))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|error| SingError::Inference(format!("VOICEVOX WAV: {error}")))
+                for sample in reader.samples::<i32>() {
+                    let value = sample
+                        .map_err(|error| SingError::Inference(format!("VOICEVOX WAV: {error}")))?;
+                    samples.push(value as f32 / scale);
+                }
+            }
+            hound::SampleFormat::Float => {
+                return Err(SingError::Inference(format!(
+                    "VOICEVOX WAV has unsupported {}-bit float samples",
+                    spec.bits_per_sample
+                )));
             }
         }
+        Ok(samples)
     }
 }
 
@@ -545,8 +683,15 @@ impl CurveGenerator for VoicevoxBackend {
         let expected = padded
             .notes
             .iter()
-            .map(|note| note.frame_length as usize)
-            .sum();
+            .try_fold(0usize, |sum, note| {
+                sum.checked_add(note.frame_length as usize)
+            })
+            .ok_or_else(|| SingError::Inference("VOICEVOX score is too long".into()))?;
+        checked_sample_count(
+            expected,
+            self.info.hop_length as usize,
+            "VOICEVOX query audio",
+        )?;
         let mut query = self.post_json(
             "/sing_frame_audio_query",
             style.query_style_id,
@@ -576,6 +721,10 @@ impl SingingBackend for VoicevoxBackend {
 
     fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn automatic_access_safe(&self) -> bool {
+        self.automatic_access_safe
     }
 
     fn sing_with(
@@ -614,8 +763,10 @@ impl SingingBackend for VoicevoxBackend {
         let score_frames: usize = score
             .notes
             .iter()
-            .map(|note| note.frame_length as usize)
-            .sum();
+            .try_fold(0usize, |sum, note| {
+                sum.checked_add(note.frame_length as usize)
+            })
+            .ok_or_else(|| SingError::Inference("VOICEVOX score is too long".into()))?;
         if score_frames != frames.len() {
             return Err(SingError::Inference(format!(
                 "the note score covers {score_frames} frames but the curves cover {}",
@@ -625,6 +776,8 @@ impl SingingBackend for VoicevoxBackend {
         if frames.is_empty() {
             return Ok(crate::SingingRender::default());
         }
+        let hop = self.info.hop_length as usize;
+        checked_sample_count(frames.len(), hop, "VOICEVOX rendered audio")?;
         if !progress(0, 2) {
             return Err(SingError::Cancelled);
         }
@@ -632,9 +785,17 @@ impl SingingBackend for VoicevoxBackend {
         let prepared = self.prepare_curves(frames, score, speaker, seed)?;
         let padding = prepared.leading_frames;
         let query_frames = prepared.pitch_hz.len();
+        let expected = checked_sample_count(query_frames, hop, "VOICEVOX decoded audio")?;
+        let pitch_end = padding
+            .checked_add(frames.len())
+            .filter(|end| *end <= prepared.pitch_hz.len())
+            .ok_or_else(|| SingError::Inference("VOICEVOX pitch context overflow".into()))?;
         let backend_pitch = auris_core::SingerPitch {
             hop_seconds: frames.hop_seconds,
-            hz: prepared.pitch_hz[padding..padding + frames.len()].to_vec(),
+            hz: try_copy_f64(
+                &prepared.pitch_hz[padding..pitch_end],
+                "VOICEVOX displayed pitch",
+            )?,
         };
         let mut query = prepared.context;
         query["f0"] = json!(prepared.pitch_hz);
@@ -644,13 +805,11 @@ impl SingingBackend for VoicevoxBackend {
         if !progress(1, 2) {
             return Err(SingError::Cancelled);
         }
-        let wav = self.synthesize(decode_style, query)?;
+        let wav = self.synthesize(decode_style, query, expected)?;
         if !progress(2, 2) {
             return Err(SingError::Cancelled);
         }
-        let mut samples = self.decode_wav(wav)?;
-        let hop = self.info.hop_length as usize;
-        let expected = query_frames * hop;
+        let mut samples = self.decode_wav(wav, expected)?;
         if samples.len() != expected {
             return Err(SingError::Inference(format!(
                 "VOICEVOX returned {} samples for {query_frames} frames; expected {expected}",
@@ -658,8 +817,10 @@ impl SingingBackend for VoicevoxBackend {
             )));
         }
         // The padding belongs to this adapter, never to the track's saved score or timeline.
-        samples.drain(..padding * hop);
-        samples.truncate(frames.len() * hop);
+        let remove = checked_sample_count(padding, hop, "VOICEVOX decoder padding")?;
+        let keep = checked_sample_count(frames.len(), hop, "VOICEVOX rendered audio")?;
+        samples.drain(..remove);
+        samples.truncate(keep);
         Ok(crate::SingingRender {
             samples,
             backend_pitch: Some(backend_pitch),
@@ -852,6 +1013,176 @@ mod tests {
 
     fn request_body(request: &str) -> Value {
         serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
+    }
+
+    fn temp_connection() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "auris-voicevox-policy-{}-{}.voicevox.json",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn connection(url: &str, sample_rate: u32, frame_rate: f64, styles: Value) -> Value {
+        json!({
+            "format_version": 1,
+            "name": "Singer",
+            "url": url,
+            "sample_rate": sample_rate,
+            "frame_rate": frame_rate,
+            "styles": styles,
+        })
+    }
+
+    #[test]
+    fn automatic_urls_accept_only_numeric_loopback_addresses() {
+        for url in [
+            "http://127.0.0.1:50021",
+            "https://127.255.2.3/service",
+            "http://[::1]:50021",
+        ] {
+            assert!(crate::automatic_voicevox_url_safe(url), "{url}");
+        }
+        for url in [
+            "http://localhost:50021",
+            "http://0.0.0.0:50021",
+            "http://192.168.1.2:50021",
+            "http://127.0.0.1.example:50021",
+            "http://127.0.0.1@example.com",
+            "http://[::1].example:50021",
+        ] {
+            assert!(!crate::automatic_voicevox_url_safe(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn explicit_remote_connection_is_cache_marked_and_automatic_load_refuses_it() {
+        let path = temp_connection();
+        let config = connection(
+            "http://192.0.2.1:50021",
+            24_000,
+            93.75,
+            json!([{"name":"Style","query_style_id":1,"decode_style_id":2}]),
+        );
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let explicit = crate::VoiceModel::load(&path, Acceleration::Cpu)
+            .expect("explicit connection loading performs no HTTP request");
+        assert!(!explicit.automatic_access_safe());
+        let error = match crate::VoiceModel::load_for_automatic_access(&path, Acceleration::Cpu) {
+            Err(error) => error,
+            Ok(_) => panic!("a remote Engine must be refused for automatic synthesis"),
+        };
+        assert!(matches!(error, SingError::UnsafeAutomaticAccess { .. }));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn voicevox_clock_and_style_boundaries_are_checked_at_load() {
+        let path = temp_connection();
+        let style = json!([{"name":"Style","query_style_id":1,"decode_style_id":2}]);
+        for (sample_rate, frame_rate) in [(8_000, 1_000.0), (192_000, 10.0)] {
+            let config = connection(
+                "http://127.0.0.1:50021",
+                sample_rate,
+                frame_rate,
+                style.clone(),
+            );
+            std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+            crate::VoiceModel::load(&path, Acceleration::Cpu)
+                .expect("inclusive sample-rate and hop boundary");
+        }
+        let invalid = connection("http://127.0.0.1:50021", 192_000, 9.999, style);
+        std::fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(crate::VoiceModel::load(&path, Acceleration::Cpu).is_err());
+
+        let mut styles: Vec<_> = (0..MAX_COLLECTION_ITEMS)
+            .map(
+                |id| json!({"name":format!("Style {id}"),"query_style_id":id,"decode_style_id":id}),
+            )
+            .collect();
+        let boundary = connection(
+            "http://127.0.0.1:50021",
+            24_000,
+            93.75,
+            json!(styles.clone()),
+        );
+        std::fs::write(&path, serde_json::to_vec(&boundary).unwrap()).unwrap();
+        crate::VoiceModel::load(&path, Acceleration::Cpu).expect("inclusive style-count boundary");
+        styles.push(json!({"name":"One too many","query_style_id":5000,"decode_style_id":5000}));
+        let invalid = connection("http://127.0.0.1:50021", 24_000, 93.75, json!(styles));
+        std::fs::write(&path, serde_json::to_vec(&invalid).unwrap()).unwrap();
+        assert!(crate::VoiceModel::load(&path, Acceleration::Cpu).is_err());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn wav_response_stream_is_bounded_from_the_expected_sample_count() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = temp_connection();
+        let config = connection(
+            &format!("http://{address}"),
+            24_000,
+            93.75,
+            json!([{"name":"Style","query_style_id":1,"decode_style_id":2}]),
+        );
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let backend = VoicevoxBackend::load(&path, Acceleration::Cpu, false).unwrap();
+        let expected_samples = 1;
+        let limit = expected_samples * std::mem::size_of::<f32>() + WAV_HEADER_ALLOWANCE;
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            stream.write_all(&vec![0; limit + 1]).unwrap();
+        });
+        let error = backend
+            .synthesize(2, json!({}), expected_samples)
+            .expect_err("streamed byte after the derived limit must be rejected");
+        assert!(matches!(
+            error,
+            SingError::TooLarge {
+                resource: "VOICEVOX WAV response",
+                ..
+            }
+        ));
+        server.join().unwrap();
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn loopback_engine_redirects_are_not_followed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let path = temp_connection();
+        let config = connection(
+            &format!("http://{address}"),
+            24_000,
+            93.75,
+            json!([{"name":"Style","query_style_id":1,"decode_style_id":2}]),
+        );
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let backend = VoicevoxBackend::load(&path, Acceleration::Cpu, false).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/escaped\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+        });
+        let error = backend
+            .post_json("/sing_frame_audio_query", 1, json!({}))
+            .expect_err("a loopback response must not redirect even an explicitly loaded cache");
+        assert!(error.to_string().contains("HTTP 302"), "{error}");
+        server.join().unwrap();
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

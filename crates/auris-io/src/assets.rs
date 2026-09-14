@@ -38,7 +38,9 @@ pub fn byte_size(path: &Path) -> u64 {
 /// contents the copy is skipped and the existing name returned — re-collecting a project is then
 /// free, and a file already inside the folder is recognised as itself. Otherwise the new file is
 /// placed under `kick-2.wav`, `kick-3.wav` and so on, because two different drum hits that happen
-/// to share a name are still two drum hits.
+/// to share a name are still two drum hits. The bytes are staged privately and the final name is
+/// claimed without replacement, so concurrent callers cannot both overwrite and report the same
+/// destination.
 pub fn copy_into(file: &Path, directory: &Path) -> Result<OsString> {
     std::fs::create_dir_all(directory).map_err(|error| IoError::from_fs(directory, error))?;
 
@@ -46,13 +48,30 @@ pub fn copy_into(file: &Path, directory: &Path) -> Result<OsString> {
         .file_name()
         .map(OsStr::to_os_string)
         .unwrap_or_else(|| OsString::from("asset"));
+    let mut staged = None;
 
     for attempt in 1..=MAX_ATTEMPTS {
         let candidate = numbered(&name, attempt);
         let target = directory.join(&candidate);
         if !target.exists() {
-            std::fs::copy(file, &target).map_err(|error| IoError::from_fs(file, error))?;
-            return Ok(candidate);
+            let copy = match staged.take() {
+                Some(copy) => copy,
+                None => stage_copy(file, directory, &target)?,
+            };
+            match copy.persist_noclobber(&target) {
+                Ok(_) => return Ok(candidate),
+                Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Another caller claimed this exact name after our existence check. Compare
+                    // what we actually staged rather than reopening the source, which may have
+                    // changed while the copy was in flight. Equal bytes share the winner's name;
+                    // different bytes carry the already-written stage on to the next suffix.
+                    if same_contents(error.file.path(), &target)? {
+                        return Ok(candidate);
+                    }
+                    staged = Some(error.file);
+                }
+                Err(error) => return Err(IoError::from_fs(&target, error.error)),
+            }
         }
         if same_contents(file, &target)? {
             return Ok(candidate);
@@ -66,6 +85,17 @@ pub fn copy_into(file: &Path, directory: &Path) -> Result<OsString> {
             format!("{MAX_ATTEMPTS} files here are already called this"),
         ),
     })
+}
+
+/// Copies an asset to a private sibling so no other caller can observe partial bytes.
+fn stage_copy(file: &Path, directory: &Path, target: &Path) -> Result<tempfile::NamedTempFile> {
+    let mut source = std::fs::File::open(file)
+        .map(std::io::BufReader::new)
+        .map_err(|error| IoError::from_fs(file, error))?;
+    let mut staged = tempfile::NamedTempFile::new_in(directory)
+        .map_err(|error| IoError::from_fs(target, error))?;
+    std::io::copy(&mut source, &mut staged).map_err(|error| IoError::from_fs(file, error))?;
+    Ok(staged)
 }
 
 /// Looks for `file_name` directly inside each of `directories`, in order.
@@ -161,6 +191,9 @@ fn read_up_to(source: &mut impl Read, buffer: &mut [u8]) -> std::io::Result<usiz
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Barrier};
+
     use super::*;
     use crate::test_support::TempFile;
 
@@ -261,6 +294,92 @@ mod tests {
         assert_eq!(
             std::fs::read(project.path().join("kick-2.wav")).unwrap(),
             b"second"
+        );
+    }
+
+    #[test]
+    fn simultaneous_copies_of_different_files_never_claim_the_same_name() {
+        const WRITERS: usize = 32;
+
+        let project = TempDir::new("simultaneous-copy-project");
+        let source_directories: Vec<_> = (0..WRITERS)
+            .map(|writer| TempDir::new(&format!("simultaneous-copy-source-{writer}")))
+            .collect();
+        let sources: Vec<(PathBuf, Vec<u8>)> = source_directories
+            .iter()
+            .enumerate()
+            .map(|(writer, source)| {
+                let contents = format!("contents from writer {writer}").into_bytes();
+                let path = source.write("take.wav", &contents);
+                (path, contents)
+            })
+            .collect();
+        let destination = project.path().to_path_buf();
+        let start = Arc::new(Barrier::new(WRITERS));
+
+        let copied: Vec<(OsString, Vec<u8>)> = std::thread::scope(|scope| {
+            let handles: Vec<_> = sources
+                .iter()
+                .map(|(path, contents)| {
+                    let start = Arc::clone(&start);
+                    let destination = destination.clone();
+                    scope.spawn(move || {
+                        start.wait();
+                        let name = copy_into(path, &destination).expect("copy succeeds");
+                        (name, contents.clone())
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("copy thread finishes"))
+                .collect()
+        });
+
+        let names: HashSet<_> = copied.iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            names.len(),
+            WRITERS,
+            "two writers reported ownership of the same destination"
+        );
+        for (name, expected) in copied {
+            assert_eq!(std::fs::read(project.path().join(name)).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn simultaneous_copies_of_the_same_file_share_the_winning_name() {
+        const WRITERS: usize = 32;
+
+        let source = TempDir::new("simultaneous-identical-copy-source");
+        let project = TempDir::new("simultaneous-identical-copy-project");
+        let file = source.write("take.wav", b"one immutable take");
+        let destination = project.path().to_path_buf();
+        let start = Arc::new(Barrier::new(WRITERS));
+
+        let names: Vec<OsString> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..WRITERS)
+                .map(|_| {
+                    let start = Arc::clone(&start);
+                    let destination = destination.clone();
+                    let file = file.clone();
+                    scope.spawn(move || {
+                        start.wait();
+                        copy_into(&file, &destination).expect("copy succeeds")
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| handle.join().expect("copy thread finishes"))
+                .collect()
+        });
+
+        assert!(names.iter().all(|name| name == &OsString::from("take.wav")));
+        assert_eq!(std::fs::read_dir(project.path()).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read(project.path().join("take.wav")).unwrap(),
+            b"one immutable take"
         );
     }
 

@@ -10,7 +10,7 @@
 //! still in its own file.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
-use auris_session::{Session, SessionOptions, WindowPlacement};
+use auris_session::{RecoverySnapshot, Session, SessionOptions, WindowPlacement};
 use gpui::{
     App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, Window,
     WindowBounds, WindowHandle, WindowOptions, point, px, size,
@@ -251,6 +251,77 @@ impl PaneFocus {
             Pane::Log => &self.log,
             Pane::Agent => &self.agent,
         }
+    }
+}
+
+/// Focus targets owned by the modal controls drawn over the main window.
+///
+/// Keeping these handles in the view makes the focus ring stable across repaints and lets the
+/// modal key handlers walk only their own controls instead of escaping into the obscured panes.
+pub(crate) struct ModalFocus {
+    prompt_cancel: FocusHandle,
+    prompt_deny: FocusHandle,
+    prompt_confirm: FocusHandle,
+    export_options: Vec<FocusHandle>,
+    export_cancel: FocusHandle,
+    export_confirm: FocusHandle,
+}
+
+impl ModalFocus {
+    const EXPORT_OPTION_COUNT: usize = 16;
+
+    fn new(cx: &mut App) -> Self {
+        let stop = |cx: &mut App| cx.focus_handle().tab_stop(true);
+        Self {
+            prompt_cancel: stop(cx),
+            prompt_deny: stop(cx),
+            prompt_confirm: stop(cx),
+            export_options: (0..Self::EXPORT_OPTION_COUNT).map(|_| stop(cx)).collect(),
+            export_cancel: stop(cx),
+            export_confirm: stop(cx),
+        }
+    }
+
+    pub(crate) fn prompt_cancel(&self) -> &FocusHandle {
+        &self.prompt_cancel
+    }
+
+    pub(crate) fn prompt_deny(&self) -> &FocusHandle {
+        &self.prompt_deny
+    }
+
+    pub(crate) fn prompt_confirm(&self) -> &FocusHandle {
+        &self.prompt_confirm
+    }
+
+    pub(crate) fn export_option(&self, index: usize) -> &FocusHandle {
+        &self.export_options[index]
+    }
+
+    pub(crate) fn export_cancel(&self) -> &FocusHandle {
+        &self.export_cancel
+    }
+
+    pub(crate) fn export_confirm(&self) -> &FocusHandle {
+        &self.export_confirm
+    }
+
+    pub(crate) fn prompt_contains_focused(&self, window: &Window) -> bool {
+        self.prompt_cancel.is_focused(window)
+            || self.prompt_deny.is_focused(window)
+            || self.prompt_confirm.is_focused(window)
+    }
+
+    pub(crate) fn export_contains_focused(&self, window: &Window) -> bool {
+        self.export_options
+            .iter()
+            .any(|focus| focus.is_focused(window))
+            || self.export_cancel.is_focused(window)
+            || self.export_confirm.is_focused(window)
+    }
+
+    fn contains_focused(&self, window: &Window) -> bool {
+        self.prompt_contains_focused(window) || self.export_contains_focused(window)
     }
 }
 
@@ -830,6 +901,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_test_build_never_offers_persistent_recovery_entries() {
+        assert!(startup_recoveries().is_empty());
+    }
+
+    #[test]
     fn a_clip_click_is_not_a_completed_move() {
         let drag = |pressed_at| Drag::ClipMove {
             clip: ClipId(1),
@@ -1287,6 +1363,34 @@ impl CanvasBounds {
 /// Waveform peaks keyed by audio source, shared by every lane in a frame.
 pub type WaveformMap = std::collections::HashMap<SourceId, Arc<WaveformPeaks>>;
 
+/// One cancellable filesystem or render command executing away from the GPUI thread.
+pub(crate) struct BackgroundCommandState {
+    /// Monotonic identity used to discard a result after cancellation or replacement.
+    pub(crate) id: u64,
+    /// Localized work description drawn beside the status line.
+    pub(crate) label: String,
+    /// Measured fraction as `f32` bits, or `None` for indeterminate work.
+    pub(crate) progress: Option<Arc<std::sync::atomic::AtomicU32>>,
+    /// Cooperative cancellation observed between files or render blocks.
+    pub(crate) cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// The one quiet recovery write in flight between repaint ticks.
+pub(crate) struct AutosaveTaskState {
+    /// Monotonic identity used to ignore an older worker handoff.
+    pub(crate) id: u64,
+    /// Cooperative stop flag shared with the filesystem worker.
+    pub(crate) cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// One quiet external-change check executing away from the GPUI thread.
+pub(crate) struct DiskWatchTaskState {
+    /// Monotonic identity used to discard an older worker handoff.
+    pub(crate) id: u64,
+    /// Cooperative stop flag checked between streamed file chunks.
+    pub(crate) cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
 /// The whole application.
 pub struct AurisApp {
     /// The document, the engine and every command that touches them.
@@ -1325,6 +1429,18 @@ pub struct AurisApp {
     /// Where each panel is docked, which of them are showing, and how large each dock is.
     pub(crate) panels: PanelLayout,
     pub(crate) status: String,
+    /// Long-running ordinary commands, kept visible and cancellable in the status bar.
+    pub(crate) background_command: Option<BackgroundCommandState>,
+    /// Source of stale-result-resistant identities for [`Self::background_command`].
+    pub(crate) background_command_generation: u64,
+    /// Quiet recovery write currently executing outside GPUI.
+    pub(crate) autosave_task: Option<AutosaveTaskState>,
+    /// Source of identities for [`Self::autosave_task`].
+    pub(crate) autosave_task_generation: u64,
+    /// Quiet external-change check currently reading the saved document.
+    pub(crate) disk_watch_task: Option<DiskWatchTaskState>,
+    /// Source of identities for [`Self::disk_watch_task`].
+    pub(crate) disk_watch_task_generation: u64,
     /// A first-launch library download, reported separately from command feedback.
     pub(crate) soundfont_download: Option<crate::startup_soundfonts::SoundFontDownload>,
     /// Audio-export choices being edited before the destination picker opens.
@@ -1427,6 +1543,8 @@ pub struct AurisApp {
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
     /// Keyboard focus target, so the action bindings reach this view.
     pub(crate) focus: FocusHandle,
+    /// Stable, focus-trapped keyboard targets for the controls in modal overlays.
+    pub(crate) modal_focus: ModalFocus,
     /// Focus handles for the panels, which is what scopes a binding to one of them.
     pub(crate) panes: PaneFocus,
     /// The panel that last held the keyboard, to give it back after a sheet closes.
@@ -1456,6 +1574,11 @@ pub struct AurisApp {
     pub(crate) menu_bar: Option<OpenMenu>,
     /// The open rename sheet, if any.
     pub(crate) prompt: Option<Prompt>,
+    /// Crash-recovery snapshots discovered before this session was created, newest first.
+    ///
+    /// Discard walks this queue during the current launch. Recover and Cancel stop asking, so
+    /// every remaining entry stays on disk for the next launch.
+    pub(crate) recovery_queue: VecDeque<RecoverySnapshot>,
     /// The open command palette, if any.
     pub(crate) palette: Option<crate::ui::palette::Palette>,
     /// The open plugin editor, if any.
@@ -1608,6 +1731,24 @@ fn session_options(settings: &Settings) -> SessionOptions {
     }
 }
 
+/// Crash-recovery snapshots that should be offered when a real window starts.
+///
+/// Tests create sessions and windows concurrently. They neither inspect nor offer a developer's
+/// real recovery data: that would make a test run itself look like a crash-recovery decision and
+/// could let a simulated click discard work that belongs to another application instance.
+fn startup_recoveries() -> VecDeque<RecoverySnapshot> {
+    if cfg!(test) {
+        return VecDeque::new();
+    }
+    match Session::recovery_snapshots() {
+        Ok(snapshots) => snapshots.into(),
+        Err(error) => {
+            log::warn!("could not inspect crash-recovery snapshots: {error}");
+            VecDeque::new()
+        }
+    }
+}
+
 /// Adds `primary` to a clip selection and returns the clip its editors should show.
 fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>) -> Option<ClipId> {
     if let Some(primary) = primary {
@@ -1639,6 +1780,20 @@ impl AurisApp {
         let theme = appearance.theme();
         cx.set_global(theme.clone());
 
+        // List before creating this session's private workspace. An empty current workspace has
+        // no snapshot and would not be offered, but taking the inventory first keeps "previous
+        // session" a structural fact rather than a convention the registry must infer.
+        let recovery_queue = startup_recoveries();
+        if !cfg!(test) {
+            let cleanup = Session::begin_recovery_quarantine_cleanup();
+            cx.background_executor()
+                .spawn(async move {
+                    if let Err(error) = cleanup.run() {
+                        log::warn!("could not clean old recovery quarantines: {error}");
+                    }
+                })
+                .detach();
+        }
         let mut session =
             Session::new(session_options(&settings)).expect("a session opens even without audio");
         // The same empty document File → New gives, rather than a separate idea of what a fresh
@@ -1682,10 +1837,7 @@ impl AurisApp {
                         // announcing one every half minute would drown out useful status. A
                         // failure is worth the interruption.
                         if this.compose_progress.is_none() {
-                            if let Some(Err(error)) = this.session.autosave() {
-                                let line = this.failure(Key::CmdSave, &error);
-                                this.set_failed_status(line);
-                            }
+                            this.poll_autosave_task(cx);
                             // Composing adopts the score and its measured faders as one edit.
                             // Other document writers wait until both halves have finished.
                             this.watch_disk(cx);
@@ -1704,6 +1856,7 @@ impl AurisApp {
                         this.finish_punch();
                         this.poll_singer_portrait(cx);
                         this.poll_spectrograms(cx);
+                        this.report_graph_resource_error();
                         cx.notify();
                     })
                     .is_err()
@@ -1722,7 +1875,7 @@ impl AurisApp {
                 .map(|clip| clip.id)
         });
 
-        Self {
+        let mut app = Self {
             session,
             theme,
             appearance,
@@ -1743,6 +1896,12 @@ impl AurisApp {
             drag: None,
             panels: PanelLayout::load(),
             status,
+            background_command: None,
+            background_command_generation: 0,
+            autosave_task: None,
+            autosave_task_generation: 0,
+            disk_watch_task: None,
+            disk_watch_task_generation: 0,
             soundfont_download: None,
             export_dialog: None,
             export: None,
@@ -1780,6 +1939,7 @@ impl AurisApp {
             drum_maps: auris_session::DrumMapBook::load(),
             auditioning: None,
             focus: cx.focus_handle(),
+            modal_focus: ModalFocus::new(cx),
             panes: PaneFocus::new(cx),
             last_pane: Pane::Arrangement,
             viewport_height: px(900.0),
@@ -1792,6 +1952,7 @@ impl AurisApp {
             menu: None,
             menu_bar: None,
             prompt: None,
+            recovery_queue,
             palette: None,
             plugin_window: None,
             auxiliary_windows: Default::default(),
@@ -1833,7 +1994,9 @@ impl AurisApp {
             rhythm_window: None,
             clicked_key: None,
             _repaint: repaint,
-        }
+        };
+        app.offer_next_recovery();
+        app
     }
 
     /// The document.
@@ -1863,14 +2026,15 @@ impl AurisApp {
 
     /// Whether something on top of the window has first claim on the keyboard.
     ///
-    /// A sheet, the palette, an export dialog, or either menu. Every binding goes out of reach
-    /// while one is up: a text field needs the keystrokes to be text, and a menu being walked with
-    /// the arrow keys must not also have `y` toggle the library away underneath it. Each overlay
-    /// handles Escape itself, since the binding that used to close them is one of the ones now out
-    /// of reach.
+    /// A sheet, the palette, an export dialog or progress sheet, or either menu. Every binding
+    /// goes out of reach while one is up: a text field needs the keystrokes to be text, and a menu
+    /// being walked with the arrow keys must not also have `y` toggle the library away underneath
+    /// it. Each overlay handles Escape itself, since the binding that used to close them is one of
+    /// the ones now out of reach.
     pub(crate) fn keys_are_claimed(&self) -> bool {
         self.compose_progress.is_some()
             || self.export_dialog.is_some()
+            || self.export.is_some()
             || self.taking_text_input()
             || self.menu.is_some()
             || self.menu_bar.is_some()
@@ -2010,6 +2174,30 @@ impl AurisApp {
             }
             return;
         }
+        if self.export.is_some() {
+            // The progress/result sheet has exactly one action. Move focus off the export
+            // dialog's former Confirm button so Cancel/Close is reachable immediately.
+            if !self.modal_focus.export_cancel().is_focused(window) {
+                window.focus(self.modal_focus.export_cancel());
+            }
+            return;
+        }
+        if self.export_dialog.is_some() {
+            if !self.modal_focus.export_contains_focused(window) {
+                window.focus(self.modal_focus.export_confirm());
+            }
+            return;
+        }
+        if self
+            .prompt
+            .as_ref()
+            .is_some_and(|prompt| prompt.field().is_none())
+        {
+            if !self.modal_focus.prompt_contains_focused(window) {
+                window.focus(self.modal_focus.prompt_confirm());
+            }
+            return;
+        }
         // A dock switch can hide a field without clicking another pane. Hidden fields must not
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {
@@ -2036,7 +2224,7 @@ impl AurisApp {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
-        } else if self.focus.is_focused(window) {
+        } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window) {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
             if let Some(pane) = self.local_pane(self.last_pane, window) {
@@ -2533,13 +2721,34 @@ impl AurisApp {
         self.status_failed = false;
     }
 
+    /// Publishes a live graph, monitor, or hosted-renderer failure on the status line once.
+    pub(crate) fn report_graph_resource_error(&mut self) {
+        let error = self
+            .session
+            .take_graph_resource_error()
+            .or_else(|| self.session.take_monitor_configuration_error())
+            .map(SessionError::Engine)
+            .or_else(|| {
+                self.session
+                    .take_vst3_render_error()
+                    .map(SessionError::Vst3)
+            });
+        if let Some(error) = error {
+            let text = crate::i18n::error_text(&error, self.language());
+            self.set_failed_status(text);
+        }
+    }
+
     /// Notices another writer at the open project — the MCP door, a sync service, anything
     /// with the file — and obeys [`external_change_action`]: reload where nothing would be
     /// lost, offer a button where something would, withdraw the offer once the file is ours
     /// again (a manual save takes it back).
     pub(crate) fn watch_disk(&mut self, cx: &mut gpui::Context<Self>) {
         // The panel accepts the whole turn as one edit, after its last tool has finished.
-        if self.agent_chat.busy {
+        if self.agent_chat.busy
+            || self.background_command.is_some()
+            || self.disk_watch_task.is_some()
+        {
             return;
         }
         const DISK_WATCH_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -2550,8 +2759,45 @@ impl AurisApp {
             return;
         }
         self.last_disk_watch = Some(std::time::Instant::now());
+        let Some(job) = self.session.begin_disk_watch() else {
+            return;
+        };
+        self.disk_watch_task_generation = self.disk_watch_task_generation.wrapping_add(1);
+        let id = self.disk_watch_task_generation;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.disk_watch_task = Some(DiskWatchTaskState {
+            id,
+            cancelled: Arc::clone(&cancelled),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(state) = this.disk_watch_task.as_ref().filter(|state| state.id == id)
+                else {
+                    return;
+                };
+                let was_cancelled = state.cancelled.load(Ordering::Relaxed);
+                this.disk_watch_task = None;
+                if was_cancelled {
+                    return;
+                }
+                let Some(modified) =
+                    result.and_then(|result| this.session.continue_disk_watch(result))
+                else {
+                    return;
+                };
+                this.apply_external_change(modified, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn apply_external_change(&mut self, modified: bool, cx: &mut gpui::Context<Self>) {
         match external_change_action(
-            self.session.externally_modified(),
+            modified,
             self.session.is_dirty(),
             self.external_change.is_some(),
         ) {
@@ -2574,6 +2820,13 @@ impl AurisApp {
                     cx.notify();
                 }
             }
+        }
+    }
+
+    /// Stops an in-flight external-change hash at its next streamed chunk boundary.
+    pub(crate) fn cancel_disk_watch(&mut self) {
+        if let Some(state) = self.disk_watch_task.take() {
+            state.cancelled.store(true, Ordering::Relaxed);
         }
     }
 
@@ -2739,6 +2992,9 @@ impl AurisApp {
     /// Best-effort on the file, like every other preference: a settings file that cannot be
     /// written must not undo a change the user can already see working.
     pub(crate) fn apply_autosave(&mut self, enabled: bool) {
+        if !enabled {
+            self.cancel_autosave_task();
+        }
         self.session.set_autosave(enabled);
         self.settings.autosave = enabled;
         if let Err(error) = self.settings.save() {

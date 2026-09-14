@@ -67,6 +67,10 @@ pub struct ClapLibrary {
 
 impl ClapLibrary {
     /// Discovers the preset locations and metadata advertised by this library.
+    ///
+    /// Provider callbacks, filesystem traversal, retained metadata, and diagnostics all have
+    /// fixed safety limits. Reaching one leaves the usable prefix in the result and adds a
+    /// truncation diagnostic instead of allowing a provider to grow process memory without bound.
     pub fn presets(&self) -> crate::PresetDiscovery {
         crate::presets::discover(&self.entry)
     }

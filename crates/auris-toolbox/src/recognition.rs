@@ -3,6 +3,44 @@
 use super::*;
 use auris_session::{AnalysisControl, AudioOptions, ChordOptions};
 
+fn analysis_control() -> AnalysisControl {
+    AnalysisControl::cancelled_by(cancellation::current().flag_handle())
+}
+
+fn export_midi_noclobber(session: &Session, output: &Path) -> Result<(), String> {
+    if output.exists() {
+        return Err("MIDI output already exists".into());
+    }
+    output.parent().ok_or("MIDI output needs a parent folder")?;
+    let staged = session
+        .stage_midi_export(output)
+        .map_err(|error| error.to_string())?;
+    cancellation::begin_commit()?;
+    staged
+        .publish_noclobber()
+        .map_err(|error| format!("could not publish MIDI without replacing a file: {error}"))?;
+    Ok(())
+}
+
+fn continue_after_midi<T>(
+    midi_path: &str,
+    update_project: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    cancellation::finish_independent_commit()
+        .and_then(|()| update_project())
+        .map_err(|error| {
+            if error.contains("tool request was cancelled before making durable changes") {
+                format!(
+                    "MIDI was written to {midi_path}; cancellation stopped before the project file was changed"
+                )
+            } else {
+                format!(
+                    "MIDI was written to {midi_path}; the subsequent project update failed: {error}"
+                )
+            }
+        })
+}
+
 fn beats(value: f64) -> Result<Ticks, String> {
     if !value.is_finite() || !(0.0..=1_000_000.0).contains(&value) {
         return Err("beat positions must be finite and within 0..1000000".into());
@@ -33,7 +71,7 @@ pub mod analyze_instruments {
             Path::new(&args.audio),
             Path::new(&args.model),
             args.threshold.unwrap_or(0.2),
-            &AnalysisControl::default(),
+            &analysis_control(),
         )
         .map_err(|e| e.to_string())?;
         reports::publish(&report)
@@ -90,7 +128,7 @@ pub mod transcribe_mixture {
         let report = auris_session::transcribe_mixture_file(
             Path::new(&args.audio),
             &config,
-            &AnalysisControl::default(),
+            &analysis_control(),
         )
         .map_err(|e| e.to_string())?;
         let response = reports::publish(&report)?;
@@ -99,16 +137,20 @@ pub mod transcribe_mixture {
             output
                 .create_mixture_tracks(&report, Ticks::ZERO)
                 .map_err(|e| e.to_string())?;
-            output
-                .export_midi(Path::new(path))
-                .map_err(|e| e.to_string())?;
+            export_midi_noclobber(&output, Path::new(path))?;
         }
         if let Some(path) = &args.project {
-            let mut output = opened(path)?;
-            output
-                .create_mixture_tracks(&report, start)
-                .map_err(|e| e.to_string())?;
-            output.save_with_checkpoint().map_err(|e| e.to_string())?;
+            let update = || {
+                let mut output = opened(path)?;
+                output
+                    .create_mixture_tracks(&report, start)
+                    .map_err(|e| e.to_string())?;
+                save_checkpointed(&mut output)
+            };
+            match args.midi_output.as_deref() {
+                Some(midi_path) => continue_after_midi(midi_path, update)?,
+                None => update()?,
+            }
         }
         Ok(response)
     }
@@ -158,14 +200,14 @@ pub mod analyze_chords {
         };
         let report = session
             .chord_analysis_job(&tracks, from, to, options)
-            .and_then(|j| j.run(&AnalysisControl::default()))
+            .and_then(|j| j.run(&analysis_control()))
             .map_err(|e| e.to_string())?;
         let response = reports::publish(&report)?;
         if args.apply {
             session
                 .apply_chord_analysis(&report)
                 .map_err(|e| e.to_string())?;
-            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            save_checkpointed(&mut session)?;
         }
         Ok(response)
     }
@@ -189,7 +231,7 @@ pub mod analyze_audio {
         let report = auris_session::analyze_audio_file(
             Path::new(&args.audio),
             AudioOptions::default(),
-            &AnalysisControl::default(),
+            &analysis_control(),
         )
         .map_err(|e| e.to_string())?;
         reports::publish(&report)
@@ -236,7 +278,7 @@ pub mod transcribe_audio {
         let report = auris_session::analyze_audio_file(
             Path::new(&args.audio),
             AudioOptions { transcribe: true },
-            &AnalysisControl::default(),
+            &analysis_control(),
         )
         .map_err(|e| e.to_string())?;
         let name = args.name.as_deref().unwrap_or("Transcription");
@@ -246,16 +288,20 @@ pub mod transcribe_audio {
             output
                 .create_transcription_track(&report, Ticks::ZERO, name)
                 .map_err(|e| e.to_string())?;
-            output
-                .export_midi(Path::new(path))
-                .map_err(|e| e.to_string())?;
+            export_midi_noclobber(&output, Path::new(path))?;
         }
         if let Some(path) = &args.project {
-            let mut session = opened(path)?;
-            session
-                .create_transcription_track(&report, start, name)
-                .map_err(|e| e.to_string())?;
-            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            let update = || {
+                let mut session = opened(path)?;
+                session
+                    .create_transcription_track(&report, start, name)
+                    .map_err(|e| e.to_string())?;
+                save_checkpointed(&mut session)
+            };
+            match args.midi_output.as_deref() {
+                Some(midi_path) => continue_after_midi(midi_path, update)?,
+                None => update()?,
+            }
         }
         Ok(response)
     }
@@ -264,6 +310,7 @@ pub mod transcribe_audio {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     #[test]
     fn mixture_tool_defaults_to_no_consent_and_refuses_before_io() {
         let args: transcribe_mixture::Args =
@@ -292,6 +339,24 @@ mod tests {
                 .unwrap_err()
                 .contains("together")
         );
+    }
+
+    #[test]
+    fn cancellation_after_midi_never_starts_the_project_update() {
+        let control = std::sync::Arc::new(crate::Cancellation::new());
+        control.begin_commit().unwrap();
+        assert!(!control.cancel());
+        let attempted = Cell::new(false);
+        let error = crate::with_cancellation(control, || {
+            continue_after_midi("Draft.mid", || {
+                attempted.set(true);
+                Ok(())
+            })
+        })
+        .unwrap_err();
+        assert!(!attempted.get());
+        assert!(error.contains("MIDI was written to Draft.mid"), "{error}");
+        assert!(error.contains("project file was changed"), "{error}");
     }
 
     #[test]

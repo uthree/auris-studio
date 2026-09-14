@@ -61,7 +61,7 @@ mod fixtures;
 pub use clip::{
     AudioClip, AudioSource, AudioSourceBank, FadeCurve, MAX_STRETCH, MIN_STRETCH, MidiClip, Note,
     UNSTRETCHED, default_loop_end, loop_passes, notes_digest, notes_trimmed_from_front,
-    quantised_stretch, sounding_length, stretch_key,
+    quantised_stretch, sounding_length, stretch_key, validated_loop_pass_count,
 };
 pub use curve::{
     BEND_LIMIT, CONTROLLER_LIMIT, CURVE_STEP, ClipCurve, CurvePoint, curve_at, curve_events,
@@ -78,7 +78,7 @@ pub use track::{
 pub use transform::{NoteTransform, StrokeDirection, performed};
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::asset::AssetPath;
@@ -414,6 +414,34 @@ impl Project {
         SendId(self.allocate_id())
     }
 
+    /// Returns an object id that is duplicated or inconsistent in this document.
+    ///
+    /// Every track, clip, audio source, SoundFont, effect slot and send shares one id namespace.
+    /// A loader must reject a document for which this returns `Some`: lookup normally selects one
+    /// matching object while deletion can select every match, so accepting a duplicate would make
+    /// the meaning of a later edit depend on which command performs it.
+    pub fn conflicting_object_id(&self) -> Option<u64> {
+        for (id, source) in &self.audio_sources {
+            if *id != source.id {
+                return Some(id.0);
+            }
+        }
+        for (id, font) in &self.soundfonts {
+            if *id != font.id {
+                return Some(id.0);
+            }
+        }
+
+        let mut used = BTreeSet::new();
+        let mut conflict = None;
+        self.for_each_object_id(|id| {
+            if conflict.is_none() && !used.insert(id) {
+                conflict = Some(id);
+            }
+        });
+        conflict
+    }
+
     /// Repairs a project loaded from disk: makes sure the id counter is past every id in use,
     /// so ids handed out later cannot collide with existing ones.
     ///
@@ -422,37 +450,41 @@ impl Project {
     /// which may already belong to another object.
     pub fn repair_id_counter(&mut self) -> bool {
         let mut highest = 0u64;
-        for track in &self.tracks {
-            highest = highest.max(track.id.0);
-            for slot in &track.mixer.effects {
-                highest = highest.max(slot.id.0);
-            }
-            for send in &track.sends {
-                highest = highest.max(send.id.0);
-            }
-            for clip in track.kind.note_clips().into_iter().flatten() {
-                highest = highest.max(clip.id.0);
-            }
-            if let Some(inner) = track.kind.as_audio() {
-                for clip in &inner.clips {
-                    highest = highest.max(clip.id.0);
-                }
-            }
-        }
-        for slot in &self.master.effects {
-            highest = highest.max(slot.id.0);
-        }
-        for id in self.audio_sources.keys() {
-            highest = highest.max(id.0);
-        }
-        for id in self.soundfonts.keys() {
-            highest = highest.max(id.0);
-        }
+        self.for_each_object_id(|id| highest = highest.max(id));
         let Some(after_highest) = highest.checked_add(1) else {
             return false;
         };
         self.next_id = self.next_id.max(after_highest);
         self.next_id < u64::MAX
+    }
+
+    fn for_each_object_id(&self, mut visit: impl FnMut(u64)) {
+        for track in &self.tracks {
+            visit(track.id.0);
+            for slot in &track.mixer.effects {
+                visit(slot.id.0);
+            }
+            for send in &track.sends {
+                visit(send.id.0);
+            }
+            for clip in track.kind.note_clips().into_iter().flatten() {
+                visit(clip.id.0);
+            }
+            if let Some(inner) = track.kind.as_audio() {
+                for clip in &inner.clips {
+                    visit(clip.id.0);
+                }
+            }
+        }
+        for slot in &self.master.effects {
+            visit(slot.id.0);
+        }
+        for id in self.audio_sources.keys() {
+            visit(id.0);
+        }
+        for id in self.soundfonts.keys() {
+            visit(id.0);
+        }
     }
 }
 

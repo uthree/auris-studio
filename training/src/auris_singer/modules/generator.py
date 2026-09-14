@@ -159,9 +159,7 @@ class NsfHifiGanGenerator(nn.Module):
             in_ch = upsample_initial_channel // (2**i)
             out_ch = upsample_initial_channel // (2 ** (i + 1))
             if kernel < rate:
-                raise ValueError(
-                    f"upsample kernel {kernel} must be >= its rate {rate}"
-                )
+                raise ValueError(f"upsample kernel {kernel} must be >= its rate {rate}")
             # Chosen so the transposed convolution outputs exactly `rate` times
             # its input length, for both even and odd `kernel - rate`.
             padding = (kernel - rate + 1) // 2

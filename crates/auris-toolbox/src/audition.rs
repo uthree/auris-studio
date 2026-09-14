@@ -136,9 +136,14 @@ pub mod preview {
             sample_rate: 24_000,
             ..Default::default()
         };
+        let cancellation = cancellation::current();
+        let commit = || cancellation.begin_commit().is_ok();
+        let mut progress = RenderProgress::default()
+            .cancelled_by(cancellation.flag())
+            .committing_with(&commit);
         let summary = session
             .render_job()
-            .render_to_wav(&path, &settings, &options, &mut RenderProgress::default())
+            .render_to_wav(&path, &settings, &options, &mut progress)
             .map_err(|e| e.to_string())?;
         let text = format!(
             "{}{}",

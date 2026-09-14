@@ -565,7 +565,7 @@ fn compose(args: &[String]) -> Result<(), String> {
     let (origin, text) = match (&source, named) {
         (Some(path), _) => (
             path.display().to_string(),
-            std::fs::read_to_string(path)
+            auris_session::settings::read_config_text(path)
                 .map_err(|error| format!("{}: {error}", path.display()))?,
         ),
         (None, Some(name)) => {

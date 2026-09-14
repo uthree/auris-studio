@@ -65,7 +65,8 @@ impl Session {
     pub fn set_punch_enabled(&mut self, enabled: bool) {
         self.dirty = true;
         self.project.punch_enabled = enabled;
-        if enabled && self.project.punch_region.is_none() {
+        let seeded_region = enabled && self.project.punch_region.is_none();
+        if seeded_region {
             // Whatever the loop is set to, when there is one: somebody who has just looped four
             // bars to find the bad one is about to punch those bars. Otherwise bars one and two,
             // asked for as bars because a meter change makes those two spans different lengths.
@@ -75,7 +76,12 @@ impl Session {
                     .unwrap_or((Ticks::ZERO, self.project.signatures.bar_start(3))),
             );
         }
-        self.history.sync_punch(&self.project);
+        self.history.sync_punch_enabled(&self.project);
+        if seeded_region {
+            // The automatic seed belongs to the unrecorded switch. Existing regions do not: they
+            // are authored edits whose distinct values must survive on both history branches.
+            self.history.seed_missing_punch_regions(&self.project);
+        }
     }
 
     /// Sets the punch region.
@@ -286,6 +292,27 @@ mod tests {
 
         session.set_punch_region(Ticks::ZERO, Ticks::from_beats(4.0));
         assert_eq!(session.history.undo_edit(), Some(Edit::SetPunchRegion));
+    }
+
+    #[test]
+    fn punch_switches_preserve_authored_regions_on_both_history_branches() {
+        let mut session = session();
+        let first = (Ticks::from_beats(4.0), Ticks::from_beats(8.0));
+        let second = (Ticks::from_beats(12.0), Ticks::from_beats(20.0));
+        session.set_punch_region(first.0, first.1);
+        session.set_punch_region(second.0, second.1);
+
+        // Enabling is unrecorded, but it must not replace either authored region in history.
+        session.set_punch_enabled(true);
+        assert_eq!(session.undo(), Some(Edit::SetPunchRegion));
+        assert_eq!(session.punch_region(), Some(first));
+        assert!(session.punch_enabled());
+
+        // Switching after Undo must leave the redo branch's authored region intact as well.
+        session.set_punch_enabled(false);
+        assert_eq!(session.redo(), Some(Edit::SetPunchRegion));
+        assert_eq!(session.punch_region(), Some(second));
+        assert!(!session.punch_enabled());
     }
 
     #[test]

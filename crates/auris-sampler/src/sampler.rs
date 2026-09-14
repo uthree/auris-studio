@@ -1,6 +1,9 @@
 //! The instrument that plays a SoundFont.
 
-use std::sync::Arc;
+use std::cell::Cell;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Once};
 
 use auris_core::param::{ParamDescriptor, ParamId, ParamUnit, ParamValueCurve, db_to_gain};
 use auris_core::plugin::{
@@ -13,6 +16,52 @@ use auris_dsp::{Adsr, SmoothedValue};
 use rustysynth::{SoundFont, Synthesizer, SynthesizerSettings};
 
 use crate::bank::SharedSoundFonts;
+
+thread_local! {
+    /// `true` only while this thread is inside the one third-party render call we contain.
+    static SUPPRESS_RENDER_PANIC_HOOK: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Installs one process-wide dispatcher while constructing the first sampler, off the audio
+/// thread. Rust invokes a panic hook *before* `catch_unwind` can catch anything; the default hook
+/// formats and writes to stderr, both forbidden from a realtime callback. The dispatcher forwards
+/// every ordinary panic to the hook it replaced and suppresses only the thread-local render
+/// boundary below.
+static INSTALL_RENDER_PANIC_HOOK: Once = Once::new();
+
+#[cfg(test)]
+static SUPPRESSED_RENDER_PANICS: AtomicU64 = AtomicU64::new(0);
+
+fn install_render_panic_hook() {
+    INSTALL_RENDER_PANIC_HOOK.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |information| {
+            let suppress = SUPPRESS_RENDER_PANIC_HOOK
+                .try_with(Cell::get)
+                .unwrap_or(false);
+            if suppress {
+                #[cfg(test)]
+                SUPPRESSED_RENDER_PANICS.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            previous(information);
+        }));
+    });
+}
+
+struct SuppressRenderPanicHook(bool);
+
+impl SuppressRenderPanicHook {
+    fn enter() -> Self {
+        Self(SUPPRESS_RENDER_PANIC_HOOK.replace(true))
+    }
+}
+
+impl Drop for SuppressRenderPanicHook {
+    fn drop(&mut self) {
+        SUPPRESS_RENDER_PANIC_HOOK.set(self.0);
+    }
+}
 
 /// The sampler's plugin id, as a project file stores it.
 pub const SAMPLER_ID: &str = "auris.sampler.soundfont";
@@ -346,6 +395,9 @@ fn claim(slots: &[Slot]) -> usize {
 impl Sampler {
     /// A sampler reading fonts from `fonts`.
     pub fn new(fonts: SharedSoundFonts) -> Self {
+        // Hook replacement takes the standard library's global panic-handler lock and allocates
+        // its forwarding closure. Do it while the graph is being built, never on first render.
+        install_render_panic_hook();
         // A level and an envelope, because the font is the sound. Anything else a track wants
         // doing to it — ambience above all — belongs in its effect chain, where the offline
         // renderer knows to keep rendering until the tail has fallen silent. An instrument
@@ -847,17 +899,24 @@ impl Sampler {
     }
 }
 
-/// Lets the synthesiser render, and answers whether it survived.
+/// Runs one third-party render boundary and answers whether it survived.
 ///
 /// The library indexes its sample data with arithmetic a degenerate font can push out of range,
 /// and this is the audio callback thread: an unwind escaping into the C callback would abort the
-/// whole process. Catching costs nothing until something actually panics; the price of that —
-/// the hook's message, an allocation for the payload — is paid once, on the way to silence.
+/// whole process. Rust normally invokes a process-wide hook before an unwind is caught; the
+/// thread-local guard suppresses that hook here so containment itself performs no formatting,
+/// logging or I/O on the callback.
 ///
-/// `AssertUnwindSafe` is honest here because the synthesiser is never called again once
-/// poisoned: whatever invariants the panic broke are invariants nobody will read.
+/// `AssertUnwindSafe` is honest for the caller because a synthesiser is never called again once
+/// poisoned: whatever invariants the panic broke are invariants nobody will read. Kept generic so
+/// the hook boundary itself can be tested without manufacturing another malformed SoundFont.
+fn render_boundary(run: impl FnOnce()) -> bool {
+    let _hook_guard = SuppressRenderPanicHook::enter();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).is_ok()
+}
+
 fn rendered_safely(synth: &mut Synthesizer, left: &mut [f32], right: &mut [f32]) -> bool {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| synth.render(left, right))).is_ok()
+    render_boundary(|| synth.render(left, right))
 }
 
 impl Parameterized for Sampler {
@@ -1516,11 +1575,11 @@ mod tests {
     }
 
     #[test]
-    fn a_font_that_breaks_the_synthesiser_costs_its_sound_and_not_the_process() {
-        // The library walks a looping voice by folding the position back one loop length per
-        // frame; this font's one-frame loop at a preposterous claimed rate outruns the fold,
-        // runs off the end of the sample data and hits an unchecked index. Uncontained, that
-        // panic unwinds into the C audio callback and aborts the whole application.
+    fn a_loop_step_larger_than_the_whole_sample_stays_inside_the_loop() {
+        // This once escaped the one-frame loop after subtracting its length only once, then hit
+        // an unchecked sample index. The vendored oscillator now folds by the remainder, so even
+        // hostile metadata remains an ordinary bounded render rather than exercising the panic
+        // containment path on every rebuild.
         let bank = SoundFontBank::shared();
         bank.insert(FONT, crate::test_support::runaway_font(RATE as i32 * 512));
         let mut sampler = playing(bank, 0, 512);
@@ -1534,34 +1593,31 @@ mod tests {
         sampler.process(&[note_on(0)], &mut out, &ctx);
 
         assert!(
-            sampler.poisoned,
-            "the runaway loop should have taken the synthesiser down"
+            !sampler.poisoned,
+            "the high-rate loop must be handled without a panic"
         );
         assert!(
-            out.channel(0).iter().all(|s| *s == 0.0),
-            "a poisoned block must come back as silence, not as what was in the buffer"
+            out.channel(0).iter().all(|sample| sample.is_finite()),
+            "the wrapped oscillator returned non-finite audio"
         );
-        assert_eq!(sampler.active_voices(), 0);
+        assert!(
+            rms(out.channel(0)) > 0.01,
+            "the oscillator stayed safe by silently abandoning the looping voice"
+        );
+        assert_eq!(sampler.active_voices(), 1);
+    }
 
-        // Parameter delivery and later envelope chunks must observe the same poison boundary;
-        // neither may call into the half-unwound library object.
-        sampler.set_param_by_key("attack", 0.5);
-        sampler.set_param_by_key("level", -6.0);
+    #[test]
+    fn a_caught_render_panic_skips_the_process_wide_hook() {
+        install_render_panic_hook();
+        let before = SUPPRESSED_RENDER_PANICS.load(Ordering::Relaxed);
 
-        // Every later block is silence rather than another attempt, and a reset must not call
-        // back into whatever state the panic left behind.
-        sampler.reset();
-        let mut later = AudioBuffer::stereo(512, RATE);
-        for sample in later.channel_mut(0) {
-            *sample = 0.5;
-        }
-        sampler.process(&[note_on(0)], &mut later, &ctx);
-        assert!(later.channel(0).iter().all(|s| *s == 0.0));
+        assert!(!render_boundary(|| panic!("synthetic third-party panic")));
 
-        // `prepare` is the way back to life.
-        sampler.prepare(&PrepareContext::new(RATE, 512, 2));
-        assert!(!sampler.poisoned);
-        assert!(sampler.has_voice());
+        assert!(
+            SUPPRESSED_RENDER_PANICS.load(Ordering::Relaxed) > before,
+            "the realtime panic reached the formatting/logging hook"
+        );
     }
 
     #[test]

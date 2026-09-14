@@ -9,6 +9,7 @@ from pathlib import Path
 import lightning as L
 from torch.utils.data import DataLoader, DistributedSampler
 
+from auris_singer.dataset_layout import resolve_dataset_root
 from auris_singer.data.dataset import (
     DistributedBucketSampler,
     SingingDataset,
@@ -49,7 +50,9 @@ class SingingDataModule(L.LightningDataModule):
         use_durations: bool = True,
     ):
         super().__init__()
-        self.root = Path(root)
+        # Resolve once so every metadata file and every sample used by this
+        # module belongs to one immutable preprocessing generation.
+        self.root = resolve_dataset_root(root)
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.val_size = val_size

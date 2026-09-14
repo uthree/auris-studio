@@ -10,7 +10,6 @@
 //! which is the same bargain [`crate::import`] makes with audio files: the document keeps a path,
 //! the samples live beside it at runtime, and a project stays small enough to read.
 
-use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
@@ -18,6 +17,12 @@ use std::sync::Arc;
 use rustysynth::SoundFont;
 
 use crate::error::{IoError, Result};
+
+/// Largest SoundFont the in-memory parser will accept.
+///
+/// The 512 MiB ceiling leaves room for large orchestral fonts while preventing an unchecked file
+/// selection from consuming the process address space before chunk validation can run.
+const MAX_SOUNDFONT_FILE_BYTES: usize = 512 * 1024 * 1024;
 
 /// File extensions the SoundFont importer accepts, for a file-picker filter.
 pub fn soundfont_extensions() -> &'static [&'static str] {
@@ -49,8 +54,7 @@ pub struct SoundFontPreset {
 /// believe it — see `check_chunks` below for what the parser would otherwise do with a size
 /// field that lies.
 pub fn load_soundfont(path: &Path) -> Result<Arc<SoundFont>> {
-    let bytes = fs::read(path)
-        .map_err(|error| IoError::Decode(format!("could not open {}: {error}", path.display())))?;
+    let bytes = read_soundfont_source(path, MAX_SOUNDFONT_FILE_BYTES)?;
     let refused = |reason: String| {
         IoError::Decode(format!(
             "{} is not a SoundFont this build can read: {reason}",
@@ -64,6 +68,33 @@ pub fn load_soundfont(path: &Path) -> Result<Arc<SoundFont>> {
     .map_err(|_| refused("the SoundFont parser rejected malformed index data".to_string()))?;
     let font = parsed.map_err(|error| refused(error.to_string()))?;
     Ok(Arc::new(font))
+}
+
+/// Reads the SoundFont source under an explicit bound.
+fn read_soundfont_source(path: &Path, limit: usize) -> Result<Vec<u8>> {
+    crate::bounded::read_with_limit(path, limit, |observed| {
+        soundfont_too_large(path, limit, observed)
+    })
+}
+
+/// The same read with a test seam after metadata, for reproducing a growing file.
+#[cfg(test)]
+fn read_soundfont_source_after_metadata(
+    path: &Path,
+    limit: usize,
+    after_metadata: impl FnOnce(),
+) -> Result<Vec<u8>> {
+    crate::bounded::read_with_limit_after_metadata(path, limit, after_metadata, |observed| {
+        soundfont_too_large(path, limit, observed)
+    })
+}
+
+fn soundfont_too_large(path: &Path, limit: usize, observed: u64) -> IoError {
+    IoError::SoundFontFileTooLarge {
+        path: path.to_path_buf(),
+        observed,
+        limit: limit as u64,
+    }
 }
 
 /// Walks the chunk tree the way the parser will, checking every size field against the bytes
@@ -194,8 +225,51 @@ pub fn font_name(font: &SoundFont, path: &Path) -> String {
 mod tests {
     use super::*;
     use crate::test_support::TempFile;
-    use std::fs::File;
+    use std::fs::{File, OpenOptions};
     use std::io::Write;
+
+    #[test]
+    fn soundfont_file_size_limit_accepts_its_edges_and_rejects_the_next_byte() {
+        const LIMIT: usize = 32;
+        for length in [LIMIT - 1, LIMIT] {
+            let file = TempFile::new(&format!("soundfont-{length}.sf2"));
+            std::fs::write(file.path(), vec![0x5a; length]).unwrap();
+            assert_eq!(
+                read_soundfont_source(file.path(), LIMIT).unwrap().len(),
+                length
+            );
+        }
+
+        let file = TempFile::new("soundfont-too-large.sf2");
+        std::fs::write(file.path(), vec![0x5a; LIMIT + 1]).unwrap();
+        assert!(matches!(
+            read_soundfont_source(file.path(), LIMIT),
+            Err(IoError::SoundFontFileTooLarge {
+                observed,
+                limit,
+                ..
+            }) if observed == (LIMIT + 1) as u64 && limit == LIMIT as u64
+        ));
+    }
+
+    #[test]
+    fn a_soundfont_that_grows_after_metadata_is_still_bounded() {
+        const LIMIT: usize = 32;
+        let file = TempFile::new("growing.sf2");
+        std::fs::write(file.path(), vec![0x5a; LIMIT]).unwrap();
+
+        let result = read_soundfont_source_after_metadata(file.path(), LIMIT, || {
+            let mut append = OpenOptions::new().append(true).open(file.path()).unwrap();
+            append.write_all(&[0x7f]).unwrap();
+            append.flush().unwrap();
+        });
+
+        assert!(matches!(
+            result,
+            Err(IoError::SoundFontFileTooLarge { observed, .. })
+                if observed == (LIMIT + 1) as u64
+        ));
+    }
 
     #[test]
     fn a_path_that_is_not_there_is_an_error_rather_than_a_panic() {

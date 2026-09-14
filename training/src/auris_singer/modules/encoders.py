@@ -71,8 +71,8 @@ class TextEncoder(nn.Module):
             ``(x, m, logs, x_mask)`` with ``x`` ``(B, hidden, S)``,
             ``m``/``logs`` ``(B, out_channels, S)`` and ``x_mask`` ``(B, 1, S)``.
         """
-        x_mask = sequence_mask(phoneme_lengths, phonemes.size(1)).unsqueeze(1).to(
-            self.proj.weight.dtype
+        x_mask = (
+            sequence_mask(phoneme_lengths, phonemes.size(1)).unsqueeze(1).to(self.proj.weight.dtype)
         )
         x = self.embedding(phonemes) * math.sqrt(self.hidden_channels)
         x = x.transpose(1, 2) * x_mask
@@ -95,9 +95,7 @@ class PitchEnergyEmbedding(nn.Module):
         self.energy_ref = energy_ref
         self.proj = nn.Conv1d(3, channels, 1)
 
-    def forward(
-        self, f0: torch.Tensor, energy: torch.Tensor, voiced: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, f0: torch.Tensor, energy: torch.Tensor, voiced: torch.Tensor) -> torch.Tensor:
         """
         Args:
             f0: ``(B, 1, T)`` in Hz (0 where unvoiced).

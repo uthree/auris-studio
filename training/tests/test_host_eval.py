@@ -16,10 +16,18 @@ import torch
 
 from auris_singer.host import Host
 from auris_singer.host_eval import (
+    MAX_EVALUATION_MELS,
+    MAX_EVALUATION_UTTERANCES,
+    MAX_PITCH_TOLERANCE_CENTS,
     METRICS,
     Analyst,
     Settings,
+    Utterance,
+    _artifact_stem,
+    _record_durations,
+    _require_checkpoint_clock,
     _song_speaker,
+    _validated_song_gap_frames,
     evaluate,
     evaluate_score,
     format_report,
@@ -28,6 +36,26 @@ from auris_singer.host_eval import (
     validation_records,
     voice_info,
 )
+from auris_singer.utils.durations import MAX_INFERENCE_FRAMES
+
+
+def test_artifact_stems_do_not_flatten_distinct_hierarchical_ids():
+    nested = _artifact_stem("s/0000/a/b")
+    literal_underscore = _artifact_stem("s/0000/a_b")
+
+    assert nested != literal_underscore
+    assert not set('<>:"/\\|?*') & set(nested + literal_underscore)
+    assert len(nested) <= 65 and len(literal_underscore) <= 65
+
+
+def test_corpus_evaluation_rejects_a_checkpoint_on_another_clock():
+    from types import SimpleNamespace
+
+    corpus = SimpleNamespace(sample_rate=48_000, hop_length=480)
+    aligner = SimpleNamespace(synthesizer=SimpleNamespace(sample_rate=44_100, hop_length=441))
+
+    with pytest.raises(ValueError, match="do not share a clock"):
+        _require_checkpoint_clock(corpus, aligner)
 
 
 class Parroting:
@@ -83,22 +111,142 @@ def test_a_joined_song_is_only_rendered_for_one_speaker():
     assert _song_speaker(mixed, "bob") == (True, "bob"), "an explicit one-voice render"
 
 
-def test_voice_info_reads_the_exported_analysis_settings(tmp_path):
-    voice = tmp_path / "voice.onnx"
-    voice.with_suffix(".json").write_text(
-        json.dumps(
-            {
-                "sample_rate": 44_100,
-                "hop_length": 441,
-                "symbols": ["<pad>", "<sil>"],
-                "f0_min": 80.0,
-                "audio": {"n_fft": 1024, "win_length": 960},
-            }
+def test_evaluation_utterance_rejects_durations_before_token_expansion():
+    with pytest.raises(ValueError, match="at most"):
+        Utterance(
+            id="hostile",
+            speaker_id=0,
+            phonemes=["a"],
+            durations=[2_001],
+            f0=np.zeros(1, dtype=np.float32),
+            energy=np.zeros(1, dtype=np.float32),
+            wav=np.zeros(1, dtype=np.float32),
+        )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"utterances": 0}, "utterances must be"),
+        ({"val_size": -1}, "val_size must be"),
+        ({"take_seeds": 0}, "take_seeds must be"),
+        ({"song_gap_seconds": float("nan")}, "song_gap_seconds must be finite"),
+        ({"song_gap_seconds": -1.0}, "song_gap_seconds must be finite"),
+        ({"song_gap_seconds": 61.0}, "song_gap_seconds must be finite"),
+        ({"n_mels": 0}, "n_mels must be"),
+        ({"n_mels": MAX_EVALUATION_MELS + 1}, "n_mels must be"),
+        ({"tolerance_cents": float("nan")}, "tolerance_cents must be finite"),
+        ({"tolerance_cents": 0.0}, "tolerance_cents must be finite"),
+        (
+            {"tolerance_cents": MAX_PITCH_TOLERANCE_CENTS + 1},
+            "tolerance_cents must be finite",
         ),
+        (
+            {"utterances": MAX_EVALUATION_UTTERANCES, "take_seeds": 5},
+            r"utterances \* take_seeds",
+        ),
+    ],
+)
+def test_settings_reject_unbounded_or_negative_work(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        Settings(**kwargs)
+
+
+def test_evaluate_revalidates_mutated_settings_before_any_collaborator(tmp_path, monkeypatch):
+    import auris_singer.host_eval as host_eval
+
+    settings = Settings()
+    settings.utterances = -1
+    monkeypatch.setattr(
+        host_eval,
+        "voice_info",
+        lambda *_args: pytest.fail("voice metadata was read before settings validation"),
+    )
+
+    with pytest.raises(ValueError, match="utterances must be"):
+        evaluate("voice.onnx", "dataset", "checkpoint", object(), tmp_path / "work", settings)
+    assert not (tmp_path / "work").exists()
+
+
+def test_analyst_rejects_an_unbounded_mel_matrix_before_pitch_setup(monkeypatch):
+    import auris_singer.preprocess.f0 as f0_module
+
+    monkeypatch.setattr(
+        f0_module,
+        "FcpeExtractor",
+        lambda *_args, **_kwargs: pytest.fail("pitch setup ran before analysis validation"),
+    )
+    with pytest.raises(ValueError, match="n_mels must be"):
+        Analyst(48_000, 2_048, 480, 2_048, n_mels=MAX_EVALUATION_MELS + 1)
+
+
+def test_song_gap_total_is_bounded_before_joined_lists_are_built():
+    settings = Settings(utterances=MAX_EVALUATION_UTTERANCES, song_gap_seconds=60.0)
+    with pytest.raises(ValueError, match="joined evaluation gaps require"):
+        _validated_song_gap_frames(settings, hop_seconds=0.01, parts=MAX_EVALUATION_UTTERANCES)
+
+
+def test_evaluation_rejects_oversized_unlabelled_audio_before_alignment():
+    class Corpus:
+        n_fft = 2048
+        hop_length = 480
+        win_length = 2048
+
+        @staticmethod
+        def durations(_record):
+            return None
+
+    class Aligner:
+        @staticmethod
+        def durations(*_args, **_kwargs):
+            pytest.fail("alignment ran before the extent guard")
+
+    frames = MAX_INFERENCE_FRAMES + 1
+    curve = np.zeros(frames, dtype=np.float32)
+    with pytest.raises(ValueError, match="at most"):
+        _record_durations(
+            Corpus(),
+            Aligner(),
+            {"speaker_id": 0},
+            ["a"],
+            curve,
+            curve,
+            curve,
+            np.zeros(frames * 480, dtype=np.float32),
+        )
+
+
+def test_voice_info_reads_the_exported_analysis_settings(tmp_path, monkeypatch):
+    voice = tmp_path / "voice.onnx"
+    block = {
+        "sample_rate": 44_100,
+        "hop_length": 441,
+        "symbols": ["<pad>", "<sil>"],
+        "f0_min": 80.0,
+        "audio": {"n_fft": 1024, "win_length": 960},
+    }
+    monkeypatch.setattr("auris_singer.export._read_embedded_metadata", lambda _path: block)
+    voice.with_suffix(".json").write_text(
+        json.dumps(block),
         encoding="utf-8",
     )
     info = voice_info(voice)
     assert (info.n_fft, info.win_length, info.f0_min) == (1024, 960, 80.0)
+
+
+def test_voice_info_rejects_a_mixed_model_and_sidecar_generation(tmp_path, monkeypatch):
+    voice = tmp_path / "voice.onnx"
+    voice.write_bytes(b"stand-in model")
+    voice.with_suffix(".json").write_text(
+        json.dumps({"export_generation": "sidecar"}), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "auris_singer.export._read_embedded_metadata",
+        lambda _path: {"export_generation": "model"},
+    )
+
+    with pytest.raises(ValueError, match="export_generation mismatch"):
+        voice_info(voice)
 
 
 def test_the_analyst_measures_a_render_against_its_curves():
@@ -168,8 +316,14 @@ def test_the_table_reads_every_column_it_is_given():
     report["summary"]["confusions"] = {"host": [["a", "a", 5], ["ɕ", "s", 3], ["k", "", 1]]}
     tallied = format_report(report)
     lines = tallied.split("\n")
-    start = next(at for at, line in enumerate(lines) if line.startswith("what the listener heard, host column"))
-    assert [line.split()[0] for line in lines[start + 2 : start + 5]] == ["ɕ", "k", "a"], "sorted by errors"
+    start = next(
+        at
+        for at, line in enumerate(lines)
+        if line.startswith("what the listener heard, host column")
+    )
+    assert [line.split()[0] for line in lines[start + 2 : start + 5]] == ["ɕ", "k", "a"], (
+        "sorted by errors"
+    )
 
     score = {
         "voice": {"path": "v.onnx", "name": ""},
@@ -198,34 +352,58 @@ def exported_voice(tmp_path, tiny_model_config, tiny_discriminator_config, proce
     from auris_singer.lightning_module import AurisSingerModule
 
     dm = SingingDataModule(
-        processed_dataset, batch_size=2, num_workers=0, val_size=2,
-        bucket_boundaries=[0, 200], pin_memory=False,
+        processed_dataset,
+        batch_size=2,
+        num_workers=0,
+        val_size=2,
+        bucket_boundaries=[0, 200],
+        pin_memory=False,
     )
     torch.manual_seed(0)
     module = AurisSingerModule(
         model=tiny_model_config,
         discriminator=tiny_discriminator_config,
-        audio={"sample_rate": 48_000, "n_fft": 2048, "hop_length": 480, "win_length": 2048, "n_mels": 80},
+        audio={
+            "sample_rate": 48_000,
+            "n_fft": 2048,
+            "hop_length": 480,
+            "win_length": 2048,
+            "n_mels": 80,
+        },
         loss={"mel_params": [[512, 120, 512, 40]], "envelope_kernel_sizes": [128, 256]},
         optimizer={"learning_rate": 1e-4},
-        metadata={"symbols": dm.phoneme_table.symbols, "speaker_to_id": dm.speaker_to_id, "audio": dm.audio_config},
+        metadata={
+            "symbols": dm.phoneme_table.symbols,
+            "speaker_to_id": dm.speaker_to_id,
+            "audio": dm.audio_config,
+        },
     )
     trainer = L.Trainer(
-        max_steps=1, accelerator="cpu", devices=1, logger=False, enable_checkpointing=False,
-        enable_progress_bar=False, num_sanity_val_steps=0, limit_val_batches=0,
+        max_steps=1,
+        accelerator="cpu",
+        devices=1,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=False,
+        num_sanity_val_steps=0,
+        limit_val_batches=0,
         use_distributed_sampler=False,
     )
     trainer.fit(module, datamodule=dm)
     checkpoint = tmp_path / "tiny.ckpt"
     trainer.save_checkpoint(checkpoint)
     voice = tmp_path / "tiny.onnx"
-    export_onnx(module.model, voice, metadata=dict(module.hparams["metadata"]), voice={"name": "Tiny"})
+    export_onnx(
+        module.model, voice, metadata=dict(module.hparams["metadata"]), voice={"name": "Tiny"}
+    )
     return voice, checkpoint
 
 
 @needs_host
 @pytest.mark.slow
-def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, processed_dataset, tmp_path):
+def test_the_host_sings_the_corpus_and_every_column_is_measured(
+    exported_voice, processed_dataset, tmp_path
+):
     voice, checkpoint = exported_voice
     info = voice_info(voice)
     assert info.name == "Tiny" and info.hop_seconds == pytest.approx(0.01)
@@ -233,12 +411,22 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
     # `all` rather than `val`: twelve synthetic utterances make a one-utterance validation
     # split, and the song column needs two.
     settings = Settings(
-        split="all", utterances=2, pitch=False, song_gap_seconds=0.2, take_seeds=2,
+        split="all",
+        utterances=2,
+        pitch=False,
+        song_gap_seconds=0.2,
+        take_seeds=2,
         speaker="alice",
     )
     listener = Parroting(["a", "i", "k", "o"])
     report = evaluate(
-        voice, processed_dataset, checkpoint, Host.find(), tmp_path / "work", settings, listener=listener
+        voice,
+        processed_dataset,
+        checkpoint,
+        Host.find(),
+        tmp_path / "work",
+        settings,
+        listener=listener,
     )
 
     assert report["kind"] == "corpus"
@@ -250,7 +438,9 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
         facts = row["timing"]
         assert facts["frames"] == row["n_frames"]
         assert facts["chunks"] >= 1
-        assert facts["seconds"] == pytest.approx(row["seconds"] * facts["takes"], abs=0.011), "added over takes"
+        assert facts["seconds"] == pytest.approx(row["seconds"] * facts["takes"], abs=0.011), (
+            "added over takes"
+        )
         assert facts["wall_seconds"] >= facts["render_seconds"] > 0
     summary = report["summary"]
     assert set(summary) >= {"host", "reference", "song", "recording", "timing"}
@@ -265,9 +455,13 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
             assert math.isfinite(row[column]["per"]) and row[column]["heard"] == "a i k o"
     assert 0 <= summary["recording"]["per"] < 1
     assert set(summary["confusions"]) == {"host", "reference", "song", "recording"}
-    assert sum(n for _, _, n in summary["confusions"]["host"]) >= 2 * 2 * 4, "every take, every phoneme"
+    assert sum(n for _, _, n in summary["confusions"]["host"]) >= 2 * 2 * 4, (
+        "every take, every phoneme"
+    )
     assert summary["timing"]["asr_seconds"] >= 0
-    assert summary["timing"]["song"]["seconds_of_frames"] > sum(r["seconds"] for r in report["utterances"])
+    assert summary["timing"]["song"]["seconds_of_frames"] > sum(
+        r["seconds"] for r in report["utterances"]
+    )
     assert 0 < summary["timing"]["rtf"] < 1000
 
     # Every file that crossed the boundary is kept, and the table reads.
@@ -281,7 +475,9 @@ def test_the_host_sings_the_corpus_and_every_column_is_measured(exported_voice, 
 
 @needs_host
 @pytest.mark.slow
-def test_the_host_sings_the_speaker_it_is_asked_for_and_refuses_a_stranger(exported_voice, tmp_path):
+def test_the_host_sings_the_speaker_it_is_asked_for_and_refuses_a_stranger(
+    exported_voice, tmp_path
+):
     """The tiny voice is trained on alice and bob; the host sings either by name, and a name
     it does not have is refused by the host itself, naming the two it has."""
     from auris_singer.host import HostError, HostFrames
@@ -289,8 +485,11 @@ def test_the_host_sings_the_speaker_it_is_asked_for_and_refuses_a_stranger(expor
     voice, _ = exported_voice
     info = voice_info(voice)
     frames = HostFrames(
-        hop_seconds=info.hop_seconds, inventory=["sil", "a"], phonemes=[0] * 5 + [1] * 40 + [0] * 5,
-        f0_hz=[0.0] * 5 + [220.0] * 40 + [0.0] * 5, energy=[0.0] * 5 + [0.5] * 40 + [0.0] * 5,
+        hop_seconds=info.hop_seconds,
+        inventory=["sil", "a"],
+        phonemes=[0] * 5 + [1] * 40 + [0] * 5,
+        f0_hz=[0.0] * 5 + [220.0] * 40 + [0.0] * 5,
+        energy=[0.0] * 5 + [0.5] * 40 + [0.0] * 5,
     )
     path = frames.write(tmp_path / "a.frames.json")
     host = Host.find()
@@ -309,7 +508,9 @@ def test_the_host_sings_a_score_the_way_a_person_would(exported_voice, tmp_path)
     voice, _ = exported_voice
     settings = Settings(pitch=False)
     listener = Parroting(["s", "a", "k", "ɯ", "ɾ", "a"])
-    report = evaluate_score(voice, Host.find(), tmp_path / "score", settings=settings, listener=listener)
+    report = evaluate_score(
+        voice, Host.find(), tmp_path / "score", settings=settings, listener=listener
+    )
 
     assert report["kind"] == "score"
     assert report["frames"]["count"] > 0
@@ -345,9 +546,33 @@ def test_several_takes_average_into_one_row():
     assert row["mel_l1"] == pytest.approx(2.0) and row["per"] == pytest.approx(0.6)
     assert row["f0_rmse_cent"] == pytest.approx(10.0), "NaN is left out of the mean"
     assert row["heard"] == "first"
-    facts = sum_facts([
-        {"seconds": 1.0, "chunks": 1, "render_seconds": 0.5, "load_seconds": 0.3, "wall_seconds": 2.0, "on_gpu": True, "sample_rate": 48_000, "frames": 100},
-        {"seconds": 1.0, "chunks": 1, "render_seconds": 0.4, "load_seconds": 0.0, "wall_seconds": 1.5, "on_gpu": False, "sample_rate": 48_000, "frames": 100},
-    ])
-    assert facts["takes"] == 2 and facts["seconds"] == 2.0 and facts["render_seconds"] == pytest.approx(0.9)
+    facts = sum_facts(
+        [
+            {
+                "seconds": 1.0,
+                "chunks": 1,
+                "render_seconds": 0.5,
+                "load_seconds": 0.3,
+                "wall_seconds": 2.0,
+                "on_gpu": True,
+                "sample_rate": 48_000,
+                "frames": 100,
+            },
+            {
+                "seconds": 1.0,
+                "chunks": 1,
+                "render_seconds": 0.4,
+                "load_seconds": 0.0,
+                "wall_seconds": 1.5,
+                "on_gpu": False,
+                "sample_rate": 48_000,
+                "frames": 100,
+            },
+        ]
+    )
+    assert (
+        facts["takes"] == 2
+        and facts["seconds"] == 2.0
+        and facts["render_seconds"] == pytest.approx(0.9)
+    )
     assert facts["on_gpu"] is False and facts["frames"] == 100

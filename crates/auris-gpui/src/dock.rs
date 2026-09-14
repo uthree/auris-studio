@@ -543,7 +543,7 @@ impl PanelLayout {
     /// opening.
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = auris_session::settings::read_config_text(&path) else {
             return Self::default();
         };
         match serde_json::from_str::<StoredLayout>(&text) {
@@ -563,7 +563,7 @@ impl PanelLayout {
         }
         let text = serde_json::to_string_pretty(&StoredLayout::from(self))
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        std::fs::write(path, text)
+        auris_session::settings::write_config_bytes(&path, text.as_bytes())
     }
 }
 

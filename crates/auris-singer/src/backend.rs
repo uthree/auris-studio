@@ -118,6 +118,13 @@ pub trait SingingBackend: Send {
     fn on_gpu(&self) -> bool;
     /// The entry file used to open this voice.
     fn path(&self) -> &Path;
+    /// Whether this already-loaded voice is safe to reuse for background synthesis.
+    ///
+    /// Native voices have no subordinate resources. Manifest-backed implementations override
+    /// this for child paths or service URLs that an explicit load was allowed to use.
+    fn automatic_access_safe(&self) -> bool {
+        true
+    }
     /// Sings frames, reporting progress as `(completed chunks, total chunks)`.
     ///
     /// Sample score-bearing frames with the sources in [`Self::capabilities`]: host-owned
@@ -166,18 +173,44 @@ impl VoiceModel {
     /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, `.voicevox.json` connection,
     /// or `.leapsinger.json` voicebank manifest.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
+        Self::load_with_access(path, acceleration, false)
+    }
+
+    /// Opens a voice for work triggered by a document rather than a fresh user action.
+    ///
+    /// In this mode the entry and each existing ancestor must not be a symlink or Windows reparse
+    /// point, a manifest may only name resources below its voicebank folder, and a VOICEVOX
+    /// connection may only address the loopback host. Rejection happens before the entry,
+    /// subordinate file or HTTP service is opened.
+    pub fn load_for_automatic_access(
+        path: &Path,
+        acceleration: Acceleration,
+    ) -> Result<Self, SingError> {
+        let path = crate::validate_automatic_voice_entry(path)?;
+        Self::load_with_access(&path, acceleration, true)
+    }
+
+    fn load_with_access(
+        path: &Path,
+        acceleration: Acceleration,
+        automatic: bool,
+    ) -> Result<Self, SingError> {
         let backend: Box<dyn SingingBackend> = match BackendKind::from_path(path) {
             BackendKind::DiffSinger => Box::new(crate::diffsinger::DiffSingerBackend::load(
                 path,
                 acceleration,
+                automatic,
             )?),
-            BackendKind::Voicevox => {
-                Box::new(crate::voicevox::VoicevoxBackend::load(path, acceleration)?)
-            }
+            BackendKind::Voicevox => Box::new(crate::voicevox::VoicevoxBackend::load(
+                path,
+                acceleration,
+                automatic,
+            )?),
             BackendKind::Auris => Box::new(crate::model::AurisBackend::load(path, acceleration)?),
             BackendKind::LeapSinger => Box::new(crate::leapsinger::LeapSingerBackend::load(
                 path,
                 acceleration,
+                automatic,
             )?),
         };
         Ok(Self { backend })
@@ -206,6 +239,14 @@ impl VoiceModel {
     /// Where the voice was loaded from.
     pub fn path(&self) -> &Path {
         self.backend.path()
+    }
+
+    /// Whether this loaded voice may be reused for background synthesis without reopening it.
+    ///
+    /// An explicitly loaded manifest can legitimately point outside its folder or at a remote
+    /// VOICEVOX Engine. The cache must still ask this before an automatic render reuses it.
+    pub fn automatic_access_safe(&self) -> bool {
+        self.backend.automatic_access_safe()
     }
 
     /// Sings frames and returns mono samples at [`VoiceInfo::sample_rate`].
@@ -260,9 +301,42 @@ impl VoiceModel {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
 
     struct NativePredictor(VoiceInfo);
+
+    fn temp_entry_root() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "auris-singer-entry-policy-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    fn create_directory_redirect(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "could not create the junction fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     impl SingingBackend for NativePredictor {
         fn kind(&self) -> BackendKind {
@@ -337,5 +411,43 @@ mod tests {
             };
             assert_eq!(backend.capabilities().curves, expected);
         }
+    }
+
+    #[test]
+    fn automatic_load_rejects_a_redirected_ancestor_without_changing_explicit_load() {
+        let root = temp_entry_root();
+        std::fs::create_dir(&root).unwrap();
+        let target = root.join("target");
+        let redirect = root.join("redirect");
+        std::fs::create_dir(&target).unwrap();
+        let target_entry = target.join("entry.voicevox.json");
+        let entry = redirect.join("entry.voicevox.json");
+        let manifest = serde_json::json!({
+            "format_version": 1,
+            "name": "Singer",
+            "url": "http://127.0.0.1:50021",
+            "sample_rate": 24_000,
+            "frame_rate": 93.75,
+            "styles": [{"name":"Style","query_style_id":1,"decode_style_id":2}],
+        });
+        std::fs::write(&target_entry, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        create_directory_redirect(&target, &redirect);
+
+        let automatic_error =
+            VoiceModel::load_for_automatic_access(&entry, Acceleration::Cpu).err();
+        let explicit_error = VoiceModel::load(&entry, Acceleration::Cpu).err();
+
+        std::fs::remove_dir(redirect).unwrap();
+        std::fs::remove_file(target_entry).unwrap();
+        std::fs::remove_dir(target).unwrap();
+        std::fs::remove_dir(root).unwrap();
+        assert!(matches!(
+            automatic_error,
+            Some(SingError::UnsafeAutomaticAccess { .. })
+        ));
+        assert!(
+            explicit_error.is_none(),
+            "an explicit user load retains redirected-path compatibility: {explicit_error:?}"
+        );
     }
 }

@@ -62,9 +62,7 @@ def feature_matching_loss(
     real_fmaps: list[list[torch.Tensor]], fake_fmaps: list[list[torch.Tensor]]
 ) -> torch.Tensor:
     """L1 distance between intermediate discriminator activations."""
-    total = torch.zeros(
-        (), device=real_fmaps[0][0].device, dtype=real_fmaps[0][0].dtype
-    )
+    total = torch.zeros((), device=real_fmaps[0][0].device, dtype=real_fmaps[0][0].dtype)
     for real_maps, fake_maps in zip(real_fmaps, fake_fmaps):
         for real, fake in zip(real_maps, fake_maps):
             total = total + torch.mean(torch.abs(real.detach() - fake))

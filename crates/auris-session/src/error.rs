@@ -58,9 +58,27 @@ pub enum SessionError {
     #[error("the project changed on disk: {0}; reload its changes or save your work elsewhere")]
     ExternalChanges(PathBuf),
 
+    /// An audio export would replace or be placed alongside files used by the open project.
+    #[error("unsafe export destination {}: {reason}", path.display())]
+    UnsafeExportDestination {
+        /// File or folder refused before rendering began.
+        path: PathBuf,
+        /// Actionable reason the destination is unsafe.
+        reason: String,
+    },
+
     /// A gesture must finish before replacing the document from disk.
     #[error("finish the current edit before accepting external changes")]
     EditInProgress,
+
+    /// Recovering another document would discard edits in the current one.
+    #[error("save or discard the current project before recovering another one")]
+    RecoveryWouldDiscardChanges,
+
+    /// A recovery entry was removed or no longer belongs to its registry.
+    #[error("the recovery snapshot is no longer available: {}", .0.display())]
+    RecoveryUnavailable(PathBuf),
+
     /// Finished audio cannot be prepared or auditioned at the current output rate.
     #[error("output preview: {0}")]
     OutputPreview(String),
@@ -194,6 +212,31 @@ pub enum SessionError {
     /// A voice model could not be loaded, or refused to sing.
     #[error(transparent)]
     Sing(#[from] auris_singer::SingError),
+
+    /// A singer-frame JSON file exceeds the bounded source-buffer size.
+    #[error(
+        "singer-frame file is too large: {} is at least {observed} bytes; the limit is {limit} bytes",
+        path.display()
+    )]
+    SingerFramesFileTooLarge {
+        /// File offered as singer frames.
+        path: PathBuf,
+        /// Size observed from the open handle or bounded read.
+        observed: u64,
+        /// Largest source file accepted by the reader.
+        limit: u64,
+    },
+
+    /// A decoded singer-frame collection exceeds a structural resource limit.
+    #[error("singer-frame {field} is too large: {observed}; the limit is {limit}")]
+    SingerFramesLimit {
+        /// Collection or string whose size crossed the bound.
+        field: &'static str,
+        /// Decoded element or byte count.
+        observed: usize,
+        /// Largest accepted count.
+        limit: usize,
+    },
 
     /// An editable singer note has a lyric that needs correction before synthesis.
     #[error("invalid lyric '{lyric}' in clip {clip:?}, note {note}: {issue}")]

@@ -40,6 +40,7 @@ from auris_singer.lightning_module import AurisSingerModule  # noqa: E402
 from auris_singer.metrics import energy_metrics, pitch_metrics  # noqa: E402
 from auris_singer.preprocess.f0 import FcpeExtractor  # noqa: E402
 from auris_singer.utils.audio import frame_energy, spectrogram  # noqa: E402
+from auris_singer.utils.audio_clock import require_same_audio_clock  # noqa: E402
 
 
 def build_conditions(
@@ -59,6 +60,18 @@ def build_conditions(
     return conditions
 
 
+def _require_matching_clock(corpus, module) -> None:
+    """Reject source-control measurements on another dataset clock."""
+    require_same_audio_clock(
+        "dataset",
+        corpus.sample_rate,
+        corpus.hop_length,
+        "checkpoint",
+        module.sample_rate,
+        module.hop_length,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint", required=True)
@@ -67,9 +80,7 @@ def main() -> None:
     parser.add_argument("--index", type=int, default=0, help="utterance index")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--noise-scale", type=float, default=0.667)
-    parser.add_argument(
-        "--semitones", type=float, nargs="*", default=[-5.0, -2.0, 3.0, 7.0]
-    )
+    parser.add_argument("--semitones", type=float, nargs="*", default=[-5.0, -2.0, 3.0, 7.0])
     parser.add_argument("--energy-scales", type=float, nargs="*", default=[0.5, 2.0])
     parser.add_argument("--f0-min", type=float, default=40.0)
     parser.add_argument("--f0-max", type=float, default=1600.0)
@@ -77,14 +88,18 @@ def main() -> None:
 
     device = torch.device(args.device)
     module = AurisSingerModule.load_from_checkpoint(
-        args.checkpoint, map_location="cpu"
+        args.checkpoint, map_location="cpu", weights_only=True
     ).to(device)
     module.eval()
     model = module.model
     hop, sample_rate = module.hop_length, module.sample_rate
     extractor = FcpeExtractor(device=str(device), f0_min=args.f0_min, f0_max=args.f0_max)
 
-    root = Path(args.dataset)
+    from auris_singer.host_eval import Corpus
+
+    corpus = Corpus(args.dataset)
+    _require_matching_clock(corpus, module)
+    root = corpus.root
     records = [
         json.loads(line)
         for line in (root / "metadata.jsonl").read_text(encoding="utf-8").splitlines()
@@ -129,9 +144,7 @@ def main() -> None:
         f"{'energy bias (dB)':>19}{'energy corr':>13}"
     )
 
-    for name, pitch_ratio, energy_scale in build_conditions(
-        args.semitones, args.energy_scales
-    ):
+    for name, pitch_ratio, energy_scale in build_conditions(args.semitones, args.energy_scales):
         target_f0 = f0 * pitch_ratio
         target_energy = energy * energy_scale
         with torch.no_grad():

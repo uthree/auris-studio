@@ -36,6 +36,19 @@ fn plain_names(path: &Path) -> impl Iterator<Item = &std::ffi::OsStr> {
     })
 }
 
+/// Whether an external path is safe to touch without an explicit user action.
+fn automatic_external_access_is_local(path: &Path) -> bool {
+    let text = path.as_os_str().to_string_lossy();
+    if let Some(verbatim) = text.strip_prefix(r"\\?\") {
+        let bytes = verbatim.as_bytes();
+        return bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/');
+    }
+    !text.starts_with(r"\\") && !text.starts_with("//")
+}
+
 /// Where an asset's file is, as the document records it.
 ///
 /// Comparison is on the stored form, so two references are equal when they say the same thing —
@@ -124,6 +137,24 @@ impl AssetPath {
             AssetPath::External(absolute) => Some(absolute.clone()),
         }
     }
+
+    /// Resolves a path that the application may open without a fresh user action.
+    ///
+    /// An `External` Windows network or device path returns `None`. Merely opening a project must
+    /// not contact an arbitrary server named by that document; Windows can otherwise offer the
+    /// current user's network credentials before the application has shown any prompt. A normal
+    /// local path, and an `Inside` path under the project folder the user already opened, resolve
+    /// in the same way as [`Self::resolve`]. Explicit import and locate commands may continue to
+    /// use [`Self::resolve`] after the user has selected their source.
+    pub fn resolve_for_automatic_access(&self, project_folder: Option<&Path>) -> Option<PathBuf> {
+        match self {
+            AssetPath::Inside(_) => self.resolve(project_folder),
+            AssetPath::External(path) if automatic_external_access_is_local(path) => {
+                Some(path.clone())
+            }
+            AssetPath::External(_) => None,
+        }
+    }
 }
 
 impl std::fmt::Display for AssetPath {
@@ -161,6 +192,13 @@ mod tests {
             asset.resolve(None),
             Some(PathBuf::from("/libraries/GM.sf2"))
         );
+    }
+
+    #[test]
+    fn automatic_resolution_refuses_a_windows_network_path() {
+        let asset = AssetPath::external(r"\\server\share\kick.wav");
+
+        assert_eq!(asset.resolve_for_automatic_access(None), None);
     }
 
     #[test]

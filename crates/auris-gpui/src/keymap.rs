@@ -49,7 +49,7 @@ impl InputSettings {
     /// because refusing to start over a preferences file is a poor trade.
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = auris_session::settings::read_config_text(&path) else {
             return Self::default();
         };
         match serde_json::from_str::<Self>(&text) {
@@ -72,7 +72,7 @@ impl InputSettings {
         }
         let text = serde_json::to_string_pretty(self)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        std::fs::write(path, text)
+        auris_session::settings::write_config_bytes(&path, text.as_bytes())
     }
 }
 

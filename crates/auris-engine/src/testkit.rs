@@ -22,6 +22,8 @@ thread_local! {
     static WATCHING: Cell<bool> = const { Cell::new(false) };
     /// Allocations this thread has made since the count started.
     static ALLOCATIONS: Cell<usize> = const { Cell::new(0) };
+    /// Deallocations this thread has made since the count started.
+    static DEALLOCATIONS: Cell<usize> = const { Cell::new(0) };
     /// Blocks [`BlockCounter`] has processed on this thread.
     static PROCESS_CALLS: Cell<usize> = const { Cell::new(0) };
 }
@@ -31,17 +33,30 @@ thread_local! {
 /// Per-thread rather than global because `cargo test` runs cases in parallel, and a global
 /// counter would pick up every other test's traffic.
 pub(crate) fn count_allocations(body: impl FnOnce()) -> usize {
+    count_heap_operations(body).0
+}
+
+/// Counts heap allocations and deallocations made by `body` on the calling thread.
+pub(crate) fn count_heap_operations(body: impl FnOnce()) -> (usize, usize) {
     ALLOCATIONS.with(|slot| slot.set(0));
+    DEALLOCATIONS.with(|slot| slot.set(0));
     WATCHING.with(|slot| slot.set(true));
     body();
     WATCHING.with(|slot| slot.set(false));
-    ALLOCATIONS.with(Cell::get)
+    (ALLOCATIONS.with(Cell::get), DEALLOCATIONS.with(Cell::get))
 }
 
 fn note_allocation() {
     // `try_with` because the allocator can run while thread-locals are being torn down.
     if WATCHING.try_with(Cell::get).unwrap_or(false) {
         let _ = ALLOCATIONS.try_with(|slot| slot.set(slot.get() + 1));
+    }
+}
+
+fn note_deallocation() {
+    // `try_with` because the allocator can run while thread-locals are being torn down.
+    if WATCHING.try_with(Cell::get).unwrap_or(false) {
+        let _ = DEALLOCATIONS.try_with(|slot| slot.set(slot.get() + 1));
     }
 }
 
@@ -58,6 +73,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        note_deallocation();
         unsafe { System.dealloc(ptr, layout) }
     }
 

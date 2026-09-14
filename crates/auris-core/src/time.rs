@@ -85,21 +85,21 @@ impl Add for Ticks {
 impl Sub for Ticks {
     type Output = Ticks;
     fn sub(self, rhs: Ticks) -> Ticks {
-        Ticks(self.0 - rhs.0)
+        Ticks(self.0.saturating_sub(rhs.0))
     }
 }
 
 impl Mul<i64> for Ticks {
     type Output = Ticks;
     fn mul(self, rhs: i64) -> Ticks {
-        Ticks(self.0 * rhs)
+        Ticks(self.0.saturating_mul(rhs))
     }
 }
 
 impl Neg for Ticks {
     type Output = Ticks;
     fn neg(self) -> Ticks {
-        Ticks(-self.0)
+        Ticks(self.0.saturating_neg())
     }
 }
 
@@ -111,7 +111,7 @@ impl AddAssign for Ticks {
 
 impl SubAssign for Ticks {
     fn sub_assign(&mut self, rhs: Ticks) {
-        self.0 -= rhs.0;
+        self.0 = self.0.saturating_sub(rhs.0);
     }
 }
 
@@ -137,7 +137,7 @@ impl Samples {
 impl Add for Samples {
     type Output = Samples;
     fn add(self, rhs: Samples) -> Samples {
-        Samples(self.0 + rhs.0)
+        Samples(self.0.saturating_add(rhs.0))
     }
 }
 
@@ -943,6 +943,24 @@ mod tests {
         let mut assigned = Ticks(i64::MAX);
         assigned += Ticks(1);
         assert_eq!(assigned, Ticks(i64::MAX));
+    }
+
+    #[test]
+    fn all_tick_arithmetic_saturates_at_document_boundaries() {
+        assert_eq!(Ticks(i64::MIN) - Ticks(1), Ticks(i64::MIN));
+        assert_eq!(Ticks(i64::MAX) - Ticks(-1), Ticks(i64::MAX));
+        assert_eq!(Ticks(i64::MAX) * 2, Ticks(i64::MAX));
+        assert_eq!(Ticks(i64::MIN) * 2, Ticks(i64::MIN));
+        assert_eq!(-Ticks(i64::MIN), Ticks(i64::MAX));
+
+        let mut assigned = Ticks(i64::MIN);
+        assigned -= Ticks(1);
+        assert_eq!(assigned, Ticks(i64::MIN));
+    }
+
+    #[test]
+    fn sample_addition_saturates_at_the_rendering_boundary() {
+        assert_eq!(Samples(u64::MAX) + Samples(1), Samples(u64::MAX));
     }
 
     #[test]

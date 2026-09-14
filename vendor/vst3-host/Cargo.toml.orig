@@ -1,0 +1,143 @@
+[package]
+name = "vst3-host"
+version = "0.9.0"
+authors = ["Helge Sverre <helge.sverre@gmail.com>"]
+edition = "2021"
+# Default-feature floor (cpal 0.18 needs 1.85). The optional `egui-widgets` feature
+# requires a newer toolchain (egui/eframe 0.34 need Rust 1.92).
+rust-version = "1.85"
+description = "Safe, simple VST3 plugin hosting with audio playback, MIDI, and crash protection"
+documentation = "https://docs.rs/vst3-host"
+readme = "README.md"
+homepage = "https://github.com/HelgeSverre/rust-vst3-host/"
+repository = "https://github.com/HelgeSverre/rust-vst3-host/"
+license = "MIT"
+keywords = ["vst3", "audio", "plugin", "host", "realtime"]
+categories = ["multimedia::audio", "api-bindings", "multimedia", "development-tools"]
+exclude = [
+    "tests/*",
+    "examples/*",
+    ".github/*",
+    ".gitignore",
+    ".cargo/*",
+]
+
+[dependencies]
+vst3 = { workspace = true }
+libloading = "0.8"
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+libc = "0.2"
+# Lock-free SPSC ring for the real-time plugin runner's command queue.
+rtrb = "0.3"
+# Lock-free bounded MPMC queue for output MIDI: the audio thread pushes emitted events and a
+# UI thread drains them without either locking the other (crossbeam-utils is already in-tree).
+crossbeam-queue = "0.3"
+
+# Optional dependencies
+cpal = { version = "0.18", optional = true }
+egui = { version = "0.34", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+# MIDI input device binding (live hardware/virtual MIDI ports). 0.11 matches the inspector and
+# accepts alsa <0.12, so on Linux it shares cpal 0.18's alsa (one alsa-sys, no `links` conflict).
+midir = { version = "0.11", optional = true }
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "NSString",
+    "NSGeometry",
+    "NSDate",
+    "NSRunLoop",
+] }
+core-foundation = "0.10"
+objc2-app-kit = { version = "0.3.2", features = [
+    "NSApplication",
+    "NSWindow",
+    "NSView",
+    "NSResponder",
+    "NSGraphics",
+    "NSEvent",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3", features = ["winuser", "windef", "libloaderapi"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# X11 plugin-editor window support (ported from the khremeviuc1004 fork). Requires
+# libxcb dev headers at build time on Linux.
+xcb = "1.7"
+
+[features]
+# process-isolation is on by default so the helper binary is always built and the
+# opt-in `Vst3Host::builder().with_process_isolation(true)` works without extra flags.
+# Note: isolation is still opt-in at *runtime* (the default load path is in-process) —
+# enabling it by default would require shipping/locating the helper binary in the
+# consumer's environment, which is a deployment concern, not just a flag.
+default = ["cpal-backend", "process-isolation"]
+cpal-backend = ["cpal"]
+process-isolation = []
+egui-widgets = ["egui", "raw-window-handle"]
+# Bind a live MIDI input device (hardware/virtual port) and forward parsed events.
+midi-input = ["dep:midir"]
+
+[dev-dependencies]
+env_logger = "0.11"
+rfd = "0.17"
+eframe = "0.34"
+raw-window-handle = "0.6"
+midly = "0.5"
+cpal = "0.18"
+
+[[example]]
+name = "play_synth"
+required-features = ["cpal-backend"]
+
+[[example]]
+name = "isolated_host"
+required-features = ["process-isolation"]
+
+[[example]]
+name = "isolated_gui"
+required-features = ["cpal-backend", "process-isolation"]
+
+[[example]]
+name = "compatibility_matrix"
+required-features = ["cpal-backend", "process-isolation"]
+
+[[example]]
+name = "plugin_scanner"
+
+[[example]]
+name = "plugin_gui"
+required-features = ["cpal-backend"]
+
+[[example]]
+name = "embedded_editor"
+required-features = ["egui-widgets"]
+
+[[example]]
+name = "host"
+required-features = ["cpal-backend", "egui-widgets"]
+
+[[example]]
+name = "test_loading"
+
+[[example]]
+name = "debug_loader"
+
+[[bin]]
+name = "vst3-host-helper"
+required-features = ["process-isolation"]
+
+# Single-shot introspection probe for crash-resistant discovery (discover_plugins_safe).
+# No special features needed — it only calls the library's introspection API.
+[[bin]]
+name = "vst3-host-probe"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

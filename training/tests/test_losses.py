@@ -46,9 +46,7 @@ def test_multi_param_mel_loss_accepts_2d_and_3d_inputs():
     loss = MultiParamMelLoss(params=((512, 120, 512, 40),))
     wav_a = torch.randn(2, 8_000) * 0.2
     wav_b = torch.randn(2, 8_000) * 0.2
-    assert torch.allclose(
-        loss(wav_a, wav_b), loss(wav_a.unsqueeze(1), wav_b.unsqueeze(1))
-    )
+    assert torch.allclose(loss(wav_a, wav_b), loss(wav_a.unsqueeze(1), wav_b.unsqueeze(1)))
 
 
 def test_multi_param_mel_loss_skips_resolutions_that_do_not_fit():
@@ -84,10 +82,18 @@ def test_kl_loss_is_normalized_per_frame_not_per_element():
     """The weight scale follows VITS: summed over channels, averaged over frames."""
     b, c, t = 1, 4, 10
     ones = torch.ones(b, c, t)
-    value = kl_loss(torch.zeros(b, c, t), torch.zeros(b, c, t), ones, torch.zeros(b, c, t), torch.ones(b, 1, t))
+    value = kl_loss(
+        torch.zeros(b, c, t), torch.zeros(b, c, t), ones, torch.zeros(b, c, t), torch.ones(b, 1, t)
+    )
     # per element: -0.5 + 0.5 * 1 = 0; summed over c=4 channels it stays 0,
     # so use an asymmetric case to expose the factor.
-    value = kl_loss(torch.zeros(b, c, t), torch.zeros(b, c, t), 2 * ones, torch.zeros(b, c, t), torch.ones(b, 1, t))
+    value = kl_loss(
+        torch.zeros(b, c, t),
+        torch.zeros(b, c, t),
+        2 * ones,
+        torch.zeros(b, c, t),
+        torch.ones(b, 1, t),
+    )
     assert value.item() == pytest.approx(c * (-0.5 + 0.5 * 4.0), rel=1e-5)
 
 
@@ -162,8 +168,11 @@ def test_free_bits_leaves_channels_above_the_floor_untouched():
 def test_free_bits_zero_matches_the_plain_estimator():
     torch.manual_seed(0)
     b, c, t = 2, 6, 15
-    args = (torch.randn(b, c, t), torch.zeros(b, c, t), torch.randn(b, c, t),
-            torch.zeros(b, c, t), torch.ones(b, 1, t))
-    assert kl_loss(*args, free_bits=0.0).item() == pytest.approx(
-        kl_loss(*args).item(), rel=1e-6
+    args = (
+        torch.randn(b, c, t),
+        torch.zeros(b, c, t),
+        torch.randn(b, c, t),
+        torch.zeros(b, c, t),
+        torch.ones(b, 1, t),
     )
+    assert kl_loss(*args, free_bits=0.0).item() == pytest.approx(kl_loss(*args).item(), rel=1e-6)

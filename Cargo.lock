@@ -900,6 +900,7 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -931,6 +932,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "raw-window-handle",
+ "tempfile",
  "thiserror 2.0.19",
  "windows 0.61.3",
 ]
@@ -1042,6 +1044,7 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+ "tempfile",
  "thiserror 2.0.19",
 ]
 
@@ -1092,6 +1095,7 @@ dependencies = [
  "dirs 6.0.0",
  "log",
  "midir",
+ "same-file",
  "schemars 1.2.2",
  "serde",
  "serde_json",
@@ -1158,6 +1162,7 @@ name = "auris-vst3"
 version = "0.7.0"
 dependencies = [
  "auris-core",
+ "crossbeam-queue",
  "log",
  "thiserror 2.0.19",
  "vst3-host",
@@ -12380,8 +12385,6 @@ dependencies = [
 [[package]]
 name = "vst3-host"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ec579d54bd13b83c60c1fd8bb756cf234e36ccbfb4833ff756b417e64db7fea"
 dependencies = [
  "core-foundation 0.10.0",
  "crossbeam-queue",

@@ -6,7 +6,12 @@ import pytest
 import torch
 
 from auris_singer.losses import kl_loss
-from auris_singer.model import AurisSinger
+from auris_singer.model import MAX_INFERENCE_FRAMES, AurisSinger
+from auris_singer.utils.durations import (
+    MAX_INFERENCE_BATCH_FRAMES,
+    MAX_INFERENCE_BATCH_SIZE,
+    MAX_INFERENCE_PHONEMES,
+)
 
 HOP = 480
 
@@ -97,13 +102,106 @@ def test_infer_defaults_to_the_first_speaker(model):
 
 
 def test_infer_rejects_control_curves_that_do_not_fit_durations(model):
-    with pytest.raises(ValueError, match="f0 has 8 frames but durations require 9"):
+    with pytest.raises(ValueError, match=r"f0 shape \(1, 8\) must be \(1, 9\)"):
         model.infer(
             phonemes=torch.randint(1, 30, (1, 3)),
             phoneme_lengths=torch.tensor([3]),
             durations=torch.tensor([[3, 3, 3]]),
             f0=torch.full((1, 8), 220.0),
             energy=torch.full((1, 8), 0.1),
+        )
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ({"speaker_ids": torch.tensor([[0, 0]])}, "one id per batch row"),
+        ({"speaker_ids": torch.tensor([2])}, "speaker ids must be between"),
+        ({"f0": torch.full((1, 2, 9), 220.0)}, "f0 shape"),
+        ({"energy": torch.full((1, 2, 9), 0.1)}, "energy shape"),
+        ({"voiced": torch.full((1, 2, 9), 1.0)}, "voiced shape"),
+        ({"noise_scale": float("nan")}, "noise_scale"),
+    ],
+)
+def test_infer_rejects_malformed_controls_before_model_work(model, monkeypatch, override, message):
+    """Malformed public inputs must not reach an embedding or encoder."""
+    arguments = {
+        "phonemes": torch.randint(1, 30, (1, 3)),
+        "phoneme_lengths": torch.tensor([3]),
+        "durations": torch.tensor([[3, 3, 3]]),
+        "f0": torch.full((1, 9), 220.0),
+        "energy": torch.full((1, 9), 0.1),
+        "voiced": torch.ones(1, 9),
+        "speaker_ids": torch.tensor([0]),
+    }
+    arguments.update(override)
+
+    def bomb(*_args, **_kwargs):
+        raise AssertionError("model work ran")
+
+    monkeypatch.setattr(model.speaker_embedding, "forward", bomb)
+    monkeypatch.setattr(model.text_encoder, "forward", bomb)
+    with pytest.raises(ValueError, match=message):
+        model.infer(**arguments)
+
+
+@pytest.mark.parametrize(
+    ("durations", "message"),
+    [
+        (torch.tensor([[3.5, 2.0, 1.0]]), "whole frame counts"),
+        (torch.tensor([[3.0, float("nan"), 1.0]]), "finite"),
+        (torch.tensor([[3, -1, 2]]), "non-negative"),
+        (torch.tensor([[MAX_INFERENCE_FRAMES + 1, 0, 0]]), "at most"),
+        (torch.tensor([[1_000, 1_000, 1]]), "at most"),
+    ],
+)
+def test_infer_rejects_hostile_durations_before_model_work(model, monkeypatch, durations, message):
+    """Bad duration tensors must not reach an allocation sized by their sum."""
+    monkeypatch.setattr(
+        model.text_encoder,
+        "forward",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("encoder ran")),
+    )
+    with pytest.raises(ValueError, match=message):
+        model.infer(
+            phonemes=torch.randint(1, 30, (1, 3)),
+            phoneme_lengths=torch.tensor([3]),
+            durations=durations,
+            f0=torch.zeros(1, 1),
+            energy=torch.zeros(1, 1),
+        )
+
+
+@pytest.mark.parametrize(
+    ("batch", "width", "duration", "message"),
+    [
+        (1, MAX_INFERENCE_PHONEMES + 1, 1, "phonemes"),
+        (MAX_INFERENCE_BATCH_SIZE + 1, 1, 1, "utterances per batch"),
+        (
+            MAX_INFERENCE_BATCH_SIZE,
+            1,
+            MAX_INFERENCE_BATCH_FRAMES // MAX_INFERENCE_BATCH_SIZE + 1,
+            "inference batch",
+        ),
+    ],
+)
+def test_infer_bounds_attention_and_aggregate_batch_before_the_encoder(
+    model, monkeypatch, batch, width, duration, message
+):
+    monkeypatch.setattr(
+        model.text_encoder,
+        "forward",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("encoder ran")),
+    )
+    durations = torch.zeros(batch, width, dtype=torch.long)
+    durations[:, 0] = duration
+    with pytest.raises(ValueError, match=message):
+        model.infer(
+            phonemes=torch.ones(batch, width, dtype=torch.long),
+            phoneme_lengths=torch.full((batch,), width),
+            durations=durations,
+            f0=torch.zeros(batch, duration),
+            energy=torch.zeros(batch, duration),
         )
 
 
@@ -116,9 +214,15 @@ def test_f0_and_energy_change_the_synthesized_waveform(model):
         noise_scale=0.0,  # remove prior sampling noise so only f0/energy differ
     )
     n_frames = 12
-    base = model.infer(f0=torch.full((1, n_frames), 220.0), energy=torch.full((1, n_frames), 0.1), **common)
-    higher = model.infer(f0=torch.full((1, n_frames), 440.0), energy=torch.full((1, n_frames), 0.1), **common)
-    louder = model.infer(f0=torch.full((1, n_frames), 220.0), energy=torch.full((1, n_frames), 0.4), **common)
+    base = model.infer(
+        f0=torch.full((1, n_frames), 220.0), energy=torch.full((1, n_frames), 0.1), **common
+    )
+    higher = model.infer(
+        f0=torch.full((1, n_frames), 440.0), energy=torch.full((1, n_frames), 0.1), **common
+    )
+    louder = model.infer(
+        f0=torch.full((1, n_frames), 220.0), energy=torch.full((1, n_frames), 0.4), **common
+    )
     assert not torch.allclose(base, higher, atol=1e-4)
     assert not torch.allclose(base, louder, atol=1e-4)
 
@@ -132,9 +236,7 @@ def test_backward_pass_reaches_every_submodule(tiny_model_config):
     loss = (
         out["wav_hat"].square().mean()
         + kl_loss(out["z_p"], out["logs_q"], out["m_p"], out["logs_p"], out["y_mask"])
-        + kl_loss(
-            out["z_p"], out["logs_q"], out["m_p0_frame"], out["logs_p0_frame"], out["y_mask"]
-        )
+        + kl_loss(out["z_p"], out["logs_q"], out["m_p0_frame"], out["logs_p0_frame"], out["y_mask"])
     )
     loss.backward()
 

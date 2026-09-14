@@ -70,9 +70,7 @@ def test_collate_pads_to_the_longest_item(processed_dataset):
 
 def test_bucket_sampler_groups_similar_lengths(processed_dataset):
     dataset = SingingDataset(processed_dataset)
-    sampler = DistributedBucketSampler(
-        dataset, batch_size=2, boundaries=[0, 70, 90, 200]
-    )
+    sampler = DistributedBucketSampler(dataset, batch_size=2, boundaries=[0, 70, 90, 200])
     sampler.set_epoch(0)
     batches = list(sampler)
     assert batches, "sampler produced no batches"
@@ -191,7 +189,9 @@ def test_a_batch_carries_durations_only_when_every_item_does(processed_dataset):
     batch = collate_batch([a, b])
     assert batch["durations"].shape == (2, max(a["phonemes"].numel(), b["phonemes"].numel()))
     assert batch["durations"][0, : a["phonemes"].numel()].tolist() == [3] * a["phonemes"].numel()
-    assert batch["durations"][1, b["phonemes"].numel() :].tolist() == [0] * (batch["durations"].shape[1] - b["phonemes"].numel())
+    assert batch["durations"][1, b["phonemes"].numel() :].tolist() == [0] * (
+        batch["durations"].shape[1] - b["phonemes"].numel()
+    )
 
 
 def test_a_batch_is_all_labelled_or_all_searched(processed_dataset):

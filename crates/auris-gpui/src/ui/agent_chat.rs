@@ -924,6 +924,12 @@ impl AurisApp {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
         }
+        if command["action"] == "list_instruments" {
+            return Err(
+                "list_instruments is unavailable in the live window; use a focused search_instruments query"
+                    .into(),
+            );
+        }
         self.check_agent_edit(&command)?;
         serde_json::from_value::<auris_session::live_agent::Command>(command)
             .map_err(|error| error.to_string())
@@ -2333,6 +2339,23 @@ mod tests {
                 .is_err()
             );
             assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn live_agent_refuses_the_legacy_synchronous_instrument_scan(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.policy = Default::default();
+            let error = this
+                .agent_edit(serde_json::json!({
+                    "action": "list_instruments",
+                    "query": null,
+                    "offset": 0,
+                    "refresh": false
+                }))
+                .unwrap_err();
+            assert!(error.contains("search_instruments"), "{error}");
         });
     }
 

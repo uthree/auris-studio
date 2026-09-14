@@ -33,9 +33,7 @@ def _masked_mean(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     return (values * mask).sum() / total
 
 
-def pearson_correlation(
-    a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor
-) -> torch.Tensor:
+def pearson_correlation(a: torch.Tensor, b: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Pearson correlation of ``a`` and ``b`` over the frames selected by ``mask``."""
     count = mask.sum()
     if count < 2:
@@ -90,9 +88,7 @@ def pitch_metrics(
     accuracy = _masked_mean((error.abs() <= tolerance_cents).float(), both_voiced)
     correlation = pearson_correlation(target_cents, pred_cents, both_voiced)
     vuv_error = _masked_mean((target_voiced != pred_voiced).float(), valid)
-    voiced_ratio_error = _masked_mean(pred_voiced, valid) - _masked_mean(
-        target_voiced, valid
-    )
+    voiced_ratio_error = _masked_mean(pred_voiced, valid) - _masked_mean(target_voiced, valid)
 
     return {
         "f0_rmse_cent": rmse,

@@ -328,7 +328,7 @@ fn malformed_curves_and_inventory_are_rejected() {
         frames.f0_hz[0] = invalid;
         assert!(matches!(
             voice.sing(&frames, 0, 0),
-            Err(SingError::Inference(_))
+            Err(SingError::InvalidFrameData { .. })
         ));
     }
     for invalid in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
@@ -336,20 +336,20 @@ fn malformed_curves_and_inventory_are_rejected() {
         frames.energy[0] = invalid;
         assert!(matches!(
             voice.sing(&frames, 0, 0),
-            Err(SingError::Inference(_))
+            Err(SingError::InvalidFrameData { .. })
         ));
     }
     let mut frames = phrase();
     frames.hop_seconds = f64::NAN;
     assert!(matches!(
         voice.sing(&frames, 0, 0),
-        Err(SingError::HopMismatch { .. })
+        Err(SingError::InvalidFrameData { .. })
     ));
     frames = phrase();
     frames.phonemes[0] = frames.inventory.len() as u32;
     assert!(matches!(
         voice.sing(&frames, 0, 0),
-        Err(SingError::Inference(_))
+        Err(SingError::InvalidFrameData { .. })
     ));
     frames = phrase();
     frames.inventory[0] = "a".into();

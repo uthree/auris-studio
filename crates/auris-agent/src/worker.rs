@@ -628,9 +628,9 @@ mod tests {
     }
 
     #[test]
-    fn instrument_listing_uses_the_permission_checked_live_session() {
+    fn instrument_search_uses_the_permission_checked_live_session() {
         let call = completion(
-            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"list_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,
             "tool_calls",
         );
         let done = completion(
@@ -647,7 +647,7 @@ mod tests {
         )
         .unwrap();
         assert!(!operation.mutating);
-        assert_eq!(operation.name, "list_instruments");
+        assert_eq!(operation.name, "search_instruments");
         worker
             .send(
                 &serde_json::json!({"event":"permission_result","id":permission["id"],"ok":true})
@@ -655,7 +655,7 @@ mod tests {
             )
             .unwrap();
         let edit = until(&worker, "edit");
-        assert_eq!(edit["command"]["action"], "list_instruments");
+        assert_eq!(edit["command"]["action"], "search_instruments");
         assert_eq!(edit["command"]["query"], "strings");
         worker.send(&serde_json::json!({"event":"edit_result","ok":true,"text":"live-session-only-strings"}).to_string()).unwrap();
         until(&worker, "answer");

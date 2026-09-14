@@ -147,14 +147,10 @@ class STFTDiscriminator(nn.Module):
         self.leaky_slope = leaky_slope
         self.register_buffer("window", torch.hann_window(win_length), persistent=False)
 
-        convs = [
-            weight_norm(nn.Conv2d(2, channels, (3, 9), padding=(1, 4)))
-        ]
+        convs = [weight_norm(nn.Conv2d(2, channels, (3, 9), padding=(1, 4)))]
         for _ in range(n_layers - 1):
             convs.append(
-                weight_norm(
-                    nn.Conv2d(channels, channels, (3, 9), stride=(1, 2), padding=(1, 4))
-                )
+                weight_norm(nn.Conv2d(channels, channels, (3, 9), stride=(1, 2), padding=(1, 4)))
             )
         convs.append(weight_norm(nn.Conv2d(channels, channels, (3, 3), padding=(1, 1))))
         self.convs = nn.ModuleList(convs)

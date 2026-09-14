@@ -916,7 +916,7 @@ impl AurisApp {
             }
             MenuCommand::SingerVoice { track, path } => {
                 self.select_track(track);
-                self.apply_singer_voice(track, &path);
+                self.apply_singer_voice(track, path, cx);
             }
             MenuCommand::SingerSpeaker { track, speaker } => {
                 self.set_singer_speaker_for(track, speaker)

@@ -3,35 +3,19 @@
 //! Snapshots stay in the project's folder; asset references keep their original origin.
 //! Audio files are not duplicated, so collecting assets remains a separate command.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use auris_core::Project;
-use auris_io::{IoError, load_project, save_project};
+use auris_io::{IoError, StagedProject, load_project, save_project, stage_project};
 
 use super::Session;
 use crate::SessionError;
 
 impl Session {
     fn checkpoint_path(&self, name: &str) -> Result<PathBuf, SessionError> {
-        if name.is_empty()
-            || name.len() > 80
-            || !name
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-        {
-            return Err(SessionError::InvalidCheckpointName);
-        }
         let folder = self.project_folder().ok_or(SessionError::NoPath)?;
-        let directory = folder.join(".auris-history");
-        std::fs::create_dir_all(&directory).map_err(|e| IoError::from_fs(&directory, e))?;
-        let canonical =
-            std::fs::canonicalize(&directory).map_err(|e| IoError::from_fs(&directory, e))?;
-        let parent = std::fs::canonicalize(folder).map_err(|e| IoError::from_fs(folder, e))?;
-        if !canonical.starts_with(&parent) {
-            return Err(SessionError::InvalidCheckpointName);
-        }
-        Ok(directory.join(format!("checkpoint-{name}.json")))
+        checkpoint_path_in_folder(folder, name)
     }
 
     fn checkpoint_document(&self, name: &str, project: &Project) -> Result<PathBuf, SessionError> {
@@ -108,18 +92,59 @@ impl Session {
 
     /// Preserves a document before an explicit replacement or a headless edit.
     pub(super) fn preserve_document(&self, project: &Project) -> Result<PathBuf, SessionError> {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let name = format!(
-            "auto-{timestamp}-{}-{}",
-            std::process::id(),
-            COUNTER.fetch_add(1, Ordering::Relaxed)
-        );
-        self.checkpoint_document(&name, project)
+        let folder = self.project_folder().ok_or(SessionError::NoPath)?;
+        preserve_document_in_folder(folder, project)
     }
+}
+
+fn checkpoint_path_in_folder(folder: &Path, name: &str) -> Result<PathBuf, SessionError> {
+    if name.is_empty()
+        || name.len() > 80
+        || !name
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(SessionError::InvalidCheckpointName);
+    }
+    let directory = folder.join(".auris-history");
+    std::fs::create_dir_all(&directory).map_err(|e| IoError::from_fs(&directory, e))?;
+    let canonical =
+        std::fs::canonicalize(&directory).map_err(|e| IoError::from_fs(&directory, e))?;
+    let parent = std::fs::canonicalize(folder).map_err(|e| IoError::from_fs(folder, e))?;
+    if !canonical.starts_with(&parent) {
+        return Err(SessionError::InvalidCheckpointName);
+    }
+    Ok(directory.join(format!("checkpoint-{name}.json")))
+}
+
+/// Preserves a document in a known project folder without borrowing the live session.
+pub(super) fn preserve_document_in_folder(
+    folder: &Path,
+    project: &Project,
+) -> Result<PathBuf, SessionError> {
+    let (path, staged) = stage_preserved_document_in_folder(folder, project)?;
+    staged.publish()?;
+    Ok(path)
+}
+
+/// Stages an automatic checkpoint without making it visible until the caller commits.
+pub(super) fn stage_preserved_document_in_folder(
+    folder: &Path,
+    project: &Project,
+) -> Result<(PathBuf, StagedProject), SessionError> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let name = format!(
+        "auto-{timestamp}-{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    );
+    let path = checkpoint_path_in_folder(folder, &name)?;
+    let staged = stage_project(&path, &mut project.clone())?;
+    Ok((path, staged))
 }
 
 #[cfg(test)]

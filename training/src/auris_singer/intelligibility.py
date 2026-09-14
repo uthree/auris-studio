@@ -161,9 +161,7 @@ def edit_distance(reference: list[str], hypothesis: list[str]) -> int:
     for i, ref in enumerate(reference, start=1):
         current = [i]
         for j, hyp in enumerate(hypothesis, start=1):
-            current.append(
-                min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ref != hyp))
-            )
+            current.append(min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (ref != hyp)))
         previous = current
     return previous[-1]
 
@@ -222,7 +220,10 @@ def tally_confusions(
 
 def confusion_rows(counts: dict[tuple[str, str], int]) -> list[list]:
     """The tally as plain data — ``[asked, heard, count]`` rows, most frequent first."""
-    return [[asked, heard, n] for (asked, heard), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return [
+        [asked, heard, n]
+        for (asked, heard), n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
 
 
 def confusion_table(counts: dict[tuple[str, str], int], limit: int = 12) -> str:

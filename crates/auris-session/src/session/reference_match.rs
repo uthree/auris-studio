@@ -461,6 +461,7 @@ impl Session {
         if report.adoption.project == report.adoption.provenance.original {
             return Ok(false);
         }
+        report.adoption.project.validate_loop_expansion()?;
         self.record(Edit::MatchReference);
         self.replace_project(report.adoption.project.clone());
         Ok(true)
@@ -494,9 +495,9 @@ impl Session {
         {
             for slot in strip.effects.iter_mut().filter(|slot| slot.is_hosted()) {
                 let bytes = if slot.effect_id.starts_with(auris_vst3::ID_PREFIX) {
-                    self.vst3.save_effect(slot.id)
+                    self.vst3.save_effect(slot.id)?
                 } else {
-                    self.hosted.save_state(slot.id)
+                    self.hosted.save_state(slot.id)?
                 }
                 .ok_or_else(|| {
                     failure(format!(
@@ -516,9 +517,9 @@ impl Session {
                 continue;
             };
             let bytes = if instrument.instrument_id.starts_with(auris_vst3::ID_PREFIX) {
-                self.vst3.save_instrument(track.id)
+                self.vst3.save_instrument(track.id)?
             } else {
-                self.hosted.save_instrument_state(track.id)
+                self.hosted.save_instrument_state(track.id)?
             }
             .ok_or_else(|| {
                 failure(format!(

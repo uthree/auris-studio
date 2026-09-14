@@ -44,12 +44,22 @@ import soundfile as sf  # noqa: E402
 from scipy.signal import resample_poly  # noqa: E402
 
 from auris_singer.text import SIL  # noqa: E402
+from auris_singer.utils.output import clip_output_key, create_fresh_output  # noqa: E402
 
 #: Techniques with ordinary voiced phonation. Everything else in VocalSet is an
 #: extended technique -- see the module docstring.
 DEFAULT_TECHNIQUES: tuple[str, ...] = (
-    "straight", "vibrato", "belt", "breathy", "forte", "pp", "messa",
-    "slow_forte", "slow_piano", "fast_forte", "fast_piano",
+    "straight",
+    "vibrato",
+    "belt",
+    "breathy",
+    "forte",
+    "pp",
+    "messa",
+    "slow_forte",
+    "slow_piano",
+    "fast_forte",
+    "fast_piano",
 )
 
 #: The four male singers with the lowest median f0, measured with FCPE over a
@@ -218,29 +228,45 @@ def main() -> None:
     parser.add_argument("--techniques", nargs="+", default=list(DEFAULT_TECHNIQUES))
     parser.add_argument("--sample-rate", type=int, default=48_000)
     parser.add_argument("--hop", type=int, default=480, help="silence-detection frame size")
-    parser.add_argument("--floor-db", type=float, default=-40.0,
-                        help="silence threshold relative to the file's loudest frame")
-    parser.add_argument("--split-silence", type=float, default=0.4,
-                        help="internal silence long enough to split an utterance")
-    parser.add_argument("--pad", type=float, default=0.1,
-                        help="silence kept at each edge of a clip")
+    parser.add_argument(
+        "--floor-db",
+        type=float,
+        default=-40.0,
+        help="silence threshold relative to the file's loudest frame",
+    )
+    parser.add_argument(
+        "--split-silence",
+        type=float,
+        default=0.4,
+        help="internal silence long enough to split an utterance",
+    )
+    parser.add_argument(
+        "--pad", type=float, default=0.1, help="silence kept at each edge of a clip"
+    )
     parser.add_argument("--min-seconds", type=float, default=0.6)
     parser.add_argument("--max-seconds", type=float, default=10.0)
-    parser.add_argument("--target-dbfs", type=float, default=-20.7,
-                        help="per-speaker RMS to match; the default is JSUT-song's")
+    parser.add_argument(
+        "--target-dbfs",
+        type=float,
+        default=-20.7,
+        help="per-speaker RMS to match; the default is JSUT-song's",
+    )
     parser.add_argument("--peak-ceiling", type=float, default=0.95)
     args = parser.parse_args()
 
+    if not args.source.is_dir():
+        raise SystemExit(f"source directory does not exist: {args.source}")
     recordings = find_recordings(args.source, set(args.speakers), set(args.techniques))
     if not recordings:
         raise SystemExit(f"no recordings under {args.source} matched the filters")
+    output = create_fresh_output(args.output)
 
     pad = int(args.pad * args.sample_rate)
     minimum = int(args.min_seconds * args.sample_rate)
 
-    print(f"wrote clips to {args.output}")
+    total_clips = 0
     for speaker in args.speakers:
-        names: list[str] = []
+        keys: list[Path] = []
         lines: list[str] = []
         timings: list[list[float]] = []
         clips: list[np.ndarray] = []
@@ -261,7 +287,7 @@ def main() -> None:
                 clip = wav[padded_start:padded_end]
                 if float(np.abs(clip).max()) < 1e-4:
                     continue
-                names.append(f"{path.stem.replace(' ', '')}_{index:02d}")
+                keys.append(clip_output_key(path, args.source / speaker, index, width=2))
                 lines.append(transcript(vowel, padded_start < start, padded_end > end))
                 timings.append(durations(padded_start, start, end, padded_end, args.sample_rate))
                 clips.append(clip)
@@ -271,21 +297,37 @@ def main() -> None:
             continue
 
         gain = gain_to_match(clips, args.target_dbfs, args.peak_ceiling)
-        wav_dir = args.output / speaker / "wav"
-        text_dir = args.output / speaker / "text"
-        dur_dir = args.output / speaker / "dur"
+        wav_dir = output / speaker / "wav"
+        text_dir = output / speaker / "text"
+        dur_dir = output / speaker / "dur"
         wav_dir.mkdir(parents=True, exist_ok=True)
         text_dir.mkdir(parents=True, exist_ok=True)
         dur_dir.mkdir(parents=True, exist_ok=True)
-        for name, line, timing, clip in zip(names, lines, timings, clips):
-            sf.write(wav_dir / f"{name}.wav", clip * gain, args.sample_rate, subtype="PCM_16")
-            (text_dir / f"{name}.txt").write_text(line + "\n", encoding="utf-8")
-            (dur_dir / f"{name}.txt").write_text(
+        for key, line, timing, clip in zip(keys, lines, timings, clips):
+            (wav_dir / key).parent.mkdir(parents=True, exist_ok=True)
+            (text_dir / key).parent.mkdir(parents=True, exist_ok=True)
+            (dur_dir / key).parent.mkdir(parents=True, exist_ok=True)
+            sf.write(
+                wav_dir / key.parent / f"{key.name}.wav",
+                clip * gain,
+                args.sample_rate,
+                subtype="PCM_16",
+            )
+            (text_dir / key.parent / f"{key.name}.txt").write_text(line + "\n", encoding="utf-8")
+            (dur_dir / key.parent / f"{key.name}.txt").write_text(
                 " ".join(f"{d:.4f}" for d in timing) + "\n", encoding="utf-8"
             )
 
         seconds = sum(len(clip) for clip in clips) / args.sample_rate
+        total_clips += len(clips)
         print(f"  {speaker:<8} {len(clips):4d} clips  {seconds / 60:5.1f} min  gain {gain:5.2f}x")
+
+    if total_clips == 0:
+        raise SystemExit(
+            f"no clips were prepared; check speaker, technique, and duration filters "
+            f"(partial output kept at {args.output})"
+        )
+    print(f"wrote {total_clips} clips to {args.output}")
 
 
 if __name__ == "__main__":

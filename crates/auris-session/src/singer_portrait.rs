@@ -5,13 +5,19 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use auris_core::TrackId;
-use auris_singer::{BackendKind, PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
+use auris_singer::{
+    BackendKind, PORTRAIT_MAX_BYTES, VoicePortrait, automatic_voicevox_url_safe,
+    read_voice_portrait,
+};
 use serde::Deserialize;
 
 use crate::VoiceSetupError;
 use crate::voice_setup::read_voicevox_connection;
 
 const MAX_JSON_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ENGINE_ITEMS: usize = 4_096;
+const MAX_ENGINE_IDENTIFIER_BYTES: usize = 512;
+const MAX_ENGINE_RESOURCE_URL_BYTES: usize = 4_096;
 
 /// A saved voice identity, suitable for caching an asynchronous artwork request.
 ///
@@ -23,6 +29,7 @@ pub struct SingerPortraitSource {
     pub(crate) path: PathBuf,
     pub(crate) backend: BackendKind,
     pub(crate) speaker: Option<String>,
+    pub(crate) automatic: bool,
 }
 
 impl SingerPortraitSource {
@@ -35,6 +42,7 @@ impl SingerPortraitSource {
             backend: BackendKind::from_path(&path),
             path,
             speaker,
+            automatic: false,
         }
     }
 
@@ -87,6 +95,11 @@ pub fn load_singer_portrait(
         BackendKind::Voicevox => {
             let connection =
                 read_voicevox_connection(&source.path, source.speaker.as_deref(), source.track)?;
+            if source.automatic && !automatic_voicevox_url_safe(&connection.url) {
+                return Err(SingerPortraitError::Invalid(
+                    "automatic VOICEVOX artwork access is limited to the loopback host".into(),
+                ));
+            }
             fetch_voicevox_portrait(&connection.url, connection.decode_style_id)
         }
     }
@@ -128,6 +141,7 @@ fn fetch_voicevox_portrait(
         .redirects(0)
         .build();
     let singers: Vec<EngineSinger> = read_json(agent.get(&format!("{root}/singers")))?;
+    validate_engine_singers(&singers)?;
     let Some(singer) = singers
         .iter()
         .find(|singer| singer.styles.iter().any(|style| style.id == decode_style))
@@ -140,6 +154,7 @@ fn fetch_voicevox_portrait(
             .query("speaker_uuid", &singer.speaker_uuid)
             .query("resource_format", "url"),
     )?;
+    validate_engine_singer_info(&info)?;
     let selected = info
         .style_infos
         .iter()
@@ -160,6 +175,58 @@ fn fetch_voicevox_portrait(
         Some(error) => Err(error),
         None => Ok(None),
     }
+}
+
+fn validate_engine_singers(singers: &[EngineSinger]) -> Result<(), SingerPortraitError> {
+    if singers.len() > MAX_ENGINE_ITEMS {
+        return Err(SingerPortraitError::Invalid(format!(
+            "VOICEVOX artwork listed more than {MAX_ENGINE_ITEMS} singers"
+        )));
+    }
+    let mut styles = 0usize;
+    for singer in singers {
+        if singer.speaker_uuid.trim().is_empty()
+            || singer.speaker_uuid.len() > MAX_ENGINE_IDENTIFIER_BYTES
+            || singer.speaker_uuid.chars().any(char::is_control)
+        {
+            return Err(SingerPortraitError::Invalid(
+                "VOICEVOX artwork supplied an invalid speaker identifier".into(),
+            ));
+        }
+        styles = styles
+            .checked_add(singer.styles.len())
+            .filter(|styles| *styles <= MAX_ENGINE_ITEMS)
+            .ok_or_else(|| {
+                SingerPortraitError::Invalid(format!(
+                    "VOICEVOX artwork listed more than {MAX_ENGINE_ITEMS} styles"
+                ))
+            })?;
+    }
+    Ok(())
+}
+
+fn validate_engine_singer_info(info: &EngineSingerInfo) -> Result<(), SingerPortraitError> {
+    if info.style_infos.len() > MAX_ENGINE_ITEMS {
+        return Err(SingerPortraitError::Invalid(format!(
+            "VOICEVOX artwork listed more than {MAX_ENGINE_ITEMS} style portraits"
+        )));
+    }
+    for resource in info.portrait.iter().chain(
+        info.style_infos
+            .iter()
+            .filter_map(|style| style.portrait.as_ref()),
+    ) {
+        // Embedded legacy PNG data is bounded by the enclosing JSON response and again by
+        // VoicePortrait's decoded limit. URL-form resources need a separate practical bound.
+        if (!resource.starts_with("iVBOR") && resource.len() > MAX_ENGINE_RESOURCE_URL_BYTES)
+            || resource.chars().any(char::is_control)
+        {
+            return Err(SingerPortraitError::Invalid(
+                "VOICEVOX artwork supplied an oversized or unprintable resource URL".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn read_engine_image(
@@ -215,16 +282,20 @@ fn read_response(request: ureq::Request, limit: usize) -> Result<Vec<u8>, Singer
             response.status()
         )));
     }
-    if response
+    let length = response
         .header("Content-Length")
-        .and_then(|length| length.parse::<usize>().ok())
-        .is_some_and(|length| length > limit)
-    {
+        .and_then(|length| length.parse::<usize>().ok());
+    if length.is_some_and(|length| length > limit) {
         return Err(SingerPortraitError::Invalid(
             "VOICEVOX artwork is too large".into(),
         ));
     }
     let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(length.unwrap_or_default().min(limit))
+        .map_err(|_| {
+            SingerPortraitError::Invalid("not enough memory to read VOICEVOX artwork".into())
+        })?;
     response
         .into_reader()
         .take(limit as u64 + 1)
@@ -388,6 +459,36 @@ mod tests {
     }
 
     #[test]
+    fn automatic_artwork_only_contacts_the_loopback_host() {
+        for allowed in [
+            "http://127.0.0.1:50021",
+            "http://127.42.9.7:50021",
+            "http://[::1]:50021",
+        ] {
+            assert!(automatic_voicevox_url_safe(allowed), "{allowed}");
+        }
+        for refused in [
+            "http://localhost:50021",
+            "http://example.com",
+            "https://192.0.2.1:50021",
+            "http://name:password@127.0.0.1:50021",
+            "file:///tmp/voicevox",
+            "not a URL",
+        ] {
+            assert!(!automatic_voicevox_url_safe(refused), "{refused}");
+        }
+
+        let file = VoiceFile::new("http://192.0.2.1:50021");
+        let mut source = SingerPortraitSource::for_voice(file.0.clone(), None);
+        source.automatic = true;
+        assert!(matches!(
+            load_singer_portrait(&source),
+            Err(SingerPortraitError::Invalid(message))
+                if message.contains("limited to the loopback host")
+        ));
+    }
+
+    #[test]
     fn redirects_and_bodies_over_the_limit_are_refused() {
         let agent = ureq::AgentBuilder::new().redirects(0).build();
         let (root, server) = serve(vec![(
@@ -408,6 +509,54 @@ mod tests {
             ));
             server.join().unwrap();
         }
+    }
+
+    #[test]
+    fn engine_artwork_catalogues_have_explicit_collection_and_text_bounds() {
+        let mut styles = (0..MAX_ENGINE_ITEMS)
+            .map(|id| EngineStyle { id: id as u32 })
+            .collect::<Vec<_>>();
+        let singer = EngineSinger {
+            speaker_uuid: "x".repeat(MAX_ENGINE_IDENTIFIER_BYTES),
+            styles,
+        };
+        assert!(validate_engine_singers(std::slice::from_ref(&singer)).is_ok());
+
+        styles = singer.styles;
+        styles.push(EngineStyle { id: u32::MAX });
+        assert!(
+            validate_engine_singers(&[EngineSinger {
+                speaker_uuid: "speaker".into(),
+                styles,
+            }])
+            .is_err()
+        );
+        assert!(
+            validate_engine_singers(&[EngineSinger {
+                speaker_uuid: "x".repeat(MAX_ENGINE_IDENTIFIER_BYTES + 1),
+                styles: Vec::new(),
+            }])
+            .is_err()
+        );
+
+        let mut info = EngineSingerInfo {
+            portrait: Some("/portrait.png".into()),
+            style_infos: (0..MAX_ENGINE_ITEMS)
+                .map(|id| EngineStyleInfo {
+                    id: id as u32,
+                    portrait: None,
+                })
+                .collect(),
+        };
+        assert!(validate_engine_singer_info(&info).is_ok());
+        info.portrait = Some("x".repeat(MAX_ENGINE_RESOURCE_URL_BYTES + 1));
+        assert!(validate_engine_singer_info(&info).is_err());
+        info.portrait = None;
+        info.style_infos.push(EngineStyleInfo {
+            id: u32::MAX,
+            portrait: None,
+        });
+        assert!(validate_engine_singer_info(&info).is_err());
     }
 
     struct VoiceFile(PathBuf);

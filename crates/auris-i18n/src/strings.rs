@@ -327,6 +327,11 @@ strings! {
         ja: "ほかにも候補があります。検索語を追加して絞り込んでください。"
     }
     BrowserAddPluginFolder { en: "Add a folder…", ja: "フォルダを追加…" }
+    BrowserRemovePluginFolder { en: "Remove folder", ja: "フォルダを削除" }
+    BrowserRemovePluginFolderBody {
+        en: "Plugins already used by this project stay loaded. This folder will no longer be scanned for new plugins.",
+        ja: "このプロジェクトですでに使用中のプラグインは読み込まれたままです。このフォルダから新しいプラグインを検索しなくなります。"
+    }
     BrowserNoSoundFonts {
         en: "None imported yet",
         ja: "まだ読み込まれていません"
@@ -1171,6 +1176,9 @@ strings! {
     SetClipSourceTempoTitle { en: "Recorded tempo", ja: "元のテンポ" }
     SetPositionTitle { en: "Go to position", ja: "位置へ移動" }
     Cancel { en: "Cancel", ja: "キャンセル" }
+    BackgroundCommandBusy { en: "Another background command is running; wait for it or cancel it first", ja: "別のバックグラウンド処理を実行中です。完了を待つか、先にキャンセルしてください" }
+    BackgroundCommandCancelled { en: "Background command cancelled", ja: "バックグラウンド処理をキャンセルしました" }
+    BackgroundCommandChanged { en: "The project changed; the background result was not applied", ja: "プロジェクトが変更されたため、バックグラウンド処理の結果は適用しませんでした" }
     Rename { en: "Rename", ja: "変更" }
     NameCannotBeEmpty { en: "Name cannot be empty", ja: "名前を空にはできません" }
     NameAlreadyUsed { en: "Name is already in use", ja: "その名前はすでに使われています" }
@@ -1214,6 +1222,25 @@ strings! {
         ja: "このプロジェクトには保存されていない変更があります。あとから元に戻すことはできません。"
     }
     Discard { en: "Discard", ja: "破棄" }
+    Recover { en: "Recover", ja: "復旧" }
+    DiscardRecovery { en: "Discard recovery", ja: "復旧データを破棄" }
+    RecoveryUntitled { en: "Unsaved project", ja: "未保存のプロジェクト" }
+    RecoveryKeyboardHint {
+        en: "Enter: recover · Delete: discard recovery · Esc: not now",
+        ja: "Enter: 復旧 · Delete: 復旧データを破棄 · Esc: 今回はしない"
+    }
+    RecoveryUnsavedBody {
+        en: "Auris Studio preserved an unsaved project after the previous session ended unexpectedly. Recovering opens it as an unsaved project. Discard recovery permanently deletes this copy.",
+        ja: "前回のセッションが予期せず終了したため、未保存のプロジェクトが保管されています。復旧すると未保存のプロジェクトとして開きます。「復旧データを破棄」を選ぶと、このコピーは完全に削除されます。"
+    }
+    ErrorRecoveryWouldDiscard {
+        en: "Save or discard the current project before recovering another one",
+        ja: "別のプロジェクトを復旧する前に、現在のプロジェクトを保存または破棄してください"
+    }
+    ErrorRecoveryUnavailable {
+        en: "This recovery is no longer available",
+        ja: "この復旧データは利用できなくなりました"
+    }
     ReplaceTitle { en: "Replace project?", ja: "プロジェクトを置き換えますか？" }
     Replace { en: "Replace", ja: "置き換える" }
     MissingAudioTitle { en: "Audio files not found", ja: "見つからないオーディオファイル" }

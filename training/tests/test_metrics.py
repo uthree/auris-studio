@@ -118,9 +118,7 @@ def test_energy_bias_has_a_sign():
     assert half["energy_bias_db"].item() == pytest.approx(-6.02, abs=0.05)
     assert double["energy_bias_db"].item() == pytest.approx(6.02, abs=0.05)
     # RMSE cannot tell the two apart; the bias term is what distinguishes them.
-    assert half["energy_rmse_db"].item() == pytest.approx(
-        double["energy_rmse_db"].item(), abs=1e-3
-    )
+    assert half["energy_rmse_db"].item() == pytest.approx(double["energy_rmse_db"].item(), abs=1e-3)
 
 
 def test_energy_metrics_exclude_silent_frames():

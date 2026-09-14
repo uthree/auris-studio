@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from auris_singer.export import export_onnx, load_portrait, verify_onnx  # noqa: E402
+from auris_singer.export import export_onnx, load_portrait  # noqa: E402
 from auris_singer.lightning_module import AurisSingerModule  # noqa: E402
 
 
@@ -63,7 +63,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    module = AurisSingerModule.load_from_checkpoint(args.checkpoint, map_location="cpu")
+    module = AurisSingerModule.load_from_checkpoint(
+        args.checkpoint, map_location="cpu", weights_only=True
+    )
     metadata = dict(module.hparams.get("metadata") or {})
 
     voice = {}
@@ -78,16 +80,20 @@ def main() -> None:
     if args.phoneme_durations:
         durations = json.loads(args.phoneme_durations.read_text(encoding="utf-8"))
         if not isinstance(durations, dict) or not isinstance(durations.get("speakers"), dict):
-            raise SystemExit("--phoneme-durations must contain a JSON object with a 'speakers' map (format 2)")
+            raise SystemExit(
+                "--phoneme-durations must contain a JSON object with a 'speakers' map (format 2)"
+            )
 
     levels = None
     if args.phoneme_levels:
         levels = json.loads(args.phoneme_levels.read_text(encoding="utf-8"))
         if not isinstance(levels, dict) or not isinstance(levels.get("speakers"), dict):
-            raise SystemExit("--phoneme-levels must contain a JSON object with a 'speakers' map (format 2)")
+            raise SystemExit(
+                "--phoneme-levels must contain a JSON object with a 'speakers' map (format 2)"
+            )
 
     output = Path(args.output)
-    export_onnx(
+    errors = export_onnx(
         module.model,
         output,
         metadata=metadata,
@@ -95,12 +101,12 @@ def main() -> None:
         voice=voice or None,
         phoneme_durations=durations,
         phoneme_levels=levels,
+        verify=not args.no_verify,
     )
     size_mb = output.stat().st_size / 1e6
     print(f"wrote {output} ({size_mb:.1f} MB) and {output.with_suffix('.json').name}")
 
-    if not args.no_verify:
-        errors = verify_onnx(module.model, output)
+    if errors is not None:
         print(
             "verified against PyTorch: "
             f"unvoiced max diff {errors['unvoiced_max_diff']:.2e}, "

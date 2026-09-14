@@ -1,15 +1,17 @@
 //! Writing rendered audio out as WAV, FLAC or MP3.
 //!
-//! An offline render already holds the finished mix in memory. Each encoder consumes that buffer
-//! in bounded chunks so progress and cancellation remain responsive while the file is written.
+//! [`AudioExportWriter`] accepts bounded render blocks and keeps the destination private until
+//! the codec is finalised. The buffer convenience functions use the same incremental encoder, so
+//! progress and cancellation stay responsive without maintaining a second implementation.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use auris_core::AudioBuffer;
 use hound::{SampleFormat, WavSpec, WavWriter};
-use rusty_mp3::{Mp3Encoder, Mp3EncoderConfig};
+use rusty_mp3::{Mp3Encode, header::FrameHeader};
+use tempfile::NamedTempFile;
 
 use crate::error::{IoError, Result};
 
@@ -306,243 +308,526 @@ pub fn write_audio_with_progress(
     settings: &AudioExportSettings,
     progress: &mut dyn FnMut(f32) -> bool,
 ) -> Result<()> {
-    let in_progress = crate::project_file::in_progress_path(path);
-    let written = match settings.format {
-        AudioExportFormat::Wav => stream_wav(&in_progress, path, buffer, settings, progress),
-        AudioExportFormat::Flac => stream_flac(&in_progress, path, buffer, settings, progress),
-        AudioExportFormat::Mp3 => stream_mp3(&in_progress, path, buffer, settings, progress),
-    };
-    if let Err(error) = written {
-        let _ = std::fs::remove_file(&in_progress);
-        return Err(error);
+    let frames = buffer.frame_count();
+    let mut writer = AudioExportWriter::create(path, buffer.channel_count(), frames, settings)?;
+    report_progress(progress, 0, frames)?;
+    for start in (0..frames).step_by(EXPORT_CHUNK_FRAMES) {
+        let end = (start + EXPORT_CHUNK_FRAMES).min(frames);
+        writer.write_range(buffer, start, end)?;
+        match settings.format {
+            AudioExportFormat::Wav if end < frames => report_progress(progress, end, frames)?,
+            AudioExportFormat::Flac | AudioExportFormat::Mp3 => {
+                report_fraction(progress, end as f32 / frames as f32 * 0.9)?;
+            }
+            AudioExportFormat::Wav => {}
+        }
     }
-    if let Err(error) = std::fs::rename(&in_progress, path) {
-        let _ = std::fs::remove_file(&in_progress);
-        return Err(IoError::from_fs(path, error));
+    writer.finalize_encoding()?;
+    report_progress(progress, frames, frames)?;
+    writer.publish()
+}
+
+/// Incremental encoder for one atomic audio export.
+///
+/// Audio may be supplied in any number of blocks. Conversion scratch is capped at
+/// `EXPORT_CHUNK_FRAMES` per call, and the destination is not replaced until [`Self::finish`]
+/// finalises the codec successfully. Dropping the writer after a render error or cancellation
+/// deletes its randomly named sibling scratch file and leaves an existing destination intact.
+pub struct AudioExportWriter {
+    path: PathBuf,
+    staged: Option<NamedTempFile>,
+    encoder: Option<AudioEncoder>,
+    settings: AudioExportSettings,
+    channels: usize,
+    expected_frames: usize,
+    written_frames: usize,
+    noise: DitherNoise,
+}
+
+/// A fully encoded and synchronised audio file that has not yet touched its destination.
+///
+/// Dropping it removes only its private sibling. A session worker can therefore decode and
+/// validate the exact encoded bytes, then hand this value to a short stale-checked continuation.
+pub struct StagedAudioExport {
+    path: PathBuf,
+    staged: NamedTempFile,
+}
+
+impl StagedAudioExport {
+    /// Private file containing the final encoded bytes.
+    pub fn staged_path(&self) -> &Path {
+        self.staged.path()
+    }
+
+    /// Encoded byte count, read from the already-open staged handle.
+    pub fn byte_size(&self) -> Result<u64> {
+        self.staged
+            .as_file()
+            .metadata()
+            .map(|metadata| metadata.len())
+            .map_err(|error| IoError::from_fs(&self.path, error))
+    }
+
+    /// Atomically claims the destination without replacing a concurrently-created file.
+    pub fn publish_noclobber(self) -> Result<()> {
+        crate::project_file::publish_staged_file_noclobber(self.staged, &self.path)
+    }
+}
+
+enum AudioEncoder {
+    Wav(WavWriter<BufWriter<File>>),
+    Flac {
+        writer: Box<flac_codec::encode::FlacSampleWriter<BufWriter<File>>>,
+        interleaved: Vec<i32>,
+    },
+    Mp3 {
+        encoder: Box<Mp3Encode>,
+        header: FrameHeader,
+        output: BufWriter<File>,
+        pending: Vec<Vec<f32>>,
+    },
+}
+
+impl AudioExportWriter {
+    /// Creates an encoder for `expected_frames` of planar audio.
+    ///
+    /// The channel count and total frame count are fixed up front so FLAC metadata is complete
+    /// and an interrupted caller cannot accidentally publish a short file as a successful
+    /// export.
+    pub fn create(
+        path: &Path,
+        channels: usize,
+        expected_frames: usize,
+        settings: &AudioExportSettings,
+    ) -> Result<Self> {
+        validate_export_geometry(channels, expected_frames, settings)?;
+        let staged = crate::project_file::new_staged_file(path)?;
+        let file = staged
+            .as_file()
+            .try_clone()
+            .map_err(|error| IoError::from_fs(path, error))?;
+        let encoder = match settings.format {
+            AudioExportFormat::Wav => {
+                let spec = WavSpec {
+                    channels: channels as u16,
+                    sample_rate: settings.sample_rate,
+                    bits_per_sample: settings.bit_depth.bits(),
+                    sample_format: settings.bit_depth.sample_format(),
+                };
+                AudioEncoder::Wav(
+                    WavWriter::new(BufWriter::new(file), spec)
+                        .map_err(|error| wav_error(path, error))?,
+                )
+            }
+            AudioExportFormat::Flac => {
+                let channels = channels as u8;
+                let total_samples = u64::try_from(expected_frames)
+                    .ok()
+                    .and_then(|frames| frames.checked_mul(u64::from(channels)))
+                    .filter(|samples| *samples > 0);
+                let writer = flac_codec::encode::FlacSampleWriter::new(
+                    BufWriter::new(file),
+                    flac_codec::encode::Options::default(),
+                    settings.sample_rate,
+                    u32::from(settings.bit_depth.bits()),
+                    channels,
+                    total_samples,
+                )
+                .map_err(|error| flac_error(path, error))?;
+                AudioEncoder::Flac {
+                    writer: Box::new(writer),
+                    interleaved: Vec::with_capacity(EXPORT_CHUNK_FRAMES * usize::from(channels)),
+                }
+            }
+            AudioExportFormat::Mp3 => {
+                let header = rusty_mp3::encoder_header(
+                    settings.sample_rate,
+                    channels as u16,
+                    settings.mp3_bitrate.kbps(),
+                )
+                .map_err(|error| mp3_error(path, error))?;
+                let samples_per_frame = header.version.samples_per_frame();
+                let audio_frames = expected_frames.div_ceil(samples_per_frame);
+                let file_frames = audio_frames
+                    .checked_add(1)
+                    .ok_or_else(|| IoError::Mp3Write("MP3 frame count is too large".to_string()))?;
+                let frame_count = u32::try_from(file_frames).map_err(|_| {
+                    IoError::Mp3Write("MP3 is too long for its 32-bit Xing frame count".to_string())
+                })?;
+                let byte_count = file_frames
+                    .checked_mul(header.frame_size())
+                    .and_then(|bytes| u32::try_from(bytes).ok())
+                    .ok_or_else(|| {
+                        IoError::Mp3Write(
+                            "MP3 is too long for its 32-bit Xing byte count".to_string(),
+                        )
+                    })?;
+                let mut output = BufWriter::new(file);
+                let info = rusty_mp3::encode::bitstream::info_frame(
+                    &header,
+                    frame_count,
+                    byte_count,
+                    false,
+                );
+                output
+                    .write_all(&info)
+                    .map_err(|error| IoError::from_fs(path, error))?;
+                AudioEncoder::Mp3 {
+                    // The high-level encoder's CBR reservoir retains every frame until
+                    // `finish`. Export directly through the frame encoder instead: the Info
+                    // frame is known up front, each reservoir-free CBR frame is written as
+                    // soon as it is complete, and only one partial PCM frame remains here.
+                    encoder: Box::new(Mp3Encode::new()),
+                    pending: (0..channels)
+                        .map(|_| Vec::with_capacity(EXPORT_CHUNK_FRAMES + samples_per_frame))
+                        .collect(),
+                    header,
+                    output,
+                }
+            }
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            staged: Some(staged),
+            encoder: Some(encoder),
+            settings: *settings,
+            channels,
+            expected_frames,
+            written_frames: 0,
+            noise: DitherNoise::new(),
+        })
+    }
+
+    /// Encodes the next planar block.
+    ///
+    /// Blocks must have the channel count passed to [`Self::create`], and together they must
+    /// contain exactly the declared frame count before [`Self::finish`] is called.
+    pub fn write(&mut self, buffer: &AudioBuffer) -> Result<()> {
+        if buffer.channel_count() != self.channels {
+            return Err(export_error(
+                self.settings.format,
+                format!(
+                    "export expected {} channels but received {}",
+                    self.channels,
+                    buffer.channel_count()
+                ),
+            ));
+        }
+        for start in (0..buffer.frame_count()).step_by(EXPORT_CHUNK_FRAMES) {
+            let end = (start + EXPORT_CHUNK_FRAMES).min(buffer.frame_count());
+            self.write_range(buffer, start, end)?;
+        }
+        Ok(())
+    }
+
+    fn write_range(&mut self, buffer: &AudioBuffer, start: usize, end: usize) -> Result<()> {
+        if buffer.channel_count() != self.channels {
+            return Err(export_error(
+                self.settings.format,
+                format!(
+                    "export expected {} channels but received {}",
+                    self.channels,
+                    buffer.channel_count()
+                ),
+            ));
+        }
+        let frames = end.saturating_sub(start);
+        if end > buffer.frame_count()
+            || self
+                .written_frames
+                .checked_add(frames)
+                .is_none_or(|total| total > self.expected_frames)
+        {
+            return Err(export_error(
+                self.settings.format,
+                "more audio was supplied than the declared export length".to_string(),
+            ));
+        }
+        let planes = buffer.channels();
+        match self.encoder.as_mut() {
+            Some(AudioEncoder::Wav(writer)) => {
+                if self.settings.bit_depth.is_integer() {
+                    let scale = self.settings.bit_depth.full_scale();
+                    let (min_code, max_code) = self.settings.bit_depth.code_range();
+                    for frame in start..end {
+                        for plane in planes {
+                            let dither_lsb = if self.settings.dither {
+                                self.noise.next_tpdf()
+                            } else {
+                                0.0
+                            };
+                            writer
+                                .write_sample(quantize(
+                                    plane[frame],
+                                    dither_lsb,
+                                    scale,
+                                    min_code,
+                                    max_code,
+                                ))
+                                .map_err(|error| wav_error(&self.path, error))?;
+                        }
+                    }
+                } else {
+                    for frame in start..end {
+                        for plane in planes {
+                            let sample = plane[frame];
+                            writer
+                                .write_sample(if sample.is_finite() { sample } else { 0.0 })
+                                .map_err(|error| wav_error(&self.path, error))?;
+                        }
+                    }
+                }
+            }
+            Some(AudioEncoder::Flac {
+                writer,
+                interleaved,
+            }) => {
+                let scale = self.settings.bit_depth.full_scale();
+                let (min_code, max_code) = self.settings.bit_depth.code_range();
+                interleaved.clear();
+                for frame in start..end {
+                    for plane in planes {
+                        let dither_lsb = if self.settings.dither {
+                            self.noise.next_tpdf()
+                        } else {
+                            0.0
+                        };
+                        interleaved.push(quantize(
+                            plane[frame],
+                            dither_lsb,
+                            scale,
+                            min_code,
+                            max_code,
+                        ));
+                    }
+                }
+                writer
+                    .write(interleaved)
+                    .map_err(|error| flac_error(&self.path, error))?;
+            }
+            Some(AudioEncoder::Mp3 {
+                encoder,
+                header,
+                output,
+                pending,
+            }) => {
+                for (channel, plane) in planes.iter().enumerate() {
+                    pending[channel].extend((start..end).map(|frame| {
+                        let sample = plane[frame];
+                        if sample.is_finite() {
+                            sample.clamp(-1.0, 1.0)
+                        } else {
+                            0.0
+                        }
+                    }));
+                }
+                write_complete_mp3_frames(encoder, header, pending, output, &self.path)?;
+            }
+            None => {
+                return Err(export_error(
+                    self.settings.format,
+                    "audio was written after the encoder was finalised".to_string(),
+                ));
+            }
+        }
+        self.written_frames += frames;
+        Ok(())
+    }
+
+    /// Finalises and atomically publishes the completed export.
+    ///
+    /// If fewer frames than declared were supplied, the scratch file is discarded instead.
+    pub fn finish(mut self) -> Result<()> {
+        self.finalize_encoding()?;
+        self.publish()
+    }
+
+    /// Finalises the codec, then publishes only if `commit` still permits the durable change.
+    ///
+    /// Encoding and container finalisation touch only the private sibling scratch file. Calling
+    /// the gate after those potentially expensive steps closes the cancellation race at the
+    /// actual destination-replacement boundary without making a cancelled caller wait through a
+    /// publication it did not authorise.
+    pub fn finish_with_commit(mut self, commit: impl FnOnce() -> bool) -> Result<()> {
+        self.finalize_encoding()?;
+        if !commit() {
+            return Err(IoError::ExportCancelled);
+        }
+        self.publish()
+    }
+
+    /// Finalises and synchronises the encoded bytes without publishing the destination.
+    pub fn finish_staged(mut self) -> Result<StagedAudioExport> {
+        self.finalize_encoding()?;
+        let Some(mut staged) = self.staged.take() else {
+            return Err(export_error(
+                self.settings.format,
+                "audio export scratch file was already published".to_string(),
+            ));
+        };
+        staged
+            .flush()
+            .and_then(|()| staged.as_file().sync_all())
+            .map_err(|error| IoError::from_fs(&self.path, error))?;
+        Ok(StagedAudioExport {
+            path: self.path,
+            staged,
+        })
+    }
+
+    /// Finalises the codec and publishes only if the destination is still unclaimed.
+    ///
+    /// This is the stem-export boundary: a folder picker cannot confirm replacement for every
+    /// generated track name, and another process may create one after the initial folder check.
+    /// The no-clobber persist makes that final race an error while preserving the winner's bytes.
+    pub fn finish_noclobber_with_commit(mut self, commit: impl FnOnce() -> bool) -> Result<()> {
+        self.finalize_encoding()?;
+        if !commit() {
+            return Err(IoError::ExportCancelled);
+        }
+        self.publish_noclobber()
+    }
+
+    fn finalize_encoding(&mut self) -> Result<()> {
+        if self.written_frames != self.expected_frames {
+            return Err(export_error(
+                self.settings.format,
+                format!(
+                    "export expected {} frames but received {}",
+                    self.expected_frames, self.written_frames
+                ),
+            ));
+        }
+        let Some(encoder) = self.encoder.take() else {
+            return Err(export_error(
+                self.settings.format,
+                "audio encoder was already finalised".to_string(),
+            ));
+        };
+        match encoder {
+            AudioEncoder::Wav(writer) => writer
+                .finalize()
+                .map_err(|error| wav_error(&self.path, error))?,
+            AudioEncoder::Flac { writer, .. } => writer
+                .finalize()
+                .map_err(|error| flac_error(&self.path, error))?,
+            AudioEncoder::Mp3 {
+                mut encoder,
+                header,
+                mut output,
+                mut pending,
+            } => {
+                if pending.first().is_some_and(|channel| !channel.is_empty()) {
+                    let samples_per_frame = header.version.samples_per_frame();
+                    for channel in &mut pending {
+                        channel.resize(samples_per_frame, 0.0);
+                    }
+                    write_complete_mp3_frames(
+                        &mut encoder,
+                        &header,
+                        &mut pending,
+                        &mut output,
+                        &self.path,
+                    )?;
+                }
+                output
+                    .flush()
+                    .map_err(|error| IoError::from_fs(&self.path, error))?;
+            }
+        }
+        Ok(())
+    }
+
+    fn publish(mut self) -> Result<()> {
+        let Some(staged) = self.staged.take() else {
+            return Err(export_error(
+                self.settings.format,
+                "audio export scratch file was already published".to_string(),
+            ));
+        };
+        crate::project_file::publish_staged_file(staged, &self.path)
+    }
+
+    fn publish_noclobber(mut self) -> Result<()> {
+        let Some(staged) = self.staged.take() else {
+            return Err(export_error(
+                self.settings.format,
+                "audio export scratch file was already published".to_string(),
+            ));
+        };
+        crate::project_file::publish_staged_file_noclobber(staged, &self.path)
+    }
+}
+
+fn validate_export_geometry(
+    channels: usize,
+    expected_frames: usize,
+    settings: &AudioExportSettings,
+) -> Result<()> {
+    if settings.sample_rate == 0 {
+        return Err(export_error(
+            settings.format,
+            "sample rate must not be zero".to_string(),
+        ));
+    }
+    match settings.format {
+        AudioExportFormat::Wav => {
+            if channels == 0 || u16::try_from(channels).is_err() {
+                return Err(IoError::WavWrite(format!(
+                    "{channels} channels is more than the WAV format can describe"
+                )));
+            }
+            let bytes_per_sample = u128::from(settings.bit_depth.bits().div_ceil(8));
+            let data_bytes = expected_frames as u128 * channels as u128 * bytes_per_sample;
+            // Hound's RIFF size includes the header in the same u32 as the data length. Reserve
+            // its largest (WAVEFORMATEXTENSIBLE) header so finalisation cannot overflow after a
+            // length that the constructor accepted.
+            if data_bytes > u128::from(u32::MAX - 68) {
+                return Err(IoError::WavWrite(
+                    "audio is too long for a RIFF/WAVE file".to_string(),
+                ));
+            }
+        }
+        AudioExportFormat::Flac => {
+            if matches!(settings.bit_depth, WavBitDepth::Float32) {
+                return Err(IoError::FlacWrite(
+                    "FLAC export supports 16-bit or 24-bit integer audio".to_string(),
+                ));
+            }
+            if !(1..=8).contains(&channels) {
+                return Err(IoError::FlacWrite(format!(
+                    "FLAC export needs between 1 and 8 channels, got {channels} channels"
+                )));
+            }
+        }
+        AudioExportFormat::Mp3 => {
+            if !(1..=2).contains(&channels) {
+                return Err(IoError::Mp3Write(format!(
+                    "MP3 export needs mono or stereo audio, got {channels} channels"
+                )));
+            }
+            if !AudioExportFormat::Mp3.supports_sample_rate(settings.sample_rate) {
+                return Err(IoError::Mp3Write(format!(
+                    "{} Hz is not supported for MP3 export; choose 32000, 44100 or 48000 Hz",
+                    settings.sample_rate
+                )));
+            }
+            if expected_frames == 0 {
+                return Err(IoError::Mp3Write(
+                    "cannot encode a file containing no audio".to_string(),
+                ));
+            }
+        }
     }
     Ok(())
 }
 
-/// Streams the samples into `target`, with errors reported against `reported` — the name the
-/// user asked to export, the scratch file being an implementation detail.
-fn stream_wav(
-    target: &Path,
-    reported: &Path,
-    buffer: &AudioBuffer,
-    settings: &AudioExportSettings,
-    progress: &mut dyn FnMut(f32) -> bool,
-) -> Result<()> {
-    let channel_count = u16::try_from(buffer.channel_count()).map_err(|_| {
-        IoError::WavWrite(format!(
-            "{} channels is more than the WAV format can describe",
-            buffer.channel_count()
-        ))
-    })?;
-    if settings.sample_rate == 0 {
-        return Err(IoError::WavWrite(
-            "sample rate must not be zero".to_string(),
-        ));
+fn export_error(format: AudioExportFormat, message: String) -> IoError {
+    match format {
+        AudioExportFormat::Wav => IoError::WavWrite(message),
+        AudioExportFormat::Flac => IoError::FlacWrite(message),
+        AudioExportFormat::Mp3 => IoError::Mp3Write(message),
     }
-
-    let spec = WavSpec {
-        channels: channel_count,
-        sample_rate: settings.sample_rate,
-        bits_per_sample: settings.bit_depth.bits(),
-        sample_format: settings.bit_depth.sample_format(),
-    };
-
-    let mut writer = WavWriter::create(target, spec).map_err(|e| wav_error(reported, e))?;
-    let planes = buffer.channels();
-    let frames = buffer.frame_count();
-    report_progress(progress, 0, frames)?;
-
-    if settings.bit_depth.is_integer() {
-        let scale = settings.bit_depth.full_scale();
-        let (min_code, max_code) = settings.bit_depth.code_range();
-        let mut noise = DitherNoise::new();
-        for frame in 0..frames {
-            if frame > 0 && frame % EXPORT_CHUNK_FRAMES == 0 {
-                report_progress(progress, frame, frames)?;
-            }
-            for plane in planes {
-                let dither_lsb = if settings.dither {
-                    noise.next_tpdf()
-                } else {
-                    0.0
-                };
-                let code = quantize(plane[frame], dither_lsb, scale, min_code, max_code);
-                writer
-                    .write_sample(code)
-                    .map_err(|e| wav_error(reported, e))?;
-            }
-        }
-    } else {
-        for frame in 0..frames {
-            if frame > 0 && frame % EXPORT_CHUNK_FRAMES == 0 {
-                report_progress(progress, frame, frames)?;
-            }
-            for plane in planes {
-                let sample = plane[frame];
-                let sample = if sample.is_finite() { sample } else { 0.0 };
-                writer
-                    .write_sample(sample)
-                    .map_err(|e| wav_error(reported, e))?;
-            }
-        }
-    }
-
-    writer.finalize().map_err(|e| wav_error(reported, e))?;
-    report_progress(progress, frames, frames)
-}
-
-/// Encodes integer PCM into FLAC in bounded chunks.
-fn stream_flac(
-    target: &Path,
-    reported: &Path,
-    buffer: &AudioBuffer,
-    settings: &AudioExportSettings,
-    progress: &mut dyn FnMut(f32) -> bool,
-) -> Result<()> {
-    if matches!(settings.bit_depth, WavBitDepth::Float32) {
-        return Err(IoError::FlacWrite(
-            "FLAC export supports 16-bit or 24-bit integer audio".to_string(),
-        ));
-    }
-    let channels = u8::try_from(buffer.channel_count()).map_err(|_| {
-        IoError::FlacWrite(format!(
-            "{} channels is more than the FLAC format can describe",
-            buffer.channel_count()
-        ))
-    })?;
-    if channels == 0 || channels > 8 {
-        return Err(IoError::FlacWrite(format!(
-            "FLAC export needs between 1 and 8 channels, got {channels}"
-        )));
-    }
-    if settings.sample_rate == 0 {
-        return Err(IoError::FlacWrite(
-            "sample rate must not be zero".to_string(),
-        ));
-    }
-
-    let file = File::create(target).map_err(|error| IoError::from_fs(reported, error))?;
-    let total_samples = u64::try_from(buffer.frame_count())
-        .ok()
-        .and_then(|frames| frames.checked_mul(u64::from(channels)))
-        .filter(|samples| *samples > 0);
-    let mut writer = flac_codec::encode::FlacSampleWriter::new(
-        BufWriter::new(file),
-        flac_codec::encode::Options::default(),
-        settings.sample_rate,
-        u32::from(settings.bit_depth.bits()),
-        channels,
-        total_samples,
-    )
-    .map_err(|error| flac_error(reported, error))?;
-
-    let frames = buffer.frame_count();
-    let planes = buffer.channels();
-    let scale = settings.bit_depth.full_scale();
-    let (min_code, max_code) = settings.bit_depth.code_range();
-    let mut noise = DitherNoise::new();
-    report_progress(progress, 0, frames)?;
-    for start in (0..frames).step_by(EXPORT_CHUNK_FRAMES) {
-        let end = (start + EXPORT_CHUNK_FRAMES).min(frames);
-        let mut interleaved = Vec::with_capacity((end - start) * planes.len());
-        for frame in start..end {
-            for plane in planes {
-                let dither_lsb = if settings.dither {
-                    noise.next_tpdf()
-                } else {
-                    0.0
-                };
-                interleaved.push(quantize(
-                    plane[frame],
-                    dither_lsb,
-                    scale,
-                    min_code,
-                    max_code,
-                ));
-            }
-        }
-        writer
-            .write(&interleaved)
-            .map_err(|error| flac_error(reported, error))?;
-        report_fraction(progress, end as f32 / frames as f32 * 0.9)?;
-    }
-    writer
-        .finalize()
-        .map_err(|error| flac_error(reported, error))?;
-    report_progress(progress, frames, frames)
-}
-
-/// Encodes stereo or mono floating-point PCM into MP3 in bounded chunks.
-fn stream_mp3(
-    target: &Path,
-    reported: &Path,
-    buffer: &AudioBuffer,
-    settings: &AudioExportSettings,
-    progress: &mut dyn FnMut(f32) -> bool,
-) -> Result<()> {
-    let channels = u16::try_from(buffer.channel_count()).map_err(|_| {
-        IoError::Mp3Write(format!(
-            "{} channels is more than MP3 can describe",
-            buffer.channel_count()
-        ))
-    })?;
-    if !(1..=2).contains(&channels) {
-        return Err(IoError::Mp3Write(format!(
-            "MP3 export needs mono or stereo audio, got {channels} channels"
-        )));
-    }
-    if !AudioExportFormat::Mp3.supports_sample_rate(settings.sample_rate) {
-        return Err(IoError::Mp3Write(format!(
-            "{} Hz is not supported for MP3 export; choose 32000, 44100 or 48000 Hz",
-            settings.sample_rate
-        )));
-    }
-    if buffer.frame_count() == 0 {
-        return Err(IoError::Mp3Write(
-            "cannot encode a file containing no audio".to_string(),
-        ));
-    }
-
-    let file = File::create(target).map_err(|error| IoError::from_fs(reported, error))?;
-    let mut output = BufWriter::new(file);
-    let mut encoder = Mp3Encoder::new(Mp3EncoderConfig {
-        bitrate_kbps: settings.mp3_bitrate.kbps(),
-        vbr_quality: None,
-    });
-    let frames = buffer.frame_count();
-    let planes = buffer.channels();
-    report_progress(progress, 0, frames)?;
-    for start in (0..frames).step_by(EXPORT_CHUNK_FRAMES) {
-        let end = (start + EXPORT_CHUNK_FRAMES).min(frames);
-        let mut interleaved = Vec::with_capacity((end - start) * planes.len());
-        for frame in start..end {
-            for plane in planes {
-                let sample = plane[frame];
-                interleaved.push(if sample.is_finite() {
-                    sample.clamp(-1.0, 1.0)
-                } else {
-                    0.0
-                });
-            }
-        }
-        encoder
-            .push_pcm_f32(&interleaved, channels, settings.sample_rate)
-            .map_err(|error| mp3_error(reported, error))?;
-        // Keep packets queued until `finish`: that lets the encoder prepend its Info frame once
-        // it knows the final frame and byte counts, including at 320 kbps where audio packets
-        // are otherwise available immediately.
-        report_fraction(progress, end as f32 / frames as f32 * 0.9)?;
-    }
-    encoder.finish();
-    drain_mp3_packets(&mut encoder, &mut output, reported)?;
-    output
-        .flush()
-        .map_err(|error| IoError::from_fs(reported, error))?;
-    report_progress(progress, frames, frames)
 }
 
 /// PCM frames converted between progress checks.
@@ -569,20 +854,30 @@ fn report_fraction(progress: &mut dyn FnMut(f32) -> bool, fraction: f32) -> Resu
     }
 }
 
-fn drain_mp3_packets(
-    encoder: &mut Mp3Encoder,
+fn write_complete_mp3_frames(
+    encoder: &mut Mp3Encode,
+    header: &FrameHeader,
+    pending: &mut [Vec<f32>],
     output: &mut impl Write,
     reported: &Path,
 ) -> Result<()> {
-    loop {
-        match encoder.next_packet() {
-            Ok(packet) => output
-                .write_all(&packet)
-                .map_err(|error| IoError::from_fs(reported, error))?,
-            Err(rusty_mp3::Error::Again | rusty_mp3::Error::Eof) => return Ok(()),
-            Err(error) => return Err(mp3_error(reported, error)),
-        }
+    let samples_per_frame = header.version.samples_per_frame();
+    while pending
+        .first()
+        .is_some_and(|channel| channel.len() >= samples_per_frame)
+    {
+        let frame: Vec<Vec<f32>> = pending
+            .iter_mut()
+            .map(|channel| channel.drain(..samples_per_frame).collect())
+            .collect();
+        let packet = encoder
+            .encode_frame(header, &frame, None)
+            .map_err(|error| mp3_error(reported, error))?;
+        output
+            .write_all(&packet)
+            .map_err(|error| IoError::from_fs(reported, error))?;
     }
+    Ok(())
 }
 
 fn flac_error(path: &Path, error: flac_codec::Error) -> IoError {
@@ -607,6 +902,18 @@ fn wav_error(path: &Path, error: hound::Error) -> IoError {
 mod tests {
     use super::*;
     use crate::test_support::TempFile;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+
+    fn legacy_predictable_scratch_path(path: &Path) -> PathBuf {
+        let mut name = path
+            .file_name()
+            .map(OsString::from)
+            .unwrap_or_else(|| OsString::from("project"));
+        name.push(format!(".{}.saving", std::process::id()));
+        path.with_file_name(name)
+    }
 
     fn test_buffer() -> AudioBuffer {
         // Values chosen to hit both rails, the midpoint and a few small levels.
@@ -634,28 +941,63 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_export_leaves_the_previous_bounce_intact() {
-        // The exporter used to open the destination with truncation, so a failure partway
-        // destroyed whatever file was already there — possibly the only render of an older
-        // mix. Same defence, and same test shape, as the project save.
+    fn a_preplaced_predictable_scratch_link_cannot_damage_another_file() {
         let file = TempFile::new("preserved-bounce.wav");
         write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).unwrap();
-        let before = std::fs::read(file.path()).unwrap();
 
-        // A directory in place of the scratch file makes the write fail after the point where
-        // a truncating export would already have destroyed the target.
-        let blocker = crate::project_file::in_progress_path(file.path());
-        std::fs::create_dir(&blocker).unwrap();
-        assert!(write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).is_err());
-        std::fs::remove_dir(&blocker).unwrap();
+        let victim = TempFile::new("audio-export-victim.txt");
+        let sentinel = b"this file must not be opened or truncated by an audio export";
+        std::fs::write(victim.path(), sentinel).unwrap();
+        let scratch = legacy_predictable_scratch_path(file.path());
+        std::fs::hard_link(victim.path(), &scratch).unwrap();
 
-        assert_eq!(std::fs::read(file.path()).unwrap(), before);
+        let result = write_wav(file.path(), &test_buffer(), &WavExportSettings::default());
+        let victim_after = std::fs::read(victim.path()).unwrap();
+        let _ = std::fs::remove_file(&scratch);
+
+        result.unwrap();
+        assert_eq!(victim_after, sentinel);
         let (spec, _) = read_int_samples(file.path());
-        assert_eq!(spec.bits_per_sample, 24, "the old bounce still opens");
+        assert_eq!(spec.bits_per_sample, 24);
+    }
 
-        // And a successful export leaves no scratch file behind.
-        write_wav(file.path(), &test_buffer(), &WavExportSettings::default()).unwrap();
-        assert!(!crate::project_file::in_progress_path(file.path()).exists());
+    #[test]
+    fn simultaneous_exports_to_one_path_use_independent_scratch_files() {
+        const WRITERS: usize = 8;
+
+        let file = TempFile::new("parallel-export.wav");
+        let encoders_open = Arc::new(Barrier::new(WRITERS));
+        let mut writers = Vec::with_capacity(WRITERS);
+        for _ in 0..WRITERS {
+            let path = file.path().to_path_buf();
+            let encoders_open = Arc::clone(&encoders_open);
+            writers.push(std::thread::spawn(move || {
+                let mut first_progress = true;
+                write_audio_with_progress(
+                    &path,
+                    &tone_buffer(EXPORT_CHUNK_FRAMES * 2),
+                    &AudioExportSettings::default(),
+                    &mut |fraction| {
+                        if first_progress {
+                            assert_eq!(fraction, 0.0);
+                            first_progress = false;
+                            encoders_open.wait();
+                        }
+                        true
+                    },
+                )
+            }));
+        }
+
+        for writer in writers {
+            writer
+                .join()
+                .expect("export thread panicked")
+                .expect("independent exports must not collide through a shared scratch file");
+        }
+        let (spec, samples) = read_int_samples(file.path());
+        assert_eq!(spec.bits_per_sample, 24);
+        assert_eq!(samples.len(), EXPORT_CHUNK_FRAMES * 2 * 2);
     }
 
     #[test]
@@ -1052,22 +1394,257 @@ mod tests {
 
     #[test]
     fn cancelling_an_encode_preserves_the_previous_export() {
-        let file = TempFile::new("preserved.flac");
+        let folder = TempFile::new("cancelled-export");
+        std::fs::create_dir(folder.path()).unwrap();
+        let path = folder.path().join("preserved.flac");
         let settings = AudioExportSettings {
             format: AudioExportFormat::Flac,
             ..AudioExportSettings::default()
         };
-        write_audio(file.path(), &tone_buffer(4_096), &settings).unwrap();
-        let before = std::fs::read(file.path()).unwrap();
+        write_audio(&path, &tone_buffer(4_096), &settings).unwrap();
+        let before = std::fs::read(&path).unwrap();
 
         let result = write_audio_with_progress(
-            file.path(),
+            &path,
             &tone_buffer(EXPORT_CHUNK_FRAMES * 3),
             &settings,
             &mut |fraction| fraction < 0.5,
         );
         assert!(matches!(result, Err(IoError::ExportCancelled)));
-        assert_eq!(std::fs::read(file.path()).unwrap(), before);
-        assert!(!crate::project_file::in_progress_path(file.path()).exists());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn denying_the_final_commit_after_codec_finalisation_preserves_the_target() {
+        let folder = TempFile::new("denied-final-commit");
+        std::fs::create_dir(folder.path()).unwrap();
+        let path = folder.path().join("preserved.mp3");
+        let previous = b"previous complete export";
+        std::fs::write(&path, previous).unwrap();
+        let buffer = tone_buffer(9_600);
+        let settings = AudioExportSettings {
+            format: AudioExportFormat::Mp3,
+            mp3_bitrate: Mp3Bitrate::Kbps192,
+            ..AudioExportSettings::default()
+        };
+        let mut writer = AudioExportWriter::create(
+            &path,
+            buffer.channel_count(),
+            buffer.frame_count(),
+            &settings,
+        )
+        .unwrap();
+        writer.write(&buffer).unwrap();
+
+        assert!(matches!(
+            writer.finish_with_commit(|| false),
+            Err(IoError::ExportCancelled)
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn noclobber_commit_loses_a_race_without_replacing_the_winner() {
+        let folder = TempFile::new("noclobber-final-commit");
+        std::fs::create_dir(folder.path()).unwrap();
+        let path = folder.path().join("stem.wav");
+        let buffer = tone_buffer(1_024);
+        let settings = AudioExportSettings::default();
+        let mut writer = AudioExportWriter::create(
+            &path,
+            buffer.channel_count(),
+            buffer.frame_count(),
+            &settings,
+        )
+        .unwrap();
+        writer.write(&buffer).unwrap();
+        let winner = b"another process won";
+
+        assert!(matches!(
+            writer.finish_noclobber_with_commit(|| {
+                std::fs::write(&path, winner).unwrap();
+                true
+            }),
+            Err(IoError::ExportDestinationExists(existing)) if existing == path
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), winner);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    fn slice(buffer: &AudioBuffer, start: usize, end: usize) -> AudioBuffer {
+        AudioBuffer::from_planar(
+            buffer
+                .channels()
+                .iter()
+                .map(|channel| channel[start..end].to_vec())
+                .collect(),
+            buffer.sample_rate(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn incremental_blocks_produce_the_same_file_for_every_format() {
+        let buffer = tone_buffer(9_600);
+        for (name, settings) in [
+            (
+                "streamed-int16.wav",
+                AudioExportSettings {
+                    bit_depth: WavBitDepth::Int16,
+                    dither: true,
+                    ..AudioExportSettings::default()
+                },
+            ),
+            (
+                "streamed-float.wav",
+                AudioExportSettings {
+                    bit_depth: WavBitDepth::Float32,
+                    ..AudioExportSettings::default()
+                },
+            ),
+            (
+                "streamed.flac",
+                AudioExportSettings {
+                    format: AudioExportFormat::Flac,
+                    dither: true,
+                    ..AudioExportSettings::default()
+                },
+            ),
+            (
+                "streamed.mp3",
+                AudioExportSettings {
+                    format: AudioExportFormat::Mp3,
+                    mp3_bitrate: Mp3Bitrate::Kbps192,
+                    ..AudioExportSettings::default()
+                },
+            ),
+        ] {
+            let whole = TempFile::new(&format!("whole-{name}"));
+            let incremental = TempFile::new(&format!("incremental-{name}"));
+            write_audio(whole.path(), &buffer, &settings).unwrap();
+
+            let mut writer = AudioExportWriter::create(
+                incremental.path(),
+                buffer.channel_count(),
+                buffer.frame_count(),
+                &settings,
+            )
+            .unwrap();
+            for start in (0..buffer.frame_count()).step_by(257) {
+                writer
+                    .write(&slice(
+                        &buffer,
+                        start,
+                        (start + 257).min(buffer.frame_count()),
+                    ))
+                    .unwrap();
+            }
+            writer.finish().unwrap();
+
+            assert_eq!(
+                std::fs::read(incremental.path()).unwrap(),
+                std::fs::read(whole.path()).unwrap(),
+                "{name} changed when block boundaries changed"
+            );
+        }
+    }
+
+    #[test]
+    fn an_incomplete_incremental_export_preserves_the_target_and_removes_scratch() {
+        let folder = TempFile::new("short-stream");
+        std::fs::create_dir(folder.path()).unwrap();
+        let path = folder.path().join("mix.wav");
+        let previous = b"previous complete export";
+        std::fs::write(&path, previous).unwrap();
+
+        let mut writer =
+            AudioExportWriter::create(&path, 2, 1_024, &AudioExportSettings::default()).unwrap();
+        writer.write(&tone_buffer(128)).unwrap();
+        assert!(matches!(writer.finish(), Err(IoError::WavWrite(_))));
+
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn conversion_workspace_stays_at_one_chunk_for_large_input_blocks() {
+        let file = TempFile::new("bounded.flac");
+        let settings = AudioExportSettings {
+            format: AudioExportFormat::Flac,
+            ..AudioExportSettings::default()
+        };
+        let buffer = tone_buffer(EXPORT_CHUNK_FRAMES * 8);
+        let mut writer = AudioExportWriter::create(
+            file.path(),
+            buffer.channel_count(),
+            buffer.frame_count(),
+            &settings,
+        )
+        .unwrap();
+        writer.write(&buffer).unwrap();
+
+        let capacity = match writer.encoder.as_ref().unwrap() {
+            AudioEncoder::Flac { interleaved, .. } => interleaved.capacity(),
+            _ => unreachable!(),
+        };
+        assert_eq!(capacity, EXPORT_CHUNK_FRAMES * buffer.channel_count());
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn mp3_streams_packets_without_growing_with_the_song() {
+        let file = TempFile::new("bounded.mp3");
+        let settings = AudioExportSettings {
+            format: AudioExportFormat::Mp3,
+            mp3_bitrate: Mp3Bitrate::Kbps192,
+            ..AudioExportSettings::default()
+        };
+        let block = tone_buffer(EXPORT_CHUNK_FRAMES);
+        let repeats = 64;
+        let mut writer = AudioExportWriter::create(
+            file.path(),
+            block.channel_count(),
+            block.frame_count() * repeats,
+            &settings,
+        )
+        .unwrap();
+        let scratch = writer.staged.as_ref().unwrap().path().to_path_buf();
+        let initial_capacities = match writer.encoder.as_ref().unwrap() {
+            AudioEncoder::Mp3 { pending, .. } => {
+                pending.iter().map(Vec::capacity).collect::<Vec<_>>()
+            }
+            _ => unreachable!(),
+        };
+
+        for _ in 0..repeats {
+            writer.write(&block).unwrap();
+            match writer.encoder.as_ref().unwrap() {
+                AudioEncoder::Mp3 {
+                    header, pending, ..
+                } => {
+                    assert!(
+                        pending
+                            .iter()
+                            .all(|channel| channel.len() < header.version.samples_per_frame())
+                    );
+                    assert_eq!(
+                        pending.iter().map(Vec::capacity).collect::<Vec<_>>(),
+                        initial_capacities
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        match writer.encoder.as_mut().unwrap() {
+            AudioEncoder::Mp3 { output, .. } => output.flush().unwrap(),
+            _ => unreachable!(),
+        }
+        assert!(
+            std::fs::metadata(scratch).unwrap().len() > 8_192,
+            "encoded packets should reach disk before finalisation"
+        );
+        writer.finish().unwrap();
     }
 }

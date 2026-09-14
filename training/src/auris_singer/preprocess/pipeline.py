@@ -23,6 +23,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import shutil
+import uuid
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +38,7 @@ import torchaudio
 from omegaconf import DictConfig
 from tqdm import tqdm
 
+from auris_singer.dataset_layout import publish_dataset_generation
 from auris_singer.preprocess.f0 import FcpeExtractor
 from auris_singer.text import DEFAULT_PHONEME_TABLE, PhonemeTable, get_frontend
 from auris_singer.utils.audio import frame_energy
@@ -65,12 +70,10 @@ def collect_utterances(sources) -> list[Utterance]:
     (default ``.txt``), one number per transcript token: its seconds.
     """
     utterances: list[Utterance] = []
-    for source in sources:
+    for source_index, source in enumerate(sources):
         speaker = str(source["name"])
         if not speaker or speaker in {".", ".."} or Path(speaker).name != speaker:
-            raise ValueError(
-                f"dataset source name must be one path component, got {speaker!r}"
-            )
+            raise ValueError(f"dataset source name must be one path component, got {speaker!r}")
         wav_dir = Path(source["wav_dir"])
         text_dir = Path(source.get("text_dir") or wav_dir)
         text_suffix = str(source.get("text_suffix", ".txt"))
@@ -89,7 +92,9 @@ def collect_utterances(sources) -> list[Utterance]:
             )
             utterances.append(
                 Utterance(
-                    utt_id=f"{speaker}/{relative.as_posix()}",
+                    # The configured source ordinal keeps ids injective even
+                    # when several roots contribute the same speaker/name.
+                    utt_id=f"{speaker}/{source_index:04d}/{relative.as_posix()}",
                     wav_path=wav_path,
                     text_path=text_path if text_path.is_file() else None,
                     speaker=speaker,
@@ -112,19 +117,28 @@ def seconds_to_frames(seconds: list[float], n_frames: int) -> list[int]:
     """
     if not seconds or n_frames < len(seconds):
         raise ValueError(f"{len(seconds)} phonemes cannot share {n_frames} frames")
+    if any(not math.isfinite(value) for value in seconds):
+        raise ValueError("durations must be finite")
+    if any(value < 0 for value in seconds):
+        raise ValueError("durations must be non-negative")
     total = float(sum(seconds))
+    if not math.isfinite(total):
+        raise ValueError("durations must have a finite sum")
     if total <= 0:
         raise ValueError("the durations sum to nothing")
     exact = [s / total * n_frames for s in seconds]
     frames = [max(1, int(round(x))) for x in exact]
     order = sorted(range(len(frames)), key=lambda i: -exact[i])
     at = 0
-    while sum(frames) != n_frames:
+    assigned = sum(frames)
+    while assigned != n_frames:
         i = order[at % len(order)]
-        if sum(frames) < n_frames:
+        if assigned < n_frames:
             frames[i] += 1
+            assigned += 1
         elif frames[i] > 1:
             frames[i] -= 1
+            assigned -= 1
         at += 1
     return frames
 
@@ -133,8 +147,38 @@ def _read_durations(path: Path) -> list[float]:
     return [float(x) for x in path.read_text(encoding="utf-8").split()]
 
 
-def _load_audio(path: Path, sample_rate: int, peak_normalize: bool, peak: float):
-    wav, sr = sf.read(str(path), dtype="float32", always_2d=True)
+def _bounded_map(executor, function, values, max_pending: int):
+    """Map in input order without eagerly retaining an entire corpus of results."""
+    if max_pending < 1:
+        raise ValueError("max_pending must be positive")
+    values = iter(values)
+    pending = deque()
+    for _ in range(max_pending):
+        try:
+            pending.append(executor.submit(function, next(values)))
+        except StopIteration:
+            break
+    while pending:
+        result = pending.popleft().result()
+        try:
+            pending.append(executor.submit(function, next(values)))
+        except StopIteration:
+            pass
+        yield result
+
+
+def _load_audio(
+    path: Path,
+    sample_rate: int,
+    peak_normalize: bool,
+    peak: float,
+    max_samples: int,
+):
+    with sf.SoundFile(str(path)) as stream:
+        sr = int(stream.samplerate)
+        source_limit = math.ceil(max_samples * sr / sample_rate)
+        frames = min(int(stream.frames), source_limit)
+        wav = stream.read(frames=frames, dtype="float32", always_2d=True)
     wav = torch.from_numpy(wav.mean(axis=1))
     if wav.numel() == 0:
         return wav
@@ -209,110 +253,136 @@ def run_preprocess(config: DictConfig) -> dict[str, int]:
         if not phonemes:
             return utt, None, None, "empty phoneme sequence"
         try:
-            wav = _load_audio(utt.wav_path, sample_rate, peak_normalize, peak)
+            wav = _load_audio(
+                utt.wav_path,
+                sample_rate,
+                peak_normalize,
+                peak,
+                max_samples,
+            )
         except (OSError, RuntimeError, ValueError) as error:
             return utt, None, None, f"audio decode error: {error}"
         return utt, wav, (text, phonemes), None
 
     records: list[dict] = []
     skipped: dict[str, int] = {}
+    staging_dir = output_dir / f".staging-{uuid.uuid4().hex}"
+    staging_dir.mkdir()
 
     def skip(reason: str) -> None:
         skipped[reason] = skipped.get(reason, 0) + 1
 
-    num_workers = int(config.get("num_workers", 4))
-    with ThreadPoolExecutor(max_workers=max(num_workers, 1)) as pool:
-        for utt, wav, text_info, error in tqdm(
-            pool.map(stage_one, utterances), total=len(utterances), desc="preprocess"
-        ):
-            if error is not None:
-                logger.warning("skipping %s: %s", utt.utt_id, error)
-                skip(error)
-                continue
-
-            if wav.numel() < max(min_samples, hop_length, feature_min_samples):
-                skip("too short")
-                continue
-            if wav.numel() > max_samples:
-                wav = wav[:max_samples]
-
-            n_frames = wav.numel() // hop_length
-            wav = wav[: n_frames * hop_length]
-
-            text, phonemes = text_info
-            unknown = table.unknown_symbols(phonemes)
-            if unknown:
-                logger.warning("%s contains symbols missing from the table: %s", utt.utt_id, unknown)
-            phoneme_ids = table.encode(phonemes)
-            if n_frames < len(phoneme_ids):
-                # Monotonic alignment search needs at least one frame per phoneme.
-                skip("fewer frames than phonemes")
-                continue
-
-            durations = None
-            if utt.duration_path is not None:
-                seconds = _read_durations(utt.duration_path)
-                if len(seconds) != len(phoneme_ids):
-                    # A label that does not line up with its transcript is a fault in
-                    # the preparation, not something to paper over with the search.
-                    logger.warning(
-                        "%s: %d durations for %d phonemes", utt.utt_id, len(seconds), len(phoneme_ids)
-                    )
-                    skip("durations do not match phonemes")
-                    continue
-                durations = seconds_to_frames(seconds, n_frames)
-
-            energy = frame_energy(wav, n_fft, hop_length, win_length)
-            f0, voiced = extractor(wav, sample_rate, n_frames)
-
-            out_path = output_dir / f"{utt.utt_id}.npz"
-            out_path.parent.mkdir(parents=True, exist_ok=True)
-            features = {
-                "wav": (wav.numpy() * 32767.0).astype(np.int16),
-                "phonemes": np.asarray(phoneme_ids, dtype=np.int32),
-                "f0": f0.numpy().astype(np.float32),
-                "energy": energy.numpy().astype(np.float32),
-                "voiced": voiced.numpy().astype(np.uint8),
-            }
-            if durations is not None:
-                features["durations"] = np.asarray(durations, dtype=np.int32)
-            np.savez(out_path, **features)
-            records.append(
-                {
-                    "id": utt.utt_id,
-                    "path": str(out_path.relative_to(output_dir)),
-                    "speaker": utt.speaker,
-                    "speaker_id": speaker_to_id[utt.speaker],
-                    "n_frames": int(n_frames),
-                    "n_phonemes": len(phoneme_ids),
-                    "seconds": round(n_frames * hop_length / sample_rate, 3),
-                    "text": text,
-                    "has_durations": durations is not None,
-                }
+    try:
+        num_workers = int(config.get("num_workers", 4))
+        with ThreadPoolExecutor(max_workers=max(num_workers, 1)) as pool:
+            work = tqdm(
+                _bounded_map(pool, stage_one, utterances, max(num_workers, 1)),
+                total=len(utterances),
+                desc="preprocess",
             )
+            for storage_index, (utt, wav, text_info, error) in enumerate(work):
+                if error is not None:
+                    logger.warning("skipping %s: %s", utt.utt_id, error)
+                    skip(error)
+                    continue
 
-    if not records:
-        raise RuntimeError(f"every utterance was skipped: {skipped}")
+                if wav.numel() < max(min_samples, hop_length, feature_min_samples):
+                    skip("too short")
+                    continue
+                if wav.numel() > max_samples:
+                    wav = wav[:max_samples]
 
-    with (output_dir / "metadata.jsonl").open("w", encoding="utf-8") as fp:
-        for record in records:
-            fp.write(json.dumps(record, ensure_ascii=False) + "\n")
-    (output_dir / "speakers.json").write_text(
-        json.dumps(speaker_to_id, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    table.save(output_dir / "phonemes.json")
-    (output_dir / "audio_config.json").write_text(
-        json.dumps(
-            {
-                "sample_rate": sample_rate,
-                "n_fft": n_fft,
-                "hop_length": hop_length,
-                "win_length": win_length,
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+                n_frames = wav.numel() // hop_length
+                wav = wav[: n_frames * hop_length]
+
+                text, phonemes = text_info
+                unknown = table.unknown_symbols(phonemes)
+                if unknown:
+                    logger.warning(
+                        "%s contains symbols missing from the table: %s",
+                        utt.utt_id,
+                        unknown,
+                    )
+                phoneme_ids = table.encode(phonemes)
+                if n_frames < len(phoneme_ids):
+                    # Monotonic alignment search needs at least one frame per phoneme.
+                    skip("fewer frames than phonemes")
+                    continue
+
+                durations = None
+                if utt.duration_path is not None:
+                    seconds = _read_durations(utt.duration_path)
+                    if len(seconds) != len(phoneme_ids):
+                        # A label that does not line up with its transcript is a fault in
+                        # the preparation, not something to paper over with the search.
+                        logger.warning(
+                            "%s: %d durations for %d phonemes",
+                            utt.utt_id,
+                            len(seconds),
+                            len(phoneme_ids),
+                        )
+                        skip("durations do not match phonemes")
+                        continue
+                    durations = seconds_to_frames(seconds, n_frames)
+
+                energy = frame_energy(wav, n_fft, hop_length, win_length)
+                f0, voiced = extractor(wav, sample_rate, n_frames)
+
+                # Use an ordinal inside this immutable generation, not a
+                # source name or stem. Equal names from separate roots (and
+                # case-folding filesystems) therefore cannot alias.
+                out_path = staging_dir / "samples" / f"{storage_index:08d}.npz"
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                features = {
+                    "wav": (wav.numpy() * 32767.0).astype(np.int16),
+                    "phonemes": np.asarray(phoneme_ids, dtype=np.int32),
+                    "f0": f0.numpy().astype(np.float32),
+                    "energy": energy.numpy().astype(np.float32),
+                    "voiced": voiced.numpy().astype(np.uint8),
+                }
+                if durations is not None:
+                    features["durations"] = np.asarray(durations, dtype=np.int32)
+                np.savez(out_path, **features)
+                records.append(
+                    {
+                        "id": utt.utt_id,
+                        "path": out_path.relative_to(staging_dir).as_posix(),
+                        "speaker": utt.speaker,
+                        "speaker_id": speaker_to_id[utt.speaker],
+                        "n_frames": int(n_frames),
+                        "n_phonemes": len(phoneme_ids),
+                        "seconds": round(n_frames * hop_length / sample_rate, 3),
+                        "text": text,
+                        "has_durations": durations is not None,
+                    }
+                )
+
+        if not records:
+            raise RuntimeError(f"every utterance was skipped: {skipped}")
+
+        with (staging_dir / "metadata.jsonl").open("w", encoding="utf-8") as fp:
+            for record in records:
+                fp.write(json.dumps(record, ensure_ascii=False) + "\n")
+        (staging_dir / "speakers.json").write_text(
+            json.dumps(speaker_to_id, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        table.save(staging_dir / "phonemes.json")
+        (staging_dir / "audio_config.json").write_text(
+            json.dumps(
+                {
+                    "sample_rate": sample_rate,
+                    "n_fft": n_fft,
+                    "hop_length": hop_length,
+                    "win_length": win_length,
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        publish_dataset_generation(output_dir, staging_dir)
+    finally:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
 
     logger.info("processed %d utterances, skipped %s", len(records), skipped or "none")
     return {"processed": len(records), "skipped": sum(skipped.values()), **skipped}

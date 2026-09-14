@@ -7,16 +7,24 @@
 //! own here is the dictionary: loaded once when the settings name a folder, owned by the
 //! session, and consulted only for text the built-in kana table cannot read.
 
+use std::borrow::Cow;
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use auris_core::project::BEND_LIMIT;
-use auris_core::{AssetPath, ClipId, Fall, Scoop, SingerTake, SingerVoice, TrackId, Vibrato};
+use auris_core::time::TempoMap;
+use auris_core::{
+    AssetPath, AudioBuffer, ClipId, Fall, Scoop, SingerTake, SingerTrack, SingerVoice, TrackId,
+    Vibrato,
+};
 use auris_singer::{BackendKind, VoiceCapabilities, VoiceInfo, VoiceModel};
 use auris_vocal::{
-    JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras, render_score,
-    split_kana_lyric,
+    CurveSources, JapaneseDictionary, SingerFrames, SingerScore, lyric_phonemes, phoneme_moras,
+    render_score, split_kana_lyric,
 };
 
 use crate::error::SessionError;
@@ -44,6 +52,21 @@ pub const PREVIEW_NOTE_SECONDS: f64 = 0.5;
 /// Silence appended after the held note, where the voice lets go of the syllable.
 const PREVIEW_TAIL_SECONDS: f64 = 0.3;
 
+/// Largest singer-frame JSON source accepted by [`Session::read_singer_frames`].
+pub const MAX_SINGER_FRAMES_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Largest decoded feature timeline accepted from an external singer-frame file.
+///
+/// This is six hours at the ordinary 100 Hz hop, while still bounding the three parallel arrays
+/// before they reach inference.
+pub const MAX_SINGER_FRAMES: usize = 2_160_000;
+
+/// Largest external phoneme inventory accepted in one singer-frame file.
+pub const MAX_SINGER_FRAME_INVENTORY: usize = 4_096;
+
+/// Largest UTF-8 byte length accepted for one external phoneme token.
+pub const MAX_SINGER_FRAME_TOKEN_BYTES: usize = 256;
+
 /// A singer's saved identity and any already-loaded metadata, safe to read while rendering.
 #[derive(Clone, Debug)]
 pub struct SingerVoiceInfo {
@@ -61,6 +84,78 @@ pub struct SingerVoiceInfo {
     pub capabilities: VoiceCapabilities,
 }
 
+/// A singer-frame export snapshot that can be rendered and written away from the session thread.
+pub struct SingerFramesExportJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    singer: SingerTrack,
+    tempo_map: TempoMap,
+    sources: CurveSources,
+}
+
+/// A completed singer-frame export waiting for its short session-thread acknowledgement.
+pub struct SingerFramesExportResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    frames: usize,
+    staged: auris_io::StagedFile,
+}
+
+/// A cold singer voice load captured for execution away from the session thread.
+pub struct SingerVoiceLoadJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    generation: u64,
+    path: PathBuf,
+    acceleration: auris_singer::Acceleration,
+    access: VoicePathAccess,
+    cached: Option<LoadedVoice>,
+}
+
+/// A loaded singer voice awaiting a stale-resistant cache handoff.
+pub struct SingerVoiceLoadResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    generation: u64,
+    path: PathBuf,
+    acceleration: auris_singer::Acceleration,
+    access: VoicePathAccess,
+    loaded: LoadedVoice,
+}
+
+/// A singer-take landing captured before inference for worker-side encoding and read-back.
+pub struct SingerLandingJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    folder: PathBuf,
+    project_rate: f64,
+    track: TrackId,
+    track_name: String,
+    fingerprint: u64,
+    seed: u64,
+    sample_rate: u32,
+    frame_hop: f64,
+    frame_count: usize,
+}
+
+/// A staged singer WAV and decoded buffer awaiting a short stale-checked document edit.
+pub struct SingerLandingResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    folder: PathBuf,
+    track: TrackId,
+    fingerprint: u64,
+    seed: u64,
+    backend_pitch: Option<auris_core::SingerPitch>,
+    file_name: String,
+    inside: PathBuf,
+    byte_size: u64,
+    buffer: AudioBuffer,
+    staged: auris_io::StagedAudioExport,
+}
+
 /// Inference stays behind a mutex; immutable metadata is copied once before sharing the model.
 #[derive(Clone)]
 pub(super) struct LoadedVoice {
@@ -68,6 +163,7 @@ pub(super) struct LoadedVoice {
     info: Arc<VoiceInfo>,
     backend: BackendKind,
     capabilities: VoiceCapabilities,
+    automatic_access_safe: bool,
     model: Arc<Mutex<VoiceModel>>,
 }
 
@@ -76,6 +172,28 @@ pub(super) struct LoadedVoice {
 /// One frame at the default hop: any narrower and the pin rounds to no frames at all, which
 /// reads as the drag refusing to work.
 pub const MIN_PHONEME_SECONDS: f64 = 0.01;
+
+/// Whether resolving a saved voice path follows a fresh user action.
+#[derive(Copy, Clone)]
+enum VoicePathAccess {
+    /// A command the user explicitly asked to perform may open the selected external path.
+    Explicit,
+    /// Background work must not contact a server merely because a document named it.
+    Automatic,
+}
+
+fn voice_entry_for_access<'a>(
+    file: &'a Path,
+    access: VoicePathAccess,
+) -> Result<Cow<'a, Path>, SessionError> {
+    match access {
+        VoicePathAccess::Explicit => Ok(Cow::Borrowed(file)),
+        VoicePathAccess::Automatic => {
+            auris_singer::validate_automatic_voice_entry(file).map(Cow::Owned)
+        }
+    }
+    .map_err(SessionError::from)
+}
 
 impl Session {
     /// Reads model-specific capabilities from the immutable cache, with cold format defaults.
@@ -568,9 +686,42 @@ impl Session {
         let frames = self.singer_frames(track)?;
         let text = serde_json::to_string(&frames)
             .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))?;
-        std::fs::write(path, text)
-            .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
+        auris_io::stage_file_bytes(path, text.as_bytes())?.publish()?;
         Ok(frames.len())
+    }
+
+    /// Captures one singer track for worker-side frame rendering and JSON export.
+    pub fn begin_singer_frames_export(
+        &self,
+        track: TrackId,
+        path: &Path,
+    ) -> Result<SingerFramesExportJob, SessionError> {
+        let singer = self.require_singer(track)?.clone();
+        Ok(SingerFramesExportJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            path: path.to_path_buf(),
+            sources: self.capabilities_for_singer(&singer).curves,
+            singer,
+            tempo_map: self.project.tempo_map.clone(),
+        })
+    }
+
+    /// Publishes a worker frame export if it still belongs to this unchanged document.
+    pub fn continue_singer_frames_export(
+        &self,
+        result: SingerFramesExportResult,
+    ) -> Option<Result<(PathBuf, usize), SessionError>> {
+        if !Arc::ptr_eq(&self.registry, &result.owner) || self.revision != result.revision {
+            return None;
+        }
+        Some(
+            result
+                .staged
+                .publish()
+                .map(|()| (result.path, result.frames))
+                .map_err(SessionError::from),
+        )
     }
 
     /// Reads frames off disk — [`Session::export_singer_frames`]'s file, or anything else
@@ -582,11 +733,11 @@ impl Session {
     /// voice is handed curves that a corpus was *recorded* with, not curves the timing rules
     /// laid out, so what comes back can be held against the recording.
     pub fn read_singer_frames(path: &Path) -> Result<SingerFrames, SessionError> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
-        let frames = serde_json::from_str(&text)
+        let bytes = read_singer_frames_source(path, MAX_SINGER_FRAMES_FILE_BYTES, || {})?;
+        let frames: SingerFrames = serde_json::from_slice(&bytes)
             .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))?;
         auris_singer::validate_frames(&frames)?;
+        validate_singer_frame_limits(&frames)?;
         Ok(frames)
     }
 
@@ -649,6 +800,87 @@ impl Session {
         Ok(sung)
     }
 
+    /// Captures an explicit singer-voice load for a worker thread.
+    pub fn begin_singer_voice_load(&mut self, file: &Path) -> SingerVoiceLoadJob {
+        self.begin_singer_voice_load_with_access(file, VoicePathAccess::Explicit)
+    }
+
+    /// Captures an explicit load of the voice currently selected on `track`.
+    pub fn begin_singer_track_voice_load(
+        &mut self,
+        track: TrackId,
+    ) -> Result<SingerVoiceLoadJob, SessionError> {
+        let voice = self
+            .require_singer(track)?
+            .voice
+            .as_ref()
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let path = self
+            .resolve_singer_asset(&voice.path, VoicePathAccess::Explicit)
+            .ok_or(SessionError::NoVoice(track.0))?;
+        Ok(self.begin_singer_voice_load_with_access(&path, VoicePathAccess::Explicit))
+    }
+
+    /// Captures a saved singer track's voice load for automatic background work.
+    ///
+    /// Network and device entry paths are refused before a job is returned. The singer backend
+    /// applies the same automatic-access policy to manifest children and VOICEVOX URLs.
+    pub fn begin_singer_voice_load_for_automatic_access(
+        &mut self,
+        track: TrackId,
+    ) -> Result<SingerVoiceLoadJob, SessionError> {
+        let voice = self
+            .require_singer(track)?
+            .voice
+            .as_ref()
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let path = self
+            .resolve_singer_asset(&voice.path, VoicePathAccess::Automatic)
+            .ok_or(SessionError::NoVoice(track.0))?;
+        Ok(self.begin_singer_voice_load_with_access(&path, VoicePathAccess::Automatic))
+    }
+
+    /// Installs a worker-loaded voice if its session, document, path generation and acceleration
+    /// still match the capture.
+    pub fn continue_singer_voice_load(
+        &mut self,
+        result: SingerVoiceLoadResult,
+    ) -> Option<SingerVoiceLoadResult> {
+        if !Arc::ptr_eq(&self.registry, &result.owner)
+            || self.revision != result.revision
+            || self.acceleration != result.acceleration
+            || self.voice_load_generations.get(&result.path).copied() != Some(result.generation)
+        {
+            return None;
+        }
+        if result.loaded.stamp.is_some() {
+            self.voices
+                .insert(result.path.clone(), result.loaded.clone());
+        }
+        Some(result)
+    }
+
+    fn begin_singer_voice_load_with_access(
+        &mut self,
+        file: &Path,
+        access: VoicePathAccess,
+    ) -> SingerVoiceLoadJob {
+        let generation = self
+            .voice_load_generations
+            .entry(file.to_path_buf())
+            .and_modify(|generation| *generation = generation.wrapping_add(1))
+            .or_insert(1);
+        SingerVoiceLoadJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            generation: *generation,
+            path: file.to_path_buf(),
+            acceleration: self.acceleration,
+            access,
+            cached: self.voices.get(file).cloned(),
+        }
+    }
+
     /// Points a singer track at a voice model, or takes its voice away.
     ///
     /// The file is opened *before* anything is recorded, so a path that is not a voice fails at
@@ -666,37 +898,62 @@ impl Session {
         let chosen = match path {
             Some(file) => {
                 let loaded = self.loaded_voice_at(file)?;
-                let info = &loaded.info;
-                let name = voice_name(info, file);
-                // Copy the first speaker's timing tables into the document, so its layout
-                // does not depend on the model being open or available on another machine.
-                let (hop, consonants, levels) = (
-                    info.hop_seconds(),
-                    info.consonant_widths(0),
-                    info.consonant_levels(0),
-                );
-                let relative = self.project_folder().and_then(|folder| {
-                    file.strip_prefix(folder)
-                        .ok()
-                        .map(Path::to_path_buf)
-                        .or_else(|| {
-                            if cfg!(target_os = "windows") {
-                                let file = std::fs::canonicalize(file).ok()?;
-                                let folder = std::fs::canonicalize(folder).ok()?;
-                                file.strip_prefix(folder).ok().map(Path::to_path_buf)
-                            } else {
-                                None
-                            }
-                        })
-                });
-                let reference = match relative {
-                    Some(relative) => AssetPath::inside(relative),
-                    None => AssetPath::external(file),
-                };
-                Some((reference, name, hop, consonants, levels))
+                Some(self.singer_voice_choice(file, &loaded))
             }
             None => None,
         };
+        self.apply_singer_voice_choice(track, chosen);
+        Ok(())
+    }
+
+    /// Points a singer track at a voice that a worker has already loaded and validated.
+    ///
+    /// Unlike [`Self::set_singer_voice`], this does not stat or reopen the selected path. The
+    /// lease is rechecked against the session and load generation, then its owned metadata is
+    /// copied into the document in the same short edit used by the synchronous command.
+    pub fn set_singer_voice_from_load(
+        &mut self,
+        track: TrackId,
+        voice_load: &SingerVoiceLoadResult,
+    ) -> Result<(), SessionError> {
+        self.require_singer(track)?;
+        if !Arc::ptr_eq(&self.registry, &voice_load.owner)
+            || self.revision != voice_load.revision
+            || self.acceleration != voice_load.acceleration
+            || self.voice_load_generations.get(&voice_load.path).copied()
+                != Some(voice_load.generation)
+        {
+            return Err(auris_singer::SingError::Cancelled.into());
+        }
+        let chosen = self.singer_voice_choice(&voice_load.path, &voice_load.loaded);
+        self.apply_singer_voice_choice(track, Some(chosen));
+        Ok(())
+    }
+
+    fn singer_voice_choice(&self, file: &Path, loaded: &LoadedVoice) -> (SingerVoice, f64) {
+        let info = &loaded.info;
+        // Copy the first speaker's timing tables into the document, so its layout does not
+        // depend on the model being open or available on another machine.
+        let relative = self
+            .project_folder()
+            .and_then(|folder| relative_path_for_asset(file, folder));
+        let path = match relative {
+            Some(relative) => AssetPath::inside(relative),
+            None => AssetPath::external(file),
+        };
+        (
+            SingerVoice {
+                path,
+                name: voice_name(info, file),
+                consonants: info.consonant_widths(0),
+                levels: info.consonant_levels(0),
+                speaker: None,
+            },
+            info.hop_seconds(),
+        )
+    }
+
+    fn apply_singer_voice_choice(&mut self, track: TrackId, chosen: Option<(SingerVoice, f64)>) {
         self.record(Edit::SetSingerVoice);
         if let Some(singer) = self
             .project
@@ -704,20 +961,13 @@ impl Session {
             .and_then(|track| track.kind.as_singer_mut())
         {
             match chosen {
-                Some((path, name, hop, consonants, levels)) => {
-                    singer.voice = Some(SingerVoice {
-                        path,
-                        name,
-                        consonants,
-                        levels,
-                        speaker: None,
-                    });
+                Some((voice, hop)) => {
+                    singer.voice = Some(voice);
                     singer.frame_hop = hop;
                 }
                 None => singer.voice = None,
             }
         }
-        Ok(())
     }
 
     /// Loads a composition's voice before the current project is replaced.
@@ -873,13 +1123,14 @@ impl Session {
         };
         let path = voice
             .path
-            .resolve(self.project_folder())
+            .resolve_for_automatic_access(self.project_folder())
             .ok_or(SessionError::NoVoice(track.0))?;
         Ok(Some(crate::SingerPortraitSource {
             track,
             backend: BackendKind::from_path(&path),
             path,
             speaker: voice.speaker.clone(),
+            automatic: true,
         }))
     }
 
@@ -1024,45 +1275,109 @@ impl Session {
         track: TrackId,
         seed: Option<u64>,
     ) -> Result<SingPlan, SessionError> {
+        self.sing_plan_with_access(track, seed, VoicePathAccess::Explicit)
+    }
+
+    /// Gathers a plan for background singing that was not started by a fresh user action.
+    ///
+    /// This has the same musical result and validation as [`Self::sing_plan`], but refuses an
+    /// external Windows network or device path saved in the document. A repaint or debounce must
+    /// not contact an arbitrary server using the current user's credentials. An explicit Sing
+    /// command continues to use [`Self::sing_plan`] and may open the voice the user selected.
+    pub fn sing_plan_for_automatic_access(
+        &mut self,
+        track: TrackId,
+        seed: Option<u64>,
+    ) -> Result<SingPlan, SessionError> {
+        self.sing_plan_with_access(track, seed, VoicePathAccess::Automatic)
+    }
+
+    /// Checks the score-only part of a singer plan without opening the selected voice.
+    ///
+    /// GUI callers use this before dispatching a cold model load so an empty track or an invalid
+    /// VOICEVOX lyric is reported immediately, in the same order as [`Self::sing_plan`]. The
+    /// worker-backed continuation still repeats these checks against its captured revision.
+    pub fn preflight_singer_plan(&self, track: TrackId) -> Result<(), SessionError> {
+        let singer = self.require_singer(track)?;
+        let voice = singer
+            .voice
+            .as_ref()
+            .ok_or(SessionError::NoVoice(track.0))?;
+        self.singer_score_for_backend(track, BackendKind::from_path(voice.path.as_stored()))?;
+        Ok(())
+    }
+
+    /// Builds a plan from a worker-validated voice without touching its file or invoking a loader.
+    ///
+    /// The result must first have passed [`Self::continue_singer_voice_load`]. Rechecking its
+    /// owner, revision, generation, selected path and automatic-access policy here keeps a model
+    /// lease from being reused after another callback changes the document or supersedes it.
+    pub fn sing_plan_from_voice_load(
+        &self,
+        track: TrackId,
+        seed: Option<u64>,
+        voice_load: &SingerVoiceLoadResult,
+    ) -> Result<SingPlan, SessionError> {
+        if !Arc::ptr_eq(&self.registry, &voice_load.owner)
+            || self.revision != voice_load.revision
+            || self.acceleration != voice_load.acceleration
+            || self.voice_load_generations.get(&voice_load.path).copied()
+                != Some(voice_load.generation)
+            || matches!(voice_load.access, VoicePathAccess::Automatic)
+                && !voice_load.loaded.automatic_access_safe
+        {
+            return Err(auris_singer::SingError::Cancelled.into());
+        }
         let singer = self.require_singer(track)?;
         let voice = singer.voice.clone().ok_or(SessionError::NoVoice(track.0))?;
         let seed = seed
             .or(singer.take.as_ref().map(|take| take.seed))
             .unwrap_or(0);
-        let (score, origins) =
-            auris_vocal::frames::render_score_with_origins(singer, &self.project.tempo_map);
-        if score.notes.is_empty() {
-            return Err(SessionError::NothingToSing(track.0));
-        }
-        let folder = self
-            .project_folder()
-            .expect("every session has a working folder");
-        let resolved = voice
-            .path
-            .resolve(Some(folder))
+        let resolved = self
+            .resolve_singer_asset(&voice.path, voice_load.access)
             .ok_or(SessionError::NoVoice(track.0))?;
-        let loaded = self.loaded_voice_at(&resolved)?;
-        if loaded.backend == BackendKind::Voicevox {
-            auris_singer::validate_voicevox_score(&score).map_err(|error| {
-                if let auris_singer::SingError::InvalidLyric {
-                    event, ref issue, ..
-                } = error
-                    && let Some(Some((clip, note))) = origins.get(event)
-                    && let Some(source) = self
-                        .project
-                        .midi_clip(*clip)
-                        .and_then(|(_, clip)| clip.notes.get(*note))
-                {
-                    return SessionError::SingerLyric {
-                        clip: *clip,
-                        note: *note,
-                        lyric: source.lyric.clone(),
-                        issue: issue.clone(),
-                    };
-                }
-                SessionError::from(error)
-            })?;
+        if resolved != voice_load.path {
+            return Err(auris_singer::SingError::Cancelled.into());
         }
+        let loaded = &voice_load.loaded;
+        let (score, _) = self.singer_score_for_backend(track, loaded.backend)?;
+        let frames = auris_vocal::render_frames_with_sources(
+            self.require_singer(track)?,
+            &self.project.tempo_map,
+            loaded.capabilities.curves,
+        );
+        let fingerprint =
+            take_fingerprint(&frames, &score, &voice.path, voice.speaker.as_deref(), seed);
+        let speaker = speaker_id(&loaded.info, voice.speaker.as_deref())?;
+        Ok(SingPlan {
+            track,
+            frames,
+            score,
+            voice: resolved,
+            speaker,
+            seed,
+            fingerprint,
+            sample_rate: loaded.info.sample_rate,
+        })
+    }
+
+    fn sing_plan_with_access(
+        &mut self,
+        track: TrackId,
+        seed: Option<u64>,
+        access: VoicePathAccess,
+    ) -> Result<SingPlan, SessionError> {
+        let singer = self.require_singer(track)?;
+        let voice = singer.voice.clone().ok_or(SessionError::NoVoice(track.0))?;
+        let seed = seed
+            .or(singer.take.as_ref().map(|take| take.seed))
+            .unwrap_or(0);
+        let (score, _) =
+            self.singer_score_for_backend(track, BackendKind::from_path(voice.path.as_stored()))?;
+        let resolved = self
+            .resolve_singer_asset(&voice.path, access)
+            .ok_or(SessionError::NoVoice(track.0))?;
+        let loaded = self.loaded_voice_at_with_access(&resolved, access)?;
         // Load before sampling: two native voices may have different optional predictors.
         let frames = auris_vocal::render_frames_with_sources(
             self.require_singer(track)?,
@@ -1085,6 +1400,47 @@ impl Session {
         })
     }
 
+    fn singer_score_for_backend(
+        &self,
+        track: TrackId,
+        backend: BackendKind,
+    ) -> Result<
+        (
+            SingerScore,
+            Vec<Option<auris_vocal::frames::ScoreNoteOrigin>>,
+        ),
+        SessionError,
+    > {
+        let singer = self.require_singer(track)?;
+        let (score, origins) =
+            auris_vocal::frames::render_score_with_origins(singer, &self.project.tempo_map);
+        if score.notes.is_empty() {
+            return Err(SessionError::NothingToSing(track.0));
+        }
+        if backend == BackendKind::Voicevox {
+            auris_singer::validate_voicevox_score(&score).map_err(|error| {
+                if let auris_singer::SingError::InvalidLyric {
+                    event, ref issue, ..
+                } = error
+                    && let Some(Some((clip, note))) = origins.get(event)
+                    && let Some(source) = self
+                        .project
+                        .midi_clip(*clip)
+                        .and_then(|(_, clip)| clip.notes.get(*note))
+                {
+                    return SessionError::SingerLyric {
+                        clip: *clip,
+                        note: *note,
+                        lyric: source.lyric.clone(),
+                        issue: issue.clone(),
+                    };
+                }
+                SessionError::from(error)
+            })?;
+        }
+        Ok((score, origins))
+    }
+
     /// The loaded voice behind a singer track, for a caller's own render thread.
     ///
     /// The audition half of [`Session::sing_plan`]: no folder is needed because nothing
@@ -1104,10 +1460,15 @@ impl Session {
             .voice
             .as_ref()
             .ok_or(SessionError::NoVoice(track.0))?;
-        voice
-            .path
-            .resolve(self.project_folder())
+        self.resolve_singer_asset(&voice.path, VoicePathAccess::Explicit)
             .ok_or(SessionError::NoVoice(track.0))
+    }
+
+    fn resolve_singer_asset(&self, path: &AssetPath, access: VoicePathAccess) -> Option<PathBuf> {
+        match access {
+            VoicePathAccess::Explicit => path.resolve(self.project_folder()),
+            VoicePathAccess::Automatic => path.resolve_for_automatic_access(self.project_folder()),
+        }
     }
 
     fn singer_metadata(&mut self, track: TrackId) -> Result<Arc<VoiceInfo>, SessionError> {
@@ -1236,25 +1597,42 @@ impl Session {
     }
 
     fn loaded_voice_at(&mut self, file: &Path) -> Result<LoadedVoice, SessionError> {
-        let stamp = voice_stamp(file);
+        self.loaded_voice_at_with_access(file, VoicePathAccess::Explicit)
+    }
+
+    fn loaded_voice_at_with_access(
+        &mut self,
+        file: &Path,
+        access: VoicePathAccess,
+    ) -> Result<LoadedVoice, SessionError> {
+        let checked_file = voice_entry_for_access(file, access)?;
+        self.invalidate_voice_load(file);
+        let stamp = voice_stamp(&checked_file);
         if let Some(loaded) = self.voices.get(file)
             && stamp.is_some()
             && stamp == loaded.stamp
+            && (matches!(access, VoicePathAccess::Explicit) || loaded.automatic_access_safe)
         {
             return Ok(loaded.clone());
         }
-        let model = VoiceModel::load(file, self.acceleration)?;
-        let loaded = LoadedVoice {
-            stamp,
-            info: Arc::new(model.info().clone()),
-            backend: model.backend_kind(),
-            capabilities: model.capabilities(),
-            model: Arc::new(Mutex::new(model)),
-        };
-        if stamp.is_some() {
+        let model = match access {
+            VoicePathAccess::Explicit => VoiceModel::load(&checked_file, self.acceleration),
+            VoicePathAccess::Automatic => {
+                VoiceModel::load_for_automatic_access(&checked_file, self.acceleration)
+            }
+        }?;
+        let loaded = loaded_voice(model, stamp);
+        if loaded.stamp.is_some() {
             self.voices.insert(file.to_path_buf(), loaded.clone());
         }
         Ok(loaded)
+    }
+
+    fn invalidate_voice_load(&mut self, file: &Path) {
+        self.voice_load_generations
+            .entry(file.to_path_buf())
+            .and_modify(|generation| *generation = generation.wrapping_add(1))
+            .or_insert(1);
     }
 
     /// Chooses where singer voices run their inference, from now on.
@@ -1277,6 +1655,33 @@ impl Session {
         self.acceleration
     }
 
+    /// Captures a rendered singer take's filesystem landing for a worker thread.
+    pub fn begin_singer_landing(&self, plan: &SingPlan) -> Result<SingerLandingJob, SessionError> {
+        self.require_singer(plan.track)?;
+        let folder = self
+            .project_folder()
+            .expect("every session has a working folder")
+            .to_path_buf();
+        let track_name = self
+            .project
+            .track(plan.track)
+            .map(|track| track.name.clone())
+            .unwrap_or_else(|| "Singer".to_string());
+        Ok(SingerLandingJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            folder,
+            project_rate: self.project.sample_rate,
+            track: plan.track,
+            track_name,
+            fingerprint: plan.fingerprint,
+            seed: plan.seed,
+            sample_rate: plan.sample_rate,
+            frame_hop: plan.frames.hop_seconds,
+            frame_count: plan.frames.len(),
+        })
+    }
+
     /// Writes a rendered take to disk and into the document, replacing any previous take.
     ///
     /// Everything that can fail — the file, the read-back through the importer — happens before
@@ -1290,7 +1695,13 @@ impl Session {
         plan: &SingPlan,
         samples: &[f32],
     ) -> Result<f64, SessionError> {
-        self.land_singer_performance(plan, samples, None)
+        self.land_singer_render(
+            plan,
+            &auris_singer::SingingRender {
+                samples: samples.to_vec(),
+                backend_pitch: None,
+            },
+        )
     }
 
     /// Saves the audio and backend pitch together as one undoable singer take.
@@ -1299,63 +1710,49 @@ impl Session {
         plan: &SingPlan,
         render: &auris_singer::SingingRender,
     ) -> Result<f64, SessionError> {
-        let pitch = render.backend_pitch.as_ref();
-        if pitch.is_some_and(|pitch| {
-            !pitch.hop_seconds.is_finite()
-                || pitch.hop_seconds <= 0.0
-                || pitch.hop_seconds != plan.frames.hop_seconds
-                || pitch.hz.len() != plan.frames.len()
-                || pitch.hz.iter().any(|hz| !hz.is_finite() || *hz < 0.0)
-        }) {
-            return Err(auris_singer::SingError::Inference(
-                "invalid rendered pitch frame grid".into(),
-            )
-            .into());
-        }
-        self.land_singer_performance(plan, &render.samples, pitch.cloned())
+        validate_landing_pitch(plan, render.backend_pitch.as_ref())?;
+        let landed = self
+            .begin_singer_landing(plan)?
+            .run(render.clone(), &AtomicBool::new(false))?
+            .expect("an uncancelled singer landing returns a result");
+        self.continue_singer_landing(landed)?
+            .ok_or_else(|| auris_singer::SingError::Cancelled.into())
     }
 
-    fn land_singer_performance(
+    /// Publishes and records a worker-prepared take if the document is still its owner.
+    pub fn continue_singer_landing(
         &mut self,
-        plan: &SingPlan,
-        samples: &[f32],
-        backend_pitch: Option<auris_core::SingerPitch>,
-    ) -> Result<f64, SessionError> {
-        self.require_singer(plan.track)?;
-        let folder = self
-            .project_folder()
-            .expect("every session has a working folder")
-            .to_path_buf();
-        let name = self
-            .project
-            .track(plan.track)
-            .map(|track| track.name.clone())
-            .unwrap_or_else(|| "Singer".to_string());
-
-        let audio_dir = folder.join(auris_io::AUDIO_DIR);
-        std::fs::create_dir_all(&audio_dir)
-            .map_err(|error| auris_io::IoError::from_fs(&audio_dir, error))?;
-        let file_name = super::record::take_file_name(&folder, &name);
-        let inside = PathBuf::from(auris_io::AUDIO_DIR).join(&file_name);
-        let path = folder.join(&inside);
-        let mut recorder = auris_io::WavRecorder::create(&path, f64::from(plan.sample_rate), 1)?;
-        if let Err(error) = recorder.write(samples).and_then(|_| recorder.finish()) {
-            // This file is not in the document yet. A failed write must not reserve a take name
-            // forever with an orphaned, partial WAV.
-            let _ = std::fs::remove_file(&path);
-            return Err(error.into());
+        result: SingerLandingResult,
+    ) -> Result<Option<f64>, SessionError> {
+        if !Arc::ptr_eq(&self.registry, &result.owner)
+            || self.revision != result.revision
+            || self.project_folder() != Some(result.folder.as_path())
+            || self
+                .singer_input_fingerprint_with_seed(result.track, result.seed)
+                .ok()
+                != Some(result.fingerprint)
+        {
+            return Ok(None);
         }
-
-        // Read back through the importer rather than kept from memory, exactly as a recorded
-        // take is: the engine renders every source at the project's rate, and the model sings
-        // at its own.
-        let buffer = auris_io::import_audio_file(&path, self.project.sample_rate)?;
+        let SingerLandingResult {
+            track,
+            fingerprint,
+            seed,
+            backend_pitch,
+            file_name,
+            inside,
+            byte_size,
+            buffer,
+            staged,
+            ..
+        } = result;
+        staged.publish_noclobber()?;
         let seconds = buffer.frame_count() as f64 / buffer.sample_rate();
 
         self.record(Edit::Sing);
         let previous = self
             .project
-            .track_mut(plan.track)
+            .track_mut(track)
             .and_then(|track| track.kind.as_singer_mut())
             .and_then(|singer| singer.take.take());
         if let Some(previous) = previous {
@@ -1372,23 +1769,25 @@ impl Session {
             buffer.sample_rate(),
             buffer.channel_count(),
         );
-        self.record_source_size(source, &path);
+        if let Some(source) = self.project.audio_sources.get_mut(&source) {
+            source.byte_size = byte_size;
+        }
         if let Some(singer) = self
             .project
-            .track_mut(plan.track)
+            .track_mut(track)
             .and_then(|track| track.kind.as_singer_mut())
         {
             singer.take = Some(SingerTake {
                 source,
-                fingerprint: plan.fingerprint,
-                seed: plan.seed,
+                fingerprint,
+                seed,
                 backend_pitch,
             });
         }
         self.install_source(source, std::sync::Arc::new(buffer));
         self.prune_sources();
         self.invalidate_graph();
-        Ok(seconds)
+        Ok(Some(seconds))
     }
 
     /// Whether a singer track's take still matches its notes.
@@ -1416,11 +1815,20 @@ impl Session {
     /// Identifies the track's current synthesis inputs without loading or locking its model.
     pub fn singer_input_fingerprint(&self, track: TrackId) -> Result<u64, SessionError> {
         let singer = self.require_singer(track)?;
+        let seed = singer.take.as_ref().map_or(0, |take| take.seed);
+        self.singer_input_fingerprint_with_seed(track, seed)
+    }
+
+    fn singer_input_fingerprint_with_seed(
+        &self,
+        track: TrackId,
+        seed: u64,
+    ) -> Result<u64, SessionError> {
+        let singer = self.require_singer(track)?;
         let voice = singer
             .voice
             .as_ref()
             .ok_or(SessionError::NoVoice(track.0))?;
-        let seed = singer.take.as_ref().map_or(0, |take| take.seed);
         let frames = self.render_singer_frames(singer);
         let score = render_score(singer, &self.project.tempo_map);
         Ok(take_fingerprint(
@@ -1497,6 +1905,308 @@ impl Session {
                 actual: found.kind.label(),
                 expected: "a singer track",
             })
+    }
+}
+
+fn loaded_voice(model: VoiceModel, stamp: Option<VoiceStamp>) -> LoadedVoice {
+    let automatic_access_safe = model.automatic_access_safe();
+    LoadedVoice {
+        stamp,
+        info: Arc::new(model.info().clone()),
+        backend: model.backend_kind(),
+        capabilities: model.capabilities(),
+        automatic_access_safe,
+        model: Arc::new(Mutex::new(model)),
+    }
+}
+
+impl SingerVoiceLoadJob {
+    /// Loads or revalidates the captured voice without blocking the session thread.
+    pub fn run(
+        self,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<SingerVoiceLoadResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let checked_path = voice_entry_for_access(&self.path, self.access)?;
+        let stamp = voice_stamp(&checked_path);
+        let loaded = match self.cached {
+            Some(cached)
+                if stamp.is_some()
+                    && stamp == cached.stamp
+                    && (matches!(self.access, VoicePathAccess::Explicit)
+                        || cached.automatic_access_safe) =>
+            {
+                cached
+            }
+            _ => {
+                let model = match self.access {
+                    VoicePathAccess::Explicit => VoiceModel::load(&checked_path, self.acceleration),
+                    VoicePathAccess::Automatic => {
+                        VoiceModel::load_for_automatic_access(&checked_path, self.acceleration)
+                    }
+                }?;
+                loaded_voice(model, stamp)
+            }
+        };
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        Ok(Some(SingerVoiceLoadResult {
+            owner: self.owner,
+            revision: self.revision,
+            generation: self.generation,
+            path: self.path,
+            acceleration: self.acceleration,
+            access: self.access,
+            loaded,
+        }))
+    }
+}
+
+impl SingerVoiceLoadResult {
+    /// Resolved voice path this lease loaded and validated.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Loaded model for inference on the caller's worker thread.
+    pub fn model(&self) -> Arc<Mutex<VoiceModel>> {
+        Arc::clone(&self.loaded.model)
+    }
+
+    /// Resolves a saved speaker name against the already-loaded model metadata.
+    pub fn speaker_id(&self, speaker: Option<&str>) -> Result<u32, SessionError> {
+        speaker_id(&self.loaded.info, speaker)
+    }
+}
+
+impl SingerLandingJob {
+    /// Encodes and imports the take through a private sibling without changing the destination.
+    pub fn run(
+        self,
+        render: auris_singer::SingingRender,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<SingerLandingResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        validate_landing_pitch_geometry(
+            self.frame_hop,
+            self.frame_count,
+            render.backend_pitch.as_ref(),
+        )?;
+        let audio_dir = self.folder.join(auris_io::AUDIO_DIR);
+        std::fs::create_dir_all(&audio_dir)
+            .map_err(|error| auris_io::IoError::from_fs(&audio_dir, error))?;
+        let file_name = super::record::take_file_name(&self.folder, &self.track_name);
+        let inside = PathBuf::from(auris_io::AUDIO_DIR).join(&file_name);
+        let path = self.folder.join(&inside);
+        let buffer = AudioBuffer::from_planar(vec![render.samples], f64::from(self.sample_rate))?;
+        let settings = auris_io::AudioExportSettings::from(auris_io::WavExportSettings {
+            sample_rate: self.sample_rate,
+            ..auris_io::WavExportSettings::default()
+        });
+        let mut writer = auris_io::AudioExportWriter::create(
+            &path,
+            buffer.channel_count(),
+            buffer.frame_count(),
+            &settings,
+        )?;
+        writer.write(&buffer)?;
+        let staged = writer.finish_staged()?;
+        // `import_audio_file` allocates the project-rate buffer. Release the model-rate render
+        // first so a take near the shared decoded-audio ceiling cannot transiently retain two
+        // complete copies (plus the resampler's working storage) on this worker.
+        drop(buffer);
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+
+        // Decode the final encoded bytes before publishing, exactly as a recorded take is read
+        // back. The engine receives the project-rate version, not the voice's native rate.
+        let imported = auris_io::import_audio_file(staged.staged_path(), self.project_rate)?;
+        let byte_size = staged.byte_size()?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        Ok(Some(SingerLandingResult {
+            owner: self.owner,
+            revision: self.revision,
+            folder: self.folder,
+            track: self.track,
+            fingerprint: self.fingerprint,
+            seed: self.seed,
+            backend_pitch: render.backend_pitch,
+            file_name,
+            inside,
+            byte_size,
+            buffer: imported,
+            staged,
+        }))
+    }
+}
+
+fn validate_landing_pitch(
+    plan: &SingPlan,
+    pitch: Option<&auris_core::SingerPitch>,
+) -> Result<(), SessionError> {
+    validate_landing_pitch_geometry(plan.frames.hop_seconds, plan.frames.len(), pitch)
+}
+
+fn validate_landing_pitch_geometry(
+    frame_hop: f64,
+    frame_count: usize,
+    pitch: Option<&auris_core::SingerPitch>,
+) -> Result<(), SessionError> {
+    if pitch.is_some_and(|pitch| {
+        !pitch.hop_seconds.is_finite()
+            || pitch.hop_seconds <= 0.0
+            || pitch.hop_seconds != frame_hop
+            || pitch.hz.len() != frame_count
+            || pitch.hz.iter().any(|hz| !hz.is_finite() || *hz < 0.0)
+    }) {
+        return Err(
+            auris_singer::SingError::Inference("invalid rendered pitch frame grid".into()).into(),
+        );
+    }
+    Ok(())
+}
+
+fn read_singer_frames_source(
+    path: &Path,
+    limit: usize,
+    after_metadata: impl FnOnce(),
+) -> Result<Vec<u8>, SessionError> {
+    let file = File::open(path)
+        .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
+    let metadata_len = file
+        .metadata()
+        .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?
+        .len();
+    let limit_u64 = u64::try_from(limit).unwrap_or(u64::MAX);
+    if metadata_len > limit_u64 {
+        return Err(singer_frames_file_too_large(path, metadata_len, limit));
+    }
+
+    after_metadata();
+
+    let capacity = usize::try_from(metadata_len).unwrap_or(limit).min(limit);
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity).map_err(|error| {
+        SessionError::Io(auris_io::IoError::from_fs(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                format!("could not reserve {capacity} bytes for singer frames: {error}"),
+            ),
+        ))
+    })?;
+    file.take(limit_u64.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|error| SessionError::Io(auris_io::IoError::from_fs(path, error)))?;
+    if bytes.len() > limit {
+        return Err(singer_frames_file_too_large(
+            path,
+            bytes.len() as u64,
+            limit,
+        ));
+    }
+    Ok(bytes)
+}
+
+fn singer_frames_file_too_large(path: &Path, observed: u64, limit: usize) -> SessionError {
+    SessionError::SingerFramesFileTooLarge {
+        path: path.to_path_buf(),
+        observed,
+        limit: limit as u64,
+    }
+}
+
+fn validate_singer_frame_limits(frames: &SingerFrames) -> Result<(), SessionError> {
+    validate_singer_frame_limits_with(
+        frames,
+        MAX_SINGER_FRAMES,
+        MAX_SINGER_FRAME_INVENTORY,
+        MAX_SINGER_FRAME_TOKEN_BYTES,
+    )
+}
+
+fn validate_singer_frame_limits_with(
+    frames: &SingerFrames,
+    max_frames: usize,
+    max_inventory: usize,
+    max_token_bytes: usize,
+) -> Result<(), SessionError> {
+    if frames.len() > max_frames {
+        return Err(SessionError::SingerFramesLimit {
+            field: "frame count",
+            observed: frames.len(),
+            limit: max_frames,
+        });
+    }
+    if frames.inventory.len() > max_inventory {
+        return Err(SessionError::SingerFramesLimit {
+            field: "phoneme inventory",
+            observed: frames.inventory.len(),
+            limit: max_inventory,
+        });
+    }
+    if let Some(token) = frames
+        .inventory
+        .iter()
+        .find(|token| token.len() > max_token_bytes)
+    {
+        return Err(SessionError::SingerFramesLimit {
+            field: "phoneme token bytes",
+            observed: token.len(),
+            limit: max_token_bytes,
+        });
+    }
+    Ok(())
+}
+
+impl SingerFramesExportJob {
+    /// Renders, serialises, and stages the captured singer frames with cancellation boundaries.
+    pub fn run(
+        self,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<SingerFramesExportResult>, SessionError> {
+        self.run_before_commit(cancelled, || {})
+    }
+
+    fn run_before_commit(
+        self,
+        cancelled: &AtomicBool,
+        before_commit: impl FnOnce(),
+    ) -> Result<Option<SingerFramesExportResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let frames =
+            auris_vocal::render_frames_with_sources(&self.singer, &self.tempo_map, self.sources);
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let frame_count = frames.len();
+        let text = serde_json::to_string(&frames)
+            .map_err(|error| SessionError::Io(auris_io::IoError::Json(error)))?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let staged = auris_io::stage_file_bytes(&self.path, text.as_bytes())?;
+        before_commit();
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        Ok(Some(SingerFramesExportResult {
+            owner: self.owner,
+            revision: self.revision,
+            path: self.path,
+            frames: frame_count,
+            staged,
+        }))
     }
 }
 
@@ -1673,6 +2383,8 @@ mod tests {
     use crate::session::fixtures::{Scratch, session};
     use auris_core::time::Ticks;
     use auris_core::{Note, default_frame_hop};
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
     /// Opt in with the real dictionary also used by auris-vocal's pronunciation test.
     /// The folder must be on the shipped search path; no settings override is applied here.
@@ -1720,10 +2432,9 @@ mod tests {
         (session, track, clip)
     }
 
-    fn voicevox_fixture(scratch: &Scratch) -> PathBuf {
-        let path = scratch.join("test.voicevox.json");
+    fn write_voicevox_fixture(path: &Path) {
         std::fs::write(
-            &path,
+            path,
             r#"{
             "format_version": 1, "name": "Test voice", "url": "http://127.0.0.1:1",
             "styles": [
@@ -1733,7 +2444,43 @@ mod tests {
         }"#,
         )
         .unwrap();
+    }
+
+    fn voicevox_fixture(scratch: &Scratch) -> PathBuf {
+        let path = scratch.join("test.voicevox.json");
+        write_voicevox_fixture(&path);
         path
+    }
+
+    fn create_directory_redirect(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            let output = std::process::Command::new("cmd")
+                .args(["/D", "/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "could not create the junction fixture: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    fn redirected_voicevox_fixture(scratch: &Scratch) -> (PathBuf, PathBuf) {
+        let target = scratch.join("target");
+        let redirect = scratch.join("redirect");
+        std::fs::create_dir(&target).unwrap();
+        write_voicevox_fixture(&target.join("test.voicevox.json"));
+        create_directory_redirect(&target, &redirect);
+        let entry = redirect.join("test.voicevox.json");
+        (entry, redirect)
     }
 
     #[test]
@@ -1792,6 +2539,91 @@ mod tests {
             session.singer_backend_pitch(track).is_none(),
             "waveform-only takes clear old pitch"
         );
+    }
+
+    #[test]
+    fn stale_or_cancelled_landing_never_publishes_its_staged_take() {
+        let scratch = Scratch::new("stale-singer-landing");
+        let voice = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&voice)).unwrap();
+        let plan = session.sing_plan(track, Some(3)).unwrap();
+        let path = session
+            .project_folder()
+            .unwrap()
+            .join(auris_io::AUDIO_DIR)
+            .join(crate::session::record::take_file_name(
+                session.project_folder().unwrap(),
+                "Melody",
+            ));
+
+        let cancelled = AtomicBool::new(true);
+        assert!(
+            session
+                .begin_singer_landing(&plan)
+                .unwrap()
+                .run(
+                    auris_singer::SingingRender {
+                        samples: vec![0.0; 256],
+                        backend_pitch: None,
+                    },
+                    &cancelled,
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert!(!path.exists());
+
+        let staged = session
+            .begin_singer_landing(&plan)
+            .unwrap()
+            .run(
+                auris_singer::SingingRender {
+                    samples: vec![0.0; 256],
+                    backend_pitch: None,
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!path.exists(), "worker work must remain private");
+        session.add_singer_track("Newer edit");
+        assert!(session.continue_singer_landing(staged).unwrap().is_none());
+        assert!(!path.exists(), "stale completion published a take");
+        assert!(session.require_singer(track).unwrap().take.is_none());
+    }
+
+    #[test]
+    fn landing_loses_a_destination_race_without_replacing_the_winner() {
+        let scratch = Scratch::new("racing-singer-landing");
+        let voice = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&voice)).unwrap();
+        let plan = session.sing_plan(track, Some(5)).unwrap();
+        let staged = session
+            .begin_singer_landing(&plan)
+            .unwrap()
+            .run(
+                auris_singer::SingingRender {
+                    samples: vec![0.0; 256],
+                    backend_pitch: None,
+                },
+                &AtomicBool::new(false),
+            )
+            .unwrap()
+            .unwrap();
+        let path = session.project_folder().unwrap().join(&staged.inside);
+        let winner = b"another writer's take";
+        std::fs::write(&path, winner).unwrap();
+
+        match session.continue_singer_landing(staged) {
+            Err(SessionError::Io(auris_io::IoError::ExportDestinationExists(existing))) => {
+                assert_eq!(existing, path);
+            }
+            other => panic!("unexpected landing result: {other:?}"),
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), winner);
+        assert!(session.require_singer(track).unwrap().take.is_none());
     }
 
     #[test]
@@ -2369,6 +3201,243 @@ mod tests {
     }
 
     #[test]
+    fn portrait_discovery_does_not_contact_a_network_path_from_the_document() {
+        let (mut session, track, _) = sung(1);
+        put_voice(&mut session, track);
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice
+            .as_mut()
+            .unwrap()
+            .path = AssetPath::external(r"\\server\share\cold.voicevox.json");
+
+        assert!(matches!(
+            session.singer_portrait_source(track),
+            Err(SessionError::NoVoice(id)) if id == track.0
+        ));
+    }
+
+    #[test]
+    fn automatic_singing_refuses_a_document_network_voice_but_explicit_access_does_not() {
+        let (mut session, track, _) = sung(1);
+        put_voice(&mut session, track);
+        let network = PathBuf::from(r"\\server\share\cold.voicevox.json");
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice
+            .as_mut()
+            .unwrap()
+            .path = AssetPath::external(&network);
+
+        assert_eq!(
+            session.singer_voice_path(track).unwrap(),
+            network,
+            "an explicit command retains access to the voice the user selected"
+        );
+        assert!(matches!(
+            session.sing_plan_for_automatic_access(track, None),
+            Err(SessionError::NoVoice(id)) if id == track.0
+        ));
+        assert!(
+            session.voices.is_empty(),
+            "the automatic refusal happens before file metadata or a model is loaded"
+        );
+    }
+
+    #[test]
+    fn voice_load_jobs_reject_cancelled_stale_and_superseded_completions() {
+        let scratch = Scratch::new("voice-load-job-races");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        session.voices.clear();
+
+        let cancelled = session.begin_singer_track_voice_load(track).unwrap();
+        assert!(
+            cancelled.run(&AtomicBool::new(true)).unwrap().is_none(),
+            "pre-cancelled work must not produce a cache handoff"
+        );
+        assert!(session.voices.is_empty());
+
+        let superseded = session.begin_singer_track_voice_load(track).unwrap();
+        let current = session.begin_singer_track_voice_load(track).unwrap();
+        let superseded = superseded.run(&AtomicBool::new(false)).unwrap().unwrap();
+        assert!(session.continue_singer_voice_load(superseded).is_none());
+        assert!(session.voices.is_empty());
+        let current = current.run(&AtomicBool::new(false)).unwrap().unwrap();
+        let current = session.continue_singer_voice_load(current).unwrap();
+        assert_eq!(current.path(), path);
+
+        session.voices.clear();
+        let stale = session.begin_singer_track_voice_load(track).unwrap();
+        let stale = stale.run(&AtomicBool::new(false)).unwrap().unwrap();
+        session.add_singer_track("Newer edit");
+        assert!(session.continue_singer_voice_load(stale).is_none());
+        assert!(session.voices.is_empty());
+    }
+
+    #[test]
+    fn automatic_voice_job_rechecks_an_explicitly_cached_remote_voicevox_url() {
+        let scratch = Scratch::new("automatic-cached-voicevox-policy");
+        let path = scratch.join("remote.voicevox.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "format_version": 1,
+                "name": "Remote",
+                "url": "http://192.0.2.1:50021",
+                "styles": [{"name":"Singer","query_style_id":1,"decode_style_id":1}]
+            }"#,
+        )
+        .unwrap();
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        assert!(!session.voices[&path].automatic_access_safe);
+
+        let error = match session
+            .begin_singer_voice_load_for_automatic_access(track)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+        {
+            Err(error) => error,
+            Ok(_) => panic!("automatic work reused an explicitly authorised remote voice"),
+        };
+        assert!(matches!(
+            error,
+            SessionError::Sing(auris_singer::SingError::UnsafeAutomaticAccess { .. })
+        ));
+    }
+
+    #[test]
+    fn automatic_voice_job_rejects_a_redirected_entry_before_reusing_an_explicit_cache() {
+        let scratch = Scratch::new("automatic-cached-entry-policy");
+        let (entry, redirect) = redirected_voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&entry)).unwrap();
+        let cache_was_automatic_safe = session.voices[&entry].automatic_access_safe;
+
+        let automatic_error = session
+            .begin_singer_voice_load_for_automatic_access(track)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .err();
+        let explicit_result = session
+            .begin_singer_track_voice_load(track)
+            .unwrap()
+            .run(&AtomicBool::new(false));
+
+        std::fs::remove_dir(redirect).unwrap();
+        assert!(cache_was_automatic_safe);
+        assert!(matches!(
+            automatic_error,
+            Some(SessionError::Sing(
+                auris_singer::SingError::UnsafeAutomaticAccess { .. }
+            ))
+        ));
+        assert!(
+            explicit_result.is_ok(),
+            "explicit cache reuse remains permitted: {:?}",
+            explicit_result.err()
+        );
+    }
+
+    #[test]
+    fn automatic_synchronous_plan_rejects_a_redirected_entry_before_cache_lookup() {
+        let scratch = Scratch::new("automatic-sync-entry-policy");
+        let (entry, redirect) = redirected_voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&entry)).unwrap();
+
+        let error = session.sing_plan_for_automatic_access(track, None).err();
+
+        std::fs::remove_dir(redirect).unwrap();
+        assert!(matches!(
+            error,
+            Some(SessionError::Sing(
+                auris_singer::SingError::UnsafeAutomaticAccess { .. }
+            ))
+        ));
+    }
+
+    #[test]
+    fn automatic_plan_uses_its_verified_lease_after_the_entry_file_is_replaced() {
+        let scratch = Scratch::new("automatic-voice-lease-race");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+        session.set_singer_voice(track, Some(&path)).unwrap();
+        session.voices.clear();
+
+        let loaded = session
+            .begin_singer_voice_load_for_automatic_access(track)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "format_version": 1,
+                "name": "Replacement",
+                "url": "http://192.0.2.1:50021",
+                "styles": [{"name":"Singer","query_style_id":1,"decode_style_id":1}]
+            }"#,
+        )
+        .unwrap();
+
+        let lease = session.continue_singer_voice_load(loaded).unwrap();
+        let plan = session
+            .sing_plan_from_voice_load(track, None, &lease)
+            .unwrap();
+        assert_eq!(plan.voice, path);
+        assert!(
+            lease.model().lock().unwrap().automatic_access_safe(),
+            "the plan retained the loopback model the automatic worker verified"
+        );
+    }
+
+    #[test]
+    fn choosing_a_voice_uses_the_worker_lease_without_reloading_a_replaced_entry() {
+        let scratch = Scratch::new("choose-voice-lease-race");
+        let path = voicevox_fixture(&scratch);
+        let (mut session, track, _) = sung(1);
+
+        let loaded = session
+            .begin_singer_voice_load(&path)
+            .run(&AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+                "format_version": 1,
+                "name": "Replacement that the UI must not reload",
+                "url": "http://192.0.2.1:50021",
+                "styles": [{"name":"Singer","query_style_id":1,"decode_style_id":1}]
+            }"#,
+        )
+        .unwrap();
+
+        let lease = session.continue_singer_voice_load(loaded).unwrap();
+        session.set_singer_voice_from_load(track, &lease).unwrap();
+        assert_eq!(
+            session.singer_voice(track).unwrap().unwrap().name,
+            "Test voice",
+            "the short UI continuation must use the already-loaded metadata"
+        );
+        assert!(Arc::ptr_eq(&lease.model(), &session.voices[&path].model));
+    }
+
+    #[test]
     fn voicevox_rejects_unsupported_manual_corrections_without_losing_existing_ones() {
         let scratch = Scratch::new("voicevox-corrections");
         let path = voicevox_fixture(&scratch);
@@ -2746,19 +3815,79 @@ mod tests {
     }
 
     #[test]
+    fn singer_preflight_reports_score_errors_without_opening_a_missing_voice() {
+        let scratch = Scratch::new("singer-score-preflight");
+        let missing = scratch.join("missing.voicevox.json");
+        let (mut session, track, clip) = sung(0);
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice = Some(SingerVoice {
+            path: AssetPath::external(&missing),
+            name: "Missing connection".into(),
+            consonants: None,
+            levels: None,
+            speaker: None,
+        });
+
+        assert!(matches!(
+            session.preflight_singer_plan(track),
+            Err(SessionError::NothingToSing(id)) if id == track.0
+        ));
+
+        let mut note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        note.lyric = "🙂".into();
+        session.add_note(clip, note).unwrap();
+        assert!(matches!(
+            session.preflight_singer_plan(track),
+            Err(SessionError::SingerLyric {
+                clip: failed_clip,
+                note: 0,
+                ..
+            }) if failed_clip == clip
+        ));
+        assert!(
+            !missing.exists(),
+            "preflight must not create or open the voice"
+        );
+    }
+
+    #[test]
     fn an_unsaved_singer_take_lives_in_working_storage_then_follows_save_as() {
         let scratch = Scratch::new("unsaved-singer-take");
         let (mut session, track, _) = sung(1);
         let working = session.project_folder().unwrap().to_path_buf();
+        let voice = PathBuf::from("unused.onnx");
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice = Some(SingerVoice {
+            path: AssetPath::external(&voice),
+            name: "Unused fixture".to_string(),
+            consonants: None,
+            levels: None,
+            speaker: None,
+        });
         let frames = session.singer_frames(track).unwrap();
+        let fingerprint = session
+            .singer_input_fingerprint_with_seed(track, 7)
+            .unwrap();
         let plan = SingPlan {
             track,
             frames,
             score: SingerScore::default(),
-            voice: PathBuf::from("unused.onnx"),
+            voice,
             speaker: 0,
             seed: 7,
-            fingerprint: 42,
+            fingerprint,
             sample_rate: 48_000,
         };
 
@@ -3221,6 +4350,56 @@ mod tests {
     }
 
     #[test]
+    fn detached_frame_export_cancels_before_writing_and_rejects_stale_completion() {
+        let (mut session, track, clip) = sung(2);
+        session.write_lyrics(clip, &[0, 1], "さく").unwrap();
+        let scratch = Scratch::new("detached-frame-export");
+        let cancelled_path = scratch.join("cancelled.frames.json");
+        assert!(
+            session
+                .begin_singer_frames_export(track, &cancelled_path)
+                .unwrap()
+                .run(&AtomicBool::new(true))
+                .unwrap()
+                .is_none()
+        );
+        assert!(!cancelled_path.exists());
+
+        let stale_path = scratch.join("snapshot.frames.json");
+        let job = session
+            .begin_singer_frames_export(track, &stale_path)
+            .unwrap();
+        session.set_frame_hop(track, 0.02).unwrap();
+        let result = std::thread::spawn(move || job.run(&AtomicBool::new(false)))
+            .join()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(session.continue_singer_frames_export(result).is_none());
+        assert!(
+            !stale_path.exists(),
+            "a stale snapshot is never published over the destination"
+        );
+
+        let current_path = scratch.join("current.frames.json");
+        let result = session
+            .begin_singer_frames_export(track, &current_path)
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        let (_, count) = session
+            .continue_singer_frames_export(result)
+            .expect("the unchanged session accepts its completion")
+            .unwrap();
+        assert!(count > 0);
+        assert_eq!(
+            Session::read_singer_frames(&current_path).unwrap().len(),
+            count
+        );
+    }
+
+    #[test]
     fn frames_read_back_from_where_they_were_exported() {
         let (mut session, track, clip) = sung(2);
         session.write_lyrics(clip, &[0, 1], "さく").unwrap();
@@ -3264,6 +4443,93 @@ mod tests {
             })) => {}
             other => panic!("expected a frame-length error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn singer_frame_source_is_bounded_even_if_it_grows_after_metadata() {
+        const LIMIT: usize = 32;
+        let scratch = Scratch::new("bounded-frames");
+        for length in [LIMIT - 1, LIMIT] {
+            let path = scratch.join(&format!("edge-{length}.json"));
+            std::fs::write(&path, vec![b' '; length]).unwrap();
+            assert_eq!(
+                read_singer_frames_source(&path, LIMIT, || {})
+                    .unwrap()
+                    .len(),
+                length
+            );
+        }
+
+        let path = scratch.join("growing.json");
+        std::fs::write(&path, vec![b' '; LIMIT]).unwrap();
+        let result = read_singer_frames_source(&path, LIMIT, || {
+            let mut append = OpenOptions::new().append(true).open(&path).unwrap();
+            append.write_all(b"x").unwrap();
+            append.flush().unwrap();
+        });
+        assert!(matches!(
+            result,
+            Err(SessionError::SingerFramesFileTooLarge {
+                observed,
+                limit,
+                ..
+            }) if observed == (LIMIT + 1) as u64 && limit == LIMIT as u64
+        ));
+    }
+
+    #[test]
+    fn decoded_singer_frame_collections_have_explicit_limits() {
+        let frames = SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec!["<sil>".into(), "a".into()],
+            phonemes: vec![0, 1, 1],
+            f0_hz: vec![0.0; 3],
+            energy: vec![0.0; 3],
+        };
+        assert!(matches!(
+            validate_singer_frame_limits_with(&frames, 2, 4, 16),
+            Err(SessionError::SingerFramesLimit {
+                field: "frame count",
+                observed: 3,
+                limit: 2,
+            })
+        ));
+
+        let mut inventory = frames.clone();
+        assert!(matches!(
+            validate_singer_frame_limits_with(&inventory, 3, 1, 16),
+            Err(SessionError::SingerFramesLimit {
+                field: "phoneme inventory",
+                observed: 2,
+                limit: 1,
+            })
+        ));
+        inventory.inventory[1] = "abcdefghijklmnopq".into();
+        assert!(matches!(
+            validate_singer_frame_limits_with(&inventory, 3, 2, 16),
+            Err(SessionError::SingerFramesLimit {
+                field: "phoneme token bytes",
+                observed: 17,
+                limit: 16,
+            })
+        ));
+    }
+
+    #[test]
+    fn cancelling_after_frame_export_staging_preserves_an_existing_destination() {
+        let (session, track, _) = sung(1);
+        let scratch = Scratch::new("cancelled-staged-frame-export");
+        let path = scratch.join("frames.json");
+        std::fs::write(&path, b"existing frames").unwrap();
+        let cancelled = AtomicBool::new(false);
+        let job = session.begin_singer_frames_export(track, &path).unwrap();
+
+        let result = job
+            .run_before_commit(&cancelled, || cancelled.store(true, Ordering::Relaxed))
+            .unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing frames");
     }
 
     #[test]
@@ -3370,4 +4636,33 @@ fn voice_stamp(file: &Path) -> Option<VoiceStamp> {
         modified: metadata.modified().ok(),
         len: metadata.len(),
     })
+}
+
+fn relative_path_for_asset(file: &Path, folder: &Path) -> Option<PathBuf> {
+    if let Ok(relative) = file.strip_prefix(folder) {
+        return Some(relative.to_path_buf());
+    }
+    if !cfg!(target_os = "windows") {
+        return None;
+    }
+    let file_components: Vec<_> = file.components().collect();
+    let folder_components: Vec<_> = folder.components().collect();
+    if folder_components.len() > file_components.len()
+        || !folder_components
+            .iter()
+            .zip(&file_components)
+            .all(|(folder, file)| {
+                folder
+                    .as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&file.as_os_str().to_string_lossy())
+            })
+    {
+        return None;
+    }
+    let mut relative = PathBuf::new();
+    for component in &file_components[folder_components.len()..] {
+        relative.push(component.as_os_str());
+    }
+    Some(relative)
 }

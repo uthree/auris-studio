@@ -25,6 +25,8 @@ pub enum ButtonStyle {
     Normal,
     /// Filled with the accent colour; for the primary action in a dialog.
     Primary,
+    /// Filled with the danger colour; for irreversible commitment in a dialog.
+    Danger,
     /// Borderless, for dense toolbars.
     Ghost,
 }
@@ -50,6 +52,26 @@ impl From<bool> for Latch {
         match active {
             true => Latch::On,
             false => Latch::Off,
+        }
+    }
+}
+
+/// Whether a shared button is actionable, including its latched appearance when available.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ButtonState {
+    /// The command participates in focus and input, with this latch state.
+    Enabled(Latch),
+    /// The command remains visible but cannot be focused or activated.
+    Disabled,
+}
+
+impl ButtonState {
+    /// Builds an enabled or disabled state while retaining the caller's latch vocabulary.
+    pub fn available<A: Into<Latch>>(active: A, enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled(active.into())
+        } else {
+            Self::Disabled
         }
     }
 }
@@ -80,7 +102,38 @@ where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let label: SharedString = label.into();
-    button_with_content(id, label, style, active, active_color, theme, on_click)
+    button_with_content(
+        id,
+        label,
+        style,
+        ButtonState::Enabled(active.into()),
+        active_color,
+        theme,
+        on_click,
+    )
+}
+
+/// A [`button`] whose command may currently be unavailable.
+///
+/// Disabled buttons stay visible in their normal place so the layout and command vocabulary do
+/// not jump as data arrives. They are omitted from the Tab order, do not react to hover, Enter,
+/// Space or a pointer, and use the same quiet treatment everywhere in the application.
+pub fn button_enabled<I, L, F>(
+    id: I,
+    label: L,
+    style: ButtonStyle,
+    state: ButtonState,
+    active_color: Hsla,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let label: SharedString = label.into();
+    button_with_content(id, label, style, state, active_color, theme, on_click)
 }
 
 /// A section heading that reveals or hides the rows following it.
@@ -113,6 +166,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_1().border_color(theme.selection))
         .flex()
         .items_center()
         .gap_1()
@@ -157,11 +212,11 @@ where
         .on_click(on_click)
 }
 
-fn button_with_content<I, L, A, F>(
+fn button_with_content<I, L, F>(
     id: I,
     label: L,
     style: ButtonStyle,
-    active: A,
+    state: ButtonState,
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
@@ -169,10 +224,12 @@ fn button_with_content<I, L, A, F>(
 where
     I: Into<ElementId>,
     L: IntoElement,
-    A: Into<Latch>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let active = active.into();
+    let (active, enabled) = match state {
+        ButtonState::Enabled(active) => (active, true),
+        ButtonState::Disabled => (Latch::Off, false),
+    };
     let (background, text_color, border) = match (style, active) {
         // Read against whatever it is latched to — mute is orange, solo is amber, a track's
         // colour is whatever the user chose — and not against the accent, which is behind none
@@ -182,6 +239,9 @@ where
         // reads as the same button rather than as a second latched one in a row of them.
         (_, Latch::Ready) => (theme.surface_raised, active_color, active_color),
         (ButtonStyle::Primary, Latch::Off) => (theme.accent, theme.text_on_accent, theme.accent),
+        (ButtonStyle::Danger, Latch::Off) => {
+            (theme.danger, theme.text_on(theme.danger), theme.danger)
+        }
         (ButtonStyle::Normal, Latch::Off) => (theme.surface_raised, theme.text, theme.border),
         (ButtonStyle::Ghost, Latch::Off) => (
             gpui::transparent_black(),
@@ -215,12 +275,20 @@ where
         .border_color(border)
         .bg(background)
         .text_xs()
-        .text_color(text_color)
-        .cursor_pointer()
-        .hover(|this| this.bg(hover))
-        .active(|this| this.opacity(0.75))
+        .text_color(if enabled {
+            text_color
+        } else {
+            theme.text_faint
+        })
+        .when(enabled, |this| {
+            this.tab_index(0)
+                .focus(|this| this.border_color(theme.selection))
+                .hover(|this| this.bg(hover))
+                .active(|this| this.opacity(0.75))
+                .on_click(on_click)
+        })
+        .when(!enabled, |this| this.opacity(0.62))
         .child(label)
-        .on_click(on_click)
 }
 
 /// A square button holding one drawn icon, used in the transport bar.
@@ -263,6 +331,8 @@ where
     div()
         .id(id)
         .debug_selector(move || handle.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -271,7 +341,6 @@ where
         .border_1()
         .border_color(if active { active_color } else { theme.border })
         .bg(background)
-        .cursor_pointer()
         .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(15.0), foreground))
@@ -291,8 +360,13 @@ where
     L: Into<SharedString>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    let id: ElementId = id.into();
+    let selector = id.clone();
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -305,7 +379,6 @@ where
         .bg(theme.surface_raised)
         .text_xs()
         .text_color(theme.text)
-        .cursor_pointer()
         .hover(|this| this.bg(theme.surface_hover))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(10.0), theme.text_muted))
@@ -331,6 +404,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -339,7 +414,6 @@ where
         .bg(theme.surface)
         .border_1()
         .border_color(theme.border_subtle)
-        .cursor_pointer()
         .hover(|this| this.bg(theme.surface_hover).border_color(theme.border))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(11.0), theme.text_muted))
@@ -517,7 +591,7 @@ where
             id,
             content,
             ButtonStyle::Normal,
-            false,
+            ButtonState::Enabled(Latch::Off),
             theme.accent,
             theme,
             on_click,
@@ -526,7 +600,7 @@ where
             id,
             content,
             ButtonStyle::Normal,
-            active,
+            ButtonState::Enabled(active.into()),
             theme.accent,
             theme,
             on_click,
@@ -564,6 +638,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .gap_1()
@@ -1119,6 +1195,97 @@ pub fn db_to_meter_position(db: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{Context, FocusHandle, Render, TestAppContext};
+
+    struct ButtonHarness {
+        focus: FocusHandle,
+        primary: usize,
+        secondary: usize,
+        disabled: usize,
+    }
+
+    impl Render for ButtonHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::default();
+            div()
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev();
+                        } else {
+                            window.focus_next();
+                        }
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(button(
+                    "keyboard-primary",
+                    "Primary",
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.primary += 1),
+                ))
+                .child(button(
+                    "keyboard-secondary",
+                    "Secondary",
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.secondary += 1),
+                ))
+                .child(button_enabled(
+                    "keyboard-disabled",
+                    "Disabled",
+                    ButtonStyle::Normal,
+                    ButtonState::Disabled,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.disabled += 1),
+                ))
+        }
+    }
+
+    fn release(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+
+    #[gpui::test]
+    fn shared_buttons_tab_both_ways_activate_and_skip_disabled(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| ButtonHarness {
+            focus: cx.focus_handle(),
+            primary: 0,
+            secondary: 0,
+            disabled: 0,
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| window.focus(&view.focus));
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("tab");
+        release("enter", cx);
+        cx.simulate_keystrokes("tab");
+        release("space", cx);
+        // The disabled third control is not a tab stop, so forward traversal wraps to Primary.
+        cx.simulate_keystrokes("tab");
+        release("enter", cx);
+        // Reverse traversal reaches Secondary again.
+        cx.simulate_keystrokes("shift-tab");
+        release("space", cx);
+        crate::harness::click("keyboard-disabled", cx);
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.primary, 2);
+            assert_eq!(view.secondary, 2);
+            assert_eq!(view.disabled, 0);
+        });
+    }
 
     #[gpui::test]
     fn japanese_picker_labels_restore_the_complete_text_after_a_narrow_layout(

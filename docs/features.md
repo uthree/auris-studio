@@ -1096,6 +1096,12 @@ The project file and the title bar's unsaved mark stay unchanged. **Save** or **
 your changes to the permanent project and clears the older snapshot. Closing without saving keeps
 the last manually saved version.
 
+After an interrupted exit, the next launch offers abandoned snapshots from newest to oldest.
+**Recover** opens the snapshot as an unsaved document, so saving it is always a deliberate choice
+and never overwrites the original project automatically. **Discard** permanently removes that
+snapshot; **Not Now** leaves it available for a later launch. Workspaces still owned by another
+running Auris process are locked and never appear in this list.
+
 Autosave is on by default. **Settings → General → Autosave** turns it off.
 
 ## The project folder

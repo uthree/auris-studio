@@ -9,7 +9,7 @@ use auris_core::DrumMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
-use crate::settings::config_dir;
+use crate::settings::{config_dir, read_config_text, write_config_bytes};
 
 /// Stable identity of a drum-producing source on this installation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,7 +87,7 @@ impl DrumMapBook {
     /// Loads the library, falling back to an empty one when missing or malformed.
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = read_config_text(&path) else {
             return Self::default();
         };
         match serde_json::from_str(&text) {
@@ -109,7 +109,8 @@ impl DrumMapBook {
             })?;
         }
         let text = serde_json::to_string_pretty(self).map_err(auris_io::IoError::from)?;
-        std::fs::write(&path, text).map_err(|source| SessionError::SettingsWrite { path, source })
+        write_config_bytes(&path, text.as_bytes())
+            .map_err(|source| SessionError::SettingsWrite { path, source })
     }
 
     /// Saved maps in picker order.

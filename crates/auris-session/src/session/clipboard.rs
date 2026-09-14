@@ -157,20 +157,28 @@ impl Session {
         let notes = notes.clone();
         let at = at.max_zero();
 
-        self.record(Edit::PasteNotes);
         let grid = self.project.grid;
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        let base = target.notes.len();
+        let mut candidate = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, target)| target.clone())
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        let base = candidate.notes.len();
         for note in notes {
-            target.notes.push(Note {
+            candidate.notes.push(Note {
                 start: at + note.start,
                 ..note
             });
         }
-        target.fit_length_to_notes(grid);
-        let pasted = (base..target.notes.len()).collect();
+        candidate.fit_length_to_notes(grid);
+        candidate.looped_note_instances()?;
+        let pasted = (base..candidate.notes.len()).collect();
+
+        self.record(Edit::PasteNotes);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(pasted)
     }
@@ -278,6 +286,27 @@ impl Session {
             .collect();
         if landing.is_empty() {
             return Ok(Vec::new());
+        }
+        // Validate the exact placed copies before ids, history, or the document change. MIDI
+        // expansion is independent of its timeline start; audio deliberately drops a split's
+        // tempo anchor when placed and therefore has to be measured at the destination tempo.
+        for (_, copied) in &landing {
+            let start = at + copied.offset;
+            match &copied.content {
+                CopiedContent::Midi(midi) | CopiedContent::Drum(midi) => {
+                    midi.looped_note_instances()?;
+                }
+                CopiedContent::Audio(audio) => {
+                    let mut candidate = (**audio).clone();
+                    candidate.start = start;
+                    candidate.tempo_anchor = None;
+                    auris_core::project::validated_loop_pass_count(
+                        candidate.id,
+                        self.project.audio_clip_length_ticks(&candidate),
+                        candidate.loop_end,
+                    )?;
+                }
+            }
         }
 
         self.record(Edit::PasteClips);

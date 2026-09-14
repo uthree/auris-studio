@@ -262,18 +262,29 @@ impl HostedPlugins {
     /// The state a hosted slot's plugin is carrying, for the document to save.
     ///
     /// Asks the instance that is rendering, because it is the one a preset or an on-screen knob
-    /// would have changed.
-    pub(super) fn save_state(&mut self, slot: EffectSlotId) -> Option<Vec<u8>> {
-        self.slots.get_mut(&slot)?.plugin_mut()?.save_state().ok()
+    /// would have changed. `Ok(None)` means there is no instantiated slot to ask; a plugin that
+    /// exists but refuses to serialize is an error, because treating that as absence would let a
+    /// project save succeed with stale opaque bytes.
+    pub(super) fn save_state(&mut self, slot: EffectSlotId) -> Result<Option<Vec<u8>>, ClapError> {
+        let Some(plugin) = self.slots.get_mut(&slot).and_then(HostedSlot::plugin_mut) else {
+            return Ok(None);
+        };
+        plugin.save_state().map(Some)
     }
 
     /// The same, for a track's hosted instrument.
-    pub(super) fn save_instrument_state(&mut self, track: TrackId) -> Option<Vec<u8>> {
-        self.instruments
-            .get_mut(&track)?
-            .plugin_mut()?
-            .save_state()
-            .ok()
+    pub(super) fn save_instrument_state(
+        &mut self,
+        track: TrackId,
+    ) -> Result<Option<Vec<u8>>, ClapError> {
+        let Some(plugin) = self
+            .instruments
+            .get_mut(&track)
+            .and_then(HostedSlot::plugin_mut)
+        else {
+            return Ok(None);
+        };
+        plugin.save_state().map(Some)
     }
 
     /// Forgets every slot. Called when a *different* document takes over — see
@@ -675,7 +686,10 @@ impl HostedSlot {
             // This is the very instance that was live. Its state is already newer than the
             // document snapshot, so loading anything into it would only roll it backwards.
             (true, _) => None,
-            (false, Some(outgoing)) => outgoing.save_state().ok(),
+            // A second instance must never fall back to its factory default when the outgoing
+            // instance exists but refuses to serialize. Abort this rebuild and leave the old
+            // instance live instead of changing the sound invisibly.
+            (false, Some(outgoing)) => Some(outgoing.save_state()?),
             (false, None) => state.hosted_bytes(),
         };
         if let Some(bytes) = bytes
@@ -789,7 +803,7 @@ fn hosted_slots(project: &Project) -> BTreeMap<EffectSlotId, HostedRequest<'_>> 
             // A plugin is always `External`, so resolving it needs no project folder — but going
             // through `resolve` rather than unwrapping the variant keeps the one rule in one
             // place, and correctly gives up on an `Inside` reference nobody should have written.
-            let file = file.resolve(None)?;
+            let file = file.resolve_for_automatic_access(None)?;
             Some((
                 slot.id,
                 HostedRequest {
@@ -814,7 +828,7 @@ fn hosted_instruments(project: &Project) -> BTreeMap<TrackId, HostedRequest<'_>>
             if !inner.instrument_id.starts_with(auris_clap::ID_PREFIX) {
                 return None;
             }
-            let file = inner.file.as_ref()?.resolve(None)?;
+            let file = inner.file.as_ref()?.resolve_for_automatic_access(None)?;
             Some((
                 track.id,
                 HostedRequest {
@@ -1128,45 +1142,52 @@ impl Session {
     /// Called before the document is written. A CLAP plugin's state is not a thing the session
     /// can keep in step as it changes — the plugin changes it whenever it likes, and says so only
     /// by setting a flag — so it is collected at the one moment it has to be right.
-    pub(super) fn collect_hosted_state(&mut self) {
+    pub(super) fn collect_hosted_state(&mut self) -> Result<(), SessionError> {
+        // A save may be requested between frontend polls. Drain native-editor changes first so
+        // stale document parameters cannot overwrite the newer controller values when the saved
+        // opaque state is restored later.
+        let (vst3_changed, rebuild_vst3) = match self.vst3.service_for_save(&mut self.project) {
+            Ok(result) => result,
+            Err(error) => {
+                // An earlier VST3 in this same collection pass may already have copied its
+                // live controller/state into the document. Preserve that partial progress as
+                // an unsaved edit and rebuild conservatively instead of returning with a
+                // silently changed, apparently-clean document and a stale renderer.
+                self.dirty = true;
+                self.revision = self.revision.wrapping_add(1);
+                self.invalidate_graph();
+                return Err(error.into());
+            }
+        };
+        if vst3_changed {
+            self.dirty = true;
+            self.revision = self.revision.wrapping_add(1);
+        }
+        if rebuild_vst3 {
+            self.invalidate_graph();
+        }
+        // Snapshot every CLAP instance before mutating the document. One plugin may refuse after
+        // an earlier one succeeded; staging prevents that failure from half-committing a newer
+        // subset of opaque states into the in-memory project.
         let slots: Vec<EffectSlotId> = hosted_slots(&self.project).into_keys().collect();
+        let mut effect_states = Vec::with_capacity(slots.len());
         for id in slots {
-            let Some(bytes) = self.hosted.save_state(id) else {
+            let Some(bytes) = self.hosted.save_state(id)? else {
                 continue;
             };
-            for strip in std::iter::once(&mut self.project.master)
-                .chain(self.project.tracks.iter_mut().map(|track| &mut track.mixer))
-            {
-                if let Some(slot) = strip.effects.iter_mut().find(|slot| slot.id == id) {
-                    slot.state.set_hosted_bytes(&bytes);
-                }
-            }
+            effect_states.push((id, bytes));
         }
 
         let tracks: Vec<TrackId> = hosted_instruments(&self.project).into_keys().collect();
+        let mut instrument_states = Vec::with_capacity(tracks.len());
         for id in tracks {
-            let Some(bytes) = self.hosted.save_instrument_state(id) else {
+            let Some(bytes) = self.hosted.save_instrument_state(id)? else {
                 continue;
             };
-            if let Some(inner) = self
-                .project
-                .track_mut(id)
-                .and_then(|track| track.kind.as_instrument_mut())
-            {
-                inner.instrument_state.set_hosted_bytes(&bytes);
-            }
+            instrument_states.push((id, bytes));
         }
 
-        let vst_slots: Vec<EffectSlotId> = std::iter::once(&self.project.master)
-            .chain(self.project.tracks.iter().map(|track| &track.mixer))
-            .flat_map(|strip| &strip.effects)
-            .filter(|slot| slot.effect_id.starts_with(auris_vst3::ID_PREFIX))
-            .map(|slot| slot.id)
-            .collect();
-        for id in vst_slots {
-            let Some(bytes) = self.vst3.save_effect(id) else {
-                continue;
-            };
+        for (id, bytes) in effect_states {
             for strip in std::iter::once(&mut self.project.master)
                 .chain(self.project.tracks.iter_mut().map(|track| &mut track.mixer))
             {
@@ -1175,23 +1196,8 @@ impl Session {
                 }
             }
         }
-        let vst_tracks: Vec<TrackId> = self
-            .project
-            .tracks
-            .iter()
-            .filter_map(|track| {
-                track
-                    .kind
-                    .as_instrument()?
-                    .instrument_id
-                    .starts_with(auris_vst3::ID_PREFIX)
-                    .then_some(track.id)
-            })
-            .collect();
-        for id in vst_tracks {
-            let Some(bytes) = self.vst3.save_instrument(id) else {
-                continue;
-            };
+
+        for (id, bytes) in instrument_states {
             if let Some(inner) = self
                 .project
                 .track_mut(id)
@@ -1200,6 +1206,7 @@ impl Session {
                 inner.instrument_state.set_hosted_bytes(&bytes);
             }
         }
+        Ok(())
     }
 }
 
@@ -1232,7 +1239,9 @@ pub(super) fn change_fixture_instrument_level(session: &mut Session, track: Trac
 #[cfg(test)]
 mod tests {
     use super::*;
-    use auris_clap::testkit::{FIXTURE_ID, TONE_ID, fixture_library, instrument_library};
+    use auris_clap::testkit::{
+        FIXTURE_ID, REFUSE_STATE_SAVE, TONE_ID, fixture_library, instrument_library,
+    };
     use auris_core::param::ParamId;
     use auris_core::plugin::{Effect, ProcessContext};
     use auris_core::time::Ticks;
@@ -1287,7 +1296,14 @@ mod tests {
             .unwrap()
             .document;
         session.open(&document).unwrap();
-        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), state);
+        assert_eq!(
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
+            state
+        );
         let clip = session
             .project
             .track(track)
@@ -1298,7 +1314,14 @@ mod tests {
             .clips[0]
             .id;
         session.regenerate_clip(clip).unwrap();
-        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), state);
+        assert_eq!(
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
+            state
+        );
         let saved =
             auris_compose::SongSpec::parse(session.project.song_spec.as_ref().unwrap()).unwrap();
         session.compose(&auris_compose::compose(&saved)).unwrap();
@@ -1426,11 +1449,32 @@ mod tests {
         );
         let second = change_native_instrument_level(&mut session, track, 0.37);
         assert_eq!(session.undo(), Some(Edit::Compose));
-        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), first);
+        assert_eq!(
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
+            first
+        );
         assert_eq!(session.redo(), Some(Edit::Compose));
-        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), second);
+        assert_eq!(
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
+            second
+        );
         assert_eq!(session.undo(), Some(Edit::Compose));
-        assert_eq!(session.hosted.save_instrument_state(track).unwrap(), first);
+        assert_eq!(
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
+            first
+        );
     }
 
     fn prepare() -> PrepareContext {
@@ -1487,6 +1531,20 @@ mod tests {
         assert!(!found.contains_key(&built_in));
         assert_eq!(found.len(), 1);
         assert_eq!(found[&hosted].clap_id, "studio.auris.test.gain");
+    }
+
+    #[test]
+    fn a_network_plugin_named_by_a_document_is_not_loaded_automatically() {
+        let mut project = Project::new("Hosted", 48_000.0);
+        let hosted = project
+            .add_hosted_effect(
+                None,
+                "clap:studio.auris.test.gain",
+                AssetPath::external(r"\\server\share\test.clap"),
+            )
+            .unwrap();
+
+        assert!(!hosted_slots(&project).contains_key(&hosted));
     }
 
     #[test]
@@ -1588,6 +1646,35 @@ mod tests {
             0.5,
             "the new instance must start where the old one left off"
         );
+    }
+
+    #[test]
+    fn a_handover_aborts_when_the_outgoing_instance_cannot_save() {
+        let library = fixture_library();
+        let mut slot = slot();
+        let state = PluginState::empty();
+
+        // Keep the rendering half alive so the rebuild really needs a second instance and must
+        // serialize the first. Falling back to the second instance's default here changes the
+        // audible preset without changing the document.
+        let first = slot
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
+            .expect("first");
+        slot.live
+            .as_mut()
+            .expect("the outgoing instance")
+            .load_state(&REFUSE_STATE_SAVE)
+            .expect("the fixture accepts its failure sentinel");
+
+        let error = slot
+            .take_effect(&library, &state, &prepare(), &mut Vec::new())
+            .expect_err("the incoming instance must not start from a factory default");
+        assert!(matches!(error, ClapError::State { saving: true, .. }));
+        assert!(
+            slot.live.is_some(),
+            "the outgoing instance remains authoritative"
+        );
+        drop(first);
     }
 
     #[test]
@@ -1923,7 +2010,11 @@ mod tests {
         );
         assert_eq!(session.undo(), Some(Edit::ConvertTrackToAudio));
         assert_eq!(
-            session.hosted.save_instrument_state(track).unwrap(),
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
             changed,
             "undo must restore the preset that was heard before conversion"
         );
@@ -1958,7 +2049,11 @@ mod tests {
         );
         assert_eq!(session.project, document);
         assert_eq!(
-            session.hosted.save_instrument_state(track).unwrap(),
+            session
+                .hosted
+                .save_instrument_state(track)
+                .unwrap()
+                .unwrap(),
             changed
         );
         assert!(!session.can_undo());
@@ -2157,7 +2252,7 @@ mod tests {
             .set_hosted_instrument(track, &file, TONE_ID)
             .unwrap();
 
-        session.collect_hosted_state();
+        session.collect_hosted_state().unwrap();
         let stored = session
             .project
             .track(track)
@@ -2271,7 +2366,7 @@ mod tests {
             .add_hosted_effect(Some(track), &file, FIXTURE_ID)
             .unwrap();
 
-        session.collect_hosted_state();
+        session.collect_hosted_state().unwrap();
         let stored = session.project.track(track).unwrap().mixer.effects[0]
             .state
             .hosted_bytes()
@@ -2282,6 +2377,92 @@ mod tests {
             "the fixture's state is its gain, which starts at unity"
         );
         assert_eq!(session.hosted_parameters(slot).len(), 5);
+    }
+
+    #[test]
+    fn a_failed_effect_state_save_is_reported_without_a_partial_document_update() {
+        let (mut session, file) = session_with_fixture();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let first = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+        let refusing = session
+            .add_hosted_effect(Some(track), &file, FIXTURE_ID)
+            .unwrap();
+
+        let old_first = 0.25f32.to_le_bytes();
+        let old_refusing = 0.5f32.to_le_bytes();
+        let effects = &mut session.project.track_mut(track).unwrap().mixer.effects;
+        effects
+            .iter_mut()
+            .find(|slot| slot.id == first)
+            .unwrap()
+            .state
+            .set_hosted_bytes(&old_first);
+        effects
+            .iter_mut()
+            .find(|slot| slot.id == refusing)
+            .unwrap()
+            .state
+            .set_hosted_bytes(&old_refusing);
+
+        session
+            .hosted
+            .window_slot(PluginWindow::Effect(first))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .load_state(&0.75f32.to_le_bytes())
+            .unwrap();
+        session
+            .hosted
+            .window_slot(PluginWindow::Effect(refusing))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .load_state(&REFUSE_STATE_SAVE)
+            .unwrap();
+
+        let before = session.project.clone();
+        let error = session.collect_hosted_state().unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::Clap(ClapError::State { saving: true, .. })
+        ));
+        assert_eq!(
+            session.project, before,
+            "a later refusal must not commit an earlier plugin's newer opaque bytes"
+        );
+    }
+
+    #[test]
+    fn a_failed_instrument_state_save_is_reported_without_stale_success() {
+        let (mut session, file) = session_with_instrument();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_hosted_instrument(track, &file, TONE_ID)
+            .unwrap();
+        let old = 0.25f32.to_le_bytes();
+        session
+            .project
+            .track_mut(track)
+            .and_then(|track| track.kind.as_instrument_mut())
+            .unwrap()
+            .instrument_state
+            .set_hosted_bytes(&old);
+        session
+            .hosted
+            .window_slot(PluginWindow::Instrument(track))
+            .and_then(HostedSlot::plugin_mut)
+            .unwrap()
+            .load_state(&REFUSE_STATE_SAVE)
+            .unwrap();
+
+        let before = session.project.clone();
+        let error = session.collect_hosted_state().unwrap_err();
+        assert!(matches!(
+            error,
+            SessionError::Clap(ClapError::State { saving: true, .. })
+        ));
+        assert_eq!(session.project, before);
     }
 
     #[test]

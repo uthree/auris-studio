@@ -78,9 +78,28 @@ METADATA_FIELD = "phoneme_durations"
 #: neighbours and behave like consonants, taking a slot of their own.
 STRETCHED: frozenset[str] = frozenset(
     {
-        "a", "i", "u", "e", "o", "ɯ", "ɨ", "ə", "ɛ", "ɔ", "æ", "ʌ", "ɑ", "ɒ",
-        "ʊ", "ɪ", "y", "ø", "œ", "ɐ",
-        "ɴ", "ʔ",
+        "a",
+        "i",
+        "u",
+        "e",
+        "o",
+        "ɯ",
+        "ɨ",
+        "ə",
+        "ɛ",
+        "ɔ",
+        "æ",
+        "ʌ",
+        "ɑ",
+        "ɒ",
+        "ʊ",
+        "ɪ",
+        "y",
+        "ø",
+        "œ",
+        "ɐ",
+        "ɴ",
+        "ʔ",
     }
 )
 
@@ -132,9 +151,10 @@ def measure_dataset(root: str | Path) -> dict[str, dict[str, list[float]]]:
     import numpy as np
 
     from auris_singer.data.dataset import read_metadata
+    from auris_singer.dataset_layout import resolve_dataset_root
     from auris_singer.text.ipa import PhonemeTable
 
-    root = Path(root)
+    root = resolve_dataset_root(root)
     table = PhonemeTable.load(root / "phonemes.json")
     audio = json.loads((root / "audio_config.json").read_text(encoding="utf-8"))
     hop = float(audio["hop_length"]) / float(audio["sample_rate"])

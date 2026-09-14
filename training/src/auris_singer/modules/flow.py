@@ -65,9 +65,7 @@ class TransformerCouplingLayer(nn.Module):
             dropout=dropout,
             cond_channels=cond_channels,
         )
-        self.post = nn.Conv1d(
-            hidden_channels, self.half_channels * (1 if mean_only else 2), 1
-        )
+        self.post = nn.Conv1d(hidden_channels, self.half_channels * (1 if mean_only else 2), 1)
         # Zero init => the layer starts as the identity transform.
         nn.init.zeros_(self.post.weight)
         nn.init.zeros_(self.post.bias)

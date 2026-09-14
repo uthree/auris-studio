@@ -32,6 +32,17 @@ impl ClapInstrument {
         self.0.processing_failed()
     }
 
+    /// Number of host-to-plugin events rejected instead of growing a queue on the audio thread.
+    pub fn dropped_input_event_count(&self) -> u64 {
+        self.0.dropped_input_events()
+    }
+
+    /// Number of plugin-generated events accepted but discarded because Auris has no event-output
+    /// route in its instrument contract yet.
+    pub fn discarded_output_event_count(&self) -> u64 {
+        self.0.discarded_output_events()
+    }
+
     /// Wraps a freshly activated audio processor. Called by
     /// [`ClapPlugin::activate_instrument`](crate::ClapPlugin::activate_instrument).
     pub(crate) fn new(bridge: Bridge) -> Self {

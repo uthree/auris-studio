@@ -11,6 +11,11 @@ use ort::value::{Tensor, ValueType};
 use serde::Deserialize;
 
 use crate::backend::{BackendKind, SingingBackend};
+use crate::limits::{
+    MAX_COLLECTION_ITEMS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TOKEN_BYTES,
+    automatic_descendant_path, checked_product, checked_sample_count, read_text_file, try_copy_f32,
+    try_zeroed_f32, validate_audio_dimensions,
+};
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
 use crate::model::{Acceleration, open_session};
 use crate::score::{MAX_CHUNK_FRAMES, chunk_ranges};
@@ -71,23 +76,55 @@ pub(crate) struct LeapSingerBackend {
     config: Config,
     info: VoiceInfo,
     path: PathBuf,
+    acoustic_path: PathBuf,
+    vocoder_path: PathBuf,
     acceleration: Acceleration,
     on_gpu: bool,
+    automatic_access_safe: bool,
 }
 
 impl LeapSingerBackend {
-    pub(crate) fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
-        let raw = std::fs::read_to_string(path).map_err(|error| load_error(path, error))?;
+    pub(crate) fn load(
+        path: &Path,
+        acceleration: Acceleration,
+        automatic: bool,
+    ) -> Result<Self, SingError> {
+        let raw = read_text_file(path, "LeapSinger manifest")?;
         let config: Config = serde_json::from_str(&raw)
             .map_err(|error| metadata(format!("invalid manifest: {error}")))?;
         validate_config(&config)?;
         let root = path.parent().unwrap_or_else(|| Path::new("."));
-        let phonemes = root.join(&config.phonemes);
-        let raw =
-            std::fs::read_to_string(&phonemes).map_err(|error| load_error(&phonemes, error))?;
+        let checked_acoustic = automatic_descendant_path(root, &config.acoustic);
+        let checked_vocoder = automatic_descendant_path(root, &config.vocoder);
+        let checked_phonemes = automatic_descendant_path(root, &config.phonemes);
+        let automatic_access_safe =
+            checked_acoustic.is_some() && checked_vocoder.is_some() && checked_phonemes.is_some();
+        if automatic && !automatic_access_safe {
+            return Err(SingError::UnsafeAutomaticAccess {
+                reason: "LeapSinger manifest paths must resolve inside the voicebank folder".into(),
+            });
+        }
+        // Automatic work opens the canonical paths that passed the containment check. Explicit
+        // loading retains historical support for absolute and parent-relative manifests.
+        let acoustic_path = if automatic {
+            checked_acoustic.expect("automatic path safety was checked above")
+        } else {
+            root.join(&config.acoustic)
+        };
+        let vocoder_path = if automatic {
+            checked_vocoder.expect("automatic path safety was checked above")
+        } else {
+            root.join(&config.vocoder)
+        };
+        let phonemes_path = if automatic {
+            checked_phonemes.expect("automatic path safety was checked above")
+        } else {
+            root.join(&config.phonemes)
+        };
+        let raw = read_text_file(&phonemes_path, "LeapSinger phoneme dictionary")?;
         let symbols = read_symbols(&raw)?;
-        let (acoustic, acoustic_gpu) = open_session(&root.join(&config.acoustic), acceleration)?;
-        let (vocoder, vocoder_gpu) = open_session(&root.join(&config.vocoder), acceleration)?;
+        let (acoustic, acoustic_gpu) = open_session(&acoustic_path, acceleration)?;
+        let (vocoder, vocoder_gpu) = open_session(&vocoder_path, acceleration)?;
         validate_models(&acoustic, &vocoder, &config)?;
         let speaker_to_id = if config.speakers.is_empty() {
             BTreeMap::from([(config.name.clone(), 0)])
@@ -121,8 +158,11 @@ impl LeapSingerBackend {
             config,
             info,
             path: path.to_path_buf(),
+            acoustic_path,
+            vocoder_path,
             acceleration,
             on_gpu: acoustic_gpu || vocoder_gpu,
+            automatic_access_safe,
         })
     }
 
@@ -170,10 +210,27 @@ impl LeapSingerBackend {
         // NHVSing V3X interpolates T frames to 2*T-1 native frames. One extra frame lets us
         // crop to the exact score length without leaving a half-hop hole at every seam.
         let vocoder_count = if hop == 512 {
+            mel.try_reserve_exact(bins)
+                .map_err(|_| SingError::Allocation {
+                    resource: "LeapSinger mel context",
+                })?;
+            score
+                .f0
+                .try_reserve_exact(1)
+                .map_err(|_| SingError::Allocation {
+                    resource: "LeapSinger pitch context",
+                })?;
+            unvoiced
+                .try_reserve_exact(1)
+                .map_err(|_| SingError::Allocation {
+                    resource: "LeapSinger voicing context",
+                })?;
             mel.extend_from_within(mel.len() - bins..);
             score.f0.push(*score.f0.last().expect("padded score"));
             unvoiced.push(*unvoiced.last().expect("padded score"));
-            count + 1
+            count
+                .checked_add(1)
+                .ok_or_else(|| SingError::Inference("LeapSinger frame count overflow".into()))?
         } else {
             count
         };
@@ -187,7 +244,9 @@ impl LeapSingerBackend {
         let (shape, samples) = output["waveform"]
             .try_extract_raw_tensor::<f32>()
             .map_err(inference)?;
-        let expected = vocoder_count * hop - if hop == 512 { 256 } else { 0 };
+        let expected = checked_sample_count(vocoder_count, hop, "LeapSinger vocoder audio")?
+            .checked_sub(if hop == 512 { 256 } else { 0 })
+            .ok_or_else(|| SingError::Inference("LeapSinger vocoder output underflow".into()))?;
         if shape != [1, 1, expected as i64] || samples.len() != expected {
             return Err(SingError::Inference(format!(
                 "LeapSinger vocoder returned shape {shape:?}; expected [1, 1, {expected}] (check hop_size)"
@@ -198,7 +257,13 @@ impl LeapSingerBackend {
                 "LeapSinger vocoder returned non-finite audio".into(),
             ));
         }
-        let mut samples = samples[..range.len() * hop].to_vec();
+        let chunk_samples = checked_sample_count(range.len(), hop, "LeapSinger chunk audio")?;
+        let mut samples = try_copy_f32(
+            samples.get(..chunk_samples).ok_or_else(|| {
+                SingError::Inference("LeapSinger vocoder returned too little audio".into())
+            })?,
+            "LeapSinger chunk audio",
+        )?;
         // Neither upstream graph consumes dynamics. Apply Auris' frame gain to the waveform,
         // interpolating between frames so an expression edit introduces no hop-sized steps.
         for (index, sample) in samples.iter_mut().enumerate() {
@@ -228,6 +293,9 @@ impl SingingBackend for LeapSingerBackend {
     fn path(&self) -> &Path {
         &self.path
     }
+    fn automatic_access_safe(&self) -> bool {
+        self.automatic_access_safe
+    }
 
     fn sing_with(
         &mut self,
@@ -255,26 +323,20 @@ impl SingingBackend for LeapSingerBackend {
             });
         }
         let hop = self.config.hop_size as usize;
-        let length = frames
-            .len()
-            .checked_mul(hop)
-            .ok_or_else(|| SingError::Inference("LeapSinger score is too long".into()))?;
+        let length = checked_sample_count(frames.len(), hop, "LeapSinger rendered audio")?;
         let chunks = chunk_ranges(frames, MAX_CHUNK_FRAMES);
         let total = chunks.len();
         if !progress(0, total) {
             return Err(SingError::Cancelled);
         }
-        let mut samples = vec![0.0; length];
+        let mut samples = try_zeroed_f32(length, "LeapSinger rendered audio")?;
         for (index, range) in chunks.into_iter().enumerate() {
             let sung = match self.sing_chunk(frames, range.clone(), speaker) {
                 Ok(sung) => sung,
                 Err(error) if self.on_gpu && self.acceleration == Acceleration::Auto => {
                     log::warn!("the GPU refused LeapSinger ({error}); retrying on CPU");
-                    let root = self.path.parent().unwrap_or_else(|| Path::new("."));
-                    let (acoustic, _) =
-                        open_session(&root.join(&self.config.acoustic), Acceleration::Cpu)?;
-                    let (vocoder, _) =
-                        open_session(&root.join(&self.config.vocoder), Acceleration::Cpu)?;
+                    let (acoustic, _) = open_session(&self.acoustic_path, Acceleration::Cpu)?;
+                    let (vocoder, _) = open_session(&self.vocoder_path, Acceleration::Cpu)?;
                     self.acoustic = acoustic;
                     self.vocoder = vocoder;
                     self.on_gpu = false;
@@ -282,7 +344,9 @@ impl SingingBackend for LeapSingerBackend {
                 }
                 Err(error) => return Err(error),
             };
-            samples[range.start * hop..range.end * hop].copy_from_slice(&sung);
+            let start = checked_sample_count(range.start, hop, "LeapSinger render offset")?;
+            let end = checked_sample_count(range.end, hop, "LeapSinger render offset")?;
+            samples[start..end].copy_from_slice(&sung);
             if !progress(index + 1, total) {
                 return Err(SingError::Cancelled);
             }
@@ -304,6 +368,16 @@ fn validate_config(config: &Config) -> Result<(), SingError> {
             "name, acoustic, vocoder, and phonemes must not be empty",
         ));
     }
+    if config.name.len() > MAX_NAME_BYTES
+        || [&config.acoustic, &config.vocoder, &config.phonemes]
+            .iter()
+            .any(|path| path.as_os_str().len() > MAX_PATH_BYTES)
+    {
+        return Err(metadata(
+            "manifest names or paths exceed their practical limits",
+        ));
+    }
+    validate_audio_dimensions(config.sample_rate, config.hop_size, NAME)?;
     if config.sample_rate != 44_100
         || !matches!(config.hop_size, 256 | 512)
         || config.num_mel_bins == 0
@@ -318,6 +392,7 @@ fn validate_config(config: &Config) -> Result<(), SingError> {
     if config.speakers.len() > 4096
         || config.speakers.iter().any(|speaker| {
             speaker.name.trim().is_empty()
+                || speaker.name.len() > MAX_NAME_BYTES
                 || !names.insert(&speaker.name)
                 || speaker.embedding.is_empty()
                 || speaker.embedding.len() > 16_384
@@ -348,6 +423,11 @@ fn read_symbols(raw: &str) -> Result<Vec<String>, SingError> {
         }
         if symbol.split_whitespace().count() != 1 || !seen.insert(symbol) {
             return Err(metadata(format!("invalid or duplicate phoneme `{symbol}`")));
+        }
+        if symbol.len() > MAX_TOKEN_BYTES || symbols.len() == MAX_COLLECTION_ITEMS {
+            return Err(metadata(
+                "phoneme dictionary must contain at most 4096 tokens of at most 256 UTF-8 bytes",
+            ));
         }
         symbols.push(symbol.to_owned());
     }
@@ -638,19 +718,25 @@ fn vocoder_mel(
     count: usize,
     bins: usize,
 ) -> Result<Vec<f32>, SingError> {
+    let value_count = checked_product(
+        count,
+        bins,
+        "LeapSinger mel output",
+        MAX_CHUNK_FRAMES * 1024,
+    )?;
     let expected = match variant {
         Variant::Full => [1, bins as i64, count as i64],
         Variant::Diffsinger => [1, count as i64, bins as i64],
     };
-    if shape != expected || values.len() != count * bins || values.iter().any(|v| !v.is_finite()) {
+    if shape != expected || values.len() != value_count || values.iter().any(|v| !v.is_finite()) {
         return Err(SingError::Inference(format!(
             "LeapSinger acoustic mel must be finite with shape {expected:?}; got {shape:?}"
         )));
     }
     if variant == Variant::Diffsinger {
-        return Ok(values.to_vec());
+        return try_copy_f32(values, "LeapSinger mel input");
     }
-    let mut mel = vec![0.0; values.len()];
+    let mut mel = try_zeroed_f32(values.len(), "LeapSinger mel input")?;
     for frame in 0..count {
         for bin in 0..bins {
             mel[frame * bins + bin] = values[bin * count + frame];
@@ -663,19 +749,39 @@ fn metadata(reason: impl std::fmt::Display) -> SingError {
     SingError::Metadata(format!("{NAME}: {reason}"))
 }
 
-fn load_error(path: &Path, error: impl std::fmt::Display) -> SingError {
-    SingError::Load {
-        reason: format!("{NAME} {}: {error}", path.display()),
-    }
-}
-
 fn inference(error: ort::Error) -> SingError {
     SingError::Inference(format!("{NAME}: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    fn valid_config() -> Config {
+        Config {
+            format_version: 1,
+            name: "Singer".into(),
+            acoustic: "acoustic.onnx".into(),
+            vocoder: "vocoder.onnx".into(),
+            phonemes: "phonemes.txt".into(),
+            variant: Variant::Full,
+            sample_rate: 44_100,
+            hop_size: 256,
+            num_mel_bins: 128,
+            speakers: Vec::new(),
+        }
+    }
+
+    fn temp_manifest() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "auris-leapsinger-policy-{}-{}.leapsinger.json",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     #[test]
     fn dictionary_preserves_export_ids_and_rejects_ambiguous_tables() {
@@ -686,6 +792,47 @@ mod tests {
         for raw in ["", "a\npau", "pau\na\na", "pau\na b"] {
             assert!(read_symbols(raw).is_err());
         }
+    }
+
+    #[test]
+    fn manifest_dimensions_names_and_dictionaries_are_bounded() {
+        let mut config = valid_config();
+        config.num_mel_bins = 1024;
+        validate_config(&config).expect("supported inclusive mel boundary");
+        config.num_mel_bins += 1;
+        assert!(validate_config(&config).is_err());
+        config = valid_config();
+        config.sample_rate = u32::MAX;
+        assert!(validate_config(&config).is_err());
+        config = valid_config();
+        config.hop_size = u32::MAX;
+        assert!(validate_config(&config).is_err());
+        config = valid_config();
+        config.name = "x".repeat(MAX_NAME_BYTES + 1);
+        assert!(validate_config(&config).is_err());
+
+        let too_many = (0..MAX_COLLECTION_ITEMS)
+            .map(|index| format!("p{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(read_symbols(&format!("pau\n{too_many}")).is_err());
+        assert!(read_symbols(&format!("pau\n{}", "x".repeat(MAX_TOKEN_BYTES + 1))).is_err());
+    }
+
+    #[test]
+    fn automatic_load_rejects_manifest_escape_before_opening_children() {
+        let path = temp_manifest();
+        std::fs::write(
+            &path,
+            r#"{"format_version":1,"name":"Singer","acoustic":"../outside.onnx","vocoder":"vocoder.onnx","phonemes":"phonemes.txt"}"#,
+        )
+        .unwrap();
+        let error = match crate::VoiceModel::load_for_automatic_access(&path, Acceleration::Cpu) {
+            Err(error) => error,
+            Ok(_) => panic!("parent traversal must be rejected before child files are opened"),
+        };
+        assert!(matches!(error, SingError::UnsafeAutomaticAccess { .. }));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

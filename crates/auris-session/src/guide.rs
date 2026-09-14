@@ -22,7 +22,7 @@
 //!
 //! # Live instrument discovery
 //!
-//! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin paths for a
+//! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin search roots for a
 //! worker-owned search catalog. `search_instruments` requires query words and returns at most
 //! 50 exact, process-local preset IDs; `similar_instruments` starts or queries a reusable
 //! background acoustic index. Both MCP and Rig use the same session implementation. MCP
@@ -35,8 +35,9 @@
 //! snapshots its state, then records one undoable edit. No preset path is supplied by the model.
 //! Acoustic indexing uses the timbre map's six reference triggers and full standardized feature
 //! space, without its PCA display limit or cached audition buffers. Each failed/silent source is
-//! reported. Libraries are cached by snapshot; explicit refresh and cache eviction invalidate IDs
-//! and cancel the old index. Neither discovery nor measurement edits the document.
+//! reported within fixed metadata and index budgets. Explicit refresh, library-identity changes,
+//! bounded handle eviction and process restart invalidate IDs; heavyweight catalog eviction does
+//! not redirect an issued handle. Neither discovery nor measurement edits the document.
 //!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont
 //! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
@@ -214,9 +215,10 @@ pub mod architecture {
     //! its independent file-based tool catalog and does not consult this policy.
     //! The MCP presentation supports explicit short project handles (never an implicit current
     //! project), startup task groups, concise schemas and full on-demand help. Discovery handles
-    //! have a random process scope and are checked against the owning library snapshot; refresh
-    //! and eviction invalidate them. Search filters apply before paging or neighbor selection,
-    //! and diagnostics are read separately. [`Session::setup_tracks`] creates a bounded batch
+    //! have a random process scope and are checked against the owning library snapshot; refresh,
+    //! library changes and bounded handle eviction invalidate them. Search filters apply before paging or neighbor selection,
+    //! and diagnostics are read separately. [`Session::setup_tracks`](crate::Session::setup_tracks)
+    //! creates a bounded batch
     //! as one transaction; the saved-project adapter saves once and retains bounded retry receipts.
     //! Conversation compaction is presentation work in `auris-agent`: a tool-less model
     //! summarizes older exchanges while the latest two completed exchanges remain verbatim.
@@ -961,6 +963,25 @@ pub mod plugins {
     //! next time round. A quiet session settles back to one instance; what is never paid twice is
     //! reading the plugin off disk. It is all in `auris_session::session::hosted`.
     //!
+    //! **VST3 uses independent control and render instances.**
+    //! [`auris_vst3::Vst3Plugin`] stays with the session for its native editor and opaque state.
+    //! Each graph receives another instance restored from that state. Normalized parameter edits
+    //! move from the session instance to every renderer through an atomic snapshot, so saving or
+    //! moving a native-editor control never competes with `process()` for a mutex. Before the
+    //! session rebuilds for an opaque preset/restart change it republishes every normalized
+    //! value; a save captures those values and the opaque bytes under the same control-instance
+    //! guard, then fails visibly rather than writing a mismatched pair. Before the
+    //! renderer starts, its event and parameter storage is bounded, preallocated and transferred
+    //! irreversibly to its one owner; processor output MIDI, editor feedback and host metering are
+    //! absent from that realtime path. A complete block that cannot fit is rejected before any
+    //! event is queued, the renderer stops, and [`Session::take_vst3_render_error`](crate::Session::take_vst3_render_error)
+    //! exposes the reason instead of replaying half a note pair or rebuilding forever. Stop, seek,
+    //! loop discontinuities and graph resets send every tracked release plus the VST3 panic
+    //! controllers in a zero-sample flush before destination notes are chased. A full engine
+    //! panic also restarts each VST3 effect with `IAudioProcessor::setProcessing(false/true)`,
+    //! the VST3 audio-thread transition that clears delay, reverb and filter history without the
+    //! control-thread-only `IComponent::setActive` lifecycle.
+    //!
     //! **Notes are translated, and the translation is lossy in one direction only.** A note port
     //! declares which dialects it speaks. CLAP's own carries the key as a field and a bend as a
     //! tuning in *semitones*, so nothing has to be scaled by a pitch-bend range the host was never
@@ -1544,6 +1565,15 @@ pub mod singing {
     //! everything else when the project reopens, played by the graph from the beginning of the
     //! timeline. The engine keeps the preview instrument standing by under a take, fed nothing
     //! but auditioned notes, so clicking a note in the roll still sounds.
+    //! Repaint-driven re-singing instead starts with
+    //! [`sing_plan_for_automatic_access`](crate::Session::sing_plan_for_automatic_access): it
+    //! refuses an external Windows network path stored in the document before touching the
+    //! filesystem. Manifest-backed voices also keep every subordinate model and dictionary
+    //! below the selected voicebank, and a saved VOICEVOX connection may contact only a numeric
+    //! loopback address. An explicitly loaded model that exceeds those background rules is not
+    //! reused by the automatic cache. The inspector applies the same loopback rule before it
+    //! requests VOICEVOX artwork. The manual Sing command, voice picker, and open song sheet
+    //! retain ordinary explicit access to the path or service the person chose.
     //!
     //! A backend that predicts pitch also returns the acoustic curve used for decoding, after
     //! musical edits and with decoder padding removed. The take keeps that curve with its audio

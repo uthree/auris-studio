@@ -82,11 +82,16 @@ impl AurisApp {
                                 false,
                                 theme.accent,
                                 theme,
-                                cx.listener(move |this, _, _, cx| {
+                                cx.listener(move |this, _, window, cx| {
                                     match this.session.set_drum_assignment(track, role, None) {
                                         Ok(_) => {
                                             this.remember_drum_map(track);
-                                            this.set_status(this.t(Key::EditSetDrumAssignment))
+                                            this.set_status(this.t(Key::EditSetDrumAssignment));
+                                            // Clearing removes this button from the next frame.
+                                            // Hand focus back to its pane so routed commands such
+                                            // as Undo remain available after pointer or keyboard
+                                            // activation.
+                                            this.focus_pane(crate::app::Pane::Inspector, window);
                                         }
                                         Err(error) => this.set_failed_status(
                                             this.failure(Key::EditSetDrumAssignment, &error),
@@ -227,6 +232,13 @@ mod window_tests {
         paint(&app, cx);
         click("drum-assignment-note-0", cx);
         paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let prompt = this
+                .prompt
+                .as_ref()
+                .expect("the empty assignment field opens");
+            assert_eq!(prompt.field().unwrap().content(), "");
+        });
         cx.simulate_input("0");
         cx.simulate_keystrokes("enter");
         paint(&app, cx);

@@ -7,6 +7,8 @@ with ``automatic_optimization = False``.
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,7 @@ from auris_singer.model import AurisSinger
 from auris_singer.modules.discriminator import Discriminator
 from auris_singer.preprocess.f0 import FcpeExtractor
 from auris_singer.utils.audio import frame_energy, mel_spectrogram
+from auris_singer.utils.audio_clock import require_same_audio_clock
 from auris_singer.utils.masks import sequence_mask, slice_segments
 
 logger = logging.getLogger(__name__)
@@ -38,6 +41,97 @@ def _is_speaker_tensor(key: str) -> bool:
     """Whether a state-dict key is sized by the number of speakers: the generator's
     speaker embedding, or a discriminator's speaker projection."""
     return "speaker" in key or ".projection." in key
+
+
+def _positive_int(value: Any, label: str) -> int:
+    """Parse a configuration integer without silently truncating a float."""
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a positive integer")
+    try:
+        number = float(value)
+        integer = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"{label} must be a positive integer") from error
+    if not math.isfinite(number) or number != integer or integer <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return integer
+
+
+def _resolve_audio_clock(
+    model: dict[str, Any], audio: dict[str, Any], metadata: dict[str, Any]
+) -> tuple[int, int]:
+    """Resolve one audio/feature clock and reject every conflicting source."""
+    nested_audio = metadata.get("audio", {})
+    if nested_audio is None:
+        nested_audio = {}
+    if not isinstance(nested_audio, dict):
+        raise ValueError("dataset audio metadata must be a mapping")
+
+    resolved = []
+    for name, default in (("sample_rate", 48_000), ("hop_length", 480)):
+        model_value = _positive_int(model.get(name, audio.get(name, default)), f"model {name}")
+        if name in audio:
+            audio_value = _positive_int(audio[name], f"audio {name}")
+            if audio_value != model_value:
+                raise ValueError(
+                    f"model {name}={model_value} disagrees with audio {name}={audio_value}"
+                )
+        for source in (metadata, nested_audio):
+            if name not in source:
+                continue
+            dataset_value = _positive_int(source[name], f"dataset {name}")
+            if dataset_value != model_value:
+                raise ValueError(
+                    f"dataset {name}={dataset_value} disagrees with model {name}={model_value}"
+                )
+        model[name] = model_value
+        resolved.append(model_value)
+
+    n_fft = _positive_int(audio.get("n_fft"), "audio n_fft")
+    win_length = _positive_int(audio.get("win_length"), "audio win_length")
+    if win_length > n_fft:
+        raise ValueError(f"audio win_length={win_length} exceeds n_fft={n_fft}")
+    spec_channels = _positive_int(model.get("spec_channels"), "model spec_channels")
+    expected_channels = n_fft // 2 + 1
+    if spec_channels != expected_channels:
+        raise ValueError(
+            f"model spec_channels={spec_channels} disagrees with audio n_fft={n_fft} "
+            f"({expected_channels} spectrogram bins)"
+        )
+    for name, training_value in (("n_fft", n_fft), ("win_length", win_length)):
+        for source in (metadata, nested_audio):
+            if name not in source:
+                continue
+            dataset_value = _positive_int(source[name], f"dataset {name}")
+            if dataset_value != training_value:
+                raise ValueError(
+                    f"dataset {name}={dataset_value} disagrees with audio {name}={training_value}"
+                )
+    return resolved[0], resolved[1]
+
+
+def _checkpoint_hyperparameters(checkpoint: dict[str, Any], path: str | Path) -> dict[str, Any]:
+    """Return the semantic contract stored beside a checkpoint's tensors."""
+    value = checkpoint.get("hyper_parameters")
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{path} has no checkpoint hyper_parameters; its semantics are unknown")
+    return dict(value)
+
+
+def _checkpoint_clock_and_metadata(
+    checkpoint: dict[str, Any], path: str | Path
+) -> tuple[int, int, dict[str, Any]]:
+    """Read a checkpoint's clock and token/speaker identity contract."""
+    hparams = _checkpoint_hyperparameters(checkpoint, path)
+    model = hparams.get("model") or {}
+    audio = hparams.get("audio") or {}
+    metadata = hparams.get("metadata") or {}
+    if not isinstance(model, Mapping) or not isinstance(audio, Mapping):
+        raise ValueError(f"{path} has malformed model/audio hyper_parameters")
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"{path} has malformed metadata hyper_parameters")
+    sample_rate, hop_length = _resolve_audio_clock(dict(model), dict(audio), dict(metadata))
+    return sample_rate, hop_length, dict(metadata)
 
 
 class AurisSingerModule(L.LightningModule):
@@ -75,9 +169,9 @@ class AurisSingerModule(L.LightningModule):
         loss = dict(loss or {})
         optimizer = dict(optimizer or {})
         discriminator = dict(discriminator or {})
+        metadata = dict(metadata or {})
 
-        self.sample_rate = int(audio.get("sample_rate", model.get("sample_rate", 48_000)))
-        self.hop_length = int(audio.get("hop_length", model.get("hop_length", 480)))
+        self.sample_rate, self.hop_length = _resolve_audio_clock(model, audio, metadata)
         self.n_fft = int(audio.get("n_fft", 2048))
         self.win_length = int(audio.get("win_length", self.n_fft))
         self.n_mels = int(audio.get("n_mels", 128))
@@ -152,18 +246,36 @@ class AurisSingerModule(L.LightningModule):
         initialised, since a speaker id means nothing across corpora anyway.
         """
         checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+        source_rate, source_hop, source_metadata = _checkpoint_clock_and_metadata(checkpoint, path)
+        require_same_audio_clock(
+            "initialization checkpoint",
+            source_rate,
+            source_hop,
+            "new run",
+            self.sample_rate,
+            self.hop_length,
+        )
+        own_metadata = dict(self.hparams.get("metadata") or {})
+        source_symbols = source_metadata.get("symbols")
+        own_symbols = own_metadata.get("symbols")
+        if not isinstance(source_symbols, list) or not isinstance(own_symbols, list):
+            raise ValueError(
+                "initialization requires explicit phoneme symbols in both checkpoint and new run"
+            )
+        if source_symbols != own_symbols:
+            raise ValueError(
+                f"{path} phoneme symbols differ from the new run; token embeddings cannot be remapped"
+            )
         state = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
         weights = {
             key: value
             for key, value in state.items()
-            if key.startswith("model.") or key.startswith("discriminator.")
+            if (key.startswith("model.") or key.startswith("discriminator."))
+            and not _is_speaker_tensor(key)
         }
         own = self.state_dict()
         for key, value in list(weights.items()):
             if key in own and own[key].shape != value.shape:
-                if _is_speaker_tensor(key):
-                    del weights[key]
-                    continue
                 raise ValueError(
                     f"{key} is {tuple(value.shape)} in {path} and {tuple(own[key].shape)} here"
                 )
@@ -176,6 +288,25 @@ class AurisSingerModule(L.LightningModule):
         if missing or unexpected:
             raise ValueError(
                 f"{path} does not hold this model: missing {missing[:5]}, unexpected {unexpected[:5]}"
+            )
+
+    def validate_resume_checkpoint(self, path: str | Path) -> None:
+        """Require a resume checkpoint to describe this exact run contract."""
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+        source_rate, source_hop, source_metadata = _checkpoint_clock_and_metadata(checkpoint, path)
+        require_same_audio_clock(
+            "resume checkpoint",
+            source_rate,
+            source_hop,
+            "current run",
+            self.sample_rate,
+            self.hop_length,
+        )
+        own_metadata = dict(self.hparams.get("metadata") or {})
+        if source_metadata != own_metadata:
+            raise ValueError(
+                f"{path} metadata differs from the current run; resume requires identical "
+                "phoneme and speaker identities"
             )
 
     def configure_optimizers(self):
@@ -247,9 +378,7 @@ class AurisSingerModule(L.LightningModule):
         )
         wav_hat = out["wav_hat"]
         segment_samples = wav_hat.size(-1)
-        wav_real = slice_segments(
-            batch["wav"], out["slice_ids"] * self.hop_length, segment_samples
-        )
+        wav_real = slice_segments(batch["wav"], out["slice_ids"] * self.hop_length, segment_samples)
         # Lightning's manual-optimization global_step advances once per optimizer
         # step. Capture the batch's scale before the discriminator increments it.
         kl_scale = self.kl_scale()
@@ -427,9 +556,7 @@ class AurisSingerModule(L.LightningModule):
         """Lazily built FCPE extractor used to re-analyse generated audio."""
         if self._pitch_extractor_failed or not self.pitch_metrics_enabled:
             return None
-        if self._pitch_extractor is None or str(self._pitch_extractor.device) != str(
-            self.device
-        ):
+        if self._pitch_extractor is None or str(self._pitch_extractor.device) != str(self.device):
             try:
                 extractor = FcpeExtractor(
                     device=str(self.device),
@@ -459,9 +586,7 @@ class AurisSingerModule(L.LightningModule):
             return
         wav = wav_hat.squeeze(1).float()
 
-        valid = sequence_mask(
-            batch["spec_lengths"].clamp(max=n_frames), n_frames
-        ).float()
+        valid = sequence_mask(batch["spec_lengths"].clamp(max=n_frames), n_frames).float()
 
         pred_energy = frame_energy(wav, self.n_fft, self.hop_length, self.win_length)
         metrics = energy_metrics(batch["energy"][:, :n_frames], pred_energy, valid)
@@ -487,17 +612,11 @@ class AurisSingerModule(L.LightningModule):
 
         # A metric with no frames to average over is NaN; logging it would
         # poison the epoch mean, so those are dropped instead.
-        finite = {
-            f"val/{name}": value
-            for name, value in metrics.items()
-            if torch.isfinite(value)
-        }
+        finite = {f"val/{name}": value for name, value in metrics.items() if torch.isfinite(value)}
         if finite:
             self.log_dict(finite, on_epoch=True, sync_dist=True)
 
-    def _log_audio(
-        self, index: int, wav_hat: torch.Tensor, wav_real: torch.Tensor
-    ) -> None:
+    def _log_audio(self, index: int, wav_hat: torch.Tensor, wav_real: torch.Tensor) -> None:
         # Lightning's public trainer property raises while the module is unattached,
         # which is also how this helper is exercised in focused tests.
         trainer = getattr(self, "_trainer", None)

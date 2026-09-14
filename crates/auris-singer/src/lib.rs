@@ -39,6 +39,7 @@ mod backend;
 mod curves;
 mod diffsinger;
 mod leapsinger;
+mod limits;
 mod metadata;
 mod model;
 mod portrait;
@@ -47,10 +48,19 @@ mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, SingingRender, VoiceCapabilities, VoiceModel};
 pub use curves::{CurveGenerator, CurvePrediction, CurveSource, CurveSources, PreparedCurves};
+pub use limits::validate_automatic_voice_entry;
 pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
 pub use model::{Acceleration, NOISE_SCALE};
 pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
 pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
+
+/// Whether a VOICEVOX base URL names a numeric loopback address suitable for background work.
+///
+/// Hostnames are deliberately not resolved here: even `localhost` can be redirected by local
+/// resolver configuration, whereas `127.0.0.0/8` and `::1` carry the boundary in the manifest.
+pub fn automatic_voicevox_url_safe(url: &str) -> bool {
+    voicevox::loopback_url(url.trim_end_matches('/'))
+}
 
 /// Checks VOICEVOX lyrics before inference, retaining the original event index on failure.
 pub fn validate_voicevox_score(score: &auris_vocal::SingerScore) -> Result<(), SingError> {
@@ -127,6 +137,34 @@ pub enum SingError {
         /// Number of energy values.
         energy: usize,
     },
+    /// A frame file has matching arrays but contains a value outside the synthesis contract.
+    #[error("invalid singer frames: {reason}")]
+    InvalidFrameData {
+        /// The rejected invariant, suitable for showing beside the imported frame file.
+        reason: String,
+    },
+    /// Input or generated output exceeds a documented memory or complexity ceiling.
+    #[error("{resource} is too large (observed {observed:?}; limit {limit})")]
+    TooLarge {
+        /// Which bounded input or output exceeded its ceiling.
+        resource: &'static str,
+        /// Observed units where they fit this process's address space.
+        observed: Option<usize>,
+        /// Maximum accepted units, in the resource named above.
+        limit: usize,
+    },
+    /// A fallible preallocation failed before inference began.
+    #[error("not enough memory to allocate {resource}")]
+    Allocation {
+        /// The buffer that could not be reserved.
+        resource: &'static str,
+    },
+    /// Background loading refused a manifest reference outside its permitted local boundary.
+    #[error("unsafe automatic voice access: {reason}")]
+    UnsafeAutomaticAccess {
+        /// The path or URL policy violation.
+        reason: String,
+    },
     /// The runtime refused an inference mid-render.
     #[error("the voice model refused the score: {0}")]
     Inference(String),
@@ -151,14 +189,68 @@ pub fn validate_frames(frames: &auris_vocal::SingerFrames) -> Result<(), SingErr
     let phonemes = frames.phonemes.len();
     let f0_hz = frames.f0_hz.len();
     let energy = frames.energy.len();
-    match phonemes == f0_hz && phonemes == energy {
-        true => Ok(()),
-        false => Err(SingError::InvalidFrames {
+    if phonemes != f0_hz || phonemes != energy {
+        return Err(SingError::InvalidFrames {
             phonemes,
             f0_hz,
             energy,
-        }),
+        });
     }
+    let invalid = |reason: &str| SingError::InvalidFrameData {
+        reason: reason.into(),
+    };
+    if !(limits::MIN_HOP_SECONDS..=limits::MAX_HOP_SECONDS).contains(&frames.hop_seconds)
+        || !frames.hop_seconds.is_finite()
+    {
+        return Err(invalid(
+            "the frame hop must be finite and between 0.001 and 0.100 seconds",
+        ));
+    }
+    validate_frame_count(phonemes)?;
+    if frames.inventory.is_empty()
+        || frames.inventory.len() > limits::MAX_COLLECTION_ITEMS
+        || frames
+            .inventory
+            .iter()
+            .any(|token| token.is_empty() || token.len() > limits::MAX_TOKEN_BYTES)
+    {
+        return Err(invalid(
+            "the phoneme inventory must contain 1..=4096 nonempty tokens of at most 256 UTF-8 bytes",
+        ));
+    }
+    if frames
+        .phonemes
+        .iter()
+        .any(|id| *id as usize >= frames.inventory.len())
+    {
+        return Err(invalid("a phoneme id is outside the supplied inventory"));
+    }
+    if frames
+        .f0_hz
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=24_000.0).contains(value))
+    {
+        return Err(invalid("pitch must be finite and between 0 and 24000 Hz"));
+    }
+    if frames
+        .energy
+        .iter()
+        .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+    {
+        return Err(invalid("energy must be finite and between 0 and 1"));
+    }
+    Ok(())
+}
+
+fn validate_frame_count(phonemes: usize) -> Result<(), SingError> {
+    if phonemes > limits::MAX_FRAME_COUNT {
+        return Err(SingError::TooLarge {
+            resource: "singer frame count",
+            observed: Some(phonemes),
+            limit: limits::MAX_FRAME_COUNT,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -181,6 +273,58 @@ mod tests {
                 phonemes: 2,
                 f0_hz: 1,
                 energy: 2
+            })
+        ));
+    }
+
+    fn valid_frames() -> auris_vocal::SingerFrames {
+        auris_vocal::SingerFrames {
+            hop_seconds: 0.01,
+            inventory: vec!["<sil>".into(), "a".into()],
+            phonemes: vec![0, 1],
+            f0_hz: vec![0.0, 440.0],
+            energy: vec![0.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn frame_clock_inventory_ids_and_curves_are_bounded() {
+        let mut frames = valid_frames();
+        for hop in [f64::NAN, 0.000_999, 0.100_001] {
+            frames.hop_seconds = hop;
+            assert!(matches!(
+                validate_frames(&frames),
+                Err(SingError::InvalidFrameData { .. })
+            ));
+        }
+        frames = valid_frames();
+        frames.phonemes[1] = 2;
+        assert!(validate_frames(&frames).is_err());
+        frames = valid_frames();
+        frames.inventory[1] = "x".repeat(limits::MAX_TOKEN_BYTES + 1);
+        assert!(validate_frames(&frames).is_err());
+        frames = valid_frames();
+        frames.f0_hz[1] = f32::INFINITY;
+        assert!(validate_frames(&frames).is_err());
+        frames = valid_frames();
+        frames.energy[1] = 1.000_1;
+        assert!(validate_frames(&frames).is_err());
+
+        for hop in [limits::MIN_HOP_SECONDS, limits::MAX_HOP_SECONDS] {
+            frames = valid_frames();
+            frames.hop_seconds = hop;
+            validate_frames(&frames).expect("inclusive hop boundary");
+        }
+    }
+
+    #[test]
+    fn frame_count_boundary_is_checked_without_allocating_an_attack_vector() {
+        validate_frame_count(limits::MAX_FRAME_COUNT).expect("inclusive frame-count boundary");
+        assert!(matches!(
+            validate_frame_count(limits::MAX_FRAME_COUNT + 1),
+            Err(SingError::TooLarge {
+                resource: "singer frame count",
+                ..
             })
         ));
     }

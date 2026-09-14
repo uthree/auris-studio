@@ -39,6 +39,18 @@ pub struct AnalysisControl {
 }
 
 impl AnalysisControl {
+    /// Creates a progress control stopped by an existing shared cancellation flag.
+    ///
+    /// Model-protocol frontends use this to carry request cancellation into CPU and ONNX loops
+    /// without a polling bridge thread. The caller retains ownership of the flag and may set it
+    /// from any thread.
+    pub fn cancelled_by(cancelled: Arc<AtomicBool>) -> Self {
+        Self {
+            cancelled,
+            progress: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
     /// Whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Relaxed)

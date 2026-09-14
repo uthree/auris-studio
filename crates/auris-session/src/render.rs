@@ -1,6 +1,8 @@
 //! Offline rendering, detached from the session that produced it.
 
 use std::collections::HashSet;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -9,14 +11,257 @@ use auris_core::project::{TrackKind, UNSTRETCHED, stretch_key};
 use auris_core::{AudioBuffer, AudioSourceBank, PluginRegistry, Project, SourceId, TrackId};
 use auris_dsp::stretch::time_stretch;
 use auris_engine::{
-    OfflineOptions, OfflineRender, PlacedEffects, PlacedInstruments, RenderProgress,
+    OfflineOptions, OfflineRender, OfflineStreamError, PlacedEffects, PlacedInstruments,
+    RENDER_CHANNELS, RenderProgress,
 };
 use auris_io::{
-    AudioExportFormat, AudioExportSettings, WavExportSettings, resample_buffer,
-    write_audio_with_progress,
+    AudioExportFormat, AudioExportSettings, AudioExportWriter, WavExportSettings, resample_buffer,
 };
 
 use crate::error::SessionError;
+
+/// A snapshot of the open document paths that an audio export must not replace.
+///
+/// Path resolution and metadata reads happen only when the guard is checked, so a frontend can
+/// capture this beside a [`RenderJob`] and run both on the same worker. The snapshot deliberately
+/// includes external SoundFonts and singer voices as well as imported audio: choosing one of those
+/// files in a save dialog must never turn an export into a destructive edit of the project.
+#[derive(Clone, Debug)]
+pub struct ExportGuard {
+    audio_dir: PathBuf,
+    document: Option<PathBuf>,
+    assets: Vec<PathBuf>,
+}
+
+impl ExportGuard {
+    /// Refuses a mix or cycle destination that aliases a project file or lives in its Audio folder.
+    pub fn check_file(&self, destination: &Path) -> Result<(), SessionError> {
+        let resolved = resolve_destination(destination)?;
+        let audio = resolve_destination(&self.audio_dir)?;
+        if path_starts_with(&resolved, &audio) {
+            return Err(unsafe_export(
+                destination,
+                "choose a file outside the project's Audio folder",
+            ));
+        }
+        if let Some(document) = &self.document
+            && paths_alias(destination, &resolved, document)?
+        {
+            return Err(unsafe_export(
+                destination,
+                "this is the open project document; choose another file",
+            ));
+        }
+        for asset in &self.assets {
+            if paths_alias(destination, &resolved, asset)? {
+                return Err(unsafe_export(
+                    destination,
+                    "this file is used by the open project; choose another file",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Refuses a stem folder containing project assets or any pre-existing planned stem path.
+    ///
+    /// Stem export has no per-file replacement prompt. Requiring every planned path to be absent
+    /// keeps a repeated export from silently truncating a previous delivery.
+    pub fn check_stems(&self, folder: &Path, planned: &[PathBuf]) -> Result<(), SessionError> {
+        let resolved_folder = resolve_destination(folder)?;
+        let audio = resolve_destination(&self.audio_dir)?;
+        if path_starts_with(&resolved_folder, &audio) || path_starts_with(&audio, &resolved_folder)
+        {
+            return Err(unsafe_export(
+                folder,
+                "choose an empty folder outside the project's Audio folder",
+            ));
+        }
+        if let Some(document) = &self.document {
+            let document = resolve_destination(document)?;
+            if path_starts_with(&document, &resolved_folder) {
+                return Err(unsafe_export(
+                    folder,
+                    "the folder contains the open project document; choose another folder",
+                ));
+            }
+        }
+        for asset in &self.assets {
+            let resolved_asset = resolve_destination(asset)?;
+            if path_starts_with(&resolved_asset, &resolved_folder) {
+                return Err(unsafe_export(
+                    folder,
+                    "the folder contains a file used by the open project; choose another folder",
+                ));
+            }
+        }
+        for path in planned {
+            match fs::symlink_metadata(path) {
+                Ok(_) => {
+                    return Err(unsafe_export(
+                        path,
+                        "a stem with this name already exists; choose an empty or different folder",
+                    ));
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(unsafe_export(
+                        path,
+                        format!("the destination could not be inspected safely: {error}"),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl crate::Session {
+    /// Captures the open project's paths for worker-side audio-export validation.
+    pub fn export_guard(&self) -> ExportGuard {
+        let folder = self
+            .project_folder()
+            .expect("every session has a working project folder");
+        let mut assets: Vec<PathBuf> = self
+            .project()
+            .audio_sources
+            .values()
+            .map(|source| &source.path)
+            .chain(self.project().soundfonts.values().map(|font| &font.path))
+            .filter_map(|asset| asset.resolve(Some(folder)))
+            .collect();
+        assets.extend(
+            self.project()
+                .tracks
+                .iter()
+                .filter_map(|track| track.kind.as_singer()?.voice.as_ref())
+                .filter_map(|voice| voice.path.resolve(Some(folder))),
+        );
+        ExportGuard {
+            audio_dir: folder.join(auris_io::AUDIO_DIR),
+            document: self.path().map(Path::to_path_buf),
+            assets,
+        }
+    }
+}
+
+fn unsafe_export(path: &Path, reason: impl Into<String>) -> SessionError {
+    SessionError::UnsafeExportDestination {
+        path: path.to_path_buf(),
+        reason: reason.into(),
+    }
+}
+
+/// Resolves symlinks through the nearest existing ancestor, including for a new output file.
+fn resolve_destination(path: &Path) -> Result<PathBuf, SessionError> {
+    let mut cursor = std::path::absolute(path).map_err(|error| {
+        unsafe_export(
+            path,
+            format!("the destination could not be made absolute: {error}"),
+        )
+    })?;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(&cursor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(name) = cursor.file_name().map(ToOwned::to_owned) else {
+                    return Err(unsafe_export(
+                        path,
+                        "no existing parent folder could be found",
+                    ));
+                };
+                missing.push(name);
+                if !cursor.pop() {
+                    return Err(unsafe_export(
+                        path,
+                        "no existing parent folder could be found",
+                    ));
+                }
+            }
+            Err(error) => {
+                return Err(unsafe_export(
+                    path,
+                    format!("the destination could not be inspected safely: {error}"),
+                ));
+            }
+        }
+    }
+    let mut resolved = cursor.canonicalize().map_err(|error| {
+        unsafe_export(
+            path,
+            format!("the destination could not be resolved safely: {error}"),
+        )
+    })?;
+    for name in missing.into_iter().rev() {
+        resolved.push(name);
+    }
+    Ok(resolved)
+}
+
+fn paths_alias(
+    destination: &Path,
+    resolved_destination: &Path,
+    protected: &Path,
+) -> Result<bool, SessionError> {
+    let resolved_protected = resolve_destination(protected)?;
+    if path_eq(resolved_destination, &resolved_protected) {
+        return Ok(true);
+    }
+    same_existing_file(destination, protected).map_err(|error| {
+        unsafe_export(
+            destination,
+            format!("the destination identity could not be checked safely: {error}"),
+        )
+    })
+}
+
+const CASE_INSENSITIVE_PATHS: bool = cfg!(any(target_os = "windows", target_os = "macos"));
+
+fn path_eq(left: &Path, right: &Path) -> bool {
+    path_eq_for(left, right, CASE_INSENSITIVE_PATHS)
+}
+
+fn path_eq_for(left: &Path, right: &Path, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        left.to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy())
+    } else {
+        left == right
+    }
+}
+
+fn path_starts_with(path: &Path, parent: &Path) -> bool {
+    path_starts_with_for(path, parent, CASE_INSENSITIVE_PATHS)
+}
+
+fn path_starts_with_for(path: &Path, parent: &Path, case_insensitive: bool) -> bool {
+    if case_insensitive {
+        let path: Vec<_> = path
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let parent: Vec<_> = parent
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        path.len() >= parent.len()
+            && path
+                .iter()
+                .zip(parent.iter())
+                .all(|(left, right)| left.eq_ignore_ascii_case(right))
+    } else {
+        path.starts_with(parent)
+    }
+}
+
+fn same_existing_file(left: &Path, right: &Path) -> io::Result<bool> {
+    match same_file::is_same_file(left, right) {
+        Ok(same) => Ok(same),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
 
 /// `buffer` at `rate`, or `None` when it could not be converted.
 ///
@@ -285,6 +530,18 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<AudioBuffer, SessionError> {
+        let mut render = self.offline_render(track, options)?;
+        let mut audio = render.buffer()?;
+        render.render(&mut audio, progress)?;
+        Ok(audio)
+    }
+
+    /// Builds one render pass without allocating its duration-sized output.
+    fn offline_render(
+        &mut self,
+        track: Option<TrackId>,
+        options: &OfflineOptions,
+    ) -> Result<OfflineRender, SessionError> {
         let rate = options.sample_rate.unwrap_or(self.project.sample_rate);
         let mut bank = bank_at_rate(&self.bank, rate);
         // An export builds its own graph from its own bank, so it stretches its own copies. They
@@ -302,9 +559,7 @@ impl RenderJob {
         if let Some(track) = track {
             render.set_audible(&self.project.soloed_alone(track));
         }
-        let mut audio = render.buffer();
-        render.render(&mut audio, progress)?;
-        Ok(audio)
+        Ok(render)
     }
 
     /// Renders and writes an audio file in the selected format.
@@ -319,24 +574,33 @@ impl RenderJob {
         options: &OfflineOptions,
         progress: &mut RenderProgress<'_>,
     ) -> Result<ExportSummary, SessionError> {
-        let buffer = progress.within(0.0, 0.9, |progress| self.render(options, progress))?;
-        let rendered_rate = options.sample_rate.unwrap_or(self.project.sample_rate);
+        let mut render = self.offline_render(None, options)?;
+        let rendered_rate = render.sample_rate();
         let settings = AudioExportSettings {
             sample_rate: rendered_rate.round().max(1.0) as u32,
             ..*settings
         };
-        progress.within(0.9, 0.1, |progress| {
-            let mut write_progress = |fraction| {
-                progress.report(fraction);
-                !progress.is_cancelled()
-            };
-            write_audio_with_progress(path, &buffer, &settings, &mut write_progress)
-        })?;
+        let frames = render.frames();
+        let mut writer = AudioExportWriter::create(path, RENDER_CHANNELS, frames, &settings)?;
+        let mut peak = 0.0f32;
+        let streamed = progress.within(0.0, 0.99, |progress| {
+            render.render_streamed(progress, |block| {
+                peak = peak.max(block.peak());
+                writer.write(block)
+            })
+        });
+        match streamed {
+            Ok(()) => {}
+            Err(OfflineStreamError::Render(error)) => return Err(error.into()),
+            Err(OfflineStreamError::Sink(error)) => return Err(error.into()),
+        }
+        writer.finish_with_commit(|| progress.begin_commit())?;
+        progress.report(1.0);
         Ok(ExportSummary {
-            seconds: buffer.duration_seconds(),
-            frames: buffer.frame_count() as u64,
-            channels: buffer.channel_count(),
-            peak_db: gain_to_db(buffer.peak()),
+            seconds: frames as f64 / rendered_rate,
+            frames: frames as u64,
+            channels: RENDER_CHANNELS,
+            peak_db: gain_to_db(peak),
         })
     }
 
@@ -427,8 +691,27 @@ fn sanitised_name(name: &str) -> String {
         })
         .collect();
     let trimmed = cleaned.trim().trim_matches('.').trim();
-    match trimmed.is_empty() {
-        true => "Track".to_string(),
+    if trimmed.is_empty() {
+        return "Track".to_string();
+    }
+    // Windows reserves these device names even when another extension follows them: `CON.wav`
+    // and `con.mix.wav` both address the console rather than a normal file. Stem names are made
+    // portable on every platform so a project prepared on macOS does not fail only when its
+    // export is repeated on Windows.
+    let device = trimmed.split('.').next().unwrap_or(trimmed).trim_end();
+    let upper = device.to_ascii_uppercase();
+    let reserved = matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || upper
+            .strip_prefix("COM")
+            .or_else(|| upper.strip_prefix("LPT"))
+            .is_some_and(|number| {
+                matches!(
+                    number,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            });
+    match reserved {
+        true => format!("_{trimmed}"),
         false => trimmed.to_string(),
     }
 }
@@ -440,6 +723,19 @@ impl RenderJob {
     /// so a progress bar knows how many renders it is waiting for.
     pub fn stem_tracks(&self) -> Vec<(TrackId, String)> {
         stem_tracks(&self.project)
+    }
+
+    /// Exact paths a stem export would create, including duplicate-name disambiguation.
+    ///
+    /// A frontend uses this before rendering so it can reject a non-empty destination without
+    /// first truncating the earlier stems. This and [`Self::render_audio_stems`] deliberately use
+    /// the same name generator.
+    pub fn stem_paths(&self, folder: &Path, format: AudioExportFormat) -> Vec<PathBuf> {
+        let mut taken = HashSet::new();
+        stem_tracks(&self.project)
+            .into_iter()
+            .map(|(_, name)| folder.join(stem_file_name(&name, format, &mut taken)))
+            .collect()
     }
 
     /// Renders one WAV file per track into `folder`, and says what each of them was.
@@ -530,29 +826,34 @@ impl RenderJob {
             sample_rate: render.sample_rate().round().max(1.0) as u32,
             ..*settings
         };
-        let mut out = render.buffer();
+        let frames = render.frames();
+        let seconds = frames as f64 / render.sample_rate();
         let span = 1.0 / tracks.len() as f32;
         let mut taken = HashSet::new();
         let mut stems = Vec::with_capacity(tracks.len());
         for (index, (track, name)) in tracks.into_iter().enumerate() {
             render.set_audible(&self.project.soloed_alone(track));
-            let path = match progress.within(index as f32 * span, span, |progress| {
-                let rendered =
-                    progress.within(0.0, 0.9, |progress| render.render(&mut out, progress));
-                if let Err(error) = rendered {
-                    return Err(error.into());
-                }
-                let path = folder.join(stem_file_name(&name, settings.format, &mut taken));
-                let written = progress.within(0.9, 0.1, |progress| {
-                    let mut write_progress = |fraction| {
-                        progress.report(fraction);
-                        !progress.is_cancelled()
-                    };
-                    write_audio_with_progress(&path, &out, &settings, &mut write_progress)
+            let path = folder.join(stem_file_name(&name, settings.format, &mut taken));
+            let mut peak = 0.0f32;
+            match progress.within(index as f32 * span, span, |progress| {
+                let mut writer =
+                    AudioExportWriter::create(&path, RENDER_CHANNELS, frames, &settings)?;
+                let streamed = progress.within(0.0, 0.99, |progress| {
+                    render.render_streamed(progress, |block| {
+                        peak = peak.max(block.peak());
+                        writer.write(block)
+                    })
                 });
-                written.map(|()| path).map_err(SessionError::from)
+                match streamed {
+                    Ok(()) => {}
+                    Err(OfflineStreamError::Render(error)) => return Err(error.into()),
+                    Err(OfflineStreamError::Sink(error)) => return Err(error.into()),
+                }
+                writer.finish_noclobber_with_commit(|| progress.begin_commit())?;
+                progress.report(1.0);
+                Ok::<(), SessionError>(())
             }) {
-                Ok(path) => path,
+                Ok(()) => {}
                 Err(error) => {
                     return Err(StemRenderFailure {
                         error,
@@ -565,10 +866,10 @@ impl RenderJob {
                 name,
                 path,
                 summary: ExportSummary {
-                    seconds: out.duration_seconds(),
-                    frames: out.frame_count() as u64,
-                    channels: out.channel_count(),
-                    peak_db: gain_to_db(out.peak()),
+                    seconds,
+                    frames: frames as u64,
+                    channels: RENDER_CHANNELS,
+                    peak_db: gain_to_db(peak),
                 },
             });
         }
@@ -724,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn two_tracks_of_one_name_do_not_write_one_file() {
+    fn stem_names_are_unique_and_portable() {
         // Duplicating a track is how this happens, and it happens constantly. The second stem
         // would otherwise be written over the first and the export would come back one short.
         let mut taken = HashSet::new();
@@ -750,6 +1051,122 @@ mod tests {
             stem_file_name("   ", AudioExportFormat::Mp3, &mut taken),
             "Track.mp3"
         );
+        assert_eq!(
+            stem_file_name("CON", AudioExportFormat::Wav, &mut taken),
+            "_CON.wav"
+        );
+        assert_eq!(
+            stem_file_name("com1.demo", AudioExportFormat::Wav, &mut taken),
+            "_com1.demo.wav"
+        );
+        assert_eq!(
+            stem_file_name("COM¹", AudioExportFormat::Wav, &mut taken),
+            "_COM¹.wav"
+        );
+        assert_eq!(
+            stem_file_name("COM10", AudioExportFormat::Wav, &mut taken),
+            "COM10.wav"
+        );
+    }
+
+    #[test]
+    fn stem_paths_match_the_names_the_renderer_will_use() {
+        let mut project = Project::new("Paths", 48_000.0);
+        project.add_audio_track("Gtr");
+        project.add_audio_track("gtr");
+        project.add_audio_track("Gtr/Bass");
+        let job = RenderJob::new(
+            project,
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+            PlacedInstruments::new(),
+        );
+        let folder = Path::new("delivery");
+        assert_eq!(
+            job.stem_paths(folder, AudioExportFormat::Flac),
+            vec![
+                folder.join("Gtr.flac"),
+                folder.join("gtr 2.flac"),
+                folder.join("Gtr-Bass.flac"),
+            ]
+        );
+    }
+
+    #[test]
+    fn export_guard_preserves_project_assets_and_existing_stems() {
+        let scratch = tempfile::tempdir().unwrap();
+        let project = scratch.path().join("Song");
+        let audio = project.join(auris_io::AUDIO_DIR);
+        let delivery = scratch.path().join("Delivery");
+        std::fs::create_dir_all(&audio).unwrap();
+        std::fs::create_dir_all(&delivery).unwrap();
+        let asset = audio.join("source.wav");
+        std::fs::write(&asset, b"project audio").unwrap();
+        let document = project.join("Song.auris");
+        std::fs::write(&document, b"project").unwrap();
+        let guard = ExportGuard {
+            audio_dir: audio.clone(),
+            document: Some(document.clone()),
+            assets: vec![asset.clone()],
+        };
+
+        assert!(matches!(
+            guard.check_file(&asset),
+            Err(SessionError::UnsafeExportDestination { .. })
+        ));
+        assert!(matches!(
+            guard.check_file(&audio.join("mix.wav")),
+            Err(SessionError::UnsafeExportDestination { .. })
+        ));
+        assert!(matches!(
+            guard.check_file(&document),
+            Err(SessionError::UnsafeExportDestination { .. })
+        ));
+        assert!(guard.check_file(&delivery.join("mix.wav")).is_ok());
+
+        let existing = delivery.join("Gtr.wav");
+        std::fs::write(&existing, b"previous stem").unwrap();
+        assert!(matches!(
+            guard.check_stems(&delivery, std::slice::from_ref(&existing)),
+            Err(SessionError::UnsafeExportDestination { .. })
+        ));
+        assert_eq!(std::fs::read(existing).unwrap(), b"previous stem");
+    }
+
+    #[test]
+    fn export_guard_recognises_hard_link_aliases() {
+        let scratch = tempfile::tempdir().unwrap();
+        let audio = scratch.path().join("Project").join(auris_io::AUDIO_DIR);
+        let delivery = scratch.path().join("Delivery");
+        std::fs::create_dir_all(&audio).unwrap();
+        std::fs::create_dir_all(&delivery).unwrap();
+        let asset = audio.join("source.wav");
+        let alias = delivery.join("mix.wav");
+        std::fs::write(&asset, b"project audio").unwrap();
+        if std::fs::hard_link(&asset, &alias).is_err() {
+            return;
+        }
+        let guard = ExportGuard {
+            audio_dir: audio,
+            document: None,
+            assets: vec![asset],
+        };
+        assert!(matches!(
+            guard.check_file(&alias),
+            Err(SessionError::UnsafeExportDestination { .. })
+        ));
+    }
+
+    #[test]
+    fn export_path_comparison_covers_sensitive_and_case_insensitive_filesystems() {
+        let audio = Path::new("Song/Audio");
+        let differently_cased = Path::new("song/audio");
+        let child = Path::new("song/AUDIO/mix.wav");
+        assert!(path_eq_for(audio, differently_cased, true));
+        assert!(!path_eq_for(audio, differently_cased, false));
+        assert!(path_starts_with_for(child, audio, true));
+        assert!(!path_starts_with_for(child, audio, false));
     }
 
     #[test]
@@ -892,5 +1309,86 @@ mod tests {
             (rendered.channel(0)[95_000] - 0.5).abs() < 1e-3,
             "the clip ran out before the end of the export"
         );
+    }
+
+    #[test]
+    fn cancelling_a_streamed_export_preserves_the_previous_file_and_removes_scratch() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let mut project = Project::new("Cancel", 48_000.0);
+        let track = project.add_audio_track("Audio");
+        let source = project.add_audio_source(
+            "source",
+            auris_core::AssetPath::inside("Audio/source.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .expect("clip");
+        let mut job = RenderJob::new(
+            project,
+            bank_at(source, 48_000.0),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+            PlacedInstruments::new(),
+        );
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let folder = std::env::temp_dir().join(format!("auris-stream-cancel-{unique}"));
+        std::fs::create_dir(&folder).unwrap();
+        let path = folder.join("mix.wav");
+        let previous = b"previous complete export";
+        std::fs::write(&path, previous).unwrap();
+
+        let cancelled = AtomicBool::new(false);
+        let mut report = |fraction: f32| {
+            if fraction > 0.0 {
+                cancelled.store(true, Ordering::Relaxed);
+            }
+        };
+        let result = job.render_to_audio(
+            &path,
+            &AudioExportSettings::default(),
+            &OfflineOptions::default().with_block_frames(1_024),
+            &mut RenderProgress::reporting(&mut report).cancelled_by(&cancelled),
+        );
+
+        assert!(result.is_err_and(|error| error.is_cancellation()));
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn cancellation_winning_the_final_commit_gate_preserves_the_previous_file() {
+        let project = Project::new("Commit gate", 48_000.0);
+        let mut job = RenderJob::new(
+            project,
+            AudioSourceBank::new(),
+            plugin_catalogue(),
+            PlacedEffects::new(),
+            PlacedInstruments::new(),
+        );
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("mix.wav");
+        let previous = b"previous complete export";
+        std::fs::write(&path, previous).unwrap();
+        let refuse_commit = || false;
+
+        let result = job.render_to_audio(
+            &path,
+            &AudioExportSettings::default(),
+            &OfflineOptions::default(),
+            &mut RenderProgress::default().committing_with(&refuse_commit),
+        );
+
+        assert!(result.is_err_and(|error| error.is_cancellation()));
+        assert_eq!(std::fs::read(&path).unwrap(), previous);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
     }
 }

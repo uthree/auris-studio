@@ -55,6 +55,8 @@ def build(config):
 
 def fit(trainer, module, datamodule, checkpoint_path) -> None:
     """Fit or resume without permitting checkpoint pickle code to execute."""
+    if checkpoint_path is not None:
+        module.validate_resume_checkpoint(checkpoint_path)
     trainer.fit(
         module,
         datamodule=datamodule,

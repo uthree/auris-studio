@@ -7,6 +7,7 @@ import pytest
 
 from auris_singer.infer import Synthesizer, frame_voicing
 from auris_singer.text import SIL, is_voiceless
+from auris_singer.utils import durations as duration_utils
 
 
 def test_voiceless_classification_covers_the_japanese_core():
@@ -42,3 +43,14 @@ def test_a_boolean_is_not_a_speaker_id():
     synthesizer.speaker_to_id = {"alice": 0, "bob": 1}
     with pytest.raises(TypeError, match="not bool"):
         synthesizer.resolve_speaker(True)
+
+
+def test_wrong_duration_count_is_rejected_before_array_conversion(monkeypatch):
+    """A huge wrong-length list must not be copied before its O(1) length check."""
+
+    def array_conversion_would_allocate(_values):
+        pytest.fail("np.asarray ran before the duration count was rejected")
+
+    monkeypatch.setattr(duration_utils.np, "asarray", array_conversion_would_allocate)
+    with pytest.raises(ValueError, match="2 entries but there are 1 phonemes"):
+        duration_utils.validated_duration_array([1, 2], expected_count=1)

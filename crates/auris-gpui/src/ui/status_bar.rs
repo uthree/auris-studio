@@ -38,6 +38,17 @@ impl AurisApp {
         } else {
             self.t(Key::EngineSilent).to_string()
         };
+        let background_fraction = self.background_command.as_ref().and_then(|state| {
+            state.progress.as_ref().map(|progress| {
+                f32::from_bits(progress.load(std::sync::atomic::Ordering::Relaxed)).clamp(0.0, 1.0)
+            })
+        });
+        let background_running = self.background_command.is_some();
+        let status = self
+            .background_command
+            .as_ref()
+            .map(|state| state.label.clone())
+            .unwrap_or_else(|| self.status.clone());
         div()
             .flex()
             .items_center()
@@ -59,7 +70,7 @@ impl AurisApp {
                     // A failure was reported in the same pale grey as the sample rate beside it,
                     // in a row a user has no reason to be looking at.
                     .when(self.status_failed, |this| this.text_color(theme.danger))
-                    .child(self.status.clone()),
+                    .child(status),
             )
             .children(self.soundfont_download.as_ref().map(|download| {
                 div()
@@ -69,6 +80,29 @@ impl AurisApp {
                     .text_color(theme.accent_text)
                     .child(download.message(self.language()))
             }))
+            .children(background_fraction.map(|fraction| {
+                div()
+                    .id("background-command-progress")
+                    .debug_selector(|| "background-command-progress".to_owned())
+                    .flex_shrink_0()
+                    .text_color(theme.accent_text)
+                    .child(format!("{:.0}%", fraction * 100.0))
+            }))
+            .when(background_running, |this| {
+                this.child(button(
+                    "background-command-cancel",
+                    self.t(Key::Cancel),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.danger,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.cancel_background_command();
+                        window.focus(&this.focus);
+                        cx.notify();
+                    }),
+                ))
+            })
             // The standing offer when another writer changed the file under unsaved work:
             // the one button in the window that takes the disk's version deliberately.
             .when(self.external_change.is_some(), |this| {
@@ -79,10 +113,11 @@ impl AurisApp {
                     true,
                     theme.warning,
                     &theme,
-                    cx.listener(|this, _, _, cx| {
+                    cx.listener(|this, _, window, cx| {
                         if let Some(path) = this.external_change.take() {
                             this.set_status(String::new());
                             this.accept_agent_changes(path, cx);
+                            window.focus(&this.focus);
                         }
                         cx.notify();
                     }),

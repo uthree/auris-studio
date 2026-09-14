@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use crate::asset::AssetPath;
 use crate::buffer::AudioBuffer;
+use crate::error::{CoreError, Result};
 use crate::time::{SignatureMap, TempoMap, Ticks};
 
 use super::curve::{ClipCurve, CurvePoint, curve_at, curve_events};
@@ -127,18 +128,106 @@ impl Note {
 /// A `content` of zero or less would divide by nothing, and yields a single degenerate pass
 /// rather than looping forever.
 pub fn loop_passes(content: Ticks, loop_end: Ticks) -> impl Iterator<Item = (Ticks, Ticks)> {
+    let (span, total, passes) = loop_geometry(content, loop_end);
+    let passes = usize::try_from(passes)
+        .unwrap_or(usize::MAX)
+        .min(MAX_LOOP_PASSES);
+    (0..passes).map(move |pass| {
+        // `pass` is below the exact ceiling division of `total / span`, so this product is
+        // mathematically below `total` and therefore representable as an i64. Keep the checked
+        // operation at the hostile-input boundary so that invariant cannot become a panic if the
+        // iterator changes later.
+        let offset = span.checked_mul(pass as i64).unwrap_or(i64::MAX);
+        (Ticks(offset), Ticks(span.min(total - offset)))
+    })
+}
+
+fn loop_geometry(content: Ticks, loop_end: Ticks) -> (i64, i64, u64) {
     let span = content.raw().max(1);
     let total = loop_end.raw().max(span);
-    (0..)
-        .map_while(move |pass| {
-            let offset = pass * span;
-            (offset < total).then(|| (Ticks(offset), Ticks(span.min(total - offset))))
-        })
-        .take(MAX_LOOP_PASSES)
+    let passes = (total as u64).div_ceil(span as u64);
+    (span, total, passes)
 }
 
 /// Safety ceiling for a loop length read from an untrusted project file.
 const MAX_LOOP_PASSES: usize = 16_384;
+
+/// Greatest number of performed note instances one clip may create while flattening its loop.
+///
+/// Half a million instances already become up to one million NoteOn/NoteOff events before any
+/// controller data. That is far beyond a dense, long-form musical part, while keeping the graph's
+/// preparation allocation to tens rather than hundreds of megabytes.
+const MAX_LOOP_NOTE_INSTANCES: usize = 500_000;
+
+/// Validates and returns the number of passes needed to play a clip's loop.
+///
+/// Callers that expand [`loop_passes`] must check this first when the clip may have come from an
+/// untrusted document or a public editing API. The iterator itself remains capped as a final
+/// memory-safety backstop, while this function turns that cap into an actionable error instead of
+/// silently shortening playback.
+pub fn validated_loop_pass_count(clip: ClipId, content: Ticks, loop_end: Ticks) -> Result<usize> {
+    let (_, _, passes) = loop_geometry(content, loop_end);
+    if passes > MAX_LOOP_PASSES as u64 {
+        return Err(CoreError::LoopPassLimit {
+            clip: clip.0,
+            passes,
+            limit: MAX_LOOP_PASSES,
+        });
+    }
+    Ok(passes as usize)
+}
+
+fn stage_note_bound(notes: u128, transform: &super::NoteTransform, length: Ticks) -> u128 {
+    match transform {
+        super::NoteTransform::Octaves { above, below } => {
+            let copies = 1 + u128::from(*above > 0.0) + u128::from(*below > 0.0);
+            notes.saturating_mul(copies)
+        }
+        super::NoteTransform::Mute { amount } | super::NoteTransform::Slide { amount }
+            if amount.is_nan() || *amount > 0.0 =>
+        {
+            notes.saturating_mul(2)
+        }
+        super::NoteTransform::Ghost { settings }
+            if (settings.density.is_nan() || settings.density > 0.0)
+                && (settings.velocity.is_nan() || settings.velocity > 0.0) =>
+        {
+            // Ghosts visit a sixteenth-note grid. At any candidate the preceding chord can
+            // contain every current note; one extra slot covers an off-grid clip origin.
+            let step = (Ticks::QUARTER.raw() / 4) as u128;
+            let slots = (length.raw().max(0) as u128).div_ceil(step) + 1;
+            notes.saturating_mul(slots.saturating_add(1))
+        }
+        super::NoteTransform::Brush { amount } if amount.is_nan() || *amount > 0.0 => {
+            let step = (Ticks::QUARTER.raw() / 4) as u128;
+            let slots = (length.raw().max(0) as u128).div_ceil(step) + 1;
+            notes.saturating_mul(slots.saturating_add(1))
+        }
+        _ => notes,
+    }
+}
+
+fn performed_note_bound(
+    voices: &mut BTreeMap<String, u128>,
+    transforms: &[super::NoteTransform],
+    length: Ticks,
+) -> u128 {
+    for transform in transforms {
+        if let super::NoteTransform::ForDrumVoice { voice, transforms } = transform {
+            let active = voices.get(voice).copied().unwrap_or(0);
+            if active > 0 {
+                let mut scoped = BTreeMap::from([(voice.clone(), active)]);
+                let bounded = performed_note_bound(&mut scoped, transforms, length);
+                voices.insert(voice.clone(), bounded);
+            }
+        } else {
+            for count in voices.values_mut() {
+                *count = stage_note_bound(*count, transform, length);
+            }
+        }
+    }
+    voices.values().copied().fold(0, u128::saturating_add)
+}
 
 /// How far a clip reaches on the timeline, repeats included.
 ///
@@ -161,7 +250,7 @@ pub fn sounding_length(content: Ticks, loop_end: Ticks) -> Ticks {
 /// not a loop.
 pub fn default_loop_end(start: Ticks, content: Ticks, next: Option<Ticks>) -> Ticks {
     let content = Ticks(content.raw().max(1));
-    let twice = content * 2;
+    let twice = Ticks(content.raw().saturating_mul(2));
     match next {
         Some(next) if next - start > content => next - start,
         _ => twice,
@@ -255,6 +344,39 @@ impl MidiClip {
             loop_end: Ticks::ZERO,
             transforms: Vec::new(),
         }
+    }
+
+    /// Conservative number of notes flattening this clip's loop may perform.
+    ///
+    /// The check includes note-adding performance stages and fails before any pass is copied.
+    /// This is the boundary used when loading a project and preparing a render graph, so a small
+    /// document cannot turn into an unbounded event allocation merely by carrying a large loop.
+    pub fn looped_note_instances(&self) -> Result<usize> {
+        self.looped_note_instances_at(self.loop_end)
+    }
+
+    /// Conservative performed-note count if this clip ended its loop at `loop_end`.
+    ///
+    /// Editors use this before committing a loop-edge drag so the document never enters a state
+    /// that the loader must reject on its next open.
+    pub fn looped_note_instances_at(&self, loop_end: Ticks) -> Result<usize> {
+        let passes = validated_loop_pass_count(self.id, self.length, loop_end)?;
+        let mut voices = BTreeMap::new();
+        for note in self.playable_notes() {
+            *voices.entry(note.drum_voice).or_insert(0) += 1;
+        }
+        let notes_per_pass = performed_note_bound(&mut voices, &self.transforms, self.length);
+        let instances = notes_per_pass.saturating_mul(passes as u128);
+        if instances > MAX_LOOP_NOTE_INSTANCES as u128 {
+            return Err(CoreError::LoopNoteLimit {
+                clip: self.id.0,
+                notes_per_pass,
+                passes,
+                instances,
+                limit: MAX_LOOP_NOTE_INSTANCES,
+            });
+        }
+        Ok(instances as usize)
     }
 
     /// `true` when the clip was written by the composer rather than played.
@@ -989,6 +1111,56 @@ impl AudioSourceBank {
 }
 
 impl Project {
+    /// Validates every clip loop before a reader expands it into notes or audio windows.
+    ///
+    /// This is deliberately a per-clip document invariant. A large project may contain many
+    /// individually safe clips; complete-graph memory budgets belong at the renderer that owns
+    /// that allocation, not at the project-file boundary.
+    pub fn validate_loop_expansion(&self) -> Result<()> {
+        for track in &self.tracks {
+            for clip in track.kind.note_clips().into_iter().flatten() {
+                clip.looped_note_instances()?;
+            }
+            if let Some(audio) = track.kind.as_audio() {
+                for clip in &audio.clips {
+                    validated_loop_pass_count(
+                        clip.id,
+                        self.audio_clip_length_ticks(clip),
+                        clip.loop_end,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates one clip as if it used the proposed `loop_end`.
+    ///
+    /// A command calls this before recording or mutating a loop edge. Complete-graph resource
+    /// budgets are enforced when a render graph is built, so duplicating a safe clip remains a
+    /// valid document edit even in a very large arrangement.
+    pub fn validate_clip_loop(&self, clip: ClipId, loop_end: Ticks) -> Result<()> {
+        for track in &self.tracks {
+            if let Some(clips) = track.kind.note_clips()
+                && let Some(candidate) = clips.iter().find(|candidate| candidate.id == clip)
+            {
+                candidate.looped_note_instances_at(loop_end)?;
+                return Ok(());
+            }
+            if let Some(audio) = track.kind.as_audio()
+                && let Some(candidate) = audio.clips.iter().find(|candidate| candidate.id == clip)
+            {
+                validated_loop_pass_count(
+                    candidate.id,
+                    self.audio_clip_length_ticks(candidate),
+                    loop_end,
+                )?;
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     /// Copies a clip onto its own track, placed immediately after the original.
     ///
     /// Butting the copy up against the original is what makes repeated duplication lay out a
@@ -1912,6 +2084,93 @@ mod tests {
             loop_passes(Ticks(1), Ticks(i64::MAX)).count(),
             MAX_LOOP_PASSES
         );
+    }
+
+    #[test]
+    fn discovering_the_end_of_a_huge_partial_loop_does_not_overflow() {
+        let content = Ticks(i64::MAX / 2 + 1);
+        assert_eq!(
+            loop_passes(content, Ticks(i64::MAX)).collect::<Vec<_>>(),
+            vec![
+                (Ticks::ZERO, content),
+                (content, Ticks(i64::MAX - content.raw())),
+            ]
+        );
+    }
+
+    #[test]
+    fn repeated_notes_over_the_expansion_budget_are_rejected_before_iteration() {
+        let mut clip = MidiClip::new(ClipId(7), "hostile", Ticks::ZERO, Ticks(1));
+        clip.notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        clip.loop_end = Ticks(501);
+
+        let error = clip
+            .looped_note_instances()
+            .expect_err("501,000 note instances must exceed the schedule budget");
+        assert!(error.to_string().contains("reduce its notes or repeats"));
+    }
+
+    #[test]
+    fn independent_drum_voice_transforms_are_not_multiplied_into_each_other() {
+        let length = Ticks::from_beats(4.0);
+        let mut clip = MidiClip::new(ClipId(8), "kit", Ticks::ZERO, length);
+        for index in 0..100 {
+            let mut note = Note::new(36 + index % 2, Ticks::ZERO, Ticks::QUARTER);
+            note.drum_voice = if index % 2 == 0 { "kick" } else { "snare" }.into();
+            clip.notes.push(note);
+        }
+        clip.transforms = ["kick", "snare"]
+            .into_iter()
+            .map(|voice| crate::NoteTransform::ForDrumVoice {
+                voice: voice.into(),
+                transforms: vec![crate::NoteTransform::Brush { amount: 1.0 }],
+            })
+            .collect();
+        clip.loop_end = length * 20;
+
+        assert!(clip.looped_note_instances().is_ok());
+    }
+
+    #[test]
+    fn individually_safe_clips_remain_a_valid_large_project_together() {
+        let mut project = Project::new("aggregate", 48_000.0);
+        let track = project.add_instrument_track("Dense", "x");
+        for index in 0..6 {
+            let id = project
+                .add_midi_clip(track, format!("part {index}"), Ticks(index), Ticks(1))
+                .expect("instrument tracks accept MIDI clips");
+            let clip = project.midi_clip_mut(id).expect("the new clip exists");
+            clip.notes = (0..1_000)
+                .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+                .collect();
+            clip.loop_end = Ticks(400);
+            assert_eq!(clip.looped_note_instances().unwrap(), 400_000);
+        }
+
+        assert!(project.validate_loop_expansion().is_ok());
+    }
+
+    #[test]
+    fn individually_safe_audio_loops_remain_a_valid_large_project_together() {
+        let mut project = Project::new("aggregate audio", 48_000.0);
+        let track = project.add_audio_track("Loops");
+        let source = project.add_audio_source(
+            "one frame",
+            AssetPath::inside("Audio/one.wav"),
+            1,
+            48_000.0,
+            2,
+        );
+        for _ in 0..7 {
+            let id = project
+                .add_audio_clip(track, source, Ticks::ZERO)
+                .expect("audio tracks accept audio clips");
+            project.audio_clip_mut(id).unwrap().loop_end = Ticks(MAX_LOOP_PASSES as i64);
+        }
+
+        assert!(project.validate_loop_expansion().is_ok());
     }
 
     #[test]

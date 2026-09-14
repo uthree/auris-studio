@@ -69,12 +69,29 @@ evaluation measures every voice on the same labelled alignment.
 
 ```
 data/processed/
-  my_singer/song01.npz
-  metadata.jsonl      # one JSON record per utterance
-  speakers.json       # speaker name -> id
-  phonemes.json       # the IPA symbol table used
-  audio_config.json   # sample rate / STFT settings the features were built with
+  CURRENT                       # selected immutable generation
+  generations/<generation>/
+    samples/00000000.npz        # one feature archive per utterance
+    metadata.jsonl              # one JSON record per utterance
+    speakers.json               # speaker name -> id
+    phonemes.json               # the IPA symbol table used
+    audio_config.json           # sample rate / STFT settings used
 ```
+
+The preprocessor finishes every archive and metadata file in a private staging
+directory, renames it into `generations/`, and only then atomically replaces
+`CURRENT`. An interrupted rerun therefore leaves the last complete generation
+readable; training resolves the pointer once at startup and cannot mix files
+from two runs. Published generations are retained because an already-running
+trainer may still have resolved one of them; remove obsolete generations only
+after those readers have stopped. Older flat datasets without `CURRENT` remain
+readable.
+
+Sample filenames are generation-local ordinals rather than source names. This
+also permits multiple source roots for one speaker even when both contain a
+file such as `song.wav`; manifest ids include the configured source ordinal for
+the same reason. Corpus preparation scripts mirror the source-relative parent
+directories under `wav/`, `text/`, and `dur/`.
 
 Each `.npz` contains:
 

@@ -51,7 +51,7 @@ impl Modulator {
         reader: &mut R,
         size: usize,
     ) -> Result<Vec<Modulator>, SoundFontError> {
-        if size % 10 != 0 {
+        if !size.is_multiple_of(10) {
             return Err(SoundFontError::InvalidModulatorList);
         }
 

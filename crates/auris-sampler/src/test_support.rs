@@ -187,7 +187,16 @@ fn runaway_bytes(claimed_rate: i32) -> Vec<u8> {
     info.extend(chunk(b"isng", padded(b"EMU8000")));
     info.extend(chunk(b"INAM", padded(b"Auris Runaway Font")));
 
-    let sdta = chunk(b"smpl", sample_data(voices, claimed_rate));
+    // Keep the loop itself audibly non-zero. A safety test that accepted silence would also pass
+    // if the oscillator merely gave up after containing the old out-of-bounds panic.
+    let mut runaway_samples = Vec::new();
+    for _ in 0..SAMPLE_FRAMES {
+        push_u16(&mut runaway_samples, (0.5 * i16::MAX as f32) as i16 as u16);
+    }
+    for _ in 0..SAMPLE_PADDING {
+        push_u16(&mut runaway_samples, 0);
+    }
+    let sdta = chunk(b"smpl", runaway_samples);
 
     let mut pdta = Vec::new();
     pdta.extend(chunk(b"phdr", preset_headers(voices)));

@@ -2,7 +2,7 @@
 use super::{
     analyser::{FLOOR_DB, HIGH_HZ, LOW_HZ, x_of},
     paint,
-    widgets::{ButtonStyle, button},
+    widgets::{ButtonState, ButtonStyle, button, button_enabled},
 };
 use crate::{app::AurisApp, theme::Theme};
 use auris_i18n::Key;
@@ -148,6 +148,27 @@ pub(crate) struct VisualizerState {
 }
 
 impl VisualizerState {
+    /// Whether there is a captured frame that can actually be held on screen.
+    fn can_freeze(&self) -> bool {
+        self.frame.is_some()
+    }
+
+    /// Whether the spectrum currently shown can become the comparison reference.
+    fn can_save(&self) -> bool {
+        if self.average {
+            !self.mean.is_empty()
+        } else {
+            self.frame
+                .as_ref()
+                .is_some_and(|frame| !frame.spectrum.is_empty())
+        }
+    }
+
+    /// Whether resetting the accumulated display would change anything.
+    fn can_reset(&self) -> bool {
+        !self.reference.is_empty() || !self.mean.is_empty() || !self.peak.is_empty()
+    }
+
     fn clear_live(&mut self) {
         self.frame = None;
         self.mean.clear();
@@ -245,10 +266,16 @@ impl AurisApp {
                 self.visualizer.frozen = false;
                 self.visualizer.clear_live();
             }
-            VisualizerCommand::Freeze => self.visualizer.frozen = !self.visualizer.frozen,
+            VisualizerCommand::Freeze if self.visualizer.can_freeze() => {
+                self.visualizer.frozen = !self.visualizer.frozen;
+            }
+            // A hold with no frame used to suppress polling forever while the window kept saying
+            // "Waiting". A keyboard shortcut can still arrive when the toolbar button is
+            // disabled, so the command itself owns the same availability rule.
+            VisualizerCommand::Freeze => self.visualizer.frozen = false,
             VisualizerCommand::Average => self.visualizer.average = !self.visualizer.average,
             VisualizerCommand::Peaks => self.visualizer.peaks = !self.visualizer.peaks,
-            VisualizerCommand::Save => {
+            VisualizerCommand::Save if self.visualizer.can_save() => {
                 let displayed = if self.visualizer.average {
                     (!self.visualizer.mean.is_empty()).then(|| self.visualizer.mean.clone())
                 } else {
@@ -262,7 +289,8 @@ impl AurisApp {
                     self.visualizer.reference = displayed;
                 }
             }
-            VisualizerCommand::Reset => {
+            VisualizerCommand::Save => {}
+            VisualizerCommand::Reset if self.visualizer.can_reset() => {
                 self.visualizer.reference.clear();
                 let spectrum = self
                     .visualizer
@@ -273,6 +301,7 @@ impl AurisApp {
                 self.visualizer.peak = spectrum.clone();
                 self.visualizer.mean = spectrum;
             }
+            VisualizerCommand::Reset => {}
             VisualizerCommand::Timebase => {
                 self.visualizer.oscilloscope_span = self.visualizer.oscilloscope_span.next();
             }
@@ -315,6 +344,7 @@ impl AurisApp {
         };
         if self.visualizer.selected && source.is_none() {
             self.session.stop_visualizer();
+            self.visualizer.frozen = false;
             self.visualizer.clear_live();
             self.visualizer.source = None;
             return;
@@ -345,6 +375,9 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme.clone();
+        let can_freeze = self.visualizer.can_freeze();
+        let can_save = self.visualizer.can_save();
+        let can_reset = self.visualizer.can_reset();
         let mut controls = div().flex().flex_wrap().gap_2();
         for (id, command, key, active) in [
             (
@@ -360,12 +393,13 @@ impl AurisApp {
                 self.visualizer.frozen,
             ),
         ] {
+            let enabled = !matches!(command, VisualizerCommand::Freeze) || can_freeze;
             controls = controls.child(
-                button(
+                button_enabled(
                     id,
                     self.t(key),
                     ButtonStyle::Normal,
-                    active,
+                    ButtonState::available(active, enabled),
                     theme.accent,
                     &theme,
                     cx.listener(move |this, _, _, cx| {
@@ -501,12 +535,17 @@ impl AurisApp {
                 false,
             ),
         ] {
+            let enabled = match command {
+                VisualizerCommand::Save => can_save,
+                VisualizerCommand::Reset => can_reset,
+                _ => true,
+            };
             spectrum_controls = spectrum_controls.child(
-                button(
+                button_enabled(
                     id,
                     self.t(key),
                     ButtonStyle::Normal,
-                    active,
+                    ButtonState::available(active, enabled),
                     theme.accent,
                     &theme,
                     cx.listener(move |this, _, _, cx| {
@@ -727,11 +766,15 @@ impl AurisApp {
                                 negative_peak_text
                             ))
                             .child(
-                                button(
+                                button_enabled(
                                     "visualizer-correlation-reset",
                                     self.t(Key::VisualizerCorrelationReset),
                                     ButtonStyle::Normal,
-                                    false,
+                                    ButtonState::available(
+                                        false,
+                                        !self.visualizer.correlation_history.is_empty()
+                                            || self.visualizer.correlation_negative_peak.is_some(),
+                                    ),
                                     theme.accent,
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
@@ -1460,6 +1503,49 @@ mod tests {
         cx.dispatch_action(actions::ToggleVisualizer);
         harness::paint(&app, cx);
         assert!(handle.read_with(cx, |_, _| ()).is_err());
+    }
+
+    #[gpui::test]
+    fn visualizer_actions_follow_available_data_and_never_freeze_waiting(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = harness::open(cx);
+        cx.dispatch_action(actions::ToggleVisualizer);
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Visualizer]);
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+
+        for selector in ["visualizer-freeze", "visualizer-save", "visualizer-reset"] {
+            harness::click(selector, cx);
+        }
+        app.read_with(cx, |app, _| {
+            assert!(!app.visualizer.frozen);
+            assert!(app.visualizer.reference.is_empty());
+            assert!(app.visualizer.mean.is_empty());
+            assert!(app.visualizer.peak.is_empty());
+        });
+
+        app.update(cx, |app, cx| {
+            app.visualizer.accept(frame(-12.));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        harness::click("visualizer-freeze", cx);
+        app.read_with(cx, |app, _| assert!(app.visualizer.frozen));
+        harness::click("visualizer-freeze", cx);
+        app.read_with(cx, |app, _| assert!(!app.visualizer.frozen));
+        harness::click("visualizer-freeze", cx);
+        app.read_with(cx, |app, _| assert!(app.visualizer.frozen));
+
+        harness::click("visualizer-source", cx);
+        app.read_with(cx, |app, _| {
+            assert!(
+                !app.visualizer.frozen,
+                "a source change cannot leave Waiting frozen"
+            );
+            assert!(app.visualizer.frame.is_none());
+        });
     }
 
     #[gpui::test]

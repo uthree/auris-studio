@@ -255,7 +255,20 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         SessionError::InvalidAutomation(detail) => with(Key::ErrorDocument, detail.clone()),
         SessionError::InvalidCheckpointName => Key::ErrorCheckpointName.get(language).to_string(),
         SessionError::ExternalChanges(_) => Key::ExternalChangeConflict.get(language).to_string(),
+        SessionError::UnsafeExportDestination { path, .. } => match language {
+            Language::English => error.to_string(),
+            Language::Japanese => format!(
+                "プロジェクトで使用中のファイルを保護するため、この書き出し先は使用できません。別の空の場所を選んでください: {}",
+                path.display()
+            ),
+        },
         SessionError::EditInProgress => Key::ErrorEditInProgress.get(language).to_string(),
+        SessionError::RecoveryWouldDiscardChanges => {
+            Key::ErrorRecoveryWouldDiscard.get(language).to_string()
+        }
+        SessionError::RecoveryUnavailable(_) => {
+            Key::ErrorRecoveryUnavailable.get(language).to_string()
+        }
         SessionError::Io(inner) => with(Key::ErrorFile, io_error_text(inner, language)),
         SessionError::Engine(inner) => with(Key::ErrorEngine, engine_error_text(inner, language)),
         // The plugin's own words: it names a file, an id or a refusal that came from somebody
@@ -277,6 +290,9 @@ pub fn error_text(error: &SessionError, language: Language) -> String {
         }
         SessionError::Vocal(inner) => with(Key::ErrorLyric, inner.to_string()),
         SessionError::Sing(inner) => with(Key::ErrorSing, inner.to_string()),
+        SessionError::SingerFramesFileTooLarge { .. } | SessionError::SingerFramesLimit { .. } => {
+            with(Key::ErrorSing, error.to_string())
+        }
         SessionError::SingerLyric {
             note, lyric, issue, ..
         } => {
@@ -388,6 +404,32 @@ fn core_error_text(error: &CoreError, language: Language) -> String {
             format!("invalid automation lane: {detail}"),
             format!("オートメーションレーンが不正です: {detail}"),
         ),
+        CoreError::LoopPassLimit {
+            clip,
+            passes,
+            limit,
+        } => (
+            format!(
+                "clip {clip} requests {passes} loop passes, above the {limit}-pass limit; shorten its loop or increase its content length"
+            ),
+            format!(
+                "クリップ{clip}のループは{passes}回展開され、上限{limit}回を超えています。ループを短くするか、内容を長くしてください"
+            ),
+        ),
+        CoreError::LoopNoteLimit {
+            clip,
+            notes_per_pass,
+            passes,
+            instances,
+            limit,
+        } => (
+            format!(
+                "clip {clip} may expand {notes_per_pass} notes over {passes} passes into {instances} performed notes, above the {limit}-note limit; reduce its notes or repeats"
+            ),
+            format!(
+                "クリップ{clip}は1回あたり{notes_per_pass}ノートを{passes}回展開し、演奏ノートが{instances}個になる可能性があります。上限{limit}個を超えるため、ノート数または繰り返しを減らしてください"
+            ),
+        ),
     };
     translated(language, english, japanese)
 }
@@ -406,6 +448,14 @@ fn engine_error_text(error: &EngineError, language: Language) -> String {
             "no audio input device is available".to_string(),
             "オーディオ入力デバイスがありません".to_string(),
         ),
+        EngineError::CaptureChannelsTooWide { channels, limit } => (
+            format!(
+                "the input device reports {channels} channels, above the realtime capture limit of {limit}"
+            ),
+            format!(
+                "入力デバイスは{channels}チャンネルを報告しました。リアルタイム収録の上限は{limit}チャンネルです"
+            ),
+        ),
         EngineError::UnsupportedSampleFormat(format) => (
             format!("unsupported sample format `{format}`"),
             format!("未対応のサンプル形式です: `{format}`"),
@@ -423,9 +473,86 @@ fn engine_error_text(error: &EngineError, language: Language) -> String {
             format!("invalid sample rate {rate}"),
             format!("サンプルレートが不正です: {rate}"),
         ),
+        EngineError::MonitorConfiguration {
+            input_rate,
+            output_rate,
+            block_frames,
+            limit,
+        } => (
+            format!(
+                "input monitoring cannot safely bridge {input_rate} Hz input to {output_rate} Hz output in {block_frames}-frame blocks within its {limit}-frame buffer"
+            ),
+            format!(
+                "入力{input_rate} Hzから出力{output_rate} Hzへのモニターを、{block_frames}フレーム単位・上限{limit}フレームのバッファでは安全に処理できません"
+            ),
+        ),
         EngineError::RenderTooLong { frames, limit } => (
             format!("render span of {frames} frames exceeds the {limit} frame limit"),
             format!("{frames}フレームのレンダー範囲が上限{limit}フレームを超えています"),
+        ),
+        EngineError::RenderBufferTooLarge {
+            frames,
+            channels,
+            limit_bytes,
+        } => (
+            format!(
+                "a {frames}-frame, {channels}-channel render exceeds the {limit_bytes}-byte in-memory limit; export it directly to a file"
+            ),
+            format!(
+                "{frames}フレーム・{channels}チャンネルのレンダーはメモリ上限{limit_bytes}バイトを超えます。ファイルへ直接書き出してください"
+            ),
+        ),
+        EngineError::RenderBufferAllocation { frames, channels } => (
+            format!(
+                "could not reserve memory for a {frames}-frame, {channels}-channel render; export it directly to a file"
+            ),
+            format!(
+                "{frames}フレーム・{channels}チャンネルのレンダー用メモリを確保できませんでした。ファイルへ直接書き出してください"
+            ),
+        ),
+        EngineError::ScheduleTooLarge {
+            clip,
+            events,
+            limit,
+        } => (
+            format!(
+                "clip {clip} would grow this track schedule to {events} events, above the {limit}-event limit; reduce its notes, curves, or repeats"
+            ),
+            format!(
+                "クリップ{clip}によってトラックのスケジュールが{events}イベントになり、上限{limit}件を超えます。ノート、カーブ、または繰り返しを減らしてください"
+            ),
+        ),
+        EngineError::ScheduleAllocation { clip, events } => (
+            format!(
+                "could not reserve {events} events while preparing clip {clip}; reduce its notes, curves, or repeats"
+            ),
+            format!(
+                "クリップ{clip}の準備中に{events}イベント分のメモリを確保できませんでした。ノート、カーブ、または繰り返しを減らしてください"
+            ),
+        ),
+        EngineError::ProjectScheduleTooLarge { events, limit } => (
+            format!(
+                "the project would retain {events} scheduled events, above the {limit}-event limit; reduce its notes, curves, or repeats"
+            ),
+            format!(
+                "プロジェクト全体のスケジュールが{events}イベントになり、上限{limit}件を超えます。ノート、カーブ、または繰り返しを減らしてください"
+            ),
+        ),
+        EngineError::ProjectAudioScheduleTooLarge { windows, limit } => (
+            format!(
+                "the project would retain {windows} audio loop windows, above the {limit}-window limit; reduce its audio clips or repeats"
+            ),
+            format!(
+                "プロジェクト全体でオーディオのループ区間が{windows}個になり、上限{limit}個を超えます。オーディオクリップ数または繰り返しを減らしてください"
+            ),
+        ),
+        EngineError::AudioScheduleAllocation { clip, windows } => (
+            format!(
+                "could not reserve {windows} audio loop windows while preparing clip {clip}; reduce its audio clips or repeats"
+            ),
+            format!(
+                "クリップ{clip}の準備中にオーディオのループ区間{windows}個分のメモリを確保できませんでした。オーディオクリップ数または繰り返しを減らしてください"
+            ),
         ),
         EngineError::CommandQueueFull => (
             "the engine command queue is full".to_string(),
@@ -477,9 +604,65 @@ fn io_error_text(error: &IoError, language: Language) -> String {
             "audio export cancelled".to_string(),
             "オーディオの書き出しを中止しました".to_string(),
         ),
+        IoError::ExportDestinationExists(path) => (
+            format!(
+                "{} already exists; choose an empty or different folder",
+                path.display()
+            ),
+            format!(
+                "{} は既に存在します。空のフォルダーまたは別のフォルダーを選んでください",
+                path.display()
+            ),
+        ),
         IoError::MidiParse(detail) => (
             format!("failed to read MIDI file: {detail}"),
             format!("MIDIファイルを読み込めませんでした: {detail}"),
+        ),
+        IoError::MidiFileTooLarge {
+            path,
+            observed,
+            limit,
+        } => (
+            format!(
+                "MIDI file is too large to import: {} is at least {observed} bytes; the limit is {limit} bytes",
+                path.display()
+            ),
+            format!(
+                "MIDIファイルが大きすぎます: {}は{observed}バイト以上あります。読み込み上限は{limit}バイトです",
+                path.display()
+            ),
+        ),
+        IoError::MidiDataTooLarge { observed, limit } => (
+            format!(
+                "MIDI data is too large to import: {observed} bytes were supplied; the limit is {limit} bytes"
+            ),
+            format!(
+                "MIDIデータが大きすぎます: {observed}バイトあります。読み込み上限は{limit}バイトです"
+            ),
+        ),
+        IoError::MidiImportTooLarge {
+            resource,
+            observed,
+            limit,
+        } => (
+            format!(
+                "MIDI import contains too many {resource}: at least {observed}; the limit is {limit}"
+            ),
+            format!(
+                "MIDIファイルを展開したデータが多すぎます: {observed}件以上あります。読み込み上限は{limit}件です"
+            ),
+        ),
+        IoError::MidiExportTooLarge {
+            resource,
+            observed,
+            limit,
+        } => (
+            format!(
+                "MIDI export contains too many {resource}: at least {observed}; the limit is {limit}"
+            ),
+            format!(
+                "MIDI書き出しで展開されるデータが多すぎます: {observed}件以上あります。書き出し上限は{limit}件です"
+            ),
         ),
         IoError::MidiWrite(detail) => (
             format!("failed to write MIDI file: {detail}"),
@@ -491,6 +674,34 @@ fn io_error_text(error: &IoError, language: Language) -> String {
             ),
             format!(
                 "このMIDIファイルは拍ではなくSMPTEフレーム（{fps} fps、{subframe}サブフレーム）で時間を数えるため、読み込める音楽的位置がありません"
+            ),
+        ),
+        IoError::SoundFontFileTooLarge {
+            path,
+            observed,
+            limit,
+        } => (
+            format!(
+                "SoundFont is too large to import: {} is at least {observed} bytes; the limit is {limit} bytes",
+                path.display()
+            ),
+            format!(
+                "SoundFontが大きすぎます: {}は{observed}バイト以上あります。読み込み上限は{limit}バイトです",
+                path.display()
+            ),
+        ),
+        IoError::ProjectFileTooLarge {
+            path,
+            observed,
+            limit,
+        } => (
+            format!(
+                "project file is too large to open: {} is at least {observed} bytes; the limit is {limit} bytes",
+                path.display()
+            ),
+            format!(
+                "プロジェクトファイルが大きすぎます: {}は{observed}バイト以上あります。読み込み上限は{limit}バイトです",
+                path.display()
             ),
         ),
         IoError::Json(detail) => (
@@ -509,6 +720,11 @@ fn io_error_text(error: &IoError, language: Language) -> String {
             "project object ids have exhausted their supported range".to_string(),
             "プロジェクトのオブジェクトIDが対応範囲を使い切りました".to_string(),
         ),
+        IoError::ProjectIdConflict(id) => (
+            format!("project object id {id} is used more than once"),
+            format!("プロジェクト内でオブジェクトID {id}が重複しています"),
+        ),
+        IoError::Core(inner) => return core_error_text(inner, language),
         IoError::Filesystem { path, source } => (
             format!("I/O error on {}: {source}", path.display()),
             format!("{}でI/Oエラーが発生しました: {source}", path.display()),

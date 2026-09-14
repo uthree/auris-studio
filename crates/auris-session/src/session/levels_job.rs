@@ -10,7 +10,7 @@ use super::{
     BalanceReport, FADER_RANGE_DB, Session, SessionError, TrackId, TrackLevel, analyze_loudness,
     fader_for, faders_lift_db, integrated_lufs, master_gain_db,
 };
-use crate::RenderJob;
+use crate::{Edit, RenderJob};
 
 /// Which measurement of a composed mix is being rendered.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +69,7 @@ struct BalanceState {
     lift_db: f32,
     balanced_lufs: Option<f32>,
     now_lufs: Option<f32>,
+    edit: Option<Edit>,
 }
 
 impl BalanceState {
@@ -189,10 +190,15 @@ impl Session {
     /// Captures hosted render instances on this thread. The job may then run on a worker.
     /// Returns `None` when automatic composition balancing is disabled in this session.
     pub fn begin_composed_balance(&mut self) -> Option<ComposeBalanceJob> {
-        self.balance_composed.then(|| self.begin_balance_job())
+        self.balance_composed.then(|| self.begin_balance_job(None))
     }
 
-    pub(super) fn begin_balance_job(&mut self) -> ComposeBalanceJob {
+    /// Starts an explicit, undoable balance pass whose renders may run on workers.
+    pub fn begin_balance_levels_job(&mut self) -> ComposeBalanceJob {
+        self.begin_balance_job(Some(Edit::BalanceLevels))
+    }
+
+    pub(super) fn begin_balance_job(&mut self, edit: Option<Edit>) -> ComposeBalanceJob {
         let state = Box::new(BalanceState {
             owner: Arc::clone(&self.registry),
             project: self.project.clone(),
@@ -209,6 +215,7 @@ impl Session {
             lift_db: 0.0,
             balanced_lufs: None,
             now_lufs: None,
+            edit,
         });
         self.balance_job_for(state)
     }
@@ -248,14 +255,42 @@ impl Session {
         if state.completed < state.levelled.len() + 2 {
             return Ok(ComposeBalanceStep::Pending(self.balance_job_for(state)));
         }
-        for (&id, level) in state.levelled.iter().zip(&state.tracks) {
-            self.write_fader(id, level.now_db);
-        }
+        let tracks_changed = state
+            .levelled
+            .iter()
+            .zip(&state.tracks)
+            .any(|(&id, level)| {
+                self.project
+                    .track(id)
+                    .is_some_and(|track| track.mixer.gain_db != level.now_db)
+            });
         let master_db = state.project.master.gain_db;
-        self.project.master.gain_db = master_db;
-        self.send(EngineCommand::SetMasterGain(master_db));
-        self.revision = self.revision.wrapping_add(1);
-        self.dirty = true;
+        let changed = tracks_changed || self.project.master.gain_db != master_db;
+        if changed && let Some(edit) = state.edit {
+            self.record(edit);
+        }
+        for (&id, level) in state.levelled.iter().zip(&state.tracks) {
+            if self
+                .project
+                .track(id)
+                .is_some_and(|track| track.mixer.gain_db != level.now_db)
+            {
+                self.write_fader(id, level.now_db);
+            }
+        }
+        if self.project.master.gain_db != master_db {
+            self.project.master.gain_db = master_db;
+            self.send(EngineCommand::SetMasterGain(master_db));
+        }
+        if changed {
+            // An explicit pass recorded its own revision above. A composition pass belongs to
+            // the composition's existing history step, but its final faders are still a document
+            // revision that must invalidate other detached workers.
+            if state.edit.is_none() {
+                self.revision = self.revision.wrapping_add(1);
+            }
+            self.dirty = true;
+        }
         Ok(ComposeBalanceStep::Complete(BalanceReport {
             tracks: state.tracks,
             lift_db: state.lift_db,

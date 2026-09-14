@@ -38,6 +38,7 @@ fn project_destination(output: &str) -> Result<&Path, String> {
 }
 
 fn save_new(session: &mut Session, output: &Path) -> Result<PathBuf, String> {
+    cancellation::begin_commit()?;
     match session.save_as(output) {
         Ok(saved) => Ok(saved.document),
         Err(SessionError::WouldReplace(path)) => Err(format!(
@@ -134,10 +135,18 @@ pub mod import_audio {
         bounded_bars(start_bar, "audio start position")?;
         let mut session = opened(&args.project)?;
         let start = session.project().signatures.bar_start(start_bar);
+        let buffer = auris_session::decode_audio(source, session.project().sample_rate)
+            .map_err(|error| error.to_string())?;
+        cancellation::check()?;
+        // Importing publishes an asset before the document can name it, so this is the command's
+        // first durable boundary rather than the later project-file save. Decode before taking
+        // that gate: cancelling a large or hostile source must not leave an asset or document
+        // edit merely because its CPU-only validation had begun.
+        cancellation::begin_commit()?;
         let clip_id = session
-            .import_audio(source, start)
+            .place_audio(source, buffer, start)
             .map_err(|e| e.to_string())?;
-        session.save_with_checkpoint().map_err(|e| e.to_string())?;
+        save_checkpointed(&mut session)?;
         let track_id = session
             .track_of_clip(clip_id)
             .ok_or("imported clip has no track")?;
@@ -223,25 +232,17 @@ pub mod export_midi {
         if output.exists() {
             return Err("output already exists; choose a new .mid or .midi path".into());
         }
-        let parent = output
+        output
             .parent()
             .ok_or("output must have a parent directory")?;
         let session = opened(&args.project)?;
-        let temporary = tempfile::Builder::new()
-            .prefix(".auris-midi-")
-            .tempfile_in(parent)
-            .map_err(|e| {
-                format!(
-                    "could not create a MIDI export in {}: {e}",
-                    parent.display()
-                )
-            })?;
-        let notes = session
-            .export_midi(temporary.path())
-            .map_err(|e| e.to_string())?;
-        temporary.persist_noclobber(output).map_err(|e| {
+        let staged = session
+            .stage_midi_export(output)
+            .map_err(|error| error.to_string())?;
+        cancellation::begin_commit()?;
+        let notes = staged.publish_noclobber().map_err(|error| {
             format!(
-                "could not save MIDI to {} without replacing a file: {e}",
+                "could not save MIDI to {} without replacing a file: {error}",
                 output.display()
             )
         })?;

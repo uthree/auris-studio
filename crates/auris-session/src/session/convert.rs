@@ -184,7 +184,7 @@ impl Session {
             ));
         }
         self.poll();
-        self.collect_hosted_state();
+        self.collect_hosted_state()?;
         let original = self.project.clone();
         let revision = self.revision();
         let entry = original.track(track).expect("checked track");

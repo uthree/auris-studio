@@ -11,9 +11,9 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use auris_i18n::{Key, messages};
-use auris_session::SingerTakeState;
 use auris_session::prelude::*;
 use auris_session::session::{MAX_TRACK_HEIGHT, MIN_TRACK_HEIGHT};
+use auris_session::{RecoverySnapshot, SingerTakeState};
 use gpui::{Context, Window};
 
 use crate::app::{
@@ -33,6 +33,22 @@ pub(crate) const AUTO_SING_DEBOUNCE: std::time::Duration = std::time::Duration::
 /// Each is under a second of mono audio; the cap is about bounding a marathon session, not
 /// about memory pressure, so wholesale clearing beats bookkeeping an eviction order.
 const SUNG_PREVIEW_CACHE: usize = 128;
+
+/// A singer plan and the exact worker-validated model lease that executes it.
+struct PreparedSingerRender {
+    plan: auris_session::SingPlan,
+    model: Arc<std::sync::Mutex<auris_session::VoiceModel>>,
+}
+
+/// Identity and UI state shared by a manual singer's model-load and render stages.
+#[derive(Clone)]
+struct SingerExportLease {
+    generation: u64,
+    fingerprint: u64,
+    folder: Option<PathBuf>,
+    progress: Arc<AtomicU32>,
+    cancel: Arc<AtomicBool>,
+}
 
 /// One menu, keyboard, or wheel step through the track-height range.
 pub(crate) const TRACK_HEIGHT_STEP: f32 = 0.08;
@@ -109,7 +125,139 @@ fn next_clip_ordinal(project: &Project, track: TrackId) -> usize {
         .map_or(1, |clips| clips.len() + 1)
 }
 
+/// Removes one plugin search path transactionally around the caller's persistence function.
+///
+/// Keeping this tiny policy independent of the filesystem lets the rollback be exercised without
+/// making the process-wide settings directory unwritable underneath concurrently running GPUI
+/// tests.
+fn remove_plugin_path_and_save(
+    settings: &mut Settings,
+    path: &Path,
+    save: impl FnOnce(&Settings) -> Result<(), SessionError>,
+) -> Result<bool, SessionError> {
+    let Some(index) = settings
+        .plugin_paths
+        .iter()
+        .position(|candidate| candidate == path)
+    else {
+        return Ok(false);
+    };
+    let removed = settings.plugin_paths.remove(index);
+    if let Err(error) = save(settings) {
+        settings.plugin_paths.insert(index, removed);
+        return Err(error);
+    }
+    Ok(true)
+}
+
 impl AurisApp {
+    /// Claims the single visible slot for an ordinary long-running command.
+    pub(crate) fn start_background_command(
+        &mut self,
+        label: String,
+        measurable: bool,
+    ) -> Option<(u64, Arc<AtomicBool>, Option<Arc<AtomicU32>>)> {
+        if self.background_command.is_some() {
+            self.set_status(self.t(Key::BackgroundCommandBusy).to_string());
+            return None;
+        }
+        self.cancel_autosave_task();
+        self.cancel_disk_watch();
+        self.background_command_generation = self.background_command_generation.wrapping_add(1);
+        let id = self.background_command_generation;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let progress = measurable.then(|| Arc::new(AtomicU32::new(0.0_f32.to_bits())));
+        self.set_status(label.clone());
+        self.background_command = Some(crate::app::BackgroundCommandState {
+            id,
+            label,
+            progress: progress.clone(),
+            cancelled: Arc::clone(&cancelled),
+        });
+        Some((id, cancelled, progress))
+    }
+
+    /// Whether a worker result still belongs to the command shown in the status bar.
+    fn background_command_is_current(&self, id: u64) -> bool {
+        self.background_command
+            .as_ref()
+            .is_some_and(|state| state.id == id && !state.cancelled.load(Ordering::Relaxed))
+    }
+
+    /// Releases the visible worker slot only for the command that owns it.
+    fn finish_background_command(&mut self, id: u64) -> bool {
+        if !self.background_command_is_current(id) {
+            return false;
+        }
+        self.background_command = None;
+        true
+    }
+
+    /// Requests cancellation and invalidates the worker's eventual UI handoff.
+    pub(crate) fn cancel_background_command(&mut self) {
+        let Some(state) = self.background_command.take() else {
+            return;
+        };
+        state.cancelled.store(true, Ordering::Relaxed);
+        self.set_status(self.t(Key::BackgroundCommandCancelled).to_string());
+    }
+
+    /// Stops a quiet recovery write at its next filesystem boundary.
+    pub(crate) fn cancel_autosave_task(&mut self) {
+        if let Some(state) = &self.autosave_task {
+            state.cancelled.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Starts a due recovery write without performing filesystem work on the repaint callback.
+    pub(crate) fn poll_autosave_task(&mut self, cx: &mut Context<Self>) {
+        if self.autosave_task.is_some()
+            || self.background_command.is_some()
+            || self.compose_progress.is_some()
+        {
+            return;
+        }
+        let job = match self.session.begin_autosave_job() {
+            Ok(Some(job)) => job,
+            Ok(None) => return,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdSave, &error));
+                return;
+            }
+        };
+        self.autosave_task_generation = self.autosave_task_generation.wrapping_add(1);
+        let id = self.autosave_task_generation;
+        let cancelled = Arc::new(AtomicBool::new(false));
+        self.autosave_task = Some(crate::app::AutosaveTaskState {
+            id,
+            cancelled: Arc::clone(&cancelled),
+        });
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(state) = this.autosave_task.as_ref().filter(|state| state.id == id) else {
+                    return;
+                };
+                let cancelled = Arc::clone(&state.cancelled);
+                this.autosave_task = None;
+                match result {
+                    Ok(Some(result)) => {
+                        let _ = this.session.continue_autosave(result, cancelled.as_ref());
+                    }
+                    Ok(None) => this.session.reschedule_autosave(),
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdSave, &error));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// How far one press of an arrow key moves something.
     ///
     /// The editing grid, except where the grid is off. Off is a division of one tick — the finest
@@ -164,7 +312,7 @@ impl AurisApp {
             return;
         }
         let delta = Ticks(self.step_ticks().raw() * direction);
-        self.session.move_clips(&origins, delta);
+        let _ = self.session.move_clips(&origins, delta);
     }
 
     /// Selects a track and points the piano roll at a clip that belongs to it.
@@ -604,6 +752,8 @@ impl AurisApp {
 
     /// Replaces the document with an empty project.
     pub(crate) fn new_project(&mut self) {
+        self.cancel_autosave_task();
+        self.cancel_disk_watch();
         self.reset_drum_analysis();
         self.agent_reset_conversation();
         self.session.new_project();
@@ -618,13 +768,15 @@ impl AurisApp {
             self.save_as(window, cx);
             return;
         }
-        match self.session.save_in_place() {
-            Ok(()) => {
-                let path = self.session.path().map(|p| p.display().to_string());
-                self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
+        self.cancel_autosave_task();
+        let job = match self.session.begin_save_in_place() {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdSave, &error));
+                return;
             }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
-        }
+        };
+        self.start_save_job(job, None, None, window, cx);
     }
 
     /// Prompts for a path and saves there.
@@ -682,27 +834,92 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.session.save_as(path) {
-            Ok(report) => {
-                self.report_save(&report);
-                if let Some(next) = then {
-                    self.run_pending(next, window, cx);
-                }
+        self.cancel_autosave_task();
+        let job = match self.session.begin_save_as(path) {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdSave, &error));
+                return;
             }
-            // The system dialog checked for a collision at the name that was typed. A project is
-            // written one folder deeper than that, so it never saw this one.
-            Err(SessionError::WouldReplace(existing)) => {
-                self.open_prompt(crate::ui::prompt::Prompt::ask(
-                    self.t(Key::ReplaceTitle),
-                    crate::ui::prompt::Question::Replace {
-                        chosen: path.to_path_buf(),
-                        existing,
-                        then,
-                    },
-                ));
-            }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
-        }
+        };
+        self.start_save_job(job, Some(path.to_path_buf()), then, window, cx);
+    }
+
+    /// Runs a prepared save away from the window thread and applies only a current result.
+    pub(crate) fn start_save_job(
+        &mut self,
+        job: auris_session::SaveJob,
+        chosen: Option<PathBuf>,
+        then: Option<crate::ui::prompt::PendingAction>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = self
+            .t(if chosen.is_some() {
+                Key::CmdSaveAs
+            } else {
+                Key::CmdSave
+            })
+            .to_string();
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
+        };
+        let view = cx.entity().downgrade();
+        cx.notify();
+        window
+            .spawn(cx, async move |cx| {
+                let saved = cx
+                    .background_executor()
+                    .spawn(async move { job.run(&cancelled) })
+                    .await;
+                let _ =
+                    view.update_in(cx, |this, window, cx| {
+                        if !this.finish_background_command(id) {
+                            return;
+                        }
+                        match saved {
+                            Ok(Some(result)) => match this.session.continue_save(result) {
+                                Some(Ok(report)) => {
+                                    this.report_save(&report);
+                                    if let Some(next) = then {
+                                        this.run_pending(next, window, cx);
+                                    }
+                                }
+                                Some(Err(error)) => {
+                                    this.set_failed_status(this.failure(Key::CmdSave, &error));
+                                }
+                                None => this
+                                    .set_status(this.t(Key::BackgroundCommandChanged).to_string()),
+                            },
+                            Ok(None) => {
+                                this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
+                            }
+                            Err(SessionError::WouldReplace(existing)) => {
+                                let Some(chosen) = chosen else {
+                                    this.set_failed_status(this.failure(
+                                        Key::CmdSave,
+                                        &SessionError::WouldReplace(existing),
+                                    ));
+                                    cx.notify();
+                                    return;
+                                };
+                                this.open_prompt(crate::ui::prompt::Prompt::ask(
+                                    this.t(Key::ReplaceTitle),
+                                    crate::ui::prompt::Question::Replace {
+                                        chosen,
+                                        existing,
+                                        then,
+                                    },
+                                ));
+                            }
+                            Err(error) => {
+                                this.set_failed_status(this.failure(Key::CmdSave, &error));
+                            }
+                        }
+                        cx.notify();
+                    });
+            })
+            .detach();
     }
 
     /// Reports where a project landed, and what did not travel with it.
@@ -726,19 +943,42 @@ impl AurisApp {
     /// A SoundFont library runs to hundreds of megabytes, so this says what it is doing and
     /// gives the window a frame to say it in before starting.
     pub(crate) fn collect_assets(&mut self, cx: &mut Context<Self>) {
-        self.set_status(messages::collecting(self.language()));
+        let job = match self.session.begin_collect_assets() {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdCollectAssets, &error));
+                return;
+            }
+        };
+        let label = messages::collecting(self.language());
+        let Some((id, cancelled, progress)) = self.start_background_command(label, true) else {
+            return;
+        };
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
+            let Some(worker_progress) = progress else {
+                return;
+            };
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    job.run(&cancelled, |fraction| {
+                        worker_progress.store(fraction.to_bits(), Ordering::Relaxed);
+                    })
+                })
                 .await;
             let _ = this.update(cx, |this, cx| {
+                if !this.finish_background_command(id) {
+                    return;
+                }
                 let language = this.language();
-                match this.session.collect_assets() {
-                    Ok(0) => this.set_status(messages::assets_already_collected(language)),
-                    Ok(count) => this.set_status(messages::assets_collected(language, count)),
-                    Err(error) => {
+                match result.and_then(|result| this.session.continue_collect_assets(result)) {
+                    Some(Ok(0)) => this.set_status(messages::assets_already_collected(language)),
+                    Some(Ok(count)) => this.set_status(messages::assets_collected(language, count)),
+                    Some(Err(error)) => {
                         this.set_failed_status(this.failure(Key::CmdCollectAssets, &error))
                     }
+                    None => this.set_status(this.t(Key::BackgroundCommandChanged).to_string()),
                 }
                 cx.notify();
             });
@@ -813,56 +1053,65 @@ impl AurisApp {
         // A reload offer belongs to the document that was open when the agent changed it. Take
         // it down before the asynchronous open starts so it cannot be clicked during the switch.
         self.agent_chat.pending_reload = None;
+        let shown = path.display().to_string();
+        let job = self.session.begin_open_project(&path);
+        let Some((id, cancelled, _)) =
+            self.start_background_command(messages::opening(self.language(), &shown), false)
+        else {
+            return;
+        };
+        cx.notify();
         cx.spawn(async move |this, cx| {
-            let _ = this.update(cx, |this, cx| {
-                let text = messages::opening(this.language(), &path.display().to_string());
-                this.set_status(text);
-                cx.notify();
-            });
-            // A project decodes every audio file it names, which on a real song is seconds of
-            // work on this thread. Without a painted frame first the window simply freezes.
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
                 .await;
-
             let _ = this.update(cx, |this, cx| {
-                match this.session.open(&path) {
-                    Ok(missing) => {
-                        this.agent_reset_conversation();
-                        this.remember_recent(&path);
-                        this.resync_selection();
-                        // A different document, so the view of the old one means nothing.
-                        this.reset_view();
-                        let language = this.language();
-                        let shown = path.display().to_string();
-                        // A file another build saved gets its note only when nothing is missing:
-                        // an absent audio file is a silent track right now, and the version note
-                        // matters the day a regenerate button is pressed, not before.
-                        let foreign = this.session.saved_by_another_build().map(str::to_string);
-                        this.set_status(match (missing.len(), foreign) {
-                            (0, Some(version)) if version.is_empty() => {
-                                messages::opened_from_older_build(language, &shown)
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                match loaded {
+                    Ok(Some(result)) => match this.session.continue_open_project(result) {
+                        Some(missing) => {
+                            this.agent_reset_conversation();
+                            this.remember_recent(&path);
+                            this.resync_selection();
+                            // A different document, so the view of the old one means nothing.
+                            this.reset_view();
+                            let language = this.language();
+                            // A file another build saved gets its note only when nothing is missing:
+                            // an absent audio file is a silent track right now, and the version note
+                            // matters the day a regenerate button is pressed, not before.
+                            let foreign = this.session.saved_by_another_build().map(str::to_string);
+                            this.set_status(match (missing.len(), foreign) {
+                                (0, Some(version)) if version.is_empty() => {
+                                    messages::opened_from_older_build(language, &shown)
+                                }
+                                (0, Some(version)) => {
+                                    messages::opened_from_build(language, &shown, &version)
+                                }
+                                (0, None) => messages::opened(language, &shown),
+                                (1, _) => messages::opened_missing_one(
+                                    language,
+                                    &shown,
+                                    &missing[0].display().to_string(),
+                                ),
+                                (n, _) => messages::opened_missing_many(language, &shown, n),
+                            });
+                            // Which files, not how many. The clips that lost their audio are
+                            // indistinguishable from silence, and a count in a status line that the
+                            // next command overwrites left the log as the only way to find out.
+                            if missing.len() > 1 {
+                                this.open_prompt(crate::ui::prompt::Prompt::notice(
+                                    this.t(Key::MissingAudioTitle),
+                                    missing.iter().map(|path| path.display().to_string().into()),
+                                ));
                             }
-                            (0, Some(version)) => {
-                                messages::opened_from_build(language, &shown, &version)
-                            }
-                            (0, None) => messages::opened(language, &shown),
-                            (1, _) => messages::opened_missing_one(
-                                language,
-                                &shown,
-                                &missing[0].display().to_string(),
-                            ),
-                            (n, _) => messages::opened_missing_many(language, &shown, n),
-                        });
-                        // Which files, not how many. The clips that lost their audio are
-                        // indistinguishable from silence, and a count in a status line that the
-                        // next command overwrites left the log as the only way to find out.
-                        if missing.len() > 1 {
-                            this.open_prompt(crate::ui::prompt::Prompt::notice(
-                                this.t(Key::MissingAudioTitle),
-                                missing.iter().map(|path| path.display().to_string().into()),
-                            ));
                         }
+                        None => this.set_status(this.t(Key::BackgroundCommandChanged).to_string()),
+                    },
+                    Ok(None) => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
                     }
                     Err(error) => this.set_failed_status(this.failure(Key::CmdOpenProject, &error)),
                 }
@@ -870,6 +1119,201 @@ impl AurisApp {
             });
         })
         .detach();
+    }
+
+    /// Restores a crash-recovery snapshot as a new unsaved document.
+    ///
+    /// This follows the same document-replacement path as [`Self::open_project_at`]: stale agent
+    /// state is detached before loading, then selection and every document-specific view cache
+    /// are rebuilt only after the session accepts the project. The recorded source document is
+    /// never selected as a save path; that guarantee belongs to `Session::recover_autosave`.
+    pub(crate) fn recover_project(&mut self, snapshot: RecoverySnapshot, cx: &mut Context<Self>) {
+        let name = crate::ui::prompt::recovery_name(&snapshot, self.language());
+        let job = match self.session.begin_recover_autosave(&snapshot) {
+            Ok(job) => job,
+            Err(error) => {
+                let language = self.language();
+                let failure = self.failure(Key::Recover, &error);
+                self.open_prompt(crate::ui::prompt::recovery_prompt(&snapshot, language));
+                self.reject_prompt(failure);
+                return;
+            }
+        };
+        let Some((id, cancelled, _)) =
+            self.start_background_command(messages::recovering(self.language(), &name), false)
+        else {
+            self.open_prompt(crate::ui::prompt::recovery_prompt(
+                &snapshot,
+                self.language(),
+            ));
+            return;
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let recovered = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let cleanup = this
+                .update(cx, |this, cx| {
+                    if !this.background_command_is_current(id) {
+                        return None;
+                    }
+                    match recovered {
+                        Ok(Some(result)) => match this.session.continue_recover_autosave(result) {
+                            Some((missing, cleanup)) => {
+                                this.reset_drum_analysis();
+                                this.agent_chat.pending_reload = None;
+                                this.agent_reset_conversation();
+                                if let Some(index) = this
+                                    .recovery_queue
+                                    .iter()
+                                    .position(|candidate| candidate == &snapshot)
+                                {
+                                    this.recovery_queue.remove(index);
+                                }
+                                this.resync_selection();
+                                this.reset_view();
+                                let language = this.language();
+                                this.set_status(match missing.len() {
+                                    0 => messages::recovered(language, &name),
+                                    1 => messages::recovered_missing_one(
+                                        language,
+                                        &name,
+                                        &missing[0].display().to_string(),
+                                    ),
+                                    count => {
+                                        messages::recovered_missing_many(language, &name, count)
+                                    }
+                                });
+                                if missing.len() > 1 {
+                                    this.open_prompt(crate::ui::prompt::Prompt::notice(
+                                        this.t(Key::MissingAudioTitle),
+                                        missing
+                                            .iter()
+                                            .map(|path| path.display().to_string().into()),
+                                    ));
+                                }
+                                cx.notify();
+                                Some(cleanup)
+                            }
+                            None => {
+                                this.finish_background_command(id);
+                                this.set_status(this.t(Key::BackgroundCommandChanged).to_string());
+                                cx.notify();
+                                None
+                            }
+                        },
+                        Ok(None) => {
+                            this.finish_background_command(id);
+                            this.set_status(this.t(Key::BackgroundCommandCancelled).to_string());
+                            cx.notify();
+                            None
+                        }
+                        Err(error) => {
+                            this.finish_background_command(id);
+                            let language = this.language();
+                            let failure = this.failure(Key::Recover, &error);
+                            this.open_prompt(crate::ui::prompt::recovery_prompt(
+                                &snapshot, language,
+                            ));
+                            this.reject_prompt(failure);
+                            cx.notify();
+                            None
+                        }
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some(cleanup) = cleanup else { return };
+            let cleanup_result = cx
+                .background_executor()
+                .spawn(async move { cleanup.run() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.finish_background_command(id) {
+                    if let Err(error) = cleanup_result {
+                        log::warn!("recovered project but kept its source workspace: {error}");
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Permanently removes a recovery snapshot without blocking the prompt handler.
+    pub(crate) fn discard_recovery(&mut self, snapshot: RecoverySnapshot, cx: &mut Context<Self>) {
+        let name = crate::ui::prompt::recovery_name(&snapshot, self.language());
+        let job = Session::begin_discard_recovery(&snapshot);
+        let Some((id, cancelled, _)) =
+            self.start_background_command(self.t(Key::DiscardRecovery).to_string(), false)
+        else {
+            self.open_prompt(crate::ui::prompt::recovery_prompt(
+                &snapshot,
+                self.language(),
+            ));
+            return;
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let discarded = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_discard_recovery(id, snapshot, name, discarded);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Reconciles a discard result even when cancellation raced with its atomic quarantine move.
+    pub(crate) fn finish_discard_recovery(
+        &mut self,
+        id: u64,
+        snapshot: RecoverySnapshot,
+        name: String,
+        discarded: Result<Option<RecoverySnapshot>, SessionError>,
+    ) {
+        let was_current = self.finish_background_command(id);
+        if !was_current && !matches!(&discarded, Ok(Some(_))) {
+            return;
+        }
+        match discarded {
+            // Once the worker has quarantined the snapshot, cancellation is too late to undo the
+            // discard. Apply that committed truth even though generic cancellation already
+            // released the status slot; otherwise the dead entry remains at the head of the UI
+            // queue and is offered again.
+            Ok(Some(discarded)) => {
+                if let Some(index) = self
+                    .recovery_queue
+                    .iter()
+                    .position(|candidate| candidate == &discarded)
+                {
+                    self.recovery_queue.remove(index);
+                }
+                if was_current || self.background_command.is_none() {
+                    self.set_status(messages::recovery_discarded(self.language(), &name));
+                }
+                if self.prompt.is_none() && self.background_command.is_none() {
+                    self.offer_next_recovery();
+                }
+            }
+            Ok(None) => {
+                self.set_status(self.t(Key::BackgroundCommandCancelled).to_string());
+                self.open_prompt(crate::ui::prompt::recovery_prompt(
+                    &snapshot,
+                    self.language(),
+                ));
+            }
+            Err(error) => {
+                let language = self.language();
+                self.open_prompt(crate::ui::prompt::recovery_prompt(&snapshot, language));
+                self.reject_prompt(self.failure(Key::DiscardRecovery, &error));
+            }
+        }
     }
 
     /// Prompts for a MIDI file and reads it as a new document, asking first if that would lose
@@ -913,38 +1357,49 @@ impl AurisApp {
     /// The end of both ways in: the file dialog picks a path and lands here, and a dropped `.mid`
     /// arrives here already knowing one.
     pub(crate) fn import_midi_at(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        cx.spawn(async move |this, cx| {
-            let shown = this.update(cx, |this, cx| {
-                let text = messages::opening(this.language(), &path.display().to_string());
-                this.set_status(text);
-                cx.notify();
-            });
-            if shown.is_err() {
+        let job = match self.session.begin_midi_import(&path) {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdImportMidi, &error));
                 return;
             }
-            // A large MIDI file is tens of thousands of events, and the tracks it makes are built
-            // on this thread — so let the status line paint before any of that starts.
-            cx.background_executor()
-                .timer(std::time::Duration::ZERO)
+        };
+        let label = messages::opening(self.language(), &path.display().to_string());
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
                 .await;
-
             let _ = this.update(cx, |this, cx| {
-                match this.session.import_midi(&path) {
-                    Ok(report) => {
-                        this.agent_reset_conversation();
-                        this.resync_selection();
-                        this.reset_view();
-                        let first = this.project().tracks.first().map(|track| track.id);
-                        this.selected_track = None;
-                        if let Some(track) = first {
-                            this.select_track(track);
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                match loaded {
+                    Ok(Some(result)) => match this.session.continue_midi_import(result) {
+                        Some(report) => {
+                            this.agent_reset_conversation();
+                            this.resync_selection();
+                            this.reset_view();
+                            let first = this.project().tracks.first().map(|track| track.id);
+                            this.selected_track = None;
+                            if let Some(track) = first {
+                                this.select_track(track);
+                            }
+                            let language = this.language();
+                            this.set_status(messages::midi_imported(
+                                language,
+                                report.tracks,
+                                report.notes,
+                            ));
                         }
-                        let language = this.language();
-                        this.set_status(messages::midi_imported(
-                            language,
-                            report.tracks,
-                            report.notes,
-                        ));
+                        None => this.set_status(this.t(Key::BackgroundCommandChanged).to_string()),
+                    },
+                    Ok(None) => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
                     }
                     Err(error) => {
                         this.set_failed_status(this.failure(Key::CmdImportMidi, &error));
@@ -1026,7 +1481,7 @@ impl AurisApp {
             let Some(handle) = handle else { return };
             let path = handle.path().to_path_buf();
             let _ = this.update(cx, |this, cx| {
-                this.apply_singer_voice(track, &path);
+                this.apply_singer_voice(track, path, cx);
                 cx.notify();
             });
         })
@@ -1103,7 +1558,12 @@ impl AurisApp {
 
     /// Points a singer track at a voice file and says what happened — the shared tail of
     /// the file picker above and the library's voice rows.
-    pub(crate) fn apply_singer_voice(&mut self, track: TrackId, path: &std::path::Path) {
+    pub(crate) fn apply_singer_voice(
+        &mut self,
+        track: TrackId,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
         if self
             .session
             .singer_voice_info(track)
@@ -1114,7 +1574,45 @@ impl AurisApp {
             self.select_track(track);
             return;
         }
-        match self.session.set_singer_voice(track, Some(path)) {
+        let label = self.t(Key::CmdChooseVoice).to_string();
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
+        };
+        // The selected voice has not changed yet, so keep its reusable cache and metadata if this
+        // load fails. Only retire work whose completion would now contradict the pending choice.
+        self.invalidate_pending_sung_preview();
+        let job = self.session.begin_singer_voice_load(&path);
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                match loaded {
+                    Ok(Some(result)) => match this.session.continue_singer_voice_load(result) {
+                        Some(voice) => this.finish_apply_singer_voice(track, &voice),
+                        None => this.set_status(this.t(Key::BackgroundCommandChanged).to_string()),
+                    },
+                    Ok(None) => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
+                    }
+                    Err(error) => this.set_failed_status(this.failure(Key::CmdChooseVoice, &error)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn finish_apply_singer_voice(
+        &mut self,
+        track: TrackId,
+        voice: &auris_session::SingerVoiceLoadResult,
+    ) {
+        match self.session.set_singer_voice_from_load(track, voice) {
             Ok(()) => {
                 self.select_track(track);
                 self.invalidate_sung_previews();
@@ -1145,15 +1643,14 @@ impl AurisApp {
 
     /// Chooses a voice from the library shelf for the selected — or only — singer track.
     ///
-    /// The browser interface a voice shares with the instruments: one row, one click. Like
-    /// the picker, this loads a couple of hundred megabytes on the main thread and accepts
-    /// the beat — it happens once per voice per session, on a deliberate action.
-    pub(crate) fn set_track_voice(&mut self, path: &std::path::Path) {
+    /// The browser interface a voice shares with the instruments: one row, one click. Like the
+    /// picker, this prepares the model on a cancellable worker before the short document edit.
+    pub(crate) fn set_track_voice(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         let Some(track) = self.singer_target() else {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
         };
-        self.apply_singer_voice(track, path);
+        self.apply_singer_voice(track, path, cx);
     }
 
     /// Drops cached and pending auditions when the voice behind them changes.
@@ -1162,6 +1659,12 @@ impl AurisApp {
         self.voicevox_catalogs.clear();
         self.singer_portraits.invalidate();
         self.sung_previews.clear();
+        self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
+    }
+
+    /// Retires in-flight audition work without discarding the current voice's reusable cache.
+    fn invalidate_pending_sung_preview(&mut self) {
+        self.stop_audition();
         self.sung_preview_generation = self.sung_preview_generation.wrapping_add(1);
     }
 
@@ -1277,19 +1780,113 @@ impl AurisApp {
             self.set_failed_status(self.t(Key::ErrorNoSingerTrack).to_string());
             return;
         };
-        let plan = match self.session.sing_plan(track, None) {
-            Ok(plan) => plan,
+        if self.background_command.is_some() {
+            self.set_status(self.t(Key::BackgroundCommandBusy).to_string());
+            return;
+        }
+        if let Err(error) = self.session.preflight_singer_plan(track) {
+            let line = self.failure(Key::CmdSing, &error);
+            self.set_failed_status(line);
+            return;
+        }
+        let job = match self.session.begin_singer_track_voice_load(track) {
+            Ok(job) => job,
             Err(error) => {
                 let line = self.failure(Key::CmdSing, &error);
                 self.set_failed_status(line);
                 return;
             }
         };
-        let model = match self.session.voice_model_at(&plan.voice) {
-            Ok(model) => model,
+        let fingerprint = match self.session.singer_input_fingerprint(track) {
+            Ok(fingerprint) => fingerprint,
             Err(error) => {
                 let line = self.failure(Key::CmdSing, &error);
                 self.set_failed_status(line);
+                return;
+            }
+        };
+        let track_name = self
+            .project()
+            .track(track)
+            .map(|track| track.name.clone())
+            .unwrap_or_default();
+        let lease = SingerExportLease {
+            generation: self.sung_preview_generation,
+            fingerprint,
+            folder: self.session.project_folder().map(Path::to_path_buf),
+            progress: Arc::new(AtomicU32::new(0)),
+            cancel: Arc::new(AtomicBool::new(false)),
+        };
+        self.cancel_autosave_task();
+        self.cancel_disk_watch();
+        self.export = Some(ExportState {
+            path: PathBuf::from(track_name),
+            progress: Arc::clone(&lease.progress),
+            result: None,
+            cancel: Arc::clone(&lease.cancel),
+        });
+        cx.notify();
+
+        let worker_lease = lease.clone();
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { job.run(&worker_lease.cancel) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.singer_export_is_current(&lease) {
+                    return;
+                }
+                if lease.cancel.load(Ordering::Relaxed)
+                    || lease.generation != this.sung_preview_generation
+                    || this.session.singer_input_fingerprint(track).ok() != Some(lease.fingerprint)
+                    || this.session.project_folder() != lease.folder.as_deref()
+                {
+                    this.finish_cancelled_singer_export(&lease);
+                    cx.notify();
+                    return;
+                }
+                match loaded {
+                    Ok(Some(result)) => match this.session.continue_singer_voice_load(result) {
+                        Some(voice) => {
+                            match this.session.sing_plan_from_voice_load(track, None, &voice) {
+                                Ok(plan) if plan.fingerprint == lease.fingerprint => {
+                                    let prepared = PreparedSingerRender {
+                                        plan,
+                                        model: voice.model(),
+                                    };
+                                    this.start_singer_render(track, prepared, lease, cx);
+                                }
+                                Ok(_) => this.finish_cancelled_singer_export(&lease),
+                                Err(error) => {
+                                    this.finish_failed_singer_export(&lease, &error);
+                                }
+                            }
+                        }
+                        None => this.finish_cancelled_singer_export(&lease),
+                    },
+                    Ok(None) => this.finish_cancelled_singer_export(&lease),
+                    Err(error) => this.finish_failed_singer_export(&lease, &error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Starts inference after the explicit voice-load job has installed a current model.
+    fn start_singer_render(
+        &mut self,
+        track: TrackId,
+        prepared: PreparedSingerRender,
+        lease: SingerExportLease,
+        cx: &mut Context<Self>,
+    ) {
+        let PreparedSingerRender { plan, model } = prepared;
+        let landing = match self.session.begin_singer_landing(&plan) {
+            Ok(job) => job,
+            Err(error) => {
+                self.finish_failed_singer_export(&lease, &error);
                 return;
             }
         };
@@ -1300,32 +1897,17 @@ impl AurisApp {
             .flatten()
             .map(|voice| voice.name.clone())
             .unwrap_or_default();
-        let track_name = self
-            .project()
-            .track(track)
-            .map(|track| track.name.clone())
-            .unwrap_or_default();
-
-        let progress = Arc::new(AtomicU32::new(0));
-        let cancel = Arc::new(AtomicBool::new(false));
-        let landing_cancel = Arc::clone(&cancel);
-        let fingerprint = plan.fingerprint;
-        let folder = self.session.project_folder().map(Path::to_path_buf);
-        let generation = self.sung_preview_generation;
-        self.export = Some(ExportState {
-            path: PathBuf::from(track_name),
-            progress: Arc::clone(&progress),
-            result: None,
-            cancel: Arc::clone(&cancel),
-        });
-        cx.notify();
+        let worker_progress = Arc::clone(&lease.progress);
+        let worker_cancel = Arc::clone(&lease.cancel);
+        let landing_cancel = Arc::clone(&lease.cancel);
+        let result_lease = lease.clone();
 
         cx.spawn(async move |this, cx| {
             let sung = cx
                 .background_executor()
                 .spawn(async move {
                     let mut model = model.lock().expect("no thread panics holding a voice");
-                    model
+                    let rendered = model
                         .sing_render_with(
                             &plan.frames,
                             &plan.score,
@@ -1333,40 +1915,48 @@ impl AurisApp {
                             plan.seed,
                             |done, total| {
                                 let fraction = done as f32 / total.max(1) as f32;
-                                progress.store(fraction.to_bits(), Ordering::Relaxed);
-                                !cancel.load(Ordering::Relaxed)
+                                worker_progress.store(fraction.to_bits(), Ordering::Relaxed);
+                                !worker_cancel.load(Ordering::Relaxed)
                             },
                         )
-                        .map(|samples| (plan, samples))
-                        .map_err(auris_session::SessionError::from)
-                        .map_err(|error| (error.is_cancellation(), error))
+                        .map_err(auris_session::SessionError::from);
+                    match rendered {
+                        Ok(render) => landing
+                            .run(render, &worker_cancel)
+                            .map_err(|error| (error.is_cancellation(), error)),
+                        Err(error) => Err((error.is_cancellation(), error)),
+                    }
                 })
                 .await;
 
             let _ = this.update(cx, |this, cx| {
+                if !this.singer_export_is_current(&result_lease) {
+                    return;
+                }
                 // Another window can change the connection, or reload the document, while
                 // this overlay is open. A completed old performance must not replace it.
                 if landing_cancel.load(Ordering::Relaxed)
-                    || generation != this.sung_preview_generation
-                    || this.session.singer_input_fingerprint(track).ok() != Some(fingerprint)
-                    || this.session.project_folder() != folder.as_deref()
+                    || result_lease.generation != this.sung_preview_generation
+                    || this.session.singer_input_fingerprint(track).ok()
+                        != Some(result_lease.fingerprint)
+                    || this.session.project_folder() != result_lease.folder.as_deref()
                 {
-                    let text = this.t(Key::SingCancelled).to_string();
-                    this.set_status(text.clone());
-                    if let Some(export) = this.export.as_mut() {
-                        export.cancel();
-                        export.result = Some(Ok(text));
-                    }
+                    this.finish_cancelled_singer_export(&result_lease);
                     cx.notify();
                     return;
                 }
                 let message = match sung {
-                    Ok((plan, samples)) => match this.session.land_singer_render(&plan, &samples) {
-                        Ok(seconds) => {
+                    Ok(Some(result)) => match this.session.continue_singer_landing(result) {
+                        Ok(Some(seconds)) => {
                             this.sung_failures.remove(&track);
                             this.sung_retry.remove(&track);
                             let language = this.language();
                             let text = messages::take_sung(language, &voice_name, seconds);
+                            this.set_status(text.clone());
+                            Ok(text)
+                        }
+                        Ok(None) => {
+                            let text = this.t(Key::SingCancelled).to_string();
                             this.set_status(text.clone());
                             Ok(text)
                         }
@@ -1376,6 +1966,11 @@ impl AurisApp {
                             Err(text)
                         }
                     },
+                    Ok(None) => {
+                        let text = this.t(Key::SingCancelled).to_string();
+                        this.set_status(text.clone());
+                        Ok(text)
+                    }
                     // Stopped on purpose: the previous take, if any, is untouched.
                     Err((true, _)) => {
                         let text = this.t(Key::SingCancelled).to_string();
@@ -1388,13 +1983,52 @@ impl AurisApp {
                         Err(text)
                     }
                 };
-                if let Some(export) = this.export.as_mut() {
+                if let Some(export) = this
+                    .export
+                    .as_mut()
+                    .filter(|export| Arc::ptr_eq(&export.cancel, &result_lease.cancel))
+                {
                     export.result = Some(message);
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn singer_export_is_current(&self, lease: &SingerExportLease) -> bool {
+        self.export.as_ref().is_some_and(|export| {
+            export.result.is_none()
+                && Arc::ptr_eq(&export.cancel, &lease.cancel)
+                && Arc::ptr_eq(&export.progress, &lease.progress)
+        })
+    }
+
+    fn finish_cancelled_singer_export(&mut self, lease: &SingerExportLease) {
+        if !self.singer_export_is_current(lease) {
+            return;
+        }
+        lease.cancel.store(true, Ordering::Relaxed);
+        let text = self.t(Key::SingCancelled).to_string();
+        self.set_status(text.clone());
+        if let Some(export) = self.export.as_mut() {
+            export.result = Some(Ok(text));
+        }
+    }
+
+    fn finish_failed_singer_export(
+        &mut self,
+        lease: &SingerExportLease,
+        error: &auris_session::SessionError,
+    ) {
+        if !self.singer_export_is_current(lease) {
+            return;
+        }
+        let text = self.failure(Key::CmdSing, error);
+        self.set_failed_status(text.clone());
+        if let Some(export) = self.export.as_mut() {
+            export.result = Some(Err(text));
+        }
     }
 
     /// Asks any background re-render to stop: a person just took the stage.
@@ -1587,66 +2221,55 @@ impl AurisApp {
                 continue;
             };
             let folder = self.session.project_folder().map(Path::to_path_buf);
-            let plan = match self.session.sing_plan(track, None) {
-                Ok(plan) => plan,
+            if let Err(error) = self.session.preflight_singer_plan(track) {
+                if !matches!(error, auris_session::SessionError::NothingToSing(_)) {
+                    self.record_singer_failure(track, fingerprint, folder, &error);
+                }
+                continue;
+            }
+            match self
+                .session
+                .begin_singer_voice_load_for_automatic_access(track)
+            {
+                Ok(job) => {
+                    chosen = Some((track, fingerprint, folder, job));
+                    break;
+                }
                 Err(error) => {
                     if !matches!(error, auris_session::SessionError::NothingToSing(_)) {
                         self.record_singer_failure(track, fingerprint, folder, &error);
                     }
-                    continue;
                 }
-            };
-            match self.session.voice_model_at(&plan.voice) {
-                Ok(model) => {
-                    chosen = Some((plan, model));
-                    break;
-                }
-                Err(error) => self.record_singer_failure(track, fingerprint, folder, &error),
             }
         }
-        let Some((plan, model)) = chosen else { return };
-        let track = plan.track;
-        let fingerprint = plan.fingerprint;
-        let folder = self.session.project_folder().map(Path::to_path_buf);
-        let voice_name = self
-            .session
-            .singer_voice(track)
-            .ok()
-            .flatten()
-            .map(|voice| voice.name.clone())
-            .unwrap_or_default();
+        let Some((track, fingerprint, folder, job)) = chosen else {
+            return;
+        };
 
         let cancel = Arc::new(AtomicBool::new(false));
         self.auto_sing = Some(AutoSing {
             track,
-            fingerprint: plan.fingerprint,
+            fingerprint,
             cancel: Arc::clone(&cancel),
             checked: revision,
         });
         cx.notify();
 
-        let landing_cancel = Arc::clone(&cancel);
+        let result_cancel = Arc::clone(&cancel);
         cx.spawn(async move |this, cx| {
-            let sung = cx
+            let loaded = cx
                 .background_executor()
-                .spawn(async move {
-                    let mut model = model.lock().expect("no thread panics holding a voice");
-                    model
-                        .sing_render_with(
-                            &plan.frames,
-                            &plan.score,
-                            plan.speaker,
-                            plan.seed,
-                            |_, _| !cancel.load(Ordering::Relaxed),
-                        )
-                        .map(|samples| (plan, samples))
-                        .map_err(auris_session::SessionError::from)
-                })
+                .spawn(async move { job.run(&cancel) })
                 .await;
-
             let _ = this.update(cx, |this, cx| {
+                let current = this.auto_sing.as_ref().is_some_and(|auto| {
+                    auto.track == track && Arc::ptr_eq(&auto.cancel, &result_cancel)
+                });
+                if !current {
+                    return;
+                }
                 this.auto_sing = None;
-                if landing_cancel.load(Ordering::Relaxed) {
+                if result_cancel.load(Ordering::Relaxed) {
                     cx.notify();
                     return;
                 }
@@ -1656,22 +2279,140 @@ impl AurisApp {
                     cx.notify();
                     return;
                 }
+                let mut continue_scheduler = false;
+                match loaded {
+                    Ok(Some(result)) => {
+                        if let Some(voice) = this.session.continue_singer_voice_load(result) {
+                            match this.session.sing_plan_from_voice_load(track, None, &voice) {
+                                Ok(plan) if plan.fingerprint == fingerprint => {
+                                    let prepared = PreparedSingerRender {
+                                        plan,
+                                        model: voice.model(),
+                                    };
+                                    this.start_auto_singer_render(
+                                        track,
+                                        fingerprint,
+                                        folder,
+                                        result_cancel,
+                                        prepared,
+                                        cx,
+                                    );
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    this.record_singer_failure(track, fingerprint, folder, &error);
+                                    continue_scheduler = true;
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        this.record_singer_failure(track, fingerprint, folder, &error);
+                        continue_scheduler = true;
+                    }
+                }
+                if continue_scheduler {
+                    this.poll_auto_sing(cx);
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Starts automatic inference after its policy-checked voice load has completed.
+    fn start_auto_singer_render(
+        &mut self,
+        track: TrackId,
+        expected_fingerprint: u64,
+        folder: Option<PathBuf>,
+        cancel: Arc<AtomicBool>,
+        prepared: PreparedSingerRender,
+        cx: &mut Context<Self>,
+    ) {
+        let PreparedSingerRender { plan, model } = prepared;
+        let landing = match self.session.begin_singer_landing(&plan) {
+            Ok(job) => job,
+            Err(error) => {
+                self.record_singer_failure(track, expected_fingerprint, folder, &error);
+                return;
+            }
+        };
+        let voice_name = self
+            .session
+            .singer_voice(track)
+            .ok()
+            .flatten()
+            .map(|voice| voice.name.clone())
+            .unwrap_or_default();
+        self.auto_sing = Some(AutoSing {
+            track,
+            fingerprint: expected_fingerprint,
+            cancel: Arc::clone(&cancel),
+            checked: self.session.revision(),
+        });
+        cx.notify();
+
+        let landing_cancel = Arc::clone(&cancel);
+        cx.spawn(async move |this, cx| {
+            let sung = cx
+                .background_executor()
+                .spawn(async move {
+                    let mut model = model.lock().expect("no thread panics holding a voice");
+                    let rendered = model
+                        .sing_render_with(
+                            &plan.frames,
+                            &plan.score,
+                            plan.speaker,
+                            plan.seed,
+                            |_, _| !cancel.load(Ordering::Relaxed),
+                        )
+                        .map_err(auris_session::SessionError::from);
+                    match rendered {
+                        Ok(render) => landing.run(render, &cancel),
+                        Err(error) => Err(error),
+                    }
+                })
+                .await;
+
+            let _ = this.update(cx, |this, cx| {
+                let current = this.auto_sing.as_ref().is_some_and(|auto| {
+                    auto.track == track && Arc::ptr_eq(&auto.cancel, &landing_cancel)
+                });
+                if !current {
+                    return;
+                }
+                this.auto_sing = None;
+                if landing_cancel.load(Ordering::Relaxed) {
+                    cx.notify();
+                    return;
+                }
+                if this.session.singer_input_fingerprint(track).ok() != Some(expected_fingerprint)
+                    || this.session.project_folder() != folder.as_deref()
+                {
+                    cx.notify();
+                    return;
+                }
                 match sung {
-                    Ok((plan, samples)) => match this.session.land_singer_render(&plan, &samples) {
-                        Ok(seconds) => {
+                    Ok(Some(result)) => match this.session.continue_singer_landing(result) {
+                        Ok(Some(seconds)) => {
                             this.sung_failures.remove(&track);
                             let language = this.language();
                             this.set_status(messages::take_sung(language, &voice_name, seconds));
                         }
-                        Err(error) => {
-                            this.record_singer_failure(track, fingerprint, folder.clone(), &error);
-                        }
+                        Ok(None) => {}
+                        Err(error) => this.record_singer_failure(
+                            track,
+                            expected_fingerprint,
+                            folder.clone(),
+                            &error,
+                        ),
                     },
-                    // Cancelled: a newer edit or a manual render took the stage, and the
-                    // next quiet moment starts over. Anything else is worth its line.
+                    Ok(None) => {}
                     Err(error) if error.is_cancellation() => {}
                     Err(error) => {
-                        this.record_singer_failure(track, fingerprint, folder, &error);
+                        this.record_singer_failure(track, expected_fingerprint, folder, &error);
                     }
                 }
                 cx.notify();
@@ -1709,34 +2450,88 @@ impl AurisApp {
             self.sung_preview_wish = None;
             return;
         }
-        let speaker = match self.session.singer_speaker(track) {
-            Ok(speaker) => speaker,
+        let job = match self.session.begin_singer_track_voice_load(track) {
+            Ok(job) => job,
             Err(_) => {
                 self.sung_preview_wish = None;
                 return;
             }
         };
-        let model = match self.session.singer_voice_model(track) {
-            Ok(model) => model,
-            Err(_) => {
-                self.sung_preview_wish = None;
-                return;
-            }
-        };
+        let generation = self.sung_preview_generation;
+        self.sung_preview_rendering = true;
+        cx.spawn(async move |this, cx| {
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { job.run(&AtomicBool::new(false)) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if generation != this.sung_preview_generation {
+                    this.sung_preview_rendering = false;
+                    cx.notify();
+                    return;
+                }
+                let still_requested = this
+                    .sung_preview_wish
+                    .as_ref()
+                    .is_some_and(|wish| wish.track == track && wish.key == key);
+                if !still_requested {
+                    this.sung_preview_rendering = false;
+                    cx.notify();
+                    return;
+                }
+                match loaded {
+                    Ok(Some(result)) => match this.session.continue_singer_voice_load(result) {
+                        Some(voice) => match voice.speaker_id(key.speaker.as_deref()) {
+                            Ok(speaker) => this.start_sung_preview_render(
+                                track,
+                                key,
+                                generation,
+                                speaker,
+                                voice.model(),
+                                cx,
+                            ),
+                            Err(_) => {
+                                this.sung_preview_rendering = false;
+                                this.sung_preview_wish = None;
+                            }
+                        },
+                        None => this.sung_preview_rendering = false,
+                    },
+                    Ok(None) => this.sung_preview_rendering = false,
+                    Err(_) => {
+                        this.sung_preview_rendering = false;
+                        this.sung_preview_wish = None;
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Starts preview inference only after its voice model is warm in the session cache.
+    fn start_sung_preview_render(
+        &mut self,
+        track: TrackId,
+        key: crate::app::SungPreviewKey,
+        generation: u64,
+        speaker: u32,
+        model: Arc<std::sync::Mutex<auris_session::VoiceModel>>,
+        cx: &mut Context<Self>,
+    ) {
         let frames = match self
             .session
             .preview_note_frames(track, key.pitch, &key.phonemes)
         {
             Ok(frames) => frames,
             Err(_) => {
+                self.sung_preview_rendering = false;
                 self.sung_preview_wish = None;
                 return;
             }
         };
         let score = self.session.preview_note_score(&frames, key.pitch);
         let seed = key.seed;
-        let generation = self.sung_preview_generation;
-        self.sung_preview_rendering = true;
         cx.spawn(async move |this, cx| {
             let sung = cx
                 .background_executor()
@@ -1828,25 +2623,63 @@ impl AurisApp {
                 let Some(handle) = handle else { return };
                 let path = handle.path().to_path_buf();
                 let _ = view.update(cx, |this, cx| {
-                    match this.session.export_singer_frames(track, &path) {
-                        Ok(frames) => {
-                            let language = this.language();
-                            this.set_status(messages::frames_exported(
-                                language,
-                                &path.display().to_string(),
-                                frames,
-                            ));
-                        }
-                        Err(error) => {
-                            this.set_failed_status(
-                                this.failure(Key::CmdExportSingerFrames, &error),
-                            );
-                        }
-                    }
+                    this.start_singer_frames_export(track, path, cx);
                     cx.notify();
                 });
             })
             .detach();
+    }
+
+    /// Renders and writes the already-chosen singer-frame destination on a worker.
+    fn start_singer_frames_export(
+        &mut self,
+        track: TrackId,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let job = match self.session.begin_singer_frames_export(track, &path) {
+            Ok(job) => job,
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdExportSingerFrames, &error));
+                return;
+            }
+        };
+        let label = self.t(Key::CmdExportSingerFrames).to_string();
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            let written = cx
+                .background_executor()
+                .spawn(async move { job.run(&cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                match written {
+                    Ok(Some(result)) => match this.session.continue_singer_frames_export(result) {
+                        Some(Ok((path, frames))) => this.set_status(messages::frames_exported(
+                            this.language(),
+                            &path.display().to_string(),
+                            frames,
+                        )),
+                        Some(Err(error)) => {
+                            this.set_failed_status(this.failure(Key::CmdExportSingerFrames, &error))
+                        }
+                        None => this.set_status(this.t(Key::BackgroundCommandChanged).to_string()),
+                    },
+                    Ok(None) => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
+                    }
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdExportSingerFrames, &error));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Prompts for a destination and writes the document out as a MIDI file.
@@ -1865,23 +2698,60 @@ impl AurisApp {
                 let Some(handle) = handle else { return };
                 let path = handle.path().to_path_buf();
                 let _ = view.update(cx, |this, cx| {
-                    match this.session.export_midi(&path) {
-                        Ok(notes) => {
-                            let language = this.language();
-                            this.set_status(messages::midi_exported(
-                                language,
-                                &path.display().to_string(),
-                                notes,
-                            ));
-                        }
-                        Err(error) => {
-                            this.set_failed_status(this.failure(Key::CmdExportMidi, &error));
-                        }
-                    }
+                    this.start_midi_export(path, cx);
                     cx.notify();
                 });
             })
             .detach();
+    }
+
+    /// Encodes and writes the already-chosen MIDI destination on a worker.
+    fn start_midi_export(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let job = self.session.begin_midi_export(&path);
+        let label = self.t(Key::CmdExportMidi).to_string();
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
+        };
+        let worker_cancelled = Arc::clone(&cancelled);
+        cx.spawn(async move |this, cx| {
+            let written = cx
+                .background_executor()
+                .spawn(async move { job.run(&worker_cancelled) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                match written {
+                    Ok(Some(result)) => {
+                        match this
+                            .session
+                            .continue_midi_export(result, cancelled.as_ref())
+                        {
+                            Ok(Some((path, notes))) => this.set_status(messages::midi_exported(
+                                this.language(),
+                                &path.display().to_string(),
+                                notes,
+                            )),
+                            Ok(None) => {
+                                this.set_status(this.t(Key::BackgroundCommandChanged).to_string())
+                            }
+                            Err(error) => {
+                                this.set_failed_status(this.failure(Key::CmdExportMidi, &error));
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string())
+                    }
+                    Err(error) => {
+                        this.set_failed_status(this.failure(Key::CmdExportMidi, &error));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Prompts for a song specification and replaces the document with what it describes.
@@ -1923,54 +2793,152 @@ impl AurisApp {
         }
         let language = self.language();
         let shown = path.display().to_string();
-
-        let text = match std::fs::read_to_string(path) {
-            Ok(text) => text,
-            Err(error) => {
-                self.set_failed_status(messages::failed(
-                    language,
-                    self.t(Key::CmdComposeSong),
-                    &error.to_string(),
-                ));
-                return;
-            }
+        let path = path.to_path_buf();
+        let revision = self.session.revision();
+        let label = self.t(Key::CmdComposeSong).to_string();
+        let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
+            return;
         };
-        // A syntax error comes back on its own with the line it is on; every complaint about
-        // what the document *means* comes back at once, so a specification with three bad
-        // values takes one round trip rather than three.
-        let spec = match SongSpec::parse(&text) {
-            Ok(spec) => spec,
-            Err(errors) => {
-                // Every complaint, in a sheet. They were joined with newlines into the status
-                // bar, which is one row twenty-two pixels tall: the whole point — say all of it
-                // at once — was thrown away by where the answer was put.
-                self.set_failed_status(messages::spec_rejected(language, &shown));
-                self.open_prompt(crate::ui::prompt::Prompt::notice(
-                    self.t(Key::SpecRejectedTitle),
-                    errors.iter().map(|error| error.to_string().into()),
-                ));
-                return;
-            }
-        };
-
-        self.compose_spec(&spec, false, cx);
+        cx.spawn(async move |this, cx| {
+            let parsed = cx
+                .background_executor()
+                .spawn(async move {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return None;
+                    }
+                    let parsed = auris_session::settings::read_config_text(&path)
+                        .map(|text| SongSpec::parse(&text));
+                    (!cancelled.load(Ordering::Relaxed)).then_some(parsed)
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if !this.finish_background_command(id) {
+                    return;
+                }
+                if this.session.revision() != revision {
+                    this.set_status(this.t(Key::BackgroundCommandChanged).to_string());
+                    cx.notify();
+                    return;
+                }
+                match parsed {
+                    None => {
+                        this.set_status(this.t(Key::BackgroundCommandCancelled).to_string());
+                    }
+                    Some(Err(error)) => this.set_failed_status(messages::failed(
+                        language,
+                        this.t(Key::CmdComposeSong),
+                        &error.to_string(),
+                    )),
+                    Some(Ok(Ok(spec))) => {
+                        this.compose_spec(&spec, false, cx);
+                    }
+                    Some(Ok(Err(errors))) => {
+                        // Every complaint, in a sheet. They were joined with newlines into the
+                        // status bar, which is one row twenty-two pixels tall: the whole point —
+                        // say all of it at once — was thrown away by where the answer was put.
+                        this.set_failed_status(messages::spec_rejected(language, &shown));
+                        this.open_prompt(crate::ui::prompt::Prompt::notice(
+                            this.t(Key::SpecRejectedTitle),
+                            errors.iter().map(|error| error.to_string().into()),
+                        ));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Renders every track alone, measures it, and sets the mix from what came out.
-    pub(crate) fn balance_levels(&mut self) {
-        let language = self.language();
-        match self.session.balance_levels() {
-            Ok(report) => {
-                let parts = report.tracks.len();
-                let lufs = report.now_lufs.unwrap_or(auris_session::TARGET_LUFS);
-                let short = report.short_by_db();
-                self.set_status(match short >= 1.0 {
-                    true => messages::mix_balanced_short(language, parts, lufs, short),
-                    false => messages::mix_balanced(language, parts, lufs),
+    pub(crate) fn balance_levels(&mut self, cx: &mut Context<Self>) {
+        let Some((id, cancelled, progress)) =
+            self.start_background_command(self.t(Key::EditBalanceLevels).to_string(), true)
+        else {
+            return;
+        };
+        let Some(progress) = progress else {
+            return;
+        };
+        // Claim the single worker slot before preparing hosted render instances. A repeated
+        // command while another job is running must be a cheap rejection, not a second round of
+        // native-plugin setup on the GPUI thread.
+        let job = self.session.begin_balance_levels_job();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let mut next = Some(job);
+            while let Some(job) = next {
+                let worker_progress = Arc::clone(&progress);
+                let worker_cancelled = Arc::clone(&cancelled);
+                let measured = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut update = |fraction: f32| {
+                            worker_progress.store(fraction.to_bits(), Ordering::Relaxed);
+                        };
+                        job.run(
+                            &mut RenderProgress::reporting(&mut update)
+                                .cancelled_by(&worker_cancelled),
+                        )
+                    })
+                    .await;
+                let continued = this.update(cx, |this, cx| {
+                    if !this.background_command_is_current(id) {
+                        return None;
+                    }
+                    let step =
+                        measured.and_then(|result| this.session.continue_composed_balance(result));
+                    match &step {
+                        Ok(auris_session::ComposeBalanceStep::Pending(_)) => {}
+                        _ => {
+                            this.background_command = None;
+                        }
+                    }
+                    cx.notify();
+                    Some(step)
                 });
+                match continued {
+                    Ok(Some(Ok(auris_session::ComposeBalanceStep::Pending(job)))) => {
+                        next = Some(job);
+                    }
+                    Ok(Some(Ok(auris_session::ComposeBalanceStep::Complete(report)))) => {
+                        let _ = this.update(cx, |this, cx| {
+                            let language = this.language();
+                            let parts = report.tracks.len();
+                            let lufs = report.now_lufs.unwrap_or(auris_session::TARGET_LUFS);
+                            let short = report.short_by_db();
+                            this.set_status(match short >= 1.0 {
+                                true => messages::mix_balanced_short(language, parts, lufs, short),
+                                false => messages::mix_balanced(language, parts, lufs),
+                            });
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    Ok(Some(Err(SessionError::StaleBalance))) => {
+                        let _ = this.update(cx, |this, cx| {
+                            this.set_status(this.t(Key::BackgroundCommandChanged).to_string());
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    Ok(Some(Err(error))) => {
+                        let _ = this.update(cx, |this, cx| {
+                            if error.is_cancellation() {
+                                this.set_status(
+                                    this.t(Key::BackgroundCommandCancelled).to_string(),
+                                );
+                            } else {
+                                this.set_failed_status(this.failure(Key::CmdBalanceLevels, &error));
+                            }
+                            cx.notify();
+                        });
+                        return;
+                    }
+                    Ok(None) | Err(_) => return,
+                }
             }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdBalanceLevels, &error)),
-        }
+        })
+        .detach();
     }
 
     /// Prompts for an audio file and drops it onto a new audio track.
@@ -2301,7 +3269,12 @@ impl AurisApp {
             let _ = this.update(cx, |this, cx| {
                 if !this.settings.plugin_paths.contains(&path) {
                     this.settings.plugin_paths.push(path);
-                    this.save_plugin_paths();
+                    if let Err(error) = this.settings.save() {
+                        this.settings.plugin_paths.pop();
+                        this.set_failed_status(this.failure(Key::BrowserAddPluginFolder, &error));
+                    } else {
+                        this.invalidate_plugin_files();
+                    }
                 }
                 cx.notify();
             });
@@ -2314,15 +3287,16 @@ impl AurisApp {
     /// The plugins under it are not unloaded and a project that names one still names it — this
     /// is a browser listing, not a registry. What it does mean is that the file has to be found
     /// again before it can be added to anything new.
-    pub(crate) fn forget_plugin_path(&mut self, index: usize) {
-        if index < self.settings.plugin_paths.len() {
-            self.settings.plugin_paths.remove(index);
-            self.save_plugin_paths();
+    pub(crate) fn forget_plugin_path(&mut self, path: &Path) -> Result<bool, SessionError> {
+        let removed = remove_plugin_path_and_save(&mut self.settings, path, Settings::save)?;
+        if removed {
+            self.invalidate_plugin_files();
         }
+        Ok(removed)
     }
 
-    /// Writes the plugin folders out and makes the browser look again.
-    fn save_plugin_paths(&mut self) {
+    /// Makes the browser look again after the plugin folders were durably changed.
+    fn invalidate_plugin_files(&mut self) {
         // The list of files was cached the first time the browser drew it, and the whole point
         // of this edit is that the answer has changed.
         self.clap_files = None;
@@ -2336,9 +3310,6 @@ impl AurisApp {
         if let Some(browser) = self.song_library.as_mut() {
             browser.tree.forget_plugin_files();
             browser.reveal = None;
-        }
-        if let Err(error) = self.settings.save() {
-            log::warn!("could not save settings: {error}");
         }
     }
 
@@ -2467,6 +3438,7 @@ impl AurisApp {
             return;
         }
         let mut job = self.session.render_job();
+        let guard = self.session.export_guard();
         // Refused before the dialog opens, for the reason a cycle export is: a folder chosen for
         // an export that cannot happen is a question asked for nothing.
         let stems = job.stem_tracks().len();
@@ -2514,14 +3486,24 @@ impl AurisApp {
                     let mut report = |fraction: f32| {
                         progress.store(fraction.to_bits(), Ordering::Relaxed);
                     };
-                    job.render_audio_stems(
-                        &render_folder,
-                        &settings,
-                        &options,
-                        &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
-                    )
-                    .map(|stems| stems.len())
-                    .map_err(|error| (error.is_cancellation(), error.to_string()))
+                    let planned = job.stem_paths(&render_folder, settings.format);
+                    guard
+                        .check_stems(&render_folder, &planned)
+                        .and_then(|()| {
+                            job.render_audio_stems(
+                                &render_folder,
+                                &settings,
+                                &options,
+                                &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
+                            )
+                        })
+                        .map(|stems| stems.len())
+                        .map_err(|error| {
+                            (
+                                error.is_cancellation(),
+                                crate::i18n::error_text(&error, language),
+                            )
+                        })
                 })
                 .await;
 
@@ -2576,6 +3558,7 @@ impl AurisApp {
         }
         // A snapshot, so the render is unaffected by anything edited while it runs.
         let mut job = self.session.render_job();
+        let guard = self.session.export_guard();
         // Set before the cycle region is converted, because `loop_options` turns ticks into
         // frames against the rate the render will run at. A region measured at the project's
         // rate and rendered at another would start and end in the wrong places.
@@ -2655,15 +3638,24 @@ impl AurisApp {
                     let mut report = |fraction: f32| {
                         progress.store(fraction.to_bits(), Ordering::Relaxed);
                     };
-                    job.render_to_audio(
-                        &render_path,
-                        &settings,
-                        &options,
-                        &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
-                    )
-                    // Stringified here so nothing that is not `Send` has to cross back, but the
-                    // one distinction that matters is kept: a cancellation is not a failure.
-                    .map_err(|error| (error.is_cancellation(), error.to_string()))
+                    guard
+                        .check_file(&render_path)
+                        .and_then(|()| {
+                            job.render_to_audio(
+                                &render_path,
+                                &settings,
+                                &options,
+                                &mut RenderProgress::reporting(&mut report).cancelled_by(&cancel),
+                            )
+                        })
+                        // Stringified here so nothing that is not `Send` has to cross back, but the
+                        // one distinction that matters is kept: a cancellation is not a failure.
+                        .map_err(|error| {
+                            (
+                                error.is_cancellation(),
+                                crate::i18n::error_text(&error, language),
+                            )
+                        })
                 })
                 .await;
 
@@ -2823,6 +3815,155 @@ fn press_keeps_selection(selected: &BTreeSet<ClipId>, clip: Option<ClipId>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_plugin_folder_persistence_rolls_the_ordered_setting_back() {
+        let first = PathBuf::from("first");
+        let doomed = PathBuf::from("doomed");
+        let last = PathBuf::from("last");
+        let mut settings = Settings {
+            plugin_paths: vec![first.clone(), doomed.clone(), last.clone()],
+            ..Settings::default()
+        };
+
+        let result =
+            remove_plugin_path_and_save(&mut settings, &doomed, |_| Err(SessionError::NoPath));
+
+        assert!(matches!(result, Err(SessionError::NoPath)));
+        assert_eq!(settings.plugin_paths, [first, doomed, last]);
+    }
+
+    #[test]
+    fn successful_plugin_folder_persistence_receives_and_keeps_the_removed_setting() {
+        let kept = PathBuf::from("kept");
+        let doomed = PathBuf::from("doomed");
+        let mut settings = Settings {
+            plugin_paths: vec![kept.clone(), doomed.clone()],
+            ..Settings::default()
+        };
+        let mut persisted = None;
+
+        let removed = remove_plugin_path_and_save(&mut settings, &doomed, |candidate| {
+            persisted = Some(candidate.plugin_paths.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(removed);
+        assert_eq!(persisted, Some(vec![kept.clone()]));
+        assert_eq!(settings.plugin_paths, [kept]);
+    }
+
+    #[gpui::test]
+    fn background_command_slot_rejects_duplicates_reports_progress_and_cancels(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let (id, cancelled, progress) = app.update(cx, |app, _| {
+            let (id, cancelled, progress) = app
+                .start_background_command("Long operation".to_owned(), true)
+                .expect("the idle worker slot is available");
+            assert!(
+                app.start_background_command("Duplicate".to_owned(), true)
+                    .is_none(),
+                "a second worker was admitted while the first still owned the UI slot"
+            );
+            (id, cancelled, progress.unwrap())
+        });
+        progress.store(0.5_f32.to_bits(), Ordering::Relaxed);
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("background-command-progress").is_some());
+        assert!(cx.debug_bounds("background-command-cancel").is_some());
+
+        crate::harness::click("background-command-cancel", cx);
+        app.read_with(cx, |app, _| {
+            assert!(app.background_command.is_none());
+            assert!(
+                !app.background_command_is_current(id),
+                "a cancelled worker result could still be applied"
+            );
+        });
+        assert!(cancelled.load(Ordering::Relaxed));
+        assert!(
+            !app.update(cx, |app, _| app.finish_background_command(id)),
+            "an old worker released a newer or empty worker slot"
+        );
+    }
+
+    #[gpui::test]
+    fn midi_export_leaves_the_gpui_thread_and_clears_its_visible_job(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "auris-gpui-midi-export-{}-{nonce}.mid",
+            std::process::id()
+        ));
+        app.update(cx, |app, cx| {
+            let track = app.session.add_default_instrument_track("MIDI").unwrap();
+            let clip = app
+                .session
+                .add_midi_clip(track, "MIDI", Ticks::ZERO, Ticks::QUARTER)
+                .unwrap();
+            app.session
+                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+                .unwrap();
+            app.start_midi_export(path.clone(), cx);
+            assert!(
+                app.background_command.is_some(),
+                "the worker is visible before the callback returns"
+            );
+        });
+
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(app.background_command.is_none());
+            assert!(!app.status_failed, "a successful export is not an error");
+        });
+        assert!(path.is_file());
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[gpui::test]
+    fn save_as_stays_staged_until_the_gpui_continuation_publishes_it(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("auris-gpui-save-{}-{nonce}", std::process::id()));
+        let chosen = root.join("Song.auris");
+        let document = root.join("Song").join("Song.auris");
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.session.add_default_instrument_track("Saved").unwrap();
+                let job = app.session.begin_save_as(&chosen).unwrap();
+                app.start_save_job(job, Some(chosen.clone()), None, window, cx);
+                assert!(app.background_command.is_some());
+                assert!(
+                    !document.exists(),
+                    "the worker may stage bytes but cannot publish before the continuation"
+                );
+            });
+        });
+
+        cx.run_until_parked();
+        app.read_with(cx, |app, _| {
+            assert!(app.background_command.is_none());
+            assert_eq!(app.session.path(), Some(document.as_path()));
+            assert!(!app.session.is_dirty());
+        });
+        assert!(document.is_file());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn the_track_height_scale_covers_the_whole_lane_range() {

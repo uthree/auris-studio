@@ -18,7 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use auris_i18n::Key;
+use auris_i18n::{Key, messages};
 use gpui::MouseButton;
 
 use crate::ui::icons::icon;
@@ -31,7 +31,7 @@ use crate::ui::icons::Icon;
 use crate::ui::inspector::{audio_name, panel_header};
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
-use crate::ui::widgets::divider;
+use crate::ui::widgets::{ButtonStyle, button, divider};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 /// How far one level of the tree is indented.
@@ -1222,7 +1222,7 @@ impl AurisApp {
                 this.on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        this.set_track_voice(&path);
+                        this.set_track_voice(path.clone(), cx);
                         this.leave_library_search();
                         cx.notify();
                     }),
@@ -1241,6 +1241,7 @@ impl AurisApp {
         let mut rows: Vec<AnyElement> = Vec::new();
         for (index, path) in self.settings.plugin_paths.clone().into_iter().enumerate() {
             let shown = path.display().to_string();
+            let path_for_remove = path.clone();
             rows.push(
                 div()
                     .id(("plugin-path", index))
@@ -1252,19 +1253,33 @@ impl AurisApp {
                     .h(Metrics::CONTROL_HEIGHT)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(div().flex_1().min_w_0().truncate().child(shown))
+                    // Keep the dock's pane-focus listener from rebuilding this row between the
+                    // button's mouse-down and mouse-up. The button still receives both phases,
+                    // so one click opens the confirmation instead of merely focusing the dock.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(div().flex_1().min_w_0().truncate().child(shown.clone()))
                     .child(
-                        div()
-                            .id(("forget-plugin-path", index))
-                            .cursor_pointer()
-                            .child(icon(Icon::Cross, px(10.0), theme.text_faint))
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                    this.forget_plugin_path(index);
-                                    cx.notify();
-                                }),
-                            ),
+                        button(
+                            ("forget-plugin-path", index),
+                            self.t(Key::BrowserRemovePluginFolder),
+                            ButtonStyle::Ghost,
+                            false,
+                            theme.danger,
+                            &theme,
+                            cx.listener(move |this, _, _, cx| {
+                                this.open_prompt(crate::ui::prompt::Prompt::ask(
+                                    messages::remove_plugin_folder_title(
+                                        this.language(),
+                                        &path_for_remove.display().to_string(),
+                                    ),
+                                    crate::ui::prompt::Question::RemovePluginPath(
+                                        path_for_remove.clone(),
+                                    ),
+                                ));
+                                cx.notify();
+                            }),
+                        )
+                        .text_color(theme.danger),
                     )
                     .into_any_element(),
             );

@@ -73,9 +73,9 @@ def test_summarize_keeps_only_lengthenings_with_enough_samples():
     block = summarize(
         {
             "x": {
-                "s": [0.104] * 100,      # long enough, sampled enough
-                "ɾ": [0.036] * 100,      # sampled enough but shorter than the default
-                "ts": [0.119] * 10,      # long enough but barely sampled
+                "s": [0.104] * 100,  # long enough, sampled enough
+                "ɾ": [0.036] * 100,  # sampled enough but shorter than the default
+                "ts": [0.119] * 10,  # long enough but barely sampled
             }
         },
         measured_from="unit test",
@@ -161,9 +161,14 @@ def test_script_end_to_end_writes_the_block(tmp_path, capsys):
     out = tmp_path / "durations.json"
     sys.argv = [
         "measure_phoneme_durations.py",
-        "--label-dir", str(labels), "--speaker", "x",
-        "--output", str(out),
-        "--measured-from", "synthetic",
+        "--label-dir",
+        str(labels),
+        "--speaker",
+        "x",
+        "--output",
+        str(out),
+        "--measured-from",
+        "synthetic",
     ]
     script.main()
 
@@ -184,7 +189,12 @@ def test_script_reports_symbols_outside_the_phoneme_table(tmp_path, capsys):
     out = tmp_path / "durations.json"
     sys.argv = [
         "measure_phoneme_durations.py",
-        "--label-dir", str(labels), "--speaker", "x", "--output", str(out),
+        "--label-dir",
+        str(labels),
+        "--speaker",
+        "x",
+        "--output",
+        str(out),
     ]
     script.main()
     assert "zzz" in capsys.readouterr().out

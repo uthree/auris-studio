@@ -34,15 +34,156 @@
 //! clock.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use auris_core::plugin::CONTROLLER_MAX;
-use auris_core::project::{CURVE_STEP, ClipCurve, CurvePoint, Note, Project};
+use auris_core::project::{
+    CURVE_STEP, ClipCurve, CurvePoint, MidiClip, Note, NoteTransform, Project,
+    validated_loop_pass_count,
+};
 use auris_core::time::{SignatureMap, TICKS_PER_QUARTER, TempoMap, Ticks, TimeSignature};
 use midly::num::{u4, u7, u15, u24, u28};
 use midly::{Format, Header, MetaMessage, MidiMessage, Smf, Timing, TrackEvent, TrackEventKind};
+use tempfile::NamedTempFile;
 
-use crate::error::{IoError, Result};
+use crate::error::{IoError, MidiExportResource, MidiImportResource, Result};
+
+/// Largest Standard MIDI File the in-memory parser will accept.
+///
+/// Sixty-four MiB already represents many millions of ordinary MIDI events. Bounding the source
+/// prevents a selected or replaced file from turning one import into an unbounded allocation.
+const MAX_MIDI_FILE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Decode ceilings shared with the render graph's practical scheduling bounds.
+const MAX_MIDI_TRACK_EVENTS: usize = 1_000_000;
+const MAX_MIDI_FILE_EVENTS: usize = 4_000_000;
+const MAX_MIDI_NOTES: usize = 500_000;
+const MAX_MIDI_AUTOMATION_POINTS: usize = 4_000_000;
+const MAX_MIDI_OUTPUT_EVENTS: usize = 4_000_000;
+
+/// Export ceilings shared with the render graph's practical scheduling bounds.
+///
+/// Note-off events double the note count, and the eight-event allowance covers a track name,
+/// end marker and the six-message pitch-bend-range handshake. Curves and notes still share the
+/// same overall wire-event ceiling, so neither resource can hide behind the other's limit.
+const MAX_MIDI_EXPORT_TRACK_NOTES: usize = 500_000;
+const MAX_MIDI_EXPORT_FILE_NOTES: usize = 500_000;
+const MAX_MIDI_EXPORT_TRACK_CURVE_EVENTS: usize = 1_000_000;
+const MAX_MIDI_EXPORT_FILE_CURVE_EVENTS: usize = 4_000_000;
+const MAX_MIDI_EXPORT_TRACK_EVENTS: usize = 1_000_008;
+const MAX_MIDI_EXPORT_FILE_EVENTS: usize = 4_000_000;
+
+#[derive(Clone, Copy)]
+struct ExportLimits {
+    track_notes: usize,
+    file_notes: usize,
+    track_curve_events: usize,
+    file_curve_events: usize,
+    track_events: usize,
+    file_events: usize,
+}
+
+const EXPORT_LIMITS: ExportLimits = ExportLimits {
+    track_notes: MAX_MIDI_EXPORT_TRACK_NOTES,
+    file_notes: MAX_MIDI_EXPORT_FILE_NOTES,
+    track_curve_events: MAX_MIDI_EXPORT_TRACK_CURVE_EVENTS,
+    file_curve_events: MAX_MIDI_EXPORT_FILE_CURVE_EVENTS,
+    track_events: MAX_MIDI_EXPORT_TRACK_EVENTS,
+    file_events: MAX_MIDI_EXPORT_FILE_EVENTS,
+};
+
+#[derive(Clone, Copy)]
+struct ImportLimits {
+    track_events: usize,
+    file_events: usize,
+    notes: usize,
+    automation_points: usize,
+    output_events: usize,
+}
+
+const IMPORT_LIMITS: ImportLimits = ImportLimits {
+    track_events: MAX_MIDI_TRACK_EVENTS,
+    file_events: MAX_MIDI_FILE_EVENTS,
+    notes: MAX_MIDI_NOTES,
+    automation_points: MAX_MIDI_AUTOMATION_POINTS,
+    output_events: MAX_MIDI_OUTPUT_EVENTS,
+};
+
+#[derive(Default)]
+struct ImportBudget {
+    file_events: usize,
+    notes: usize,
+    automation_points: usize,
+    output_events: usize,
+}
+
+impl ImportBudget {
+    fn source_event(&mut self, track_events: &mut usize, limits: ImportLimits) -> Result<()> {
+        let next_track = bounded_increment(
+            *track_events,
+            limits.track_events,
+            MidiImportResource::TrackEvents,
+        )?;
+        let next_file = bounded_increment(
+            self.file_events,
+            limits.file_events,
+            MidiImportResource::FileEvents,
+        )?;
+        *track_events = next_track;
+        self.file_events = next_file;
+        Ok(())
+    }
+
+    fn note(&mut self, limits: ImportLimits) -> Result<()> {
+        let notes = bounded_increment(self.notes, limits.notes, MidiImportResource::Notes)?;
+        let output_events = bounded_increment(
+            self.output_events,
+            limits.output_events,
+            MidiImportResource::OutputEvents,
+        )?;
+        self.notes = notes;
+        self.output_events = output_events;
+        Ok(())
+    }
+
+    fn automation_point(&mut self, limits: ImportLimits) -> Result<()> {
+        let automation_points = bounded_increment(
+            self.automation_points,
+            limits.automation_points,
+            MidiImportResource::AutomationPoints,
+        )?;
+        let output_events = bounded_increment(
+            self.output_events,
+            limits.output_events,
+            MidiImportResource::OutputEvents,
+        )?;
+        self.automation_points = automation_points;
+        self.output_events = output_events;
+        Ok(())
+    }
+
+    fn timeline_point(&mut self, limits: ImportLimits) -> Result<()> {
+        self.output_events = bounded_increment(
+            self.output_events,
+            limits.output_events,
+            MidiImportResource::OutputEvents,
+        )?;
+        Ok(())
+    }
+}
+
+fn bounded_increment(current: usize, limit: usize, resource: MidiImportResource) -> Result<usize> {
+    let observed = current.saturating_add(1);
+    if observed > limit {
+        return Err(IoError::MidiImportTooLarge {
+            resource,
+            observed: u64::try_from(observed).unwrap_or(u64::MAX),
+            limit: u64::try_from(limit).unwrap_or(u64::MAX),
+        });
+    }
+    Ok(observed)
+}
 
 /// File extensions the MIDI importer accepts, for a file-dialog filter.
 pub fn midi_extensions() -> &'static [&'static str] {
@@ -103,24 +244,60 @@ impl MidiImport {
 
 /// Reads a Standard MIDI File.
 pub fn read_midi_file(path: &Path) -> Result<MidiImport> {
-    let bytes = std::fs::read(path).map_err(|source| match source.kind() {
-        std::io::ErrorKind::NotFound => IoError::FileNotFound(path.to_path_buf()),
-        _ => IoError::Filesystem {
-            path: path.to_path_buf(),
-            source,
-        },
-    })?;
+    let bytes = read_midi_source(path, MAX_MIDI_FILE_BYTES)?;
     let smf = Smf::parse(&bytes).map_err(|error| IoError::MidiParse(error.to_string()))?;
     read_smf(&smf)
 }
 
+/// Reads the MIDI source under an explicit bound.
+fn read_midi_source(path: &Path, limit: usize) -> Result<Vec<u8>> {
+    crate::bounded::read_with_limit(path, limit, |observed| {
+        midi_too_large(path, limit, observed)
+    })
+}
+
+/// The same read with a test seam after metadata, for reproducing a growing file.
+#[cfg(test)]
+fn read_midi_source_after_metadata(
+    path: &Path,
+    limit: usize,
+    after_metadata: impl FnOnce(),
+) -> Result<Vec<u8>> {
+    crate::bounded::read_with_limit_after_metadata(path, limit, after_metadata, |observed| {
+        midi_too_large(path, limit, observed)
+    })
+}
+
+fn midi_too_large(path: &Path, limit: usize, observed: u64) -> IoError {
+    IoError::MidiFileTooLarge {
+        path: path.to_path_buf(),
+        observed,
+        limit: limit as u64,
+    }
+}
+
 /// The half of [`read_midi_file`] that touches no filesystem, so it can be tested on bytes.
 pub fn read_midi_bytes(bytes: &[u8]) -> Result<MidiImport> {
+    ensure_midi_data_size(bytes, MAX_MIDI_FILE_BYTES)?;
     let smf = Smf::parse(bytes).map_err(|error| IoError::MidiParse(error.to_string()))?;
     read_smf(&smf)
 }
 
+fn ensure_midi_data_size(bytes: &[u8], limit: usize) -> Result<()> {
+    if bytes.len() > limit {
+        return Err(IoError::MidiDataTooLarge {
+            observed: bytes.len() as u64,
+            limit: limit as u64,
+        });
+    }
+    Ok(())
+}
+
 fn read_smf(smf: &Smf) -> Result<MidiImport> {
+    read_smf_with_limits(smf, IMPORT_LIMITS)
+}
+
+fn read_smf_with_limits(smf: &Smf, limits: ImportLimits) -> Result<MidiImport> {
     let per_quarter = match smf.header.timing {
         Timing::Metrical(per_quarter) => u32::from(per_quarter.as_int()).max(1),
         Timing::Timecode(fps, subframe) => {
@@ -140,9 +317,11 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
     // are two instruments, and merging them would put a bass line inside the drum part.
     let mut parts: HashMap<(usize, u8), Part> = HashMap::new();
     let mut order: Vec<(usize, u8)> = Vec::new();
+    let mut budget = ImportBudget::default();
 
     for (index, track) in smf.tracks.iter().enumerate() {
         let mut at: u64 = 0;
+        let mut track_events = 0usize;
         let mut track_name: Option<String> = None;
         // Sounding notes, keyed by channel and pitch. A stack per key rather than one slot: the
         // same pitch struck twice before either release is legal, and the engine already keeps
@@ -150,10 +329,14 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
         let mut sounding: HashMap<(u8, u8), Vec<(u64, u8)>> = HashMap::new();
 
         for event in track.iter() {
+            // Count before interpreting or retaining the event. In particular, splitting an
+            // attack over another source track cannot reset the file-wide budget.
+            budget.source_event(&mut track_events, limits)?;
             at += u64::from(event.delta.as_int());
             let tick = scale(at, per_quarter);
             match event.kind {
                 TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
+                    budget.timeline_point(limits)?;
                     let micros = micros.as_int().max(1);
                     let bpm = 60_000_000.0 / f64::from(micros);
                     // A tempo at the very start *is* the song's tempo rather than a change
@@ -201,6 +384,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                         );
                         continue;
                     }
+                    budget.timeline_point(limits)?;
                     let signature = TimeSignature::new(numerator, denominator);
                     match saw_signature || tick != Ticks::ZERO {
                         false => signatures = SignatureMap::constant(signature),
@@ -226,6 +410,10 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                         // A note-on at zero velocity is a note-off. Every sequencer that ever
                         // used running status emits them, so this is not an edge case.
                         MidiMessage::NoteOn { key: pitch, vel } if vel.as_int() > 0 => {
+                            // Every accepted attack becomes a note, even when the source forgot
+                            // its release and we close it at end-of-track. Reserve that object
+                            // before growing the sounding-note stack.
+                            budget.note(limits)?;
                             sounding
                                 .entry((channel, pitch.as_int()))
                                 .or_default()
@@ -243,6 +431,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                             }
                         }
                         MidiMessage::PitchBend { bend } => {
+                            budget.automation_point(limits)?;
                             if let Some(part) = parts.get_mut(&key) {
                                 part.bend.push(CurvePoint {
                                     at: scale(at, per_quarter),
@@ -253,6 +442,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
                         MidiMessage::Controller { controller, value }
                             if is_performance_controller(controller.as_int()) =>
                         {
+                            budget.automation_point(limits)?;
                             if let Some(part) = parts.get_mut(&key) {
                                 part.controllers
                                     .entry(controller.as_int())
@@ -339,6 +529,338 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
     })
 }
 
+struct InstrumentSeed {
+    track_index: usize,
+    channel: u4,
+}
+
+struct ExportTrackPlan {
+    track_index: usize,
+    channel: u4,
+    bend_range: f32,
+    event_capacity: usize,
+}
+
+struct ExportPlan {
+    conductor_capacity: usize,
+    instrument_tracks: Vec<ExportTrackPlan>,
+}
+
+fn export_too_large(resource: MidiExportResource, observed: u128, limit: usize) -> IoError {
+    IoError::MidiExportTooLarge {
+        resource,
+        observed: u64::try_from(observed).unwrap_or(u64::MAX),
+        limit: u64::try_from(limit).unwrap_or(u64::MAX),
+    }
+}
+
+fn add_export_count(
+    current: &mut u128,
+    additional: u128,
+    limit: usize,
+    resource: MidiExportResource,
+) -> Result<()> {
+    let observed = current.saturating_add(additional);
+    if observed > limit as u128 {
+        return Err(export_too_large(resource, observed, limit));
+    }
+    *current = observed;
+    Ok(())
+}
+
+fn reserve_export<T>(values: &mut Vec<T>, additional: usize, purpose: &str) -> Result<()> {
+    values.try_reserve_exact(additional).map_err(|_| {
+        IoError::MidiWrite(format!(
+            "could not allocate {additional} entries for {purpose}"
+        ))
+    })
+}
+
+fn pitch_contour_points(transforms: &[NoteTransform]) -> u128 {
+    transforms
+        .iter()
+        .map(|transform| match transform {
+            NoteTransform::Pitch { settings } => settings.volume_contour.points().len() as u128,
+            NoteTransform::ForDrumVoice { transforms, .. } => pitch_contour_points(transforms),
+            _ => 0,
+        })
+        .fold(0, u128::saturating_add)
+}
+
+/// Conservative ceiling for the vector built by `sounding_performance_curve_events`.
+///
+/// Keep this in step with the render scheduler's corresponding bound. The regular sampling grid,
+/// authored corners, per-pass resets, generated note edges/contours and the five-millisecond
+/// generated-performance grid are all charged before the curve builder is allowed to allocate.
+fn curve_event_upper_bound(
+    clip: &MidiClip,
+    which: ClipCurve,
+    tempo_map: &TempoMap,
+    passes: u128,
+    note_instances: u128,
+) -> u128 {
+    let total_ticks = clip.sounding_length().raw().max(0) as u128;
+    let step = CURVE_STEP.raw().max(1) as u128;
+    let mut events = total_ticks
+        .div_ceil(step)
+        .saturating_add(passes.saturating_mul(5))
+        .saturating_add((clip.curve(which).len() as u128).saturating_mul(passes));
+
+    if clip.has_generated_curve(which) {
+        events = events
+            .saturating_add(note_instances.saturating_mul(4))
+            .saturating_add(note_instances.saturating_mul(pitch_contour_points(&clip.transforms)));
+        let start = tempo_map.ticks_to_seconds(clip.start).0;
+        let end = tempo_map
+            .ticks_to_seconds(clip.start + clip.sounding_length())
+            .0;
+        let seconds = (end - start).max(0.0);
+        let five_ms_samples = if seconds.is_finite() {
+            (seconds / 0.005).ceil() as u128
+        } else {
+            u128::MAX
+        };
+        events = events.saturating_add(five_ms_samples);
+    }
+    events
+}
+
+/// Proves the complete expansion fits before any performed-note or performance-curve vector is
+/// created. A later track therefore cannot evade the file-wide budget after earlier tracks have
+/// already consumed memory.
+fn preflight_export(project: &Project, limits: ExportLimits) -> Result<ExportPlan> {
+    let mut seeds = Vec::new();
+    reserve_export(
+        &mut seeds,
+        project.tracks.len(),
+        "the MIDI export track plan",
+    )?;
+    let mut melodic_index = 0_u8;
+    for (track_index, track) in project.tracks.iter().enumerate() {
+        if track.kind.as_instrument().is_none() {
+            continue;
+        }
+        let channel = u4::new(if track.kind.is_drum() {
+            9
+        } else {
+            let channel = melodic_index + u8::from(melodic_index >= 9);
+            melodic_index = (melodic_index + 1) % 15;
+            channel
+        });
+        seeds.push(InstrumentSeed {
+            track_index,
+            channel,
+        });
+    }
+
+    // Pitch-bend sensitivity is channel state, so a wide bend on any reused channel adds the RPN
+    // handshake to every track assigned that channel.
+    let mut bend_ranges = [BEND_RANGE; 16];
+    for seed in &seeds {
+        let instrument = project.tracks[seed.track_index]
+            .kind
+            .as_instrument()
+            .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))?;
+        if instrument
+            .clips
+            .iter()
+            .filter(|clip| !clip.muted)
+            .any(|clip| {
+                clip.has_pitch_performance()
+                    || clip.bend.iter().any(|point| point.value.abs() > BEND_RANGE)
+            })
+        {
+            bend_ranges[usize::from(seed.channel.as_int())] = 12.0;
+        }
+    }
+
+    let conductor_capacity = (project.tempo_map.points().len() as u128)
+        .saturating_add(project.signatures.points().len() as u128)
+        .saturating_add(2);
+    let mut conductor_events = 0;
+    add_export_count(
+        &mut conductor_events,
+        conductor_capacity,
+        limits.track_events,
+        MidiExportResource::TrackEvents,
+    )?;
+    let mut file_events = 0;
+    add_export_count(
+        &mut file_events,
+        conductor_capacity,
+        limits.file_events,
+        MidiExportResource::FileEvents,
+    )?;
+
+    let mut file_notes = 0;
+    let mut file_curve_events = 0;
+    let mut instrument_tracks = Vec::new();
+    reserve_export(
+        &mut instrument_tracks,
+        seeds.len(),
+        "the MIDI export track plan",
+    )?;
+    for seed in seeds {
+        let instrument = project.tracks[seed.track_index]
+            .kind
+            .as_instrument()
+            .ok_or_else(|| IoError::MidiWrite("instrument export plan changed".to_string()))?;
+        let bend_range = bend_ranges[usize::from(seed.channel.as_int())];
+        let mut track_notes = 0;
+        let mut track_curve_events = 0;
+        let mut track_events = 0;
+        let fixed_events = 2 + u128::from(bend_range > BEND_RANGE) * 6;
+        add_export_count(
+            &mut track_events,
+            fixed_events,
+            limits.track_events,
+            MidiExportResource::TrackEvents,
+        )?;
+        add_export_count(
+            &mut file_events,
+            fixed_events,
+            limits.file_events,
+            MidiExportResource::FileEvents,
+        )?;
+
+        for clip in instrument.clips.iter().filter(|clip| !clip.muted) {
+            let passes = validated_loop_pass_count(clip.id, clip.length, clip.loop_end)? as u128;
+            let notes = clip.looped_note_instances()? as u128;
+            add_export_count(
+                &mut track_notes,
+                notes,
+                limits.track_notes,
+                MidiExportResource::TrackNotes,
+            )?;
+            add_export_count(
+                &mut file_notes,
+                notes,
+                limits.file_notes,
+                MidiExportResource::FileNotes,
+            )?;
+            let note_events = notes.saturating_mul(2);
+            add_export_count(
+                &mut track_events,
+                note_events,
+                limits.track_events,
+                MidiExportResource::TrackEvents,
+            )?;
+            add_export_count(
+                &mut file_events,
+                note_events,
+                limits.file_events,
+                MidiExportResource::FileEvents,
+            )?;
+
+            for which in clip.performance_curves() {
+                let curve_events =
+                    curve_event_upper_bound(clip, which, &project.tempo_map, passes, notes);
+                add_export_count(
+                    &mut track_curve_events,
+                    curve_events,
+                    limits.track_curve_events,
+                    MidiExportResource::TrackCurveEvents,
+                )?;
+                add_export_count(
+                    &mut file_curve_events,
+                    curve_events,
+                    limits.file_curve_events,
+                    MidiExportResource::FileCurveEvents,
+                )?;
+                add_export_count(
+                    &mut track_events,
+                    curve_events,
+                    limits.track_events,
+                    MidiExportResource::TrackEvents,
+                )?;
+                add_export_count(
+                    &mut file_events,
+                    curve_events,
+                    limits.file_events,
+                    MidiExportResource::FileEvents,
+                )?;
+            }
+        }
+        instrument_tracks.push(ExportTrackPlan {
+            track_index: seed.track_index,
+            channel: seed.channel,
+            bend_range,
+            event_capacity: usize::try_from(track_events).map_err(|_| {
+                export_too_large(
+                    MidiExportResource::TrackEvents,
+                    track_events,
+                    limits.track_events,
+                )
+            })?,
+        });
+    }
+    Ok(ExportPlan {
+        conductor_capacity: usize::try_from(conductor_capacity).map_err(|_| {
+            export_too_large(
+                MidiExportResource::TrackEvents,
+                conductor_capacity,
+                limits.track_events,
+            )
+        })?,
+        instrument_tracks,
+    })
+}
+
+/// A complete, synchronised MIDI file awaiting atomic publication.
+///
+/// Dropping it removes only the private sibling. Its publication methods are the only operations
+/// that make its bytes visible at the requested destination.
+pub struct StagedMidi {
+    file: NamedTempFile,
+    path: PathBuf,
+    notes: usize,
+}
+
+impl StagedMidi {
+    /// Number of performed notes encoded in the staged file.
+    pub fn notes(&self) -> usize {
+        self.notes
+    }
+
+    /// Atomically replaces the destination with the already-synchronised MIDI file.
+    pub fn publish(self) -> Result<usize> {
+        crate::project_file::publish_ready_staged_file(self.file, &self.path)?;
+        Ok(self.notes)
+    }
+
+    /// Atomically claims the still-absent destination without replacing another writer's file.
+    pub fn publish_noclobber(self) -> Result<usize> {
+        crate::project_file::publish_ready_staged_file_noclobber(self.file, &self.path)?;
+        Ok(self.notes)
+    }
+}
+
+/// Encodes and synchronises a project into a private sibling of `path` without publishing it.
+///
+/// This is the worker half of a two-phase export. Encoding, allocation, flushing and file sync
+/// happen before this function returns; publication is one short rename after the caller has
+/// revalidated cancellation and live document ownership.
+pub fn stage_midi_file(path: &Path, project: &Project) -> Result<StagedMidi> {
+    let (smf_tracks, notes) = build_tracks(project)?;
+    let smf = Smf {
+        header: Header::new(
+            Format::Parallel,
+            Timing::Metrical(u15::new(TICKS_PER_QUARTER as u16)),
+        ),
+        tracks: smf_tracks,
+    };
+    let mut file = crate::project_file::new_staged_file(path)?;
+    smf.write_std(file.as_file_mut())
+        .and_then(|()| file.flush())
+        .and_then(|()| file.as_file().sync_all())
+        .map_err(|source| IoError::from_fs(path, source))?;
+    Ok(StagedMidi {
+        file,
+        path: path.to_path_buf(),
+        notes,
+    })
+}
+
 /// Writes the project's instrument tracks as a Standard MIDI File.
 ///
 /// Format 1, at this application's own division — [`TICKS_PER_QUARTER`] is 960 and an SMF header
@@ -350,19 +872,7 @@ fn read_smf(smf: &Smf) -> Result<MidiImport> {
 /// automation. A `.mid` is the notes and the clock, and saying so here is better than a reader
 /// discovering it by comparing two files.
 pub fn write_midi_file(path: &Path, project: &Project) -> Result<usize> {
-    let (smf_tracks, count) = build_tracks(project)?;
-    let smf = Smf {
-        header: Header::new(
-            Format::Parallel,
-            Timing::Metrical(u15::new(TICKS_PER_QUARTER as u16)),
-        ),
-        tracks: smf_tracks,
-    };
-    smf.save(path).map_err(|error| IoError::Filesystem {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    Ok(count)
+    stage_midi_file(path, project)?.publish()
 }
 
 /// [`write_midi_file`] into memory, so a round trip can be tested without a filesystem.
@@ -377,48 +887,36 @@ pub fn write_midi_bytes(project: &Project) -> Result<Vec<u8>> {
     };
     let mut bytes = Vec::new();
     smf.write(&mut bytes)
-        .map_err(|error| IoError::MidiParse(error.to_string()))?;
+        .map_err(|error| IoError::MidiWrite(error.to_string()))?;
     Ok(bytes)
 }
 
 /// The file's tracks, and how many notes went into them.
 fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usize)> {
-    let mut tracks = vec![conductor_track(project)?];
-    let mut count = 0;
-    let mut melodic_index = 0_u8;
-    let instruments: Vec<_> = project
-        .tracks
-        .iter()
-        .filter_map(|track| {
-            let instrument = track.kind.as_instrument()?;
-            // Reserve channel 10 for drums so a MIDI round trip preserves percussion identity.
-            // Melodic tracks wrap around the remaining fifteen channels.
-            let channel = u4::new(if track.kind.is_drum() {
-                9
-            } else {
-                let channel = melodic_index + u8::from(melodic_index >= 9);
-                melodic_index = (melodic_index + 1) % 15;
-                channel
-            });
-            Some((track, instrument, channel))
-        })
-        .collect();
-    // Pitch-bend sensitivity is channel state, shared even by separate SMF tracks.
-    // Resolve it before writing so a later track cannot change an earlier track's scale.
-    let mut bend_ranges = [BEND_RANGE; 16];
-    for (_, instrument, channel) in &instruments {
-        if instrument
-            .clips
-            .iter()
-            .filter(|c| !c.muted)
-            .any(|c| c.has_pitch_performance() || c.bend.iter().any(|p| p.value.abs() > BEND_RANGE))
-        {
-            bend_ranges[usize::from(channel.as_int())] = 12.0;
-        }
-    }
-    for (track, instrument, channel) in instruments {
+    let plan = preflight_export(project, EXPORT_LIMITS)?;
+    let mut tracks = Vec::new();
+    reserve_export(
+        &mut tracks,
+        plan.instrument_tracks.len().saturating_add(1),
+        "the Standard MIDI File track list",
+    )?;
+    tracks.push(conductor_track(project, plan.conductor_capacity)?);
+    let mut count = 0usize;
+    for track_plan in plan.instrument_tracks {
+        let track = project.tracks.get(track_plan.track_index).ok_or_else(|| {
+            IoError::MidiWrite("instrument export plan no longer names a track".to_string())
+        })?;
+        let instrument = track.kind.as_instrument().ok_or_else(|| {
+            IoError::MidiWrite("instrument export plan no longer names an instrument".to_string())
+        })?;
+        let channel = track_plan.channel;
         let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
-        let bend_range = bend_ranges[usize::from(channel.as_int())];
+        reserve_export(
+            &mut events,
+            track_plan.event_capacity.saturating_sub(2),
+            "an exported MIDI track",
+        )?;
+        let bend_range = track_plan.bend_range;
         if bend_range > BEND_RANGE {
             // RPN 0 is pitch-bend sensitivity, followed by a null RPN selection.
             for (number, value) in [
@@ -448,7 +946,14 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
                 project.tempo_map.bpm_at(clip.start),
                 project.signatures.clone(),
             ) {
-                count += 1;
+                count = count.checked_add(1).ok_or_else(|| {
+                    export_too_large(
+                        MidiExportResource::FileNotes,
+                        u128::MAX,
+                        MAX_MIDI_EXPORT_FILE_NOTES,
+                    )
+                })?;
+                ensure_planned_events(&events, 2, track_plan.event_capacity)?;
                 let start = clip.start + note.start;
                 events.push((start, message(channel, note.pitch, velocity(note.velocity))));
                 events.push((
@@ -460,12 +965,14 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
             // the wire carries — fourteen bits of bend, seven of controller — is this file's
             // business and stops here; the document works in semitones and in a fraction.
             for which in clip.performance_curves() {
-                for (at, value) in clip.sounding_performance_curve_events(
+                let curve_events = clip.sounding_performance_curve_events(
                     which,
                     CURVE_STEP,
                     &project.tempo_map,
                     &project.signatures,
-                ) {
+                );
+                ensure_planned_events(&events, curve_events.len(), track_plan.event_capacity)?;
+                for (at, value) in curve_events {
                     let message = match which {
                         ClipCurve::Bend => bend_message(channel, value, bend_range),
                         ClipCurve::Controller(number) => controller_message(channel, number, value),
@@ -499,9 +1006,23 @@ fn build_tracks(project: &Project) -> Result<(Vec<Vec<TrackEvent<'static>>>, usi
     Ok((tracks, count))
 }
 
+fn ensure_planned_events<T>(events: &[T], additional: usize, event_capacity: usize) -> Result<()> {
+    if events.len().saturating_add(additional) > event_capacity.saturating_sub(2) {
+        return Err(IoError::MidiWrite(
+            "internal MIDI export event bound was exceeded".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// The first track of a format 1 file: the clock, and nothing that makes a sound.
-fn conductor_track(project: &Project) -> Result<Vec<TrackEvent<'static>>> {
+fn conductor_track(project: &Project, event_capacity: usize) -> Result<Vec<TrackEvent<'static>>> {
     let mut events: Vec<(Ticks, TrackEventKind<'static>)> = Vec::new();
+    reserve_export(
+        &mut events,
+        event_capacity.saturating_sub(2),
+        "the MIDI conductor track",
+    )?;
     for point in project.tempo_map.points() {
         let micros = (60_000_000.0 / point.bpm).round().clamp(1.0, MAX_MICROS) as u32;
         events.push((
@@ -532,7 +1053,12 @@ fn delta_encode(
     name: String,
     events: Vec<(Ticks, TrackEventKind<'static>)>,
 ) -> Result<Vec<TrackEvent<'static>>> {
-    let mut out = Vec::with_capacity(events.len() + 2);
+    let capacity = events
+        .len()
+        .checked_add(2)
+        .ok_or_else(|| IoError::MidiWrite("MIDI event count overflowed".to_string()))?;
+    let mut out = Vec::new();
+    reserve_export(&mut out, capacity, "a delta-encoded MIDI track")?;
     out.push(TrackEvent {
         delta: u28::new(0),
         kind: TrackEventKind::Meta(MetaMessage::TrackName(
@@ -744,12 +1270,69 @@ fn note(started: (u64, u8), ended: u64, pitch: u8, per_quarter: u32) -> Note {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempFile;
     use auris_core::plugin::CC_MODULATION;
     use midly::num::{u4, u7, u15, u24, u28};
     use midly::{Header, Track, TrackEvent};
+    use std::fs::OpenOptions;
+    use std::io::Write;
 
     /// Ticks per quarter used by the fixtures, deliberately not ours.
     const PPQ: u16 = 480;
+
+    #[test]
+    fn midi_file_size_limit_accepts_its_edges_and_rejects_the_next_byte() {
+        const LIMIT: usize = 32;
+        for length in [LIMIT - 1, LIMIT] {
+            let file = TempFile::new(&format!("midi-{length}.mid"));
+            std::fs::write(file.path(), vec![0x5a; length]).unwrap();
+            assert_eq!(read_midi_source(file.path(), LIMIT).unwrap().len(), length);
+        }
+
+        let file = TempFile::new("midi-too-large.mid");
+        std::fs::write(file.path(), vec![0x5a; LIMIT + 1]).unwrap();
+        assert!(matches!(
+            read_midi_source(file.path(), LIMIT),
+            Err(IoError::MidiFileTooLarge {
+                observed,
+                limit,
+                ..
+            }) if observed == (LIMIT + 1) as u64 && limit == LIMIT as u64
+        ));
+    }
+
+    #[test]
+    fn in_memory_midi_data_uses_the_same_inclusive_size_boundary() {
+        const LIMIT: usize = 32;
+        assert!(ensure_midi_data_size(&[0; LIMIT - 1], LIMIT).is_ok());
+        assert!(ensure_midi_data_size(&[0; LIMIT], LIMIT).is_ok());
+        assert!(matches!(
+            ensure_midi_data_size(&[0; LIMIT + 1], LIMIT),
+            Err(IoError::MidiDataTooLarge {
+                observed,
+                limit,
+            }) if observed == (LIMIT + 1) as u64 && limit == LIMIT as u64
+        ));
+    }
+
+    #[test]
+    fn a_midi_file_that_grows_after_metadata_is_still_bounded() {
+        const LIMIT: usize = 32;
+        let file = TempFile::new("growing.mid");
+        std::fs::write(file.path(), vec![0x5a; LIMIT]).unwrap();
+
+        let result = read_midi_source_after_metadata(file.path(), LIMIT, || {
+            let mut append = OpenOptions::new().append(true).open(file.path()).unwrap();
+            append.write_all(&[0x7f]).unwrap();
+            append.flush().unwrap();
+        });
+
+        assert!(matches!(
+            result,
+            Err(IoError::MidiFileTooLarge { observed, .. })
+                if observed == (LIMIT + 1) as u64
+        ));
+    }
 
     fn event(delta: u32, kind: TrackEventKind<'_>) -> TrackEvent<'_> {
         TrackEvent {
@@ -796,6 +1379,202 @@ mod tests {
             Header::new(Format::Parallel, Timing::Metrical(u15::new(PPQ))),
             tracks,
         )
+    }
+
+    fn import_with_limits(tracks: Vec<Track<'_>>, limits: ImportLimits) -> Result<MidiImport> {
+        read_smf_with_limits(
+            &Smf {
+                header: Header::new(Format::Parallel, Timing::Metrical(u15::new(PPQ))),
+                tracks,
+            },
+            limits,
+        )
+    }
+
+    fn generous_limits() -> ImportLimits {
+        ImportLimits {
+            track_events: usize::MAX,
+            file_events: usize::MAX,
+            notes: usize::MAX,
+            automation_points: usize::MAX,
+            output_events: usize::MAX,
+        }
+    }
+
+    fn track_name() -> TrackEvent<'static> {
+        event(0, TrackEventKind::Meta(MetaMessage::TrackName(b"track")))
+    }
+
+    fn pitch_bend() -> TrackEvent<'static> {
+        event(
+            0,
+            TrackEventKind::Midi {
+                channel: u4::new(0),
+                message: MidiMessage::PitchBend {
+                    bend: midly::PitchBend::from_f32(0.0),
+                },
+            },
+        )
+    }
+
+    #[test]
+    fn production_midi_budgets_accept_the_boundary_and_reject_the_next_item() {
+        let mut budget = ImportBudget {
+            notes: MAX_MIDI_NOTES - 1,
+            ..ImportBudget::default()
+        };
+        budget.note(IMPORT_LIMITS).expect("the last note fits");
+        assert!(matches!(
+            budget.note(IMPORT_LIMITS),
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::Notes,
+                observed,
+                limit,
+            }) if observed == (MAX_MIDI_NOTES + 1) as u64
+                && limit == MAX_MIDI_NOTES as u64
+        ));
+
+        let mut budget = ImportBudget {
+            automation_points: MAX_MIDI_AUTOMATION_POINTS - 1,
+            ..ImportBudget::default()
+        };
+        budget
+            .automation_point(IMPORT_LIMITS)
+            .expect("the last automation point fits");
+        assert!(matches!(
+            budget.automation_point(IMPORT_LIMITS),
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::AutomationPoints,
+                observed,
+                limit,
+            }) if observed == (MAX_MIDI_AUTOMATION_POINTS + 1) as u64
+                && limit == MAX_MIDI_AUTOMATION_POINTS as u64
+        ));
+
+        let mut budget = ImportBudget {
+            file_events: MAX_MIDI_FILE_EVENTS - 1,
+            ..ImportBudget::default()
+        };
+        let mut track_events = 0;
+        budget
+            .source_event(&mut track_events, IMPORT_LIMITS)
+            .expect("the last file event fits");
+        assert!(matches!(
+            budget.source_event(&mut track_events, IMPORT_LIMITS),
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::FileEvents,
+                observed,
+                limit,
+            }) if observed == (MAX_MIDI_FILE_EVENTS + 1) as u64
+                && limit == MAX_MIDI_FILE_EVENTS as u64
+        ));
+
+        let mut budget = ImportBudget::default();
+        let mut track_events = MAX_MIDI_TRACK_EVENTS - 1;
+        budget
+            .source_event(&mut track_events, IMPORT_LIMITS)
+            .expect("the last event in one track fits");
+        assert!(matches!(
+            budget.source_event(&mut track_events, IMPORT_LIMITS),
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::TrackEvents,
+                observed,
+                limit,
+            }) if observed == (MAX_MIDI_TRACK_EVENTS + 1) as u64
+                && limit == MAX_MIDI_TRACK_EVENTS as u64
+        ));
+
+        let mut budget = ImportBudget {
+            output_events: MAX_MIDI_OUTPUT_EVENTS - 1,
+            ..ImportBudget::default()
+        };
+        budget
+            .timeline_point(IMPORT_LIMITS)
+            .expect("the last retained event fits");
+        assert!(matches!(
+            budget.timeline_point(IMPORT_LIMITS),
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::OutputEvents,
+                observed,
+                limit,
+            }) if observed == (MAX_MIDI_OUTPUT_EVENTS + 1) as u64
+                && limit == MAX_MIDI_OUTPUT_EVENTS as u64
+        ));
+    }
+
+    #[test]
+    fn event_budget_is_aggregated_across_source_tracks() {
+        let mut limits = generous_limits();
+        limits.track_events = 2;
+        let one_track =
+            import_with_limits(vec![vec![track_name(), track_name(), track_name()]], limits);
+        assert!(matches!(
+            one_track,
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::TrackEvents,
+                observed: 3,
+                limit: 2,
+            })
+        ));
+
+        let mut limits = generous_limits();
+        limits.track_events = 3;
+        limits.file_events = 4;
+        let result = import_with_limits(
+            vec![
+                vec![track_name(), track_name(), track_name()],
+                vec![track_name(), track_name(), track_name()],
+            ],
+            limits,
+        );
+        assert!(matches!(
+            result,
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::FileEvents,
+                observed: 5,
+                limit: 4,
+            })
+        ));
+    }
+
+    #[test]
+    fn note_and_automation_budgets_cannot_be_reset_by_splitting_tracks() {
+        let mut limits = generous_limits();
+        limits.notes = 2;
+        let notes = import_with_limits(
+            vec![
+                vec![note_on(0, 60, 100)],
+                vec![note_on(0, 61, 100)],
+                vec![note_on(0, 62, 100)],
+            ],
+            limits,
+        );
+        assert!(matches!(
+            notes,
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::Notes,
+                observed: 3,
+                limit: 2,
+            })
+        ));
+
+        let mut limits = generous_limits();
+        limits.automation_points = 2;
+        let automation = import_with_limits(
+            vec![
+                vec![note_on(0, 60, 100), pitch_bend(), pitch_bend()],
+                vec![note_on(0, 61, 100), pitch_bend(), pitch_bend()],
+            ],
+            limits,
+        );
+        assert!(matches!(
+            automation,
+            Err(IoError::MidiImportTooLarge {
+                resource: MidiImportResource::AutomationPoints,
+                observed: 3,
+                limit: 2,
+            })
+        ));
     }
 
     #[test]
@@ -1121,6 +1900,182 @@ mod tests {
             .expect("an instrument track takes a clip");
         project.midi_clip_mut(clip).expect("the clip").notes = notes;
         project
+    }
+
+    fn roomy_export_limits() -> ExportLimits {
+        ExportLimits {
+            track_notes: 100,
+            file_notes: 100,
+            track_curve_events: 100,
+            file_curve_events: 100,
+            track_events: 1_000,
+            file_events: 1_000,
+        }
+    }
+
+    fn add_looped_note_track(project: &mut Project, name: &str) {
+        let track = project.add_instrument_track(name, "synth");
+        let clip = project
+            .add_midi_clip(track, name, Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        let clip = project.midi_clip_mut(clip).unwrap();
+        clip.notes = vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)];
+        clip.loop_end = Ticks::QUARTER * 2;
+    }
+
+    #[test]
+    fn export_note_budget_is_checked_per_track_and_across_all_tracks_before_expansion() {
+        let mut one_track = Project::new("Track limit", 48_000.0);
+        add_looped_note_track(&mut one_track, "Lead");
+        let mut limits = roomy_export_limits();
+        limits.track_notes = 1;
+        assert!(matches!(
+            preflight_export(&one_track, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::TrackNotes,
+                observed: 2,
+                limit: 1,
+            })
+        ));
+
+        let mut project = Project::new("File limit", 48_000.0);
+        add_looped_note_track(&mut project, "Lead");
+        add_looped_note_track(&mut project, "Bass");
+        let mut limits = roomy_export_limits();
+        limits.track_notes = 2;
+        limits.file_notes = 3;
+        assert!(matches!(
+            preflight_export(&project, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::FileNotes,
+                observed: 4,
+                limit: 3,
+            })
+        ));
+    }
+
+    #[test]
+    fn export_curve_and_wire_event_budgets_cannot_be_reset_by_splitting_tracks() {
+        let mut project = Project::new("Curve limit", 48_000.0);
+        for name in ["Lead", "Bass"] {
+            let track = project.add_instrument_track(name, "synth");
+            let clip = project
+                .add_midi_clip(track, name, Ticks::ZERO, Ticks(1))
+                .unwrap();
+            project.midi_clip_mut(clip).unwrap().bend = vec![CurvePoint {
+                at: Ticks::ZERO,
+                value: 1.0,
+            }];
+        }
+        let mut limits = roomy_export_limits();
+        limits.track_curve_events = 6;
+        assert!(matches!(
+            preflight_export(&project, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::TrackCurveEvents,
+                observed: 7,
+                limit: 6,
+            })
+        ));
+
+        let mut limits = roomy_export_limits();
+        limits.track_curve_events = 7;
+        limits.file_curve_events = 13;
+        assert!(matches!(
+            preflight_export(&project, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::FileCurveEvents,
+                observed: 14,
+                limit: 13,
+            })
+        ));
+
+        let mut note_events = Project::new("Track wire limit", 48_000.0);
+        add_looped_note_track(&mut note_events, "Lead");
+        let mut limits = roomy_export_limits();
+        limits.track_events = 5;
+        assert!(matches!(
+            preflight_export(&note_events, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::TrackEvents,
+                observed: 6,
+                limit: 5,
+            })
+        ));
+
+        let mut empty_tracks = Project::new("Wire limit", 48_000.0);
+        empty_tracks.add_instrument_track("Lead", "synth");
+        empty_tracks.add_instrument_track("Bass", "synth");
+        let mut limits = roomy_export_limits();
+        limits.file_events = 7;
+        assert!(matches!(
+            preflight_export(&empty_tracks, limits),
+            Err(IoError::MidiExportTooLarge {
+                resource: MidiExportResource::FileEvents,
+                observed: 8,
+                limit: 7,
+            })
+        ));
+    }
+
+    #[test]
+    fn staged_and_failed_midi_exports_never_damage_the_previous_destination() {
+        let folder = TempFile::new("midi-export-folder");
+        std::fs::create_dir(folder.path()).unwrap();
+        let destination = folder.path().join("song.mid");
+        std::fs::write(&destination, b"previous MIDI bytes").unwrap();
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+
+        let staged = stage_midi_file(&destination, &project).unwrap();
+        assert_eq!(staged.notes(), 1);
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous MIDI bytes");
+        drop(staged);
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+
+        let mut invalid = project.clone();
+        invalid.tracks[0].kind.as_instrument_mut().unwrap().clips[0].start = Ticks(0x1000_0000);
+        assert!(write_midi_file(&destination, &invalid).is_err());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"previous MIDI bytes");
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+
+        assert_eq!(write_midi_file(&destination, &project).unwrap(), 1);
+        assert_eq!(&std::fs::read(&destination).unwrap()[..4], b"MThd");
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn staged_midi_noclobber_publish_is_atomic_and_loses_a_race_safely() {
+        // Model-facing commands stage directly beside the requested destination, put their
+        // cancellation boundary here, and then atomically claim a name that must remain absent.
+        let folder = TempFile::new("midi-noclobber-folder");
+        std::fs::create_dir(folder.path()).unwrap();
+        let project = project_with(
+            vec![Note::new(60, Ticks::ZERO, Ticks::QUARTER)],
+            Ticks::QUARTER,
+        );
+        let destination = folder.path().join("tool-output.mid");
+        assert_eq!(
+            stage_midi_file(&destination, &project)
+                .unwrap()
+                .publish_noclobber()
+                .unwrap(),
+            1
+        );
+
+        assert_eq!(read_midi_file(&destination).unwrap().note_count(), 1);
+
+        let raced = folder.path().join("raced.mid");
+        let staged = stage_midi_file(&raced, &project).unwrap();
+        std::fs::write(&raced, b"winning writer").unwrap();
+        assert!(matches!(
+            staged.publish_noclobber(),
+            Err(IoError::ExportDestinationExists(path)) if path == raced
+        ));
+        assert_eq!(std::fs::read(&raced).unwrap(), b"winning writer");
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 2);
     }
 
     fn round_trip(project: &Project) -> MidiImport {

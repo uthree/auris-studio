@@ -170,6 +170,8 @@ pub struct CaptureSettings {
 #[derive(Debug)]
 struct CaptureShared {
     running: AtomicBool,
+    /// Backend notices published without formatting or allocation from its error callback.
+    stream_notices: AtomicU32,
     /// Whether a take is running, which is what decides if the pool is fed at all.
     ///
     /// An open device is not a take. Monitoring holds one open with this `false`, and then the
@@ -219,9 +221,18 @@ pub struct Capture {
     /// The way back to the speakers, handed to the render graph. Unlike the reader this is shared
     /// rather than taken: a graph is rebuilt on every structural edit and needs it again each time.
     monitors: Vec<Arc<MonitorRing>>,
+    /// Why the rings are placeholders rather than safe listening buffers, if they are.
+    monitor_setup_failure: Option<MonitorSetupFailure>,
     name: String,
     sample_rate: f64,
     channel_count: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct MonitorSetupFailure {
+    input_rate: f64,
+    output_rate: f64,
+    block_frames: usize,
 }
 
 /// The receiving end of a capture's pool.
@@ -326,6 +337,14 @@ impl Capture {
     /// `true` while the stream is alive. Goes false if the device disappears mid-take.
     pub fn is_running(&self) -> bool {
         self.shared.running.load(Ordering::Relaxed)
+    }
+
+    /// Takes backend notices published since the previous call.
+    ///
+    /// This is deliberately polled outside the callback so reporting an audio error never logs,
+    /// formats text or allocates on a realtime thread.
+    pub fn take_stream_notices(&self) -> crate::StreamNotices {
+        crate::handle::take_stream_notices(&self.shared.stream_notices)
     }
 
     /// The playhead frame the first captured frame lines up with, once one has arrived.
@@ -456,6 +475,20 @@ impl Capture {
         self.monitors.get(slot).map(Arc::clone)
     }
 
+    /// Why software monitoring is unavailable for this device pair, if it is.
+    ///
+    /// Recording remains usable: only the preallocated path from the input callback to the output
+    /// callback is refused when its rate ratio and block size would exceed the bounded ring.
+    pub fn monitor_error(&self) -> Option<EngineError> {
+        self.monitor_setup_failure
+            .map(|failure| EngineError::MonitorConfiguration {
+                input_rate: failure.input_rate,
+                output_rate: failure.output_rate,
+                block_frames: failure.block_frames,
+                limit: crate::monitor::MAX_RING_FRAMES,
+            })
+    }
+
     /// The worst any listening slot has had it: gaps heard, counted.
     ///
     /// The worst rather than the sum, because one is what a person is being told about — that the
@@ -502,6 +535,12 @@ struct CaptureSink {
     /// it. A slot nobody is listening through costs the branch inside
     /// [`MonitorRing::write`](crate::monitor::MonitorRing::write) and nothing else.
     monitors: Vec<Arc<MonitorRing>>,
+    /// Pool buffers returned after their consumer has disappeared.
+    ///
+    /// Disconnect is an exceptional teardown path, but it can be observed by the input callback
+    /// before the stream itself has stopped. Keeping the allocations in fixed slots makes that
+    /// callback free of deallocation too; dropping the stream releases them on its owner thread.
+    stranded: [Option<Vec<f32>>; POOL_BUFFERS],
 }
 
 impl CaptureSink {
@@ -512,6 +551,29 @@ impl CaptureSink {
         f32: FromSample<T>,
     {
         if data.is_empty() {
+            return;
+        }
+        let channels = self.channels;
+        if channels == 0 || channels > POOL_SAMPLES {
+            if self.shared.recording.load(Ordering::Acquire) {
+                self.shared
+                    .dropped
+                    .fetch_add(data.len() as u64, Ordering::Relaxed);
+            }
+            return;
+        }
+        // A backend promises complete interleaved frames. Keep that invariant even if a hostile
+        // implementation violates it: no pooled buffer or monitor ring ever receives a partial
+        // frame that would shift every later channel.
+        let whole_samples = data.len() - data.len() % channels;
+        let trailing = data.len() - whole_samples;
+        data = &data[..whole_samples];
+        if data.is_empty() {
+            if trailing > 0 && self.shared.recording.load(Ordering::Acquire) {
+                self.shared
+                    .dropped
+                    .fetch_add(trailing as u64, Ordering::Relaxed);
+            }
             return;
         }
         for ring in &self.monitors {
@@ -525,6 +587,13 @@ impl CaptureSink {
         // take and to nothing else.
         if !self.shared.recording.load(Ordering::Acquire) {
             return;
+        }
+        if trailing > 0 {
+            // The public damage counter is expressed in frames. Count a complete damaged frame
+            // so integer division in `dropped_frames` cannot hide a backend's partial frame.
+            self.shared
+                .dropped
+                .fetch_add(channels as u64, Ordering::Relaxed);
         }
         // The first block is what fixes the take to the timeline. `compare_exchange` rather than
         // a store, so every later block leaves it alone.
@@ -549,7 +618,6 @@ impl CaptureSink {
             Ordering::Relaxed,
         );
 
-        let channels = self.channels.max(1);
         while !data.is_empty() {
             let Ok(mut buffer) = self.empty.try_recv() else {
                 // The pool is empty: the reader has not run in over a second. Dropping is the
@@ -572,13 +640,30 @@ impl CaptureSink {
             buffer.extend(data[..take].iter().map(|sample| f32::from_sample(*sample)));
             let frames = (take / channels) as u64;
             match self.full.try_send(buffer) {
-                Ok(()) => self.shared.frames.fetch_add(frames, Ordering::Relaxed),
-                Err(_) => self
-                    .shared
-                    .dropped
-                    .fetch_add(take as u64, Ordering::Relaxed),
+                Ok(()) => {
+                    self.shared.frames.fetch_add(frames, Ordering::Relaxed);
+                }
+                Err(crossbeam_channel::TrySendError::Full(buffer))
+                | Err(crossbeam_channel::TrySendError::Disconnected(buffer)) => {
+                    self.shared
+                        .dropped
+                        .fetch_add(take as u64, Ordering::Relaxed);
+                    self.retain_stranded(buffer);
+                }
             };
             data = &data[take..];
+        }
+    }
+
+    /// Defers destruction of a pool allocation until the stream leaves the realtime thread.
+    fn retain_stranded(&mut self, buffer: Vec<f32>) {
+        if let Some(slot) = self.stranded.iter_mut().find(|slot| slot.is_none()) {
+            *slot = Some(buffer);
+        } else {
+            // The pool owns exactly `POOL_BUFFERS` allocations, so every returned buffer fits.
+            // Leaking is the panic-free fallback if that invariant is ever broken: one bounded
+            // allocation is preferable to freeing memory from the audio callback.
+            std::mem::forget(buffer);
         }
     }
 
@@ -626,7 +711,11 @@ impl CaptureSink {
 }
 
 /// The two halves of a fresh pool, and the state they share.
-fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
+fn pool(
+    input_rate: f64,
+    output_rate: f64,
+    max_output_block: usize,
+) -> (Capture, CaptureSink, Arc<CaptureShared>) {
     let (full_tx, full_rx) = crossbeam_channel::bounded(POOL_BUFFERS);
     let (empty_tx, empty_rx) = crossbeam_channel::bounded(POOL_BUFFERS);
     for _ in 0..POOL_BUFFERS {
@@ -634,6 +723,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
     }
     let shared = Arc::new(CaptureShared {
         running: AtomicBool::new(false),
+        stream_notices: AtomicU32::new(0),
         recording: AtomicBool::new(false),
         dropped: AtomicU64::new(0),
         started_at: AtomicU64::new(NOT_STARTED),
@@ -642,9 +732,24 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         channel_peaks: [const { AtomicU32::new(0) }; MAX_METERED_CHANNELS],
         frames: AtomicU64::new(0),
     });
-    // Every slot up front: the callback writes whichever are enabled and may not make one.
+    // Every slot up front: the callback writes whichever are enabled and may not make one. A
+    // corrupt device rate or extreme cross-device ratio gets inert baseline rings so recording
+    // can continue; Session reports `monitor_setup_failure` before enabling any of them.
+    let monitor_capacity =
+        crate::monitor::planned_capacity(input_rate, output_rate, max_output_block);
+    let monitor_setup_failure = monitor_capacity.is_none().then_some(MonitorSetupFailure {
+        input_rate,
+        output_rate,
+        block_frames: max_output_block,
+    });
     let monitors: Vec<Arc<MonitorRing>> = (0..MONITOR_SLOTS)
-        .map(|_| Arc::new(MonitorRing::new(input_rate)))
+        .map(|_| {
+            Arc::new(match monitor_capacity {
+                Some(_) => MonitorRing::for_output(input_rate, output_rate, max_output_block)
+                    .expect("the capacity was validated above"),
+                None => MonitorRing::new(input_rate),
+            })
+        })
         .collect();
     let capture = Capture {
         stream: None,
@@ -658,6 +763,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         }),
         shared: Arc::clone(&shared),
         monitors: monitors.clone(),
+        monitor_setup_failure,
         name: String::new(),
         sample_rate: 0.0,
         channel_count: 0,
@@ -670,6 +776,7 @@ fn pool(input_rate: f64) -> (Capture, CaptureSink, Arc<CaptureShared>) {
         count_in: Arc::new(AtomicU64::new(0)),
         channels: 1,
         monitors,
+        stranded: std::array::from_fn(|_| None),
     };
     (capture, sink, shared)
 }
@@ -729,9 +836,11 @@ fn start_capture_with_setup(
     engine: &EngineHandle,
 ) -> Result<Capture, EngineError> {
     let channels = setup.config.channels as usize;
+    validate_capture_channels(channels)?;
     let sample_rate = f64::from(setup.config.sample_rate);
 
-    let (mut capture, mut sink, shared) = pool(sample_rate);
+    let (mut capture, mut sink, shared) =
+        pool(sample_rate, engine.sample_rate(), engine.max_block());
     sink.playhead = engine.playhead_cell();
     sink.count_in = engine.count_in_cell();
     sink.channels = channels;
@@ -776,12 +885,18 @@ fn input_error_handler(shared: Arc<CaptureShared>) -> impl FnMut(cpal::Error) + 
     // Same discrimination as the output stream: a rerouted default device keeps recording,
     // and declaring it dead would paint "device lost" over a take that is landing fine.
     move |error: cpal::Error| {
-        if crate::device::stream_survives(error.kind()) {
-            log::warn!("audio input notice: {error}; the recording stream keeps running");
-            return;
-        }
-        shared.running.store(false, Ordering::Relaxed);
-        log::error!("audio input error: {error}; the recording stream is dead");
+        crate::device::note_stream_error(error.kind(), &shared.running, &shared.stream_notices);
+    }
+}
+
+fn validate_capture_channels(channels: usize) -> Result<(), EngineError> {
+    if (1..=POOL_SAMPLES).contains(&channels) {
+        Ok(())
+    } else {
+        Err(EngineError::CaptureChannelsTooWide {
+            channels,
+            limit: POOL_SAMPLES,
+        })
     }
 }
 
@@ -938,13 +1053,34 @@ mod tests {
         assert!(matches!(attempted[1], BufferSize::Default));
     }
 
+    #[test]
+    fn an_extreme_monitor_ratio_does_not_allocate_from_hostile_device_metadata() {
+        let (capture, _, _) = pool(u32::MAX as f64, 8_000.0, 65_536);
+
+        assert!(matches!(
+            capture.monitor_error(),
+            Some(EngineError::MonitorConfiguration {
+                input_rate,
+                output_rate: 8_000.0,
+                block_frames: 65_536,
+                limit: crate::monitor::MAX_RING_FRAMES,
+            }) if input_rate == u32::MAX as f64
+        ));
+        assert!(
+            capture
+                .monitors
+                .iter()
+                .all(|ring| ring.capacity_frames() == 16_384)
+        );
+    }
+
     /// A capture and its callback half, wired together with no device behind them.
     ///
     /// Everything below the stream is what these tests are for: no machine running CI has a
     /// microphone, and the parts that would go wrong — the pool running dry, the stamp, the
     /// format conversion — are all on this side of it anyway.
     fn wired(channels: usize) -> (Capture, CaptureReader, CaptureSink, Arc<AtomicU64>) {
-        let (mut capture, mut sink, _) = pool(48_000.0);
+        let (mut capture, mut sink, _) = pool(48_000.0, 48_000.0, 512);
         let playhead = Arc::new(AtomicU64::new(0));
         sink.playhead = Arc::clone(&playhead);
         sink.channels = channels;
@@ -1106,6 +1242,40 @@ mod tests {
     }
 
     #[test]
+    fn a_partial_frame_from_a_hostile_backend_is_dropped_and_reported() {
+        let (capture, mut reader, mut sink, _) = wired(2);
+
+        sink.push(&[0.1f32, 0.2, 0.3, 0.4, 0.5]);
+
+        assert_eq!(drained(&mut reader), vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(capture.frames(), 2);
+        assert_eq!(capture.dropped_frames(), 1);
+    }
+
+    #[test]
+    fn a_frame_wider_than_the_fixed_pool_is_rejected_without_partial_buffers() {
+        assert!(matches!(
+            validate_capture_channels(POOL_SAMPLES + 1),
+            Err(EngineError::CaptureChannelsTooWide {
+                channels,
+                limit: POOL_SAMPLES,
+            }) if channels == POOL_SAMPLES + 1
+        ));
+        assert!(matches!(
+            validate_capture_channels(0),
+            Err(EngineError::CaptureChannelsTooWide { channels: 0, .. })
+        ));
+
+        // Defence in depth for a backend that changes its metadata after validation.
+        let channels = POOL_SAMPLES + 1;
+        let (capture, mut reader, mut sink, _) = wired(channels);
+        sink.push(&vec![0.5f32; channels]);
+        assert!(drained(&mut reader).is_empty());
+        assert_eq!(capture.frames(), 0);
+        assert_eq!(capture.dropped_frames(), 1);
+    }
+
+    #[test]
     fn a_reader_that_never_runs_costs_samples_rather_than_the_device() {
         // The contract this whole module is built around: the callback must come back. Filling
         // the pool without draining it has to end in counted losses, not in a block.
@@ -1183,6 +1353,26 @@ mod tests {
     }
 
     #[test]
+    fn a_lost_reader_does_not_free_pool_buffers_on_the_input_callback() {
+        // The record thread can disappear before a monitored input stream is closed. Both pool
+        // channels are then disconnected, but their preallocated empty buffers remain visible to
+        // the callback. Returning one through `full` must retain it rather than run Vec::drop on
+        // this realtime thread.
+        let (capture, reader, mut sink, _) = wired(1);
+        drop(reader);
+
+        let operations = crate::testkit::count_heap_operations(|| sink.push(&[0.5f32; 64]));
+
+        assert_eq!(operations, (0, 0), "the input callback touched the heap");
+        assert_eq!(
+            sink.stranded.iter().flatten().count(),
+            1,
+            "the disconnected pool buffer was not retained for stream teardown"
+        );
+        assert_eq!(capture.dropped_frames(), 64);
+    }
+
+    #[test]
     fn a_reader_is_out_on_loan_rather_than_handed_out_for_good() {
         // Two at once would split a take between two files, each with half the blocks. But a
         // device outlives the take that opened it — somebody monitoring keeps it open between
@@ -1237,7 +1427,7 @@ mod tests {
 
     /// A capture with its reader still attached, for the test above.
     fn pool_capture() -> (Capture, CaptureSink, Arc<CaptureShared>, ()) {
-        let (capture, sink, shared) = pool(48_000.0);
+        let (capture, sink, shared) = pool(48_000.0, 48_000.0, 512);
         (capture, sink, shared, ())
     }
 

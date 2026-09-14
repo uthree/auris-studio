@@ -51,6 +51,7 @@ import soundfile as sf  # noqa: E402
 
 from auris_singer.text import SIL  # noqa: E402
 from auris_singer.text.japanese import openjtalk_to_ipa  # noqa: E402
+from auris_singer.utils.output import clip_output_key, create_fresh_output  # noqa: E402
 
 # HTS full-context labels encode the current phoneme between '-' and '+'.
 PHONEME_PATTERN = re.compile(r"-([^+]+)\+")
@@ -147,11 +148,7 @@ def enforce_max_length(phrase: list[Phoneme], max_seconds: float) -> list[list[P
 
     limit = phrase[0].start + max_seconds
     earliest = phrase[0].start + max_seconds * 0.4
-    candidates = [
-        i
-        for i in range(1, len(phrase))
-        if earliest <= phrase[i].start <= limit
-    ]
+    candidates = [i for i in range(1, len(phrase)) if earliest <= phrase[i].start <= limit]
     if not candidates:
         # Every boundary is outside the window (one enormous phoneme); take the
         # first boundary past the lower bound so progress is still made.
@@ -162,8 +159,7 @@ def enforce_max_length(phrase: list[Phoneme], max_seconds: float) -> list[list[P
     onsets = [
         i
         for i in candidates
-        if phrase[i].symbol not in VOWEL_PHONEMES
-        and phrase[i].symbol not in PAUSE_PHONEMES
+        if phrase[i].symbol not in VOWEL_PHONEMES and phrase[i].symbol not in PAUSE_PHONEMES
     ]
     cut = onsets[-1] if onsets else candidates[-1]
     return [phrase[:cut]] + enforce_max_length(phrase[cut:], max_seconds)
@@ -250,9 +246,18 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    wav_out = args.output / "wav"
-    text_out = args.output / "text"
-    dur_out = args.output / "dur"
+    if not args.wav_dir.is_dir():
+        raise SystemExit(f"wav directory does not exist: {args.wav_dir}")
+    if not args.label_dir.is_dir():
+        raise SystemExit(f"label directory does not exist: {args.label_dir}")
+    wav_paths = sorted(args.wav_dir.rglob("*.wav"))
+    if not wav_paths:
+        raise SystemExit(f"no .wav recordings found under {args.wav_dir}")
+
+    output = create_fresh_output(args.output)
+    wav_out = output / "wav"
+    text_out = output / "text"
+    dur_out = output / "dur"
     wav_out.mkdir(parents=True, exist_ok=True)
     text_out.mkdir(parents=True, exist_ok=True)
     dur_out.mkdir(parents=True, exist_ok=True)
@@ -261,8 +266,9 @@ def main() -> None:
     total_seconds = 0.0
     skipped_without_label = 0
 
-    for wav_path in sorted(args.wav_dir.glob("*.wav")):
-        label_path = args.label_dir / f"{wav_path.stem}.lab"
+    for wav_path in wav_paths:
+        relative = wav_path.relative_to(args.wav_dir)
+        label_path = (args.label_dir / relative).with_suffix(".lab")
         if not label_path.is_file():
             skipped_without_label += 1
             continue
@@ -275,9 +281,7 @@ def main() -> None:
             wav = wav * (args.peak / peak)
 
         phonemes = read_label(label_path)
-        grouped = split_into_phrases(
-            phonemes, args.min_pause, args.min_seconds, args.max_seconds
-        )
+        grouped = split_into_phrases(phonemes, args.min_pause, args.min_seconds, args.max_seconds)
         phrases = [
             part for phrase in grouped for part in enforce_max_length(phrase, args.max_seconds)
         ]
@@ -292,11 +296,18 @@ def main() -> None:
             if not transcript:
                 continue
 
-            name = f"{wav_path.stem}_{index:03d}"
-            sf.write(wav_out / f"{name}.wav", wav[begin:finish], sample_rate)
-            (text_out / f"{name}.txt").write_text(transcript, encoding="utf-8")
+            key = clip_output_key(wav_path, args.wav_dir, index)
+            (wav_out / key).parent.mkdir(parents=True, exist_ok=True)
+            (text_out / key).parent.mkdir(parents=True, exist_ok=True)
+            (dur_out / key).parent.mkdir(parents=True, exist_ok=True)
+            sf.write(
+                wav_out / key.parent / f"{key.name}.wav",
+                wav[begin:finish],
+                sample_rate,
+            )
+            (text_out / key.parent / f"{key.name}.txt").write_text(transcript, encoding="utf-8")
             durations = to_durations(phrase, begin / sample_rate, finish / sample_rate)
-            (dur_out / f"{name}.txt").write_text(
+            (dur_out / key.parent / f"{key.name}.txt").write_text(
                 " ".join(f"{d:.4f}" for d in durations), encoding="utf-8"
             )
             n_phrases += 1
@@ -304,9 +315,12 @@ def main() -> None:
 
     if skipped_without_label:
         print(f"warning: {skipped_without_label} recording(s) had no label file")
-    print(
-        f"wrote {n_phrases} phrases ({total_seconds / 60:.1f} min) to {args.output}"
-    )
+    if n_phrases == 0:
+        raise SystemExit(
+            f"no phrases were prepared; check labels and clip filters "
+            f"(partial output kept at {args.output})"
+        )
+    print(f"wrote {n_phrases} phrases ({total_seconds / 60:.1f} min) to {args.output}")
 
 
 if __name__ == "__main__":

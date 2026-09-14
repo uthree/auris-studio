@@ -105,6 +105,16 @@ impl Session {
                 });
             }
             self.open_input()?;
+            if let Some(error) = self
+                .input
+                .as_ref()
+                .and_then(|capture| capture.monitor_error())
+            {
+                // Opening solely for this request must not leave the microphone live after the
+                // request is refused. An input already recording remains open as usual.
+                self.close_input_if_idle();
+                return Err(error.into());
+            }
             self.monitored.push(track);
         } else {
             let removed = self.monitored.iter().position(|held| *held == track);

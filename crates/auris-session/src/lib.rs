@@ -105,16 +105,22 @@ pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::prepare_output_preview;
 pub use session::{
-    AccompanyReport, Arm, AudioStatus, BalanceReport, CEILING_DB, ChordPreview, ChordPreviewJob,
-    Clipboard, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
-    ComposeBalanceResult, ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent,
-    DEFAULT_LYRIC_PROGRESSION, DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, InputChannels,
-    LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport, MIN_PHONEME_SECONDS, MixAnalysis,
-    MusicalTyping, OCTAVE_RANGE, Played, PluginWindow, Quantize, RecordingReport, RecordingStatus,
-    Release, SaveReport, SectionLoudness, Session, SessionOptions, SingPlan, SingerTakeState,
-    SingerVoiceInfo, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
-    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
-    input_level_of, master_gain_db, quantized, read_soundfont, shadows_musical_typing,
+    AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
+    ChordPreview, ChordPreviewJob, Clipboard, CollectAssetsJob, CollectAssetsResult,
+    ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult,
+    ComposeBalanceStep, ComposeReport, CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION,
+    DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob,
+    DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport,
+    MIN_PHONEME_SECONDS, MidiExportJob, MidiExportResult, MidiImportJob, MidiImportResult,
+    MixAnalysis, MusicalTyping, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played,
+    PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob,
+    RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob,
+    SaveReport, SaveResult, SectionLoudness, Session, SessionOptions, SingPlan,
+    SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob, SingerLandingResult,
+    SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck,
+    SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole,
+    VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of,
+    master_gain_db, quantized, read_soundfont, recovery_dir, shadows_musical_typing,
     take_fingerprint,
 };
 pub use session::{
@@ -302,13 +308,17 @@ pub mod prelude {
     pub use auris_sampler::{SAMPLER_ENVELOPE_KEY, SAMPLER_ID};
 
     pub use crate::{
-        Acceleration, AccompanyReport, Arm, AudioPreferences, Clipboard, ComposeBalanceJob,
-        ComposeBalancePhase, ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep,
-        ComposeReport, CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_PARTS, Edit,
-        ExportPreferences, ExportSummary, InputChannels, LoadedFont, LyricSongReport,
-        MusicalTyping, ParamTarget, Quantize, RecordingReport, RecordingStatus, RenderJob,
-        SaveReport, Session, SessionError, SessionOptions, Settings, StemRenderFailure,
-        StemSummary, TakeReport, decode_audio, input_level_of, read_soundfont,
+        Acceleration, AccompanyReport, Arm, AudioPreferences, AutosaveJob, AutosaveResult,
+        Clipboard, CollectAssetsJob, CollectAssetsResult, ComposeBalanceJob, ComposeBalancePhase,
+        ComposeBalanceProgress, ComposeBalanceResult, ComposeBalanceStep, ComposeReport,
+        CopiedClip, CopiedContent, DEFAULT_LYRIC_PROGRESSION, DEFAULT_PARTS, DiscardRecoveryJob,
+        DiskWatchJob, DiskWatchResult, Edit, ExportPreferences, ExportSummary, InputChannels,
+        LoadedFont, LyricSongReport, MidiImportJob, MidiImportResult, MusicalTyping,
+        OpenProjectJob, OpenProjectResult, ParamTarget, Quantize, RecordingReport, RecordingStatus,
+        RecoveryCleanupJob, RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult, RenderJob,
+        SaveJob, SaveReport, SaveResult, Session, SessionError, SessionOptions, Settings,
+        SingerLandingJob, SingerLandingResult, SingerVoiceLoadJob, SingerVoiceLoadResult,
+        StemRenderFailure, StemSummary, TakeReport, decode_audio, input_level_of, read_soundfont,
     };
 }
 

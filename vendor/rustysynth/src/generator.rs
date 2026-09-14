@@ -26,7 +26,7 @@ impl Generator {
         reader: &mut R,
         size: usize,
     ) -> Result<Vec<Generator>, SoundFontError> {
-        if size == 0 || size % 4 != 0 {
+        if size == 0 || !size.is_multiple_of(4) {
             return Err(SoundFontError::InvalidGeneratorList);
         }
 

@@ -89,10 +89,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
-        "--data", type=Path, help="a preprocessed dataset with labelled durations: every speaker at once"
+        "--data",
+        type=Path,
+        help="a preprocessed dataset with labelled durations: every speaker at once",
     )
-    source.add_argument("--label-dir", type=Path, help="label files, searched recursively: one speaker")
-    parser.add_argument("--speaker", help="the speaker the label files belong to, as the model names it")
+    source.add_argument(
+        "--label-dir", type=Path, help="label files, searched recursively: one speaker"
+    )
+    parser.add_argument(
+        "--speaker", help="the speaker the label files belong to, as the model names it"
+    )
     parser.add_argument("--output", required=True, type=Path, help="output .json path")
     parser.add_argument(
         "--measured-from",
@@ -106,7 +112,9 @@ def main() -> None:
     if args.data is not None:
         by_speaker = measure_dataset(args.data)
         if not by_speaker:
-            raise SystemExit(f"{args.data} holds no labelled durations; preprocess with a duration_dir first")
+            raise SystemExit(
+                f"{args.data} holds no labelled durations; preprocess with a duration_dir first"
+            )
         measured_from = args.measured_from or f"the labelled durations under {args.data}"
     else:
         if not args.speaker:
@@ -128,11 +136,11 @@ def main() -> None:
         default=args.default_seconds,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(block, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    args.output.write_text(json.dumps(block, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     for speaker, table in block["speakers"].items():
-        print(f"{speaker}: {len(table['seconds'])} phonemes shipped, default {table['default'] * 1000:.0f} ms:")
+        print(
+            f"{speaker}: {len(table['seconds'])} phonemes shipped, default {table['default'] * 1000:.0f} ms:"
+        )
         for symbol, seconds in table["seconds"].items():
             print(f"  {symbol:4s} {seconds * 1000:5.0f} ms  n={table['counts'][symbol]:5d}")
     print(f"wrote {args.output}")

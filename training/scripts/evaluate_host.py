@@ -54,16 +54,42 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--voice", required=True, type=Path, help="the exported .onnx")
-    parser.add_argument("--checkpoint", type=Path, help="the checkpoint it was exported from (corpus mode)")
+    parser.add_argument(
+        "--checkpoint", type=Path, help="the checkpoint it was exported from (corpus mode)"
+    )
     parser.add_argument("--data", type=Path, help="a preprocessed dataset directory (corpus mode)")
-    parser.add_argument("--score", action="store_true", help="sing notes and words instead of a corpus")
-    parser.add_argument("--spec", type=Path, help="the .asong to compose in score mode (default: a built-in verse)")
-    parser.add_argument("--split", choices=["val", "all"], default="val", help="which utterances (default: val)")
-    parser.add_argument("--utterances", type=int, default=8, help="how many (default: 8)")
-    parser.add_argument("--val-size", type=int, default=8, help="the training config's data.val_size (default: 8)")
-    parser.add_argument("--seed", type=int, default=1234, help="the training config's seed, for the split (default: 1234)")
+    parser.add_argument(
+        "--score", action="store_true", help="sing notes and words instead of a corpus"
+    )
+    parser.add_argument(
+        "--spec", type=Path, help="the .asong to compose in score mode (default: a built-in verse)"
+    )
+    parser.add_argument(
+        "--split", choices=["val", "all"], default="val", help="which utterances (default: val)"
+    )
+    parser.add_argument("--utterances", type=int, default=8, help="how many, 1..1024 (default: 8)")
+    parser.add_argument(
+        "--val-size",
+        type=int,
+        default=8,
+        help="the training config's data.val_size, 1..1024 (default: 8)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=1234,
+        help="the training config's seed, for the split (default: 1234)",
+    )
     parser.add_argument("--take-seed", type=int, default=0, help="the render's seed (default: 0)")
-    parser.add_argument("--take-seeds", type=int, default=1, help="how many takes to average, seeds --take-seed onwards (default: 1)")
+    parser.add_argument(
+        "--take-seeds",
+        type=int,
+        default=1,
+        help=(
+            "how many takes to average, 1..64, seeds --take-seed onwards; "
+            "utterances*takes may not exceed 4096 (default: 1)"
+        ),
+    )
     parser.add_argument("--acceleration", choices=["auto", "gpu", "cpu"], default="auto")
     parser.add_argument(
         "--speaker",
@@ -74,16 +100,53 @@ def main() -> None:
     )
     parser.add_argument("--no-song", action="store_true", help="skip the concatenated render")
     parser.add_argument("--no-reference", action="store_true", help="skip the PyTorch render")
-    parser.add_argument("--no-pitch", action="store_true", help="skip FCPE, and so the pitch metrics")
-    parser.add_argument("--gap", type=float, default=0.5, help="seconds of silence between song parts (default: 0.5)")
-    parser.add_argument("--asr", action="store_true", help="also listen: the phoneme error rate, by a recogniser (needs the `asr` extra)")
-    parser.add_argument("--asr-language", default="ja", help="the language the listener listens in (default: ja, ReazonSpeech)")
-    parser.add_argument("--asr-precision", default="fp32", help="the recogniser's weights, fp32 or int8 (default: fp32)")
-    parser.add_argument("--n-mels", type=int, default=128)
-    parser.add_argument("--tolerance-cents", type=float, default=50.0)
-    parser.add_argument("--device", default=None, help="torch device for alignment, reference and FCPE (default: cuda if present)")
-    parser.add_argument("--release", action="store_true", help="drive cargo's release build, for honest timings")
-    parser.add_argument("--workdir", type=Path, help="where the renders are kept (default: a temporary directory)")
+    parser.add_argument(
+        "--no-pitch", action="store_true", help="skip FCPE, and so the pitch metrics"
+    )
+    parser.add_argument(
+        "--gap",
+        type=float,
+        default=0.5,
+        help="seconds of silence between song parts, finite and 0..60 (default: 0.5)",
+    )
+    parser.add_argument(
+        "--asr",
+        action="store_true",
+        help="also listen: the phoneme error rate, by a recogniser (needs the `asr` extra)",
+    )
+    parser.add_argument(
+        "--asr-language",
+        default="ja",
+        help="the language the listener listens in (default: ja, ReazonSpeech)",
+    )
+    parser.add_argument(
+        "--asr-precision",
+        default="fp32",
+        help="the recogniser's weights, fp32 or int8 (default: fp32)",
+    )
+    parser.add_argument(
+        "--n-mels",
+        type=int,
+        default=128,
+        help="mel bands per comparison, 1..2048 (default: 128)",
+    )
+    parser.add_argument(
+        "--tolerance-cents",
+        type=float,
+        default=50.0,
+        help="pitch-accuracy tolerance, finite and >0..1200 cents (default: 50)",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="torch device for alignment, reference and FCPE (default: cuda if present)",
+    )
+    parser.add_argument(
+        "--release", action="store_true", help="drive cargo's release build, for honest timings"
+    )
+    parser.add_argument(
+        "--workdir", type=Path, help="where the renders are kept (default: a temporary directory)"
+    )
     parser.add_argument("--json", type=Path, help="write the whole report here")
     parser.add_argument("--baseline", type=Path, help="a report to print deltas against")
     parser.add_argument("--log-level", default="INFO")
@@ -95,26 +158,29 @@ def main() -> None:
 
         args.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    settings = Settings(
-        split=args.split,
-        utterances=args.utterances,
-        seed=args.seed,
-        val_size=args.val_size,
-        take_seed=args.take_seed,
-        take_seeds=args.take_seeds,
-        acceleration=args.acceleration,
-        speaker=args.speaker,
-        song=not args.no_song,
-        reference=not args.no_reference,
-        pitch=not args.no_pitch,
-        song_gap_seconds=args.gap,
-        n_mels=args.n_mels,
-        tolerance_cents=args.tolerance_cents,
-        device=args.device,
-        asr=args.asr,
-        asr_language=args.asr_language,
-        asr_options={"precision": args.asr_precision},
-    )
+    try:
+        settings = Settings(
+            split=args.split,
+            utterances=args.utterances,
+            seed=args.seed,
+            val_size=args.val_size,
+            take_seed=args.take_seed,
+            take_seeds=args.take_seeds,
+            acceleration=args.acceleration,
+            speaker=args.speaker,
+            song=not args.no_song,
+            reference=not args.no_reference,
+            pitch=not args.no_pitch,
+            song_gap_seconds=args.gap,
+            n_mels=args.n_mels,
+            tolerance_cents=args.tolerance_cents,
+            device=args.device,
+            asr=args.asr,
+            asr_language=args.asr_language,
+            asr_options={"precision": args.asr_precision},
+        )
+    except ValueError as error:
+        parser.error(str(error))
     host = Host.find(release=args.release)
 
     if args.workdir is None:

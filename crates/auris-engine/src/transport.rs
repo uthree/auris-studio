@@ -25,9 +25,12 @@ pub struct CountIn {
 
 impl CountIn {
     /// A count of `beats`, each `beat_frames` long, accented every `per_bar`.
+    ///
+    /// Its duration saturates at the sample-domain ceiling. These fields are public protocol data,
+    /// so even an absurd count must not overflow before it reaches the realtime renderer.
     pub fn new(beats: u32, beat_frames: u64, per_bar: u32) -> Self {
         Self {
-            remaining_frames: beats as u64 * beat_frames,
+            remaining_frames: (beats as u64).saturating_mul(beat_frames),
             beat_frames,
             beats,
             per_bar: per_bar.max(1),
@@ -36,7 +39,7 @@ impl CountIn {
 
     /// How long the whole count lasts, in frames.
     pub fn total_frames(&self) -> u64 {
-        self.beats as u64 * self.beat_frames
+        (self.beats as u64).saturating_mul(self.beat_frames)
     }
 
     /// How far into the count the transport has got, in frames.
@@ -189,6 +192,15 @@ mod tests {
             loop_end_frames: 5_000,
             count_in: None,
         }
+    }
+
+    #[test]
+    fn an_extreme_count_in_saturates_its_sample_duration() {
+        let count = CountIn::new(u32::MAX, u64::MAX, 4);
+
+        assert_eq!(count.remaining_frames, u64::MAX);
+        assert_eq!(count.total_frames(), u64::MAX);
+        assert_eq!(count.elapsed_frames(), 0);
     }
 
     #[test]

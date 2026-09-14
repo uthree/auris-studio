@@ -155,7 +155,7 @@ fn previews_distinguish_speakers_and_same_named_voice_files(cx: &mut TestAppCont
     let one = scratch.voice("one.voicevox.json");
     let two = scratch.voice("two.voicevox.json");
     let (app, cx) = open(cx);
-    app.update(cx, |this, _| {
+    app.update(cx, |this, _cx| {
         let (first, _) = add_singer(this, "First", &one, false);
         let (second, _) = add_singer(this, "Second", &one, false);
         let (other_file, _) = add_singer(this, "Other file", &two, false);
@@ -193,7 +193,7 @@ fn choosing_the_current_voice_preserves_its_speaker_and_document(cx: &mut TestAp
     let scratch = Scratch::new("reselect-voice");
     let voice = scratch.voice("current.voicevox.json");
     let (app, cx) = open(cx);
-    app.update(cx, |this, _| {
+    app.update(cx, |this, cx| {
         let (track, _) = add_singer(this, "Singer", &voice, true);
         this.session
             .set_singer_speaker(track, Some("Second"))
@@ -202,7 +202,7 @@ fn choosing_the_current_voice_preserves_its_speaker_and_document(cx: &mut TestAp
         this.select_track(other);
         let revision = this.session.revision();
 
-        this.apply_singer_voice(track, &voice);
+        this.apply_singer_voice(track, voice.clone(), cx);
 
         assert_eq!(this.selected_track, Some(track));
         assert_eq!(
@@ -229,13 +229,13 @@ fn stale_preview_completions_preserve_the_latest_request(cx: &mut TestAppContext
     let one = scratch.voice("one.voicevox.json");
     let two = scratch.voice("two.voicevox.json");
     let (app, cx) = open(cx);
-    app.update(cx, |this, _| {
+    app.update(cx, |this, cx| {
         let (track, _) = add_singer(this, "Singer", &one, false);
         assert!(this.wish_sung_preview(track, 60, None));
         let old = this.sung_preview_wish.as_ref().unwrap().key.clone();
         let generation = this.sung_preview_generation;
         this.sung_preview_rendering = true;
-        this.apply_singer_voice(track, &two);
+        this.apply_singer_voice(track, two.clone(), cx);
         assert!(this.wish_sung_preview(track, 62, None));
         let current = this.sung_preview_wish.as_ref().unwrap().key.clone();
         this.finish_sung_preview(
@@ -277,6 +277,45 @@ fn stale_preview_completions_preserve_the_latest_request(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+fn failed_voice_choice_preserves_the_current_voice_preview_cache(cx: &mut TestAppContext) {
+    let scratch = Scratch::new("failed-voice-choice-preview");
+    let current_voice = scratch.voice("current.voicevox.json");
+    let missing_voice = scratch.join("missing.voicevox.json");
+    let (app, cx) = open(cx);
+    let (track, key) = app.update(cx, |this, cx| {
+        let (track, _) = add_singer(this, "Singer", &current_voice, false);
+        assert!(this.wish_sung_preview(track, 60, None));
+        let key = this.sung_preview_wish.as_ref().unwrap().key.clone();
+        this.finish_sung_preview(
+            track,
+            key.clone(),
+            this.sung_preview_generation,
+            Ok((vec![0.1; 128], 24_000.0)),
+        );
+        assert!(this.sung_previews.contains_key(&key));
+        let generation = this.sung_preview_generation;
+
+        this.apply_singer_voice(track, missing_voice, cx);
+
+        assert_ne!(this.sung_preview_generation, generation);
+        assert!(
+            this.sung_previews.contains_key(&key),
+            "a pending choice must not evict the current voice's reusable audio"
+        );
+        (track, key)
+    });
+    cx.run_until_parked();
+    app.read_with(cx, |this, _| {
+        assert!(this.status_failed);
+        assert!(this.sung_previews.contains_key(&key));
+        assert_eq!(
+            this.session.singer_voice_info(track).unwrap().unwrap().path,
+            current_voice
+        );
+    });
+}
+
+#[gpui::test]
 fn empty_and_missing_voices_do_not_stop_the_next_singer(cx: &mut TestAppContext) {
     let scratch = Scratch::new("scheduler-neighbours");
     let valid = scratch.voice("valid.voicevox.json");
@@ -298,10 +337,11 @@ fn empty_and_missing_voices_do_not_stop_the_next_singer(cx: &mut TestAppContext)
         this.poll_auto_sing(cx);
         assert_eq!(
             this.auto_sing.as_ref().map(|render| render.track),
-            Some(ready)
+            Some(unavailable),
+            "a cold voice is checked on the worker before the scheduler can reject it"
         );
         assert!(!this.sung_failures.contains_key(&empty));
-        assert!(this.sung_failures.contains_key(&unavailable));
+        assert!(!this.sung_failures.contains_key(&unavailable));
         (empty, unavailable, ready)
     });
     cx.run_until_parked();

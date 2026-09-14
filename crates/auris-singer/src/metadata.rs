@@ -6,11 +6,15 @@
 //! not parse protobuf). [`VoiceInfo`] is that object read and checked, so everything after
 //! loading can trust the numbers.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
 use crate::SingError;
+use crate::limits::{
+    MAX_COLLECTION_ITEMS, MAX_INTER_CHANNELS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TEXT_BYTES,
+    MAX_TOKEN_BYTES, validate_audio_dimensions,
+};
 
 /// Most speakers a single voice model may declare.
 ///
@@ -167,6 +171,13 @@ pub struct VoiceCard {
 impl VoiceInfo {
     /// Reads the metadata JSON and refuses anything a later `sing` would trip over.
     pub(crate) fn parse(raw: &str) -> Result<VoiceInfo, SingError> {
+        if raw.len() > MAX_TEXT_BYTES {
+            return Err(SingError::TooLarge {
+                resource: "voice metadata",
+                observed: Some(raw.len()),
+                limit: MAX_TEXT_BYTES,
+            });
+        }
         let info: VoiceInfo = serde_json::from_str(raw)
             .map_err(|error| SingError::Metadata(format!("unreadable metadata: {error}")))?;
         if info.format_version > FORMAT_VERSION {
@@ -181,16 +192,42 @@ impl VoiceInfo {
                 info.format_version, FORMAT_VERSION
             )));
         }
-        if info.sample_rate == 0 || info.hop_length == 0 || info.inter_channels == 0 {
-            return Err(SingError::Metadata(
-                "a zero among sample_rate, hop_length and inter_channels".into(),
-            ));
+        validate_audio_dimensions(info.sample_rate, info.hop_length, "voice metadata")?;
+        if !(1..=MAX_INTER_CHANNELS).contains(&info.inter_channels) {
+            return Err(SingError::Metadata(format!(
+                "inter_channels must be between 1 and {MAX_INTER_CHANNELS}, got {}",
+                info.inter_channels
+            )));
         }
         if info.n_speakers == 0 || info.n_speakers > MAX_SPEAKERS {
             return Err(SingError::Metadata(format!(
                 "n_speakers must be between 1 and {MAX_SPEAKERS}, got {}",
                 info.n_speakers
             )));
+        }
+        if info.symbols.is_empty()
+            || info.symbols.len() > MAX_COLLECTION_ITEMS
+            || info
+                .symbols
+                .iter()
+                .any(|symbol| symbol.is_empty() || symbol.len() > MAX_TOKEN_BYTES)
+        {
+            return Err(SingError::Metadata(format!(
+                "symbols must contain 1..={MAX_COLLECTION_ITEMS} nonempty tokens of at most {MAX_TOKEN_BYTES} UTF-8 bytes"
+            )));
+        }
+        if info.speaker_to_id.len() > info.n_speakers as usize
+            || info
+                .speaker_to_id
+                .keys()
+                .any(|name| name.trim().is_empty() || name.len() > MAX_NAME_BYTES)
+            || info.speaker_to_id.values().any(|id| *id >= info.n_speakers)
+            || info.speaker_to_id.values().collect::<BTreeSet<_>>().len()
+                != info.speaker_to_id.len()
+        {
+            return Err(SingError::Metadata(
+                "speaker names and ids must be unique, bounded, and inside n_speakers".into(),
+            ));
         }
         for required in [crate::score::MODEL_SILENCE, crate::score::MODEL_UNKNOWN] {
             if !info.symbols.iter().any(|symbol| symbol == required) {
@@ -207,6 +244,14 @@ impl VoiceInfo {
                 .cloned()
         };
         if let Some(durations) = &info.phoneme_durations {
+            validate_table_strings(
+                &durations.unit,
+                durations
+                    .speakers
+                    .iter()
+                    .map(|(name, table)| (name.as_str(), table.seconds.keys().map(String::as_str))),
+                "phoneme durations",
+            )?;
             if durations.unit != "seconds" {
                 return Err(SingError::Metadata(format!(
                     "phoneme durations in `{}` — this build reads seconds",
@@ -228,6 +273,14 @@ impl VoiceInfo {
             }
         }
         if let Some(levels) = &info.phoneme_levels {
+            validate_table_strings(
+                &levels.unit,
+                levels
+                    .speakers
+                    .iter()
+                    .map(|(name, table)| (name.as_str(), table.db.keys().map(String::as_str))),
+                "phoneme levels",
+            )?;
             if levels.unit != "db" {
                 return Err(SingError::Metadata(format!(
                     "phoneme levels in `{}` — this build reads db",
@@ -247,6 +300,26 @@ impl VoiceInfo {
                     ));
                 }
             }
+        }
+        if let Some(card) = &info.voice
+            && ([
+                card.name.as_str(),
+                card.version.as_str(),
+                card.license.as_str(),
+            ]
+            .iter()
+            .any(|value| value.len() > MAX_NAME_BYTES)
+                || card.description.len() > MAX_TEXT_BYTES
+                || card.url.len() > MAX_PATH_BYTES
+                || card.credits.len() > MAX_COLLECTION_ITEMS
+                || card
+                    .credits
+                    .iter()
+                    .any(|credit| credit.len() > MAX_NAME_BYTES))
+        {
+            return Err(SingError::Metadata(
+                "voice card strings or credits exceed their practical limits".into(),
+            ));
         }
         Ok(info)
     }
@@ -322,6 +395,45 @@ impl VoiceInfo {
     }
 }
 
+fn validate_table_strings<'a, I, J>(unit: &str, speakers: I, context: &str) -> Result<(), SingError>
+where
+    I: IntoIterator<Item = (&'a str, J)>,
+    J: IntoIterator<Item = &'a str>,
+{
+    if unit.len() > MAX_NAME_BYTES {
+        return Err(SingError::Metadata(format!("{context} unit is too long")));
+    }
+    let mut speaker_count = 0usize;
+    for (speaker, tokens) in speakers {
+        speaker_count += 1;
+        if speaker.len() > MAX_NAME_BYTES {
+            return Err(SingError::Metadata(format!(
+                "{context} speaker name is too long"
+            )));
+        }
+        let mut token_count = 0usize;
+        for token in tokens {
+            token_count += 1;
+            if token.is_empty() || token.len() > MAX_TOKEN_BYTES {
+                return Err(SingError::Metadata(format!(
+                    "{context} contains an invalid phoneme token"
+                )));
+            }
+        }
+        if token_count > MAX_COLLECTION_ITEMS {
+            return Err(SingError::Metadata(format!(
+                "{context} has more than {MAX_COLLECTION_ITEMS} phoneme entries for one speaker"
+            )));
+        }
+    }
+    if speaker_count > MAX_COLLECTION_ITEMS {
+        return Err(SingError::Metadata(format!(
+            "{context} has more than {MAX_COLLECTION_ITEMS} speakers"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,6 +471,55 @@ mod tests {
         let raw = RITSU.replacen("\"n_speakers\": 1", "\"n_speakers\": 4000000000", 1);
         let error = VoiceInfo::parse(&raw).expect_err("the count is not a plausible voice");
         assert!(error.to_string().contains("n_speakers"), "{error}");
+    }
+
+    #[test]
+    fn audio_dimensions_and_metadata_size_are_bounded_before_inference() {
+        for raw in [
+            RITSU.replace("\"sample_rate\": 48000", "\"sample_rate\": 7999"),
+            RITSU.replace("\"sample_rate\": 48000", "\"sample_rate\": 192001"),
+            RITSU.replace("\"hop_length\": 480", "\"hop_length\": 1"),
+            RITSU.replace("\"hop_length\": 480", "\"hop_length\": 4294967295"),
+            RITSU.replace("\"inter_channels\": 192", "\"inter_channels\": 4294967295"),
+        ] {
+            assert!(VoiceInfo::parse(&raw).is_err(), "{raw}");
+        }
+
+        let raw = RITSU
+            .replace("\"sample_rate\": 48000", "\"sample_rate\": 192000")
+            .replace("\"hop_length\": 480", "\"hop_length\": 19200")
+            .replace("\"inter_channels\": 192", "\"inter_channels\": 4096");
+        VoiceInfo::parse(&raw).expect("inclusive audio boundaries");
+
+        let oversized = " ".repeat(MAX_TEXT_BYTES + 1);
+        assert!(matches!(
+            VoiceInfo::parse(&oversized),
+            Err(SingError::TooLarge {
+                resource: "voice metadata",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn symbol_and_speaker_tables_have_count_string_and_id_limits() {
+        let mut value: serde_json::Value = serde_json::from_str(RITSU).unwrap();
+        value["symbols"] = serde_json::json!(["<sil>", "<unk>", "x".repeat(MAX_TOKEN_BYTES + 1)]);
+        assert!(VoiceInfo::parse(&value.to_string()).is_err());
+
+        let mut value: serde_json::Value = serde_json::from_str(RITSU).unwrap();
+        let mut symbols: Vec<String> = vec!["<sil>".into(), "<unk>".into()];
+        symbols.extend((2..MAX_COLLECTION_ITEMS).map(|index| format!("s{index}")));
+        value["symbols"] = serde_json::json!(symbols);
+        VoiceInfo::parse(&value.to_string()).expect("inclusive symbol-count boundary");
+        value["symbols"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("one-too-many"));
+        assert!(VoiceInfo::parse(&value.to_string()).is_err());
+
+        let raw = RITSU.replace("\"namine_ritsu\": 0", "\"namine_ritsu\": 1");
+        assert!(VoiceInfo::parse(&raw).is_err());
     }
 
     /// The new-spec export: the same voice with its measured consonant table aboard.

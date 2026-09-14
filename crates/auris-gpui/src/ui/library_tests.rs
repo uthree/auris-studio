@@ -246,6 +246,16 @@ fn song_library_typing_and_ime_never_change_the_covered_lyrics_editor(cx: &mut T
         )
     });
     paint(&app, cx);
+    let looping = app.read_with(cx, |this, _| this.project().loop_enabled);
+    cx.dispatch_action(crate::actions::ToggleLoop);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.project().loop_enabled,
+            looping,
+            "a native-menu action cannot edit the document behind the library sheet"
+        );
+        assert!(this.song_library.is_some());
+    });
     cx.simulate_input("あいう");
     cx.simulate_keystrokes("backspace");
     paint(&app, cx);
@@ -434,4 +444,51 @@ fn song_library_selects_cached_hosted_instruments_and_excludes_effects(cx: &mut 
             assert_eq!(serde_json::to_value(this.project()).unwrap(), before);
         });
     }
+}
+
+#[gpui::test]
+fn plugin_folder_removal_names_the_folder_and_requires_confirmation(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    let folder = std::env::temp_dir().join(format!(
+        "auris-plugin-folder-to-remove-{}",
+        std::process::id()
+    ));
+    app.update(cx, |this, _| {
+        prepare_library(this);
+        this.settings.plugin_paths = vec![folder.clone()];
+        // Put the plugin-folder row in the visible viewport. Hit-testing a debug node drawn far
+        // below a clipped scroll view would only prove that off-screen controls do not click.
+        for branch in [
+            Branch::Instruments,
+            Branch::SoundFonts,
+            Branch::Voices,
+            Branch::Effects,
+        ] {
+            this.library.set_open(branch, false);
+        }
+    });
+    paint(&app, cx);
+    click("forget-plugin-path-0", cx);
+    app.read_with(cx, |this, _| {
+        let prompt = this.prompt.as_ref().expect("removal asks first");
+        assert!(prompt.title.contains(&folder.display().to_string()));
+        assert!(matches!(
+            &prompt.body,
+            crate::ui::prompt::PromptBody::Ask(
+                crate::ui::prompt::Question::RemovePluginPath(path)
+            ) if path == &folder
+        ));
+        assert_eq!(
+            this.settings.plugin_paths.as_slice(),
+            std::slice::from_ref(&folder)
+        );
+    });
+
+    cx.simulate_keystrokes("escape");
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.settings.plugin_paths.as_slice(),
+            std::slice::from_ref(&folder)
+        )
+    });
 }

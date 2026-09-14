@@ -46,6 +46,7 @@ from prepare_jsut_song import (  # noqa: E402
 )
 
 from auris_singer.text.japanese import OPENJTALK_TO_IPA  # noqa: E402
+from auris_singer.utils.output import clip_output_key, create_fresh_output  # noqa: E402
 
 TIME_UNIT = 1e-7
 
@@ -85,9 +86,20 @@ def main() -> None:
     parser.add_argument("--min-clip-seconds", type=float, default=0.8)
     args = parser.parse_args()
 
-    wav_out = args.output / "wav"
-    text_out = args.output / "text"
-    dur_out = args.output / "dur"
+    if not args.db_dir.is_dir():
+        raise SystemExit(f"database directory does not exist: {args.db_dir}")
+    songs = [
+        (song_dir, sorted(song_dir.glob("*.wav")))
+        for song_dir in sorted(path for path in args.db_dir.iterdir() if path.is_dir())
+    ]
+    songs = [(song_dir, wav_paths) for song_dir, wav_paths in songs if wav_paths]
+    if not songs:
+        raise SystemExit(f"no .wav recordings found under {args.db_dir}")
+
+    output = create_fresh_output(args.output)
+    wav_out = output / "wav"
+    text_out = output / "text"
+    dur_out = output / "dur"
     wav_out.mkdir(parents=True, exist_ok=True)
     text_out.mkdir(parents=True, exist_ok=True)
     dur_out.mkdir(parents=True, exist_ok=True)
@@ -97,10 +109,7 @@ def main() -> None:
     skipped = 0
     unknown: set[str] = set()
 
-    for song_dir in sorted(p for p in args.db_dir.iterdir() if p.is_dir()):
-        wav_paths = sorted(song_dir.glob("*.wav"))
-        if not wav_paths:
-            continue
+    for song_dir, wav_paths in songs:
         for wav_path in wav_paths:
             label_path = wav_path.with_suffix(".lab")
             if not label_path.is_file():
@@ -123,9 +132,7 @@ def main() -> None:
                 phonemes, args.min_pause, args.min_seconds, args.max_seconds
             )
             phrases = [
-                part
-                for phrase in grouped
-                for part in enforce_max_length(phrase, args.max_seconds)
+                part for phrase in grouped for part in enforce_max_length(phrase, args.max_seconds)
             ]
 
             for index, phrase in enumerate(phrases):
@@ -138,11 +145,18 @@ def main() -> None:
                 if not transcript:
                     continue
 
-                name = f"{wav_path.stem}_{index:03d}"
-                sf.write(wav_out / f"{name}.wav", wav[begin:finish], sample_rate)
-                (text_out / f"{name}.txt").write_text(transcript, encoding="utf-8")
+                key = clip_output_key(wav_path, args.db_dir, index)
+                (wav_out / key).parent.mkdir(parents=True, exist_ok=True)
+                (text_out / key).parent.mkdir(parents=True, exist_ok=True)
+                (dur_out / key).parent.mkdir(parents=True, exist_ok=True)
+                sf.write(
+                    wav_out / key.parent / f"{key.name}.wav",
+                    wav[begin:finish],
+                    sample_rate,
+                )
+                (text_out / key.parent / f"{key.name}.txt").write_text(transcript, encoding="utf-8")
                 durations = to_durations(phrase, begin / sample_rate, finish / sample_rate)
-                (dur_out / f"{name}.txt").write_text(
+                (dur_out / key.parent / f"{key.name}.txt").write_text(
                     " ".join(f"{d:.4f}" for d in durations), encoding="utf-8"
                 )
                 n_phrases += 1
@@ -152,6 +166,11 @@ def main() -> None:
         print(f"warning: {skipped} wav(s) had no label file")
     if unknown:
         print(f"warning: unmapped label symbols dropped from transcripts: {sorted(unknown)}")
+    if n_phrases == 0:
+        raise SystemExit(
+            f"no phrases were prepared; check labels and clip filters "
+            f"(partial output kept at {args.output})"
+        )
     print(f"wrote {n_phrases} phrases ({total_seconds / 60:.1f} min) to {args.output}")
 
 

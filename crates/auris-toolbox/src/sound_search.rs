@@ -7,7 +7,7 @@ pub mod search_instruments {
     /// Wire name.
     pub const NAME: &str = "search_instruments";
     /// Model-facing contract.
-    pub const DESCRIPTION: &str = "Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on rescan, cache eviction or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.";
+    pub const DESCRIPTION: &str = "Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on explicit refresh, a library identity change, bounded handle eviction, or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.";
     /// Search arguments.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]

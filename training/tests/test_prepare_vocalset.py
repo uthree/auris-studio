@@ -44,6 +44,17 @@ def test_find_recordings_filters_and_reads_the_vowel(tmp_path):
     assert [(speaker, vowel) for speaker, vowel, _ in found] == [("male1", "a")]
 
 
+def test_output_keys_keep_equal_stems_from_separate_source_paths_distinct(tmp_path):
+    first = tmp_path / "male1" / "scales" / "straight" / "same.wav"
+    second = tmp_path / "male1" / "arpeggios" / "straight" / "same.wav"
+
+    first_key = prepare_vocalset.clip_output_key(first, tmp_path, 0, width=2)
+    second_key = prepare_vocalset.clip_output_key(second, tmp_path, 0, width=2)
+
+    assert first_key != second_key
+    assert first_key.name == second_key.name == "same_00"
+
+
 def test_regions_split_at_internal_silence_only_when_long_enough():
     wav = np.concatenate([tone(0.5), silence(0.6), tone(0.5)])
     split = prepare_vocalset.find_sound_regions(wav, SR, 480, -40.0, 0.4)
@@ -110,3 +121,90 @@ def test_durations_line_up_with_the_transcript_and_sum_to_the_clip():
     assert left_only == pytest.approx([0.1, 1.0])
     assert len(left_only) == len(prepare_vocalset.transcript("a", True, False).split())
     assert sum(prepare_vocalset.durations(100, 100, 400, 400, sr)) == pytest.approx(300 / sr)
+
+
+def test_preparation_refuses_to_merge_with_stale_output(tmp_path, monkeypatch):
+    source = tmp_path / "FULL"
+    recording = source / "male1" / "recording.wav"
+    recording.parent.mkdir(parents=True)
+    recording.write_bytes(b"stand-in")
+    output = tmp_path / "prepared"
+    monkeypatch.setattr(
+        prepare_vocalset,
+        "find_recordings",
+        lambda *_args: [("male1", "a", recording)],
+    )
+    monkeypatch.setattr(prepare_vocalset, "load_mono", lambda *_args: tone(1.0))
+    monkeypatch.setattr(
+        prepare_vocalset,
+        "find_sound_regions",
+        lambda wav, *_args: [(0, len(wav))],
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_vocalset.py",
+            "--source",
+            str(source),
+            "--output",
+            str(output),
+            "--speakers",
+            "male1",
+        ],
+    )
+
+    prepare_vocalset.main()
+    assert list(output.rglob("*.wav"))
+    with pytest.raises(FileExistsError, match="output already exists"):
+        prepare_vocalset.main()
+
+
+def test_missing_source_directory_is_refused_before_output_is_reserved(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_vocalset.py",
+            "--source",
+            str(tmp_path / "missing"),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="source directory does not exist"):
+        prepare_vocalset.main()
+    assert not output.exists()
+
+
+def test_all_regions_filtered_out_fail_and_keep_the_reserved_output(tmp_path, monkeypatch):
+    source = tmp_path / "FULL"
+    recording = source / "male1" / "scales" / "straight" / "take_a.wav"
+    recording.parent.mkdir(parents=True)
+    recording.write_bytes(b"stand-in")
+    monkeypatch.setattr(prepare_vocalset, "load_mono", lambda *_args: tone(0.25))
+    monkeypatch.setattr(
+        prepare_vocalset,
+        "find_sound_regions",
+        lambda wav, *_args: [(0, len(wav))],
+    )
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_vocalset.py",
+            "--source",
+            str(source),
+            "--output",
+            str(output),
+            "--speakers",
+            "male1",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="no clips were prepared"):
+        prepare_vocalset.main()
+    assert output.is_dir(), "failed preparation remains available for inspection"

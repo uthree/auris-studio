@@ -46,9 +46,7 @@ pub mod set_drum_assignment {
             .set_drum_assignment(track, role, args.note)
             .map_err(|error| error.to_string())?;
         if changed {
-            session
-                .save_with_checkpoint()
-                .map_err(|error| error.to_string())?;
+            save_checkpointed(&mut session)?;
         }
         serde_json::to_string_pretty(&serde_json::json!({
             "track": track.0,
@@ -145,9 +143,7 @@ pub mod analyze_drum_kit {
             session
                 .apply_drum_map(&report, args.remap_clips)
                 .map_err(|error| error.to_string())?;
-            session
-                .save_with_checkpoint()
-                .map_err(|error| error.to_string())?;
+            save_checkpointed(&mut session)?;
         }
         if args.include_triggers {
             serde_json::to_string_pretty(&report).map_err(|error| error.to_string())

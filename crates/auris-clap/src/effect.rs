@@ -25,6 +25,23 @@ use crate::host::AurisHost;
 pub struct ClapEffect(Bridge);
 
 impl ClapEffect {
+    /// Whether processing has failed since activation, including an input-event burst that
+    /// exceeded the room supplied during preparation.
+    pub fn processing_failed(&self) -> bool {
+        self.0.processing_failed()
+    }
+
+    /// Number of host-to-plugin events rejected instead of growing a queue on the audio thread.
+    pub fn dropped_input_event_count(&self) -> u64 {
+        self.0.dropped_input_events()
+    }
+
+    /// Number of plugin-generated events accepted but discarded because Auris has no event-output
+    /// route in its effect contract yet.
+    pub fn discarded_output_event_count(&self) -> u64 {
+        self.0.discarded_output_events()
+    }
+
     /// Wraps a freshly activated audio processor. Called by
     /// [`ClapPlugin::activate`](crate::ClapPlugin::activate), which is the only place that can
     /// produce the processor in the first place.
@@ -57,11 +74,14 @@ impl Effect for ClapEffect {
         self.0.descriptor()
     }
 
-    fn prepare(&mut self, _ctx: &PrepareContext) {
-        // Deliberately nothing. A CLAP plugin sizes its buffers when it is *activated*, from a
-        // rate and block size it cannot then be told about again — changing either means
-        // deactivating and building it afresh, which only the main-thread half can do. By the
-        // time this effect is in a graph, preparing has already happened.
+    fn prepare(&mut self, ctx: &PrepareContext) {
+        // A CLAP plugin sizes its audio buffers when it is *activated*, from a rate and block size
+        // it cannot then be told about again — changing either means deactivating and building it
+        // afresh, which only the main-thread half can do. Event storage belongs to the host,
+        // though, and must follow the graph's count off the audio thread just like the instrument
+        // wrapper does. An effect normally has only parameter events; keeping this symmetric also
+        // covers a future event-carrying effect contract without a hidden RT grow.
+        self.0.reserve_events(ctx.max_block_events);
     }
 
     fn reset(&mut self) {

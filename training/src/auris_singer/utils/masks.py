@@ -26,10 +26,13 @@ def generate_path(duration: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         ``(B, 1, T, S)`` binary path where ``path[b, 0, t, s] == 1`` iff frame
         ``t`` is assigned to token ``s``.
     """
-    b, _, t_y, t_x = mask.shape
-    cum_duration = torch.cumsum(duration, dim=-1).view(b * t_x)
-    path = sequence_mask(cum_duration, t_y).to(mask.dtype)
-    path = path.view(b, t_x, t_y)
+    _, _, t_y, _ = mask.shape
+    cum_duration = torch.cumsum(duration, dim=-1).squeeze(1)
+    # Build the (B, S, T) mask directly. Flattening B*S and reshaping it back is unnecessary,
+    # and Torch 2.14 exports that dynamic view as Reshape(allowzero=1, shape=[-1]), a graph the
+    # DirectML provider refuses even though the CPU provider accepts it.
+    positions = torch.arange(t_y, device=duration.device, dtype=duration.dtype)
+    path = (positions.unsqueeze(0).unsqueeze(0) < cum_duration.unsqueeze(-1)).to(mask.dtype)
     path = path - torch.nn.functional.pad(path, [0, 0, 1, 0])[:, :-1]
     path = path.unsqueeze(1).transpose(2, 3)
     return path * mask

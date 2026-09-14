@@ -50,9 +50,7 @@ def test_table_save_and_load_roundtrip(tmp_path):
 
 def test_every_openjtalk_phoneme_maps_into_the_table():
     missing = [
-        f"{src}->{dst}"
-        for src, dst in OPENJTALK_TO_IPA.items()
-        if dst not in DEFAULT_PHONEME_TABLE
+        f"{src}->{dst}" for src, dst in OPENJTALK_TO_IPA.items() if dst not in DEFAULT_PHONEME_TABLE
     ]
     assert missing == []
 
