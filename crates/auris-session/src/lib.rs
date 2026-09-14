@@ -70,6 +70,7 @@ pub mod render;
 pub mod session;
 pub mod settings;
 pub mod singer_portrait;
+pub mod transient_id;
 pub mod voice_setup;
 
 pub use auris_analysis::audio::{
@@ -130,7 +131,7 @@ pub use session::{
     ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
     ReferenceMatchSettings, ReferenceMatchStep,
 };
-pub use session::{SoundLibraryJob, SoundSearch};
+pub use session::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{

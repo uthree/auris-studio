@@ -66,10 +66,7 @@ mod tests {
             );
         }
         let schema = parameter_schema::<set_instrument::Args>();
-        assert!(
-            schema["properties"]["sound"]
-                .to_string()
-                .contains("integer")
-        );
+        assert!(schema["properties"].get("sound").is_none());
+        assert!(schema["properties"].get("sound_id").is_some());
     }
 }

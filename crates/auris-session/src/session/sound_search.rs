@@ -6,7 +6,7 @@ use auris_core::plugin::{Instrument, PluginState, PrepareContext};
 use auris_dsp::timbre::{standardize_timbres, timbre_features};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// A bounded discovery operation shared by saved-file and live-session frontends.
@@ -24,6 +24,9 @@ pub enum SoundSearch {
         /// First matching result, defaults to zero.
         #[serde(default)]
         offset: usize,
+        /// Optional exact source and library substring constraints.
+        #[serde(default, flatten)]
+        filter: SoundFilter,
     },
     /// Other sounds ordered by full standardized acoustic feature distance.
     Similar {
@@ -33,7 +36,47 @@ pub enum SoundSearch {
         #[serde(default = "default_limit")]
         #[schemars(range(min = 1, max = 50))]
         limit: usize,
+        /// Optional constraints on returned neighbors (not on the reference).
+        #[serde(default, flatten)]
+        filter: SoundFilter,
     },
+}
+/// Sound origins available to discovery clients.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SoundSource {
+    /// Internal synthesizers.
+    Builtin,
+    /// Loaded SoundFont presets.
+    Soundfont,
+    /// CLAP instruments and presets.
+    Clap,
+    /// VST3 instruments and presets.
+    Vst3,
+}
+/// Constraints applied before pagination or selecting nearest neighbors.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+pub struct SoundFilter {
+    /// Restrict results to this source; omit for all sources.
+    pub source: Option<SoundSource>,
+    /// Case-insensitive library name substring; omit for all libraries.
+    pub library: Option<String>,
+}
+impl SoundFilter {
+    fn matches(&self, sound: &Sound) -> bool {
+        let source = match self.source {
+            None => true,
+            Some(SoundSource::Builtin) => matches!(sound.source, Source::Builtin(_)),
+            Some(SoundSource::Soundfont) => matches!(sound.source, Source::Font(_)),
+            Some(SoundSource::Clap) => matches!(sound.source, Source::Clap { .. }),
+            Some(SoundSource::Vst3) => matches!(sound.source, Source::Vst3 { .. }),
+        };
+        source
+            && self
+                .library
+                .as_ref()
+                .is_none_or(|name| sound.library.to_lowercase().contains(&name.to_lowercase()))
+    }
 }
 fn default_limit() -> usize {
     10
@@ -107,7 +150,6 @@ struct Catalog {
 }
 static CATALOGS: OnceLock<Mutex<Vec<Arc<Catalog>>>> = OnceLock::new();
 static CATALOG_BUILD: Mutex<()> = Mutex::new(());
-static CATALOG_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Immutable snapshot; run discovery on an ordinary worker, never the UI or audio thread.
 pub struct SoundLibraryJob {
@@ -185,7 +227,13 @@ impl Session {
             "{:x}",
             Sha256::digest(format!(
                 "{:?}{:?}{:?}{}",
-                self.path(),
+                self.path()
+                    .map(|path| path
+                        .canonicalize()
+                        .unwrap_or_else(|_| path.to_path_buf())
+                        .to_string_lossy()
+                        .into_owned())
+                    .unwrap_or_else(|| self.sound_scope.clone()),
                 stamps,
                 sounds,
                 self.sample_rate()
@@ -299,6 +347,46 @@ impl Session {
 }
 
 impl SoundLibraryJob {
+    /// Reads bounded scan or measurement diagnostics from the existing snapshot only.
+    pub fn diagnostics(&self, offset: usize, limit: usize) -> Result<String, String> {
+        if !(1..=16).contains(&limit) {
+            return Err("limit must be 1..16".into());
+        }
+        let catalog = CATALOGS
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| "Sound catalog lock failed")?
+            .iter()
+            .find(|c| c.key == self.key)
+            .cloned()
+            .ok_or("No sound snapshot; search_instruments first")?;
+        let state = catalog
+            .index
+            .lock()
+            .map_err(|_| "Acoustic index lock failed")?;
+        let mut errors = catalog
+            .errors
+            .iter()
+            .map(|error| ("scan", error))
+            .collect::<Vec<_>>();
+        if let Some(Ok(index)) = &state.result {
+            errors.extend(index.skipped.iter().map(|error| ("measurement", error)));
+        }
+        if let Some(Err(error)) = &state.result {
+            errors.push(("index", error));
+        }
+        if offset > errors.len() {
+            return Err("offset exceeds diagnostic count".into());
+        }
+        let entries = errors
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .map(|(kind, error)| serde_json::json!({"kind":kind,"message":short_text(error,240)}))
+            .collect::<Vec<_>>();
+        let next = offset + entries.len();
+        Ok(serde_json::json!({"entries":entries,"total":errors.len(),"next_offset":(next<errors.len()).then_some(next)}).to_string())
+    }
     /// Returns a bounded search response. First acoustic use starts a background index and
     /// returns `status: indexing`; subsequent calls report progress or completed neighbors.
     pub fn run(self, request: SoundSearch, refresh: bool) -> Result<String, String> {
@@ -320,7 +408,12 @@ impl SoundLibraryJob {
         }
         let catalog = self.catalog(refresh)?;
         match request {
-            SoundSearch::Text { query, offset, .. } => {
+            SoundSearch::Text {
+                query,
+                offset,
+                filter,
+                ..
+            } => {
                 let words = query
                     .split_whitespace()
                     .map(str::to_lowercase)
@@ -328,7 +421,7 @@ impl SoundLibraryJob {
                 let matches = catalog
                     .sounds
                     .iter()
-                    .filter(|s| s.matches(&words))
+                    .filter(|s| s.matches(&words) && filter.matches(s))
                     .collect::<Vec<_>>();
                 if offset > matches.len() {
                     return Err("offset exceeds matching sound count".into());
@@ -340,11 +433,12 @@ impl SoundLibraryJob {
                     .map(|s| s.value())
                     .collect::<Vec<_>>();
                 let next = offset + page.len();
-                Ok(serde_json::json!({"status":"ready","sounds":page,"total":matches.len(),"next_offset":(next<matches.len()).then_some(next),
-                    "scan_error_count":catalog.errors.len(),"scan_errors":short_errors(&catalog.errors),
-                    "usage":"Copy id into set_instrument (live) or sound_id in add_track/set_instrument (MCP). Use similar_instruments for acoustic alternatives."}).to_string())
+                Ok(sound_page(
+                    serde_json::json!({"status":"ready","sounds":page,"total":matches.len(),"next_offset":(next<matches.len()).then_some(next),
+                    "scan_error_count":catalog.errors.len()}),
+                ))
             }
-            SoundSearch::Similar { id, .. } => {
+            SoundSearch::Similar { id, filter, .. } => {
                 let reference = catalog
                     .sounds
                     .iter()
@@ -364,7 +458,9 @@ impl SoundLibraryJob {
                         .rows
                         .iter()
                         .enumerate()
-                        .filter(|(i, _)| *i != row)
+                        .filter(|(i, _)| {
+                            *i != row && filter.matches(&catalog.sounds[index.sounds[*i]])
+                        })
                         .map(|(i, other)| {
                             let distance = other
                                 .iter()
@@ -385,9 +481,10 @@ impl SoundLibraryJob {
                             v
                         })
                         .collect::<Vec<_>>();
-                    return Ok(serde_json::json!({"status":"ready","reference":id,"sounds":sounds,"indexed":index.sounds.len(),
-                        "skipped_count":index.skipped.len(),"skipped":short_errors(&index.skipped),
-                        "metric":"Euclidean distance in the full standardized timbre feature space; lower is closer. Not a subjective quality score."}).to_string());
+                    return Ok(sound_page(
+                        serde_json::json!({"status":"ready","reference":id,"sounds":sounds,"indexed":index.sounds.len(),
+                        "skipped_count":index.skipped.len()}),
+                    ));
                 }
                 if !state.started {
                     let worker_catalog = catalog.clone();
@@ -462,12 +559,8 @@ impl SoundLibraryJob {
         });
         let mut seen = std::collections::HashSet::new();
         sounds.retain(|s| seen.insert(s.id.clone()));
-        let generation = CATALOG_GENERATION.fetch_add(1, Ordering::Relaxed);
         for sound in &mut sounds {
-            sound.id = format!(
-                "sound:{:x}",
-                Sha256::digest(format!("{}:{generation}:{}", self.key, sound.id))
-            );
+            sound.id = crate::transient_id::transient_id("s");
         }
         let catalog = Arc::new(Catalog {
             key: self.key.clone(),
@@ -516,6 +609,26 @@ impl SoundLibraryJob {
     }
 }
 
+fn sound_page(mut value: serde_json::Value) -> String {
+    let mut libraries = Vec::new();
+    if let Some(sounds) = value["sounds"].as_array_mut() {
+        for sound in sounds {
+            let metadata = serde_json::json!({"name":sound["library"],"source":sound["source"]});
+            let index = libraries
+                .iter()
+                .position(|entry| *entry == metadata)
+                .unwrap_or_else(|| {
+                    libraries.push(metadata);
+                    libraries.len() - 1
+                });
+            sound["library"] = index.into();
+            sound.as_object_mut().unwrap().remove("source");
+        }
+    }
+    value["libraries"] = libraries.into();
+    value.to_string()
+}
+
 fn measurable(sound: &Sound) -> bool {
     match &sound.source {
         Source::Font(p) => p.bank != 128,
@@ -533,9 +646,6 @@ fn short_text(text: &str, limit: usize) -> String {
         result.push('…');
     }
     result
-}
-fn short_errors(errors: &[String]) -> Vec<String> {
-    errors.iter().take(3).map(|e| short_text(e, 240)).collect()
 }
 
 fn measure_sound(
@@ -742,6 +852,7 @@ fn discover_vst3(
 }
 
 fn stamp(path: &Path) -> String {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let metadata = path.metadata().ok();
     format!(
         "{}:{:?}:{:?}",
@@ -832,6 +943,82 @@ mod tests {
         job.plugins.clear();
         job
     }
+    #[test]
+    fn source_filters_precede_paging_and_metadata_is_shared() {
+        let scratch = Scratch::new("filtered-sounds");
+        let mut session = session();
+        session.save_as(&scratch.join("Filter.auris")).unwrap();
+        let result = isolated_job(&session)
+            .run(
+                SoundSearch::Text {
+                    query: "auris".into(),
+                    limit: 2,
+                    offset: 0,
+                    filter: SoundFilter {
+                        source: Some(SoundSource::Builtin),
+                        library: Some("AURIS".into()),
+                    },
+                },
+                false,
+            )
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(
+            value["libraries"],
+            serde_json::json!([{"name":"Auris","source":"builtin"}])
+        );
+        for sound in value["sounds"].as_array().unwrap() {
+            assert!(sound["id"].as_str().unwrap().len() < 24);
+            assert_eq!(sound["library"], 0);
+            assert!(sound.get("source").is_none());
+        }
+        assert!(value.get("scan_errors").is_none());
+        assert!(value.get("usage").is_none());
+        let empty = isolated_job(&session)
+            .run(
+                SoundSearch::Text {
+                    query: "auris".into(),
+                    limit: 1,
+                    offset: 0,
+                    filter: SoundFilter {
+                        source: Some(SoundSource::Clap),
+                        library: None,
+                    },
+                },
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&empty).unwrap()["total"],
+            0
+        );
+        let diagnostic = isolated_job(&session).diagnostics(0, 2).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&diagnostic).unwrap()["total"],
+            0
+        );
+        assert!(isolated_job(&session).diagnostics(0, 17).is_err());
+    }
+    #[test]
+    fn handles_belong_to_one_document_and_paths_and_aliases_share_a_snapshot() {
+        let mut first = session();
+        let mut other = session();
+        let track = other.add_default_instrument_track("Other").unwrap();
+        let result = query(&first, "auris", 1, 0, false).unwrap();
+        let id = result["sounds"][0]["id"].as_str().unwrap();
+        assert!(other.use_library_sound(track, id, &[]).is_err());
+        first.new_project();
+        let track = first.project().tracks[0].id;
+        assert!(first.use_library_sound(track, id, &[]).is_err());
+        let scratch = Scratch::new("sound-path-alias");
+        let saved = first.save_as(&scratch.join("Alias.auris")).unwrap();
+        let key = first.sound_library_job(&[]).key;
+        let mut canonical = session();
+        canonical
+            .open(&saved.document.canonicalize().unwrap())
+            .unwrap();
+        assert_eq!(key, canonical.sound_library_job(&[]).key);
+    }
     fn query(
         session: &Session,
         query: &str,
@@ -841,6 +1028,7 @@ mod tests {
     ) -> Result<serde_json::Value, String> {
         let text = isolated_job(session).run(
             SoundSearch::Text {
+                filter: SoundFilter::default(),
                 query: query.into(),
                 limit,
                 offset,
@@ -920,6 +1108,7 @@ mod tests {
         let response = job
             .run(
                 SoundSearch::Similar {
+                    filter: SoundFilter::default(),
                     id: reference.clone(),
                     limit: 1,
                 },
@@ -966,6 +1155,7 @@ mod tests {
             .id
             .clone();
         let request = SoundSearch::Similar {
+            filter: SoundFilter::default(),
             id: reference,
             limit: 2,
         };

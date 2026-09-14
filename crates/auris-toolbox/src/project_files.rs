@@ -99,7 +99,7 @@ pub mod create_project {
             .map(|track| serde_json::json!({"track":format!("id:{}",track.id.0),"name":track.name}))
             .collect();
         Ok(
-            serde_json::json!({"project":written,"tempo":session.project().bpm(),
+            serde_json::json!({"project_id":project_handles::register(&written)?,"project":written,"tempo":session.project().bpm(),
             "meter":session.signature_at(Ticks::ZERO).to_string(),"tracks":tracks,"clips":0})
             .to_string(),
         )

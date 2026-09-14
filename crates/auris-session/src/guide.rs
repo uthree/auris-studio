@@ -212,6 +212,12 @@ pub mod architecture {
     //! Deny rules override every mode; plan mode forbids mutations even with an allow rule.
     //! One-time approvals bind the exact command to the current document revision. MCP keeps
     //! its independent file-based tool catalog and does not consult this policy.
+    //! The MCP presentation supports explicit short project handles (never an implicit current
+    //! project), startup task groups, concise schemas and full on-demand help. Discovery handles
+    //! have a random process scope and are checked against the owning library snapshot; refresh
+    //! and eviction invalidate them. Search filters apply before paging or neighbor selection,
+    //! and diagnostics are read separately. [`Session::setup_tracks`] creates a bounded batch
+    //! as one transaction; the saved-project adapter saves once and retains bounded retry receipts.
     //! Conversation compaction is presentation work in `auris-agent`: a tool-less model
     //! summarizes older exchanges while the latest two completed exchanges remain verbatim.
     //! Summary failures leave history intact, and summaries never grant tool permissions.

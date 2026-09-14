@@ -147,8 +147,69 @@ restart reliability; inspect `/healthz` and the server log when a request fails.
 
 ## Tool arguments and project setup
 
-`tool_help` takes an exact tool `name` and returns its current schema and examples.
-Both frontends use the same catalog and inline nested schemas. Invalid arguments
+### Compact MCP catalogs and references
+
+Set the server environment `AURIS_MCP_TOOL_GROUPS=manual,mix` for manual composition
+and mixing. Other groups are `transcription`, `vocals`, and `composition`; shared
+inspection, sound search, rendering, and help remain available. Omit the variable
+or use `all` for the complete catalog. Invalid groups fail startup. Disabled tools
+are excluded from `tools/list` and refused by `tools/call`; restart to change groups.
+`discover_tools` searches names and descriptions, optionally by group, in pages of
+ten. Discovery describes the complete vocabulary, including disabled groups.
+
+MCP publishes concise descriptions while keeping schema constraints. `tool_help`
+returns one tool's complete field descriptions and examples; an unknown name no
+longer returns the whole catalog. This changes presentation, not musical units.
+
+`create_project` also returns `project_id`; `open_project` registers an existing
+document. Put this explicit handle into later `project` arguments. Paths remain
+valid. There is no implicit current document. The last 64 distinct project paths
+are retained; restart and eviction invalidate handles. Reopen the path to recover.
+
+Sound IDs and report IDs are short opaque references with a random process scope
+and serial. Never persist, construct, or reuse them after restart. Sound references
+also expire on library rescan/eviction; search the same project again to recover.
+Each sound's integer `library` indexes that response's `libraries` array, whose
+entries contain `name` and `source`. These indices are page-local, not sound IDs.
+Search replies retain failure counts; `instrument_diagnostics` reads the existing
+scan/measurement diagnostics in pages of at most 16 bounded messages without rescanning.
+
+Both text and similarity search accept `source` (`builtin`, `soundfont`, `clap`,
+`vst3`) and a case-insensitive `library` substring. Filters apply before pagination
+or selecting nearest neighbors. For example, a SoundFont-only request is:
+
+```json
+{"project":"<project_id>","query":"bass","source":"soundfont","limit":5}
+```
+
+`setup_tracks` combines adding tracks, selecting sounds and opening empty clips:
+
+```json
+{
+  "project":"<project_id>",
+  "request_id":"initial-band",
+  "tracks":[
+    {"name":"Lead","kind":"instrument","sound_id":"<search id>",
+     "clip":{"name":"Song","start_bar":1,"bars":32}},
+    {"name":"Drums","kind":"drum",
+     "clip":{"name":"Song","start_bar":1,"bars":32}}
+  ]
+}
+```
+
+The batch holds 1..16 tracks with unique new names; a clip holds 1..1024 bars.
+Failure rolls back the whole document and writes nothing. Success saves once.
+Identical retries with the same `request_id` return the original response while
+the document is unchanged. Receipts retain the last 32 successful requests for
+the server lifetime. Changed arguments or a subsequently edited document require
+inspection before a new request. After receipt eviction/restart, existing names
+are rejected instead of creating duplicates. The session command is a single Undo
+step; the saved-project tool uses the normal checkpoint mechanism.
+
+### Argument recovery
+
+`tool_help` takes an exact saved-project tool `name` and returns its current schema and examples.
+Both transports inline nested argument schemas. Invalid arguments
 produce corrective feedback; unknown fields in clip edits and previews are refused.
 For example, eight bars starting at bar 1 resize with
 `action:{kind:"resize",end_bar:9}`, and a four-bar preview uses top-level
@@ -164,12 +225,9 @@ including in a `replace_notes` source file. Positional arrays are rejected with 
 Use `search_instruments` with the saved `project` and focused `query` words instead
 of fetching the library. Results default to 10 (maximum 50), with `next_offset` for
 additional matches. Copy a returned `id` into `sound_id` on `add_track` or
-`set_instrument` for the same project. Pass only one of `sound_id`, `instrument`, or
-`sound`. Search covers loaded SoundFonts, built-ins, CLAP provider presets and VST3
+`set_instrument` for the same project. Search covers loaded SoundFonts, built-ins, CLAP provider presets and VST3
 advertised programs/standard `.vstpreset` files. The legacy `list_instruments` now
-returns only a compact built-in summary. General MIDI `sound` still accepts a
-zero-based program or GM name; both `81` and `"81"` select the sawtooth lead.
-Use `kind:"drum"` when adding a kit track or `drums:true` when changing its sound.
+returns only a compact built-in summary. Use `kind:"drum"` when adding a kit track.
 For manual composition, add a clip with `add_clip`, then fill it with `replace_notes`;
 `add_part` generates music automatically.
 
@@ -386,7 +444,7 @@ All words must occur in the sound name, library/vendor, or published preset tags
 case-insensitively. Empty queries are rejected. Results default to 10, with a hard
 maximum of 50; continue with the same query and `next_offset`. Search is performed
 on a worker so native preset discovery does not block the window. Returned IDs go
-into `set_instrument.instrument`. This includes exact CLAP provider presets and
+into `set_instrument.sound_id`. This includes exact CLAP provider presets and
 VST3 unit programs/standard files, rather than just a plugin's default patch.
 
 `similar_instruments` takes an `id` from that search and `limit` (default 10,

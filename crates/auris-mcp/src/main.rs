@@ -6,10 +6,12 @@
 //! work behind them — lives in [`auris_toolbox`], shared with `auris-agent` so the two doors a
 //! model comes through can never drift apart; this crate is the stdio door and nothing else.
 //!
-//! One seam shows: the doc comment on each method below *is* that tool's wire description, and
+//! One seam shows: the doc comment on each method below is its full registered description, and
 //! the SDK's macro only reads it from a literal — it cannot be pointed at the toolbox constant.
 //! So the text exists twice, and the test at the bottom holds the two copies equal, which turns
 //! silent drift into a red build.
+//! `tools/list` applies the shared compact presentation and startup task-group filter;
+//! `tool_help` retains the full description and schema.
 //!
 //! What remains here is the protocol binding, and its two decisions:
 //!
@@ -32,7 +34,9 @@ use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
 /// Saved projects and rendered audio stay on disk.
 #[derive(Clone, Debug, Default)]
-struct AurisMcp {}
+struct AurisMcp {
+    groups: toolbox::ToolGroups,
+}
 
 /// Both transports publish the shared, self-contained schemas.
 fn tool_schema(name: &str) -> std::sync::Arc<rmcp::model::JsonObject> {
@@ -54,6 +58,38 @@ fn tool_schema(name: &str) -> std::sync::Arc<rmcp::model::JsonObject> {
 // come from the toolbox — this list is the door, not the furniture.
 #[tool_router]
 impl AurisMcp {
+    /// Open a saved project and return project_id for subsequent project arguments. Handles expire on server restart or after 64 distinct projects. Does not change files.
+    #[tool(input_schema = tool_schema("open_project"))]
+    async fn open_project(
+        &self,
+        Parameters(args): Parameters<toolbox::open_project::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::open_project::run(&args)).await
+    }
+    /// Add 1..16 tracks with optional sound_id and empty clip in one atomic save. Use a unique request_id; identical retries return the same result while the document is unchanged (last 32 receipts, this server lifetime). Existing track names are rejected. On conflict, inspect the project before a new request.
+    #[tool(input_schema = tool_schema("setup_tracks"))]
+    async fn setup_tracks(
+        &self,
+        Parameters(args): Parameters<toolbox::setup_tracks::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::setup_tracks::run(&args)).await
+    }
+    /// Read scan and acoustic measurement failures after search_instruments or similar_instruments. Does not rescan. Messages are bounded; follow next_offset.
+    #[tool(input_schema = tool_schema("instrument_diagnostics"))]
+    async fn instrument_diagnostics(
+        &self,
+        Parameters(args): Parameters<toolbox::instrument_diagnostics::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::instrument_diagnostics::run(&args)).await
+    }
+    /// Find tool names by text and optional task group, without full schemas. Fetch tool_help for one result. Startup AURIS_MCP_TOOL_GROUPS controls which groups are callable.
+    #[tool(input_schema = tool_schema("discover_tools"))]
+    async fn discover_tools(
+        &self,
+        Parameters(args): Parameters<toolbox::discover_tools::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::discover_tools::run(&args)).await
+    }
     /// Renders a short project excerpt and sends its actual WAV to the configured audio critic. Use start_bar and bars (default first four bars), or section and optional instance. Keep focus to a short question about the sound. compare_to accepts an earlier audio_path from this project's listen/preview. Review a supported edit by listening to the same range again; leave the mix unchanged when no correction is supported. Returns audio delivery status, fallible observations and separate measurements. Configure AURIS_AUDIO_MODEL and AURIS_AUDIO_URL for a music-capable server. Does not edit the project.
     #[tool(input_schema = tool_schema("listen"))]
     async fn listen(
@@ -443,7 +479,7 @@ impl AurisMcp {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Search sounds by name, library, vendor or preset tags. All query words must match (case-insensitive). Includes loaded SoundFonts, built-ins, CLAP provider presets and VST3 advertised programs/standard preset files. Returns at most 50 exact sound IDs, never the full library. Pass a returned id as sound_id to add_track/set_instrument for the same project. Unsupported plugin preset discovery is reported. Prefer this over list_instruments.
+    /// Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on rescan, cache eviction or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.
     #[tool(input_schema = tool_schema("search_instruments"))]
     async fn search_instruments(
         &self,
@@ -452,7 +488,7 @@ impl AurisMcp {
         blocking(move || toolbox::search_instruments::run(&args)).await
     }
 
-    /// Find up to n acoustic alternatives to a sound ID from search_instruments. Uses full standardized timbre vectors, not 2D map positions or names. Includes measurable built-ins, melodic SoundFonts and discovered CLAP/VST3 presets; excludes the reference. First call starts background indexing and returns status indexing with progress; continue other work then retry with the same id. Lower distance is closer, not a quality rating. Silent/failed sources are reported, drum kits are excluded.
+    /// Find acoustic alternatives to a searched sound ID using full standardized timbre vectors. Filter source/library before selecting at most 50 neighbors; excludes the reference and drum kits. First use starts indexing: continue other work and retry the same id later. Lower distance is closer, not better. Each sound.library indexes libraries. Read instrument_diagnostics for failed measurements.
     #[tool(input_schema = tool_schema("similar_instruments"))]
     async fn similar_instruments(
         &self,
@@ -461,7 +497,7 @@ impl AurisMcp {
         blocking(move || toolbox::similar_instruments::run(&args)).await
     }
 
-    /// Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting all three uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.
+    /// Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.
     #[tool(input_schema = tool_schema("add_track"))]
     async fn add_track(
         &self,
@@ -479,7 +515,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_part::run(&args)).await
     }
 
-    /// Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Re-voices an instrument track: `instrument` names a built-in from `list_instruments`, or `sound` names a General MIDI sound (a name or a program number, `drums: true` for a kit). The previous instrument's dial positions and the automation that drove them go with it. The change is saved.
+    /// Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. Saves the change.
     #[tool(input_schema = tool_schema("set_instrument"))]
     async fn set_instrument(
         &self,
@@ -581,12 +617,37 @@ impl AurisMcp {
 
 #[tool_handler]
 impl ServerHandler for AurisMcp {
+    async fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
+        let tools = toolbox::tool_catalog()
+            .into_iter()
+            .filter(|t| self.groups.allows(t.name))
+            .map(|mut t| {
+                toolbox::compact_parameters(&mut t.parameters);
+                rmcp::model::Tool::new(
+                    t.name,
+                    toolbox::concise_description(t.description),
+                    t.parameters.as_object().expect("object schema").clone(),
+                )
+            })
+            .collect();
+        Ok(rmcp::model::ListToolsResult {
+            tools,
+            ..Default::default()
+        })
+    }
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
         let name = request.name.to_string();
+        if !self.groups.allows(&name) {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(format!("Tool {name} is disabled. Enable group '{}' in AURIS_MCP_TOOL_GROUPS and restart the server.", toolbox::tool_group(&name)))]).into());
+        }
         let router = Self::tool_router();
         let known = router.has_route(&name);
         let arguments = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
@@ -601,7 +662,7 @@ impl ServerHandler for AurisMcp {
         let mut info = ServerInfo::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-        info.instructions = Some(toolbox::INSTRUCTIONS.into());
+        info.instructions = Some(self.groups.instructions());
         info
     }
 }
@@ -689,7 +750,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `~/.config/auris-studio` only has its settings carried across by whichever one does.
 
     tokio::runtime::Runtime::new()?.block_on(async {
-        let service = AurisMcp::default().serve(rmcp::transport::stdio()).await?;
+        let groups = match std::env::var("AURIS_MCP_TOOL_GROUPS") {
+            Ok(v) => toolbox::ToolGroups::parse(&v)?,
+            Err(std::env::VarError::NotPresent) => toolbox::ToolGroups::default(),
+            Err(e) => return Err(e.into()),
+        };
+        let service = AurisMcp { groups }.serve(rmcp::transport::stdio()).await?;
         service.waiting().await?;
         Ok(())
     })
@@ -698,6 +764,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn manual_catalog_is_compact_and_disabled_tools_are_not_callable() {
+        let (server_transport, client_transport) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            AurisMcp {
+                groups: toolbox::ToolGroups::parse("manual").unwrap(),
+            }
+            .serve(server_transport)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+        });
+        let client = ().serve(client_transport).await.unwrap();
+        let listed = client.list_tools(None).await.unwrap();
+        assert!(listed.tools.iter().any(|t| t.name == "setup_tracks"));
+        assert!(!listed.tools.iter().any(|t| t.name == "transcribe_audio"
+            || t.name == "compose"
+            || t.name == "automation"));
+        let full = toolbox::tool_catalog();
+        for actual in &listed.tools {
+            let original = full.iter().find(|t| t.name == actual.name).unwrap();
+            let mut compact = original.parameters.clone();
+            toolbox::compact_parameters(&mut compact);
+            assert_eq!(actual.input_schema.as_ref(), compact.as_object().unwrap());
+        }
+        let denied = client
+            .call_tool(rmcp::model::CallToolRequestParams::new("compose"))
+            .await
+            .unwrap();
+        assert_eq!(denied.is_error, Some(true));
+        let help = client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("tool_help").with_arguments(
+                    serde_json::json!({"name":"replace_notes"})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_ne!(help.is_error, Some(true));
+        let payload: serde_json::Value =
+            serde_json::from_str(&help.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(
+            payload["parameters"],
+            full.iter()
+                .find(|t| t.name == "replace_notes")
+                .unwrap()
+                .parameters
+        );
+        client.cancel().await.unwrap();
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn preview_returns_a_local_wav_path_without_binary_content() {

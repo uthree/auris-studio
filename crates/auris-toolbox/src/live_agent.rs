@@ -77,6 +77,7 @@ pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
     let action = match tool {
         "inspect_project" => "inspect",
         "list_instruments"
+        | "instrument_diagnostics"
         | "search_instruments"
         | "similar_instruments"
         | "inspect_audio"
@@ -295,11 +296,15 @@ mod tests {
         let fixtures = [
             (
                 "search_instruments",
-                serde_json::json!({"query":"piano","limit":10,"offset":0,"refresh":false}),
+                serde_json::json!({"query":"piano","limit":10,"offset":0,"refresh":false,"source":null,"library":null}),
             ),
             (
                 "similar_instruments",
-                serde_json::json!({"id":"sound:test","limit":10}),
+                serde_json::json!({"id":"s:test:1","limit":10,"source":null,"library":null}),
+            ),
+            (
+                "instrument_diagnostics",
+                serde_json::json!({"offset":0,"limit":10}),
             ),
             ("inspect_project", serde_json::json!({})),
             (
@@ -319,7 +324,7 @@ mod tests {
             ("remove_track", serde_json::json!({"track":1})),
             (
                 "set_instrument",
-                serde_json::json!({"track":1,"instrument":"auris.synth.drumkit"}),
+                serde_json::json!({"track":1,"sound_id":"auris.synth.drumkit"}),
             ),
             (
                 "set_level",
@@ -401,7 +406,7 @@ mod tests {
     #[test]
     fn flat_catalog_covers_commands_without_a_tagged_union_or_file_destinations() {
         let tools = definitions();
-        assert_eq!(tools.len(), 19);
+        assert_eq!(tools.len(), 20);
         assert!(
             command("compose_song", &serde_json::json!({}))
                 .unwrap()

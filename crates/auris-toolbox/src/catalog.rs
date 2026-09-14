@@ -137,10 +137,18 @@ fn definition<T: schemars::JsonSchema>(
     name: &'static str,
     description: &'static str,
 ) -> ToolDefinition {
+    let mut parameters = parameter_schema::<T>();
+    if let Some(project) = parameters
+        .get_mut("properties")
+        .and_then(|p| p.get_mut("project"))
+    {
+        project["description"] =
+            "Project path or project_id from create_project/open_project.".into();
+    }
     ToolDefinition {
         name,
         description,
-        parameters: parameter_schema::<T>(),
+        parameters,
     }
 }
 
@@ -151,6 +159,13 @@ struct NoArgs {}
 /// Complete project-tool catalog. Transport tests compare their registrations to this list.
 pub fn tool_catalog() -> Vec<ToolDefinition> {
     vec![
+        definition::<open_project::Args>(open_project::NAME, open_project::DESCRIPTION),
+        definition::<setup_tracks::Args>(setup_tracks::NAME, setup_tracks::DESCRIPTION),
+        definition::<instrument_diagnostics::Args>(
+            instrument_diagnostics::NAME,
+            instrument_diagnostics::DESCRIPTION,
+        ),
+        definition::<discover_tools::Args>(discover_tools::NAME, discover_tools::DESCRIPTION),
         definition::<read_report::Args>(read_report::NAME, read_report::DESCRIPTION),
         definition::<listen::Args>(listen::NAME, listen::DESCRIPTION),
         definition::<create_project::Args>(create_project::NAME, create_project::DESCRIPTION),
@@ -269,13 +284,8 @@ pub mod tool_help {
             .find(|tool| tool.name == args.name)
             .ok_or_else(|| {
                 format!(
-                    "Unknown tool '{}'. Available tools: {}",
-                    args.name,
-                    catalog
-                        .iter()
-                        .map(|tool| tool.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "Unknown tool '{}'. Use discover_tools with a short query (for example edit_clip) to find its exact name.",
+                    args.name.chars().take(80).collect::<String>()
                 )
             })?;
         let project = "/absolute/path/Song/Song.auris";
@@ -283,7 +293,7 @@ pub mod tool_help {
             "add_track" => serde_json::json!([
                 {"project":project,"name":"Reverb","kind":"bus"},
                 {"project":project,"name":"Kit","kind":"drum"},
-                {"project":project,"name":"Lead","kind":"instrument","instrument":"auris.synth.chiptune"}
+                {"project":project,"name":"Lead","kind":"instrument","sound_id":"s:example:1"}
             ]),
             "add_clip" => serde_json::json!([
                 {"project":project,"track":"Lead","name":"Manual","start_bar":5,"bars":2}

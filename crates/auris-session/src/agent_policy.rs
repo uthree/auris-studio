@@ -120,6 +120,7 @@ impl Operation {
                     | crate::live_agent::Command::ReadNotes { .. }
                     | crate::live_agent::Command::ListInstruments { .. }
                     | crate::live_agent::Command::SearchInstruments { .. }
+                    | crate::live_agent::Command::InstrumentDiagnostics { .. }
                     | crate::live_agent::Command::SimilarInstruments { .. }
             );
             let confirm = matches!(

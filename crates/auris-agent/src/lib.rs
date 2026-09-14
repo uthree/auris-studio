@@ -279,7 +279,7 @@ Use short batches of up to 32 notes to keep each response manageable.
 Use multiple tracks for distinct musical parts and set_level to balance them.
 Track kind is one lowercase string, for example {\"name\":\"Drums\",\"kind\":\"drum\"}.
 Use instrument for melody/harmony and drum for percussion. Do not wrap kind in an array.
-For set_instrument use the exact returned instrument ID, never a program number or sound field.
+For set_instrument use sound_id with the exact returned ID, never a program number. Search results use library indices into the libraries array; instrument_diagnostics reads failures on demand.
 Set the tempo with set_tempo and a loop region with set_loop for loop background music.
 Preserve existing tracks and notes unless the user explicitly requests their removal.
 Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
@@ -1936,7 +1936,8 @@ mod tests {
         assert!(names.contains(&"replace_notes"));
         assert!(names.contains(&"search_instruments"));
         assert!(names.contains(&"similar_instruments"));
-        assert_eq!(names.len(), 21);
+        assert!(names.contains(&"instrument_diagnostics"));
+        assert_eq!(names.len(), 22);
         for expected in toolbox::live_agent::definitions() {
             let exposed = actual
                 .iter()

@@ -7,7 +7,7 @@ pub mod search_instruments {
     /// Wire name.
     pub const NAME: &str = "search_instruments";
     /// Model-facing contract.
-    pub const DESCRIPTION: &str = "Search sounds by name, library, vendor or preset tags. All query words must match (case-insensitive). Includes loaded SoundFonts, built-ins, CLAP provider presets and VST3 advertised programs/standard preset files. Returns at most 50 exact sound IDs, never the full library. Pass a returned id as sound_id to add_track/set_instrument for the same project. Unsupported plugin preset discovery is reported. Prefer this over list_instruments.";
+    pub const DESCRIPTION: &str = "Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on rescan, cache eviction or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.";
     /// Search arguments.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -20,6 +20,9 @@ pub mod search_instruments {
         #[serde(default = "limit")]
         #[schemars(range(min = 1, max = 50))]
         pub limit: usize,
+        /// Optional source and library filters.
+        #[serde(default, flatten)]
+        pub filter: auris_session::SoundFilter,
         /// First matching result; follow next_offset with the same query.
         #[serde(default)]
         pub offset: usize,
@@ -33,6 +36,7 @@ pub mod search_instruments {
             auris_session::SoundSearch::Text {
                 query: args.query.clone(),
                 limit: args.limit,
+                filter: args.filter.clone(),
                 offset: args.offset,
             },
             args.refresh,
@@ -46,7 +50,7 @@ pub mod similar_instruments {
     /// Wire name.
     pub const NAME: &str = "similar_instruments";
     /// Model-facing contract.
-    pub const DESCRIPTION: &str = "Find up to n acoustic alternatives to a sound ID from search_instruments. Uses full standardized timbre vectors, not 2D map positions or names. Includes measurable built-ins, melodic SoundFonts and discovered CLAP/VST3 presets; excludes the reference. First call starts background indexing and returns status indexing with progress; continue other work then retry with the same id. Lower distance is closer, not a quality rating. Silent/failed sources are reported, drum kits are excluded.";
+    pub const DESCRIPTION: &str = "Find acoustic alternatives to a searched sound ID using full standardized timbre vectors. Filter source/library before selecting at most 50 neighbors; excludes the reference and drum kits. First use starts indexing: continue other work and retry the same id later. Lower distance is closer, not better. Each sound.library indexes libraries. Read instrument_diagnostics for failed measurements.";
     /// Neighbor arguments.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -59,6 +63,9 @@ pub mod similar_instruments {
         #[serde(default = "limit")]
         #[schemars(range(min = 1, max = 50))]
         pub limit: usize,
+        /// Optional source and library filters.
+        #[serde(default, flatten)]
+        pub filter: auris_session::SoundFilter,
     }
     /// Queries or starts the read-only acoustic index.
     pub fn run(args: &Args) -> Result<String, String> {
@@ -66,6 +73,7 @@ pub mod similar_instruments {
             auris_session::SoundSearch::Similar {
                 id: args.id.clone(),
                 limit: args.limit,
+                filter: args.filter.clone(),
             },
             false,
         )
@@ -73,4 +81,33 @@ pub mod similar_instruments {
 }
 fn limit() -> usize {
     10
+}
+
+/// On-demand bounded library diagnostics.
+pub mod instrument_diagnostics {
+    use super::*;
+    /// Wire name.
+    pub const NAME: &str = "instrument_diagnostics";
+    /// Model-facing contract.
+    pub const DESCRIPTION: &str = "Read scan and acoustic measurement failures after search_instruments or similar_instruments. Does not rescan. Messages are bounded; follow next_offset.";
+    /// Diagnostic page selector.
+    #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct Args {
+        /// Project path or project_id.
+        pub project: String,
+        /// Zero-based first diagnostic.
+        #[serde(default)]
+        pub offset: usize,
+        /// Page size, 1..16; defaults to 10.
+        #[serde(default = "limit")]
+        #[schemars(range(min = 1, max = 16))]
+        pub limit: usize,
+    }
+    /// Reads an existing snapshot.
+    pub fn run(args: &Args) -> Result<String, String> {
+        opened(&args.project)?
+            .sound_library_job(&[])
+            .diagnostics(args.offset, args.limit)
+    }
 }

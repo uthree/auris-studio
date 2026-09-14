@@ -60,16 +60,7 @@ fn snapshot(value: Value, bytes: &[u8]) -> Result<String, String> {
     let mut file = tempfile::tempfile().map_err(|e| e.to_string())?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
     file.flush().map_err(|e| e.to_string())?;
-    static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_nanos();
-    let id = format!(
-        "report-{}-{epoch}-{}",
-        std::process::id(),
-        SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    );
+    let id = auris_session::transient_id::transient_id("r");
     let response = page(
         &value,
         &read_report::Args {

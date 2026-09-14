@@ -21,6 +21,16 @@ fn mixer_summary(mixer: &auris_core::project::MixerStrip) -> serde_json::Value {
 pub enum Command {
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
+    /// Read bounded scan/measurement failures after searching. Does not rescan.
+    InstrumentDiagnostics {
+        /// Zero-based first diagnostic.
+        #[serde(default)]
+        offset: usize,
+        /// Page size, 1..16.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 16))]
+        limit: usize,
+    },
     /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
     InspectAudio {
         /// First bar, starting at 1.
@@ -57,6 +67,9 @@ pub enum Command {
         /// Rescan changed presets, only at offset 0. Invalidates acoustic measurements.
         #[serde(default)]
         refresh: bool,
+        /// Restrict source and library.
+        #[serde(default, flatten)]
+        filter: crate::SoundFilter,
     },
     /// Find acoustic alternatives to a searched sound ID using full standardized timbre features. Returns at most limit neighbors and excludes the reference. First use starts background indexing; continue other work and retry later when status is indexing. Silent/failed sources are reported; drum kits are excluded. Distance is not a quality score.
     SimilarInstruments {
@@ -66,6 +79,9 @@ pub enum Command {
         #[serde(default = "sound_search_limit")]
         #[schemars(range(min = 1, max = 50))]
         limit: usize,
+        /// Restrict source and library.
+        #[serde(default, flatten)]
+        filter: crate::SoundFilter,
     },
     /// Read up to 128 notes with zero-based storage indices; follow next_offset for more. Returned note.start and note.length are ticks, not beats: divide by ticks_per_quarter when using add_note or add_notes. Indices may change after edits; read again before removing notes.
     ReadNotes {
@@ -111,6 +127,7 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
         /// Exact id returned by search_instruments/similar_instruments, or legacy list_instruments.
+        #[serde(rename = "sound_id", alias = "instrument")]
         instrument: String,
     },
     /// Set a fader and pan using native units.
@@ -295,6 +312,9 @@ impl Session {
     ) -> Result<String, String> {
         let error = |error: crate::SessionError| error.to_string();
         match command {
+            Command::InstrumentDiagnostics { offset, limit } => self
+                .sound_library_job(plugin_paths)
+                .diagnostics(offset, limit),
             Command::ListInstruments {
                 query,
                 offset,
@@ -305,17 +325,19 @@ impl Session {
                 limit,
                 offset,
                 refresh,
+                filter,
             } => self.sound_library_job(plugin_paths).run(
                 crate::SoundSearch::Text {
                     query,
                     limit,
                     offset,
+                    filter,
                 },
                 refresh,
             ),
-            Command::SimilarInstruments { id, limit } => self
+            Command::SimilarInstruments { id, limit, filter } => self
                 .sound_library_job(plugin_paths)
-                .run(crate::SoundSearch::Similar { id, limit }, false),
+                .run(crate::SoundSearch::Similar { id, limit, filter }, false),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -427,7 +449,7 @@ impl Session {
                 Ok("Removed track".into())
             }
             Command::SetInstrument { track, instrument } => {
-                if instrument.starts_with("sound:") {
+                if instrument.starts_with("s:") {
                     self.use_library_sound(TrackId(track), &instrument, plugin_paths)?;
                 } else {
                     self.agent_set_instrument(TrackId(track), &instrument)?;

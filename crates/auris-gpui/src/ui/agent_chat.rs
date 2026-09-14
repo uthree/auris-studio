@@ -984,16 +984,18 @@ impl AurisApp {
                     limit,
                     offset,
                     refresh,
+                    filter,
                 } => (
                     SoundSearch::Text {
                         query,
                         limit,
                         offset,
+                        filter,
                     },
                     refresh,
                 ),
-                Command::SimilarInstruments { id, limit } => {
-                    (SoundSearch::Similar { id, limit }, false)
+                Command::SimilarInstruments { id, limit, filter } => {
+                    (SoundSearch::Similar { id, limit, filter }, false)
                 }
                 _ => return Err("Expected a sound search command".into()),
             };

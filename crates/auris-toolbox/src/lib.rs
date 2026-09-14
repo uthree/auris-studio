@@ -41,6 +41,13 @@ mod audition;
 #[path = "capabilities.rs"]
 mod availability;
 mod catalog;
+mod tool_exposure;
+pub use tool_exposure::{
+    ToolGroups, compact_parameters, concise_description, discover_tools, tool_group,
+};
+mod project_handles;
+pub mod setup_tracks;
+pub use project_handles::open_project;
 mod drums;
 mod editing;
 mod listening;
@@ -52,7 +59,7 @@ pub use reports::read_report;
 pub mod replace_notes;
 mod sound_input;
 mod sound_search;
-pub use sound_search::{search_instruments, similar_instruments};
+pub use sound_search::{instrument_diagnostics, search_instruments, similar_instruments};
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
@@ -76,7 +83,9 @@ pub use track_editing::{convert_track_to_audio, routing, set_instrument_param, s
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
 pub const INSTRUCTIONS: &str = "You control Auris Studio projects through saved files. Respond in the user's language.
-Use absolute paths and copy the actual saved project path returned by creation tools.
+Use project_id from create_project/open_project in later project arguments; absolute paths also work.
+Search replies use zero-based library indices into libraries. instrument_diagnostics pages scan/measurement failures.
+Use setup_tracks for atomic track/sound/clip setup. discover_tools finds names without fetching schemas.
 Large reports return report_id: use read_report with report_path and next_offset to inspect the immutable snapshot without re-running a write.\nMake dependent edits one at a time: wait for each result before using its IDs or paths.
 
 Use search_instruments with a focused query to choose sounds; never fetch the full library by default.
@@ -1833,7 +1842,7 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting all three uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
+    pub const DESCRIPTION: &str = "Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.";
 
     /// The explicit type of track to create.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
@@ -1873,14 +1882,15 @@ pub mod add_track {
         pub name: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`, not both;
         /// with neither, the default instrument plays.
+        #[schemars(skip)]
         pub instrument: Option<String>,
         /// Exact ID from search_instruments or similar_instruments for this project.
-        /// Mutually exclusive with instrument and sound; includes native plugin presets.
+        /// Includes native plugin presets; expires on rescan or cache eviction.
         pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         #[serde(default, deserialize_with = "sound_input::deserialize")]
-        #[schemars(with = "Option<sound_input::Input>")]
+        #[schemars(skip)]
         pub sound: Option<String>,
         /// The track type. Use bus for a mixer bus; the track name does not determine its type.
         pub kind: Kind,
@@ -2115,10 +2125,7 @@ pub mod set_instrument {
     /// The tool's wire name.
     pub const NAME: &str = "set_instrument";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Use sound_id from search_instruments/similar_instruments for an exact library or plugin preset; pass only one of sound_id, instrument, sound. Re-voices an instrument track: `instrument` names a built-in \
-        from `list_instruments`, or `sound` names a General MIDI sound (a name or a program \
-        number, `drums: true` for a kit). The previous instrument's dial positions and the \
-        automation that drove them go with it. The change is saved.";
+    pub const DESCRIPTION: &str = "Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. Saves the change.";
 
     /// Arguments to `set_instrument`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2129,17 +2136,20 @@ pub mod set_instrument {
         /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`.
+        #[schemars(skip)]
         pub instrument: Option<String>,
         /// Exact ID from search_instruments or similar_instruments for this project.
-        /// Mutually exclusive with instrument and sound; includes native plugin presets.
+        /// Includes native plugin presets; expires on rescan or cache eviction.
+        #[schemars(required)]
         pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
         #[serde(default, deserialize_with = "sound_input::deserialize")]
-        #[schemars(with = "Option<sound_input::Input>")]
+        #[schemars(skip)]
         pub sound: Option<String>,
         /// Read `sound`'s number as a drum kit rather than a melodic program.
         #[serde(default)]
+        #[schemars(skip)]
         pub drums: bool,
     }
 
@@ -2149,7 +2159,7 @@ pub mod set_instrument {
             return Err("Pass sound_id, instrument, or sound, not more than one".into());
         }
         if args.instrument.is_none() && args.sound.is_none() && args.sound_id.is_none() {
-            return Err("pass `instrument` or `sound` — there is nothing else here to set".into());
+            return Err("pass sound_id from search_instruments".into());
         }
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
@@ -2992,6 +3002,9 @@ fn headless() -> Result<Session, String> {
 /// under its own name. A path found neither way is refused with the absolute form, so the
 /// caller learns what its relative path actually meant.
 pub fn resolve_project(path: &str) -> Result<PathBuf, String> {
+    if path.starts_with("p:") && !Path::new(path).is_absolute() {
+        return project_handles::resolve(path);
+    }
     let absolute = std::path::absolute(Path::new(path)).map_err(|error| error.to_string())?;
     if absolute.exists() {
         return Ok(absolute);
