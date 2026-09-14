@@ -9,7 +9,34 @@
 //! each crate's own front page explains what that crate is for, and this one explains why the
 //! boundaries between them are where they are.
 //!
+//! # Authored note replacement
+//!
+//! [`crate::Session::replace_notes`] validates a complete note sequence before replacing
+//! only the authored notes of one clip. Clip timing, curves, transforms and recipe survive.
+//! The operation records one Undo step; identical sequences are no-ops, including an empty
+//! sequence on an empty clip. The live agent exposes this through the existing replacement
+//! permission policy with clip-relative quarter-note times and no filesystem access.
+//! MCP's toolbox translates song-relative bar/beat inputs, optionally read from a bounded
+//! JSON file, and checkpoints only changed documents. File paths refer to the MCP server;
+//! the source JSON is input, not a retained asset. Both doors share pitch notation parsing.
+//!
 //! # Live instrument discovery
+//!
+//! [`crate::Session::sound_library_job`] snapshots loaded fonts and configured plugin paths for a
+//! worker-owned search catalog. `search_instruments` requires query words and returns at most
+//! 50 exact, process-local preset IDs; `similar_instruments` starts or queries a reusable
+//! background acoustic index. Both MCP and Rig use the same session implementation. MCP
+//! resolves IDs against the named saved project and passes them as `sound_id`; Rig resolves
+//! against the unsaved document and passes them as `set_instrument.instrument`.
+//!
+//! CLAP discovery providers supply locations and opaque load keys. VST3 supplies unit programs
+//! and standard preset files. Only published preset interfaces are searchable; a private plugin
+//! browser is not a preset API. Applying a native preset prepares a separate instance first,
+//! snapshots its state, then records one undoable edit. No preset path is supplied by the model.
+//! Acoustic indexing uses the timbre map's six reference triggers and full standardized feature
+//! space, without its PCA display limit or cached audition buffers. Each failed/silent source is
+//! reported. Libraries are cached by snapshot; explicit refresh and cache eviction invalidate IDs
+//! and cancel the old index. Neither discovery nor measurement edits the document.
 //!
 //! The live agent queries the owning session for built-in instruments, loaded SoundFont
 //! presets and installed CLAP/VST3 instruments. The frontend supplies its configured plugin
@@ -17,7 +44,7 @@
 //! handles; rescanning expires them rather than silently redirecting a prior selection.
 //! SoundFont selections are validated against the loaded bank before any edit is recorded.
 //! All replacements use the existing session commands and their Undo behavior. The model
-//! never supplies a filesystem path, and the independent MCP interface is unchanged.
+//! never supplies a plugin filesystem path; MCP supplies its saved project path independently.
 //!
 //! # Visual audio inspection
 //!
@@ -185,6 +212,12 @@ pub mod architecture {
     //! Deny rules override every mode; plan mode forbids mutations even with an allow rule.
     //! One-time approvals bind the exact command to the current document revision. MCP keeps
     //! its independent file-based tool catalog and does not consult this policy.
+    //! The MCP presentation supports explicit short project handles (never an implicit current
+    //! project), startup task groups, concise schemas and full on-demand help. Discovery handles
+    //! have a random process scope and are checked against the owning library snapshot; refresh
+    //! and eviction invalidate them. Search filters apply before paging or neighbor selection,
+    //! and diagnostics are read separately. [`Session::setup_tracks`] creates a bounded batch
+    //! as one transaction; the saved-project adapter saves once and retains bounded retry receipts.
     //! Conversation compaction is presentation work in `auris-agent`: a tool-less model
     //! summarizes older exchanges while the latest two completed exchanges remain verbatim.
     //! Summary failures leave history intact, and summaries never grant tool permissions.
@@ -208,9 +241,8 @@ pub mod architecture {
     //! envelope, preserving its shape and the values outside the requested range.
     //! [`Session::render_range_options`](crate::Session::render_range_options) converts a
     //! timeline selection through the tempo map. The toolbox presents these commands as
-    //! section-relative gain and audition tools. The MCP frontend keeps only transport state:
-    //! a bounded set of immutable WAV resources for `resources/read`. It never interprets a
-    //! resource URI as a filesystem path; reconnecting or eviction expires the old URI.
+    //! section-relative gain and audition tools. Auditions return the absolute local WAV
+    //! path and measurements through either frontend; clients open the file for playback.
     //!
     //! Availability is also session knowledge: [`Session::playback_readiness`](crate::Session::playback_readiness)
     //! distinguishes loaded instruments from empty samplers and guide/stale vocals. Shared

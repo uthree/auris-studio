@@ -26,7 +26,7 @@
 //!
 //! One public module per tool. Tools that take arguments expose [`compose::NAME`],
 //! [`compose::DESCRIPTION`], [`compose::Args`] and [`compose::run`]. The four argument-less
-//! catalogue tools expose `NAME`, `DESCRIPTION`, and `run() -> String`; frontends bind that small
+//! reference tools expose `NAME`, `DESCRIPTION`, and `run() -> String`; frontends bind that small
 //! group separately.
 
 #![warn(missing_docs)]
@@ -41,17 +41,30 @@ mod audition;
 #[path = "capabilities.rs"]
 mod availability;
 mod catalog;
+mod tool_exposure;
+pub use tool_exposure::{
+    ToolGroups, compact_parameters, concise_description, discover_tools, tool_group,
+};
+mod project_handles;
+pub mod setup_tracks;
+pub use project_handles::open_project;
 mod drums;
 mod editing;
 mod listening;
 mod mix_editing;
 mod project_files;
 mod recognition;
+mod reports;
+pub use reports::read_report;
+pub mod replace_notes;
+mod sound_input;
+mod sound_search;
+pub use sound_search::{instrument_diagnostics, search_instruments, similar_instruments};
 mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
-pub use catalog::{ToolDefinition, parameter_schema, tool_catalog, tool_help};
+pub use catalog::{ToolDefinition, argument_error_hint, parameter_schema, tool_catalog, tool_help};
 pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
     analyze_music, checkpoints, edit_clip, edit_harmony, edit_recipe, inspect_composition,
@@ -70,9 +83,13 @@ pub use track_editing::{convert_track_to_audio, routing, set_instrument_param, s
 /// the workflow and nothing else — the format itself is behind `spec_reference`, fetched when
 /// a spec is actually being written rather than sitting in every exchange.
 pub const INSTRUCTIONS: &str = "You control Auris Studio projects through saved files. Respond in the user's language.
-Use absolute paths and copy the actual saved project path returned by creation tools.
-Make dependent edits one at a time: wait for each result before using its IDs or paths.
+Use project_id from create_project/open_project in later project arguments; absolute paths also work.
+Search replies use zero-based library indices into libraries. instrument_diagnostics pages scan/measurement failures.
+Use setup_tracks for atomic track/sound/clip setup. discover_tools finds names without fetching schemas.
+Large reports return report_id: use read_report with report_path and next_offset to inspect the immutable snapshot without re-running a write.\nMake dependent edits one at a time: wait for each result before using its IDs or paths.
 
+Use search_instruments with a focused query to choose sounds; never fetch the full library by default.
+Use similar_instruments with a returned ID for acoustic alternatives, and sound_id to select a result.
 Read first: capabilities checks installed sounds and voices. describe lists tracks and clip
 numbers; inspect_composition reads current harmony and recipes. Track selectors can be names
 or id:<number>. Prefer IDs for edits; they survive renames. Re-read clip numbers after arrangement edits.
@@ -94,7 +111,10 @@ Do not replace the whole project to make a local edit.
 add_track requires an explicit kind: instrument, drum, singer, audio or bus. A name containing
 bus does not select kind bus. add_clip requires the intended clip name. Preserve exact
 names requested by the user. add_part generates a part from existing
-harmony; edit_notes writes individual notes. notes reads them back. set_instrument selects a
+harmony; edit_notes writes individual notes. replace_notes replaces a complete clip sequence
+without duplicating notes on retry. For script-generated scores, pass source with an absolute
+JSON-array file path instead of printing and copying the notes into tool arguments.
+notes reads them back. set_instrument selects a
 sound. automation with target kind instrument and operation action read discovers its
 parameters; set_instrument_param sets a static value. Use native parameter units.
 
@@ -144,10 +164,12 @@ pub mod search_documentation {
 
     /// A documentation search.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Args {
-        /// Words or a short phrase to find in the Auris Studio documentation.
+        /// Non-blank words or a short phrase to find in the Auris Studio documentation.
+        #[schemars(length(min = 1))]
         pub query: String,
-        /// Maximum passages to return, from 1 to 10. Defaults to 5.
+        /// Maximum passages to return. Omitted or null defaults to 5; supplied values are clamped to 1..10.
         pub limit: Option<usize>,
     }
 
@@ -403,6 +425,7 @@ pub const WRITES_PROJECTS: &[&str] = &[
     remove_track::NAME,
     add_clip::NAME,
     edit_notes::NAME,
+    replace_notes::NAME,
     accompany::NAME,
     write_lyrics::NAME,
     sing::NAME,
@@ -686,7 +709,7 @@ pub mod describe {
     pub const NAME: &str = "describe";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Describes a project on disk: tempo, meter, duration, and \
-        every track with its instrument, clip count, effects and routing.";
+        every track with its instrument, clip count, effects and routing. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
 
     /// Arguments to `describe`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -837,7 +860,7 @@ pub mod describe {
             }
             None => {}
         }
-        Ok(text.trim_end().to_string())
+        reports::publish_text(text.trim_end().to_string())
     }
 }
 
@@ -852,7 +875,7 @@ pub mod analyze {
         nothing: length, integrated loudness and peaks for the whole mix, the same per named \
         section — the piece's dynamic arc as numbers — and, with `per_track`, each track alone. \
         This is the ears of the improve loop: render, analyze, edit the spec or rewrite one \
-        clip, and ask again.";
+        clip, and ask again. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
 
     /// Arguments to `analyze`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -883,7 +906,7 @@ pub mod analyze {
             ));
         }
         text.push_str(&analysis_text(&report));
-        Ok(text.trim_end().to_string())
+        reports::publish_text(text.trim_end().to_string())
     }
 }
 
@@ -897,13 +920,18 @@ pub mod mixer {
     pub const DESCRIPTION: &str = "Reads the mixer as it stands: every track's fader, pan, \
         mute and solo, its sends, and each effect's parameters with key, value and range — the \
         vocabulary `set_level`, `routing` and `set_effect` move. A control marked `[automated]` \
-        is driven by its lane, not its stored value. Gain envelopes include every point and section midpoint values.";
+        is driven by its lane, not its stored value. Strip pages default to 16 (max 32). Gain points, section midpoints, effect parameters and choices are previews of at most 16 each; use automation for paged parameter, point and choice details. Follow next_offset for more strips.";
 
     /// Arguments to `mixer`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     pub struct Args {
         /// The project to read — an absolute path to a `.auris` file.
         pub project: String,
+        /// Zero-based strip offset, including master as the final strip.
+        #[serde(default)]
+        pub offset: usize,
+        /// Strip page size, default 16, clamped to 1-32.
+        pub limit: Option<usize>,
     }
 
     /// One strip's worth of structure, copied out so the parameter pass can borrow the
@@ -972,7 +1000,12 @@ pub mod mixer {
         };
 
         let mut text = String::new();
-        for row in rows {
+        let total = rows.len();
+        if args.offset > total {
+            return Err("offset exceeds strip count".into());
+        }
+        let limit = args.limit.unwrap_or(16).clamp(1, 32);
+        for row in rows.into_iter().skip(args.offset).take(limit) {
             let (gain_target, pan_target) = match row.track {
                 Some(id) => (ParamTarget::TrackGain(id), ParamTarget::TrackPan(id)),
                 None => (ParamTarget::MasterGain, ParamTarget::MasterPan),
@@ -1002,8 +1035,8 @@ pub mod mixer {
                 text.push_str(&format!("  selector id:{}\n", id.0));
             }
             if let Some(lane) = session.project().automation.lane(gain_target) {
-                text.push_str(&format!("  gain envelope {:?} (dB):\n", lane.curve));
-                for point in lane.points() {
+                text.push_str(&format!("  gain envelope {:?} (dB), {} points; first 16 below. Use automation for paged detail:\n", lane.curve, lane.points().len()));
+                for point in lane.points().iter().take(16) {
                     let bar = session.project().signatures.bar_of(point.tick);
                     let beat = 1.0
                         + (point.tick - session.project().signatures.bar_start(bar)).raw() as f64
@@ -1017,6 +1050,8 @@ pub mod mixer {
                     .project()
                     .sections
                     .spans_in(Ticks::ZERO, session.project().end_tick())
+                    .into_iter()
+                    .take(16)
                 {
                     let midpoint = span.start + Ticks((span.end - span.start).raw() / 2);
                     let value = session
@@ -1066,14 +1101,28 @@ pub mod mixer {
                             .choices
                             .iter()
                             .enumerate()
+                            .take(16)
                             .map(|(index, label)| format!("{index}={label}"))
                             .collect();
                         text.push_str(&format!("    {:<14} {}\n", "", listed.join(" ")));
                     }
                     index += 1;
+                    if index == 16 {
+                        text.push_str("    Parameter preview limited to 16; use automation for paged detail.\n");
+                        break;
+                    }
                 }
             }
         }
+        let next = args.offset + limit.min(total - args.offset);
+        text.push_str(&format!(
+            "strips_total: {total}; next_offset: {}\n",
+            if next < total {
+                next.to_string()
+            } else {
+                "null".into()
+            }
+        ));
         Ok(text.trim_end().to_string())
     }
 }
@@ -1761,35 +1810,31 @@ pub mod list_presets {
 /// The instruments a track can be voiced with.
 pub mod list_instruments {
     use super::*;
-
     /// The tool's wire name.
     pub const NAME: &str = "list_instruments";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Lists the built-in instruments a track can play, by the id \
-        `add_track` and `set_instrument` take. Reports whether the General MIDI library is \
-        loaded; when available, select a GM name or program number using sound.";
-
-    /// Every registered instrument, one line each.
+    pub const DESCRIPTION: &str = "Legacy compact built-in summary. Use search_instruments with a focused query to discover selectable sounds and plugin presets; use similar_instruments for acoustic alternatives.";
+    /// A compact summary; never expands the SoundFont or plugin preset libraries.
     pub fn run() -> String {
-        let mut text = String::from("Instruments `add_track` and `set_instrument` accept:\n");
         match headless() {
             Ok(session) => {
-                text.push_str(&format!("General MIDI library loaded: {}. The sampler requires a loaded font and preset.\n", session.general_midi_available()));
-                for descriptor in session.registry().instruments() {
-                    text.push_str(&format!("  {:<24} {}\n", descriptor.id, descriptor.name));
-                }
+                let names = session
+                    .registry()
+                    .instruments()
+                    .filter(|p| p.id != SAMPLER_ID)
+                    .take(10)
+                    .map(|p| format!("{}: {}", p.id, p.name))
+                    .collect::<Vec<_>>();
+                format!(
+                    "Built-ins (up to 10):\n{}\nGeneral MIDI library loaded: {}.\nUse search_instruments with project and a focused query for selectable sounds, including SoundFonts and plugin presets. Pass the returned id as sound_id.",
+                    names.join("\n"),
+                    session.general_midi_available()
+                )
             }
-            Err(error) => text.push_str(&format!("  (unlisted: {error})\n")),
+            Err(error) => format!("Cannot inspect instruments: {error}"),
         }
-        text.push_str(
-            "\nOr pass `sound` instead of `instrument`: any General MIDI sound by name \
-             (\"Electric Piano 1\", \"Fretless Bass\") or program number 0-127, with \
-             `kind: drum` in add_track, or `drums: true` in set_instrument, for a drum kit.",
-        );
-        text.trim_end().to_string()
     }
 }
-
 /// A track, added to a project that already exists.
 pub mod add_track {
     use super::*;
@@ -1797,7 +1842,7 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Adds a named track and saves. Required kind selects instrument, drum, singer, audio or bus; a bus name alone does not create a bus. For instrument or drum tracks, choose instrument from list_instruments or sound by General MIDI name/program; omitting both uses the default instrument. Kind drum uses the drum editor and treats sound as a GM kit; New note tracks have no clips: add_clip creates an empty named clip; add_part generates notes.";
+    pub const DESCRIPTION: &str = "Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.";
 
     /// The explicit type of track to create.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
@@ -1837,9 +1882,15 @@ pub mod add_track {
         pub name: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`, not both;
         /// with neither, the default instrument plays.
+        #[schemars(skip)]
         pub instrument: Option<String>,
+        /// Exact ID from search_instruments or similar_instruments for this project.
+        /// Includes native plugin presets; expires on rescan or cache eviction.
+        pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
+        #[serde(default, deserialize_with = "sound_input::deserialize")]
+        #[schemars(skip)]
         pub sound: Option<String>,
         /// The track type. Use bus for a mixer bus; the track name does not determine its type.
         pub kind: Kind,
@@ -1849,6 +1900,9 @@ pub mod add_track {
     pub fn run(args: &Args) -> Result<String, String> {
         if args.name.trim().is_empty() {
             return Err("the track needs a name — a blank one no tool can address again".into());
+        }
+        if args.sound_id.is_some() && (args.instrument.is_some() || args.sound.is_some()) {
+            return Err("Pass sound_id, instrument, or sound, not more than one".into());
         }
         let mut session = opened(&args.project)?;
         let kind = args.kind;
@@ -1871,16 +1925,21 @@ pub mod add_track {
                         .add_default_instrument_track(&args.name)
                         .map_err(|error| error.to_string())?,
                 };
-                voice(
-                    &mut session,
-                    id,
-                    &args.sound,
-                    kind == Kind::Drum,
-                    &args.instrument,
-                )?
+                if let Some(sound_id) = &args.sound_id {
+                    session.use_library_sound(id, sound_id, &[])?;
+                    sound_id.clone()
+                } else {
+                    voice(
+                        &mut session,
+                        id,
+                        &args.sound,
+                        kind == Kind::Drum,
+                        &args.instrument,
+                    )?
+                }
             }
             Kind::Singer | Kind::Audio | Kind::Bus => {
-                if args.instrument.is_some() || args.sound.is_some() {
+                if args.instrument.is_some() || args.sound.is_some() || args.sound_id.is_some() {
                     return Err(format!(
                         "a {} track plays no instrument — drop it",
                         kind.label()
@@ -1905,7 +1964,7 @@ pub mod add_track {
             .map_err(|error| error.to_string())?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if matches!(kind, Kind::Instrument | Kind::Drum) {
-            text.push_str(" The track holds no clips yet; `add_part` writes one.");
+            text.push_str(" The track holds no clips yet. For authored notes, use `add_clip` then `replace_notes` (inline notes or a JSON source file); `add_part` generates a part automatically.");
         }
         if kind == Kind::Singer {
             text.push_str(
@@ -1935,7 +1994,7 @@ pub mod add_track {
             let program = gm::Program::parse(wanted).ok_or_else(|| {
                 format!(
                     "no General MIDI sound answers to '{wanted}' — give a name like \
-                     \"Electric Piano 1\" or a program number 0-127"
+                     \"Electric Piano 1\" or a program number 0-127. Use search_instruments and pass a returned id as sound_id instead of guessing preset names"
                 )
             })?;
             let chosen = program.sound(drums);
@@ -2066,10 +2125,7 @@ pub mod set_instrument {
     /// The tool's wire name.
     pub const NAME: &str = "set_instrument";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Re-voices an instrument track: `instrument` names a built-in \
-        from `list_instruments`, or `sound` names a General MIDI sound (a name or a program \
-        number, `drums: true` for a kit). The previous instrument's dial positions and the \
-        automation that drove them go with it. The change is saved.";
+    pub const DESCRIPTION: &str = "Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. Saves the change.";
 
     /// Arguments to `set_instrument`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2080,22 +2136,38 @@ pub mod set_instrument {
         /// Also accepts a stable `id:<number>` selector from describe.
         pub track: String,
         /// A built-in instrument id from `list_instruments`. Pass this or `sound`.
+        #[schemars(skip)]
         pub instrument: Option<String>,
+        /// Exact ID from search_instruments or similar_instruments for this project.
+        /// Includes native plugin presets; expires on rescan or cache eviction.
+        #[schemars(required)]
+        pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
+        #[serde(default, deserialize_with = "sound_input::deserialize")]
+        #[schemars(skip)]
         pub sound: Option<String>,
         /// Read `sound`'s number as a drum kit rather than a melodic program.
         #[serde(default)]
+        #[schemars(skip)]
         pub drums: bool,
     }
 
     /// Changes the voice, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
-        if args.instrument.is_none() && args.sound.is_none() {
-            return Err("pass `instrument` or `sound` — there is nothing else here to set".into());
+        if args.sound_id.is_some() && (args.instrument.is_some() || args.sound.is_some()) {
+            return Err("Pass sound_id, instrument, or sound, not more than one".into());
+        }
+        if args.instrument.is_none() && args.sound.is_none() && args.sound_id.is_none() {
+            return Err("pass sound_id from search_instruments".into());
         }
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
+        if let Some(sound_id) = &args.sound_id {
+            session.use_library_sound(track, sound_id, &[])?;
+            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            return Ok(format!("{} — now {sound_id}. Saved.", args.track));
+        }
         if let Some(id) = &args.instrument {
             if args.sound.is_some() {
                 return Err(
@@ -2261,7 +2333,7 @@ pub mod notes {
     pub const DESCRIPTION: &str = "Reads one clip's notes, numbered in time order — pitch, bar, \
         beat, length in beats, velocity and, where a note carries one, its lyric. The numbers \
         are the address `edit_notes` removes and `write_lyrics` starts by; aim with `track` \
-        and the clip number `describe` shows.";
+        and the clip number `describe` shows. Returns at most 128 notes; follow next_offset without editing between pages. Note numbers remain global within the clip.";
 
     /// Arguments to `notes`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2273,6 +2345,11 @@ pub mod notes {
         pub track: String,
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
+        /// Zero-based offset in time order; follow next_offset without editing between pages.
+        #[serde(default)]
+        pub offset: usize,
+        /// Page size, default 128, clamped to 1-128.
+        pub limit: Option<usize>,
     }
 
     /// Answers with the numbered listing.
@@ -2293,7 +2370,16 @@ pub mod notes {
             origin,
             clip.notes.len()
         );
-        for (number, (_, note)) in time_ordered(clip).into_iter().enumerate() {
+        if args.offset > clip.notes.len() {
+            return Err("offset exceeds note count".into());
+        }
+        let limit = args.limit.unwrap_or(128).clamp(1, 128);
+        for (number, (_, note)) in time_ordered(clip)
+            .into_iter()
+            .enumerate()
+            .skip(args.offset)
+            .take(limit)
+        {
             let tick = clip.start + note.start;
             let bar = project.signatures.bar_of(tick);
             let within = tick - project.signatures.bar_start(bar);
@@ -2313,6 +2399,15 @@ pub mod notes {
                 trimmed(note.velocity),
             ));
         }
+        let next = args.offset + limit.min(clip.notes.len() - args.offset);
+        text.push_str(&format!(
+            "next_offset: {}\n",
+            if next < clip.notes.len() {
+                next.to_string()
+            } else {
+                "null".into()
+            }
+        ));
         let _ = id;
         Ok(text.trim_end().to_string())
     }
@@ -2329,22 +2424,30 @@ pub mod edit_notes {
         takes the numbers `notes` lists, `add` takes notes as pitch (a name like \"F#4\" or a \
         MIDI number), 1-based bar and beat in the song, length in beats, and velocity 0-1 \
         (0.75 when left out). Removals happen first. The change is saved. On a generated clip \
-        the edit sticks until `regenerate_clips` rewrites the clip whole.";
+        the edit sticks until `regenerate_clips` rewrites the clip whole. Inline add and remove each allow at most 256 entries. For a complete larger score, use replace_notes with source pointing to a JSON file.";
 
     /// One note to place.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct NoteSpec {
         /// The pitch: a name in scientific notation ("C4", "F#3", "Bb2") or a MIDI number
         /// 0-127. C4 is middle C.
+        #[serde(deserialize_with = "auris_session::note_pitch::deserialize_string")]
+        #[schemars(with = "auris_session::note_pitch::Input")]
         pub pitch: String,
         /// The 1-based bar the note starts in.
+        #[schemars(range(min = 1))]
         pub bar: u32,
         /// The 1-based beat within that bar; fractions land between beats (1.5 is the "and"
-        /// of one).
+        /// of one). Must be less than numerator + 1 in the current meter (1 <= beat < 5
+        /// in 4/4, 1 <= beat < 7 in 6/8). Advance bar instead of overflowing beat.
+        #[schemars(range(min = 1))]
         pub beat: f64,
         /// How long the note is held, in beats.
+        #[schemars(extend("exclusiveMinimum" = 0), range(max = 16384))]
         pub beats: f64,
         /// Attack strength 0-1. 0.75 when left out.
+        #[schemars(range(min = 0, max = 1))]
         pub velocity: Option<f32>,
     }
 
@@ -2361,15 +2464,91 @@ pub mod edit_notes {
         /// Which clip, by the 1-based number `describe` shows.
         pub clip: usize,
         /// Note numbers to remove, as the `notes` listing counts them.
+        #[schemars(length(max = 256))]
         pub remove: Option<Vec<usize>>,
         /// Notes to place.
+        #[serde(
+            default,
+            deserialize_with = "super::replace_notes::deserialize_optional_notes"
+        )]
+        #[schemars(length(max = 256))]
         pub add: Option<Vec<NoteSpec>>,
+    }
+
+    pub(super) fn prepare(
+        session: &Session,
+        clip: &MidiClip,
+        additions: &[NoteSpec],
+    ) -> Result<Vec<Note>, String> {
+        additions.iter().enumerate().map(|(index, spec)| {
+            prepare_one(session, clip, spec).map_err(|error| format!(
+                "notes[{index}]: {error}. Example: {{\"pitch\":60,\"bar\":1,\"beat\":1,\"beats\":1,\"velocity\":0.75}}"
+            ))
+        }).collect()
+    }
+
+    fn prepare_one(session: &Session, clip: &MidiClip, spec: &NoteSpec) -> Result<Note, String> {
+        let clip_start = clip.start;
+        let clip_end = clip.start + clip.length;
+        let pitch = pitch_named(&spec.pitch).map_err(|e| format!("pitch: {e}"))?;
+        let tick = placed_at(session.project(), spec.bar, spec.beat)
+            .map_err(|e| format!("bar/beat: {e}"))?;
+        if tick < clip_start || tick >= clip_end {
+            let first = session.project().signatures.bar_of(clip_start);
+            let last = session
+                .project()
+                .signatures
+                .bar_of((clip_end - Ticks(1)).max_zero());
+            return Err(format!(
+                "bar {} beat {} is outside the clip, which covers bars {first}-{last}",
+                spec.bar, spec.beat
+            ));
+        }
+        if !spec.beats.is_finite() || spec.beats <= 0.0 || spec.beats > MAX_TOOL_BEATS {
+            return Err(format!(
+                "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
+            ));
+        }
+        // Refused rather than clamped, like every other bounded number at this door: the
+        // session would quietly pull it into range, and a success that placed a different
+        // velocity than the one asked for is a lie of omission.
+        if let Some(velocity) = spec.velocity
+            && !(0.0..=1.0).contains(&velocity)
+        {
+            return Err(format!("velocity runs 0-1; {velocity} is outside that"));
+        }
+        let per_beat = session
+            .project()
+            .signatures
+            .signature_at(tick)
+            .ticks_per_beat();
+        let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
+        if length.raw() < 1 {
+            return Err("beats must produce at least one tick".into());
+        }
+        if length > clip_end - tick {
+            let first = session.project().signatures.bar_of(clip_start);
+            let last = session
+                .project()
+                .signatures
+                .bar_of((clip_end - Ticks(1)).max_zero());
+            return Err(format!(
+                "a note at bar {} beat {} held for {} beats runs past the clip, which covers bars {first}-{last}",
+                spec.bar, spec.beat, spec.beats
+            ));
+        }
+        let mut note = Note::new(pitch, tick - clip_start, length);
+        note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
+        Ok(note)
     }
 
     /// Removes, places, and saves.
     pub fn run(args: &Args) -> Result<String, String> {
         let removals = args.remove.as_deref().unwrap_or_default();
         let additions = args.add.as_deref().unwrap_or_default();
+        if additions.len() > 256 || removals.len() > 256 {
+            return Err("add/remove must each contain at most 256 entries. For a complete larger score, use replace_notes with source pointing to a JSON file; do not print the array into a tool call".into());
+        }
         if removals.is_empty() && additions.is_empty() {
             return Err("pass `remove`, `add`, or both — there is nothing else here to do".into());
         }
@@ -2377,8 +2556,6 @@ pub mod edit_notes {
         let track = track_by_name(session.project(), &args.track)?.id;
         let (id, clip) = clip_by_number(session.project(), track, args.clip)?;
         let generated = clip.recipe.is_some();
-        let clip_start = clip.start;
-        let clip_end = clip.start + clip.length;
 
         // The listing's numbers, translated back to storage order before anything moves.
         let ordered = time_ordered(clip);
@@ -2393,55 +2570,7 @@ pub mod edit_notes {
             doomed.push(*index);
         }
 
-        let mut placed = Vec::with_capacity(additions.len());
-        for spec in additions {
-            let pitch = pitch_named(&spec.pitch)?;
-            let tick = placed_at(session.project(), spec.bar, spec.beat)?;
-            if tick < clip_start || tick >= clip_end {
-                let first = session.project().signatures.bar_of(clip_start);
-                let last = session
-                    .project()
-                    .signatures
-                    .bar_of((clip_end - Ticks(1)).max_zero());
-                return Err(format!(
-                    "bar {} beat {} is outside the clip, which covers bars {first}-{last}",
-                    spec.bar, spec.beat
-                ));
-            }
-            if !spec.beats.is_finite() || spec.beats <= 0.0 || spec.beats > MAX_TOOL_BEATS {
-                return Err(format!(
-                    "`beats` is how long the note is held; give more than 0 and at most {MAX_TOOL_BEATS}"
-                ));
-            }
-            // Refused rather than clamped, like every other bounded number at this door: the
-            // session would quietly pull it into range, and a success that placed a different
-            // velocity than the one asked for is a lie of omission.
-            if let Some(velocity) = spec.velocity
-                && !(0.0..=1.0).contains(&velocity)
-            {
-                return Err(format!("velocity runs 0-1; {velocity} is outside that"));
-            }
-            let per_beat = session
-                .project()
-                .signatures
-                .signature_at(tick)
-                .ticks_per_beat();
-            let length = Ticks((per_beat.raw() as f64 * spec.beats).round() as i64);
-            if length > clip_end - tick {
-                let first = session.project().signatures.bar_of(clip_start);
-                let last = session
-                    .project()
-                    .signatures
-                    .bar_of((clip_end - Ticks(1)).max_zero());
-                return Err(format!(
-                    "a note at bar {} beat {} held for {} beats runs past the clip, which covers bars {first}-{last}",
-                    spec.bar, spec.beat, spec.beats
-                ));
-            }
-            let mut note = Note::new(pitch, tick - clip_start, length);
-            note.velocity = spec.velocity.unwrap_or(auris_session::DEFAULT_VELOCITY);
-            placed.push(note);
-        }
+        let placed = prepare(&session, clip, additions)?;
 
         session
             .remove_notes(id, &doomed)
@@ -2873,6 +3002,9 @@ fn headless() -> Result<Session, String> {
 /// under its own name. A path found neither way is refused with the absolute form, so the
 /// caller learns what its relative path actually meant.
 pub fn resolve_project(path: &str) -> Result<PathBuf, String> {
+    if path.starts_with("p:") && !Path::new(path).is_absolute() {
+        return project_handles::resolve(path);
+    }
     let absolute = std::path::absolute(Path::new(path)).map_err(|error| error.to_string())?;
     if absolute.exists() {
         return Ok(absolute);
@@ -3008,32 +3140,7 @@ fn time_ordered(clip: &MidiClip) -> Vec<(usize, &Note)> {
 
 /// A pitch, read as a MIDI number or a scientific name — "C4" is middle C.
 fn pitch_named(text: &str) -> Result<u8, String> {
-    let text = text.trim();
-    if let Ok(number) = text.parse::<i32>() {
-        if (0..=127).contains(&number) {
-            return Ok(number as u8);
-        }
-        return Err(format!("MIDI numbers run 0-127; {number} is outside that"));
-    }
-    let split = text
-        .find(|mark: char| mark.is_ascii_digit() || mark == '-')
-        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    let class = auris_session::prelude::PitchClass::parse(&text[..split])
-        .ok_or_else(|| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    let octave: i32 = text[split..]
-        .parse()
-        .map_err(|_| format!("'{text}' is not a pitch — a name like \"F#4\", or 0-127"))?;
-    // `midi` is plain i32 arithmetic, and an octave in the hundreds of millions would overflow
-    // it before the 0-127 check below could answer. MIDI lives in octaves -1 to 9; a couple
-    // either side still falls through to the friendlier answer that names the number.
-    if !(-4..=12).contains(&octave) {
-        return Err(format!("{text} is far outside the MIDI range 0-127"));
-    }
-    let midi = class.midi(octave);
-    u8::try_from(midi)
-        .ok()
-        .filter(|midi| *midi <= 127)
-        .ok_or_else(|| format!("{text} is MIDI {midi}, outside 0-127"))
+    auris_session::note_pitch::parse(text)
 }
 
 /// The bar one past the last of a run `bars` long starting at 1-based `start_bar` — refused,
@@ -3064,17 +3171,28 @@ fn bounded_bars(bars: u32, subject: &str) -> Result<u32, String> {
 
 /// Where 1-based `bar` and `beat` land on the timeline.
 fn placed_at(project: &Project, bar: u32, beat: f64) -> Result<Ticks, String> {
-    if !beat.is_finite() || !(1.0..=MAX_TOOL_BEATS).contains(&beat) {
+    if bar == 0 {
+        return Err("bar must be at least 1; bar 0 is not a musical position".into());
+    }
+    let start = project.signatures.bar_start(bar);
+    let signature = project.signatures.signature_at(start);
+    let end = f64::from(signature.numerator) + 1.0;
+    if !beat.is_finite() || !(1.0..end).contains(&beat) {
         return Err(format!(
-            "beats count from 1 and stop at {MAX_TOOL_BEATS}; {beat} is outside that range"
+            "beat must satisfy 1 <= beat < {end} in {}/{} at bar {bar}; got {beat}. Advance bar for the next bar; fractional beats such as 1.5 are valid",
+            signature.numerator, signature.denominator
         ));
     }
-    let start = project.signatures.bar_start(bar.max(1));
-    let per_beat = project.signatures.signature_at(start).ticks_per_beat();
-    Ok(start + Ticks((per_beat.raw() as f64 * (beat - 1.0)).round() as i64))
+    let offset = Ticks((signature.ticks_per_beat().raw() as f64 * (beat - 1.0)).round() as i64);
+    if offset >= signature.ticks_per_bar() {
+        return Err(
+            "beat rounds to the next bar at tick resolution; advance bar and use beat 1".into(),
+        );
+    }
+    Ok(start + offset)
 }
 
-/// Largest beat position or note duration accepted at the model-facing door.
+/// Largest note duration accepted at the model-facing door, in notated beats.
 ///
 /// This is 4,096 bars of common time: far beyond an ordinary clip, while still keeping every
 /// conversion and subsequent timeline calculation comfortably inside `Ticks`.
@@ -3299,6 +3417,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn note_positions_respect_each_bars_notated_meter_without_clamping() {
+        let mut project = Project::new("Meter", 48_000.0);
+        for (bar, beat) in [
+            (0, 1.0),
+            (1, 0.0),
+            (1, 5.0),
+            (1, f64::NAN),
+            (1, f64::INFINITY),
+            (1, 4.99999999),
+        ] {
+            assert!(
+                placed_at(&project, bar, beat).is_err(),
+                "bar {bar} beat {beat}"
+            );
+        }
+        assert_eq!(
+            placed_at(&project, 1, 4.75).unwrap(),
+            Ticks::from_beats(3.75)
+        );
+        let change = Ticks::QUARTER * 4;
+        project
+            .signatures
+            .set_point(change, TimeSignature::new(6, 8));
+        assert_eq!(
+            placed_at(&project, 2, 6.5).unwrap(),
+            change + Ticks::from_beats(2.75)
+        );
+        assert!(placed_at(&project, 2, 7.0).is_err());
+        project
+            .signatures
+            .set_point(change + Ticks::QUARTER * 3, TimeSignature::new(3, 4));
+        assert!(placed_at(&project, 3, 4.0).is_err());
+        assert_eq!(placed_at(&project, 3, 1.0).unwrap(), Ticks::QUARTER * 7);
+    }
+
+    #[test]
     fn documentation_search_finds_a_named_feature_and_limits_its_answer() {
         let answer = search_documentation::run(&search_documentation::Args {
             query: "Dragging files in".to_string(),
@@ -3452,6 +3606,8 @@ mod tests {
         }
         let read = || {
             mixer::run(&mixer::Args {
+                offset: 0,
+                limit: None,
                 project: path.clone(),
             })
         };
@@ -3600,6 +3756,7 @@ mod tests {
 
         // A plain instrument track lands on the default voice and says what to do next.
         let added = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Keys".to_string(),
             instrument: None,
@@ -3613,6 +3770,7 @@ mod tests {
         // The General MIDI door: the sound where the library is installed, the honest
         // refusal where it is not — never a silent substitution.
         let voiced = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "EP".to_string(),
             instrument: None,
@@ -3624,6 +3782,7 @@ mod tests {
             Err(text) => assert!(text.contains("library"), "{text}"),
         }
         let nonsense = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "X".to_string(),
             instrument: None,
@@ -3670,6 +3829,7 @@ mod tests {
 
         // Re-voicing refuses an id nothing answers to, pointing at the list.
         let wrong = set_instrument::run(&set_instrument::Args {
+            sound_id: None,
             project: path.clone(),
             track: "Keys".to_string(),
             instrument: Some("auris.not.a.thing".to_string()),
@@ -3679,6 +3839,7 @@ mod tests {
         .unwrap_err();
         assert!(wrong.contains("list_instruments"), "{wrong}");
         let revoiced = set_instrument::run(&set_instrument::Args {
+            sound_id: None,
             project: path.clone(),
             track: "Keys".to_string(),
             instrument: Some(default_id.clone()),
@@ -3798,6 +3959,7 @@ mod tests {
         let path = root.join("Tune").join("Tune.auris").display().to_string();
 
         add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Lead".to_string(),
             instrument: None,
@@ -3846,6 +4008,8 @@ mod tests {
         assert!(placed.contains("placed 4"), "{placed}");
 
         let listing = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -3857,11 +4021,25 @@ mod tests {
             "time order, not placement order: {listing}"
         );
         assert!(listing.contains("[3] bar 2 beat 1 — G4"), "{listing}");
+        let page = notes::run(&notes::Args {
+            offset: 2,
+            limit: Some(1),
+            project: path.clone(),
+            track: "Lead".into(),
+            clip: 1,
+        })
+        .unwrap();
+        assert!(page.contains("[3] bar 2 beat 1 — G4"));
+        assert!(!page.contains("[1] bar"));
+        assert!(!page.contains("[4] bar"));
+        assert!(page.contains("next_offset: 3"));
 
         // The correction: the D was wrong, an E belongs there. Numbers are the listing's.
         let corrected = place(vec![note("E4", 2, 3.0)], Some(vec![4])).unwrap();
         assert!(corrected.contains("Removed 1, placed 1"), "{corrected}");
         let after = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -3902,7 +4080,7 @@ mod tests {
         assert!(too_long.contains("at most"), "refused safely: {too_long}");
         let too_late = place(vec![note("C4", 1, 1e18)], None).unwrap_err();
         assert!(
-            too_late.contains("outside that range"),
+            too_late.contains("1 <= beat < 5"),
             "refused safely: {too_late}"
         );
 
@@ -3918,6 +4096,8 @@ mod tests {
         assert!(band.contains("Key:"), "{band}");
         assert!(band.contains("Bass"), "{band}");
         let unchanged = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Lead".to_string(),
             clip: 1,
@@ -4176,6 +4356,7 @@ mod tests {
 
         // The track arrives through the same door as every other kind, with directions on.
         let added = add_track::run(&add_track::Args {
+            sound_id: None,
             project: path.clone(),
             name: "Vocal".to_string(),
             instrument: None,
@@ -4219,6 +4400,8 @@ mod tests {
         .unwrap();
         assert!(laid.contains("3 notes"), "{laid}");
         let listing = notes::run(&notes::Args {
+            offset: 0,
+            limit: None,
             project: path.clone(),
             track: "Vocal".to_string(),
             clip: 1,

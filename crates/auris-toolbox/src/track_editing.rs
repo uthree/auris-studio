@@ -360,17 +360,7 @@ pub mod set_instrument_param {
         let descriptor = descriptors
             .iter()
             .find(|descriptor| descriptor.key.as_ref() == args.param)
-            .ok_or_else(|| {
-                format!(
-                    "unknown instrument parameter '{}'; available keys: {}",
-                    args.param,
-                    descriptors
-                        .iter()
-                        .map(|descriptor| descriptor.key.as_ref())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            })?;
+            .ok_or_else(|| "Unknown instrument parameter. Use automation with target {kind:instrument}, operation {action:read} to discover paged keys; copy an exact key.".to_string())?;
         if !(descriptor.min..=descriptor.max).contains(&args.value) {
             return Err(format!(
                 "{} must be between {} and {} ({:?})",
@@ -709,7 +699,7 @@ mod tests {
             .unwrap();
         assert_eq!(listed["steps"], choice.steps.unwrap());
         assert_eq!(
-            listed["choices"].as_array().unwrap().len(),
+            listed["choice_count"].as_u64().unwrap() as usize,
             choice.choices.len()
         );
         let descriptor = descriptors
@@ -746,6 +736,16 @@ mod tests {
             descriptor.min
         );
         let before = std::fs::read(&fixture.path).unwrap();
+        let huge_key = "missing".repeat(10_000);
+        let error = set_instrument_param::run(
+            &serde_json::from_value(
+                json!({"project":fixture.path,"track":"Lead","param":huge_key,"value":0}),
+            )
+            .unwrap(),
+        )
+        .unwrap_err();
+        assert!(error.len() < 256);
+        assert!(error.contains("automation"));
         for (track, param, value) in [
             ("Lead", descriptor.key.as_ref(), descriptor.max + 1.0),
             ("Lead", "missing_parameter", 0.0),

@@ -23,6 +23,20 @@ use vst3_host::{
 /// Prefix used for VST3 class ids stored in Auris project files.
 pub const ID_PREFIX: &str = "vst3:";
 
+/// A reproducible VST3 preset address.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Vst3Preset {
+    /// A program advertised by a unit's program list.
+    Program {
+        /// Unit identifier.
+        unit: i32,
+        /// Zero-based program index.
+        index: i32,
+    },
+    /// A standard `.vstpreset` file.
+    File(PathBuf),
+}
+
 /// An error reported while discovering, loading, or driving a VST3 plugin.
 #[derive(Debug, Error)]
 pub enum Vst3Error {
@@ -170,6 +184,38 @@ impl std::fmt::Debug for Vst3Plugin {
 }
 
 impl Vst3Plugin {
+    /// Names and exact addresses from the plugin's VST3 program lists.
+    pub fn presets(&self) -> Result<Vec<(String, Vst3Preset)>, Vst3Error> {
+        Ok(self
+            .lock()?
+            .get_units()?
+            .into_iter()
+            .flat_map(|unit| {
+                unit.programs
+                    .into_iter()
+                    .enumerate()
+                    .map(move |(index, name)| {
+                        (
+                            name,
+                            Vst3Preset::Program {
+                                unit: unit.id,
+                                index: index as i32,
+                            },
+                        )
+                    })
+            })
+            .collect())
+    }
+
+    /// Loads a discovered program or standard preset on an isolated instance.
+    pub fn load_preset(&self, preset: &Vst3Preset) -> Result<(), Vst3Error> {
+        let mut plugin = self.lock()?;
+        match preset {
+            Vst3Preset::Program { unit, index } => plugin.select_program(*unit, *index)?,
+            Vst3Preset::File(path) => plugin.load_vstpreset(path)?,
+        }
+        Ok(())
+    }
     /// Loads and configures one VST3 audio class.
     pub fn load(path: &Path, class_id: &str, prepare: &PrepareContext) -> Result<Self, Vst3Error> {
         let mut host = Vst3Host::builder()

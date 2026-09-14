@@ -1051,10 +1051,11 @@ version = "0.7.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
- "base64 0.22.1",
  "env_logger",
  "log",
  "rmcp",
+ "serde_json",
+ "tempfile",
  "tokio",
 ]
 
@@ -1088,6 +1089,7 @@ dependencies = [
  "auris-vocal",
  "auris-vst3",
  "base64 0.22.1",
+ "dirs 6.0.0",
  "log",
  "midir",
  "schemars 1.2.2",
@@ -9471,6 +9473,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.19",
  "tokio",
+ "tokio-stream",
  "tokio-util",
  "tracing",
  "uuid",

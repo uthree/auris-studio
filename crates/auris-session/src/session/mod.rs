@@ -32,6 +32,10 @@
 
 mod accompany;
 mod agent_instruments;
+mod setup_tracks;
+mod sound_search;
+pub use setup_tracks::{SetupClip, SetupTrack, SetupTrackKind};
+pub use sound_search::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
 mod analysis;
 mod assets;
 mod audition;
@@ -301,6 +305,8 @@ pub struct Session {
     /// data reaches an instrument the registry builds.
     fonts: SharedSoundFonts,
     agent_instruments: agent_instruments::PluginCatalog,
+    /// Separates discovery handles belonging to different unsaved sessions.
+    sound_scope: String,
     /// Decoded fonts, kept by the path they were read from as well as their document ids.
     ///
     /// [`Self::fonts`] is emptied whenever the document is replaced, because it is keyed by ids
@@ -637,6 +643,7 @@ impl Session {
             voices: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             agent_instruments: agent_instruments::PluginCatalog::default(),
+            sound_scope: crate::transient_id::transient_id("session"),
             hosted: hosted::HostedPlugins::default(),
             vst3: vst3::Vst3Plugins::default(),
         };

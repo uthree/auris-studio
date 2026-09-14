@@ -8,7 +8,7 @@ pub mod analyze_music {
     /// The tool's wire name.
     pub const NAME: &str = "analyze_music";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening.";
+    pub const DESCRIPTION: &str = "Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// The project to inspect.
     pub use crate::describe::Args;
     /// Returns measurements with the track and clip numbers used by editing tools.
@@ -18,7 +18,7 @@ pub mod analyze_music {
             serde_json::json!({"track": session.project().track(report.track).map(|track| &track.name),
                 "clip": clip_number(session.project(), report.track, report.clip), "measurements": report})
         }).collect();
-        serde_json::to_string_pretty(&reports).map_err(|error| error.to_string())
+        reports::publish(&reports)
     }
 }
 
@@ -28,7 +28,7 @@ pub mod inspect_composition {
     /// The tool's wire name.
     pub const NAME: &str = "inspect_composition";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text.";
+    pub const DESCRIPTION: &str = "Reads the original song specification and the current key, chords, tempo, meter, sections and clip recipes. The specification is provenance; later manual edits are represented by the current state, not by that original text. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.";
     /// The project to inspect.
     pub use crate::describe::Args;
     /// Reports musical decisions without rendering audio or changing the document.
@@ -44,14 +44,14 @@ pub mod inspect_composition {
             }).collect();
             serde_json::json!({"track": track.name, "id": track.id.0, "clips": clips})
         }).collect();
-        serde_json::to_string_pretty(&serde_json::json!({
+        reports::publish(serde_json::json!({
             "original_specification": project.song_spec,
             "playback": session.playback_readiness(),
             "grooves": groove_catalog().iter().map(|groove| groove.name).collect::<Vec<_>>(),
             "harmony": project.harmony, "tempo": project.tempo_map,
             "meter": project.signatures, "sections": project.sections, "tracks": tracks,
             "time_units": "Map positions are ticks; 960 ticks are one quarter note. Clip numbers are 1-based."
-        })).map_err(|error| error.to_string())
+        }))
     }
 }
 
@@ -735,6 +735,25 @@ mod tests {
         };
         let read = automate(json!({"action":"set","points":[{"beat":0,"value":-6},{"beat":16,"value":-24}],"curve":"linear"})).unwrap();
         let read: serde_json::Value = serde_json::from_str(&read).unwrap();
+        assert_eq!(read["point_count"], 2);
+        assert!(read.get("parameters").is_none());
+        let page: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read","limit":1})).unwrap()).unwrap();
+        assert_eq!(
+            page["parameters"][0]["lane"]["points"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(page["parameters"][0]["lane"]["next_offset"], 1);
+        let last: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read","offset":1,"limit":1})).unwrap())
+                .unwrap();
+        assert_eq!(last["parameters"][0]["lane"]["points"][0]["value"], -24.0);
+        assert!(last["parameters"][0]["lane"]["next_offset"].is_null());
+        let read: serde_json::Value =
+            serde_json::from_str(&automate(json!({"action":"read"})).unwrap()).unwrap();
         assert_eq!(read["parameters"][0]["lane"]["points"][1]["value"], -24.0);
         assert_eq!(read["parameters"][0]["lane"]["curve"], "linear");
         let saved = std::fs::read(&fixture.path).unwrap();

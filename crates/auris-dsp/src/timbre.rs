@@ -143,17 +143,11 @@ pub struct TimbreProjection {
     pub explained_variance: f64,
 }
 
-/// Fits a bounded, reproducible exploratory map. Empty input produces an empty map.
-///
-/// Constant features become zero. Deterministically restarted, matrix-free power iteration finds
-/// two PCA axes without a dense covariance matrix. Stable ties make both the map and k-means
-/// with farthest-first seeds repeatable.
-pub fn project_timbres(
-    rows: &[Vec<f64>],
-    clusters: usize,
-) -> Result<TimbreProjection, &'static str> {
+/// Centers and scales the full feature space for acoustic nearest-neighbor search.
+/// Constant features become zero; malformed or excessive matrices are rejected.
+pub fn standardize_timbres(rows: &[Vec<f64>]) -> Result<Vec<Vec<f64>>, &'static str> {
     let dims = rows.first().map_or(0, Vec::len);
-    if rows.len() > 512
+    if rows.len() > 100_000
         || dims > 2048
         || rows
             .iter()
@@ -171,6 +165,24 @@ pub fn project_timbres(
             row[d] = if sd > 1e-7 { (row[d] - mean) / sd } else { 0.0 };
         }
     }
+
+    Ok(data)
+}
+
+/// Fits a bounded, reproducible exploratory map. Empty input produces an empty map.
+///
+/// Constant features become zero. Deterministically restarted, matrix-free power iteration finds
+/// two PCA axes without a dense covariance matrix. Stable ties make both the map and k-means
+/// with farthest-first seeds repeatable.
+pub fn project_timbres(
+    rows: &[Vec<f64>],
+    clusters: usize,
+) -> Result<TimbreProjection, &'static str> {
+    if rows.len() > 512 {
+        return Err("invalid or excessive timbre matrix");
+    }
+    let data = standardize_timbres(rows)?;
+    let dims = rows.first().map_or(0, Vec::len);
     let mut positions = vec![[0.0; 2]; rows.len()];
     let mut axes: Vec<Vec<f64>> = Vec::new();
     for component in 0..2 {
@@ -332,6 +344,20 @@ fn kmeans(rows: &[Vec<f64>], k: usize) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn acoustic_standardization_scales_beyond_the_display_map_and_zeroes_constants() {
+        let rows = (0..1024)
+            .map(|i| vec![f64::from(i), 7.0])
+            .collect::<Vec<_>>();
+        let normalized = standardize_timbres(&rows).unwrap();
+        let mean = normalized.iter().map(|r| r[0]).sum::<f64>() / 1024.0;
+        let variance = normalized.iter().map(|r| r[0] * r[0]).sum::<f64>() / 1024.0;
+        assert!(mean.abs() < 1e-12 && (variance - 1.0).abs() < 1e-12);
+        assert!(normalized.iter().all(|r| r[1] == 0.0));
+        assert!(project_timbres(&rows, 2).is_err());
+        assert!(standardize_timbres(&[vec![f64::NAN]]).is_err());
+        assert!(standardize_timbres(&[vec![1.0], vec![]]).is_err());
+    }
 
     fn tone(gain: f32, anti_phase: bool) -> AudioBuffer {
         let mut audio = AudioBuffer::stereo(16_000, 16_000.0);

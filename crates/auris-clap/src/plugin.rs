@@ -89,6 +89,48 @@ pub struct ClapPlugin {
 }
 
 impl ClapPlugin {
+    /// Whether the plugin exposes the standard preset-load extension.
+    pub fn supports_preset_loading(&self) -> bool {
+        self.instance
+            .plugin_shared_handle()
+            .get_extension::<clack_extensions::preset_discovery::PluginPresetLoad>()
+            .is_some()
+    }
+    /// Loads an exact discovered preset on an inactive instance.
+    pub fn load_preset(&mut self, preset: &crate::ClapPreset) -> Result<(), String> {
+        use clack_extensions::preset_discovery::prelude::{Location, PluginPresetLoad};
+        if self.active {
+            return Err("Deactivate the plugin before loading a preset".into());
+        }
+        if !preset.plugin_ids.iter().any(|id| id == &self.info.clap_id) {
+            return Err("The preset does not advertise this plugin ID".into());
+        }
+        let extension = self
+            .instance
+            .plugin_shared_handle()
+            .get_extension::<PluginPresetLoad>()
+            .ok_or("Plugin does not support preset loading")?;
+        let path = preset
+            .location
+            .as_ref()
+            .map(|s| std::ffi::CString::new(s.as_str()))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let key = preset
+            .load_key
+            .as_ref()
+            .map(|s| std::ffi::CString::new(s.as_str()))
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let location = path
+            .as_deref()
+            .map_or(Location::Plugin, |path| Location::File { path });
+        extension
+            .load_from_location(&mut self.instance.plugin_handle(), location, key.as_deref())
+            .map_err(|e| e.to_string())?;
+        self.refresh_parameters();
+        Ok(())
+    }
     /// Instantiates a plugin from an already-loaded entry.
     pub(crate) fn new(entry: &PluginEntry, info: ClapPluginInfo) -> Result<Self, ClapError> {
         let id = std::ffi::CString::new(info.clap_id.as_str()).map_err(|_| {

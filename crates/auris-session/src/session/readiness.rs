@@ -32,6 +32,17 @@ pub struct PlaybackReadiness {
 }
 
 impl Session {
+    /// Presets selectable through the shipped General MIDI library, or an empty list when
+    /// that library is unavailable. Other loaded SoundFonts are deliberately not included.
+    pub fn general_midi_presets(&self) -> Vec<crate::prelude::SoundFontPreset> {
+        crate::library::shipped(crate::library::GENERAL_MIDI)
+            .and_then(crate::library::installed)
+            .and_then(|path| self.project.soundfont_at(self.project_folder(), &path))
+            .filter(|id| self.soundfont_is_loaded(*id))
+            .map(|id| self.soundfont_presets(id))
+            .unwrap_or_default()
+    }
+
     /// Whether the standard General MIDI library is loaded and can be selected by program.
     pub fn general_midi_available(&self) -> bool {
         crate::library::shipped(crate::library::GENERAL_MIDI)
@@ -97,5 +108,6 @@ mod tests {
         assert_eq!(report[0].state, PlaybackState::MissingSoundfont);
         assert_eq!(report[1].state, PlaybackState::GuideVoice);
         assert!(!session.general_midi_available());
+        assert!(session.general_midi_presets().is_empty());
     }
 }

@@ -157,7 +157,7 @@ pub mod automation {
     /// The wire name.
     pub const NAME: &str = "automation";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Reads or edits parameter automation. target and operation are objects: target {\"kind\":\"mixer\"}, operation {\"action\":\"read\"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {\"action\":\"set\",\"param\":\"gain\",\"points\":[{\"beat\":0,\"value\":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Changes are validated, checkpointed and saved.";
+    pub const DESCRIPTION: &str = "Reads or edits parameter automation. target and operation are objects: target {\"kind\":\"mixer\"}, operation {\"action\":\"read\"} discovers keys, units and ranges. Other targets: instrument, effect with slot, send with destination. Set example: {\"action\":\"set\",\"param\":\"gain\",\"points\":[{\"beat\":0,\"value\":0.5}]}. Beats are absolute quarter notes from zero; values use parameter units. Set merges points; replace true replaces the lane. Curve: linear or hold. Read pages default to 32 (max 128): omit param for parameter summaries, or supply param for points and choices. Follow top-level next_offset for parameters, lane.next_offset for points, and next_choice_offset with choice_offset for choices. Set/clear returns only saved status and point count. Changes are validated, checkpointed and saved.";
     /// Which group of parameters to inspect.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -202,6 +202,14 @@ pub mod automation {
         Read {
             /// Exact parameter key; omit to list all keys and ranges.
             param: Option<String>,
+            /// Zero-based parameter offset, or point offset when param is supplied.
+            #[serde(default)]
+            offset: usize,
+            /// Page size, default 32, clamped to 1-128.
+            limit: Option<usize>,
+            /// Zero-based choice offset when reading one exact parameter.
+            #[serde(default)]
+            choice_offset: usize,
         },
         /// Write points on one parameter.
         Set {
@@ -290,7 +298,7 @@ pub mod automation {
             }
         }
         let param = match &args.operation {
-            Action::Read { param } => param.as_deref(),
+            Action::Read { param, .. } => param.as_deref(),
             Action::Set { param, .. } | Action::Clear { param } => Some(param.as_str()),
         };
         let mut parameters: Vec<_> = targets
@@ -340,16 +348,51 @@ pub mod automation {
                 Action::Read { .. } => unreachable!(),
             }
             session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            let point_count = session
+                .automation()
+                .lane(*target)
+                .map_or(0, |lane| lane.points().len());
+            return Ok(
+                serde_json::json!({"param":param,"point_count":point_count,"saved":true})
+                    .to_string(),
+            );
         }
-        let result: Vec<_> = parameters.drain(..).map(|(target, d)| serde_json::json!({
+        let Action::Read {
+            offset,
+            limit,
+            choice_offset,
+            ..
+        } = &args.operation
+        else {
+            unreachable!()
+        };
+        let limit = limit.unwrap_or(32).clamp(1, 128);
+        let total = parameters.len();
+        if param.is_none() && *offset > total {
+            return Err("offset exceeds parameter count".into());
+        }
+        if param.is_some() {
+            let count = session
+                .automation()
+                .lane(parameters[0].0)
+                .map_or(0, |lane| lane.points().len());
+            if *offset > count || *choice_offset > parameters[0].1.choices.len() {
+                return Err("offset exceeds point or choice count".into());
+            }
+        }
+        let result: Vec<_> = parameters.drain(..).skip(if param.is_none() {*offset} else {0}).take(limit).map(|(target, d)| serde_json::json!({
             "key":d.key,"name":d.name,"unit":format!("{:?}",d.unit),"min":d.min,"max":d.max,
-            "steps":d.steps,"choices":d.choices,
+            "steps":d.steps,"choice_count":d.choices.len(),
+            "choices":if param.is_some() {d.choices.iter().skip(*choice_offset).take(limit).collect::<Vec<_>>()} else {Vec::new()},
+            "next_choice_offset":if param.is_some() && d.choices.len().saturating_sub(*choice_offset) > limit {Some(choice_offset + limit)} else {None},
             "value":session.param_value(target, &d),"automatable":session.automatable(target).is_some(),
             "lane":session.automation().lane(target).map(|lane| serde_json::json!({
                 "curve":match lane.curve { AutomationCurve::Linear => "linear", AutomationCurve::Hold => "hold" },
-                "points":lane.points().iter().map(|p| serde_json::json!({"beat":p.tick.as_beats(),"value":p.value})).collect::<Vec<_>>()
+                "point_count":lane.points().len(),
+                "next_offset":if param.is_some() && lane.points().len().saturating_sub(*offset) > limit {Some(offset + limit)} else {None},
+                "points":lane.points().iter().skip(*offset).take(if param.is_some() {limit} else {0}).map(|p| serde_json::json!({"beat":p.tick.as_beats(),"value":p.value})).collect::<Vec<_>>()
             }))
         })).collect();
-        Ok(serde_json::json!({"parameters":result}).to_string())
+        Ok(serde_json::json!({"parameters":result,"total":total,"next_offset":if param.is_none() && total.saturating_sub(*offset) > limit {Some(offset + limit)} else {None}}).to_string())
     }
 }

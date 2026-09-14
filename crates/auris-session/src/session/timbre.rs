@@ -41,7 +41,7 @@ impl TimbreMapControl {
     pub fn completed(&self) -> usize {
         self.completed.load(Ordering::Relaxed)
     }
-    fn check(&self) -> Result<(), SessionError> {
+    pub(super) fn check(&self) -> Result<(), SessionError> {
         if self.cancelled.load(Ordering::Relaxed) {
             Err(failure("cancelled"))
         } else {
@@ -211,46 +211,13 @@ impl TimbreMapJob {
                     }
                     instrument.load_state(&state);
                     instrument.prepare(&PrepareContext::new(self.sample_rate, BLOCK, 2));
-                    let frames = (self.sample_rate * SECONDS).round() as usize;
-                    let off = (self.sample_rate * HOLD).round() as usize;
-                    let mut audio = AudioBuffer::stereo(frames, self.sample_rate);
-                    let mut block = AudioBuffer::stereo(BLOCK, self.sample_rate);
-                    for start in (0..frames).step_by(BLOCK) {
-                        control.check()?;
-                        let count = (frames - start).min(BLOCK);
-                        block.set_frame_count(count);
-                        block.clear();
-                        let mut events = Vec::with_capacity(2);
-                        if start == 0 {
-                            events.push(NoteEvent::NoteOn {
-                                frame: 0,
-                                pitch,
-                                velocity,
-                            });
-                        }
-                        if (start..start + count).contains(&off) {
-                            events.push(NoteEvent::NoteOff {
-                                frame: (off - start) as u32,
-                                pitch,
-                            });
-                        }
-                        instrument.process(
-                            &events,
-                            &mut block,
-                            &ProcessContext {
-                                sample_rate: self.sample_rate,
-                                block_frames: count,
-                                playhead_samples: start as u64,
-                                bpm: 120.0,
-                                is_playing: true,
-                                is_offline: true,
-                            },
-                        );
-                        for channel in 0..2 {
-                            audio.channel_mut(channel)[start..start + count]
-                                .copy_from_slice(block.channel(channel));
-                        }
-                    }
+                    let mut audio = render_reference(
+                        instrument.as_mut(),
+                        self.sample_rate,
+                        pitch,
+                        velocity,
+                        control,
+                    )?;
                     match timbre_features(&audio, HOLD).map_err(failure)? {
                         Some(values) => features.extend(values),
                         None => silent = true,
@@ -322,6 +289,57 @@ impl TimbreMap {
         neighbors.truncate(limit);
         neighbors
     }
+}
+
+pub(super) fn render_reference(
+    instrument: &mut dyn auris_core::Instrument,
+    sample_rate: f64,
+    pitch: u8,
+    velocity: f32,
+    control: &TimbreMapControl,
+) -> Result<AudioBuffer, SessionError> {
+    let frames = (sample_rate * SECONDS).round() as usize;
+    let off = (sample_rate * HOLD).round() as usize;
+    let mut audio = AudioBuffer::stereo(frames, sample_rate);
+    let mut block = AudioBuffer::stereo(BLOCK, sample_rate);
+    for start in (0..frames).step_by(BLOCK) {
+        control.check()?;
+        let count = (frames - start).min(BLOCK);
+        block.set_frame_count(count);
+        block.clear();
+        let mut events = Vec::with_capacity(2);
+        if start == 0 {
+            events.push(NoteEvent::NoteOn {
+                frame: 0,
+                pitch,
+                velocity,
+            });
+        }
+        if (start..start + count).contains(&off) {
+            events.push(NoteEvent::NoteOff {
+                frame: (off - start) as u32,
+                pitch,
+            });
+        }
+        instrument.process(
+            &events,
+            &mut block,
+            &ProcessContext {
+                sample_rate,
+                block_frames: count,
+                playhead_samples: start as u64,
+                bpm: 120.0,
+                is_playing: true,
+                is_offline: true,
+            },
+        );
+        for channel in 0..2 {
+            audio.channel_mut(channel)[start..start + count]
+                .copy_from_slice(block.channel(channel));
+        }
+    }
+
+    Ok(audio)
 }
 
 fn failure(message: impl Into<String>) -> SessionError {

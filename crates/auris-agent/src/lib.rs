@@ -269,7 +269,7 @@ fn preamble() -> String {
 Call inspect_project first. Use the operation-specific tools with flat JSON arguments,
 without command or action wrappers. Use the numeric IDs returned by inspection and edits.
 For a song request, choose the harmony, melody, rhythm and arrangement yourself.
-Use list_instruments (search by query and follow next_offset), add_track, set_instrument, add_clip and add_notes to write your music. Instrument IDs come from the live library, including SoundFont sounds and CLAP/VST3 instruments; never invent IDs.
+Use search_instruments with focused query words (default 10 results), then set_instrument with the returned id. Use similar_instruments for acoustic alternatives; while status is indexing, continue other work and retry later. Do not fetch the whole library by default. IDs include SoundFont sounds and advertised CLAP/VST3 presets; never invent IDs. Use add_track, add_clip and add_notes to write your music.
 Batch a short phrase into one add_notes call. Each note has pitch, start_beat,
 duration_beats and velocity. start_beat is its position; duration_beats is its length.
 For example, two successive quarter notes:
@@ -277,13 +277,16 @@ For example, two successive quarter notes:
 {\"pitch\":65,\"start_beat\":1,\"duration_beats\":1,\"velocity\":0.8}]}.
 Use short batches of up to 32 notes to keep each response manageable.
 Use multiple tracks for distinct musical parts and set_level to balance them.
-Track kind is lowercase: instrument for melody/harmony, drum for percussion.
-For set_instrument use the exact returned instrument ID, never a program number or sound field.
+Track kind is one lowercase string, for example {\"name\":\"Drums\",\"kind\":\"drum\"}.
+Use instrument for melody/harmony and drum for percussion. Do not wrap kind in an array.
+For set_instrument use sound_id with the exact returned ID, never a program number. Search results use library indices into the libraries array; instrument_diagnostics reads failures on demand.
 Set the tempo with set_tempo and a loop region with set_loop for loop background music.
 Preserve existing tracks and notes unless the user explicitly requests their removal.
 Make dependent edits one at a time. Changes are unsaved and undoable. Verify with
 inspect_project before claiming completion. Use read_notes before changing existing notes.
-Note times are zero-based quarter-note beats relative to the clip. Use search_documentation
+For adding notes, times are zero-based quarter-note beats relative to the clip. read_notes
+returns ticks; divide by ticks_per_quarter before reusing times. Correct the named field after
+an argument error; never repeat unchanged failed arguments. Use search_documentation
 only when a tool description does not answer an application question.
 Use inspect_audio to check a short rendered passage before and after edits. It returns measured
 levels and score data, plus a mel/piano-roll image when vision is supported. Inspect the same
@@ -384,10 +387,12 @@ fn edit_reply(response: serde_json::Value) -> Result<String, ToolFailed> {
 
 /// Arguments to the agent-only internet search tool.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct InternetSearchArgs {
-    /// Words or a short phrase to search for on the public internet.
+    /// Non-blank public internet query, at most 400 characters and 50 whitespace-separated words.
+    #[schemars(length(min = 1, max = 400))]
     query: String,
-    /// Maximum results to return, from 1 to 10. Defaults to 5.
+    /// Maximum results to return. Omitted or null defaults to 5; supplied values are clamped to 1..10.
     limit: Option<usize>,
 }
 
@@ -1928,7 +1933,23 @@ mod tests {
         assert!(!names.contains(&"edit_project"));
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
-        assert_eq!(names.len(), 18);
+        assert!(names.contains(&"replace_notes"));
+        assert!(names.contains(&"search_instruments"));
+        assert!(names.contains(&"similar_instruments"));
+        assert!(names.contains(&"instrument_diagnostics"));
+        assert_eq!(names.len(), 22);
+        for expected in toolbox::live_agent::definitions() {
+            let exposed = actual
+                .iter()
+                .find(|tool| tool.name == expected.name)
+                .unwrap();
+            assert_eq!(exposed.parameters, expected.parameters, "{}", expected.name);
+            assert_eq!(
+                exposed.description, expected.description,
+                "{}",
+                expected.name
+            );
+        }
         let catalog = toolbox::tool_catalog();
         for name in [
             "create_project",
@@ -1961,6 +1982,30 @@ mod tests {
         for field in ["output", "project", "path", "stems", "midi_output"] {
             assert!(!schema.contains(&format!("\"{field}\":")));
         }
+    }
+
+    #[test]
+    fn reference_search_contracts_reject_unknown_fields_and_keep_optional_limits() {
+        let minimal = serde_json::json!({"query":"chords"});
+        assert!(
+            serde_json::from_value::<InternetSearchArgs>(minimal.clone())
+                .unwrap()
+                .limit
+                .is_none()
+        );
+        assert!(
+            serde_json::from_value::<toolbox::search_documentation::Args>(minimal)
+                .unwrap()
+                .limit
+                .is_none()
+        );
+        let extra = serde_json::json!({"query":"chords","unexpected":true});
+        assert!(serde_json::from_value::<InternetSearchArgs>(extra.clone()).is_err());
+        assert!(serde_json::from_value::<toolbox::search_documentation::Args>(extra).is_err());
+        assert_eq!(
+            schema::<InternetSearchArgs>()["properties"]["query"]["maxLength"],
+            400
+        );
     }
 
     #[test]

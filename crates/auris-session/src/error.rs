@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// An authored note batch cannot be applied without changing its requested values.
+    #[error("invalid notes: {0}")]
+    InvalidNotes(String),
     /// An authored rhythm contains no steps or unknown notation.
     #[error(
         "use x, X, o for hits and . for rests, or leave the rhythm empty for automatic generation"

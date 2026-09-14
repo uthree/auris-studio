@@ -63,13 +63,13 @@ impl RenderRange {
     }
 }
 
-/// A short WAV that MCP can return as an audio resource and the panel can attach.
+/// A short WAV saved locally for playback by a client or the panel.
 pub mod preview {
     use super::*;
     /// The tool's wire name.
     pub const NAME: &str = "preview";
     /// The model-facing description.
-    pub const DESCRIPTION: &str = "Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.";
+    pub const DESCRIPTION: &str = "Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns the absolute path of the local WAV file and measurements. Open that file with a local audio player. Does not change the project. Use render for unrestricted exports.";
     /// Preview request.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
@@ -105,7 +105,7 @@ pub mod preview {
         if end.saturating_sub(options.start_frames) as f64 > project.sample_rate * 120.0 {
             return Err("preview is limited to 120 seconds; choose a shorter range".into());
         }
-        // A fixed preview rate bounds resource size even for high-rate source projects.
+        // A fixed preview rate bounds file size even for high-rate source projects.
         let source_rate = project.sample_rate;
         options.start_frames =
             (options.start_frames as f64 * 24_000.0 / source_rate).round() as u64;

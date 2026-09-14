@@ -48,6 +48,7 @@ pub mod audio_inspection;
 pub mod audio_review;
 pub mod clap_evaluation;
 pub mod live_agent;
+pub mod note_pitch;
 /// Headless composition search and its request/result types.
 ///
 /// This function-based command needs no session, audio device or UI. Frontends can prepare a
@@ -71,6 +72,7 @@ pub mod render;
 pub mod session;
 pub mod settings;
 pub mod singer_portrait;
+pub mod transient_id;
 pub mod voice_setup;
 
 pub use auris_analysis::audio::{
@@ -131,6 +133,7 @@ pub use session::{
     ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
     ReferenceMatchSettings, ReferenceMatchStep,
 };
+pub use session::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{

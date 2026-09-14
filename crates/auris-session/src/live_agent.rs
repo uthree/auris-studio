@@ -1,6 +1,19 @@
 //! File-free commands for the agent attached to an open session.
 
 use crate::{Session, prelude::*};
+fn sound_search_limit() -> usize {
+    10
+}
+
+fn mixer_summary(mixer: &auris_core::project::MixerStrip) -> serde_json::Value {
+    serde_json::json!({
+        "gain_db":mixer.gain_db, "pan":mixer.pan,
+        "mute":mixer.mute, "solo":mixer.solo,
+        "effects":mixer.effects.iter().map(|slot| serde_json::json!({
+            "id":slot.id, "effect_id":slot.effect_id, "enabled":slot.enabled
+        })).collect::<Vec<_>>()
+    })
+}
 
 /// An operation on the current document. No operation accepts a filesystem destination.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -8,11 +21,23 @@ use crate::{Session, prelude::*};
 pub enum Command {
     /// Read the current arrangement and stable track/clip IDs. Use read_notes for note data.
     Inspect {},
-    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Visual interpretation is not listening. Use the same range before and after editing.
+    /// Read bounded scan/measurement failures after searching. Does not rescan.
+    InstrumentDiagnostics {
+        /// Zero-based first diagnostic.
+        #[serde(default)]
+        offset: usize,
+        /// Page size, 1..16.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 16))]
+        limit: usize,
+    },
+    /// Inspect actual rendered audio and score without saving: mel image, levels and piano roll. Start within the arrangement and request 1..8 bars fitting in 30 seconds. Visual interpretation is not listening. Use the same range before and after editing.
     InspectAudio {
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Number of bars, 1..8; the range must fit in 30 seconds.
+        #[schemars(range(min = 1, max = 8))]
         bars: u32,
         /// Optional track ID for solo routing; omit for the mix.
         track: Option<u64>,
@@ -28,7 +53,37 @@ pub enum Command {
         #[serde(default)]
         refresh: bool,
     },
-    /// Read a page of notes using zero-based storage indices.
+    /// Search sounds by name, library, vendor or preset tags. All query words must match. Returns bounded exact IDs for set_instrument, including CLAP provider presets and VST3 programs/standard preset files. Prefer this over listing the library.
+    SearchInstruments {
+        /// Nonempty case-insensitive search words.
+        query: String,
+        /// Maximum results, 1..50; defaults to 10.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 50))]
+        limit: usize,
+        /// First matching result; follow next_offset with the same query.
+        #[serde(default)]
+        offset: usize,
+        /// Rescan changed presets, only at offset 0. Invalidates acoustic measurements.
+        #[serde(default)]
+        refresh: bool,
+        /// Restrict source and library.
+        #[serde(default, flatten)]
+        filter: crate::SoundFilter,
+    },
+    /// Find acoustic alternatives to a searched sound ID using full standardized timbre features. Returns at most limit neighbors and excludes the reference. First use starts background indexing; continue other work and retry later when status is indexing. Silent/failed sources are reported; drum kits are excluded. Distance is not a quality score.
+    SimilarInstruments {
+        /// Exact ID returned by search_instruments.
+        id: String,
+        /// Maximum neighbors, 1..50; defaults to 10.
+        #[serde(default = "sound_search_limit")]
+        #[schemars(range(min = 1, max = 50))]
+        limit: usize,
+        /// Restrict source and library.
+        #[serde(default, flatten)]
+        filter: crate::SoundFilter,
+    },
+    /// Read up to 128 notes with zero-based storage indices; follow next_offset for more. Returned note.start and note.length are ticks, not beats: divide by ticks_per_quarter when using add_note or add_notes. Indices may change after edits; read again before removing notes.
     ReadNotes {
         /// Stable clip ID.
         clip: u64,
@@ -46,18 +101,20 @@ pub enum Command {
         #[serde(default)]
         replace: bool,
     },
-    /// Add an empty named track. Use add_clip and add_note to write music by hand.
+    /// Add one empty track and return its numeric track ID. Pass kind as one string, for example {"name":"Drums","kind":"drum"}. Instrument and drum tracks start with a default sound; then use set_instrument with an ID from search_instruments. Use add_clip followed by add_notes to write music. Edits affect the open document and remain unsaved.
     AddTrack {
-        /// The exact desired name.
+        /// The exact desired name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
-        /// Track type.
+        /// One string: instrument, drum, singer, audio or bus. Never an array or instrument ID.
         kind: TrackKind,
     },
-    /// Rename a track using its stable numeric ID from inspect.
+    /// Rename a track using its stable numeric ID from inspect_project or add_track.
     RenameTrack {
         /// Stable track ID.
         track: u64,
-        /// New name.
+        /// New name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
     },
     /// Remove one track and its clips.
@@ -65,23 +122,26 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Replace a track sound using an exact id from list_instruments. Keeps notes, clips, mixer and effects. Replacing the instrument clears its old parameter automation.
+    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Native preset state is retained in the document. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh or cache eviction.
     SetInstrument {
         /// Stable track ID.
         track: u64,
-        /// Exact id returned by list_instruments (built-in, SoundFont, CLAP or VST3).
+        /// Exact id returned by search_instruments/similar_instruments, or legacy list_instruments.
+        #[serde(rename = "sound_id", alias = "instrument")]
         instrument: String,
     },
     /// Set a fader and pan using native units.
     SetLevel {
         /// Stable track ID.
         track: u64,
-        /// Fader in decibels, -60 through 12.
+        /// Fader in decibels, -60 through 12. Required along with pan.
+        #[schemars(range(min = -60, max = 12))]
         gain_db: f32,
         /// Pan, -1 through 1.
+        #[schemars(range(min = -1, max = 1))]
         pan: f32,
     },
-    /// Set mute and solo for one track.
+    /// Set mute and solo for one track. Both booleans are required; use inspect_project to preserve the other state when changing only one.
     SetTrackState {
         /// Stable track ID.
         track: u64,
@@ -90,50 +150,70 @@ pub enum Command {
         /// Whether soloed.
         solo: bool,
     },
-    /// Add an empty MIDI clip at a 1-based bar position.
+    /// Add an empty MIDI clip to an instrument, drum or singer track and return its numeric clip ID. start_bar is 1-based in the project's meter; bars is a duration. Audio and bus tracks cannot hold MIDI clips.
     AddClip {
         /// Stable track ID.
         track: u64,
-        /// Exact clip name.
+        /// Exact clip name; must contain non-whitespace text.
+        #[schemars(length(min = 1))]
         name: String,
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Duration in bars, 1 through 1024.
+        #[schemars(range(min = 1, max = 1024))]
         bars: u32,
     },
-    /// Add one note using quarter-note beats relative to the clip start (zero-based).
+    /// Add one note using start and beats in quarter-note beats relative to the clip start (zero-based). The note must fit inside the clip and last at least one tick. Unlike add_notes, this tool uses start and beats rather than start_beat and duration_beats. Velocity is 0..1, not MIDI 0..127.
     AddNote {
         /// Stable clip ID from inspect or add_clip.
         clip: u64,
-        /// MIDI pitch, 0 through 127.
+        /// MIDI pitch 0..127 as an integer or string, or a name such as C4 (60).
+        #[serde(deserialize_with = "crate::note_pitch::deserialize")]
+        #[schemars(with = "crate::note_pitch::Input")]
         pitch: u8,
         /// Start in quarter-note beats relative to the clip, starting at zero.
+        #[schemars(range(min = 0))]
         start: f64,
         /// Duration in quarter-note beats.
+        #[schemars(extend("exclusiveMinimum" = 0))]
         beats: f64,
         /// Velocity, 0 through 1.
+        #[schemars(range(min = 0, max = 1))]
         velocity: f32,
     },
-    /// Add a phrase or chord as 1..256 notes in one undoable edit. All notes must fit the clip.
+    /// Add 1..256 notes in one undoable edit. Each note uses pitch, start_beat, duration_beats and velocity, for example {"pitch":60,"start_beat":0,"duration_beats":1,"velocity":0.8}. Times are clip-relative quarter-note beats; all notes must fit the clip and last at least one tick. Velocity is 0..1, not MIDI 0..127. Validate the whole batch before writing; larger phrases need multiple calls.
     AddNotes {
         /// Stable clip ID from add_clip or inspect_project.
         clip: u64,
         /// Notes with MIDI pitches and clip-relative quarter-note beats.
+        #[schemars(length(min = 1, max = 256))]
+        notes: Vec<NoteInput>,
+    },
+    /// Replace all authored notes in one undoable edit; identical retries are no-ops and [] clears notes. Use pitch, start_beat, duration_beats and velocity as in add_notes, with clip-relative quarter-note beats. All notes must fit the clip. Preserves clip curves, recipe, transforms and length. Edits remain unsaved. Maximum 4096 notes; prefer short clips to avoid large tool arguments.
+    ReplaceNotes {
+        /// Stable clip ID from inspect_project or add_clip.
+        clip: u64,
+        /// Complete replacement sequence, or [] to clear the clip.
+        #[schemars(length(max = 4096))]
         notes: Vec<NoteInput>,
     },
     /// Set the tempo at the beginning of the project.
     SetTempo {
         /// Tempo in BPM, 20 through 300.
+        #[schemars(range(min = 20, max = 300))]
         bpm: f64,
     },
     /// Set and enable a playback loop using a 1-based start bar and duration.
     SetLoop {
         /// First bar, starting at 1.
+        #[schemars(range(min = 1))]
         start_bar: u32,
         /// Loop duration in bars, 1 through 1024.
+        #[schemars(range(min = 1, max = 1024))]
         bars: u32,
     },
-    /// Remove notes using zero-based storage indices from read_notes.
+    /// Remove notes using current zero-based storage indices from read_notes. Read again after edits that change indices. Duplicate indices are harmless; an empty array is a no-op.
     RemoveNotes {
         /// Stable clip ID.
         clip: u64,
@@ -146,31 +226,42 @@ pub enum Command {
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NoteInput {
-    /// MIDI pitch, 0 through 127.
+    /// MIDI pitch 0..127 as an integer or string, or a name such as C4 (60).
+    #[serde(deserialize_with = "crate::note_pitch::deserialize")]
+    #[schemars(with = "crate::note_pitch::Input")]
     pub pitch: u8,
     /// Start in quarter-note beats, starting at zero.
     #[serde(rename = "start_beat")]
+    #[schemars(range(min = 0))]
     pub start: f64,
     /// Positive duration in quarter-note beats.
     #[serde(rename = "duration_beats")]
+    #[schemars(extend("exclusiveMinimum" = 0))]
     pub beats: f64,
     /// Velocity, 0 through 1.
+    #[schemars(range(min = 0, max = 1))]
     pub velocity: f32,
 }
 
 impl NoteInput {
     fn validate(self, clip_length: Ticks) -> Result<Note, String> {
-        if self.pitch > 127
-            || !self.start.is_finite()
-            || self.start < 0.0
-            || !self.beats.is_finite()
-            || self.beats <= 0.0
-            || !(0.0..=1.0).contains(&self.velocity)
-            || self.start + self.beats > clip_length.as_beats()
-        {
-            return Err(
-                "Invalid note pitch, timing or velocity; notes must fit inside the clip".into(),
-            );
+        let field = if self.pitch > 127 {
+            Some("pitch must be 0..127")
+        } else if !self.start.is_finite() || self.start < 0.0 {
+            Some("start_beat must be finite and >= 0")
+        } else if !self.beats.is_finite() || self.beats <= 0.0 {
+            Some("duration_beats must be finite and > 0")
+        } else if !(0.0..=1.0).contains(&self.velocity) {
+            Some("velocity must be 0..1")
+        } else if self.start + self.beats > clip_length.as_beats() {
+            Some("start_beat + duration_beats must fit inside the clip")
+        } else {
+            None
+        };
+        if let Some(field) = field {
+            return Err(format!(
+                "{field}. Example: {{\"pitch\":60,\"start_beat\":0,\"duration_beats\":1,\"velocity\":0.75}}"
+            ));
         }
         let start = Ticks::from_beats(self.start);
         let length = Ticks::from_beats(self.beats);
@@ -221,11 +312,32 @@ impl Session {
     ) -> Result<String, String> {
         let error = |error: crate::SessionError| error.to_string();
         match command {
+            Command::InstrumentDiagnostics { offset, limit } => self
+                .sound_library_job(plugin_paths)
+                .diagnostics(offset, limit),
             Command::ListInstruments {
                 query,
                 offset,
                 refresh,
             } => self.agent_instrument_list(query.as_deref(), offset, refresh, plugin_paths),
+            Command::SearchInstruments {
+                query,
+                limit,
+                offset,
+                refresh,
+                filter,
+            } => self.sound_library_job(plugin_paths).run(
+                crate::SoundSearch::Text {
+                    query,
+                    limit,
+                    offset,
+                    filter,
+                },
+                refresh,
+            ),
+            Command::SimilarInstruments { id, limit, filter } => self
+                .sound_library_job(plugin_paths)
+                .run(crate::SoundSearch::Similar { id, limit, filter }, false),
             Command::Inspect {} => {
                 let project = self.project();
                 let tracks: Vec<_> = project
@@ -244,7 +356,7 @@ impl Session {
                             })
                             .collect();
                         serde_json::json!({"id":track.id.0, "name":track.name,
-                        "kind":track.kind.label(), "mixer":track.mixer, "clips":clips,
+                        "kind":track.kind.label(), "mixer":mixer_summary(&track.mixer), "clips":clips,
                         "instrument":track.kind.as_instrument().map(|inner| &inner.instrument_id),
                         "soundfont_preset":self.track_preset(track.id)})
                     })
@@ -337,7 +449,11 @@ impl Session {
                 Ok("Removed track".into())
             }
             Command::SetInstrument { track, instrument } => {
-                self.agent_set_instrument(TrackId(track), &instrument)?;
+                if instrument.starts_with("s:") {
+                    self.use_library_sound(TrackId(track), &instrument, plugin_paths)?;
+                } else {
+                    self.agent_set_instrument(TrackId(track), &instrument)?;
+                }
                 Ok("Changed instrument".into())
             }
             Command::SetLevel {
@@ -400,7 +516,11 @@ impl Session {
                     beats,
                     velocity,
                 }
-                .validate(target.length)?;
+                .validate(target.length)
+                .map_err(|e| {
+                    e.replace("start_beat", "start")
+                        .replace("duration_beats", "beats")
+                })?;
                 let index = self.add_note(ClipId(clip), note).map_err(error)?;
                 Ok(format!("Added note index {index}"))
             }
@@ -415,7 +535,11 @@ impl Session {
                 let first = target.notes.len();
                 let notes = notes
                     .into_iter()
-                    .map(|note| note.validate(target.length))
+                    .enumerate()
+                    .map(|(index, note)| {
+                        note.validate(target.length)
+                            .map_err(|error| format!("notes[{index}]: {error}"))
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 let count = notes.len();
                 self.begin_transaction(crate::Edit::ExternalChanges);
@@ -425,6 +549,28 @@ impl Session {
                 self.end_transaction();
                 result.map_err(error)?;
                 Ok(format!("Added {count} notes, starting at index {first}"))
+            }
+            Command::ReplaceNotes { clip, notes } => {
+                if notes.len() > 4096 {
+                    return Err("Pass at most 4096 notes; use shorter clips".into());
+                }
+                let (_, target) = self
+                    .project()
+                    .midi_clip(ClipId(clip))
+                    .ok_or("Unknown MIDI clip ID")?;
+                let notes = notes
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, note)| {
+                        note.validate(target.length)
+                            .map_err(|e| format!("notes[{index}]: {e}"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let count = notes.len();
+                self.replace_notes(ClipId(clip), notes).map_err(error)?;
+                Ok(format!(
+                    "Clip now holds {count} authored notes; edits remain unsaved"
+                ))
             }
             Command::SetTempo { bpm } => {
                 if !(20.0..=300.0).contains(&bpm) {
@@ -465,6 +611,157 @@ mod tests {
 
     fn session() -> Session {
         Session::new(crate::SessionOptions::headless().with_balance(false)).unwrap()
+    }
+
+    #[test]
+    fn inspection_size_does_not_depend_on_hosted_effect_state() {
+        let mut mixer = MixerStrip::default();
+        mixer.effects.push(auris_core::project::EffectSlot::new(
+            EffectSlotId(1),
+            "test.fx",
+        ));
+        let before = mixer_summary(&mixer);
+        mixer.effects[0]
+            .state
+            .set_hosted_bytes(&vec![42; 1_000_000]);
+        mixer.effects[0].state.params.insert("hidden".into(), 0.5);
+        assert_eq!(mixer_summary(&mixer), before);
+        assert!(before.to_string().len() < 256);
+    }
+
+    #[test]
+    fn replacement_preserves_clip_state_is_atomic_and_undoes_once() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 8)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(48, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.set_curve_point(
+            clip,
+            auris_core::project::ClipCurve::Bend,
+            Ticks::ZERO,
+            0.25,
+        );
+        session
+            .set_clip_transforms(
+                clip,
+                vec![auris_core::NoteTransform::Transpose { semitones: 12 }],
+            )
+            .unwrap();
+        let before = session.project().clone();
+        let command = |notes| {
+            serde_json::from_value::<Command>(
+                serde_json::json!({"action":"replace_notes","clip":clip.0,"notes":notes}),
+            )
+            .unwrap()
+        };
+        let notes = serde_json::json!([
+            {"pitch":"C4","start_beat":0,"duration_beats":1,"velocity":0.7},
+            {"pitch":"64","start_beat":1,"duration_beats":1,"velocity":0.8}
+        ]);
+        session.agent_command(command(notes.clone())).unwrap();
+        let after = session.project().clone();
+        let target = after.midi_clip(clip).unwrap().1;
+        let mut expected = before.midi_clip(clip).unwrap().1.clone();
+        expected.notes = target.notes.clone();
+        assert_eq!(target, &expected);
+        assert_eq!(
+            target.notes.iter().map(|n| n.pitch).collect::<Vec<_>>(),
+            vec![60, 64]
+        );
+        session.agent_command(command(notes)).unwrap();
+        let error = session
+            .agent_command(command(serde_json::json!([
+                {"pitch":60,"start_beat":0,"duration_beats":1,"velocity":0.7},
+                {"pitch":61,"start_beat":7,"duration_beats":2,"velocity":0.7}
+            ])))
+            .unwrap_err();
+        assert!(
+            error.contains("notes[1]") && error.contains("duration_beats"),
+            "{error}"
+        );
+        assert_eq!(session.project(), &after);
+        session.undo();
+        assert_eq!(session.project(), &before);
+        session.redo();
+        assert_eq!(session.project(), &after);
+        session
+            .agent_command(command(serde_json::json!([])))
+            .unwrap();
+        assert!(
+            session
+                .project()
+                .midi_clip(clip)
+                .unwrap()
+                .1
+                .notes
+                .is_empty()
+        );
+        session.undo();
+        assert_eq!(session.project(), &after);
+        assert!(session.path().is_none());
+        let operation = crate::agent_policy::Operation::parse(
+            "edit_project",
+            &serde_json::json!({"command":{"action":"replace_notes","clip":clip.0,"notes":[]}}),
+        )
+        .unwrap();
+        assert!(operation.mutating && operation.confirm);
+    }
+
+    #[test]
+    fn direct_replacement_rejects_invalid_notes_without_recording_history() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        let note = Note::new(60, Ticks::ZERO, Ticks::QUARTER);
+        session.replace_notes(clip, vec![note.clone()]).unwrap();
+        let before = session.project().clone();
+        for bad in [
+            Note {
+                pitch: 128,
+                ..note.clone()
+            },
+            Note {
+                velocity: f32::NAN,
+                ..note.clone()
+            },
+            Note {
+                start: Ticks(-1),
+                ..note.clone()
+            },
+            Note {
+                length: Ticks::ZERO,
+                ..note.clone()
+            },
+            Note {
+                start: Ticks(i64::MAX),
+                ..note.clone()
+            },
+        ] {
+            assert!(
+                session
+                    .replace_notes(clip, vec![note.clone(), bad])
+                    .unwrap_err()
+                    .to_string()
+                    .contains("notes[1]")
+            );
+            assert_eq!(session.project(), &before);
+        }
+        session.undo();
+        assert!(
+            session
+                .project()
+                .midi_clip(clip)
+                .unwrap()
+                .1
+                .notes
+                .is_empty()
+        );
     }
 
     #[test]

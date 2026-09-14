@@ -366,7 +366,7 @@ impl AgentHook for Guard {
             if estimate > limit as usize {
                 let reserve = self.output_tokens;
                 return CompletionCallAction::Stop(format!(
-                    "estimated context budget {estimate} tokens (tools, history and {reserve} output reserve) exceeds requested {limit}; increase Agent Panel context/--context-tokens or start a fresh conversation. Saved edits remain on disk."
+                    "estimated context budget {estimate} tokens (tools, history and {reserve} output reserve) exceeds requested {limit}; increase Agent Panel context/--context-tokens or start a fresh conversation. Earlier edits remain in the open document and may be unsaved."
                 ));
             }
             let request = event.history.iter().chain([event.prompt]);
@@ -433,7 +433,7 @@ impl AgentHook for Guard {
         *attempts += 1;
         if *attempts > 2 {
             return Some(InvalidToolCallAction::stop(format!(
-                "{} failed twice as an unavailable tool; stopping the repeated call. Saved edits remain on disk.",
+                "{} failed twice as an unavailable tool; stopping the repeated call. Earlier edits remain in the open document and may be unsaved.",
                 event.tool_name
             )));
         }
@@ -455,7 +455,7 @@ impl AgentHook for Guard {
             >= 2
         {
             return ToolCallAction::Stop(format!(
-                "{} failed twice with identical arguments; stopping the repeated call. Correct the arguments or choose another approach. Saved edits remain on disk.",
+                "{} failed twice with identical arguments; stopping the repeated call. Correct the arguments or choose another approach. Earlier edits remain in the open document and may be unsaved.",
                 event.tool_name
             ));
         }
@@ -501,7 +501,7 @@ where
             _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
                 let (last, tools) = *activity.lock().unwrap();
                 if tools == 0 && last.elapsed() > CONVERSATION_PATIENCE {
-                    return Err("model request timed out after 300 seconds without progress; saved project edits remain on disk".into());
+                    return Err("model request timed out after 300 seconds without progress; earlier edits remain in the open document and may be unsaved".into());
                 }
             }
         }

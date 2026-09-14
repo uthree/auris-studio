@@ -1,6 +1,13 @@
 //! Shared wire schemas and on-demand help for model clients.
 use super::*;
 
+/// Explain a likely field mismatch after a saved-project tool rejects its arguments.
+/// This is diagnostic help, not a substitute for deserialization or session validation.
+pub fn argument_error_hint(name: &str, arguments: &serde_json::Value) -> Option<String> {
+    let definition = tool_catalog().into_iter().find(|tool| tool.name == name)?;
+    super::live_agent::argument_hint(&definition.parameters, arguments, "arguments")
+}
+
 /// A model-facing tool definition, shared by both transports.
 pub struct ToolDefinition {
     /// Exact callable name.
@@ -130,10 +137,18 @@ fn definition<T: schemars::JsonSchema>(
     name: &'static str,
     description: &'static str,
 ) -> ToolDefinition {
+    let mut parameters = parameter_schema::<T>();
+    if let Some(project) = parameters
+        .get_mut("properties")
+        .and_then(|p| p.get_mut("project"))
+    {
+        project["description"] =
+            "Project path or project_id from create_project/open_project.".into();
+    }
     ToolDefinition {
         name,
         description,
-        parameters: parameter_schema::<T>(),
+        parameters,
     }
 }
 
@@ -144,6 +159,14 @@ struct NoArgs {}
 /// Complete project-tool catalog. Transport tests compare their registrations to this list.
 pub fn tool_catalog() -> Vec<ToolDefinition> {
     vec![
+        definition::<open_project::Args>(open_project::NAME, open_project::DESCRIPTION),
+        definition::<setup_tracks::Args>(setup_tracks::NAME, setup_tracks::DESCRIPTION),
+        definition::<instrument_diagnostics::Args>(
+            instrument_diagnostics::NAME,
+            instrument_diagnostics::DESCRIPTION,
+        ),
+        definition::<discover_tools::Args>(discover_tools::NAME, discover_tools::DESCRIPTION),
+        definition::<read_report::Args>(read_report::NAME, read_report::DESCRIPTION),
         definition::<listen::Args>(listen::NAME, listen::DESCRIPTION),
         definition::<create_project::Args>(create_project::NAME, create_project::DESCRIPTION),
         definition::<import_audio::Args>(import_audio::NAME, import_audio::DESCRIPTION),
@@ -204,6 +227,14 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<NoArgs>(list_progressions::NAME, list_progressions::DESCRIPTION),
         definition::<NoArgs>(list_presets::NAME, list_presets::DESCRIPTION),
         definition::<NoArgs>(list_instruments::NAME, list_instruments::DESCRIPTION),
+        definition::<search_instruments::Args>(
+            search_instruments::NAME,
+            search_instruments::DESCRIPTION,
+        ),
+        definition::<similar_instruments::Args>(
+            similar_instruments::NAME,
+            similar_instruments::DESCRIPTION,
+        ),
         definition::<add_track::Args>(add_track::NAME, add_track::DESCRIPTION),
         definition::<add_part::Args>(add_part::NAME, add_part::DESCRIPTION),
         definition::<set_instrument::Args>(set_instrument::NAME, set_instrument::DESCRIPTION),
@@ -212,6 +243,7 @@ pub fn tool_catalog() -> Vec<ToolDefinition> {
         definition::<add_clip::Args>(add_clip::NAME, add_clip::DESCRIPTION),
         definition::<notes::Args>(notes::NAME, notes::DESCRIPTION),
         definition::<edit_notes::Args>(edit_notes::NAME, edit_notes::DESCRIPTION),
+        definition::<replace_notes::Args>(replace_notes::NAME, replace_notes::DESCRIPTION),
         definition::<accompany::Args>(accompany::NAME, accompany::DESCRIPTION),
         definition::<write_lyrics::Args>(write_lyrics::NAME, write_lyrics::DESCRIPTION),
         definition::<sing::Args>(sing::NAME, sing::DESCRIPTION),
@@ -252,13 +284,8 @@ pub mod tool_help {
             .find(|tool| tool.name == args.name)
             .ok_or_else(|| {
                 format!(
-                    "Unknown tool '{}'. Available tools: {}",
-                    args.name,
-                    catalog
-                        .iter()
-                        .map(|tool| tool.name)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "Unknown tool '{}'. Use discover_tools with a short query (for example edit_clip) to find its exact name.",
+                    args.name.chars().take(80).collect::<String>()
                 )
             })?;
         let project = "/absolute/path/Song/Song.auris";
@@ -266,7 +293,7 @@ pub mod tool_help {
             "add_track" => serde_json::json!([
                 {"project":project,"name":"Reverb","kind":"bus"},
                 {"project":project,"name":"Kit","kind":"drum"},
-                {"project":project,"name":"Lead","kind":"instrument","instrument":"auris.synth.chiptune"}
+                {"project":project,"name":"Lead","kind":"instrument","sound_id":"s:example:1"}
             ]),
             "add_clip" => serde_json::json!([
                 {"project":project,"track":"Lead","name":"Manual","start_bar":5,"bars":2}
@@ -308,6 +335,11 @@ pub mod tool_help {
             ]),
             "edit_notes" => serde_json::json!([
                 {"project":project,"track":"Lead","clip":1,"add":[{"pitch":"C4","bar":1,"beat":1,"beats":1,"velocity":0.75}]}
+            ]),
+            "replace_notes" => serde_json::json!([
+                {"project":project,"track":"Lead","clip":1,"source":"/absolute/path/lead.json"},
+                {"project":project,"track":"Lead","clip":1,"notes":[{"pitch":60,"bar":1,"beat":1,"beats":1}]},
+                {"project":project,"track":"Lead","clip":1,"notes":[]}
             ]),
             _ => serde_json::json!([]),
         };
@@ -620,6 +652,7 @@ mod tests {
         check::<routing::Args>("routing");
         check::<listen::Args>("listen");
         check::<edit_notes::Args>("edit_notes");
+        check::<replace_notes::Args>("replace_notes");
         check::<add_track::Args>("add_track");
         check::<add_clip::Args>("add_clip");
     }

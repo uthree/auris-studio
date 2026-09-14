@@ -66,6 +66,10 @@ pub struct ClapLibrary {
 }
 
 impl ClapLibrary {
+    /// Discovers the preset locations and metadata advertised by this library.
+    pub fn presets(&self) -> crate::PresetDiscovery {
+        crate::presets::discover(&self.entry)
+    }
     /// Loads a `.clap` file.
     ///
     /// # Safety
