@@ -1418,11 +1418,8 @@ is refused. Whole-project exports retain their previous behavior.
 
 `preview` uses the same range selectors for an audition of at most 120 seconds. It writes
 a 24 kHz, 16-bit WAV without effect tails under `.auris-previews/`, leaving the document
-unchanged. On MCP its answer also carries an `audio/wav` resource link: `resources/read`
-returns the WAV bytes, and `resources/list` lists the connection's previews. The server keeps
-the newest eight resources, available until eviction or disconnection. A resource is a copy
-of the rendered bytes, so a later file edit cannot change an earlier A/B preview. The agent
-frontend receives the local WAV path, which can be attached in the panel. Both export paths
+unchanged. Both frontends return the absolute local WAV path and measurements; the client
+can open the file in a local player or attach it in the panel. Both export paths
 warn when the rendered signal would clip in an integer WAV.
 
 Editing tools preserve the preceding document in `.auris-history/`. The `checkpoints` tool

@@ -235,9 +235,8 @@ pub mod architecture {
     //! envelope, preserving its shape and the values outside the requested range.
     //! [`Session::render_range_options`](crate::Session::render_range_options) converts a
     //! timeline selection through the tempo map. The toolbox presents these commands as
-    //! section-relative gain and audition tools. The MCP frontend keeps only transport state:
-    //! a bounded set of immutable WAV resources for `resources/read`. It never interprets a
-    //! resource URI as a filesystem path; reconnecting or eviction expires the old URI.
+    //! section-relative gain and audition tools. Auditions return the absolute local WAV
+    //! path and measurements through either frontend; clients open the file for playback.
     //!
     //! Availability is also session knowledge: [`Session::playback_readiness`](crate::Session::playback_readiness)
     //! distinguishes loaded instruments from empty samplers and guide/stale vocals. Shared

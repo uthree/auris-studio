@@ -1049,11 +1049,11 @@ version = "0.7.0"
 dependencies = [
  "auris-session",
  "auris-toolbox",
- "base64 0.22.1",
  "env_logger",
  "log",
  "rmcp",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

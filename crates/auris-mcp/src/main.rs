@@ -23,7 +23,6 @@
 #![warn(missing_docs)]
 
 use auris_toolbox as toolbox;
-mod previews;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
@@ -31,11 +30,9 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
-/// Project state lives on disk; only the connection's bounded audio resources live here.
+/// Saved projects and rendered audio stay on disk.
 #[derive(Clone, Debug, Default)]
-struct AurisMcp {
-    previews: std::sync::Arc<std::sync::Mutex<previews::Previews>>,
-}
+struct AurisMcp {}
 
 /// Both transports publish the shared, self-contained schemas.
 fn tool_schema(name: &str) -> std::sync::Arc<rmcp::model::JsonObject> {
@@ -183,33 +180,13 @@ impl AurisMcp {
         blocking(move || toolbox::effects::run(&args)).await
     }
 
-    /// Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns a local audio file; MCP also returns an audio/wav resource link readable through resources/read. Does not change the project. Use render for unrestricted exports.
+    /// Renders a short WAV audition, at most 120 seconds without effect tails. Supply start_bar and bars at the top level, for example start_bar:1,bars:4; or section and optional instance. Omit both to preview the whole song within the limit. Returns the absolute path of the local WAV file and measurements. Open that file with a local audio player. Does not change the project. Use render for unrestricted exports.
     #[tool(input_schema = tool_schema("preview"))]
     async fn preview(
         &self,
         Parameters(args): Parameters<toolbox::preview::Args>,
     ) -> Result<CallToolResult, ErrorData> {
-        let rendered = tokio::task::spawn_blocking(move || {
-            let preview = toolbox::preview::create(&args)?;
-            let bytes = std::fs::read(&preview.path).map_err(|e| e.to_string())?;
-            Ok::<_, String>((preview.text, bytes))
-        })
-        .await
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        match rendered {
-            Ok((text, bytes)) => {
-                let resource = self
-                    .previews
-                    .lock()
-                    .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
-                    .insert(bytes)?;
-                Ok(CallToolResult::success(vec![
-                    ContentBlock::text(text),
-                    ContentBlock::resource_link(resource),
-                ]))
-            }
-            Err(error) => finished(Err(error)),
-        }
+        blocking(move || toolbox::preview::run(&args)).await
     }
     /// Measures each note clip's pitch range, note density, pitch-class count and exact bar-pattern repetition. Reads stored notes without rendering. These describe musical choices, not aesthetic quality; use analyze for loudness and audio input for listening. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
     #[tool(input_schema = tool_schema("analyze_music"))]
@@ -617,43 +594,12 @@ impl ServerHandler for AurisMcp {
         recover_argument_error(router.call(call).await, &name, known, Some(&arguments))
     }
 
-    async fn list_resources(
-        &self,
-        _: Option<rmcp::model::PaginatedRequestParams>,
-        _: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<rmcp::model::ListResourcesResult, ErrorData> {
-        let resources = self
-            .previews
-            .lock()
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
-            .list();
-        Ok(rmcp::model::ListResourcesResult {
-            resources,
-            ..Default::default()
-        })
-    }
-    async fn read_resource(
-        &self,
-        request: rmcp::model::ReadResourceRequestParams,
-        _: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<rmcp::model::ReadResourceResponse, ErrorData> {
-        let bytes = self
-            .previews
-            .lock()
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?
-            .bytes(&request.uri)?;
-        let content = previews::Previews::content(request.uri, &bytes);
-        Ok(rmcp::model::ReadResourceResult::new(vec![content]).into())
-    }
     fn get_info(&self) -> ServerInfo {
         // Field by field because the type is `non_exhaustive`, which rules the literal out.
         // Named explicitly rather than via `Implementation::from_build_env`, whose `env!` was
         // expanded when *rmcp* was compiled — a server introducing itself as "rmcp 3.1.4".
         let mut info = ServerInfo::default();
-        info.capabilities = ServerCapabilities::builder()
-            .enable_tools()
-            .enable_resources()
-            .build();
+        info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
         info.instructions = Some(toolbox::INSTRUCTIONS.into());
         info
@@ -752,6 +698,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn preview_returns_a_local_wav_path_without_binary_content() {
+        use auris_session::prelude::{Note, Ticks};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Preview.auris");
+        let mut session =
+            auris_session::Session::new(auris_session::SessionOptions::headless()).unwrap();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Phrase", Ticks::ZERO, Ticks::QUARTER * 4)
+            .unwrap();
+        session
+            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+        session.save(&path).unwrap();
+        drop(session);
+        assert!(
+            AurisMcp::default()
+                .get_info()
+                .capabilities
+                .resources
+                .is_none()
+        );
+        let (server_transport, client_transport) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            AurisMcp::default()
+                .serve(server_transport)
+                .await
+                .unwrap()
+                .waiting()
+                .await
+                .unwrap();
+        });
+        let client = ().serve(client_transport).await.unwrap();
+        let result = client
+            .call_tool(
+                rmcp::model::CallToolRequestParams::new("preview").with_arguments(
+                    serde_json::json!({"project":path,"start_bar":1,"bars":1})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(result.content.len(), 1);
+        let text = &result.content[0].as_text().unwrap().text;
+        let wav = std::fs::read_dir(root.path().join(".auris-previews"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(wav.is_absolute());
+        assert!(text.contains(&wav.display().to_string()), "{text}");
+        assert!(text.len() < 2048);
+        let bytes = std::fs::read(wav).unwrap();
+        assert!(bytes.starts_with(b"RIFF"));
+        assert_eq!(&bytes[8..12], b"WAVE");
+        client.cancel().await.unwrap();
+        server.await.unwrap();
+    }
 
     #[tokio::test]
     async fn routed_parameter_failures_include_field_and_recovery_guidance() {
