@@ -239,9 +239,7 @@ use interval-union coverage, and an absent inter-onset interval remains `null`.
 
 These diagnostics describe where motion pauses; they do not rate long notes or
 rests as defects. There is no combined quality score. Use them to check a specific
-listening hypothesis, and validate any ensuing writer change on new seeds. See
-[the continuity experiment](reviews/melody-continuity-2026-09-10.md) for conditions,
-results and reproduction commands.
+listening hypothesis, and validate any ensuing writer change on new seeds.
 
 ```
 uv run tools/eval/aesthetics.py --preset all --json before.json

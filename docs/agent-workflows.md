@@ -114,8 +114,8 @@ model heard the excerpt correctly. If the critic says it cannot hear, report tha
 response as a limitation and check the request and audio backend, or ask for human
 listening feedback.
 Validate a new listener with known audible differences before trusting its advice.
-The local interface trial records observed model limitations separately from tool
-and wire correctness in `docs/reviews/local-model-interface-2026-09-07.md`.
+Treat a completed request as transport evidence only; it does not establish that the model
+heard a difference or that its musical judgment is reliable.
 
 An optional [local audio service](../tools/audio-review/README.md) provides
 the same endpoint independently of Ollama, with Qwen2-Audio and an opt-in native
