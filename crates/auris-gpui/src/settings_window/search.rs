@@ -60,7 +60,7 @@ impl Section {
                 Key::AgentKeyEnvLabel,
                 Key::AgentContextTokens,
                 Key::AgentOutputTokens,
-                Key::AgentThinking,
+                Key::AgentEffort,
             ],
             Self::Appearance => &[
                 Key::AppearanceHeading,

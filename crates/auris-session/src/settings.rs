@@ -184,6 +184,63 @@ impl ExportPreferences {
     }
 }
 
+/// How much deliberate reasoning the agent asks a model to use.
+///
+/// `Default` leaves the request untouched. The other values are sent in the provider's native
+/// request format; a provider or model may reject levels it does not implement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    /// Keep the model or server default.
+    #[default]
+    Default,
+    /// Disable deliberate reasoning when the model supports doing so.
+    None,
+    /// Use the smallest reasoning budget.
+    Minimal,
+    /// Use a low reasoning budget.
+    Low,
+    /// Use a medium reasoning budget.
+    Medium,
+    /// Use a high reasoning budget.
+    High,
+    /// Use an extra-high reasoning budget.
+    Xhigh,
+    /// Use the provider's maximum reasoning budget.
+    Max,
+}
+
+impl ReasoningEffort {
+    /// The lowercase value used by provider APIs and command-line flags.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::Xhigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
+
+    /// Parse the provider-facing spelling of a reasoning effort.
+    pub fn named(value: &str) -> Option<Self> {
+        Some(match value {
+            "default" | "auto" => Self::Default,
+            "none" | "off" => Self::None,
+            "minimal" => Self::Minimal,
+            "low" => Self::Low,
+            "medium" => Self::Medium,
+            "high" => Self::High,
+            "xhigh" => Self::Xhigh,
+            "max" => Self::Max,
+            _ => return None,
+        })
+    }
+}
+
 /// How the built-in agent dials a language model.
 ///
 /// A fact about the machine, like a plugin folder: which server answers, and as which model.
@@ -206,7 +263,12 @@ pub struct AgentPreferences {
     /// Ollama output limit per response. Absent uses 4096 tokens.
     pub output_tokens: Option<u32>,
     /// Ollama thinking override; absent keeps the model's default.
+    ///
+    /// Kept for settings written before `effort` existed. New controls write `effort` and clear
+    /// this field.
     pub thinking: Option<bool>,
+    /// Requested reasoning effort. `Default` keeps the provider or model default.
+    pub effort: ReasoningEffort,
     /// The API dialect: "ollama", or "openai" for any OpenAI-compatible endpoint. Empty means
     /// ollama.
     pub provider: String,

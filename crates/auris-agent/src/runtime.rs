@@ -2,7 +2,7 @@
 use super::*;
 use rig::agent::{
     CompletionCallAction, CompletionCallEvent, CompletionResponseEvent, InvalidToolCallAction,
-    InvalidToolCallContext, ObservationAction,
+    InvalidToolCallContext, ModelTurnAction, ModelTurnFinished, ObservationAction,
 };
 use rig::message::{AssistantContent, ReasoningContent, UserContent};
 use rig::tool::ToolErrorKind;
@@ -357,6 +357,9 @@ impl AgentHook for Guard {
         event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
         self.mark(0);
+        if let Some(bridge) = &self.bridge {
+            bridge.emit(serde_json::json!({"event":"phase", "phase":"prefill"}));
+        }
         let visual = self.bridge.as_ref().and_then(Bridge::visual);
         if let Some(limit) = self.context {
             // Generated inspection images are fixed at 512x384; reserve image tokens rather
@@ -415,6 +418,23 @@ impl AgentHook for Guard {
             .unwrap()
             .observe_context(event.usage.input_tokens);
         ObservationAction::Continue
+    }
+    async fn on_model_turn_finished(
+        &self,
+        _: &HookContext,
+        event: ModelTurnFinished<'_>,
+    ) -> ModelTurnAction {
+        if self.context.is_some()
+            && event
+                .finish_reason
+                .is_some_and(rig::completion::FinishReason::truncated_output)
+        {
+            let limit = self.output_tokens;
+            return ModelTurnAction::stop(format!(
+                "Ollama reached the {limit}-token output limit; the response is incomplete. Increase the Agent Panel output token limit or retry with a smaller task. Earlier edits remain in the project."
+            ));
+        }
+        ModelTurnAction::Continue
     }
     async fn on_invalid_tool_call(
         &self,

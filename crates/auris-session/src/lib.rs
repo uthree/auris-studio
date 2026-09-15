@@ -137,8 +137,8 @@ pub use session::{SoundFilter, SoundLibraryJob, SoundSearch, SoundSource};
 pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
-    AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, Settings,
-    WindowPlacement, config_dir,
+    AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, ReasoningEffort,
+    Settings, WindowPlacement, config_dir,
 };
 pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use voice_setup::{

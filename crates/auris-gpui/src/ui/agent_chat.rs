@@ -6,11 +6,13 @@
 //! Editing commands execute against the window's current session. They do not save or
 //! reload a project; successful edits appear on repaint and use ordinary undo history.
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
+use std::time::{Duration, Instant};
 
 use auris_i18n::Key;
-use auris_session::AgentPreferences;
+use auris_session::{AgentPreferences, ReasoningEffort};
 use gpui::{
     AnyElement, IntoElement, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
 };
@@ -22,10 +24,77 @@ use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
 use crate::ui::widgets::{ButtonStyle, button};
 
-mod controls;
+pub(crate) mod controls;
 
 /// Maximum transcript rows retained in the panel.
 const CHAT_CAPACITY: usize = 500;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AgentPhase {
+    #[default]
+    Idle,
+    Waiting,
+    Prefill,
+    Thinking,
+    Decode,
+    Tool,
+}
+
+#[derive(Default)]
+struct SpeedMeter {
+    samples: VecDeque<(Instant, u64)>,
+}
+
+impl SpeedMeter {
+    fn record(&mut self, tokens: u64) {
+        self.record_at(Instant::now(), tokens);
+    }
+
+    fn record_at(&mut self, now: Instant, tokens: u64) {
+        self.samples.push_back((now, tokens));
+        while self
+            .samples
+            .front()
+            .is_some_and(|(at, _)| now.duration_since(*at) > Duration::from_secs(10))
+        {
+            self.samples.pop_front();
+        }
+    }
+
+    fn rate(&self) -> Option<f64> {
+        let (first, _) = self.samples.front()?;
+        let (last, _) = self.samples.back()?;
+        let span = last.duration_since(*first);
+        if span < Duration::from_millis(500) {
+            return None;
+        }
+        let tokens: u64 = self.samples.iter().skip(1).map(|(_, tokens)| tokens).sum();
+        Some(tokens as f64 / span.as_secs_f64())
+    }
+
+    fn reset(&mut self) {
+        self.samples.clear();
+    }
+}
+
+fn stream_token_estimate(text: &str) -> u64 {
+    let ascii = text.chars().filter(char::is_ascii).count();
+    let non_ascii = text.chars().count().saturating_sub(ascii);
+    u64::try_from(ascii.div_ceil(4) + non_ascii)
+        .unwrap_or(u64::MAX)
+        .max(1)
+}
+
+fn log_preview(text: &str) -> String {
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut chars = line.chars();
+    let preview: String = chars.by_ref().take(72).collect();
+    if chars.next().is_some() {
+        format!("{preview}…")
+    } else {
+        preview
+    }
+}
 
 /// One line of the conversation, as the panel shows it.
 #[derive(Debug, PartialEq)]
@@ -34,12 +103,16 @@ pub(crate) enum ChatEntry {
     You(String),
     /// What the model answered.
     Agent(String),
+    /// The model's reasoning log, collapsed until explicitly opened.
+    Reasoning(String),
     /// Status produced by the agent runtime, not by the model.
     Status(String),
     /// One tool call: running while `line` is empty, answered or refused once it is not.
     Tool {
         /// The tool's wire name.
         name: String,
+        /// The JSON arguments the model supplied.
+        args: String,
         /// Whether it answered rather than refused.
         ok: bool,
         /// The first line of its answer.
@@ -87,10 +160,27 @@ pub(crate) enum AgentEvent {
         /// The model the agent resolved to.
         model: String,
     },
+    /// The current stage of a model request.
+    Phase {
+        /// Provider-independent phase name.
+        phase: AgentPhase,
+    },
+    /// One streamed fragment of model reasoning.
+    ReasoningDelta {
+        /// The fragment text.
+        text: String,
+    },
+    /// One streamed fragment of the visible answer.
+    TextDelta {
+        /// The fragment text.
+        text: String,
+    },
     /// A tool was asked.
     Call {
         /// Its wire name.
         tool: String,
+        /// Its provider-produced JSON arguments, formatted for the disclosure row.
+        args: String,
     },
     /// A tool answered or refused.
     Result {
@@ -175,7 +265,34 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
         "ready" => AgentEvent::Ready {
             model: text("model"),
         },
-        "call" => AgentEvent::Call { tool: text("tool") },
+        "phase" => AgentEvent::Phase {
+            phase: match parsed.get("phase")?.as_str()? {
+                "waiting" => AgentPhase::Waiting,
+                "prefill" => AgentPhase::Prefill,
+                "thinking" => AgentPhase::Thinking,
+                "decode" => AgentPhase::Decode,
+                "tool" => AgentPhase::Tool,
+                "idle" => AgentPhase::Idle,
+                _ => return None,
+            },
+        },
+        "reasoning_delta" => AgentEvent::ReasoningDelta { text: text("text") },
+        "text_delta" => AgentEvent::TextDelta { text: text("text") },
+        "call" => AgentEvent::Call {
+            tool: text("tool"),
+            args: parsed
+                .get("args")
+                .and_then(|args| {
+                    args.as_str()
+                        .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
+                        .as_ref()
+                        .map_or_else(
+                            || serde_json::to_string_pretty(args).ok(),
+                            |args| serde_json::to_string_pretty(args).ok(),
+                        )
+                })
+                .unwrap_or_default(),
+        },
         "result" => {
             let detail = text("text");
             AgentEvent::Result {
@@ -357,8 +474,10 @@ pub(crate) struct AgentChat {
     /// Requested Ollama context, independent of the model's architectural maximum.
     pub(crate) context_tokens: u32,
     pub(crate) output_tokens: u32,
-    /// Ollama thinking override.
+    /// Legacy Ollama thinking override.
     pub(crate) thinking: Option<bool>,
+    /// Provider-native reasoning effort.
+    pub(crate) effort: ReasoningEffort,
     /// The transcript, oldest first.
     pub(crate) entries: Vec<ChatEntry>,
     /// The message being written.
@@ -383,6 +502,12 @@ pub(crate) struct AgentChat {
     pub(crate) tokens_in: u64,
     /// Tokens the model has written across the conversation.
     pub(crate) tokens_out: u64,
+    /// The provider-independent stage of the active request.
+    phase: AgentPhase,
+    /// Rolling speed estimate for streamed model output.
+    speed: SpeedMeter,
+    /// Whether the current turn has already drawn streamed visible text.
+    streamed_answer: bool,
     /// The chosen model's context window, when its listing said.
     pub(crate) context_window: Option<u64>,
     /// The transcript rows clicked open to their full text.
@@ -432,6 +557,7 @@ impl Default for AgentChat {
             context_tokens: 32768,
             output_tokens: 4096,
             thinking: None,
+            effort: ReasoningEffort::Default,
             entries: Vec::new(),
             input: TextField::new(String::new()),
             chosen_model: String::new(),
@@ -444,6 +570,9 @@ impl Default for AgentChat {
             model_menu: false,
             tokens_in: 0,
             tokens_out: 0,
+            phase: AgentPhase::Idle,
+            speed: SpeedMeter::default(),
+            streamed_answer: false,
             context_window: None,
             expanded: std::collections::BTreeSet::new(),
             open_tools: std::collections::BTreeMap::new(),
@@ -516,6 +645,7 @@ impl AgentChat {
         self.context_tokens = prefs.context_tokens.unwrap_or(32768);
         self.output_tokens = prefs.output_tokens.unwrap_or(4096);
         self.thinking = prefs.thinking;
+        self.effort = prefs.effort;
         self.provider_openai = prefs.provider.trim() == "openai";
         self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
@@ -538,6 +668,7 @@ impl AgentChat {
             context_tokens: Some(self.context_tokens),
             output_tokens: Some(self.output_tokens),
             thinking: self.thinking,
+            effort: self.effort,
             provider: match self.provider_openai {
                 true => "openai".to_string(),
                 false => "ollama".to_string(),
@@ -552,6 +683,32 @@ impl AgentChat {
     pub(crate) fn context_ratio(&self) -> Option<f32> {
         let window = self.context_window?;
         (window > 0).then(|| (self.tokens_in as f32 / window as f32).min(1.0))
+    }
+
+    fn append_streamed(&mut self, reasoning: bool, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let appended = match self.entries.last_mut() {
+            Some(ChatEntry::Reasoning(existing)) if reasoning => {
+                existing.push_str(&text);
+                true
+            }
+            Some(ChatEntry::Agent(existing)) if !reasoning => {
+                existing.push_str(&text);
+                true
+            }
+            _ => false,
+        };
+        if !appended {
+            self.push_entry(if reasoning {
+                ChatEntry::Reasoning(text)
+            } else {
+                ChatEntry::Agent(text)
+            });
+        } else {
+            self.scroll.scroll_to_bottom();
+        }
     }
 
     /// Takes one event into the transcript, and says what the window should do about it.
@@ -608,9 +765,25 @@ impl AgentChat {
             AgentEvent::Ready { model } => {
                 self.model_label = model;
             }
-            AgentEvent::Call { tool } => {
+            AgentEvent::Phase { phase } => {
+                self.phase = phase;
+            }
+            AgentEvent::ReasoningDelta { text } => {
+                self.phase = AgentPhase::Thinking;
+                self.speed.record(stream_token_estimate(&text));
+                self.append_streamed(true, text);
+            }
+            AgentEvent::TextDelta { text } => {
+                self.phase = AgentPhase::Decode;
+                self.speed.record(stream_token_estimate(&text));
+                self.streamed_answer = true;
+                self.append_streamed(false, text);
+            }
+            AgentEvent::Call { tool, args } => {
+                self.phase = AgentPhase::Tool;
                 let index = self.push_entry(ChatEntry::Tool {
                     name: tool.clone(),
+                    args,
                     ok: true,
                     line: String::new(),
                     detail: String::new(),
@@ -650,6 +823,7 @@ impl AgentChat {
                     _ => {
                         self.push_entry(ChatEntry::Tool {
                             name: tool,
+                            args: String::new(),
                             ok,
                             line,
                             detail,
@@ -685,23 +859,34 @@ impl AgentChat {
                 output_tokens,
             } => {
                 self.busy = false;
+                self.phase = AgentPhase::Idle;
+                self.speed.reset();
                 // The input count is a level, the output a tally: the next turn's prompt
                 // carries everything again, so the last report is the gauge's whole truth.
                 if input_tokens > 0 {
                     self.tokens_in = input_tokens;
                 }
                 self.tokens_out += output_tokens;
-                self.push_entry(ChatEntry::Agent(text));
+                if !self.streamed_answer && !text.is_empty() {
+                    self.push_entry(ChatEntry::Agent(text));
+                }
+                self.streamed_answer = false;
                 return self.finish_reload(open, dirty);
             }
             AgentEvent::Error { message } => {
                 self.busy = false;
+                self.phase = AgentPhase::Idle;
+                self.speed.reset();
+                self.streamed_answer = false;
                 self.push_entry(ChatEntry::Error(message));
                 return self.finish_reload(open, dirty);
             }
             AgentEvent::Ended => {
                 self.controls = Default::default();
                 self.busy = false;
+                self.phase = AgentPhase::Idle;
+                self.speed.reset();
+                self.streamed_answer = false;
                 self.link = None;
                 self.push_entry(ChatEntry::Note(Key::AgentEnded));
                 return self.finish_reload(open, dirty);
@@ -785,6 +970,9 @@ impl AurisApp {
         self.agent_chat.controls = Default::default();
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
+        self.agent_chat.phase = AgentPhase::Idle;
+        self.agent_chat.speed.reset();
+        self.agent_chat.streamed_answer = false;
         self.agent_chat.bound_project = None;
         self.agent_chat.fresh_history = false;
         self.agent_chat.restart_after_turn = false;
@@ -808,6 +996,9 @@ impl AurisApp {
         self.agent_chat.controls.compacting = false;
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
+        self.agent_chat.phase = AgentPhase::Idle;
+        self.agent_chat.speed.reset();
+        self.agent_chat.streamed_answer = false;
         if self.session.externally_modified()
             && let Some(path) = self.session.path().map(Path::to_path_buf)
         {
@@ -915,6 +1106,9 @@ impl AurisApp {
         }
         self.agent_chat.push_entry(ChatEntry::You(text));
         self.agent_chat.busy = true;
+        self.agent_chat.phase = AgentPhase::Waiting;
+        self.agent_chat.speed.reset();
+        self.agent_chat.streamed_answer = false;
         self.agent_chat.input = TextField::new(String::new());
         self.agent_chat.attachments.clear();
     }
@@ -1311,6 +1505,34 @@ impl AurisApp {
                 return true;
             }
         }
+        let completions = if !composing && focused == AgentField::Chat {
+            controls::slash_matches(self.agent_chat.input.content())
+        } else {
+            Vec::new()
+        };
+        if !completions.is_empty() {
+            let selected = self.agent_chat.controls.slash_selected % completions.len();
+            match key {
+                "up" => {
+                    self.agent_chat.controls.slash_selected =
+                        (selected + completions.len() - 1) % completions.len();
+                    return true;
+                }
+                "down" => {
+                    self.agent_chat.controls.slash_selected = (selected + 1) % completions.len();
+                    return true;
+                }
+                "tab" => {
+                    self.accept_agent_completion(&completions[selected].fill);
+                    return true;
+                }
+                "enter" if completions[selected].fill != self.agent_chat.input.content() => {
+                    self.accept_agent_completion(&completions[selected].fill);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if !composing && key == "tab" && event.keystroke.modifiers.shift {
             self.agent_mode(self.settings.agent.policy.mode.next());
             return true;
@@ -1330,10 +1552,21 @@ impl AurisApp {
         }
         let shift = event.keystroke.modifiers.shift;
         let secondary = event.keystroke.modifiers.secondary();
-        self.agent_chat.field_mut().is_some_and(|field| {
-            field.apply_key_with_clipboard(key, shift, secondary, false, cx)
-                != crate::ui::text_field::KeyEffect::Ignored
-        })
+        let effect = self
+            .agent_chat
+            .field_mut()
+            .map(|field| field.apply_key_with_clipboard(key, shift, secondary, false, cx));
+        if effect == Some(crate::ui::text_field::KeyEffect::Changed) {
+            self.agent_chat.controls.slash_selected = 0;
+        }
+        effect.is_some_and(|effect| effect != crate::ui::text_field::KeyEffect::Ignored)
+    }
+
+    fn accept_agent_completion(&mut self, fill: &str) {
+        let length = self.agent_chat.input.content().len();
+        self.agent_chat.input.replace(0..length, fill);
+        self.agent_chat.controls.slash_selected = 0;
+        self.focus_agent_field(AgentField::Chat);
     }
 
     /// The send button and Enter share validation before editing the live session.
@@ -1515,17 +1748,6 @@ impl AurisApp {
                             this.child(self.agent_rules(cx))
                         })
                         .children(rows)
-                        .when(busy, |this| {
-                            this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
-                                self.t(if self.agent_chat.controls.compacting {
-                                    Key::AgentCompacting
-                                } else if self.agent_chat.controls.pending.is_some() {
-                                    Key::AgentAwaitingApproval
-                                } else {
-                                    Key::AgentWorking
-                                }),
-                            ))
-                        })
                         .when(self.agent_chat.entries.is_empty() && !busy, |this| {
                             this.child(
                                 div()
@@ -1539,7 +1761,8 @@ impl AurisApp {
                 ),
             )
             .child(self.agent_approval_view(cx))
-            .child(self.agent_gauge_row(&theme))
+            .child(self.agent_status_row(&theme))
+            .child(self.agent_slash_completions(cx))
             .child(self.agent_input_row(cx))
     }
 
@@ -1549,15 +1772,27 @@ impl AurisApp {
     /// Nothing is drawn before the first turn — a gauge reading zero over an empty transcript
     /// is furniture — and the bar itself only appears when the model's listing said how big
     /// the window is, because a bar with an invented ceiling would be a number wearing a lie.
-    fn agent_gauge_row(&self, theme: &Theme) -> AnyElement {
-        if self.agent_chat.tokens_in == 0 && self.agent_chat.tokens_out == 0 {
-            return div().into_any_element();
-        }
+    fn agent_status_row(&self, theme: &Theme) -> AnyElement {
         let ratio = self.agent_chat.context_ratio();
-        let mut row = div()
+        let phase = if self.agent_chat.controls.compacting {
+            Key::AgentCompacting
+        } else if self.agent_chat.controls.pending.is_some() {
+            Key::AgentAwaitingApproval
+        } else {
+            match self.agent_chat.phase {
+                AgentPhase::Idle => Key::AgentPhaseIdle,
+                AgentPhase::Waiting => Key::AgentPhaseWaiting,
+                AgentPhase::Prefill => Key::AgentPhasePrefill,
+                AgentPhase::Thinking => Key::AgentPhaseThinking,
+                AgentPhase::Decode => Key::AgentPhaseDecode,
+                AgentPhase::Tool => Key::AgentPhaseTool,
+            }
+        };
+        let active = self.agent_chat.busy || self.agent_chat.controls.compacting;
+        let row = div()
             .flex()
             .items_center()
-            .justify_end()
+            .justify_between()
             .gap_2()
             .px_2()
             .py_0p5()
@@ -1565,13 +1800,35 @@ impl AurisApp {
             .border_color(theme.border_subtle)
             .text_xs()
             .text_color(theme.text_faint)
-            .child(format!(
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_color(if active {
+                                theme.accent
+                            } else {
+                                theme.text_faint
+                            })
+                            .child("●"),
+                    )
+                    .child(self.t(phase)),
+            );
+        let mut counters = div().flex().items_center().gap_2();
+        if let Some(rate) = self.agent_chat.speed.rate().filter(|_| active) {
+            counters = counters.child(format!("{:>3.0} tok/s", rate.max(1.0)));
+        }
+        if self.agent_chat.tokens_in > 0 || self.agent_chat.tokens_out > 0 {
+            counters = counters.child(format!(
                 "↑ {} ↓ {}",
                 self.agent_chat.tokens_in, self.agent_chat.tokens_out
             ));
+        }
         if let Some(ratio) = ratio {
             const GAUGE_WIDTH: f32 = 96.0;
-            row = row
+            counters = counters
                 .child(
                     div()
                         .w(px(GAUGE_WIDTH))
@@ -1588,7 +1845,7 @@ impl AurisApp {
                 )
                 .child(format!("{:>3.0}%", ratio * 100.0));
         }
-        row.into_any_element()
+        row.child(counters).into_any_element()
     }
 
     /// One transcript row. A tool row with an answer opens to the whole of it on a click —
@@ -1601,9 +1858,24 @@ impl AurisApp {
         window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        let opened = self.agent_chat.expanded.contains(&index);
+        let openable = matches!(entry, ChatEntry::Reasoning(_))
+            || matches!(entry, ChatEntry::Tool { args, detail, .. } if !args.is_empty() || !detail.is_empty());
+        let chevron = if opened { "▾" } else { "▸" };
         let (colour, text): (gpui::Hsla, String) = match entry {
             ChatEntry::You(text) => (theme.accent_text, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
+            ChatEntry::Reasoning(reasoning) => (
+                theme.text_muted,
+                format!(
+                    "{chevron} ✳ {}{}",
+                    self.t(Key::AgentReasoningLog),
+                    match log_preview(reasoning) {
+                        preview if preview.is_empty() => String::new(),
+                        preview => format!(" — {preview}"),
+                    }
+                ),
+            ),
             ChatEntry::Status(text) => (theme.text_muted, text.clone()),
             ChatEntry::Tool { name, ok, line, .. } => {
                 let mark = match (*ok, line.is_empty()) {
@@ -1611,17 +1883,41 @@ impl AurisApp {
                     (true, false) => "✓",
                     (false, false) => "✗",
                 };
-                (theme.text_muted, format!("{mark} {name}  {line}"))
+                let disclosure = if openable {
+                    format!("{chevron} ")
+                } else {
+                    String::new()
+                };
+                (
+                    theme.text_muted,
+                    format!("{disclosure}{mark} {name}  {line}"),
+                )
             }
             ChatEntry::Error(message) => (theme.danger, message.clone()),
             ChatEntry::Note(key) => (theme.warning, self.t(*key).to_string()),
         };
         let bordered = matches!(entry, ChatEntry::You(_));
-        let opened = self.agent_chat.expanded.contains(&index);
-        let openable = matches!(entry, ChatEntry::Tool { detail, .. } if !detail.is_empty());
-        let detail = match entry {
-            ChatEntry::Tool { detail, .. } if opened => Some(detail.clone()),
-            _ => None,
+        let details = match entry {
+            ChatEntry::Reasoning(text) if opened => {
+                vec![(None, text.clone())]
+            }
+            ChatEntry::Tool { args, detail, .. } if opened => {
+                let mut sections = Vec::new();
+                if !args.is_empty() {
+                    sections.push((
+                        Some(self.t(Key::AgentToolArguments).to_string()),
+                        args.clone(),
+                    ));
+                }
+                if !detail.is_empty() {
+                    sections.push((
+                        Some(self.t(Key::AgentToolResult).to_string()),
+                        detail.clone(),
+                    ));
+                }
+                sections
+            }
+            _ => Vec::new(),
         };
         let body: AnyElement = match entry {
             ChatEntry::Agent(_) => super::agent_markdown::render(
@@ -1684,7 +1980,7 @@ impl AurisApp {
                     )
                 },
             )
-            .when_some(detail, |this, detail| {
+            .when(!details.is_empty(), |this| {
                 // Line by line rather than one string: a div's text collapses the newlines a
                 // tool's tables are drawn with.
                 this.child(
@@ -1696,12 +1992,23 @@ impl AurisApp {
                         .text_color(theme.text_muted)
                         .flex()
                         .flex_col()
-                        .children(
-                            detail
-                                .lines()
-                                .map(|line| div().child(line.to_string()))
-                                .collect::<Vec<_>>(),
-                        ),
+                        .children(details.into_iter().enumerate().map(
+                            |(section, (label, detail))| {
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .when(section > 0, |this| this.mt_1())
+                                    .when_some(label, |this, label| {
+                                        this.child(div().text_color(theme.text_faint).child(label))
+                                    })
+                                    .children(
+                                        detail
+                                            .lines()
+                                            .map(|line| div().child(line.to_string()))
+                                            .collect::<Vec<_>>(),
+                                    )
+                            },
+                        )),
                 )
             })
             .into_any_element()
@@ -1931,6 +2238,62 @@ impl AurisApp {
         list.into_any_element()
     }
 
+    fn agent_slash_completions(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
+        let matches = controls::slash_matches(self.agent_chat.input.content());
+        if matches.is_empty() {
+            return div().into_any_element();
+        }
+        let selected = self.agent_chat.controls.slash_selected % matches.len();
+        let theme = &self.theme;
+        div()
+            .id("agent-slash-completions")
+            .debug_selector(|| "agent-slash-completions".into())
+            .flex()
+            .flex_col()
+            .max_h(px(180.0))
+            .overflow_y_scroll()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.surface_raised)
+            .children(matches.into_iter().enumerate().map(|(index, candidate)| {
+                let fill = candidate.fill.clone();
+                div()
+                    .id(("agent-slash-option", index))
+                    .debug_selector(move || format!("agent-slash-option-{index}"))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .when(index == selected, |this| this.bg(theme.surface_hover))
+                    .hover(|this| this.bg(theme.surface_hover))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            this.accept_agent_completion(&fill);
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .w(px(112.0))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(theme.text)
+                            .child(candidate.label),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_xs()
+                            .text_color(theme.text_faint)
+                            .child(self.t(candidate.description)),
+                    )
+            }))
+            .into_any_element()
+    }
+
     /// The message field and its border, at the bottom of the panel.
     fn agent_input_row(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
@@ -2129,7 +2492,72 @@ impl AurisApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use auris_session::agent_policy::Mode;
     use auris_session::prelude::{Note, Ticks};
+
+    #[gpui::test]
+    fn approval_mode_is_a_dropdown(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_error = Some("offline fixture".into());
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-mode-menu").is_some());
+        assert!(cx.debug_bounds("agent-mode-option-1").is_none());
+        crate::harness::click("agent-mode-menu", cx);
+        assert!(cx.debug_bounds("agent-mode-option-1").is_some());
+        crate::harness::click("agent-mode-option-1", cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.settings.agent.policy.mode, Mode::Edit)
+        });
+    }
+
+    #[gpui::test]
+    fn slash_candidates_are_visible_and_click_to_complete(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.input = TextField::new("/ef");
+            this.focus_agent_field(AgentField::Chat);
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-slash-completions").is_some());
+        crate::harness::click("agent-slash-option-0", cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "/effort ")
+        });
+    }
+
+    #[gpui::test]
+    fn reasoning_and_tool_details_start_collapsed(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.entries = vec![
+                ChatEntry::Reasoning("private working notes".into()),
+                ChatEntry::Tool {
+                    name: "inspect".into(),
+                    args: "{\n  \"bar\": 2\n}".into(),
+                    ok: true,
+                    line: "done".into(),
+                    detail: "measured".into(),
+                },
+            ];
+        });
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.is_empty()));
+        crate::harness::click("agent-line-0", cx);
+        crate::harness::click("agent-line-1", cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.agent_chat.expanded.iter().copied().collect::<Vec<_>>(),
+                vec![0, 1]
+            );
+        });
+    }
 
     #[gpui::test]
     fn copy_answer_keeps_all_markdown_after_resizing(cx: &mut gpui::TestAppContext) {
@@ -2205,6 +2633,7 @@ mod tests {
                 ChatEntry::Agent(answer.repeat(40)),
                 ChatEntry::Tool {
                     name: "preview".into(),
+                    args: "{}".into(),
                     ok: true,
                     line: "finished".into(),
                     detail: "Audio preview details".into(),
@@ -2586,11 +3015,94 @@ mod tests {
     }
 
     #[test]
+    fn streamed_phases_reasoning_and_tool_arguments_cross_the_wire() {
+        assert_eq!(
+            parse_event(r#"{"event":"phase","phase":"prefill"}"#),
+            Some(AgentEvent::Phase {
+                phase: AgentPhase::Prefill
+            })
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"reasoning_delta","text":"checking"}"#),
+            Some(AgentEvent::ReasoningDelta {
+                text: "checking".into()
+            })
+        );
+        assert_eq!(
+            parse_event(r#"{"event":"call","tool":"inspect","args":"{\"bar\":2}"}"#),
+            Some(AgentEvent::Call {
+                tool: "inspect".into(),
+                args: "{\n  \"bar\": 2\n}".into()
+            })
+        );
+    }
+
+    #[test]
+    fn streamed_logs_are_grouped_and_disclosures_start_closed() {
+        let mut chat = AgentChat {
+            busy: true,
+            ..Default::default()
+        };
+        chat.absorb(
+            AgentEvent::ReasoningDelta {
+                text: "first ".into(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::ReasoningDelta {
+                text: "second".into(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::TextDelta {
+                text: "answer".into(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::Answer {
+                text: "answer".into(),
+                input_tokens: 20,
+                output_tokens: 4,
+            },
+            None,
+            false,
+        );
+
+        assert_eq!(
+            chat.entries,
+            vec![
+                ChatEntry::Reasoning("first second".into()),
+                ChatEntry::Agent("answer".into())
+            ]
+        );
+        assert!(chat.expanded.is_empty());
+    }
+
+    #[test]
+    fn speed_uses_a_stable_recent_window() {
+        let mut speed = SpeedMeter::default();
+        let start = Instant::now();
+        speed.record_at(start, 50);
+        speed.record_at(start + Duration::from_secs(1), 10);
+        speed.record_at(start + Duration::from_secs(2), 10);
+        assert!((speed.rate().unwrap() - 10.0).abs() < 0.01);
+        speed.reset();
+        assert_eq!(speed.rate(), None);
+    }
+
+    #[test]
     fn a_call_row_is_filled_in_by_its_result() {
         let mut chat = AgentChat::default();
         chat.absorb(
             AgentEvent::Call {
                 tool: "compose".to_string(),
+                args: "{}".to_string(),
             },
             None,
             false,
@@ -2646,6 +3158,7 @@ mod tests {
         chat.absorb(
             AgentEvent::Call {
                 tool: "compose".to_string(),
+                args: "{}".to_string(),
             },
             None,
             false,

@@ -40,6 +40,7 @@ impl SettingsWindow {
             prefs.context_tokens = draft.context_tokens;
             prefs.output_tokens = draft.output_tokens;
             prefs.thinking = draft.thinking;
+            prefs.effort = draft.effort;
             app.agent_chat.load_preferences(&prefs);
             app.agent_apply_settings();
             app.agent_chat.models.clear();
@@ -189,27 +190,40 @@ impl SettingsWindow {
                 ),
             );
             rows.push(note(self.t(Key::AgentOutputTokensHelp), &theme));
-            rows.push(section_title(self.t(Key::AgentThinking), &theme));
-            let thinking = self.agent.prefs.thinking;
-            let choices = [
-                (None, Key::AgentThinkingAuto),
-                (Some(false), Key::AgentThinkingOff),
-                (Some(true), Key::AgentThinkingOn),
-            ]
-            .into_iter()
-            .map(|(value, key)| (value, self.t(key).to_owned(), String::new()))
-            .collect();
-            rows.push(self.dropdown(
-                "agent-thinking",
-                choices,
-                &thinking,
-                |this, value, cx| {
-                    this.agent.prefs.thinking = value;
-                    cx.notify();
-                },
-                cx,
-            ));
         }
+        rows.push(section_title(self.t(Key::AgentEffort), &theme));
+        let effort = self.agent.prefs.effort;
+        let choices = [
+            ReasoningEffort::Default,
+            ReasoningEffort::None,
+            ReasoningEffort::Minimal,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::Xhigh,
+            ReasoningEffort::Max,
+        ]
+        .into_iter()
+        .map(|value| {
+            (
+                value,
+                self.t(crate::ui::agent_chat::controls::effort_key(value))
+                    .to_owned(),
+                String::new(),
+            )
+        })
+        .collect();
+        rows.push(self.dropdown(
+            "agent-effort",
+            choices,
+            &effort,
+            |this, value, cx| {
+                this.agent.prefs.effort = value;
+                this.agent.prefs.thinking = None;
+                cx.notify();
+            },
+            cx,
+        ));
         rows.push(
             button(
                 "agent-apply",

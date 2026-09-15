@@ -1838,6 +1838,7 @@ new のオプション
     AgentEditMode { en: "Edit", ja: "編集" }
     AgentPlanMode { en: "Plan", ja: "プラン" }
     AgentBypassMode { en: "Bypass", ja: "バイパス" }
+    AgentApprovalMode { en: "Approval", ja: "承認" }
     AgentPermissions { en: "Permissions…", ja: "操作の許可…" }
     AgentPermissionHelp { en: "Deny rules always win. Plan blocks changes. Read-only asks before changes; Edit allows ordinary edits. Bypass skips confirmation. Click a rule to cycle Default → Allow → Deny. Keyboard: Shift+Tab changes mode; /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。プランは変更を禁止、読み取り専用は変更前に確認、編集は通常の編集を許可、バイパスは確認を省略します。ルールはクリックで 標準 → 許可 → 禁止。Shift+Tabでモード変更。/mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
     AgentRuleDefault { en: "Default", ja: "標準" }
@@ -1865,6 +1866,31 @@ new のオプション
     AgentThinkingAuto { en: "Model default", ja: "モデルの標準設定" }
     AgentThinkingOn { en: "On", ja: "有効" }
     AgentThinkingOff { en: "Off", ja: "無効" }
+    AgentEffort { en: "Reasoning effort", ja: "推論の強さ" }
+    AgentEffortDefault { en: "Default", ja: "標準" }
+    AgentEffortNone { en: "Off", ja: "オフ" }
+    AgentEffortMinimal { en: "Minimal", ja: "最小" }
+    AgentEffortLow { en: "Low", ja: "低" }
+    AgentEffortMedium { en: "Medium", ja: "中" }
+    AgentEffortHigh { en: "High", ja: "高" }
+    AgentEffortXhigh { en: "Extra high", ja: "最高" }
+    AgentEffortMax { en: "Maximum", ja: "最大" }
+    AgentPhaseIdle { en: "Ready", ja: "待機" }
+    AgentPhaseWaiting { en: "Waiting for model", ja: "モデルを待機中" }
+    AgentPhasePrefill { en: "Reading context", ja: "prefill中" }
+    AgentPhaseThinking { en: "Reasoning", ja: "思考中" }
+    AgentPhaseDecode { en: "Generating", ja: "decode中" }
+    AgentPhaseTool { en: "Running tool", ja: "ツール実行中" }
+    AgentReasoningLog { en: "Reasoning", ja: "思考ログ" }
+    AgentToolArguments { en: "Arguments", ja: "ツール仕様" }
+    AgentToolResult { en: "Result", ja: "実行結果" }
+    AgentSlashMode { en: "Change approval mode", ja: "承認モードを切り替える" }
+    AgentSlashEffort { en: "Change reasoning effort", ja: "推論の強さを切り替える" }
+    AgentSlashPermissions { en: "Show permission rules", ja: "操作の許可ルールを表示する" }
+    AgentSlashAllow { en: "Always allow an operation", ja: "操作を常に許可する" }
+    AgentSlashDeny { en: "Always deny an operation", ja: "操作を常に拒否する" }
+    AgentSlashDefault { en: "Reset an operation rule", ja: "操作ルールを標準に戻す" }
+    AgentSlashCompact { en: "Summarize earlier context", ja: "以前の文脈を要約する" }
     AgentKeyEnvLabel { en: "API key variable", ja: "APIキーの環境変数" }
     AgentWorking { en: "Working…", ja: "作業中…" }
     AgentEnded { en: "The agent process ended.", ja: "エージェントのプロセスが終了しました。" }

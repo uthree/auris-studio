@@ -50,6 +50,7 @@ clack-plugin = "0.1.1"
 bytemuck = { version = "1.16", features = ["derive"] }
 cpal = "0.18"
 crossbeam-channel = "0.5"
+futures = "0.3"
 flac-codec = "1.3"
 hound = "3.5"
 ureq = { version = "2.12", features = ["json"] }
