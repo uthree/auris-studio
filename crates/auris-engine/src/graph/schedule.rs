@@ -11,8 +11,101 @@ use std::sync::Arc;
 use auris_core::AudioBuffer;
 use auris_core::param::db_to_gain;
 use auris_core::plugin::NoteEvent;
-use auris_core::project::{AudioClip, AudioSourceBank, FadeCurve, MidiClip};
+use auris_core::project::{
+    AudioClip, AudioSourceBank, ClipCurve, ClipId, FadeCurve, MidiClip, NoteTransform,
+};
 use auris_core::time::{SignatureMap, TempoMap, Ticks};
+
+use crate::error::EngineError;
+
+/// Largest flattened event list one instrument track may allocate.
+///
+/// One million events occupy tens of megabytes and represent hours of dense MIDI. Keeping the
+/// ceiling per track prevents a compact project file from requesting gigabytes while preserving
+/// realistic long-form arrangements.
+pub(super) const MAX_SCHEDULED_EVENTS_PER_TRACK: usize = 1_000_000;
+
+/// Largest flattened event collection retained by a complete render graph.
+pub(super) const MAX_SCHEDULED_EVENTS_PER_PROJECT: usize = 4_000_000;
+
+/// Largest audio-window collection retained by a complete render graph.
+///
+/// This is a renderer resource boundary rather than a project-file invariant: an arrangement
+/// may validly contain more individually safe clips than one graph can hold at once.
+pub(super) const MAX_AUDIO_WINDOWS_PER_PROJECT: usize = 100_000;
+
+fn ensure_event_budget(
+    clip: ClipId,
+    current: usize,
+    additional: u128,
+) -> Result<usize, EngineError> {
+    let events = (current as u128).saturating_add(additional);
+    if events > MAX_SCHEDULED_EVENTS_PER_TRACK as u128 {
+        return Err(EngineError::ScheduleTooLarge {
+            clip: clip.0,
+            events,
+            limit: MAX_SCHEDULED_EVENTS_PER_TRACK,
+        });
+    }
+    Ok(events as usize)
+}
+
+fn reserve_events(
+    out: &mut Vec<ScheduledEvent>,
+    clip: ClipId,
+    additional: usize,
+) -> Result<(), EngineError> {
+    let events = ensure_event_budget(clip, out.len(), additional as u128)?;
+    out.try_reserve(additional)
+        .map_err(|_| EngineError::ScheduleAllocation {
+            clip: clip.0,
+            events,
+        })
+}
+
+fn pitch_contour_points(transforms: &[NoteTransform]) -> u128 {
+    transforms
+        .iter()
+        .map(|transform| match transform {
+            NoteTransform::Pitch { settings } => settings.volume_contour.points().len() as u128,
+            NoteTransform::ForDrumVoice { transforms, .. } => pitch_contour_points(transforms),
+            _ => 0,
+        })
+        .fold(0, u128::saturating_add)
+}
+
+fn curve_event_upper_bound(
+    clip: &MidiClip,
+    which: ClipCurve,
+    tempo_map: &TempoMap,
+) -> Result<u128, EngineError> {
+    let passes = auris_core::project::loop_passes(clip.length, clip.loop_end).count() as u128;
+    let total_ticks = clip.sounding_length().raw().max(0) as u128;
+    let step = auris_core::project::CURVE_STEP.raw().max(1) as u128;
+    let mut events = total_ticks
+        .div_ceil(step)
+        .saturating_add(passes.saturating_mul(5))
+        .saturating_add((clip.curve(which).len() as u128).saturating_mul(passes));
+
+    if clip.has_generated_curve(which) {
+        let notes = clip.looped_note_instances()? as u128;
+        events = events
+            .saturating_add(notes.saturating_mul(4))
+            .saturating_add(notes.saturating_mul(pitch_contour_points(&clip.transforms)));
+        let start = tempo_map.ticks_to_seconds(clip.start).0;
+        let end = tempo_map
+            .ticks_to_seconds(clip.start + clip.sounding_length())
+            .0;
+        let seconds = (end - start).max(0.0);
+        let five_ms_samples = if seconds.is_finite() {
+            (seconds / 0.005).ceil() as u128
+        } else {
+            u128::MAX
+        };
+        events = events.saturating_add(five_ms_samples);
+    }
+    Ok(events)
+}
 
 /// A note event pinned to an absolute position on the timeline.
 ///
@@ -87,70 +180,101 @@ pub(super) fn schedule_clip(
     signatures: &SignatureMap,
     sample_rate: f64,
     out: &mut Vec<ScheduledEvent>,
-) {
+) -> Result<(), EngineError> {
     if clip.muted || clip.length <= Ticks::ZERO {
-        return;
+        return Ok(());
     }
-    // Which notes a clip actually plays is `MidiClip`'s own rule, asked rather than repeated: the
-    // MIDI writer asks the same question, and an export that answered it differently from the
-    // renderer would write a file that is not the piece you can hear. The tempo is the one in
-    // force at the clip — the transforms' humanisation is milliseconds, and this is where
-    // milliseconds meet ticks.
-    for note in clip.sounding_notes_with_meter(tempo_map.bpm_at(clip.start), signatures.clone()) {
-        let start_tick = clip.start + note.start;
-        let end_tick = clip.start + note.end();
-        let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
-        // A note must occupy at least one frame or the instrument would see the release before
-        // it ever produced a sample.
-        let end = tempo_map
-            .ticks_to_samples(end_tick, sample_rate)
-            .raw()
-            .max(start + 1);
-        out.push(ScheduledEvent {
-            frame: start,
-            event: NoteEvent::NoteOn {
-                frame: 0,
-                pitch: note.pitch,
-                velocity: note.velocity.clamp(0.0, 1.0),
-            },
-        });
-        out.push(ScheduledEvent {
-            frame: end,
-            event: NoteEvent::NoteOff {
-                frame: 0,
-                pitch: note.pitch,
-            },
-        });
-    }
-    // The curves the clip actually carries, sampled the same way and by the same rule — asked of
-    // the clip rather than worked out here, so the roll drawing a curve and the renderer playing
-    // it read one answer.
-    for which in clip.performance_curves() {
-        for (at, value) in clip.sounding_performance_curve_events(
-            which,
-            auris_core::project::CURVE_STEP,
-            tempo_map,
-            signatures,
-        ) {
-            let frame = tempo_map
-                .ticks_to_samples(clip.start + at, sample_rate)
-                .raw();
+    let initial_len = out.len();
+    let note_events =
+        clip.looped_note_instances()?
+            .checked_mul(2)
+            .ok_or(EngineError::ScheduleTooLarge {
+                clip: clip.id.0,
+                events: u128::MAX,
+                limit: MAX_SCHEDULED_EVENTS_PER_TRACK,
+            })?;
+    reserve_events(out, clip.id, note_events)?;
+
+    let scheduled = (|| {
+        // Which notes a clip actually plays is `MidiClip`'s own rule, asked rather than repeated:
+        // the MIDI writer asks the same question, and an export that answered it differently from
+        // the renderer would write a file that is not the piece you can hear. The tempo is the one
+        // in force at the clip — the transforms' humanisation is milliseconds, and this is where
+        // milliseconds meet ticks.
+        for note in clip.sounding_notes_with_meter(tempo_map.bpm_at(clip.start), signatures.clone())
+        {
+            reserve_events(out, clip.id, 2)?;
+            let start_tick = clip.start + note.start;
+            let end_tick = clip.start + note.end();
+            let start = tempo_map.ticks_to_samples(start_tick, sample_rate).raw();
+            // A note must occupy at least one frame or the instrument would see the release before
+            // it ever produced a sample.
+            let end = tempo_map
+                .ticks_to_samples(end_tick, sample_rate)
+                .raw()
+                .max(start.saturating_add(1));
             out.push(ScheduledEvent {
-                frame,
-                event: match which {
-                    auris_core::project::ClipCurve::Bend => NoteEvent::PitchBend {
-                        frame: 0,
-                        semitones: value,
-                    },
-                    auris_core::project::ClipCurve::Controller(number) => NoteEvent::Controller {
-                        frame: 0,
-                        number,
-                        value,
-                    },
+                frame: start,
+                event: NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: note.pitch,
+                    velocity: note.velocity.clamp(0.0, 1.0),
+                },
+            });
+            out.push(ScheduledEvent {
+                frame: end,
+                event: NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: note.pitch,
                 },
             });
         }
+        // The curves the clip actually carries, sampled the same way and by the same rule — asked
+        // of the clip rather than worked out here, so the roll drawing a curve and the renderer
+        // playing it read one answer.
+        for which in clip.performance_curves() {
+            let upper_bound = curve_event_upper_bound(clip, which, tempo_map)?;
+            let reserved = ensure_event_budget(clip.id, out.len(), upper_bound)?;
+            out.try_reserve(reserved - out.len())
+                .map_err(|_| EngineError::ScheduleAllocation {
+                    clip: clip.id.0,
+                    events: reserved,
+                })?;
+            let curve_events = clip.sounding_performance_curve_events(
+                which,
+                auris_core::project::CURVE_STEP,
+                tempo_map,
+                signatures,
+            );
+            reserve_events(out, clip.id, curve_events.len())?;
+            for (at, value) in curve_events {
+                let frame = tempo_map
+                    .ticks_to_samples(clip.start + at, sample_rate)
+                    .raw();
+                out.push(ScheduledEvent {
+                    frame,
+                    event: match which {
+                        auris_core::project::ClipCurve::Bend => NoteEvent::PitchBend {
+                            frame: 0,
+                            semitones: value,
+                        },
+                        auris_core::project::ClipCurve::Controller(number) => {
+                            NoteEvent::Controller {
+                                frame: 0,
+                                number,
+                                value,
+                            }
+                        }
+                    },
+                });
+            }
+        }
+        Ok(())
+    })();
+    if scheduled.is_err() {
+        out.truncate(initial_len);
     }
+    scheduled
 }
 
 /// Rank used to break ties between events landing on the same frame.
@@ -196,10 +320,11 @@ pub(super) fn resolve_audio_clip(
     tempo_map: &TempoMap,
     sample_rate: f64,
     source_rate: f64,
+    project_windows_before_track: usize,
     out: &mut Vec<RenderAudioClip>,
-) {
+) -> Result<(), EngineError> {
     if clip.muted {
-        return;
+        return Ok(());
     }
     // How far this clip's audio is stretched, and therefore which copy of the source it plays.
     // The stretched copies are made where a stretcher may be run at all — the session, off the
@@ -223,7 +348,7 @@ pub(super) fn resolve_audio_clip(
                     clip.name,
                     clip.source.0
                 );
-                return;
+                return Ok(());
             }
         },
     };
@@ -245,17 +370,32 @@ pub(super) fn resolve_audio_clip(
     let source_offset = convert(clip.offset_frames).min(available);
     let length = convert(clip.length_frames).min(available - source_offset);
     if length == 0 {
-        return;
+        return Ok(());
     }
     let start = clip.start.max_zero();
     // How long one pass is on the musical grid, which is what `loop_end` is measured against.
     let content = tempo_map.seconds_to_ticks(auris_core::time::Seconds(
         tempo_map.ticks_to_seconds(start).0 + length as f64 / sample_rate.max(1.0),
     )) - start;
-    let passes: Vec<(Ticks, Ticks)> =
-        auris_core::project::loop_passes(content, clip.loop_end).collect();
-    let last = passes.len().saturating_sub(1);
-    for (index, (offset, span)) in passes.into_iter().enumerate() {
+    let passes = auris_core::project::validated_loop_pass_count(clip.id, content, clip.loop_end)?;
+    let project_windows = (project_windows_before_track as u128)
+        .saturating_add(out.len() as u128)
+        .saturating_add(passes as u128);
+    if project_windows > MAX_AUDIO_WINDOWS_PER_PROJECT as u128 {
+        return Err(EngineError::ProjectAudioScheduleTooLarge {
+            windows: project_windows,
+            limit: MAX_AUDIO_WINDOWS_PER_PROJECT,
+        });
+    }
+    out.try_reserve(passes)
+        .map_err(|_| EngineError::AudioScheduleAllocation {
+            clip: clip.id.0,
+            windows: out.len().saturating_add(passes),
+        })?;
+    let last = passes.saturating_sub(1);
+    for (index, (offset, span)) in
+        auris_core::project::loop_passes(content, clip.loop_end).enumerate()
+    {
         let from = tempo_map
             .ticks_to_samples(start + offset, sample_rate)
             .raw();
@@ -291,6 +431,7 @@ pub(super) fn resolve_audio_clip(
             fade_out_curve: clip.fade_out_curve,
         });
     }
+    Ok(())
 }
 
 /// Largest number of events that can fall inside any window of `window` frames.
@@ -369,7 +510,7 @@ mod tests {
         let meter = SignatureMap::constant(TimeSignature::new(6, 8));
         let tempo = TempoMap::default();
         let mut events = Vec::new();
-        schedule_clip(&clip, &tempo, &meter, 48_000.0, &mut events);
+        schedule_clip(&clip, &tempo, &meter, 48_000.0, &mut events).unwrap();
         let notes: Vec<_> = clip.sounding_notes_with_meter(120.0, meter).collect();
         assert_eq!(events.len(), notes.len() * 2);
         assert!(notes.len() > clip.notes.len() * 2);
@@ -438,8 +579,10 @@ mod tests {
             &project.tempo_map,
             48_000.0,
             48_000.0,
+            0,
             &mut out,
-        );
+        )
+        .unwrap();
         let played = out.first().expect("one pass");
         assert_eq!(played.length, 96_000, "the stretch was not played");
         assert_eq!(played.buffer.frame_count(), 96_000, "the wrong copy");
@@ -458,8 +601,10 @@ mod tests {
             &project.tempo_map,
             48_000.0,
             48_000.0,
+            0,
             &mut out,
-        );
+        )
+        .unwrap();
         assert_eq!(out.first().expect("one pass").length, 48_000);
     }
 
@@ -669,6 +814,20 @@ mod tests {
     }
 
     #[test]
+    fn the_track_event_budget_reports_the_clip_before_reserving() {
+        let error = ensure_event_budget(ClipId(42), MAX_SCHEDULED_EVENTS_PER_TRACK, 1)
+            .expect_err("one event past the track budget must be rejected");
+        assert!(matches!(
+            error,
+            EngineError::ScheduleTooLarge {
+                clip: 42,
+                events,
+                limit: MAX_SCHEDULED_EVENTS_PER_TRACK,
+            } if events == MAX_SCHEDULED_EVENTS_PER_TRACK as u128 + 1
+        ));
+    }
+
+    #[test]
     fn a_looped_audio_clip_becomes_one_window_per_pass() {
         let mut project = Project::new("Graph", 48_000.0);
         let track = project.add_audio_track("Drums");
@@ -712,6 +871,93 @@ mod tests {
         assert_eq!((clips[0].fade_in, clips[0].fade_out), (480, 0));
         assert_eq!((clips[1].fade_in, clips[1].fade_out), (0, 0));
         assert_eq!((clips[2].fade_in, clips[2].fade_out), (0, 480));
+    }
+
+    #[test]
+    fn an_audio_loop_over_the_pass_budget_is_not_partially_scheduled() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_audio_track("Hostile");
+        let source = project.add_audio_source(
+            "loop",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        project.audio_clip_mut(clip).unwrap().loop_end = Ticks(i64::MAX);
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(48_000, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+        assert!(matches!(graph.tracks()[0].source, RenderSource::Silence));
+    }
+
+    #[test]
+    fn the_complete_graph_audio_budget_returns_an_explicit_diagnostic() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_audio_track("One more");
+        let source = project.add_audio_source(
+            "one frame",
+            auris_core::AssetPath::inside("Audio/one.wav"),
+            1,
+            48_000.0,
+            2,
+        );
+        let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1, 48_000.0)));
+        let mut out = Vec::new();
+
+        let error = resolve_audio_clip(
+            project.audio_clip(clip).unwrap(),
+            &bank,
+            &project.tempo_map,
+            48_000.0,
+            48_000.0,
+            MAX_AUDIO_WINDOWS_PER_PROJECT,
+            &mut out,
+        )
+        .expect_err("one window past the complete graph budget must be diagnosed");
+
+        assert!(matches!(
+            error,
+            EngineError::ProjectAudioScheduleTooLarge {
+                windows,
+                limit: MAX_AUDIO_WINDOWS_PER_PROJECT,
+            } if windows == MAX_AUDIO_WINDOWS_PER_PROJECT as u128 + 1
+        ));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn many_individually_safe_audio_loops_do_not_exhaust_graph_memory() {
+        let mut project = Project::new("Graph", 48_000.0);
+        let track = project.add_audio_track("Hostile aggregate");
+        let source = project.add_audio_source(
+            "one frame",
+            auris_core::AssetPath::inside("Audio/one.wav"),
+            1,
+            48_000.0,
+            2,
+        );
+        for _ in 0..7 {
+            let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+            project.audio_clip_mut(clip).unwrap().loop_end = Ticks(16_384);
+        }
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1, 48_000.0)));
+
+        let graph = RenderGraph::build(&project, &bank, &testkit::registry(), 512);
+
+        assert!(matches!(graph.tracks()[0].source, RenderSource::Silence));
+        assert!(matches!(
+            graph.resource_error(),
+            Some(EngineError::ProjectAudioScheduleTooLarge {
+                windows: 114_688,
+                limit: MAX_AUDIO_WINDOWS_PER_PROJECT,
+            })
+        ));
     }
 
     #[test]

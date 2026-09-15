@@ -85,13 +85,19 @@ impl Session {
     pub fn set_loop_enabled(&mut self, enabled: bool) {
         self.dirty = true;
         self.project.loop_enabled = enabled;
-        if enabled && self.project.loop_region.is_none() {
+        let seeded_region = enabled && self.project.loop_region.is_none();
+        if seeded_region {
             // Bars one and two, asked for as bars rather than as twice a bar length: with a meter
             // change in the second bar those are not the same span, and the one a person means by
             // "the first two bars" is this one.
             self.project.loop_region = Some((Ticks::ZERO, self.project.signatures.bar_start(3)));
         }
-        self.history.sync_loop(&self.project);
+        self.history.sync_loop_enabled(&self.project);
+        if seeded_region {
+            // Seeding is part of the unrecorded switch, but an existing region is an authored edit.
+            // Fill only absent regions so a later toggle cannot erase their undo/redo snapshots.
+            self.history.seed_missing_loop_regions(&self.project);
+        }
         self.publish_loop();
     }
 
@@ -383,6 +389,27 @@ mod tests {
         assert!(session.project().punch_enabled);
         assert_eq!(session.project().punch_region, punch_region);
         assert_eq!(session.project().grid, Ticks(120));
+    }
+
+    #[test]
+    fn loop_switches_preserve_authored_regions_on_both_history_branches() {
+        let mut session = session();
+        let first = (Ticks::from_beats(4.0), Ticks::from_beats(8.0));
+        let second = (Ticks::from_beats(12.0), Ticks::from_beats(20.0));
+        session.set_loop_region(first.0, first.1);
+        session.set_loop_region(second.0, second.1);
+
+        // The unrecorded switch used to copy the current region into every past snapshot.
+        session.set_loop_enabled(true);
+        assert_eq!(session.undo(), Some(Edit::SetLoopRegion));
+        assert_eq!(session.project().loop_region, Some(first));
+        assert!(session.project().loop_enabled);
+
+        // The same overwrite used to destroy the redo value when the switch changed after Undo.
+        session.set_loop_enabled(false);
+        assert_eq!(session.redo(), Some(Edit::SetLoopRegion));
+        assert_eq!(session.project().loop_region, Some(second));
+        assert!(!session.project().loop_enabled);
     }
 
     #[test]

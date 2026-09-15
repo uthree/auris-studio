@@ -796,10 +796,13 @@ impl AurisApp {
             .child(self.score_layer_tabs(cx))
             .child(
                 div()
+                    .id("drum-toolbar")
+                    .debug_selector(|| "drum-toolbar".to_owned())
                     .flex()
+                    .flex_wrap()
                     .items_center()
-                    .gap_2()
-                    .h(Metrics::PANEL_HEADER_HEIGHT)
+                    .gap_1()
+                    .min_h(Metrics::PANEL_HEADER_HEIGHT)
                     .px_2()
                     .bg(theme.surface_raised)
                     .border_b_1()
@@ -809,6 +812,7 @@ impl AurisApp {
                     .min_w_0()
                     .child(
                         div()
+                            .flex_shrink()
                             .min_w_0()
                             .truncate()
                             .child(format!("{} — {name}", self.t(Key::DrumEditor))),
@@ -1510,6 +1514,34 @@ mod window_tests {
         });
         paint(&app, cx);
         (app, cx, track, clip)
+    }
+
+    #[gpui::test]
+    fn narrow_drum_editor_wraps_without_losing_toolbar_actions(cx: &mut TestAppContext) {
+        let (app, cx, _, _) = fixture(cx);
+        let viewport = size(px(640.0), px(480.0));
+        harness::resize(&app, cx, viewport);
+
+        let toolbar = cx
+            .debug_bounds("drum-toolbar")
+            .expect("the drum toolbar is visible");
+        for selector in [
+            "drum-map-notes",
+            "drum-used-notes",
+            "drum-all-notes",
+            "drum-map-actions",
+            "drum-zoom",
+        ] {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("`{selector}` is visible"));
+            assert!(bounds.size.width > px(0.0));
+            assert!(bounds.left() >= toolbar.left());
+            assert!(bounds.right() <= toolbar.right());
+            assert!(bounds.top() >= toolbar.top());
+            assert!(bounds.bottom() <= toolbar.bottom());
+            assert!(bounds.right() <= viewport.width);
+        }
     }
 
     fn hit_point(

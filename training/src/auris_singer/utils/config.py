@@ -10,9 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 __all__ = ["load_config", "save_config"]
 
 
-def load_config(
-    path: str | Path, overrides: list[str] | None = None
-) -> DictConfig:
+def load_config(path: str | Path, overrides: list[str] | None = None) -> DictConfig:
     """Load a YAML config, resolving an optional ``defaults`` include list.
 
     A config may start with::
@@ -49,8 +47,7 @@ def _load_default(base_dir: Path, entry: Any) -> DictConfig:
     """Resolve one ``defaults`` entry into a config fragment."""
     if not isinstance(entry, DictConfig) and not isinstance(entry, dict):
         raise TypeError(
-            f"each 'defaults' entry must be a mapping like "
-            f"'presets.yml@model: base', got {entry!r}"
+            f"each 'defaults' entry must be a mapping like 'presets.yml@model: base', got {entry!r}"
         )
     fragment = OmegaConf.create({})
     for spec, key in dict(entry).items():

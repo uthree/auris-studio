@@ -32,6 +32,18 @@ macro_rules! messages {
 }
 
 messages! {
+    /// Names the exact plugin folder a removal confirmation applies to.
+    fn remove_plugin_folder_title(path: &str) {
+        en: "Remove plugin folder “{path}”?",
+        ja: "プラグインフォルダ「{path}」を削除しますか？"
+    }
+
+    /// Confirms which plugin search folder was removed.
+    fn plugin_folder_removed(path: &str) {
+        en: "Removed plugin folder: {path}",
+        ja: "プラグインフォルダを削除しました: {path}"
+    }
+
     /// An invalid singer lyric, with its editable note number and recovery instruction.
     fn singer_lyric_error(note: usize, lyric: &str, reason: &str) {
         en: "Cannot sing note {note}, “{lyric}”. {reason}",
@@ -220,6 +232,48 @@ messages! {
     fn would_replace(existing: &str) {
         en: "{existing} already exists. Saving here replaces it, and it cannot be recovered.",
         ja: "{existing} はすでに存在します。ここに保存すると置き換えられ、元に戻すことはできません。"
+    }
+
+    /// Title of the decision to restore one named crash-recovery snapshot.
+    fn recover_title(project: &str) {
+        en: "Recover “{project}”?",
+        ja: "「{project}」を復旧しますか？"
+    }
+
+    /// Explains which saved project a recovery was based on and that it will not be overwritten.
+    fn recovery_from(source: &str) {
+        en: "Auris Studio preserved unsaved changes based on {source} after the previous session ended unexpectedly. Recovering opens a new unsaved project; it does not overwrite that file. Discard recovery permanently deletes this copy.",
+        ja: "前回のセッションが予期せず終了したため、{source} を基にした未保存の変更が保管されています。復旧すると別の未保存プロジェクトとして開き、元のファイルは上書きしません。「復旧データを破棄」を選ぶと、このコピーは完全に削除されます。"
+    }
+
+    /// Status while a crash-recovery snapshot is being read.
+    fn recovering(project: &str) {
+        en: "Recovering “{project}”…",
+        ja: "「{project}」を復旧しています…"
+    }
+
+    /// Status after one crash-recovery snapshot has been restored.
+    fn recovered(project: &str) {
+        en: "Recovered “{project}” as an unsaved project",
+        ja: "「{project}」を未保存のプロジェクトとして復旧しました"
+    }
+
+    /// Recovery succeeded, but one referenced audio file was absent.
+    fn recovered_missing_one(project: &str, missing: &str) {
+        en: "Recovered “{project}” as an unsaved project — missing audio file {missing}",
+        ja: "「{project}」を未保存のプロジェクトとして復旧しました — オーディオファイル {missing} が見つかりません"
+    }
+
+    /// Recovery succeeded, but several referenced audio files were absent.
+    fn recovered_missing_many(project: &str, count: usize) {
+        en: "Recovered “{project}” as an unsaved project — {count} audio files are missing",
+        ja: "「{project}」を未保存のプロジェクトとして復旧しました — {count} 件のオーディオファイルが見つかりません"
+    }
+
+    /// Status after one crash-recovery snapshot has been deliberately deleted.
+    fn recovery_discarded(project: &str) {
+        en: "Discarded recovery for “{project}”",
+        ja: "「{project}」の復旧データを破棄しました"
     }
 
     /// A project saved, but some of its audio could not be brought into the folder with it.
@@ -1022,6 +1076,8 @@ mod tests {
             assert!(note_count(language, 7).contains('7'));
             assert!(exported(language, "a.wav", "00:12.000", -1.25).contains("-1.2"));
             assert!(failed(language, "save", "disk full").contains("disk full"));
+            assert!(recovery_from(language, "song.auris").contains("song.auris"));
+            assert!(recovered_missing_many(language, "Song", 3).contains('3'));
             assert!(
                 opened_missing_many(language, "song.auris", 3).contains('3'),
                 "the count is what the sentence is about"

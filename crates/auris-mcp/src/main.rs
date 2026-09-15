@@ -32,6 +32,11 @@ use rmcp::model::{
 };
 use rmcp::{ServerHandler, ServiceExt, tool, tool_handler, tool_router};
 
+tokio::task_local! {
+    /// Cancellation state for the request currently executing on this async task.
+    static REQUEST_CANCELLATION: std::sync::Arc<toolbox::Cancellation>;
+}
+
 /// Saved projects and rendered audio stay on disk.
 #[derive(Clone, Debug, Default)]
 struct AurisMcp {
@@ -479,7 +484,7 @@ impl AurisMcp {
         blocking(move || Ok(toolbox::list_instruments::run())).await
     }
 
-    /// Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on rescan, cache eviction or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.
+    /// Search sounds by name, library, vendor or tags; all query words must match. Filter by source and library before paging. Returns at most 50 sound IDs for sound_id in add_track/set_instrument/setup_tracks. IDs expire on explicit refresh, a library identity change, bounded handle eviction, or server restart. Each sound.library indexes the response libraries array. Read instrument_diagnostics for scan failures.
     #[tool(input_schema = tool_schema("search_instruments"))]
     async fn search_instruments(
         &self,
@@ -651,10 +656,26 @@ impl ServerHandler for AurisMcp {
         let router = Self::tool_router();
         let known = router.has_route(&name);
         let arguments = serde_json::Value::Object(request.arguments.clone().unwrap_or_default());
+        let protocol_probe = context.ct.clone();
+        let cancellation = std::sync::Arc::new(toolbox::Cancellation::with_probe(move || {
+            protocol_probe.is_cancelled()
+        }));
+        let cancellation_request = std::sync::Arc::clone(&cancellation);
+        let protocol_token = context.ct.clone();
+        // A dropped JoinHandle leaves its task running. That matters when rmcp drops this handler
+        // future on cancellation: the blocking worker still receives the signal and stops before
+        // it can cross the toolbox's commit gate.
+        let cancellation_watcher = tokio::spawn(async move {
+            protocol_token.cancelled().await;
+            cancellation_request.cancel();
+        });
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        recover_argument_error(router.call(call).await, &name, known, Some(&arguments))
+        let result = REQUEST_CANCELLATION
+            .scope(cancellation, router.call(call))
+            .await;
+        cancellation_watcher.abort();
+        recover_argument_error(result, &name, known, Some(&arguments))
     }
-
     fn get_info(&self) -> ServerInfo {
         // Field by field because the type is `non_exhaustive`, which rules the literal out.
         // Named explicitly rather than via `Implementation::from_build_env`, whose `env!` was
@@ -723,10 +744,32 @@ fn recover_argument_error(
 async fn blocking(
     work: impl FnOnce() -> Result<String, String> + Send + 'static,
 ) -> Result<CallToolResult, ErrorData> {
-    let outcome = tokio::task::spawn_blocking(work)
-        .await
-        .map_err(|error| ErrorData::internal_error(error.to_string(), None))?;
-    finished(outcome)
+    finished(run_blocking(work).await?)
+}
+
+/// Runs one synchronous toolbox call with the current MCP cancellation state installed on its
+/// pooled worker thread.
+async fn run_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<Result<T, String>, ErrorData> {
+    let cancellation = REQUEST_CANCELLATION
+        .try_with(std::sync::Arc::clone)
+        .unwrap_or_else(|_| std::sync::Arc::new(toolbox::Cancellation::new()));
+    let observed = std::sync::Arc::clone(&cancellation);
+    tokio::task::spawn_blocking(move || {
+        toolbox::with_cancellation(cancellation, || {
+            if observed.is_cancelled() {
+                return Err("the tool request was cancelled before starting".to_string());
+            }
+            let outcome = work();
+            if observed.is_cancelled() {
+                return Err("the tool request was cancelled before making durable changes".into());
+            }
+            outcome
+        })
+    })
+    .await
+    .map_err(|error| ErrorData::internal_error(error.to_string(), None))
 }
 
 /// Turns a tool's verdict into the result the protocol carries.
@@ -739,6 +782,9 @@ fn finished(outcome: Result<String, String>) -> Result<CallToolResult, ErrorData
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(code) = auris_session::handle_drum_probe_worker() {
+        std::process::exit(code);
+    }
+    if let Some(code) = auris_session::handle_plugin_discovery_worker() {
         std::process::exit(code);
     }
     // Stderr, and only stderr: stdout is the protocol channel, and one stray line on it is a
@@ -925,6 +971,36 @@ mod tests {
         assert!(text.contains("tool_help"), "{text}");
         client.cancel().await.unwrap();
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_cancellation_reaches_the_blocking_worker() {
+        let cancellation = std::sync::Arc::new(toolbox::Cancellation::new());
+        let observed = std::sync::Arc::clone(&cancellation);
+        let worker_observed = std::sync::Arc::clone(&cancellation);
+        let (started, running) = std::sync::mpsc::sync_channel(0);
+
+        let canceller = std::thread::spawn(move || {
+            running.recv().expect("worker start");
+            assert!(observed.cancel());
+        });
+
+        let result = REQUEST_CANCELLATION
+            .scope(
+                cancellation,
+                run_blocking(move || {
+                    started.send(()).expect("test receiver");
+                    while !worker_observed.is_cancelled() {
+                        std::thread::yield_now();
+                    }
+                    Ok::<_, String>("work completed after cancellation")
+                }),
+            )
+            .await
+            .expect("worker task");
+        canceller.join().expect("canceller thread");
+
+        assert!(result.unwrap_err().contains("cancelled"));
     }
 
     #[test]

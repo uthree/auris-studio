@@ -1,0 +1,533 @@
+//! Simplified API for common VST3 hosting tasks.
+//!
+//! This module provides convenience functions that make it easy to get started
+//! with VST3 plugin hosting without needing to understand all the configuration
+//! options and complex APIs.
+//!
+//! ## Quick Examples
+//!
+//! ### Load and play a plugin
+//! ```no_run
+//! use vst3_host::simple;
+//! use vst3_host::midi::MidiChannel;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Load a plugin with sensible defaults
+//! let mut plugin = simple::load_plugin("/path/to/synth.vst3")?;
+//!
+//! // Start processing audio
+//! plugin.start_processing()?;
+//!
+//! // Play a note
+//! plugin.send_midi_note(60, 127, MidiChannel::Ch1)?; // Middle C
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ### Discover plugins easily
+//! ```no_run
+//! use vst3_host::simple;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Find all plugins on the system
+//! let plugins = simple::discover_plugins()?;
+//!
+//! for plugin in plugins {
+//!     println!("Found: {} by {}", plugin.name, plugin.vendor);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+
+use crate::{
+    audio::AudioBuffers,
+    error::{Error, Result},
+    host::Vst3Host,
+    midi::MidiEvent,
+    plugin::{Plugin, PluginInfo},
+};
+use std::path::Path;
+
+/// Load a VST3 plugin with sensible defaults.
+///
+/// This function creates a host with default audio settings and loads the
+/// specified plugin. It's the quickest way to get started with plugin hosting.
+///
+/// # Default Settings
+/// - Sample rate: 44100 Hz
+/// - Block size: 512 samples
+/// - Input channels: 2 (stereo)
+/// - Output channels: 2 (stereo)
+/// - Process isolation: disabled (in-process). Use [`load_plugin_isolated`] to opt in.
+///
+/// # Arguments
+/// * `path` - Path to the VST3 plugin (.vst3 file or directory)
+///
+/// # Returns
+/// A loaded and configured plugin ready for audio processing.
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+/// use vst3_host::midi::MidiChannel;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let mut plugin = simple::load_plugin("/Applications/Dexed.vst3")?;
+/// plugin.start_processing()?;
+/// plugin.send_midi_note(60, 100, MidiChannel::Ch1)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn load_plugin<P: AsRef<Path>>(path: P) -> Result<Plugin> {
+    let mut host = Vst3Host::builder()
+        .sample_rate(44100.0)
+        .block_size(512)
+        .input_channels(2)
+        .output_channels(2)
+        .build()?;
+
+    host.load_plugin(path)
+}
+
+/// Load a plugin with custom audio settings.
+///
+/// This provides a middle ground between the fully automatic `load_plugin()`
+/// and the full control of the host builder pattern.
+///
+/// # Arguments
+/// * `path` - Path to the VST3 plugin
+/// * `sample_rate` - Audio sample rate in Hz (typically 44100 or 48000)
+/// * `block_size` - Audio buffer size (typically 512 or 1024)
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Load with professional audio settings
+/// let mut plugin = simple::load_plugin_with_settings(
+///     "/path/to/plugin.vst3",
+///     48000.0,  // 48kHz sample rate
+///     256       // Small buffer for low latency
+/// )?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn load_plugin_with_settings<P: AsRef<Path>>(
+    path: P,
+    sample_rate: f64,
+    block_size: usize,
+) -> Result<Plugin> {
+    let mut host = Vst3Host::builder()
+        .sample_rate(sample_rate)
+        .block_size(block_size)
+        .input_channels(2)
+        .output_channels(2)
+        .build()?;
+
+    host.load_plugin(path)
+}
+
+/// Load a plugin with crash protection enabled.
+///
+/// This loads the plugin in a separate process, which prevents plugin crashes
+/// from affecting your application. Use this for untested or problematic plugins.
+///
+/// # Arguments
+/// * `path` - Path to the VST3 plugin
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// // Load a potentially unstable plugin safely
+/// let mut plugin = simple::load_plugin_isolated("/path/to/sketchy_plugin.vst3")?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn load_plugin_isolated<P: AsRef<Path>>(path: P) -> Result<Plugin> {
+    let mut host = Vst3Host::builder()
+        .sample_rate(44100.0)
+        .block_size(512)
+        .input_channels(2)
+        .output_channels(2)
+        .with_process_isolation(true) // Force process isolation
+        .build()?;
+
+    host.load_plugin(path)
+}
+
+/// Load a plugin and immediately start playing it through the default audio device.
+///
+/// The quickest way to actually hear a synth: load, then `play`. The returned
+/// [`AudioHandle`](crate::AudioHandle) keeps audio running until dropped, and lets
+/// you control the plugin while it plays.
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::{simple, midi::MidiChannel};
+///
+/// # fn main() -> vst3_host::Result<()> {
+/// let plugin = simple::load_plugin("/path/to/synth.vst3")?;
+/// let audio = simple::play(plugin)?;
+/// audio.lock().send_midi_note(60, 100, MidiChannel::Ch1)?; // middle C
+/// std::thread::sleep(std::time::Duration::from_secs(2));
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "cpal-backend")]
+pub fn play(plugin: Plugin) -> Result<crate::AudioHandle> {
+    let backend = crate::backends::CpalBackend::new()?;
+    let config = crate::audio::AudioConfig {
+        output_channels: 2,
+        input_channels: 0,
+        ..Default::default()
+    };
+    crate::playback::play_with_backend(&backend, plugin, config)
+}
+
+/// Host an effect plugin on live audio input: capture from the default input device, process
+/// through the plugin, and play the result on the default output device.
+///
+/// The instrument counterpart is [`play`]. Returns an [`AudioHandle`](crate::AudioHandle)
+/// that keeps the streams alive and lets you control the plugin; dropping it stops audio.
+#[cfg(feature = "cpal-backend")]
+pub fn play_with_input(plugin: Plugin) -> Result<crate::AudioHandle> {
+    let backend = crate::backends::CpalBackend::new()?;
+    let config = crate::audio::AudioConfig {
+        input_channels: 2,
+        output_channels: 2,
+        ..Default::default()
+    };
+    crate::playback::play_with_input_backend(&backend, plugin, config)
+}
+
+/// Discover all VST3 plugins in the standard system locations.
+///
+/// Scans the platform's standard VST3 directories and returns metadata for each
+/// plugin found. For progress reporting during a long scan, use
+/// [`Vst3Host::discover_plugins_with_callback`](crate::Vst3Host::discover_plugins_with_callback).
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// for info in simple::discover_plugins()? {
+///     println!("Found: {} by {}", info.name, info.vendor);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+pub fn discover_plugins() -> Result<Vec<PluginInfo>> {
+    let mut host = Vst3Host::builder()
+        .scan_default_paths() // Enable scanning system directories
+        .build()?;
+
+    host.discover_plugins()
+}
+
+/// Discover plugins in a specific directory.
+///
+/// # Arguments
+/// * `path` - Directory to scan for VST3 plugins
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let plugins = simple::discover_plugins_in("/my/custom/vst3/folder")?;
+/// println!("{} plugins found", plugins.len());
+/// # Ok(())
+/// # }
+/// ```
+pub fn discover_plugins_in<P: AsRef<Path>>(path: P) -> Result<Vec<PluginInfo>> {
+    let mut host = Vst3Host::builder().add_scan_path(path).build()?;
+
+    host.discover_plugins()
+}
+
+/// Read a plugin's metadata by loading it in this process.
+///
+/// # This loads the plugin
+///
+/// Despite reading like a cheap lookup, this performs a full in-process load — the plugin's
+/// own initialization code runs inside your process. A plugin that `abort()`s or makes a
+/// pure-virtual call while initializing (a licensed plugin failing its auth check, say) takes
+/// the host down with it, and no Rust `catch_unwind` can prevent that.
+///
+/// For an untrusted plugin use [`crate::discovery::probe_plugin_info_isolated`], which does the
+/// same introspection in a throwaway child process, or
+/// [`crate::discovery::discover_plugins_safe`] to scan a whole folder that way. Use this
+/// function when you already trust the plugin (or intend to load it regardless).
+///
+/// # Arguments
+/// * `path` - Path to the VST3 plugin
+///
+/// # Returns
+/// Plugin information including name, vendor, version, and capabilities.
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let info = simple::get_plugin_info("/path/to/plugin.vst3")?;
+/// println!("Plugin: {} v{} by {}", info.name, info.version, info.vendor);
+/// println!("Has GUI: {}", info.has_gui);
+/// println!("Audio I/O: {} in, {} out", info.audio_inputs, info.audio_outputs);
+/// # Ok(())
+/// # }
+/// ```
+pub fn get_plugin_info<P: AsRef<Path>>(path: P) -> Result<PluginInfo> {
+    let path = path.as_ref();
+
+    if !path.exists() {
+        return Err(Error::PluginNotFound(path.display().to_string()));
+    }
+
+    // Create a minimal host just for info gathering
+    let mut host = Vst3Host::builder().build()?;
+
+    // Load plugin to get info, then immediately drop it
+    let plugin = host.load_plugin(path)?;
+    Ok(plugin.info().clone())
+}
+
+/// Check if a plugin path is valid and loadable.
+///
+/// This performs basic validation without actually loading the plugin.
+/// Useful for filtering plugin lists or validating user input.
+///
+/// # Arguments
+/// * `path` - Path to check
+///
+/// # Returns
+/// `true` if the path appears to be a valid VST3 plugin, `false` otherwise.
+///
+/// # Examples
+/// ```no_run
+/// use vst3_host::simple;
+///
+/// if simple::is_valid_plugin("/path/to/plugin.vst3") {
+///     println!("Plugin path looks valid");
+/// } else {
+///     println!("Not a valid VST3 plugin path");
+/// }
+/// ```
+pub fn is_valid_plugin<P: AsRef<Path>>(path: P) -> bool {
+    let path = path.as_ref();
+
+    // Basic checks
+    if !path.exists() {
+        return false;
+    }
+
+    // Check for .vst3 extension
+    if let Some(extension) = path.extension() {
+        if extension.to_string_lossy().to_lowercase() == "vst3" {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Upper bound on one offline render, in total `f32` samples across all output channels.
+///
+/// The `.wav` container itself tops out at a 4 GiB `u32` chunk size, so a render past this
+/// could not be written back out anyway. Bounding it here turns an allocator abort into an
+/// error a caller can handle.
+const MAX_RENDER_SAMPLES: usize = (u32::MAX / 4) as usize;
+
+/// Frame count for an offline render of `duration_secs`, rejecting the durations that would
+/// otherwise reach `Vec::with_capacity` as a request no allocator can serve.
+///
+/// `duration_secs` comes straight from a caller: `f64::INFINITY` saturates through `as usize`
+/// to `usize::MAX` (a capacity-overflow panic), `f64::NAN` casts to `0` and silently renders
+/// nothing, and any absurd-but-finite value asks for tens of gigabytes.
+fn render_frame_count(duration_secs: f64, sample_rate: f64, out_channels: usize) -> Result<usize> {
+    if !duration_secs.is_finite() || duration_secs < 0.0 {
+        return Err(Error::InvalidParameter(format!(
+            "duration must be finite and non-negative, got {duration_secs}"
+        )));
+    }
+    let frames = (duration_secs * sample_rate).round();
+    if !frames.is_finite() || frames < 0.0 {
+        return Err(Error::InvalidParameter(format!(
+            "duration {duration_secs}s at {sample_rate} Hz is not a renderable frame count"
+        )));
+    }
+    let max_frames = MAX_RENDER_SAMPLES / out_channels.max(1);
+    if frames > max_frames as f64 {
+        return Err(Error::InvalidParameter(format!(
+            "duration {duration_secs}s at {sample_rate} Hz is {frames} frames across \
+             {out_channels} channels, past the {max_frames}-frame render limit"
+        )));
+    }
+    Ok(frames as usize)
+}
+
+/// Render a plugin offline to a 32-bit float WAV file.
+///
+/// Drives `process_audio` faster-than-realtime for `duration_secs` (at the plugin's
+/// configured sample rate and block size), starting/stopping processing for you, and writes
+/// the output to `path`. Any `midi` events are sent at the start — pass a held `NoteOn` to
+/// bounce an instrument, or an empty slice for an effect (feed input via the lower-level
+/// `process_audio` loop if you need to process a signal). No audio hardware is used.
+///
+/// `duration_secs` must be finite, non-negative, and short enough that the rendered audio
+/// fits a `.wav` file; anything else is an [`Error::InvalidParameter`].
+///
+/// ```no_run
+/// use vst3_host::{simple, midi::{MidiEvent, MidiChannel}};
+/// # fn main() -> vst3_host::Result<()> {
+/// let mut plugin = simple::load_plugin("/path/synth.vst3")?;
+/// let note = MidiEvent::NoteOn { channel: MidiChannel::Ch1, note: 60, velocity: 100 };
+/// simple::render_to_wav(&mut plugin, 2.0, &[note], "out.wav")?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn render_to_wav<P: AsRef<Path>>(
+    plugin: &mut Plugin,
+    duration_secs: f64,
+    midi: &[MidiEvent],
+    path: P,
+) -> Result<()> {
+    let sample_rate = plugin.sample_rate();
+    let block = plugin.block_size().max(1);
+    let out_channels = plugin.output_channel_count().max(1);
+    let total_frames = render_frame_count(duration_secs, sample_rate, out_channels)?;
+
+    plugin.start_processing()?;
+    for &event in midi {
+        plugin.send_midi_event(event)?;
+    }
+
+    let mut channels: Vec<Vec<f32>> = vec![Vec::with_capacity(total_frames); out_channels];
+    let mut rendered = 0;
+    while rendered < total_frames {
+        let frames = block.min(total_frames - rendered);
+        let mut buffers = AudioBuffers::new(0, out_channels, frames, sample_rate);
+        plugin.process_audio(&mut buffers)?;
+        for (ch, dst) in channels.iter_mut().enumerate() {
+            if let Some(src) = buffers.outputs.get(ch) {
+                dst.extend_from_slice(&src[..frames.min(src.len())]);
+            }
+        }
+        rendered += frames;
+    }
+    plugin.stop_processing()?;
+
+    crate::audio::write_wav(path, &channels, sample_rate as u32)
+}
+
+/// Offline-render a plugin to a WAV while feeding its audio input from an [`InputSource`]
+/// (a generated test signal or a loaded file) — for auditioning/regression-testing effects
+/// with a known input. Like [`render_to_wav`] but with `input_channels` filled each block,
+/// and with the same limits on `duration_secs`.
+///
+/// [`InputSource`]: crate::audio::InputSource
+pub fn render_to_wav_with_input<P: AsRef<Path>>(
+    plugin: &mut Plugin,
+    duration_secs: f64,
+    midi: &[MidiEvent],
+    source: &mut dyn crate::audio::InputSource,
+    path: P,
+) -> Result<()> {
+    let sample_rate = plugin.sample_rate();
+    let block = plugin.block_size().max(1);
+    let out_channels = plugin.output_channel_count().max(1);
+    let in_channels = plugin.info().audio_inputs.max(1) as usize;
+    let total_frames = render_frame_count(duration_secs, sample_rate, out_channels)?;
+
+    plugin.start_processing()?;
+    for &event in midi {
+        plugin.send_midi_event(event)?;
+    }
+
+    let mut channels: Vec<Vec<f32>> = vec![Vec::with_capacity(total_frames); out_channels];
+    let mut rendered = 0;
+    while rendered < total_frames {
+        let frames = block.min(total_frames - rendered);
+        let mut buffers = AudioBuffers::new(in_channels, out_channels, frames, sample_rate);
+        source.fill(&mut buffers.inputs, frames, sample_rate);
+        plugin.process_audio(&mut buffers)?;
+        for (ch, dst) in channels.iter_mut().enumerate() {
+            if let Some(src) = buffers.outputs.get(ch) {
+                dst.extend_from_slice(&src[..frames.min(src.len())]);
+            }
+        }
+        rendered += frames;
+    }
+    plugin.stop_processing()?;
+
+    crate::audio::write_wav(path, &channels, sample_rate as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_plugin() {
+        // Test non-existent path
+        assert!(!is_valid_plugin("/nonexistent/path.vst3"));
+
+        // Test wrong extension
+        assert!(!is_valid_plugin("plugin.dll"));
+        assert!(!is_valid_plugin("plugin.so"));
+
+        // Would need actual plugin files to test positive cases
+    }
+
+    /// `duration_secs` reaches `Vec::with_capacity` through an `as usize` cast that saturates:
+    /// `INFINITY` became `usize::MAX` (a capacity-overflow panic), `NAN` became `0` (a silent
+    /// empty render), and any absurd finite value asked the allocator for tens of gigabytes.
+    #[test]
+    fn render_frame_count_rejects_unrenderable_durations() {
+        for bad in [
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -1.0,
+            1.0e12,
+            f64::MAX,
+        ] {
+            assert!(
+                render_frame_count(bad, 44_100.0, 2).is_err(),
+                "duration {bad} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn render_frame_count_accepts_ordinary_durations() {
+        assert_eq!(render_frame_count(0.0, 44_100.0, 2).unwrap(), 0);
+        assert_eq!(render_frame_count(2.0, 44_100.0, 2).unwrap(), 88_200);
+        assert_eq!(render_frame_count(0.5, 48_000.0, 6).unwrap(), 24_000);
+        // Right at the limit: the largest render that still fits a .wav.
+        let max_frames = MAX_RENDER_SAMPLES / 2;
+        let secs = max_frames as f64 / 44_100.0;
+        assert!(render_frame_count(secs, 44_100.0, 2).is_ok());
+    }
+
+    #[test]
+    fn test_host_creation() {
+        // Test that we can create hosts with different configurations
+        let host1 = Vst3Host::builder()
+            .sample_rate(44100.0)
+            .block_size(512)
+            .build();
+        assert!(host1.is_ok());
+
+        let host2 = Vst3Host::builder()
+            .sample_rate(48000.0)
+            .block_size(256)
+            .with_process_isolation(true)
+            .build();
+        assert!(host2.is_ok());
+    }
+}

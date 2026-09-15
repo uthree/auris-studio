@@ -55,14 +55,23 @@ fn smoke_instrument(plugin: &Vst3Plugin) {
     let mut instrument = plugin
         .instrument()
         .expect("the instrument render adapter should start");
+    instrument.prepare(&PrepareContext::new(SAMPLE_RATE, BLOCK_FRAMES, 2));
     let mut buffer = AudioBuffer::stereo(BLOCK_FRAMES, SAMPLE_RATE);
     let mut peak = 0.0_f32;
     for block in 0..64 {
-        let note_on = [NoteEvent::NoteOn {
-            frame: 0,
-            pitch: 60,
-            velocity: 0.8,
-        }];
+        // Duplicate voices at one pitch require one tracked release each.
+        let note_on = [
+            NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 60,
+                velocity: 0.8,
+            },
+            NoteEvent::NoteOn {
+                frame: 0,
+                pitch: 60,
+                velocity: 0.5,
+            },
+        ];
         let events = if block == 0 { &note_on[..] } else { &[] };
         let context = ProcessContext::realtime(
             SAMPLE_RATE,
@@ -84,12 +93,46 @@ fn smoke_instrument(plugin: &Vst3Plugin) {
         peak > 1.0e-6,
         "the instrument should produce audible output"
     );
+    instrument.reset();
+    let context = ProcessContext::realtime(
+        SAMPLE_RATE,
+        BLOCK_FRAMES,
+        64 * BLOCK_FRAMES as u64,
+        120.0,
+        false,
+    );
+    instrument.process(&[], &mut buffer, &context);
+    assert_finite(&buffer);
+    assert!(
+        !instrument.processing_failed(),
+        "reset and its zero-frame release flush must fit the realtime queues"
+    );
+
+    instrument.process(
+        &[NoteEvent::NoteOn {
+            frame: 0,
+            pitch: 64,
+            velocity: 0.8,
+        }],
+        &mut buffer,
+        &context,
+    );
+    instrument.process(
+        &[NoteEvent::AllNotesOff { frame: 0 }],
+        &mut buffer,
+        &context,
+    );
+    assert!(
+        !instrument.processing_failed(),
+        "a discontinuity marker must use the same bounded release flush"
+    );
 }
 
 fn smoke_effect(plugin: &Vst3Plugin) {
     let mut effect = plugin
         .effect()
         .expect("the effect render adapter should start");
+    effect.prepare(&PrepareContext::new(SAMPLE_RATE, BLOCK_FRAMES, 2));
     let mut buffer = AudioBuffer::stereo(BLOCK_FRAMES, SAMPLE_RATE);
     for channel in buffer.iter_channels_mut() {
         for (frame, sample) in channel.iter_mut().enumerate() {
@@ -106,6 +149,15 @@ fn smoke_effect(plugin: &Vst3Plugin) {
             .flatten()
             .any(|sample| sample.abs() > 1.0e-6),
         "the effect should return audio for an audible input"
+    );
+
+    effect.reset();
+    buffer.clear();
+    effect.process(&mut buffer, &context);
+    assert_finite(&buffer);
+    assert!(
+        !effect.processing_failed(),
+        "effect reset must restart the realtime processor without stopping the renderer"
     );
 }
 

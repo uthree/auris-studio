@@ -114,8 +114,8 @@ model heard the excerpt correctly. If the critic says it cannot hear, report tha
 response as a limitation and check the request and audio backend, or ask for human
 listening feedback.
 Validate a new listener with known audible differences before trusting its advice.
-The local interface trial records observed model limitations separately from tool
-and wire correctness in `docs/reviews/local-model-interface-2026-09-07.md`.
+Treat a completed request as transport evidence only; it does not establish that the model
+heard a difference or that its musical judgment is reliable.
 
 An optional [local audio service](../tools/audio-review/README.md) provides
 the same endpoint independently of Ollama, with Qwen2-Audio and an opt-in native
@@ -358,21 +358,29 @@ The rig Agent Panel has four persistent modes, following the permission model in
 
 | Mode | Behavior |
 | --- | --- |
-| Read-only | Read immediately; request approval for edits and internet search unless allowed by a rule. |
+| Read-only | Read immediately; reject document changes and request approval for internet search unless allowed by a rule. |
 | Edit | Apply ordinary live edits; confirm removals, arrangement replacement, and internet search. |
 | Plan | Inspect and propose a plan; reject document changes, including allow-listed changes. |
 | Bypass | Skip confirmations while continuing to enforce deny rules. |
 
-Deny rules win over every mode and allow rule. The Permissions section offers
-Default, Allow, and Deny for each operation, `edit_project.*`, and `*`.
+Deny rules win over every mode and allow rule. Read-only and Plan reject document
+changes before allow rules are considered. The Permissions section offers Default,
+Allow, and Deny for each exact operation. Its `edit_project.*` and `*` rows switch
+only between Default and Deny; deliberate broad allowances remain available through
+the `/allow` command.
 An approval shows the project, operation and exact arguments. Allow once applies
 only to that command at the current document revision; edits made while awaiting
 approval invalidate it. Always allow saves an operation rule. Rejecting an operation
 returns a refusal to the model. Changing modes or rules cancels pending approvals.
 Stopping the agent cancels its pending work.
 
+Starting a new conversation asks for explicit confirmation before it stops active
+work, clears the visible transcript, and deletes the saved conversation history.
+Cancelling the confirmation leaves the conversation and active work untouched.
+
 Use the mode buttons or `/mode read_only|edit|plan|bypass`. Shift+Tab cycles the
-three ordinary modes; bypass requires an explicit choice. `/permissions` opens
+three ordinary modes; bypass requires an explicit choice. While an approval is
+pending, Shift+Tab denies it without changing the mode. `/permissions` opens
 rules, and `/allow OPERATION`, `/deny OPERATION`, `/default OPERATION` edit them.
 While confirmation is pending, Escape denies, Ctrl+Enter (Command+Enter on macOS)
 allows once, and adding Shift always allows.

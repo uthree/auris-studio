@@ -122,7 +122,7 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Native preset state is retained in the document. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh or cache eviction.
+    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Native preset state is retained in the document. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh, library changes, bounded handle eviction, or restart.
     SetInstrument {
         /// Stable track ID.
         track: u64,

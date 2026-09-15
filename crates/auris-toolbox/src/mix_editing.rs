@@ -128,7 +128,7 @@ pub mod effects {
             }
         }
         if !matches!(args.operation, Action::List) {
-            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            save_checkpointed(&mut session)?;
         }
         let slots = chain(&session, track).to_vec();
         let slots: Vec<_> = slots
@@ -347,7 +347,7 @@ pub mod automation {
                 }
                 Action::Read { .. } => unreachable!(),
             }
-            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            save_checkpointed(&mut session)?;
             let point_count = session
                 .automation()
                 .lane(*target)

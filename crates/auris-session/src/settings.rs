@@ -4,7 +4,10 @@
 //! rate. A project file never carries them, because the machine that opens the file is rarely
 //! the machine that wrote it.
 
+use std::fs::File;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use auris_i18n::Language;
 use auris_io::{
@@ -16,6 +19,90 @@ use crate::error::SessionError;
 
 /// Folder name used under the user's configuration directory.
 const APP_FOLDER: &str = "auris-studio";
+
+/// Preference files are hand-editable, but none should approach this eight-megabyte ceiling.
+const CONFIG_TEXT_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Serialises final-file reads and publication inside this process.
+///
+/// Windows cannot replace a destination while another thread still has it open. An atomic rename
+/// prevents partial contents, but it does not by itself prevent that sharing violation, so readers
+/// and the short publication step use the same lock. Staging and synchronising the private sibling
+/// remain concurrent.
+static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
+
+/// Reads a small UTF-8 configuration file without trusting a stale pathname size check.
+///
+/// The opened handle supplies both metadata and bytes. The `take` limit catches a file that grows
+/// after metadata was read and prevents a corrupt preference from exhausting memory at startup.
+pub fn read_config_text(path: &Path) -> std::io::Result<String> {
+    let _read = CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > CONFIG_TEXT_MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "configuration file is larger than 8 MiB",
+        ));
+    }
+    let mut text = String::new();
+    text.try_reserve_exact(size as usize)
+        .map_err(|_| std::io::Error::other("not enough memory to read configuration file"))?;
+    file.take(CONFIG_TEXT_MAX_BYTES + 1)
+        .read_to_string(&mut text)?;
+    if text.len() as u64 > CONFIG_TEXT_MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "configuration file grew beyond 8 MiB while it was read",
+        ));
+    }
+    Ok(text)
+}
+
+/// Writes configuration bytes through a private sibling and atomically replaces `path`.
+///
+/// The temporary file is exclusively created and synchronised before the short publication step,
+/// so a crash cannot leave a partially truncated settings or conversation file. The caller must
+/// create the parent directory before calling this function.
+pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    if bytes.len() as u64 > CONFIG_TEXT_MAX_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "configuration file is larger than 8 MiB",
+        ));
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(bytes)?;
+    staged.flush()?;
+    staged.as_file().sync_all()?;
+
+    let _publish = CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    staged
+        .persist(path)
+        .map(drop)
+        .map_err(|error| error.error)?;
+    sync_config_parent(parent)
+}
+
+#[cfg(unix)]
+pub(crate) fn sync_config_parent(parent: &Path) -> std::io::Result<()> {
+    // On Unix, making the rename durable requires flushing the directory entry as well as the
+    // staged file. Windows has no equivalent operation through Rust's portable File API.
+    File::open(parent)?.sync_all()
+}
+
+#[cfg(not(unix))]
+pub(crate) fn sync_config_parent(_: &Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 /// Environment variable naming the configuration directory outright.
 pub const CONFIG_DIR_VAR: &str = "AURIS_CONFIG_DIR";
@@ -352,7 +439,7 @@ impl Settings {
     /// falls back, because refusing to start over a broken preference would be a poor trade.
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = read_config_text(&path) else {
             return Self::default();
         };
         match serde_json::from_str::<Self>(&text) {
@@ -379,7 +466,17 @@ impl Settings {
             })?;
         }
         let text = serde_json::to_string_pretty(self).map_err(auris_io::IoError::from)?;
-        std::fs::write(&path, text).map_err(|source| SessionError::SettingsWrite { path, source })
+        if text.len() as u64 > CONFIG_TEXT_MAX_BYTES {
+            return Err(SessionError::SettingsWrite {
+                path,
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "settings are larger than 8 MiB",
+                ),
+            });
+        }
+        write_config_bytes(&path, text.as_bytes())
+            .map_err(|source| SessionError::SettingsWrite { path, source })
     }
 }
 
@@ -441,6 +538,61 @@ mod tests {
         let settings = Settings::default();
         let text = serde_json::to_string(&settings).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), settings);
+    }
+
+    #[test]
+    fn configuration_reads_refuse_files_over_the_startup_budget() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file().set_len(CONFIG_TEXT_MAX_BYTES + 1).unwrap();
+        let error = read_config_text(file.path()).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("8 MiB"));
+    }
+
+    #[test]
+    fn configuration_writes_replace_whole_files_without_predictable_scratch_names() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("settings.json");
+        std::fs::write(&path, b"old settings").unwrap();
+
+        write_config_bytes(&path, b"new settings").unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new settings");
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn concurrent_configuration_reads_do_not_block_atomic_publication() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("appearance.json");
+        write_config_bytes(&path, br#"{"writer":0,"round":0}"#).unwrap();
+        let barrier = std::sync::Barrier::new(4);
+
+        std::thread::scope(|scope| {
+            for writer in 0..2 {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for round in 0..16 {
+                        let text = format!(r#"{{"writer":{writer},"round":{round}}}"#);
+                        write_config_bytes(path, text.as_bytes()).unwrap();
+                    }
+                });
+            }
+            for _ in 0..2 {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..64 {
+                        let text = read_config_text(path).unwrap();
+                        serde_json::from_str::<serde_json::Value>(&text)
+                            .expect("a reader sees one complete publication");
+                    }
+                });
+            }
+        });
     }
 
     #[test]

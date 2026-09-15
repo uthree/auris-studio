@@ -352,18 +352,36 @@ impl History {
     }
 
     /// Keeps an unrecorded loop switch outside the meaning of every undo snapshot.
-    pub fn sync_loop(&mut self, current: &Project) {
+    pub fn sync_loop_enabled(&mut self, current: &Project) {
+        self.for_each_project_mut(|project| project.loop_enabled = current.loop_enabled);
+    }
+
+    /// Seeds snapshots that do not yet have a loop region without replacing authored regions.
+    pub fn seed_missing_loop_regions(&mut self, current: &Project) {
+        let Some(region) = current.loop_region else {
+            return;
+        };
         self.for_each_project_mut(|project| {
-            project.loop_enabled = current.loop_enabled;
-            project.loop_region = current.loop_region;
+            if project.loop_region.is_none() {
+                project.loop_region = Some(region);
+            }
         });
     }
 
     /// Keeps an unrecorded punch switch outside the meaning of every undo snapshot.
-    pub fn sync_punch(&mut self, current: &Project) {
+    pub fn sync_punch_enabled(&mut self, current: &Project) {
+        self.for_each_project_mut(|project| project.punch_enabled = current.punch_enabled);
+    }
+
+    /// Seeds snapshots that do not yet have a punch region without replacing authored regions.
+    pub fn seed_missing_punch_regions(&mut self, current: &Project) {
+        let Some(region) = current.punch_region else {
+            return;
+        };
         self.for_each_project_mut(|project| {
-            project.punch_enabled = current.punch_enabled;
-            project.punch_region = current.punch_region;
+            if project.punch_region.is_none() {
+                project.punch_region = Some(region);
+            }
         });
     }
 

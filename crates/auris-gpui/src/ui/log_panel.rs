@@ -58,7 +58,13 @@ impl AurisApp {
                     .border_color(theme.border)
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(div().flex_1().child(self.t(Key::LogPanel)))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(self.t(Key::LogPanel)),
+                    )
                     .child(button(
                         "log-clear",
                         self.t(Key::LogClear),
@@ -77,6 +83,7 @@ impl AurisApp {
                     ScrollPanel::Log,
                     div()
                         .id("log-lines")
+                        .debug_selector(|| "log-lines".to_owned())
                         .flex()
                         .flex_col()
                         .p_1()
@@ -105,6 +112,7 @@ fn log_row(index: usize, entry: &Entry, theme: &Theme) -> AnyElement {
     div()
         .id(("log-line", index))
         .flex()
+        .min_w_0()
         .items_start()
         .gap_2()
         .px_1p5()
@@ -122,20 +130,32 @@ fn log_row(index: usize, entry: &Entry, theme: &Theme) -> AnyElement {
                 .w(px(52.0))
                 .flex_shrink_0()
                 .text_color(level_colour(entry.level, theme))
+                .debug_selector(move || format!("log-level-{index}"))
                 .child(level_word(entry.level)),
         )
         .child(
             div()
+                .id(("log-target", index))
                 .w(px(180.0))
-                .flex_shrink_0()
+                .min_w(px(56.0))
+                .flex_shrink()
+                .truncate()
                 .text_color(theme.text_faint)
-                .child(entry.target.clone()),
+                .debug_selector(move || format!("log-target-{index}"))
+                .child(entry.target.clone())
+                .tooltip(crate::ui::tooltip::keyed_tip(
+                    entry.target.clone(),
+                    "",
+                    theme,
+                )),
         )
         .child(
             div()
                 .flex_1()
                 .min_w_0()
+                .whitespace_normal()
                 .text_color(theme.text)
+                .debug_selector(move || format!("log-message-{index}"))
                 .child(entry.message.clone()),
         )
         .into_any_element()
@@ -171,6 +191,9 @@ fn level_word(level: Level) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dock::Panel;
+    use crate::harness;
+    use gpui::{TestAppContext, size};
 
     #[test]
     fn every_level_has_a_word_and_it_is_the_one_rust_log_uses() {
@@ -194,6 +217,40 @@ mod tests {
                 theme.text_muted,
                 "{quiet} should not have a colour of its own"
             );
+        }
+    }
+
+    #[gpui::test]
+    fn a_narrow_log_keeps_severity_source_and_message_readable(cx: &mut TestAppContext) {
+        struct ClearLog;
+        impl Drop for ClearLog {
+            fn drop(&mut self) {
+                book().clear();
+            }
+        }
+
+        book().clear();
+        let _clear = ClearLog;
+        let (app, cx) = harness::open(cx);
+        book().push(
+            Level::Error,
+            "auris_session::session::plugin::a_very_long_provider_name",
+            "The selected plugin could not be loaded. Choose another sound and try again.".into(),
+        );
+        app.update(cx, |this, _| this.show_panel(Panel::Log));
+        let viewport = size(px(640.0), px(480.0));
+        harness::resize(&app, cx, viewport);
+
+        let lines = cx.debug_bounds("log-lines").expect("the log is visible");
+        for selector in ["log-level-0", "log-target-0", "log-message-0"] {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("`{selector}` is visible"));
+            assert!(bounds.size.width > px(0.0));
+            assert!(bounds.left() >= lines.left());
+            assert!(bounds.right() <= lines.right());
+            assert!(bounds.top() >= lines.top());
+            assert!(bounds.bottom() <= lines.bottom());
         }
     }
 }

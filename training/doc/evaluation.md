@@ -138,6 +138,14 @@ another. `--take-seeds 3` sings every column three times, seeds `--take-seed` on
 and averages each utterance's numbers over the takes; the table then reads the voice
 rather than the throw. Each take's files are kept, suffixed `.s<seed>`.
 
+Evaluation inputs are deliberately bounded before any model or listener starts: 1–1,024
+utterances, 1–64 takes, and at most 4,096 utterance/take renders per run. `--gap` accepts
+0–60 finite seconds, and all inserted gaps together may contain at most 1,000,000 frames.
+The mel comparison accepts 1–2,048 bands, and pitch accuracy accepts a finite tolerance
+above zero and no greater than one octave (1,200 cents). These limits leave ample room for
+the documented 48-utterance and ten-take studies while a mistyped count, gap, or analysis
+dimension cannot turn a local comparison into an unbounded job.
+
 The noise differs between host and reference. Each draws its own — the host from
 `auris_core::rng` streams named by the seed, PyTorch from its generator — so the two columns
 are compared metric to metric, never sample to sample; a bit-exact comparison is what

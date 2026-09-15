@@ -56,9 +56,7 @@ def _mas_kernel(paths, values, t_xs, t_ys):
         index = t_x - 1
         for y in range(t_y - 1, -1, -1):
             path[index, y] = 1.0
-            if index != 0 and (
-                index == y or value[index, y - 1] < value[index - 1, y - 1]
-            ):
+            if index != 0 and (index == y or value[index, y - 1] < value[index - 1, y - 1]):
                 index -= 1
 
 
@@ -69,9 +67,7 @@ else:  # pragma: no cover
 
 
 @torch.no_grad()
-def maximum_path(
-    neg_cent: torch.Tensor, mask: torch.Tensor
-) -> torch.Tensor:
+def maximum_path(neg_cent: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Find the most likely monotonic alignment.
 
     Args:

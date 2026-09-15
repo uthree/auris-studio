@@ -12,20 +12,76 @@ use std::sync::mpsc::Receiver;
 use auris_i18n::Key;
 use auris_session::AgentPreferences;
 use gpui::{
-    AnyElement, IntoElement, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*, px,
+    AnyElement, IntoElement, MouseButton, MouseDownEvent, SharedString, Window, div, prelude::*,
+    px, relative,
 };
 
-use crate::app::AurisApp;
+use crate::app::{AurisApp, Pane};
 use crate::theme::{Metrics, Theme};
 use crate::ui::icons::{Icon, icon};
 use crate::ui::scrollbars::ScrollPanel;
 use crate::ui::text_field::TextField;
-use crate::ui::widgets::{ButtonStyle, button};
+use crate::ui::widgets::{
+    ButtonState, ButtonStyle, bounded_button_enabled, bounded_picker_label, button, button_enabled,
+    disclosure,
+};
 
 mod controls;
 
 /// Maximum transcript rows retained in the panel.
 const CHAT_CAPACITY: usize = 500;
+
+/// A model-selector-local action carrying the standard key that requested navigation.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_agent_model, no_json)]
+pub(crate) struct NavigateAgentModel {
+    key: &'static str,
+}
+
+/// Bindings installed independently of the editable application keymap.
+///
+/// The selector context wins before window actions such as Down-to-select-the-next-track while
+/// the model control owns focus. Tab deliberately remains unbound so normal focus traversal can
+/// continue after dismissing the menu.
+pub(crate) fn model_key_bindings() -> [gpui::KeyBinding; 7] {
+    [
+        gpui::KeyBinding::new(
+            "up",
+            NavigateAgentModel { key: "up" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "down",
+            NavigateAgentModel { key: "down" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "home",
+            NavigateAgentModel { key: "home" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "end",
+            NavigateAgentModel { key: "end" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "enter",
+            NavigateAgentModel { key: "enter" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "space",
+            NavigateAgentModel { key: "space" },
+            Some("AurisAgentModel"),
+        ),
+        gpui::KeyBinding::new(
+            "escape",
+            NavigateAgentModel { key: "escape" },
+            Some("AurisAgentModel"),
+        ),
+    ]
+}
 
 /// One line of the conversation, as the panel shows it.
 #[derive(Debug, PartialEq)]
@@ -36,6 +92,8 @@ pub(crate) enum ChatEntry {
     Agent(String),
     /// Status produced by the agent runtime, not by the model.
     Status(String),
+    /// Compacted history restored as reference context, never as a new user instruction.
+    RestoredContext(String),
     /// One tool call: running while `line` is empty, answered or refused once it is not.
     Tool {
         /// The tool's wire name.
@@ -74,6 +132,8 @@ pub(crate) enum AgentEvent {
     },
     /// Previously completed text turns recovered for this project.
     History {
+        /// Compacted older context, shown separately from user-authored turns.
+        summary: String,
         /// User and assistant text, oldest first.
         turns: Vec<(String, String)>,
     },
@@ -89,11 +149,15 @@ pub(crate) enum AgentEvent {
     },
     /// A tool was asked.
     Call {
+        /// Rig's unique id for this invocation, independent of the tool name.
+        call_id: String,
         /// Its wire name.
         tool: String,
     },
     /// A tool answered or refused.
     Result {
+        /// Rig's unique id for the invocation this completes.
+        call_id: String,
         /// Its wire name.
         tool: String,
         /// Whether it answered.
@@ -157,6 +221,7 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
             command: parsed.get("command")?.clone(),
         },
         "history" => AgentEvent::History {
+            summary: text("summary"),
             turns: parsed
                 .get("turns")?
                 .as_array()?
@@ -175,11 +240,27 @@ pub(crate) fn parse_event(line: &str) -> Option<AgentEvent> {
         "ready" => AgentEvent::Ready {
             model: text("model"),
         },
-        "call" => AgentEvent::Call { tool: text("tool") },
+        "call" => {
+            let tool = text("tool");
+            AgentEvent::Call {
+                call_id: parsed
+                    .get("call_id")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("legacy:{tool}")),
+                tool,
+            }
+        }
         "result" => {
             let detail = text("text");
+            let tool = text("tool");
             AgentEvent::Result {
-                tool: text("tool"),
+                call_id: parsed
+                    .get("call_id")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("legacy:{tool}")),
+                tool,
                 ok: parsed
                     .get("ok")
                     .and_then(|value| value.as_bool())
@@ -250,6 +331,35 @@ pub(crate) fn gauge_colour(ratio: f32, theme: &Theme) -> gpui::Hsla {
     }
 }
 
+/// Semantic colour for a translated panel note.
+///
+/// Most notes are neutral guidance. Only a completed action, a recoverable condition, or a
+/// terminal failure spends one of the stronger signal colours.
+fn note_colour(key: Key, theme: &Theme) -> gpui::Hsla {
+    match key {
+        Key::AgentReloaded | Key::AgentConversationReset => theme.playing,
+        Key::AgentReloadOffer
+        | Key::AgentResolveFirst
+        | Key::AgentNotConfigured
+        | Key::AgentCompactEmpty => theme.warning,
+        Key::AgentEnded => theme.danger,
+        _ => theme.text_muted,
+    }
+}
+
+/// A tool cancellation is terminal without pretending the tool itself failed.
+fn tool_mark(ok: bool, line: &str) -> &'static str {
+    if line.is_empty() {
+        "…"
+    } else if line == "stopped" {
+        "■"
+    } else if ok {
+        "✓"
+    } else {
+        "✗"
+    }
+}
+
 /// What the window should do after one event has been absorbed.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Absorbed {
@@ -258,6 +368,68 @@ pub(crate) enum Absorbed {
     /// Reload this project: the agent rewrote the open document and the window holds nothing
     /// unsaved.
     Reload(PathBuf),
+}
+
+/// The state a hidden Agent panel reports on its switch in the window chrome.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum AgentPanelStatus {
+    /// Nothing is running and no result needs attention.
+    #[default]
+    Idle,
+    /// A turn is running.
+    Running,
+    /// The turn is paused for a permission decision.
+    Pending,
+    /// The last turn completed successfully.
+    Completed,
+    /// The last turn stopped or failed.
+    Failed,
+}
+
+impl AgentPanelStatus {
+    /// Gives live states precedence over the last settled result.
+    fn from_state(busy: bool, pending: bool, settled: Option<Self>) -> Self {
+        if pending {
+            Self::Pending
+        } else if busy {
+            Self::Running
+        } else {
+            settled.unwrap_or_default()
+        }
+    }
+
+    /// Stable selector suffix for visual tests and assistive inspection.
+    pub(crate) fn slug(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::Running => "running",
+            Self::Pending => "pending",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+
+    /// A shape as well as a colour, so the four states do not rely on colour vision.
+    pub(crate) fn mark(self) -> &'static str {
+        match self {
+            Self::Idle => "",
+            Self::Running => "…",
+            Self::Pending => "?",
+            Self::Completed => "✓",
+            Self::Failed => "!",
+        }
+    }
+
+    /// Localized words used by the panel switch tooltip.
+    pub(crate) fn label(self) -> Key {
+        match self {
+            Self::Idle => Key::AgentPanel,
+            Self::Running => Key::AgentWorking,
+            Self::Pending => Key::AgentAwaitingApproval,
+            Self::Completed => Key::AgentCompleted,
+            Self::Failed => Key::AgentFailed,
+        }
+    }
 }
 
 /// Which of the panel's text fields is being typed into.
@@ -308,13 +480,76 @@ pub(crate) fn parse_model_list(line: &str) -> Result<Vec<ModelOption>, String> {
 struct AgentLink {
     worker: auris_agent::Worker,
     inspection: Option<PendingInspection>,
-    sound_search: Option<(u64, Receiver<Result<String, String>>)>,
+    sound_search: Option<PendingSoundSearch>,
+}
+
+/// Identity of the document for which an asynchronous panel operation was started.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AgentDocumentToken {
+    project: Option<PathBuf>,
+    revision: u64,
+}
+
+impl AgentDocumentToken {
+    fn matches(&self, project: Option<&Path>, revision: u64) -> bool {
+        self.revision == revision && self.project.as_deref() == project
+    }
 }
 
 struct PendingInspection {
     revision: u64,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
     receiver: Receiver<Result<auris_session::audio_inspection::Inspection, String>>,
+}
+
+struct PendingSoundSearch {
+    revision: u64,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    receiver: Receiver<Result<String, String>>,
+}
+
+struct PendingHistoryClear {
+    project: PathBuf,
+    receiver: Receiver<Result<(), String>>,
+}
+
+struct PendingHistoryLoad {
+    token: AgentDocumentToken,
+    receiver: Receiver<Result<auris_agent::HistorySnapshot, String>>,
+}
+
+/// One immutable composer submission waiting for persisted history to load.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingAgentSend {
+    token: AgentDocumentToken,
+    text: String,
+    attachments: Vec<PathBuf>,
+    preferences: AgentPreferences,
+    selection_context: String,
+}
+
+impl PendingHistoryLoad {
+    fn poll(&self) -> Option<Result<auris_agent::HistorySnapshot, String>> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("Conversation storage worker stopped".into()))
+            }
+        }
+    }
+}
+
+impl PendingHistoryClear {
+    fn poll(&self) -> Option<Result<(), String>> {
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err("Conversation storage worker stopped".into()))
+            }
+        }
+    }
 }
 
 impl PendingInspection {
@@ -337,6 +572,30 @@ impl PendingInspection {
 }
 
 impl Drop for PendingInspection {
+    fn drop(&mut self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl PendingSoundSearch {
+    fn poll(&self, revision: u64, same_document: bool) -> Option<Result<String, String>> {
+        if self.revision != revision || !same_document {
+            self.cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            return Some(Err(
+                "The document changed during sound search; search again".into(),
+            ));
+        }
+        match self.receiver.try_recv() {
+            Ok(result) => Some(result),
+            Err(std::sync::mpsc::TryRecvError::Empty) => None,
+            Err(_) => Some(Err("Sound search worker stopped".into())),
+        }
+    }
+}
+
+impl Drop for PendingSoundSearch {
     fn drop(&mut self) {
         self.cancel
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -377,8 +636,26 @@ pub(crate) struct AgentChat {
     pub(crate) fetching_models: bool,
     /// What went wrong the last time it was asked, shown where the list would be.
     pub(crate) models_error: Option<String>,
+    /// Whether the provider has answered at least once, even with a valid empty list.
+    pub(crate) models_loaded: bool,
     /// Whether the model picker is dropped open.
     pub(crate) model_menu: bool,
+    /// The option reached by arrow keys while the model picker is open.
+    model_highlighted: usize,
+    /// Keeps the highlighted model visible in a long provider list.
+    model_scroll: gpui::ScrollHandle,
+    /// Keeps the compact header, permission controls and model section reachable in a short dock.
+    controls_scroll: gpui::ScrollHandle,
+    /// Non-tab-stop focus ancestors used to reveal each section in `controls_scroll`.
+    header_section_focus: Option<gpui::FocusHandle>,
+    controls_section_focus: Option<gpui::FocusHandle>,
+    model_section_focus: Option<gpui::FocusHandle>,
+    /// Stable keyboard focus for the model selector, allocated on its first render.
+    model_focus: Option<gpui::FocusHandle>,
+    /// Stable keyboard focus for the message editor, allocated on its first render.
+    input_focus: Option<gpui::FocusHandle>,
+    /// Stable target for cancelling a queued or running turn.
+    stop_focus: Option<gpui::FocusHandle>,
     /// Prompt tokens the last turn carried — the context gauge's needle.
     pub(crate) tokens_in: u64,
     /// Tokens the model has written across the conversation.
@@ -387,12 +664,26 @@ pub(crate) struct AgentChat {
     pub(crate) context_window: Option<u64>,
     /// The transcript rows clicked open to their full text.
     pub(crate) expanded: std::collections::BTreeSet<usize>,
-    /// Running tool rows by wire name, so a result never scans the transcript.
+    /// Running tool rows by unique call id, so parallel calls sharing a name remain distinct.
     open_tools: std::collections::BTreeMap<String, usize>,
     /// The wire a model listing comes back on.
     pub(crate) models_rx: Option<Receiver<Result<String, String>>>,
+    /// A serialized deletion waiting behind any final history write by the cancelled worker.
+    history_clear: Option<PendingHistoryClear>,
+    /// A saved transcript being read independently of model/provider startup.
+    history_load: Option<PendingHistoryLoad>,
+    /// The saved project whose history has already populated this transcript.
+    history_project: Option<PathBuf>,
+    /// The exact displayed history to hand to the next worker for this saved project.
+    loaded_history: Option<auris_agent::HistorySnapshot>,
+    /// A project whose persisted transcript could not be read until it is reset.
+    history_error_project: Option<PathBuf>,
+    /// The exact composer submission to send once saved history has arrived.
+    pending_send: Option<PendingAgentSend>,
     /// Which field holds the keyboard, if any.
     pub(crate) focused: Option<AgentField>,
+    /// Restore approval shortcuts once when a hidden panel is deliberately shown again.
+    pub(crate) restore_pending_focus: bool,
     /// Whether the settings section is showing.
     pub(crate) configuring: bool,
     /// Whether the settings fields have been seeded from the saved preferences.
@@ -415,11 +706,15 @@ pub(crate) struct AgentChat {
     /// A different project produced by the last turn, ready to open explicitly.
     produced_project: Option<PathBuf>,
     /// The next child should replace its persisted text memory with an empty conversation.
-    fresh_history: bool,
+    pub(crate) fresh_history: bool,
     /// Apply changed provider settings after the current reply has finished.
     restart_after_turn: bool,
     /// Where the transcript is scrolled to.
     pub(crate) scroll: gpui::ScrollHandle,
+    /// Transcript changes that arrived while the reader was away from the tail.
+    pub(crate) unread_entries: usize,
+    /// Whether transcript changes should continue following the tail.
+    follow_tail: bool,
     link: Option<AgentLink>,
 }
 
@@ -441,14 +736,31 @@ impl Default for AgentChat {
             models: Vec::new(),
             fetching_models: false,
             models_error: None,
+            models_loaded: false,
             model_menu: false,
+            model_highlighted: 0,
+            model_scroll: gpui::ScrollHandle::new(),
+            controls_scroll: gpui::ScrollHandle::new(),
+            header_section_focus: None,
+            controls_section_focus: None,
+            model_section_focus: None,
+            model_focus: None,
+            input_focus: None,
+            stop_focus: None,
             tokens_in: 0,
             tokens_out: 0,
             context_window: None,
             expanded: std::collections::BTreeSet::new(),
             open_tools: std::collections::BTreeMap::new(),
             models_rx: None,
+            history_clear: None,
+            history_load: None,
+            history_project: None,
+            loaded_history: None,
+            history_error_project: None,
+            pending_send: None,
             focused: None,
+            restore_pending_focus: false,
             configuring: false,
             preferences_loaded: false,
             busy: false,
@@ -461,14 +773,71 @@ impl Default for AgentChat {
             fresh_history: false,
             restart_after_turn: false,
             scroll: gpui::ScrollHandle::new(),
+            unread_entries: 0,
+            follow_tail: true,
             link: None,
         }
     }
 }
 
 impl AgentChat {
-    /// Appends one transcript row, keeping indexes coherent and the newest row visible.
+    /// Whether a model tool call is waiting for an explicit user decision.
+    pub(crate) fn has_pending_approval(&self) -> bool {
+        self.controls.pending.is_some()
+    }
+
+    /// Whether the transcript is at, or close enough to resume following, its tail.
+    fn is_near_tail(&self) -> bool {
+        let remaining =
+            f32::from(self.scroll.max_offset().height) + f32::from(self.scroll.offset().y);
+        remaining <= f32::from(Metrics::CONTROL_HEIGHT) * 2.0
+    }
+
+    fn should_follow_tail(&mut self) -> bool {
+        self.follow_tail = self.is_near_tail();
+        self.follow_tail
+    }
+
+    /// Records one transcript mutation without taking the reader away from older content.
+    fn finish_transcript_change(&mut self, follow_tail: bool) {
+        self.follow_tail = follow_tail;
+        if follow_tail {
+            self.unread_entries = 0;
+            self.scroll.scroll_to_bottom();
+        } else {
+            self.unread_entries = self.unread_entries.saturating_add(1);
+        }
+    }
+
+    /// Explicitly resumes automatic tail following and clears the new-message count.
+    pub(crate) fn jump_to_latest(&mut self) {
+        self.follow_tail = true;
+        self.unread_entries = 0;
+        self.scroll.scroll_to_bottom();
+    }
+
+    /// Replaces the transcript with persisted turns and presents their newest exchange.
+    fn replace_history(&mut self, summary: String, turns: Vec<(String, String)>) {
+        self.entries.clear();
+        self.open_tools.clear();
+        self.expanded.clear();
+        // A new document's transcript must not inherit the old document's scroll geometry.
+        self.scroll = gpui::ScrollHandle::new();
+        self.follow_tail = true;
+        self.unread_entries = 0;
+        if !summary.trim().is_empty() {
+            self.push_entry(ChatEntry::RestoredContext(summary));
+        }
+        for (user, answer) in turns {
+            self.push_entry(ChatEntry::You(user));
+            self.push_entry(ChatEntry::Agent(answer));
+        }
+        self.jump_to_latest();
+    }
+
+    /// Appends one transcript row, keeping indexes coherent and following only a nearby tail.
     fn push_entry(&mut self, entry: ChatEntry) -> usize {
+        let follow_tail = self.should_follow_tail();
         if self.entries.len() >= CHAT_CAPACITY {
             self.entries.remove(0);
             self.expanded = self
@@ -486,7 +855,7 @@ impl AgentChat {
         }
         let index = self.entries.len();
         self.entries.push(entry);
-        self.scroll.scroll_to_bottom();
+        self.finish_transcript_change(follow_tail);
         index
     }
 
@@ -495,8 +864,16 @@ impl AgentChat {
         self.focused.is_some()
     }
 
+    /// The message editor's actual focus target, once the panel has been painted.
+    pub(crate) fn input_focus(&self) -> Option<&gpui::FocusHandle> {
+        self.input_focus.as_ref()
+    }
+
     /// The field the keyboard is in, mutably.
     pub(crate) fn field_mut(&mut self) -> Option<&mut TextField> {
+        if self.pending_send.is_some() {
+            return None;
+        }
         Some(match self.focused? {
             AgentField::Chat => &mut self.input,
         })
@@ -504,6 +881,9 @@ impl AgentChat {
 
     /// The field the keyboard is in.
     pub(crate) fn field(&self) -> Option<&TextField> {
+        if self.pending_send.is_some() {
+            return None;
+        }
         Some(match self.focused? {
             AgentField::Chat => &self.input,
         })
@@ -520,6 +900,16 @@ impl AgentChat {
         self.chosen_model = prefs.model.trim().to_string();
         self.url_field = TextField::new(prefs.url.clone());
         self.key_env_field = TextField::new(prefs.api_key_env.clone());
+        // A reply started for the previous provider or URL must never repopulate this form.
+        // Dropping the receiver is cancellation from the UI's point of view; the short-lived
+        // worker will observe its disconnected sender when it finishes.
+        self.models_rx = None;
+        self.fetching_models = false;
+        self.models.clear();
+        self.models_error = None;
+        self.models_loaded = false;
+        self.model_menu = false;
+        self.context_window = None;
         self.preferences_loaded = true;
     }
 
@@ -554,6 +944,91 @@ impl AgentChat {
         (window > 0).then(|| (self.tokens_in as f32 / window as f32).min(1.0))
     }
 
+    /// Whether opening or repainting the panel should start its one automatic model query.
+    fn needs_model_listing(&self) -> bool {
+        !self.models_loaded && !self.fetching_models && self.models_rx.is_none()
+    }
+
+    /// Whether the model selector has a catalogue it can truthfully open.
+    fn model_selector_enabled(&self) -> bool {
+        !self.busy
+            && !self.fetching_models
+            && self.models_error.is_none()
+            && !self.models.is_empty()
+    }
+
+    /// Applies the one terminal answer from a model-listing worker.
+    fn accept_model_listing(&mut self, answer: Result<String, String>) {
+        self.fetching_models = false;
+        self.models_loaded = true;
+        // The old ceiling belongs to the old catalogue. Keeping it through a missing model or a
+        // failed refresh makes the gauge look measured when the provider no longer supports it.
+        self.context_window = None;
+        match answer.and_then(|line| parse_model_list(&line)) {
+            Ok(models) => {
+                if let Some(chosen) = models
+                    .iter()
+                    .find(|option| option.name == self.chosen_model)
+                {
+                    self.context_window = chosen.context_length;
+                }
+                self.models = models;
+                self.models_error = None;
+            }
+            Err(error) => self.models_error = Some(error),
+        }
+    }
+
+    /// State shown on the dock switch while this panel is closed.
+    pub(crate) fn panel_status(&self) -> AgentPanelStatus {
+        let settled = self.entries.iter().rev().find_map(|entry| match entry {
+            ChatEntry::Agent(_) => Some(AgentPanelStatus::Completed),
+            ChatEntry::Error(_) | ChatEntry::Note(Key::AgentEnded) => {
+                Some(AgentPanelStatus::Failed)
+            }
+            ChatEntry::Tool { ok, line, .. } if !line.is_empty() => Some(if *ok {
+                AgentPanelStatus::Completed
+            } else {
+                AgentPanelStatus::Failed
+            }),
+            ChatEntry::You(_)
+            | ChatEntry::Note(
+                Key::AgentConversationReset | Key::AgentStopped | Key::AgentSendCancelled,
+            ) => Some(AgentPanelStatus::Idle),
+            _ => None,
+        });
+        AgentPanelStatus::from_state(
+            self.busy || self.history_clear.is_some() || self.pending_send.is_some(),
+            self.controls.pending.is_some(),
+            settled,
+        )
+    }
+
+    /// Converts every still-running tool row into a terminal row.
+    fn finish_open_tools(&mut self, line: &str, detail: &str) {
+        let follow_tail = self.should_follow_tail();
+        let mut changed = false;
+        for index in std::mem::take(&mut self.open_tools).into_values() {
+            if let Some(ChatEntry::Tool {
+                ok,
+                line: row_line,
+                detail: row_detail,
+                ..
+            }) = self.entries.get_mut(index)
+            {
+                changed = true;
+                *ok = false;
+                *row_line = line.to_string();
+                if !detail.is_empty() {
+                    *row_detail = detail.to_string();
+                }
+            }
+        }
+        if changed {
+            self.finish_transcript_change(follow_tail);
+        }
+    }
+
     /// Takes one event into the transcript, and says what the window should do about it.
     ///
     /// Plain data in, plain instruction out — the whole reload policy is here, where a unit
@@ -586,54 +1061,51 @@ impl AgentChat {
                     self.push_entry(ChatEntry::Error(message));
                 }
             }
-            AgentEvent::History { turns } => {
+            AgentEvent::History { summary, turns } => {
                 let current = match self.entries.last() {
                     Some(ChatEntry::You(text)) => Some(text.clone()),
                     _ => None,
                 };
-                self.entries.clear();
-                self.open_tools.clear();
-                self.expanded.clear();
-                for (user, answer) in turns {
-                    self.push_entry(ChatEntry::You(user));
-                    self.push_entry(ChatEntry::Agent(answer));
-                }
+                self.replace_history(summary, turns);
                 if let Some(current) = current {
                     self.push_entry(ChatEntry::You(current));
+                    self.jump_to_latest();
                 }
             }
             AgentEvent::Notice { message } => {
-                self.push_entry(ChatEntry::Error(message));
+                self.push_entry(ChatEntry::Status(message));
             }
             AgentEvent::Ready { model } => {
                 self.model_label = model;
             }
-            AgentEvent::Call { tool } => {
+            AgentEvent::Call { call_id, tool } => {
                 let index = self.push_entry(ChatEntry::Tool {
                     name: tool.clone(),
                     ok: true,
                     line: String::new(),
                     detail: String::new(),
                 });
-                self.open_tools.insert(tool, index);
+                self.open_tools.insert(call_id, index);
             }
             AgentEvent::Result {
+                call_id,
                 tool,
                 ok,
                 line,
                 detail,
             } => {
+                let follow_tail = self.should_follow_tail();
                 // The call pushed a running row; this fills it in. A result with no matching
                 // call — a build mismatch, a dropped line — becomes its own row rather than
                 // being lost.
                 let line = if line.is_empty() {
-                    "done".to_string()
+                    if ok { "done" } else { "failed" }.to_string()
                 } else {
                     line
                 };
                 let open_row = self
                     .open_tools
-                    .remove(&tool)
+                    .remove(&call_id)
                     .and_then(|index| self.entries.get_mut(index));
                 match open_row {
                     Some(ChatEntry::Tool {
@@ -645,7 +1117,7 @@ impl AgentChat {
                         *row_ok = ok;
                         *row_line = line;
                         *row_detail = detail;
-                        self.scroll.scroll_to_bottom();
+                        self.finish_transcript_change(follow_tail);
                     }
                     _ => {
                         self.push_entry(ChatEntry::Tool {
@@ -696,6 +1168,7 @@ impl AgentChat {
             }
             AgentEvent::Error { message } => {
                 self.busy = false;
+                self.finish_open_tools("failed", &message);
                 self.push_entry(ChatEntry::Error(message));
                 return self.finish_reload(open, dirty);
             }
@@ -703,6 +1176,7 @@ impl AgentChat {
                 self.controls = Default::default();
                 self.busy = false;
                 self.link = None;
+                self.finish_open_tools("stopped", "");
                 self.push_entry(ChatEntry::Note(Key::AgentEnded));
                 return self.finish_reload(open, dirty);
             }
@@ -723,14 +1197,19 @@ fn spawn_link(
     prefs: &AgentPreferences,
     folder: Option<&Path>,
     fresh_history: bool,
+    history: Option<auris_agent::HistorySnapshot>,
 ) -> Result<AgentLink, String> {
-    auris_agent::Worker::spawn(prefs.clone(), folder.map(Path::to_path_buf), fresh_history).map(
-        |worker| AgentLink {
-            worker,
-            inspection: None,
-            sound_search: None,
-        },
+    auris_agent::Worker::spawn(
+        prefs.clone(),
+        folder.map(Path::to_path_buf),
+        fresh_history,
+        history,
     )
+    .map(|worker| AgentLink {
+        worker,
+        inspection: None,
+        sound_search: None,
+    })
 }
 
 /// Fetch provider models off the UI thread.
@@ -739,6 +1218,146 @@ fn spawn_model_listing(prefs: &AgentPreferences) -> Receiver<Result<String, Stri
 }
 
 impl AurisApp {
+    fn agent_document_token(&self) -> AgentDocumentToken {
+        AgentDocumentToken {
+            project: self.session.path().map(Path::to_path_buf),
+            revision: self.session.revision(),
+        }
+    }
+
+    /// Detaches every path-scoped Agent operation after Save As changes the document identity.
+    pub(crate) fn agent_document_saved_from(&mut self, previous: Option<&Path>) {
+        if previous == self.session.path() {
+            return;
+        }
+        let has_path_scoped_state = self.agent_chat.link.is_some()
+            || self.agent_chat.busy
+            || self.agent_chat.pending_send.is_some()
+            || self.agent_chat.history_load.is_some()
+            || self.agent_chat.history_clear.is_some()
+            || self.agent_chat.history_project.is_some()
+            || self.agent_chat.loaded_history.is_some()
+            || self.agent_chat.history_error_project.is_some()
+            || self.agent_chat.controls.pending.is_some()
+            || !self.agent_chat.entries.is_empty();
+        if !has_path_scoped_state {
+            return;
+        }
+
+        // The composer belongs to the document the user just renamed, not to the old history
+        // file. Preserve it while dropping the worker receiver so queued old-path events cannot
+        // be observed under the new path.
+        let attachments = std::mem::take(&mut self.agent_chat.attachments);
+        self.agent_reset_conversation();
+        self.agent_chat.attachments = attachments;
+    }
+
+    fn agent_history_clear_pending(&self) -> bool {
+        self.agent_chat
+            .history_clear
+            .as_ref()
+            .is_some_and(|pending| self.session.path() == Some(pending.project.as_path()))
+    }
+
+    /// Whether a model turn or conversation-storage operation owns the panel controls.
+    pub(crate) fn agent_operation_busy(&self) -> bool {
+        self.agent_chat.busy
+            || self.agent_chat.pending_send.is_some()
+            || self.agent_chat.controls.pending.is_some()
+            || self.agent_history_clear_pending()
+    }
+
+    /// Whether Stop can abandon work without interrupting an irreversible history deletion.
+    fn agent_cancelable(&self) -> bool {
+        self.agent_chat.busy
+            || self.agent_chat.pending_send.is_some()
+            || self.agent_chat.controls.pending.is_some()
+    }
+
+    /// Starts reading this saved project's transcript before any model provider is contacted.
+    fn start_agent_history_load(&mut self) -> bool {
+        let token = self.agent_document_token();
+        let Some(project) = token.project.as_ref() else {
+            return true;
+        };
+        if self.agent_chat.history_project.as_ref() == Some(project)
+            && (self.agent_chat.link.is_some() || self.agent_chat.loaded_history.is_some())
+        {
+            return true;
+        }
+        if self.agent_chat.history_error_project.as_ref() == Some(project) {
+            return false;
+        }
+        if self
+            .agent_chat
+            .history_load
+            .as_ref()
+            .is_some_and(|pending| pending.token == token)
+        {
+            return false;
+        }
+        let Some(folder) = self.session.project_folder() else {
+            return true;
+        };
+        self.agent_chat.loaded_history = None;
+        self.agent_chat.history_load = Some(PendingHistoryLoad {
+            token,
+            receiver: auris_agent::load_history_background(
+                folder.join(".auris-conversation.json"),
+                self.agent_chat.fresh_history,
+            ),
+        });
+        false
+    }
+
+    /// Applies one history answer only to the exact document snapshot that requested it.
+    fn poll_agent_history_load(&mut self, cx: &mut gpui::Context<Self>) {
+        let answer = self
+            .agent_chat
+            .history_load
+            .as_ref()
+            .and_then(PendingHistoryLoad::poll);
+        let Some(answer) = answer else { return };
+        let pending = self.agent_chat.history_load.take().unwrap();
+        if !pending
+            .token
+            .matches(self.session.path(), self.session.revision())
+        {
+            if self.agent_chat.pending_send.take().is_some() {
+                self.agent_chat.push_entry(ChatEntry::Error(
+                    "The document changed while conversation history was loading. Review the draft and send it again."
+                        .into(),
+                ));
+                cx.notify();
+            }
+            return;
+        }
+        let project = pending.token.project.expect("saved history has a project");
+        match answer {
+            Ok(snapshot) => {
+                let summary = snapshot.summary().unwrap_or_default().to_string();
+                let turns = snapshot.turns();
+                self.agent_chat.replace_history(summary, turns);
+                self.agent_chat.history_project = Some(project);
+                self.agent_chat.loaded_history = Some(snapshot);
+                self.agent_chat.history_error_project = None;
+                self.agent_chat.fresh_history = false;
+                if let Some(message) = self.agent_chat.pending_send.take() {
+                    self.send_agent_message(message);
+                }
+            }
+            Err(error) => {
+                // A repaint-speed retry loop would only repeat the same disk error. New
+                // Conversation or an explicit Send clears this marker and retries the read.
+                self.agent_chat.history_error_project = Some(project);
+                self.agent_chat.loaded_history = None;
+                self.agent_chat.pending_send = None;
+                self.agent_chat.push_entry(ChatEntry::Error(error));
+            }
+        }
+        cx.notify();
+    }
+
     /// Frames the selection using live command IDs and zero-based note indices.
     fn agent_selection_context(&self) -> serde_json::Value {
         let project = self.project();
@@ -782,28 +1401,95 @@ impl AurisApp {
 
     /// Starts fresh model history and rebinds the next child to the current document.
     pub(crate) fn agent_reset_conversation(&mut self) {
+        let had_transcript = !self.agent_chat.entries.is_empty();
         self.agent_chat.controls = Default::default();
+        self.agent_chat.restore_pending_focus = false;
         self.agent_chat.link = None;
         self.agent_chat.busy = false;
         self.agent_chat.bound_project = None;
+        self.agent_chat.history_clear = None;
+        self.agent_chat.history_load = None;
+        self.agent_chat.history_project = None;
+        self.agent_chat.loaded_history = None;
+        self.agent_chat.history_error_project = None;
+        self.agent_chat.pending_send = None;
         self.agent_chat.fresh_history = false;
         self.agent_chat.restart_after_turn = false;
         self.agent_chat.produced_project = None;
         self.agent_chat.turn_project = None;
         self.agent_chat.pending_reload = None;
+        self.agent_chat.attachments.clear();
+        self.agent_chat.entries.clear();
+        self.agent_chat.expanded.clear();
         self.agent_chat.open_tools.clear();
         self.agent_chat.model_label.clear();
         self.agent_chat.tokens_in = 0;
         self.agent_chat.tokens_out = 0;
-        if !self.agent_chat.entries.is_empty() {
+        self.agent_chat.scroll = gpui::ScrollHandle::new();
+        self.agent_chat.unread_entries = 0;
+        self.agent_chat.follow_tail = true;
+        if had_transcript {
             self.agent_chat
                 .push_entry(ChatEntry::Note(Key::AgentConversationReset));
         }
     }
 
+    /// Stops the current worker and permanently clears this project's conversation history.
+    pub(crate) fn start_new_agent_conversation(&mut self, cx: &mut gpui::Context<Self>) {
+        if self.agent_history_clear_pending() {
+            return;
+        }
+        self.agent_stop(cx);
+        self.agent_chat.history_load = None;
+        self.agent_chat.history_error_project = None;
+        self.agent_chat.pending_send = None;
+        let project = self.session.path().map(Path::to_path_buf);
+        let history = self
+            .session
+            .project_folder()
+            .map(|folder| folder.join(".auris-conversation.json"));
+        if let (Some(project), Some(history)) = (project, history) {
+            self.agent_chat.history_clear = Some(PendingHistoryClear {
+                project,
+                receiver: auris_agent::clear_history_background(history),
+            });
+        } else {
+            self.finish_new_agent_conversation();
+        }
+        cx.notify();
+    }
+
+    fn finish_new_agent_conversation(&mut self) {
+        // A conflict must remain available after clearing model history.
+        let pending = self.agent_chat.pending_reload.clone();
+        self.agent_reset_conversation();
+        self.agent_chat.pending_reload = pending;
+        self.agent_chat.fresh_history = true;
+        self.agent_chat.entries.clear();
+    }
+
+    /// Cancels either a queued submission or the running worker, then returns to its draft.
+    fn agent_cancel(&mut self, window: &mut Window, cx: &mut gpui::Context<Self>) {
+        if self.agent_chat.pending_send.take().is_some() {
+            // Dropping the receiver detaches this panel from the read. The storage thread may
+            // finish independently, but its stale answer can no longer start the queued turn.
+            self.agent_chat.history_load = None;
+            self.agent_chat
+                .push_entry(ChatEntry::Note(Key::AgentSendCancelled));
+        } else {
+            self.agent_stop(cx);
+        }
+        self.focus_agent_field(AgentField::Chat);
+        if let Some(focus) = self.agent_chat.input_focus.as_ref() {
+            window.focus(focus);
+        }
+        cx.notify();
+    }
+
     /// Stops the worker and checks for completed writes, which remain undoable.
     fn agent_stop(&mut self, cx: &mut gpui::Context<Self>) {
         self.agent_chat.controls.pending = None;
+        self.agent_chat.restore_pending_focus = false;
         self.agent_chat.controls.permits.clear();
         self.agent_chat.controls.compacting = false;
         self.agent_chat.link = None;
@@ -820,8 +1506,9 @@ impl AurisApp {
         {
             self.accept_agent_changes(path, cx);
         }
-        self.agent_chat.open_tools.clear();
-        self.agent_chat.push_entry(ChatEntry::Note(Key::AgentEnded));
+        self.agent_chat.finish_open_tools("stopped", "");
+        self.agent_chat
+            .push_entry(ChatEntry::Note(Key::AgentStopped));
         cx.notify();
     }
 
@@ -834,10 +1521,10 @@ impl AurisApp {
         if text.is_empty() {
             return;
         }
-        if self.agent_control_command(&text) {
+        if self.agent_operation_busy() {
             return;
         }
-        if self.agent_chat.busy {
+        if self.agent_control_command(&text) {
             return;
         }
         if self.agent_chat.pending_reload.is_some() {
@@ -851,8 +1538,13 @@ impl AurisApp {
             // pressed Enter, and watched this branch's predecessor wipe the pick by loading
             // the saved (empty) preferences back over the form.
             let formed = self.agent_chat.preferences();
-            if formed.is_configured() && formed != self.settings.agent {
-                self.agent_apply_settings();
+            if formed.is_configured()
+                && formed != self.settings.agent
+                && let Err(error) = self.agent_apply_settings()
+            {
+                let message = crate::i18n::error_text(&error, self.language());
+                self.agent_chat.push_entry(ChatEntry::Error(message));
+                return;
             }
         }
         if !self.settings.agent.is_configured() {
@@ -875,16 +1567,63 @@ impl AurisApp {
         {
             self.agent_reset_conversation();
         }
+        let project = self.session.path().map(Path::to_path_buf);
+        if self.agent_chat.history_error_project == project {
+            // The visible Send button is the explicit retry after an earlier read failure.
+            self.agent_chat.history_error_project = None;
+        }
+        let message = PendingAgentSend {
+            token: self.agent_document_token(),
+            text,
+            attachments: self.agent_chat.attachments.clone(),
+            preferences: self.settings.agent.clone(),
+            selection_context: self.agent_selection_context().to_string(),
+        };
+        if !self.start_agent_history_load() {
+            if self.agent_chat.history_load.is_some() {
+                self.agent_chat.pending_send = Some(message);
+            }
+            return;
+        }
+        self.send_agent_message(message);
+    }
+
+    /// Sends one already-validated composer snapshot without consulting the live editor again.
+    fn send_agent_message(&mut self, message: PendingAgentSend) {
+        if !message
+            .token
+            .matches(self.session.path(), self.session.revision())
+        {
+            self.agent_chat.push_entry(ChatEntry::Error(
+                "The document changed before the message could be sent. Review the draft and send it again."
+                    .into(),
+            ));
+            return;
+        }
         if self.agent_chat.link.is_none() {
-            let folder = self
-                .session
-                .path()
+            let folder = message
+                .token
+                .project
+                .as_deref()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
+            let history = if message.token.project.is_some() {
+                let Some(snapshot) = self.agent_chat.loaded_history.clone() else {
+                    self.agent_chat.history_project = None;
+                    self.agent_chat.push_entry(ChatEntry::Error(
+                        "Conversation history is not ready. Send again after it reloads.".into(),
+                    ));
+                    return;
+                };
+                Some(snapshot)
+            } else {
+                None
+            };
             match spawn_link(
-                &self.settings.agent,
+                &message.preferences,
                 folder.as_deref(),
                 self.agent_chat.fresh_history,
+                history,
             ) {
                 Ok(link) => {
                     self.agent_chat.link = Some(link);
@@ -900,20 +1639,30 @@ impl AurisApp {
 
         let framed = format!(
             "[Window context: {}]\n{}",
-            self.agent_selection_context(),
-            framed_say(&text, self.session.path())
+            message.selection_context,
+            framed_say(&message.text, message.token.project.as_deref())
         );
-        let wire =
-            serde_json::json!({ "say": framed, "display": text, "audio": self.agent_chat.attachments, "policy": self.settings.agent.policy, "auto_compact_percent": self.settings.agent.auto_compact_percent.unwrap_or(85) }).to_string();
+        let wire = serde_json::json!({
+            "say": framed,
+            "display": &message.text,
+            "audio": &message.attachments,
+            "policy": message.preferences.policy,
+            "auto_compact_percent": message.preferences.auto_compact_percent.unwrap_or(85)
+        })
+        .to_string();
         if let Some(link) = self.agent_chat.link.as_mut()
-            && let Err(error) = link.send(&wire.to_string())
+            && let Err(error) = link.send(&wire)
         {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
             self.agent_chat.link = None;
             return;
         }
-        self.agent_chat.push_entry(ChatEntry::You(text));
+        self.agent_chat.push_entry(ChatEntry::You(message.text));
+        self.agent_chat.loaded_history = None;
+        // Sending is an explicit return to the live exchange. A reader who scrolls away again
+        // before the reply arrives will still stop following on that next transcript change.
+        self.agent_chat.jump_to_latest();
         self.agent_chat.busy = true;
         self.agent_chat.input = TextField::new(String::new());
         self.agent_chat.attachments.clear();
@@ -923,6 +1672,12 @@ impl AurisApp {
     fn agent_edit(&mut self, command: serde_json::Value) -> Result<String, String> {
         if self.agent_chat.bound_project.as_deref() != self.session.path() {
             return Err("The open document changed; start a new conversation".into());
+        }
+        if command["action"] == "list_instruments" {
+            return Err(
+                "list_instruments is unavailable in the live window; use a focused search_instruments query"
+                    .into(),
+            );
         }
         self.check_agent_edit(&command)?;
         serde_json::from_value::<auris_session::live_agent::Command>(command)
@@ -1005,18 +1760,24 @@ impl AurisApp {
         if link.sound_search.is_some() {
             return Err("A sound search is already running".into());
         }
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancel = cancel.clone();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .name("auris-sound-search".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    job.run(request, refresh)
+                    job.run_isolated(request, refresh, &worker_cancel)
                 }))
                 .unwrap_or_else(|_| Err("Sound search worker panicked".into()));
                 let _ = sender.send(result);
             })
             .map_err(|e| e.to_string())?;
-        link.sound_search = Some((self.session.revision(), receiver));
+        link.sound_search = Some(PendingSoundSearch {
+            revision: self.session.revision(),
+            cancel,
+            receiver,
+        });
         Ok(())
     }
 
@@ -1024,19 +1785,14 @@ impl AurisApp {
         let Some(link) = self.agent_chat.link.as_mut() else {
             return;
         };
-        let Some((revision, receiver)) = link.sound_search.as_ref() else {
+        let Some(pending) = link.sound_search.as_ref() else {
             return;
         };
-        let result = if *revision != self.session.revision()
-            || self.agent_chat.bound_project.as_deref() != self.session.path()
-        {
-            Err("The document changed during sound search; search again".into())
-        } else {
-            match receiver.try_recv() {
-                Ok(result) => result,
-                Err(std::sync::mpsc::TryRecvError::Empty) => return,
-                Err(_) => Err("Sound search worker stopped".into()),
-            }
+        let Some(result) = pending.poll(
+            self.session.revision(),
+            self.agent_chat.bound_project.as_deref() == self.session.path(),
+        ) else {
+            return;
         };
         link.sound_search = None;
         let wire = serde_json::json!({"event":"edit_result","ok":result.is_ok(),"text":result.unwrap_or_else(|e|e)});
@@ -1069,27 +1825,47 @@ impl AurisApp {
     /// Called from the repaint tick, beside `Session::poll` — the same shape as everything
     /// else another thread writes and this one reads.
     pub(crate) fn drain_agent(&mut self, cx: &mut gpui::Context<Self>) {
-        // The model listing first: one answer, then the channel is spent.
-        if let Some(receiver) = self.agent_chat.models_rx.as_ref()
-            && let Ok(answer) = receiver.try_recv()
-        {
-            self.agent_chat.models_rx = None;
-            self.agent_chat.fetching_models = false;
-            match answer.and_then(|line| parse_model_list(&line)) {
-                Ok(models) => {
-                    // The chosen model's window rides in on its listing — the gauge has no
-                    // other way to learn it.
-                    if let Some(chosen) = models
-                        .iter()
-                        .find(|option| option.name == self.agent_chat.chosen_model)
-                    {
-                        self.agent_chat.context_window = chosen.context_length;
-                    }
-                    self.agent_chat.models = models;
-                    self.agent_chat.models_error = None;
+        self.poll_agent_history_load(cx);
+        let history_answer = self
+            .agent_chat
+            .history_clear
+            .as_ref()
+            .and_then(PendingHistoryClear::poll);
+        if let Some(answer) = history_answer {
+            let pending = self.agent_chat.history_clear.take().unwrap();
+            match answer {
+                Ok(()) if self.session.path() == Some(pending.project.as_path()) => {
+                    self.finish_new_agent_conversation();
                 }
-                Err(error) => self.agent_chat.models_error = Some(error),
+                Ok(()) => {}
+                Err(error) if self.session.path() == Some(pending.project.as_path()) => {
+                    if self.agent_chat.history_project.as_ref() != Some(&pending.project) {
+                        self.agent_chat.history_error_project = Some(pending.project.clone());
+                    }
+                    self.agent_chat.push_entry(ChatEntry::Error(error));
+                }
+                Err(_) => {}
             }
+            cx.notify();
+        }
+        if self.panels.is_open(crate::dock::Panel::Agent) && !self.agent_history_clear_pending() {
+            self.start_agent_history_load();
+        }
+        // The model listing first: one answer, then the channel is spent.
+        let model_answer =
+            self.agent_chat
+                .models_rx
+                .as_ref()
+                .and_then(|receiver| match receiver.try_recv() {
+                    Ok(answer) => Some(answer),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        Some(Err("Model-listing worker stopped".to_string()))
+                    }
+                });
+        if let Some(answer) = model_answer {
+            self.agent_chat.models_rx = None;
+            self.agent_chat.accept_model_listing(answer);
             cx.notify();
         }
         // A live command must not join or finish the user's in-progress undo transaction.
@@ -1147,8 +1923,9 @@ impl AurisApp {
                 if let Some(link) = self.agent_chat.link.as_mut()
                     && let Err(error) = link.send(&wire.to_string())
                 {
-                    self.agent_chat
-                        .push_entry(ChatEntry::Error(error.to_string()));
+                    let error = error.to_string();
+                    self.agent_chat.finish_open_tools("failed", &error);
+                    self.agent_chat.push_entry(ChatEntry::Error(error));
                     self.agent_chat.link = None;
                     self.agent_chat.busy = false;
                 }
@@ -1181,11 +1958,13 @@ impl AurisApp {
         // One question at a time: a second press while one is out would park another
         // worker thread behind the same server, and a server that is not
         // answering would collect one per click.
-        if self.agent_chat.fetching_models {
+        if self.agent_operation_busy() || self.agent_chat.fetching_models {
             return;
         }
         self.agent_chat.models.clear();
         self.agent_chat.models_error = None;
+        self.agent_chat.context_window = None;
+        self.agent_chat.models_loaded = false;
         self.agent_chat.fetching_models = true;
         self.agent_chat.model_menu = false;
         self.agent_chat.models_rx = Some(spawn_model_listing(&self.agent_chat.preferences()));
@@ -1242,16 +2021,73 @@ impl AurisApp {
     /// Picking a model is a whole decision, unlike a half-typed URL: it takes effect the
     /// moment it is made, and the Apply button remains for the text fields. An incomplete
     /// form is left alone — nothing is saved until there is a model to save.
-    pub(crate) fn agent_write_through(&mut self) {
+    fn agent_write_through_with<E>(
+        &mut self,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<(), E> {
         let formed = self.agent_chat.preferences();
         if !formed.is_configured() || formed == self.settings.agent {
-            return;
+            return Ok(());
         }
-        self.settings.agent = formed;
-        if let Err(error) = self.settings.save() {
-            log::warn!("the agent settings did not save: {error}");
+        if self.persist_agent_preferences_with(formed, save)? {
+            self.restart_agent_after_preferences_change();
         }
-        // The child read its configuration at spawn; the next message spawns a fresh one.
+        Ok(())
+    }
+
+    /// Writes the settings section back to the shared preferences and restarts the wire.
+    ///
+    /// The child read its configuration at spawn, so a change means a new child; dropping the
+    /// link is enough, because the next message spawns one.
+    pub(crate) fn agent_apply_settings(&mut self) -> Result<(), auris_session::SessionError> {
+        self.agent_apply_settings_with(|settings| settings.save())
+    }
+
+    fn agent_apply_settings_with<E>(
+        &mut self,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let formed = self.agent_chat.preferences();
+        if self.persist_agent_preferences_with(formed, save)? {
+            self.restart_agent_after_preferences_change();
+        }
+        self.finish_agent_settings_form();
+        Ok(())
+    }
+
+    /// Persists preferences supplied by the separate Settings window, then mirrors them into
+    /// the Agent panel. A failed write leaves both the live settings and panel form untouched.
+    pub(crate) fn agent_apply_preferences_with<E>(
+        &mut self,
+        preferences: AgentPreferences,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<(), E> {
+        let changed = self.persist_agent_preferences_with(preferences.clone(), save)?;
+        self.agent_chat.load_preferences(&preferences);
+        if changed {
+            self.restart_agent_after_preferences_change();
+        }
+        self.finish_agent_settings_form();
+        Ok(())
+    }
+
+    fn persist_agent_preferences_with<E>(
+        &mut self,
+        preferences: AgentPreferences,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<bool, E> {
+        if preferences == self.settings.agent {
+            return Ok(false);
+        }
+        let previous = std::mem::replace(&mut self.settings.agent, preferences);
+        if let Err(error) = save(&self.settings) {
+            self.settings.agent = previous;
+            return Err(error);
+        }
+        Ok(true)
+    }
+
+    fn restart_agent_after_preferences_change(&mut self) {
         if self.agent_chat.busy {
             self.agent_chat.restart_after_turn = true;
         } else {
@@ -1260,21 +2096,7 @@ impl AurisApp {
         self.agent_chat.model_label = String::new();
     }
 
-    /// Writes the settings section back to the shared preferences and restarts the wire.
-    ///
-    /// The child read its configuration at spawn, so a change means a new child; dropping the
-    /// link is enough, because the next message spawns one.
-    pub(crate) fn agent_apply_settings(&mut self) {
-        self.settings.agent = self.agent_chat.preferences();
-        if let Err(error) = self.settings.save() {
-            log::warn!("the agent settings did not save: {error}");
-        }
-        if self.agent_chat.busy {
-            self.agent_chat.restart_after_turn = true;
-        } else {
-            self.agent_chat.link = None;
-        }
-        self.agent_chat.model_label = String::new();
+    fn finish_agent_settings_form(&mut self) {
         self.agent_chat.configuring = false;
         self.agent_chat.focused = None;
     }
@@ -1282,7 +2104,7 @@ impl AurisApp {
     /// Answers for a key while one of the agent panel's fields holds the keyboard.
     ///
     /// The characters come through the platform's input handler like every other field's; this
-    /// sees what that leaves out. Enter in the chat field sends.
+    /// sees what that leaves out. Enter sends; Shift+Enter inserts a line break.
     pub(crate) fn agent_key(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -1297,6 +2119,11 @@ impl AurisApp {
             .agent_chat
             .field()
             .is_some_and(|field| field.marked().is_some());
+        if composing && key == "tab" {
+            // Keep Tab inside the native IME while it owns a pre-edit. Falling through would
+            // dispatch the window's focus-navigation binding and strand the candidate session.
+            return true;
+        }
         if !composing && self.agent_chat.controls.pending.is_some() {
             if key == "escape" {
                 self.agent_approval(controls::Approval::Deny);
@@ -1311,18 +2138,39 @@ impl AurisApp {
                 return true;
             }
         }
-        if !composing && key == "tab" && event.keystroke.modifiers.shift {
-            self.agent_mode(self.settings.agent.policy.mode.next());
+        if self.agent_chat.pending_send.is_some() && !matches!(key, "tab" | "escape") {
+            // History loading owns an immutable composer snapshot. Native text input is also
+            // blocked by `field_mut`, while this catches keys that edit the field directly.
+            return true;
+        }
+        if !composing && key == "tab" {
+            if let Some(field) = self.agent_chat.field_mut() {
+                field.unmark();
+            }
+            self.agent_chat.focused = None;
+            if event.keystroke.modifiers.shift {
+                window.focus_prev();
+            } else {
+                window.focus_next();
+            }
             return true;
         }
         if !composing {
             match (key, focused) {
                 ("escape", _) => {
+                    if let Some(field) = self.agent_chat.field_mut() {
+                        field.unmark();
+                    }
                     self.agent_chat.focused = None;
+                    window.focus(self.panes.handle(Pane::Agent));
                     return true;
                 }
                 ("enter", AgentField::Chat) => {
-                    self.agent_submit(window, cx);
+                    if event.keystroke.modifiers.shift {
+                        self.agent_chat.input.insert("\n");
+                    } else {
+                        self.agent_submit(window, cx);
+                    }
                     return true;
                 }
                 _ => {}
@@ -1331,17 +2179,23 @@ impl AurisApp {
         let shift = event.keystroke.modifiers.shift;
         let secondary = event.keystroke.modifiers.secondary();
         self.agent_chat.field_mut().is_some_and(|field| {
-            field.apply_key_with_clipboard(key, shift, secondary, false, cx)
+            field.apply_key_with_clipboard(key, shift, secondary, true, cx)
                 != crate::ui::text_field::KeyEffect::Ignored
         })
     }
 
     /// The send button and Enter share validation before editing the live session.
-    fn agent_submit(&mut self, _window: &mut Window, _cx: &mut gpui::Context<Self>) {
+    fn agent_submit(&mut self, window: &mut Window, _cx: &mut gpui::Context<Self>) {
         if self.agent_chat.input.marked().is_some() {
             return;
         }
         self.agent_send();
+        if self.agent_chat.pending_send.is_some() {
+            self.agent_chat.focused = None;
+            if let Some(focus) = self.agent_chat.stop_focus.as_ref() {
+                window.focus(focus);
+            }
+        }
     }
 
     /// Puts the keyboard into one of the panel's fields.
@@ -1359,17 +2213,86 @@ impl AurisApp {
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let composer_locked = self.agent_chat.pending_send.is_some();
+        let cancelable = self.agent_cancelable();
+        let input_focus = self
+            .agent_chat
+            .input_focus
+            .get_or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_index(Pane::Agent.tab_index() + 2)
+                    .tab_stop(true)
+            })
+            .clone()
+            .tab_stop(!composer_locked);
+        let stop_focus = self
+            .agent_chat
+            .stop_focus
+            .get_or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_index(Pane::Agent.tab_index() + 3)
+                    .tab_stop(true)
+            })
+            .clone()
+            .tab_stop(cancelable);
+        if !composer_locked && input_focus.is_focused(window) {
+            self.focus_agent_field(AgentField::Chat);
+        } else if !composer_locked
+            && self.agent_chat.focused == Some(AgentField::Chat)
+            && self.pane_focused(Pane::Agent, window, cx)
+        {
+            // Several controls express "return to the composer" without receiving a Window.
+            // Move that logical request onto the real input target on the following frame.
+            window.focus(&input_focus);
+        }
+        // Arrival while hidden cannot keep the input handle focused: `reconcile_focus` correctly
+        // releases every hidden field. Showing the panel is the explicit return, so restore its
+        // advertised approval keys exactly once. A later click into another pane clears the
+        // ordinary field focus without this repaint stealing it back.
+        if self.agent_chat.restore_pending_focus && self.agent_chat.controls.pending.is_some() {
+            self.agent_chat.restore_pending_focus = false;
+            self.focus_agent_field(AgentField::Chat);
+            window.focus(&input_focus);
+        }
         // The persistent model picker uses the saved provider even before settings opens.
         self.agent_chat
             .load_preferences_once(&self.settings.agent.clone());
         // When the panel first opens, ask the provider what it serves —
         // once, and only until an answer or a refusal lands; the refresh button asks again.
-        if self.agent_chat.models.is_empty()
-            && self.agent_chat.models_error.is_none()
-            && !self.agent_chat.fetching_models
-            && self.agent_chat.models_rx.is_none()
-        {
+        if self.agent_chat.needs_model_listing() {
             self.agent_refresh_models();
+        }
+        if self.agent_operation_busy() || !self.agent_chat.model_selector_enabled() {
+            self.agent_chat.model_menu = false;
+        }
+
+        let header_section_focus = self
+            .agent_chat
+            .header_section_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let controls_section_focus = self
+            .agent_chat
+            .controls_section_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        let model_section_focus = self
+            .agent_chat
+            .model_section_focus
+            .get_or_insert_with(|| cx.focus_handle())
+            .clone();
+        for (index, focus) in [
+            &header_section_focus,
+            &controls_section_focus,
+            &model_section_focus,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if focus.contains_focused(window, cx) {
+                self.agent_chat.controls_scroll.scroll_to_item(index);
+                break;
+            }
         }
 
         let entries: Vec<AnyElement> = self
@@ -1380,126 +2303,207 @@ impl AurisApp {
             .map(|(index, entry)| self.chat_row(index, entry, &theme, window, cx))
             .collect();
         let rows = entries;
-        let busy = self.agent_chat.busy;
+        let operation_busy = self.agent_operation_busy();
         let pending_reload = self.agent_chat.pending_reload.is_some();
         let model_label = match self.agent_chat.model_label.is_empty() {
             true => self.settings.agent.model.clone(),
             false => self.agent_chat.model_label.clone(),
         };
+        let controls_max_offset = self.agent_chat.controls_scroll.max_offset().height;
+        let controls_offset = self.agent_chat.controls_scroll.offset().y;
+        let controls_overflow = controls_max_offset > px(0.0);
+        let controls_cue = if controls_offset >= px(-1.0) {
+            "↓"
+        } else if -controls_offset >= controls_max_offset - px(1.0) {
+            "↑"
+        } else {
+            "↕"
+        };
 
         div()
+            .id("agent-panel")
+            .debug_selector(|| "agent-panel".to_string())
             .flex()
             .flex_col()
             .flex_1()
             .min_h(px(80.0))
             .min_w_0()
+            .overflow_hidden()
             .bg(theme.surface_sunken)
+            // Model options stop propagation; any other click in the panel is outside the
+            // selector and dismisses it before carrying on to its own control.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                    if this.agent_chat.model_menu {
+                        this.agent_chat.model_menu = false;
+                        cx.notify();
+                    }
+                }),
+            )
             .child(
                 div()
+                    .id("agent-panel-controls")
+                    .debug_selector(|| "agent-panel-controls".to_string())
                     .flex()
-                    .items_center()
-                    .gap_2()
-                    .flex_shrink_0()
-                    .min_h(Metrics::PANEL_HEADER_HEIGHT)
-                    .flex_wrap()
-                    .px_2()
-                    .bg(theme.surface_raised)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .text_xs()
-                    .text_color(theme.text_muted)
-                    .child(div().child(self.t(Key::AgentPanel)))
-                    .when(self.agent_chat.produced_project.is_some(), |this| {
-                        this.child(button(
-                            "agent-open-result",
-                            self.t(Key::AgentOpenResult),
-                            ButtonStyle::Normal,
-                            false,
-                            theme.accent,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                if let Some(path) = this.agent_chat.produced_project.clone()
-                                    && this.confirm_discard(
-                                        crate::ui::prompt::PendingAction::OpenDropped(path.clone()),
-                                    )
-                                {
-                                    this.open_project_at(path, cx);
-                                }
-                            }),
-                        ))
-                    })
-                    .child(button(
-                        "agent-new-conversation",
-                        self.t(Key::AgentNewConversation),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| {
-                            this.agent_stop(cx);
-                            // A conflict must remain available after clearing model history.
-                            let pending = this.agent_chat.pending_reload.clone();
-                            this.agent_reset_conversation();
-                            this.agent_chat.pending_reload = pending;
-                            this.agent_chat.fresh_history = true;
-                            this.agent_chat.entries.clear();
-                            if let Some(folder) = this.session.project_folder() {
-                                let history = folder.join(".auris-conversation.json");
-                                if let Err(error) = std::fs::remove_file(&history)
-                                    && error.kind() != std::io::ErrorKind::NotFound
-                                {
-                                    this.agent_chat
-                                        .push_entry(ChatEntry::Error(error.to_string()));
-                                }
-                            }
-                            cx.notify();
-                        }),
-                    ))
-                    .when(busy, |this| {
-                        this.child(button(
-                            "agent-stop",
-                            self.t(Key::AgentStop),
-                            ButtonStyle::Normal,
-                            false,
-                            theme.warning,
-                            &theme,
-                            cx.listener(|this, _, _, cx| this.agent_stop(cx)),
-                        ))
-                    })
+                    .flex_col()
+                    .relative()
+                    .flex_shrink()
+                    .min_h_0()
+                    .max_h(px(180.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.agent_chat.controls_scroll)
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden()
-                            .text_color(theme.text_faint)
-                            .child(model_label),
+                            .track_focus(&header_section_focus)
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .flex_shrink_0()
+                            .min_h(Metrics::PANEL_HEADER_HEIGHT)
+                            .flex_wrap()
+                            .px_2()
+                            .bg(theme.surface_raised)
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(div().child(self.t(Key::AgentPanel)))
+                            .when(self.agent_chat.produced_project.is_some(), |this| {
+                                this.child(button(
+                                    "agent-open-result",
+                                    self.t(Key::AgentOpenResult),
+                                    ButtonStyle::Normal,
+                                    false,
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        if let Some(path) = this.agent_chat.produced_project.clone()
+                                            && this.confirm_discard(
+                                                crate::ui::prompt::PendingAction::OpenDropped(
+                                                    path.clone(),
+                                                ),
+                                            )
+                                        {
+                                            this.open_project_at(path, cx);
+                                        }
+                                    }),
+                                ))
+                            })
+                            .child(bounded_button_enabled(
+                                "agent-new-conversation",
+                                self.t(Key::AgentNewConversation),
+                                ButtonStyle::Normal,
+                                ButtonState::available(false, !operation_busy),
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_prompt(crate::ui::prompt::Prompt::ask(
+                                        this.t(Key::AgentNewConversationTitle),
+                                        crate::ui::prompt::Question::NewAgentConversation,
+                                    ));
+                                    cx.notify();
+                                }),
+                            ))
+                            .when(cancelable, |this| {
+                                this.child(
+                                    button(
+                                        "agent-stop",
+                                        self.t(Key::AgentStop),
+                                        ButtonStyle::Normal,
+                                        false,
+                                        theme.warning,
+                                        &theme,
+                                        cx.listener(|this, _, window, cx| {
+                                            this.agent_cancel(window, cx)
+                                        }),
+                                    )
+                                    .track_focus(&stop_focus),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .id("agent-header-model")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(Metrics::CONTROL_HEIGHT)
+                                    .text_color(theme.text_faint)
+                                    .child(bounded_picker_label(model_label.clone()))
+                                    .when(!model_label.is_empty(), |this| {
+                                        this.tooltip(crate::ui::tooltip::keyed_tip(
+                                            model_label,
+                                            "",
+                                            &theme,
+                                        ))
+                                    }),
+                            )
+                            .when(pending_reload, |this| {
+                                this.child(button(
+                                    "agent-reload",
+                                    self.t(Key::AgentReload),
+                                    ButtonStyle::Normal,
+                                    true,
+                                    theme.warning,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.agent_reload(cx);
+                                        cx.notify();
+                                    }),
+                                ))
+                            })
+                            .child(button_enabled(
+                                "agent-configure",
+                                self.t(Key::AgentConfigure),
+                                ButtonStyle::Normal,
+                                ButtonState::available(false, !operation_busy),
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.agent_chat.model_menu = false;
+                                    this.open_settings_tab(
+                                        crate::settings_window::SettingsTab::Agent,
+                                        cx,
+                                    );
+                                }),
+                            )),
                     )
-                    .when(pending_reload, |this| {
-                        this.child(button(
-                            "agent-reload",
-                            self.t(Key::AgentReload),
-                            ButtonStyle::Normal,
-                            true,
-                            theme.warning,
-                            &theme,
-                            cx.listener(|this, _, _, cx| {
-                                this.agent_reload(cx);
-                                cx.notify();
-                            }),
-                        ))
-                    })
-                    .child(button(
-                        "agent-configure",
-                        self.t(Key::AgentConfigure),
-                        ButtonStyle::Normal,
-                        false,
-                        theme.accent,
-                        &theme,
-                        cx.listener(|this, _, _, cx| this.open_settings(cx)),
-                    )),
+                    .child(
+                        div()
+                            .track_focus(&controls_section_focus)
+                            .child(self.agent_controls(cx)),
+                    )
+                    .child(
+                        div()
+                            .track_focus(&model_section_focus)
+                            .child(self.agent_model_picker(cx)),
+                    )
+                    .when(controls_overflow, |this| {
+                        this.child(
+                            div()
+                                .id("agent-controls-scroll-cue")
+                                .debug_selector(|| "agent-controls-scroll-cue".to_string())
+                                .absolute()
+                                .right(px(2.0))
+                                .bottom(px(2.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(16.0))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.surface_raised)
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .child(controls_cue)
+                                .tooltip(crate::ui::tooltip::keyed_tip(
+                                    self.t(Key::AgentControlsScroll),
+                                    "",
+                                    &theme,
+                                )),
+                        )
+                    }),
             )
-            .child(self.agent_controls(cx))
-            .child(self.agent_model_picker(cx))
             .child(
                 self.scrolling(
                     ScrollPanel::Agent,
@@ -1515,7 +2519,7 @@ impl AurisApp {
                             this.child(self.agent_rules(cx))
                         })
                         .children(rows)
-                        .when(busy, |this| {
+                        .when(operation_busy, |this| {
                             this.child(div().px_1p5().text_xs().text_color(theme.text_faint).child(
                                 self.t(if self.agent_chat.controls.compacting {
                                     Key::AgentCompacting
@@ -1526,21 +2530,39 @@ impl AurisApp {
                                 }),
                             ))
                         })
-                        .when(self.agent_chat.entries.is_empty() && !busy, |this| {
-                            this.child(
-                                div()
-                                    .p_2()
-                                    .text_xs()
-                                    .text_color(theme.text_faint)
-                                    .child(self.t(Key::AgentPlaceholder)),
-                            )
-                        }),
+                        .when(
+                            self.agent_chat.entries.is_empty() && !operation_busy,
+                            |this| {
+                                this.child(
+                                    div()
+                                        .p_2()
+                                        .text_xs()
+                                        .text_color(theme.text_faint)
+                                        .child(self.t(Key::AgentPlaceholder)),
+                                )
+                            },
+                        ),
                     cx,
                 ),
             )
+            .when(self.agent_chat.unread_entries > 0, |this| {
+                let unread = self.agent_chat.unread_entries;
+                this.child(div().flex().justify_center().px_2().py_0p5().child(button(
+                    "agent-jump-latest",
+                    format!("{} ({unread})", self.t(Key::AgentJumpLatest)),
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.agent_chat.jump_to_latest();
+                        cx.notify();
+                    }),
+                )))
+            })
             .child(self.agent_approval_view(cx))
             .child(self.agent_gauge_row(&theme))
-            .child(self.agent_input_row(cx))
+            .child(self.agent_input_row(input_focus, cx))
     }
 
     /// The context gauge and token counters, over the input the way picocode sets its status
@@ -1555,44 +2577,54 @@ impl AurisApp {
         }
         let ratio = self.agent_chat.context_ratio();
         let mut row = div()
+            .id("agent-gauge")
+            .debug_selector(|| "agent-gauge".to_string())
             .flex()
-            .items_center()
-            .justify_end()
-            .gap_2()
+            .flex_col()
+            .gap_1()
             .px_2()
             .py_0p5()
             .border_t_1()
             .border_color(theme.border_subtle)
             .text_xs()
             .text_color(theme.text_faint)
-            .child(format!(
+            .child(div().flex().justify_end().min_w_0().child(format!(
                 "↑ {} ↓ {}",
                 self.agent_chat.tokens_in, self.agent_chat.tokens_out
-            ));
+            )));
         if let Some(ratio) = ratio {
-            const GAUGE_WIDTH: f32 = 96.0;
-            row = row
-                .child(
-                    div()
-                        .w(px(GAUGE_WIDTH))
-                        .h(px(5.0))
-                        .rounded_full()
-                        .bg(theme.surface_raised)
-                        .child(
-                            div()
-                                .w(px(GAUGE_WIDTH * ratio))
-                                .h_full()
-                                .rounded_full()
-                                .bg(gauge_colour(ratio, theme)),
-                        ),
-                )
-                .child(format!("{:>3.0}%", ratio * 100.0));
+            row = row.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .w_full()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .id("agent-gauge-meter")
+                            .debug_selector(|| "agent-gauge-meter".to_string())
+                            .flex_1()
+                            .min_w(px(48.0))
+                            .h(px(5.0))
+                            .rounded_full()
+                            .bg(theme.surface_raised)
+                            .child(
+                                div()
+                                    .w(relative(ratio))
+                                    .h_full()
+                                    .rounded_full()
+                                    .bg(gauge_colour(ratio, theme)),
+                            ),
+                    )
+                    .child(format!("{:>3.0}%", ratio * 100.0)),
+            );
         }
         row.into_any_element()
     }
 
-    /// One transcript row. A tool row with an answer opens to the whole of it on a click —
-    /// the loop's log, kept where the loop is shown.
+    /// One transcript row. A tool row with an answer opens to the whole of it when activated —
+    /// by pointer or keyboard — so the loop's log stays where the loop is shown.
     fn chat_row(
         &self,
         index: usize,
@@ -1605,22 +2637,24 @@ impl AurisApp {
             ChatEntry::You(text) => (theme.accent_text, text.clone()),
             ChatEntry::Agent(text) => (theme.text, text.clone()),
             ChatEntry::Status(text) => (theme.text_muted, text.clone()),
+            ChatEntry::RestoredContext(_) => (
+                theme.text_muted,
+                self.t(Key::AgentRestoredContext).to_string(),
+            ),
             ChatEntry::Tool { name, ok, line, .. } => {
-                let mark = match (*ok, line.is_empty()) {
-                    (_, true) => "…",
-                    (true, false) => "✓",
-                    (false, false) => "✗",
-                };
+                let mark = tool_mark(*ok, line);
                 (theme.text_muted, format!("{mark} {name}  {line}"))
             }
             ChatEntry::Error(message) => (theme.danger, message.clone()),
-            ChatEntry::Note(key) => (theme.warning, self.t(*key).to_string()),
+            ChatEntry::Note(key) => (note_colour(*key, theme), self.t(*key).to_string()),
         };
         let bordered = matches!(entry, ChatEntry::You(_));
         let opened = self.agent_chat.expanded.contains(&index);
-        let openable = matches!(entry, ChatEntry::Tool { detail, .. } if !detail.is_empty());
+        let openable = matches!(entry, ChatEntry::Tool { detail, .. } if !detail.is_empty())
+            || matches!(entry, ChatEntry::RestoredContext(detail) if !detail.is_empty());
         let detail = match entry {
             ChatEntry::Tool { detail, .. } if opened => Some(detail.clone()),
+            ChatEntry::RestoredContext(detail) if opened => Some(detail.clone()),
             _ => None,
         };
         let body: AnyElement = match entry {
@@ -1631,6 +2665,32 @@ impl AurisApp {
                 window,
                 cx,
             ),
+            ChatEntry::Tool { .. } if openable => disclosure(
+                SharedString::from(format!("agent-tool-result-{index}")),
+                text,
+                opened,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.agent_chat.expanded.remove(&index) {
+                        this.agent_chat.expanded.insert(index);
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+            ChatEntry::RestoredContext(_) => disclosure(
+                SharedString::from(format!("agent-restored-context-{index}")),
+                text,
+                opened,
+                theme,
+                cx.listener(move |this, _, _, cx| {
+                    if !this.agent_chat.expanded.remove(&index) {
+                        this.agent_chat.expanded.insert(index);
+                    }
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
             _ => div().child(text).into_any_element(),
         };
         div()
@@ -1645,17 +2705,6 @@ impl AurisApp {
             .text_color(colour)
             .when(bordered, |this| {
                 this.border_l_2().border_color(theme.accent)
-            })
-            .when(openable, |this| {
-                this.cursor_pointer().on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                        if !this.agent_chat.expanded.remove(&index) {
-                            this.agent_chat.expanded.insert(index);
-                        }
-                        cx.notify();
-                    }),
-                )
             })
             .child(body)
             .when_some(
@@ -1707,22 +2756,142 @@ impl AurisApp {
             .into_any_element()
     }
 
+    /// Opens the model menu at the current choice, ready for arrow-key navigation.
+    fn open_agent_model_menu(&mut self) {
+        if self.agent_operation_busy() || !self.agent_chat.model_selector_enabled() {
+            return;
+        }
+        if let Some(field) = self.agent_chat.field_mut() {
+            field.unmark();
+        }
+        self.agent_chat.focused = None;
+        self.library_search_focused = false;
+        self.agent_chat.model_highlighted = self
+            .agent_chat
+            .models
+            .iter()
+            .position(|option| option.name == self.agent_chat.chosen_model)
+            .unwrap_or(0);
+        self.agent_chat.model_menu = true;
+        self.agent_chat
+            .model_scroll
+            .scroll_to_item(self.agent_chat.model_highlighted);
+    }
+
+    /// Applies one model choice immediately, just like a pointer selection.
+    fn choose_agent_model(&mut self, index: usize) {
+        let result = self.choose_agent_model_with(index, |settings| settings.save());
+        if let Err(error) = result {
+            let message = crate::i18n::error_text(&error, self.language());
+            self.agent_chat.models_error = Some(message);
+        }
+    }
+
+    fn choose_agent_model_with<E>(
+        &mut self,
+        index: usize,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<(), E> {
+        if self.agent_operation_busy() {
+            return Ok(());
+        }
+        let Some(option) = self.agent_chat.models.get(index).cloned() else {
+            self.agent_chat.model_menu = false;
+            return Ok(());
+        };
+        let previous_context_window = self.agent_chat.context_window;
+        let previous = (
+            std::mem::replace(&mut self.agent_chat.chosen_model, option.name),
+            previous_context_window,
+            std::mem::replace(&mut self.agent_chat.tokens_in, 0),
+            std::mem::replace(&mut self.agent_chat.tokens_out, 0),
+            std::mem::replace(&mut self.agent_chat.model_highlighted, index),
+            std::mem::replace(&mut self.agent_chat.model_menu, false),
+        );
+        self.agent_chat.context_window = option.context_length;
+        // The pick counts the moment it is made — no Apply between the menu and the setting.
+        if let Err(error) = self.agent_write_through_with(save) {
+            (
+                self.agent_chat.chosen_model,
+                self.agent_chat.context_window,
+                self.agent_chat.tokens_in,
+                self.agent_chat.tokens_out,
+                self.agent_chat.model_highlighted,
+                self.agent_chat.model_menu,
+            ) = previous;
+            return Err(error);
+        }
+        self.agent_chat.models_error = None;
+        Ok(())
+    }
+
+    /// Handles the keys belonging to the focused model selector.
+    fn agent_model_menu_key(&mut self, key: &str) -> bool {
+        if self.agent_operation_busy() || !self.agent_chat.model_selector_enabled() {
+            self.agent_chat.model_menu = false;
+            return false;
+        }
+        if !self.agent_chat.model_menu {
+            if matches!(key, "enter" | "space" | " " | "up" | "down") {
+                self.open_agent_model_menu();
+                return true;
+            }
+            return false;
+        }
+        let count = self.agent_chat.models.len();
+        match key {
+            "escape" => self.agent_chat.model_menu = false,
+            // Dismiss, then let gpui continue ordinary focus traversal.
+            "tab" => {
+                self.agent_chat.model_menu = false;
+                return false;
+            }
+            "enter" | "space" | " " if count > 0 => {
+                self.choose_agent_model(self.agent_chat.model_highlighted)
+            }
+            "up" if count > 0 => {
+                self.agent_chat.model_highlighted =
+                    self.agent_chat.model_highlighted.saturating_sub(1);
+            }
+            "down" if count > 0 => {
+                self.agent_chat.model_highlighted =
+                    (self.agent_chat.model_highlighted + 1).min(count - 1);
+            }
+            "home" if count > 0 => self.agent_chat.model_highlighted = 0,
+            "end" if count > 0 => self.agent_chat.model_highlighted = count - 1,
+            _ => {}
+        }
+        if self.agent_chat.model_menu {
+            self.agent_chat
+                .model_scroll
+                .scroll_to_item(self.agent_chat.model_highlighted);
+        }
+        true
+    }
+
     /// The settings section: provider, model, URL, key variable, apply.
     fn agent_model_picker(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
+        let operation_busy = self.agent_operation_busy();
+        let refresh_enabled = !operation_busy && !self.agent_chat.fetching_models;
+        let model_enabled = !operation_busy && self.agent_chat.model_selector_enabled();
+        let configured_model = !self.agent_chat.chosen_model.is_empty();
+        let model_focus = self
+            .agent_chat
+            .model_focus
+            .get_or_insert_with(|| {
+                cx.focus_handle()
+                    .tab_index(Pane::Agent.tab_index() + 1)
+                    .tab_stop(true)
+            })
+            .clone()
+            .tab_stop(model_enabled);
         let labelled = |label: String, control: AnyElement, theme: &Theme| {
             div()
                 .flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    div()
-                        .w(px(96.0))
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(label),
-                )
+                .flex_col()
+                .gap_1()
+                .child(div().text_xs().text_color(theme.text_muted).child(label))
                 .child(div().flex_1().min_w_0().child(control))
                 .into_any_element()
         };
@@ -1737,26 +2906,27 @@ impl AurisApp {
                 self.t(Key::AgentModelLabel).to_string(),
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_1()
-                    .child(div().flex_1().min_w_0().child(self.dropdown(
-                        "agent-model",
+                    .w_full()
+                    .min_w_0()
+                    .child(div().flex_1().min_w_0().child(self.model_dropdown(
                         match self.agent_chat.chosen_model.is_empty() {
                             true => self.t(Key::AgentChooseModel).to_string(),
                             false => self.agent_chat.chosen_model.clone(),
                         },
                         self.agent_chat.model_menu,
-                        &theme,
-                        |this, _| {
-                            this.agent_chat.model_menu = !this.agent_chat.model_menu;
-                        },
+                        model_enabled,
+                        configured_model,
+                        model_focus,
                         cx,
                     )))
-                    .child(button(
+                    .child(button_enabled(
                         "agent-models-refresh",
                         self.t(Key::AgentModelsFetch),
                         ButtonStyle::Normal,
-                        false,
+                        ButtonState::available(false, refresh_enabled),
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
@@ -1779,7 +2949,24 @@ impl AurisApp {
             .when_some(self.agent_chat.models_error.clone(), |this, error| {
                 this.child(div().px_1().text_xs().text_color(theme.danger).child(error))
             })
-            .when(self.agent_chat.model_menu, |this| {
+            .when(
+                self.agent_chat.models_loaded
+                    && self.agent_chat.models.is_empty()
+                    && self.agent_chat.models_error.is_none()
+                    && !self.agent_chat.fetching_models,
+                |this| {
+                    this.child(
+                        div()
+                            .id("agent-models-empty")
+                            .debug_selector(|| "agent-models-empty".to_string())
+                            .px_1()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(self.t(Key::AgentModelsEmpty)),
+                    )
+                },
+            )
+            .when(self.agent_chat.model_menu && model_enabled, |this| {
                 let names: Vec<String> = self
                     .agent_chat
                     .models
@@ -1789,24 +2976,7 @@ impl AurisApp {
                         None => option.name.clone(),
                     })
                     .collect();
-                this.child(self.option_rows(
-                    "agent-model-option",
-                    &names,
-                    &theme,
-                    |this, chosen, _| {
-                        if let Some(option) = this.agent_chat.models.get(chosen) {
-                            this.agent_chat.chosen_model = option.name.clone();
-                            this.agent_chat.context_window = option.context_length;
-                            this.agent_chat.tokens_in = 0;
-                            this.agent_chat.tokens_out = 0;
-                        }
-                        this.agent_chat.model_menu = false;
-                        // The pick counts the moment it is made — no Apply between the
-                        // menu and the setting.
-                        this.agent_write_through();
-                    },
-                    cx,
-                ))
+                this.child(self.model_option_rows(&names, &theme, cx))
             })
             .into_any_element()
     }
@@ -1815,18 +2985,24 @@ impl AurisApp {
     ///
     /// Not a popup window — the options render as rows underneath, pushing the section down,
     /// which is all a two-item provider list and a one-server model list need.
-    fn dropdown(
+    fn model_dropdown(
         &self,
-        id: &'static str,
         current: String,
         open: bool,
-        theme: &Theme,
-        toggle: impl Fn(&mut Self, &mut gpui::Context<Self>) + 'static,
+        enabled: bool,
+        configured: bool,
+        focus: gpui::FocusHandle,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        let id = "agent-model";
+        let theme = &self.theme;
+        let pointer_focus = focus.clone();
+        let tooltip = current.clone();
         div()
             .id(id)
             .debug_selector(move || id.to_string())
+            .track_focus(&focus)
+            .key_context("AurisAgentModel")
             .flex()
             .items_center()
             .justify_between()
@@ -1845,20 +3021,32 @@ impl AurisApp {
                 false => theme.border_subtle,
             })
             .text_xs()
-            .hover(|this| {
-                this.bg(theme.surface_hover).border_color(if open {
-                    theme.accent
-                } else {
-                    theme.border
-                })
+            .when(enabled, |this| {
+                this.tab_index(0)
+                    .focus(|this| this.border_color(theme.selection))
+                    .hover(|this| {
+                        this.bg(theme.surface_hover).border_color(if open {
+                            theme.accent
+                        } else {
+                            theme.border
+                        })
+                    })
             })
+            // Keep a configured name readable even when the provider supplied no usable list;
+            // the quiet chevron and absent hover/focus response carry the disabled state.
+            .when(!enabled, |this| this.opacity(0.78))
             .child(
                 div()
+                    .id("agent-model-current")
+                    .debug_selector(|| "agent-model-current".to_string())
                     .flex_1()
                     .min_w_0()
-                    .overflow_hidden()
-                    .text_color(theme.text)
-                    .child(current),
+                    .text_color(if configured {
+                        theme.text
+                    } else {
+                        theme.text_faint
+                    })
+                    .child(bounded_picker_label(current)),
             )
             .child(
                 div()
@@ -1874,71 +3062,125 @@ impl AurisApp {
                             Icon::ChevronDown
                         },
                         Metrics::DROPDOWN_INDICATOR_SIZE,
-                        theme.text_muted,
+                        if enabled {
+                            theme.text_muted
+                        } else {
+                            theme.text_faint
+                        },
                     )),
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    toggle(this, cx);
-                    cx.notify();
-                }),
-            )
+            .when(enabled, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                        window.focus(&pointer_focus);
+                        if this.agent_chat.model_menu {
+                            this.agent_chat.model_menu = false;
+                        } else {
+                            this.open_agent_model_menu();
+                        }
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                )
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "tab" && this.agent_chat.model_menu {
+                        this.agent_chat.model_menu = false;
+                        cx.notify();
+                    }
+                }))
+                .on_action(cx.listener(
+                    |this, event: &NavigateAgentModel, _, cx| {
+                        if this.agent_model_menu_key(event.key) {
+                            cx.stop_propagation();
+                        }
+                        cx.notify();
+                    },
+                ))
+            })
+            .tooltip(crate::ui::tooltip::keyed_tip(tooltip, "", theme))
             .into_any_element()
     }
 
     /// The rows an open dropdown shows, each picking by its position in the list.
-    fn option_rows(
+    fn model_option_rows(
         &self,
-        id: &'static str,
         names: &[String],
         theme: &Theme,
-        pick: impl Fn(&mut Self, usize, &mut gpui::Context<Self>) + Clone + 'static,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
+        let id = "agent-model-option";
         let mut list = div()
             .id((id, usize::MAX))
             .flex()
             .flex_col()
             .max_h(px(160.0))
             .overflow_y_scroll()
-            .ml(px(96.0 + 8.0))
+            .track_scroll(&self.agent_chat.model_scroll)
+            .w_full()
+            .min_w_0()
             .rounded(Metrics::RADIUS_SM)
             .border_1()
             .border_color(theme.border_subtle)
-            .bg(theme.surface_raised);
+            .bg(theme.surface_raised)
+            .on_mouse_down(
+                MouseButton::Left,
+                |_: &MouseDownEvent, _, cx: &mut gpui::App| {
+                    cx.stop_propagation();
+                },
+            );
         for (index, name) in names.iter().enumerate() {
-            let pick = pick.clone();
+            let tooltip = name.clone();
             list = list.child(
                 div()
                     .id((id, index))
                     .debug_selector(move || format!("{id}-{index}"))
+                    .flex()
+                    .items_center()
+                    .h(Metrics::CONTROL_HEIGHT)
                     .px_1p5()
-                    .py_0p5()
+                    .min_w_0()
                     .text_xs()
                     .text_color(theme.text)
+                    .when(self.agent_chat.model_highlighted == index, |this| {
+                        this.bg(theme.accent_soft)
+                    })
                     .hover(|this| this.bg(theme.surface_hover))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                            pick(this, index, cx);
+                            this.choose_agent_model(index);
+                            cx.stop_propagation();
                             cx.notify();
                         }),
                     )
-                    .child(name.clone()),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .child(bounded_picker_label(name.clone())),
+                    )
+                    .tooltip(crate::ui::tooltip::keyed_tip(tooltip, "", theme)),
             );
         }
         list.into_any_element()
     }
 
     /// The message field and its border, at the bottom of the panel.
-    fn agent_input_row(&mut self, cx: &mut gpui::Context<Self>) -> AnyElement {
+    fn agent_input_row(
+        &mut self,
+        input_focus: gpui::FocusHandle,
+        cx: &mut gpui::Context<Self>,
+    ) -> AnyElement {
         let theme = self.theme.clone();
         let attachments = self.agent_chat.attachments.clone();
         let focused = self.agent_chat.focused == Some(AgentField::Chat);
         let empty = self.agent_chat.input.content().is_empty();
         let placeholder = self.t(Key::AgentPlaceholder).to_string();
-        let can_send = !self.agent_chat.busy
+        let operation_busy = self.agent_operation_busy();
+        let composer_locked = self.agent_chat.pending_send.is_some();
+        let can_send = !operation_busy
             && !self.agent_chat.input.content().trim().is_empty()
             && self.agent_chat.input.marked().is_none();
         div()
@@ -1954,15 +3196,18 @@ impl AurisApp {
                     .flex()
                     .flex_wrap()
                     .gap_1()
-                    .child(button(
+                    .w_full()
+                    .min_w_0()
+                    .child(button_enabled(
                         "agent-attach-audio",
                         self.t(Key::AgentAttachAudio),
                         ButtonStyle::Normal,
-                        false,
+                        ButtonState::available(false, !operation_busy),
                         theme.accent,
                         &theme,
                         cx.listener(|this, _, _, cx| {
                             let language = this.language();
+                            let token = this.agent_document_token();
                             cx.spawn(async move |this, cx| {
                                 let files = rfd::AsyncFileDialog::new()
                                     .set_title(Key::AgentAttachAudio.get(language))
@@ -1974,6 +3219,14 @@ impl AurisApp {
                                     .await;
                                 if let Some(files) = files {
                                     let _ = this.update(cx, |this, cx| {
+                                        if this.agent_operation_busy()
+                                            || !token.matches(
+                                                this.session.path(),
+                                                this.session.revision(),
+                                            )
+                                        {
+                                            return;
+                                        }
                                         for file in files {
                                             let path = file.path().to_path_buf();
                                             if !this.agent_chat.attachments.contains(&path) {
@@ -1988,14 +3241,17 @@ impl AurisApp {
                         }),
                     ))
                     .children(attachments.iter().enumerate().map(|(index, path)| {
-                        button(
+                        let name = path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+                        let remove_label =
+                            self.t(Key::AgentRemoveAttachment).replace("{name}", &name);
+                        button_enabled(
                             ("agent-attachment", index),
-                            format!(
-                                "{} ×",
-                                path.file_name().unwrap_or_default().to_string_lossy()
-                            ),
+                            "",
                             ButtonStyle::Normal,
-                            false,
+                            ButtonState::available(false, !operation_busy),
                             theme.accent,
                             &theme,
                             cx.listener(move |this, _, _, cx| {
@@ -2005,24 +3261,64 @@ impl AurisApp {
                                 cx.notify();
                             }),
                         )
+                        .w_full()
+                        .max_w_full()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .w_full()
+                                .min_w_0()
+                                .child(
+                                    div().flex_1().min_w_0().child(
+                                        crate::ui::widgets::bounded_picker_label(name.clone()),
+                                    ),
+                                )
+                                .child(
+                                    div()
+                                        .id(("agent-attachment-remove", index))
+                                        .debug_selector(move || {
+                                            format!("agent-attachment-remove-{index}")
+                                        })
+                                        .flex_shrink_0()
+                                        .child("×"),
+                                ),
+                        )
+                        .tooltip(crate::ui::tooltip::keyed_tip(remove_label, "", &theme))
                     })),
             )
             .child(
                 div()
                     .flex()
-                    .items_center()
+                    .flex_col()
+                    .items_end()
                     .gap_1()
-                    .child(div().flex_1().min_w_0().child(self.panel_field(
+                    .when(composer_locked, |this| {
+                        this.child(
+                            div()
+                                .id("agent-send-waiting-history")
+                                .debug_selector(|| "agent-send-waiting-history".to_string())
+                                .w_full()
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .child(self.t(Key::AgentSendWaitingHistory)),
+                        )
+                    })
+                    .child(div().w_full().min_w_0().child(self.panel_field(
                         "agent-input",
                         AgentField::Chat,
                         focused,
                         empty,
                         placeholder,
+                        input_focus,
+                        !composer_locked,
                         &theme,
                         cx,
                     )))
                     .child(
-                        button(
+                        button_enabled(
                             "agent-send",
                             self.t(Key::AgentSend),
                             if can_send {
@@ -2030,27 +3326,22 @@ impl AurisApp {
                             } else {
                                 ButtonStyle::Normal
                             },
-                            false,
+                            ButtonState::available(false, can_send),
                             theme.accent,
                             &theme,
-                            cx.listener(move |this, _, window, cx| {
-                                if can_send {
-                                    this.agent_submit(window, cx);
-                                    cx.notify();
-                                }
+                            cx.listener(|this, _, window, cx| {
+                                this.agent_submit(window, cx);
+                                cx.notify();
                             }),
                         )
                         .flex_shrink_0()
-                        .cursor_default()
-                        .when(!can_send, |this| {
-                            this.text_color(theme.text_faint).opacity(0.5)
-                        }),
+                        .cursor_default(),
                     ),
             )
             .into_any_element()
     }
 
-    /// One of the panel's one-line fields, drawn the way the library's search box is.
+    /// The growing multi-line message composer.
     #[allow(clippy::too_many_arguments)]
     fn panel_field(
         &mut self,
@@ -2059,6 +3350,8 @@ impl AurisApp {
         focused: bool,
         show_placeholder: bool,
         placeholder: String,
+        focus: gpui::FocusHandle,
+        enabled: bool,
         theme: &Theme,
         cx: &mut gpui::Context<Self>,
     ) -> AnyElement {
@@ -2067,61 +3360,99 @@ impl AurisApp {
         };
         let text = value.content().to_string();
         let selection = value.selection();
+        let composing = value.marked().is_some();
         let marked = value.marked();
         let view = cx.entity();
-        let handle = self.focus.clone();
+        let pointer_focus = focus.clone();
+        let minimum = crate::ui::text_area::area_height("", 2, 6);
+        let maximum = crate::ui::text_area::area_height("a\na\na\na\na\na", 2, 6);
 
         div()
             .id(id)
             // The id again, as a name a test can find the field by — the same line every
             // button gets in `widgets`, compiled to nothing outside `cargo test`.
             .debug_selector(move || id.to_string())
+            .track_focus(&focus)
             .flex()
-            .items_center()
-            .h(Metrics::CONTROL_HEIGHT)
-            .px_1p5()
+            .relative()
+            .min_h(minimum)
+            .max_h(maximum)
+            .overflow_hidden()
             .rounded(Metrics::RADIUS_SM)
             .bg(theme.surface_raised)
             .border_1()
-            .border_color(match focused {
+            .border_color(match focused && enabled {
                 true => theme.accent,
                 false => theme.border_subtle,
             })
-            .cursor_text()
+            .when(enabled, |this| this.cursor_text())
+            .when(!enabled, |this| this.cursor_default().opacity(0.62))
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .min_w_0()
-                    .h_full()
-                    .child(match focused {
-                        true => crate::ui::prompt::editable_text(
+                    // Normal-flow prose gives the wrapper its auto-growing height. It is
+                    // transparent because the canvas above it paints selection, pre-edit and
+                    // caret; unlike a fixed height derived from `\n`, it also counts soft wraps.
+                    .child(
+                        div()
+                            .w_full()
+                            .min_h(minimum)
+                            .max_h(maximum)
+                            .overflow_hidden()
+                            .px_1p5()
+                            .py_1()
+                            .text_xs()
+                            .line_height(crate::ui::text_area::AREA_LINE_HEIGHT)
+                            .text_color(gpui::transparent_black())
+                            .child(text.clone()),
+                    )
+                    .child(div().absolute().inset_0().child(
+                        crate::ui::text_area::editable_wrapped_area(
                             text.clone().into(),
                             selection,
                             marked,
-                            handle,
+                            focused && enabled,
+                            focus,
                             view,
                             theme.clone(),
-                        )
-                        .into_any_element(),
-                        false => crate::ui::prompt::field_text(text.clone(), theme.text)
-                            .into_any_element(),
-                    })
+                        ),
+                    ))
                     .when(show_placeholder && text.is_empty(), |this| {
                         this.child(
-                            crate::ui::prompt::field_text(placeholder, theme.text_faint)
+                            div()
                                 .absolute()
-                                .inset_0(),
+                                .top(px(5.0))
+                                .left(px(6.0))
+                                .text_xs()
+                                .text_color(theme.text_faint)
+                                .child(placeholder),
                         )
                     }),
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                    this.focus_agent_field(field);
-                    cx.notify();
-                }),
-            )
+            .when(enabled, |this| {
+                this.on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        if focused && !composing {
+                            let text = this.agent_chat.input.content().to_string();
+                            if let Some(offset) = crate::ui::text_area::wrapped_area_offset_at(
+                                window,
+                                &text,
+                                event.position,
+                            ) {
+                                this.agent_chat
+                                    .input
+                                    .place_caret(offset, event.modifiers.shift);
+                            }
+                        }
+                        this.focus_agent_field(field);
+                        window.focus(&pointer_focus);
+                        cx.notify();
+                    }),
+                )
+            })
             .into_any_element()
     }
 }
@@ -2131,6 +3462,36 @@ mod tests {
     use super::*;
     use auris_session::prelude::{Note, Ticks};
 
+    fn release_key(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+
+    fn saved_history_snapshot(
+        path: &Path,
+        summary: &str,
+        turns: &[(&str, &str)],
+    ) -> auris_agent::HistorySnapshot {
+        let turns: Vec<_> = turns
+            .iter()
+            .map(|(user, answer)| serde_json::json!({ "user": user, "answer": answer }))
+            .collect();
+        std::fs::write(
+            path,
+            serde_json::to_vec(&serde_json::json!({
+                "summary": summary,
+                "turns": turns,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        auris_agent::load_history_background(path.to_path_buf(), false)
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+    }
+
     #[gpui::test]
     fn copy_answer_keeps_all_markdown_after_resizing(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
@@ -2138,7 +3499,7 @@ mod tests {
         app.update(cx, |this, _| {
             this.panels.show(crate::dock::Panel::Agent);
             this.settings.agent.model = "test-model".into();
-            this.agent_chat.entries = vec![ChatEntry::Agent(answer.into())];
+            this.agent_chat.push_entry(ChatEntry::Agent(answer.into()));
         });
         crate::harness::resize(&app, cx, gpui::size(px(900.), px(600.)));
         crate::harness::click("agent-copy-0", cx);
@@ -2225,8 +3586,93 @@ mod tests {
             this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset);
         });
         crate::harness::paint(&app, cx);
-        crate::harness::click("agent-line-2", cx);
+        crate::harness::click("agent-tool-result-2", cx);
         app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&2)));
+    }
+
+    #[gpui::test]
+    fn incoming_rows_follow_only_a_reader_near_the_transcript_tail(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "offline-fixture".into();
+            this.agent_chat.configuring = false;
+            this.agent_chat.entries = (0..80)
+                .map(|index| ChatEntry::Agent(format!("row {index}: {}", "detail ".repeat(12))))
+                .collect();
+        });
+        crate::harness::paint(&app, cx);
+        app.update(cx, |this, _| {
+            let view = this.scroll_view(ScrollPanel::Agent);
+            assert!(view.max_offset > view.viewport);
+            this.set_scroll_offset(ScrollPanel::Agent, -view.max_offset / 2.0);
+        });
+        crate::harness::paint(&app, cx);
+        let before = app.read_with(cx, |this, _| this.scroll_view(ScrollPanel::Agent).offset);
+
+        app.update(cx, |this, _| {
+            this.agent_chat
+                .push_entry(ChatEntry::Agent("new while reading".into()));
+            assert_eq!(this.agent_chat.unread_entries, 1);
+        });
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let view = this.scroll_view(ScrollPanel::Agent);
+            assert!(
+                (view.offset - before).abs() < 1.0,
+                "reader was forced to the tail"
+            );
+        });
+
+        assert!(cx.debug_bounds("agent-jump-latest").is_some());
+        crate::harness::click("agent-jump-latest", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            let view = this.scroll_view(ScrollPanel::Agent);
+            assert!((view.offset + view.max_offset).abs() < 1.0);
+            assert_eq!(this.agent_chat.unread_entries, 0);
+        });
+    }
+
+    #[gpui::test]
+    fn tool_result_disclosure_tabs_both_ways_and_answers_enter_and_space(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "test-model".into();
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.entries = vec![ChatEntry::Tool {
+                name: "inspect_audio".into(),
+                ok: true,
+                line: "finished".into(),
+                detail: "Full tool result".into(),
+            }];
+        });
+        crate::harness::paint(&app, cx);
+
+        crate::harness::click("agent-tool-result-0", cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+        cx.simulate_keystrokes("shift-tab tab");
+        release_key("space", cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.agent_chat.expanded.contains(&0))
+        });
+        release_key("enter", cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.expanded.contains(&0)));
+    }
+
+    #[test]
+    fn translated_notes_use_neutral_success_warning_and_error_signals() {
+        let theme = Theme::default();
+        assert_eq!(
+            note_colour(Key::AgentPermissionHelp, &theme),
+            theme.text_muted
+        );
+        assert_eq!(note_colour(Key::AgentReloaded, &theme), theme.playing);
+        assert_eq!(note_colour(Key::AgentCompactEmpty, &theme), theme.warning);
+        assert_eq!(note_colour(Key::AgentEnded, &theme), theme.danger);
     }
 
     #[gpui::test]
@@ -2337,6 +3783,23 @@ mod tests {
     }
 
     #[gpui::test]
+    fn live_agent_refuses_the_legacy_synchronous_instrument_scan(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.policy = Default::default();
+            let error = this
+                .agent_edit(serde_json::json!({
+                    "action": "list_instruments",
+                    "query": null,
+                    "offset": 0,
+                    "refresh": false
+                }))
+                .unwrap_err();
+            assert!(error.contains("search_instruments"), "{error}");
+        });
+    }
+
+    #[gpui::test]
     fn pending_changes_block_send_before_saving_or_starting_a_model(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
@@ -2369,6 +3832,270 @@ mod tests {
         assert!(pending.poll(7, false).unwrap().is_err());
         drop(pending);
         assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn sound_search_cancels_on_document_change_and_when_the_agent_stops() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let pending = PendingSoundSearch {
+            revision: 7,
+            receiver,
+            cancel: cancel.clone(),
+        };
+
+        assert!(pending.poll(7, true).is_none());
+        assert!(pending.poll(8, true).unwrap().is_err());
+        assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
+        cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        drop(pending);
+        assert!(cancel.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn document_tokens_reject_other_projects_and_revisions() {
+        let token = AgentDocumentToken {
+            project: Some(PathBuf::from("Song.auris")),
+            revision: 7,
+        };
+        assert!(token.matches(Some(Path::new("Song.auris")), 7));
+        assert!(!token.matches(Some(Path::new("Other.auris")), 7));
+        assert!(!token.matches(Some(Path::new("Song.auris")), 8));
+        assert!(!token.matches(None, 7));
+    }
+
+    #[gpui::test]
+    fn history_results_apply_only_to_the_requesting_document_revision(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let root =
+            std::env::temp_dir().join(format!("auris-agent-history-load-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        app.update(cx, |this, cx| {
+            this.session.save_as(&root.join("History.auris")).unwrap();
+            let stale = this.agent_document_token();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            this.agent_chat.history_load = Some(PendingHistoryLoad {
+                token: stale,
+                receiver,
+            });
+            this.session
+                .add_default_instrument_track("revision bump")
+                .unwrap();
+            sender.send(Err("stale request result".into())).unwrap();
+            this.poll_agent_history_load(cx);
+            assert!(this.agent_chat.entries.is_empty());
+            assert!(this.agent_chat.history_project.is_none());
+
+            let current = this.agent_document_token();
+            let history_path = this
+                .session
+                .project_folder()
+                .unwrap()
+                .join(".auris-conversation.json");
+            let snapshot = saved_history_snapshot(
+                &history_path,
+                "Earlier choices are reference context.",
+                &[("current request", "current answer")],
+            );
+            let (sender, receiver) = std::sync::mpsc::channel();
+            this.agent_chat.history_load = Some(PendingHistoryLoad {
+                token: current.clone(),
+                receiver,
+            });
+            sender.send(Ok(snapshot)).unwrap();
+            this.poll_agent_history_load(cx);
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![
+                    ChatEntry::RestoredContext("Earlier choices are reference context.".into()),
+                    ChatEntry::You("current request".into()),
+                    ChatEntry::Agent("current answer".into())
+                ]
+            );
+            assert_eq!(this.agent_chat.history_project, current.project);
+        });
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn first_send_waits_for_the_saved_transcript_and_preserves_its_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let root = std::env::temp_dir().join(format!(
+            "auris-agent-history-before-send-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        app.update(cx, |this, _| {
+            let selected = this
+                .session
+                .add_default_instrument_track("Click-time selection")
+                .unwrap();
+            this.session
+                .save_as(&root.join("BeforeSend.auris"))
+                .unwrap();
+            this.settings.agent.model = "offline-fixture".into();
+            this.settings.agent.output_tokens = Some(2_048);
+            this.settings.agent.policy.mode = auris_session::agent_policy::Mode::ReadOnly;
+            this.selected_track = Some(selected);
+            this.agent_chat.input = TextField::new("continue the saved conversation");
+            this.agent_chat.focused = Some(AgentField::Chat);
+            this.agent_chat.attachments = vec![PathBuf::from("reference.wav")];
+            let (_sender, receiver) = std::sync::mpsc::channel();
+            let token = this.agent_document_token();
+            this.agent_chat.history_load = Some(PendingHistoryLoad { token, receiver });
+            let click_preferences = this.settings.agent.clone();
+            let click_context = this.agent_selection_context().to_string();
+
+            this.agent_send();
+
+            assert!(this.agent_chat.link.is_none());
+            assert!(!this.agent_chat.busy);
+            assert!(this.agent_operation_busy());
+            assert!(this.agent_chat.field_mut().is_none());
+            assert_eq!(
+                this.agent_chat.input.content(),
+                "continue the saved conversation"
+            );
+            assert_eq!(
+                this.agent_chat
+                    .pending_send
+                    .as_ref()
+                    .map(|message| (message.text.as_str(), message.attachments.as_slice())),
+                Some((
+                    "continue the saved conversation",
+                    [PathBuf::from("reference.wav")].as_slice()
+                ))
+            );
+
+            // Even a programmatic mutation cannot substitute a later composer value or a
+            // second Send for the immutable submission already waiting on disk history. This
+            // also models another Settings window and a canvas click changing live state.
+            this.agent_chat.input = TextField::new("later mutation");
+            this.agent_chat.attachments = vec![PathBuf::from("later.wav")];
+            this.settings.agent.model = "changed-in-another-window".into();
+            this.settings.agent.output_tokens = Some(8_192);
+            this.settings.agent.policy.mode = auris_session::agent_policy::Mode::Bypass;
+            this.selected_track = None;
+            this.agent_send();
+            let pending = this.agent_chat.pending_send.as_ref().unwrap();
+            assert_eq!(pending.text, "continue the saved conversation");
+            assert_eq!(pending.attachments, vec![PathBuf::from("reference.wav")]);
+            assert_eq!(pending.preferences, click_preferences);
+            assert_eq!(pending.selection_context, click_context);
+            assert_ne!(pending.preferences, this.settings.agent);
+            assert_ne!(
+                pending.selection_context,
+                this.agent_selection_context().to_string()
+            );
+        });
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn send_retries_a_failed_history_read_instead_of_becoming_a_no_op(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let root =
+            std::env::temp_dir().join(format!("auris-agent-history-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        app.update(cx, |this, _| {
+            this.session
+                .save_as(&root.join("RetryHistory.auris"))
+                .unwrap();
+            this.settings.agent.model = "offline-fixture".into();
+            this.agent_chat.input = TextField::new("retry this exact draft");
+            this.agent_chat.history_error_project = this.session.path().map(Path::to_path_buf);
+
+            this.agent_send();
+
+            assert!(this.agent_chat.history_error_project.is_none());
+            assert!(this.agent_chat.history_load.is_some());
+            assert_eq!(
+                this.agent_chat
+                    .pending_send
+                    .as_ref()
+                    .map(|message| message.text.as_str()),
+                Some("retry this exact draft")
+            );
+            assert!(this.agent_operation_busy());
+        });
+        let receiver = app.update(cx, |this, _| {
+            this.agent_chat.pending_send = None;
+            this.agent_chat
+                .history_load
+                .take()
+                .expect("the retry still owns its history request")
+                .receiver
+        });
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the background history read finishes before cleanup")
+            .expect("a project without saved conversation history loads as empty");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn save_as_discards_old_agent_channels_but_preserves_the_composer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let root =
+            std::env::temp_dir().join(format!("auris-agent-save-as-rebind-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        app.update(cx, |this, _| {
+            this.agent_chat.input = TextField::new("keep this draft");
+            this.agent_chat.attachments = vec![PathBuf::from("keep-reference.wav")];
+            this.agent_chat.entries = vec![ChatEntry::Agent("old path answer".into())];
+            this.agent_chat.busy = true;
+            let token = this.agent_document_token();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            this.agent_chat.history_load = Some(PendingHistoryLoad { token, receiver });
+
+            this.session.save_as(&root.join("Rebound.auris")).unwrap();
+            this.agent_document_saved_from(None);
+
+            assert!(!this.agent_chat.busy);
+            assert!(this.agent_chat.link.is_none());
+            assert!(this.agent_chat.pending_send.is_none());
+            assert!(this.agent_chat.history_load.is_none());
+            assert!(
+                !this
+                    .agent_chat
+                    .entries
+                    .contains(&ChatEntry::Agent("old path answer".into()))
+            );
+            assert_eq!(this.agent_chat.input.content(), "keep this draft");
+            assert_eq!(
+                this.agent_chat.attachments,
+                vec![PathBuf::from("keep-reference.wav")]
+            );
+            assert!(sender.send(Err("stale load".into())).is_err());
+        });
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn stale_history_clear_failures_do_not_leak_into_another_project(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.panels.hide(crate::dock::Panel::Agent);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            this.agent_chat.history_clear = Some(PendingHistoryClear {
+                project: PathBuf::from("a-project-that-is-not-open.auris"),
+                receiver,
+            });
+            sender.send(Err("old project failed".into())).unwrap();
+            this.drain_agent(cx);
+            assert!(this.agent_chat.entries.is_empty());
+            assert!(!this.agent_operation_busy());
+        });
     }
 
     #[test]
@@ -2449,6 +4176,7 @@ mod tests {
         chat.push_entry(ChatEntry::You("continue".into()));
         chat.absorb(
             AgentEvent::History {
+                summary: String::new(),
                 turns: vec![("old request".into(), "old answer".into())],
             },
             None,
@@ -2462,6 +4190,37 @@ mod tests {
                 ChatEntry::You("continue".into())
             ]
         );
+    }
+
+    #[gpui::test]
+    fn replacing_the_document_never_shows_the_previous_projects_transcript(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.agent_chat.entries = vec![
+                ChatEntry::You("Project A secret".into()),
+                ChatEntry::Agent("Project A answer".into()),
+            ];
+            this.agent_chat.input = TextField::new("draft for the next project");
+            this.agent_chat.attachments = vec![PathBuf::from("Project-A-reference.wav")];
+
+            this.new_project();
+
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::Note(Key::AgentConversationReset)]
+            );
+            assert_eq!(
+                this.agent_chat.input.content(),
+                "draft for the next project",
+                "the visible draft remains available for the next document"
+            );
+            assert!(
+                this.agent_chat.attachments.is_empty(),
+                "attachments never cross a project boundary"
+            );
+        });
     }
 
     #[gpui::test]
@@ -2562,9 +4321,10 @@ mod tests {
         );
         assert_eq!(
             parse_event(
-                r#"{"event":"result","tool":"analyze","ok":true,"text":"The mix — x\nmore"}"#
+                r#"{"event":"result","call_id":"call-7","tool":"analyze","ok":true,"text":"The mix — x\nmore"}"#
             ),
             Some(AgentEvent::Result {
+                call_id: "call-7".to_string(),
                 tool: "analyze".to_string(),
                 ok: true,
                 line: "The mix — x".to_string(),
@@ -2590,6 +4350,7 @@ mod tests {
         let mut chat = AgentChat::default();
         chat.absorb(
             AgentEvent::Call {
+                call_id: "call-1".to_string(),
                 tool: "compose".to_string(),
             },
             None,
@@ -2601,6 +4362,7 @@ mod tests {
         ));
         chat.absorb(
             AgentEvent::Result {
+                call_id: "call-1".to_string(),
                 tool: "compose".to_string(),
                 ok: true,
                 line: "Wrote X".to_string(),
@@ -2618,10 +4380,57 @@ mod tests {
     }
 
     #[test]
+    fn parallel_calls_with_the_same_tool_name_finish_their_own_rows() {
+        let mut chat = AgentChat::default();
+        for call_id in ["first", "second"] {
+            chat.absorb(
+                AgentEvent::Call {
+                    call_id: call_id.to_string(),
+                    tool: "inspect_audio".to_string(),
+                },
+                None,
+                false,
+            );
+        }
+        chat.absorb(
+            AgentEvent::Result {
+                call_id: "second".to_string(),
+                tool: "inspect_audio".to_string(),
+                ok: true,
+                line: "second result".to_string(),
+                detail: "second result".to_string(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::Result {
+                call_id: "first".to_string(),
+                tool: "inspect_audio".to_string(),
+                ok: false,
+                line: "first result".to_string(),
+                detail: "first result".to_string(),
+            },
+            None,
+            false,
+        );
+
+        assert!(matches!(
+            &chat.entries[0],
+            ChatEntry::Tool { ok: false, line, .. } if line == "first result"
+        ));
+        assert!(matches!(
+            &chat.entries[1],
+            ChatEntry::Tool { ok: true, line, .. } if line == "second result"
+        ));
+    }
+
+    #[test]
     fn unmatched_empty_results_are_finished_rows() {
         let mut chat = AgentChat::default();
         chat.absorb(
             AgentEvent::Result {
+                call_id: "missing".to_string(),
                 tool: "compose".to_string(),
                 ok: false,
                 line: String::new(),
@@ -2633,7 +4442,7 @@ mod tests {
 
         assert!(matches!(
             chat.entries.last(),
-            Some(ChatEntry::Tool { ok: false, line, .. }) if line == "done"
+            Some(ChatEntry::Tool { ok: false, line, .. }) if line == "failed"
         ));
     }
 
@@ -2645,6 +4454,7 @@ mod tests {
         }
         chat.absorb(
             AgentEvent::Call {
+                call_id: "call-1".to_string(),
                 tool: "compose".to_string(),
             },
             None,
@@ -2652,6 +4462,7 @@ mod tests {
         );
         chat.absorb(
             AgentEvent::Result {
+                call_id: "call-1".to_string(),
                 tool: "compose".to_string(),
                 ok: true,
                 line: "written".to_string(),
@@ -2666,6 +4477,828 @@ mod tests {
             chat.entries.last(),
             Some(ChatEntry::Tool { line, .. }) if line == "written"
         ));
+    }
+
+    #[test]
+    fn nonfatal_notices_are_neutral_and_errors_finalize_running_tools() {
+        let mut chat = AgentChat {
+            busy: true,
+            ..Default::default()
+        };
+        chat.absorb(
+            AgentEvent::Notice {
+                message: "Older turns were omitted".to_string(),
+            },
+            None,
+            false,
+        );
+        assert!(matches!(chat.entries.last(), Some(ChatEntry::Status(_))));
+
+        chat.absorb(
+            AgentEvent::Call {
+                call_id: "call-1".to_string(),
+                tool: "compose".to_string(),
+            },
+            None,
+            false,
+        );
+        chat.absorb(
+            AgentEvent::Error {
+                message: "provider disconnected".to_string(),
+            },
+            None,
+            false,
+        );
+        assert!(matches!(
+            &chat.entries[1],
+            ChatEntry::Tool { ok: false, line, .. } if line == "failed"
+        ));
+        assert!(chat.open_tools.is_empty());
+    }
+
+    #[test]
+    fn an_empty_successful_model_listing_is_a_completed_fetch() {
+        let mut chat = AgentChat::default();
+        assert!(chat.needs_model_listing());
+        chat.accept_model_listing(Ok(r#"{"models":[]}"#.to_string()));
+        assert!(chat.models.is_empty());
+        assert!(chat.models_error.is_none());
+        assert!(chat.models_loaded);
+        assert!(!chat.needs_model_listing());
+    }
+
+    #[test]
+    fn a_stopped_tool_uses_a_neutral_terminal_mark() {
+        assert_eq!(tool_mark(false, "stopped"), "■");
+    }
+
+    #[test]
+    fn a_terminal_model_refresh_never_keeps_a_stale_context_ceiling() {
+        let mut chat = AgentChat {
+            chosen_model: "removed-model".to_string(),
+            context_window: Some(65_536),
+            ..Default::default()
+        };
+
+        chat.accept_model_listing(Ok(r#"{"models":[]}"#.to_string()));
+        assert_eq!(chat.context_window, None);
+
+        chat.context_window = Some(65_536);
+        chat.accept_model_listing(Err("provider unavailable".to_string()));
+        assert_eq!(chat.context_window, None);
+    }
+
+    #[test]
+    fn loading_changed_preferences_discards_an_in_flight_model_listing() {
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let mut chat = AgentChat {
+            fetching_models: true,
+            models_rx: Some(receiver),
+            models: vec![ModelOption {
+                name: "old-model".to_string(),
+                context_length: Some(8_192),
+            }],
+            models_error: Some("old error".to_string()),
+            context_window: Some(8_192),
+            ..Default::default()
+        };
+
+        chat.load_preferences(&AgentPreferences {
+            model: "new-model".to_string(),
+            ..Default::default()
+        });
+
+        assert!(!chat.fetching_models);
+        assert!(chat.models_rx.is_none());
+        assert!(chat.models.is_empty());
+        assert!(chat.models_error.is_none());
+        assert_eq!(chat.context_window, None);
+        assert!(chat.needs_model_listing());
+    }
+
+    #[test]
+    fn terminal_entries_drive_the_closed_panel_state() {
+        let mut chat = AgentChat {
+            busy: true,
+            ..Default::default()
+        };
+        assert_eq!(chat.panel_status(), AgentPanelStatus::Running);
+        chat.busy = false;
+        chat.entries.push(ChatEntry::Agent("done".to_string()));
+        assert_eq!(chat.panel_status(), AgentPanelStatus::Completed);
+        chat.entries.push(ChatEntry::Error("failed".to_string()));
+        assert_eq!(chat.panel_status(), AgentPanelStatus::Failed);
+        assert_eq!(
+            AgentPanelStatus::from_state(false, true, None),
+            AgentPanelStatus::Pending
+        );
+    }
+
+    #[gpui::test]
+    fn model_selection_rolls_back_when_preferences_cannot_be_saved(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent = AgentPreferences {
+                model: "first".to_string(),
+                ..Default::default()
+            };
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models = vec![
+                ModelOption {
+                    name: "first".to_string(),
+                    context_length: Some(32_768),
+                },
+                ModelOption {
+                    name: "second".to_string(),
+                    context_length: Some(65_536),
+                },
+            ];
+            this.agent_chat.context_window = Some(32_768);
+            this.agent_chat.tokens_in = 23;
+            this.agent_chat.tokens_out = 7;
+            this.agent_chat.model_highlighted = 0;
+            this.agent_chat.model_menu = true;
+
+            let result = this.choose_agent_model_with(1, |_| Err("settings fixture failure"));
+
+            assert_eq!(result, Err("settings fixture failure"));
+            assert_eq!(
+                (
+                    this.settings.agent.model.as_str(),
+                    this.agent_chat.chosen_model.as_str(),
+                    this.agent_chat.context_window,
+                    this.agent_chat.tokens_in,
+                    this.agent_chat.tokens_out,
+                    this.agent_chat.model_highlighted,
+                    this.agent_chat.model_menu,
+                ),
+                ("first", "first", Some(32_768), 23, 7, 0, true)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn stopping_finishes_the_running_tool_row(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.agent_chat.busy = true;
+            this.agent_chat.absorb(
+                AgentEvent::Call {
+                    call_id: "call-1".to_string(),
+                    tool: "inspect_audio".to_string(),
+                },
+                None,
+                false,
+            );
+            this.agent_stop(cx);
+            assert!(matches!(
+                &this.agent_chat.entries[0],
+                ChatEntry::Tool { ok: false, line, .. } if line == "stopped"
+            ));
+            assert!(this.agent_chat.open_tools.is_empty());
+            assert_eq!(
+                this.agent_chat.entries.last(),
+                Some(&ChatEntry::Note(Key::AgentStopped))
+            );
+            assert_eq!(this.agent_chat.panel_status(), AgentPanelStatus::Idle);
+            assert_eq!(
+                note_colour(Key::AgentStopped, &this.theme),
+                this.theme.text_muted
+            );
+        });
+    }
+
+    #[test]
+    fn an_unexpected_worker_end_remains_a_failure() {
+        let mut chat = AgentChat {
+            busy: true,
+            ..Default::default()
+        };
+
+        chat.absorb(AgentEvent::Ended, None, false);
+
+        assert_eq!(chat.entries.last(), Some(&ChatEntry::Note(Key::AgentEnded)));
+        assert_eq!(chat.panel_status(), AgentPanelStatus::Failed);
+    }
+
+    #[gpui::test]
+    fn a_closed_agent_switch_shows_terminal_and_live_state(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.hide(crate::dock::Panel::Agent);
+            this.agent_chat.busy = true;
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-panel-state-running").is_some());
+
+        app.update(cx, |this, _| {
+            this.agent_chat.busy = false;
+            this.agent_chat.entries = vec![ChatEntry::Agent("done".to_string())];
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-panel-state-completed").is_some());
+
+        app.update(cx, |this, _| {
+            this.agent_chat.entries = vec![ChatEntry::Error("failed".to_string())];
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-panel-state-failed").is_some());
+    }
+
+    #[gpui::test]
+    fn the_model_picker_supports_keys_dismissal_and_busy_disabling(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent = Default::default();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.configuring = true;
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models = vec![
+                ModelOption {
+                    name: "first".to_string(),
+                    context_length: Some(32_768),
+                },
+                ModelOption {
+                    name: "second".to_string(),
+                    context_length: Some(65_536),
+                },
+            ];
+            this.agent_chat.chosen_model = "first".to_string();
+        });
+        crate::harness::paint(&app, cx);
+
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+        cx.simulate_input("draft");
+        crate::harness::click("agent-model", cx);
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .model_focus
+                        .as_ref()
+                        .unwrap()
+                        .is_focused(window),
+                    "the app repaint stole keyboard focus back from the model selector"
+                );
+                assert_eq!(this.agent_chat.focused, None);
+            });
+        });
+        cx.simulate_keystrokes("down enter");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.chosen_model, "second");
+            assert!(!this.agent_chat.model_menu);
+            assert_eq!(this.agent_chat.input.content(), "draft");
+        });
+
+        crate::harness::click("agent-model", cx);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
+        crate::harness::click("agent-model", cx);
+        crate::harness::click("agent-input", cx);
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
+
+        app.update(cx, |this, _| this.agent_chat.busy = true);
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-model", cx);
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
+    }
+
+    #[gpui::test]
+    fn empty_model_results_explain_recovery_and_fetching_hides_the_empty_state(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models.clear();
+            this.agent_chat.models_error = None;
+            this.agent_chat.fetching_models = false;
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-models-empty").is_some());
+
+        app.update(cx, |this, _| this.agent_chat.fetching_models = true);
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-models-empty").is_none());
+        // A disabled Refresh remains inert while the outstanding request owns the control.
+        // The shared button regressions separately cover pointer and keyboard exclusion.
+        crate::harness::click("agent-models-refresh", cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.fetching_models);
+            assert!(this.agent_chat.models.is_empty());
+        });
+
+        app.update(cx, |this, _| this.agent_chat.fetching_models = false);
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-models-empty").is_some());
+    }
+
+    #[gpui::test]
+    fn empty_or_failed_catalogue_disables_model_choice_but_keeps_refresh_available(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "configured-model-remains-visible".into();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models.clear();
+            this.agent_chat.models_error = None;
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-model-current").is_some());
+        crate::harness::click("agent-model", cx);
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
+        cx.update(|window, cx| {
+            app.update(cx, |this, _| this.focus_pane(Pane::Agent, window));
+        });
+        cx.simulate_keystrokes("tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "Tab skips the disabled model selector"
+                );
+            });
+        });
+
+        app.update(cx, |this, _| {
+            this.agent_chat.models = vec![ModelOption {
+                name: "stale-model".into(),
+                context_length: None,
+            }];
+            this.agent_chat.models_error = Some("provider unavailable".into());
+            this.agent_chat.model_menu = true;
+        });
+        crate::harness::paint(&app, cx);
+        assert!(cx.debug_bounds("agent-model-option-0").is_none());
+        crate::harness::click("agent-model", cx);
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.model_menu));
+
+        crate::harness::click("agent-models-refresh", cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.fetching_models);
+            assert!(this.agent_chat.models.is_empty());
+            assert!(this.agent_chat.models_error.is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn queued_send_focuses_stop_locks_controls_and_cancels_without_losing_the_draft(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        let root =
+            std::env::temp_dir().join(format!("auris-agent-queued-send-ui-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let (history_sender, history_receiver) = std::sync::mpsc::channel();
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.session
+                .save_as(&root.join("QueuedSend.auris"))
+                .unwrap();
+            this.settings.agent.model = "first".into();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models = vec![ModelOption {
+                name: "first".into(),
+                context_length: Some(32_768),
+            }];
+            this.agent_chat.input = TextField::new("keep this queued draft");
+            this.agent_chat.attachments = vec![PathBuf::from("keep-reference.wav")];
+            let token = this.agent_document_token();
+            this.agent_chat.history_load = Some(PendingHistoryLoad {
+                token,
+                receiver: history_receiver,
+            });
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        crate::harness::click("agent-send", cx);
+        crate::harness::paint(&app, cx);
+
+        assert!(cx.debug_bounds("agent-stop").is_some());
+        assert!(cx.debug_bounds("agent-send-waiting-history").is_some());
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .stop_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "queued Send moves focus to its available cancellation"
+                );
+            });
+        });
+
+        crate::harness::click("agent-model", cx);
+        crate::harness::click("agent-models-refresh", cx);
+        crate::harness::click("agent-configure", cx);
+        crate::harness::click("agent-mode-bypass", cx);
+        app.read_with(cx, |this, _| {
+            assert!(!this.agent_chat.model_menu);
+            assert!(!this.agent_chat.fetching_models);
+            assert!(this.settings_window.is_none());
+            assert_ne!(
+                this.settings.agent.policy.mode,
+                auris_session::agent_policy::Mode::Bypass
+            );
+        });
+
+        crate::harness::click("agent-stop", cx);
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.agent_chat.pending_send.is_none());
+                assert!(this.agent_chat.history_load.is_none());
+                assert_eq!(this.agent_chat.input.content(), "keep this queued draft");
+                assert_eq!(
+                    this.agent_chat.attachments,
+                    vec![PathBuf::from("keep-reference.wav")]
+                );
+                assert_eq!(
+                    this.agent_chat.entries.last(),
+                    Some(&ChatEntry::Note(Key::AgentSendCancelled))
+                );
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window))
+                );
+            });
+        });
+        assert!(history_sender.send(Err("stale".into())).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn japanese_tabs_reveal_the_model_control_in_a_minimum_width_panel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            for panel in crate::dock::Panel::ALL {
+                this.panels.hide(panel);
+            }
+            this.panels
+                .set_size(crate::dock::Dock::Right, crate::dock::PanelLayout::MIN_SIDE);
+            this.language = auris_i18n::Language::Japanese;
+            this.settings.agent.model = "日本語環境で使う設定済みモデル".into();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models = vec![ModelOption {
+                name: this.settings.agent.model.clone(),
+                context_length: Some(32_768),
+            }];
+            // Exercise the tallest settled header as well as Japanese controls. The test text
+            // system gives every glyph identical metrics, so ordinary translated copy alone can
+            // still fit inside the 180px controls viewport.
+            this.agent_chat.pending_reload = Some(PathBuf::from("Song.auris"));
+            this.agent_chat.produced_project = Some(PathBuf::from("Created.auris"));
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
+
+        cx.simulate_keystrokes("secondary-alt-a");
+        crate::harness::paint(&app, cx);
+        let panel = cx
+            .debug_bounds("agent-panel")
+            .expect("the minimum-width agent panel is visible");
+        for selector in ["agent-new-conversation", "agent-compact"] {
+            let control = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is visible"));
+            assert!(
+                control.left() >= panel.left() && control.right() <= panel.right(),
+                "{selector} escapes the minimum-width panel: {control:?} outside {panel:?}"
+            );
+        }
+
+        cx.simulate_keystrokes("tab tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .model_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "real Tab reaches the enabled model selector"
+                );
+                assert!(this.agent_chat.controls_scroll.offset().y < px(0.0));
+            });
+        });
+        let viewport = cx
+            .debug_bounds("agent-panel-controls")
+            .expect("the bounded controls viewport is visible");
+        let model = cx
+            .debug_bounds("agent-model")
+            .expect("the focused model selector is visible");
+        assert!(
+            model.top() >= viewport.top() && model.bottom() <= viewport.bottom(),
+            "focused model {model:?} is outside controls viewport {viewport:?}"
+        );
+        assert!(
+            cx.debug_bounds("agent-controls-scroll-cue").is_some(),
+            "a clipped controls stack advertises its own scroll region"
+        );
+    }
+
+    #[gpui::test]
+    fn long_attachment_names_keep_the_remove_affordance_inside_a_minimum_width_panel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.panels
+                .set_size(crate::dock::Dock::Right, crate::dock::PanelLayout::MIN_SIDE);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.attachments = vec![PathBuf::from(
+                "録音素材_ボーカルテイク_".repeat(12) + ".super-long-extension",
+            )];
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
+
+        let panel = cx
+            .debug_bounds("agent-panel")
+            .expect("Agent panel is visible");
+        let chip = cx
+            .debug_bounds("agent-attachment-0")
+            .expect("attachment chip is visible");
+        let remove = cx
+            .debug_bounds("agent-attachment-remove-0")
+            .expect("remove affordance remains visible");
+        assert!(chip.left() >= panel.left() && chip.right() <= panel.right());
+        assert!(remove.left() >= chip.left() && remove.right() <= chip.right());
+    }
+
+    #[gpui::test]
+    fn minimum_side_dock_keeps_model_gauge_and_composer_inside_the_agent_panel(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.panels
+                .set_size(crate::dock::Dock::Right, crate::dock::PanelLayout::MIN_SIDE);
+            this.settings.agent.model = "a-very-long-offline-model-name-".repeat(8);
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models = vec![ModelOption {
+                name: this.settings.agent.model.clone(),
+                context_length: Some(32_768),
+            }];
+            this.agent_chat.context_window = Some(32_768);
+            this.agent_chat.tokens_in = 16_384;
+            this.agent_chat.tokens_out = 128;
+            this.agent_chat.input = TextField::new(
+                "長い日本語の依頼文でも、入力欄と送信操作を狭いパネル内に保ちます。".repeat(4),
+            );
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(720.0), px(720.0)));
+
+        let panel = cx
+            .debug_bounds("agent-panel")
+            .expect("Agent panel is visible");
+        assert!(panel.size.width <= crate::dock::PanelLayout::MIN_SIDE);
+        for selector in [
+            "agent-new-conversation",
+            "agent-compact",
+            "agent-model",
+            "agent-models-refresh",
+            "agent-gauge-meter",
+            "agent-input",
+            "agent-send",
+        ] {
+            let control = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is visible at the supported minimum width"));
+            assert!(
+                control.size.width > px(0.0)
+                    && control.left() >= panel.left()
+                    && control.right() <= panel.right(),
+                "{selector} escapes the 180px Agent panel: {control:?} outside {panel:?}"
+            );
+        }
+        for selector in ["agent-new-conversation", "agent-compact"] {
+            let control = cx.debug_bounds(selector).unwrap();
+            assert!(
+                control.size.width >= panel.size.width * 0.5,
+                "{selector} collapsed instead of yielding its label: {control:?} inside {panel:?}"
+            );
+        }
+        // The minimum dock deliberately scrolls its three header sections. Reproduce a mouse
+        // user following the visible scroll cue before opening the model menu.
+        app.update(cx, |this, _| {
+            this.agent_chat.controls_scroll.scroll_to_item(2);
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-model", cx);
+        crate::harness::paint(&app, cx);
+        let option = cx
+            .debug_bounds("agent-model-option-0")
+            .expect("the long model option is rendered");
+        assert!(
+            option.left() >= panel.left() && option.right() <= panel.right(),
+            "the long model option remains horizontally bounded: {option:?} outside {panel:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn shift_enter_inserts_a_visible_second_composer_line(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+        cx.simulate_input("first line");
+        cx.simulate_keystrokes("shift-enter");
+        cx.simulate_input("second line");
+        crate::harness::paint(&app, cx);
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.agent_chat.input.content(), "first line\nsecond line");
+            assert!(!this.agent_chat.busy);
+        });
+        assert!(
+            cx.debug_bounds("agent-input").unwrap().size.height > Metrics::CONTROL_HEIGHT,
+            "the second logical line must be visible"
+        );
+    }
+
+    #[gpui::test]
+    fn shortcut_and_tabs_reach_the_real_composer_focus_in_both_directions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            for panel in crate::dock::Panel::ALL {
+                this.panels.hide(panel);
+            }
+            this.settings.agent.model = "offline-fixture".to_string();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models = vec![ModelOption {
+                name: this.settings.agent.model.clone(),
+                context_length: Some(32_768),
+            }];
+        });
+        crate::harness::paint(&app, cx);
+
+        // Drive the same binding and focus traversal as the visible application. With only the
+        // arrangement and Agent stops painted, the walk is Agent pane, model, then composer.
+        cx.simulate_keystrokes("secondary-alt-a tab tab tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.panels.is_open(crate::dock::Panel::Agent));
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "Tab reaches the composer's own focus handle"
+                );
+                assert_eq!(this.agent_chat.focused, Some(AgentField::Chat));
+            });
+        });
+
+        cx.simulate_input("一行目");
+        cx.simulate_keystrokes("shift-enter");
+        cx.simulate_input("二行目");
+        let mode = app.read_with(cx, |this, _| this.settings.agent.policy.mode);
+        cx.simulate_keystrokes("shift-tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .model_focus
+                        .as_ref()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "Shift+Tab walks back to the preceding Agent control"
+                );
+                assert_eq!(this.settings.agent.policy.mode, mode);
+                assert_eq!(this.agent_chat.input.content(), "一行目\n二行目");
+            });
+        });
+
+        cx.simulate_keystrokes("tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window))
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn long_japanese_prose_soft_wraps_without_losing_the_caret_or_ime(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "offline-fixture".to_string();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".to_string());
+        });
+        crate::harness::resize(&app, cx, gpui::size(px(640.0), px(480.0)));
+        crate::harness::click("agent-input", cx);
+        crate::harness::paint(&app, cx);
+
+        let prose =
+            "長い日本語の依頼も単語間の空白を前提にせずパネルの幅で自然に折り返します。".repeat(24);
+        cx.simulate_input(&prose);
+        crate::harness::paint(&app, cx);
+        let (scroll_y, visual_rows) = crate::ui::text_area::wrapped_area_state()
+            .expect("the focused wrapped editor was painted");
+        assert!(
+            visual_rows > 6,
+            "ordinary Japanese prose produced soft wraps"
+        );
+        assert!(
+            scroll_y > px(0.0),
+            "the capped editor viewport followed the caret instead of clipping it"
+        );
+        assert!(
+            cx.debug_bounds("agent-input").unwrap().size.height
+                <= crate::ui::text_area::area_height("a\na\na\na\na\na", 2, 6),
+            "the composer leaves the transcript usable at narrow window sizes"
+        );
+
+        app.update(cx, |this, _| {
+            let end = this.agent_chat.input.content().len();
+            this.agent_chat
+                .input
+                .replace_and_mark(end..end, "かな", None);
+        });
+        crate::harness::paint(&app, cx);
+        cx.simulate_keystrokes("tab");
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert_eq!(
+                    this.agent_chat.input.marked(),
+                    Some(prose.len()..prose.len() + 6)
+                );
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window)),
+                    "Tab does not discard or move away from an active IME pre-edit"
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn agent_settings_opens_on_the_agent_tab(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.agent_chat.models_loaded = true;
+        });
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-configure", cx);
+        cx.run_until_parked();
+        let settings = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(settings.into(), cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("agent-provider").is_some(),
+            "Agent Settings must reveal the Agent tab, not General"
+        );
     }
 
     #[test]

@@ -33,11 +33,8 @@ uv run --no-sync python server.py --device cuda --quantization nf4 --revision 0a
 `HIP_VISIBLE_DEVICES=0` selected the discrete GPU on the tested host; check device ordering on
 another machine. This configuration completed local GPU inference trials. Music critique and reliable
 A/B judgments were not validated by that fact; the live blind controls exposed incorrect answers.
-Several MusicFlamingo requests completed, but a later cold start crashed in the native
-`torch_cpu.dll` while loading weights, before returning any review. This tested AMD runtime
-therefore remains experimental; successful earlier runs do not establish restart reliability.
-The [interface trial](../../docs/reviews/local-model-interface-2026-09-07.md) preserves both
-the completed runs and the failed startup.
+Treat this AMD runtime as experimental and validate cold starts on the target machine; a
+successful request does not establish restart reliability.
 
 The official BF16 checkpoint download is about 16.8 GB. CPU execution uses float32 and needs
 more memory. GPU execution uses BF16 when supported, otherwise FP16. With limited VRAM,

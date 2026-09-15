@@ -20,6 +20,9 @@ use auris_vocal::{SingerFrames, SingerScore};
 
 use crate::SingError;
 use crate::backend::{BackendKind, SingingBackend};
+use crate::limits::{
+    checked_product, checked_sample_count, try_copy_f32, try_f32_with, try_zeroed_f32,
+};
 use crate::metadata::{METADATA_KEY, VoiceInfo};
 use crate::score::{MAX_CHUNK_FRAMES, arrange, chunk_ranges};
 
@@ -188,7 +191,8 @@ impl AurisBackend {
         }
 
         let hop = self.info.hop_length as usize;
-        let mut out = vec![0.0f32; frames.len() * hop];
+        let length = checked_sample_count(frames.len(), hop, "native rendered audio")?;
+        let mut out = try_zeroed_f32(length, "native rendered audio")?;
         let chunks = chunk_ranges(frames, MAX_CHUNK_FRAMES);
         let total = chunks.len();
         for (at, range) in chunks.into_iter().enumerate() {
@@ -212,8 +216,12 @@ impl AurisBackend {
                 }
                 Err(error) => return Err(error),
             };
-            let start = range.start * hop;
-            out[start..start + sung.len()].copy_from_slice(&sung);
+            let start = checked_sample_count(range.start, hop, "native render offset")?;
+            let end = start
+                .checked_add(sung.len())
+                .filter(|end| *end <= out.len())
+                .ok_or_else(|| SingError::Inference("native render offset overflow".into()))?;
+            out[start..end].copy_from_slice(&sung);
         }
         if !progress(total, total) {
             return Err(SingError::Cancelled);
@@ -243,7 +251,13 @@ impl AurisBackend {
             seed,
             &[Key::Word("sing"), Key::Index(chunk as u64), Key::Word("z")],
         );
-        let z_noise: Vec<f32> = (0..inter * count).map(|_| z.jitter(1.0)).collect();
+        let latent_count = checked_product(
+            inter,
+            count,
+            "native latent noise",
+            crate::limits::MAX_OUTPUT_SAMPLES,
+        )?;
+        let z_noise = try_f32_with(latent_count, "native latent noise", || z.jitter(1.0))?;
         let mut source = Rng::stream(
             seed,
             &[
@@ -252,9 +266,10 @@ impl AurisBackend {
                 Key::Word("source"),
             ],
         );
-        let source_noise: Vec<f32> = (0..count * hop)
-            .map(|_| source.unit() * 2.0 - 1.0)
-            .collect();
+        let sample_count = checked_sample_count(count, hop, "native chunk audio")?;
+        let source_noise = try_f32_with(sample_count, "native source noise", || {
+            source.unit() * 2.0 - 1.0
+        })?;
 
         let refused = |error: ort::Error| SingError::Inference(error.to_string());
         let inputs = ort::inputs! {
@@ -267,22 +282,21 @@ impl AurisBackend {
             "speaker_ids" => Tensor::from_array(([1], vec![i64::from(speaker)]))?,
             "noise_scale" => Tensor::from_array(((), vec![NOISE_SCALE]))?,
             "z_noise" => Tensor::from_array(([1, inter, count], z_noise))?,
-            "source_noise" => Tensor::from_array(([1, 1, count * hop], source_noise))?,
+            "source_noise" => Tensor::from_array(([1, 1, sample_count], source_noise))?,
         }
         .map_err(refused)?;
         let outputs = self.session.run(inputs).map_err(refused)?;
         let (_, samples) = outputs["wav"]
             .try_extract_raw_tensor::<f32>()
             .map_err(refused)?;
-        if samples.len() != count * hop {
+        if samples.len() != sample_count || samples.iter().any(|sample| !sample.is_finite()) {
             return Err(SingError::Inference(format!(
-                "the model answered {} samples where {} frames wanted {}",
+                "the model answered {} samples where {} frames wanted {sample_count} finite samples",
                 samples.len(),
-                count,
-                count * hop
+                count
             )));
         }
-        Ok(samples.to_vec())
+        try_copy_f32(samples, "native chunk audio")
     }
 }
 

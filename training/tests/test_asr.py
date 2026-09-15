@@ -48,7 +48,9 @@ def test_edit_distance_counts_every_kind_of_edit():
 def test_the_rate_is_edits_per_reference_phoneme():
     assert phoneme_error_rate(["a", "i", "u"], ["a", "i", "u"]) == 0.0
     assert phoneme_error_rate(["a", "i", "u"], ["a", "e", "u"]) == pytest.approx(1 / 3)
-    assert phoneme_error_rate(["a"], ["a", "b", "c"]) == pytest.approx(2.0), "insertions can exceed one"
+    assert phoneme_error_rate(["a"], ["a", "b", "c"]) == pytest.approx(2.0), (
+        "insertions can exceed one"
+    )
     assert math.isnan(phoneme_error_rate([], ["a"])), "nothing asked for, no rate"
 
 
@@ -68,7 +70,12 @@ def test_the_listener_turns_text_into_comparable_phonemes():
     assert heard.text == "k o ɴ i̥ tɕ i w a"
     assert heard.phonemes == ["k", "o", "ɴ", "i", "tɕ", "i", "w", "a"]
     assert parrot.calls == [(4800, 48_000)]
-    assert phoneme_error_rate(hearable(["<sil>", "k", "o", "ɴ", "i", "tɕ", "i", "w", "a"]), heard.phonemes) == 0.0
+    assert (
+        phoneme_error_rate(
+            hearable(["<sil>", "k", "o", "ɴ", "i", "tɕ", "i", "w", "a"]), heard.phonemes
+        )
+        == 0.0
+    )
 
 
 def test_silence_heard_is_no_phonemes_at_all():

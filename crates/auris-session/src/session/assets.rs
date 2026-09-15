@@ -11,15 +11,19 @@
 //! See [`crate::guide::documents`] for why the search runs in two passes and why what it finds is
 //! written back.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use auris_core::{AssetPath, AudioBuffer, AudioSourceBank, SoundFontId, SourceId};
-use auris_gpu::compute_peaks;
-use auris_io::{AUDIO_DIR, byte_size, copy_into, find_named, import_audio_file, load_soundfont};
+use auris_core::{AssetPath, AudioBuffer, AudioSourceBank, Project, SoundFontId, SourceId};
+use auris_gpu::{WaveformPeaks, compute_peaks};
+use auris_io::{
+    AUDIO_DIR, SoundFont, byte_size, copy_into, find_named, import_audio_file, load_soundfont,
+};
 
 use crate::error::SessionError;
-use crate::render::source_at_rate;
+use crate::render::{fill_stretches, source_at_rate};
 
 use super::Session;
 
@@ -29,7 +33,121 @@ use super::Session;
 /// individual drum hits at normal zoom levels.
 const WAVEFORM_BUCKET: u32 = 256;
 
+/// File-backed project state decoded without touching a live session.
+pub(super) struct PreparedAssets {
+    source_locations: Vec<(SourceId, AssetPath, PathBuf)>,
+    bank: AudioSourceBank,
+    render_bank: AudioSourceBank,
+    pub(super) render_rate: f64,
+    waveforms: HashMap<SourceId, Arc<WaveformPeaks>>,
+    fonts: Vec<(SoundFontId, AssetPath, PathBuf, Arc<SoundFont>)>,
+    missing: Vec<PathBuf>,
+}
+
+/// Locates and decodes every asset in `project`, cooperatively stopping between files.
+pub(super) fn prepare_project_assets(
+    project: &Project,
+    folder: Option<&Path>,
+    render_rate: f64,
+    cancelled: &AtomicBool,
+) -> Option<PreparedAssets> {
+    let mut search = folder
+        .map(|folder| vec![folder.join(AUDIO_DIR), folder.to_path_buf()])
+        .unwrap_or_default();
+    search.extend(crate::library::library_roots());
+    let mut prepared = PreparedAssets {
+        source_locations: Vec::new(),
+        bank: AudioSourceBank::new(),
+        render_bank: AudioSourceBank::new(),
+        render_rate,
+        waveforms: HashMap::new(),
+        fonts: Vec::new(),
+        missing: Vec::new(),
+    };
+
+    for source in project.audio_sources.values() {
+        if cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let stored = source.path.clone();
+        let Some(found) = locate(&stored, folder, &search, source.byte_size) else {
+            prepared.missing.push(stored.as_stored().to_path_buf());
+            continue;
+        };
+        match import_audio_file(&found, project.sample_rate) {
+            Ok(buffer) => {
+                let buffer = Arc::new(buffer);
+                let peaks = compute_peaks(None, &buffer, WAVEFORM_BUCKET);
+                prepared.waveforms.insert(source.id, Arc::new(peaks));
+                if let Some(at_rate) = source_at_rate(source.id, &buffer, render_rate) {
+                    prepared.render_bank.insert(source.id, at_rate);
+                }
+                prepared.bank.insert(source.id, buffer);
+                remember_directory(&mut search, &found);
+                prepared.source_locations.push((source.id, stored, found));
+            }
+            Err(error) => {
+                log::warn!("could not reload {}: {error}", found.display());
+                prepared.missing.push(stored.as_stored().to_path_buf());
+            }
+        }
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        return None;
+    }
+    // Tempo-following audio can take substantially longer than decoding. Prepare those copies on
+    // the same worker too; `rebuild_graph` will then find every requested stretch already cached.
+    fill_stretches(project, &mut prepared.render_bank);
+    for font in project.soundfonts.values() {
+        if cancelled.load(Ordering::Relaxed) {
+            return None;
+        }
+        let stored = font.path.clone();
+        let Some(found) = locate(&stored, folder, &search, font.byte_size) else {
+            prepared.missing.push(stored.as_stored().to_path_buf());
+            continue;
+        };
+        match load_soundfont(&found) {
+            Ok(samples) => {
+                remember_directory(&mut search, &found);
+                prepared.fonts.push((font.id, stored, found, samples));
+            }
+            Err(error) => {
+                log::warn!("could not reload {}: {error}", found.display());
+                prepared.missing.push(stored.as_stored().to_path_buf());
+            }
+        }
+    }
+    (!cancelled.load(Ordering::Relaxed)).then_some(prepared)
+}
+
 impl Session {
+    /// Installs assets already read by [`prepare_project_assets`].
+    pub(super) fn install_prepared_assets(&mut self, assets: PreparedAssets) -> Vec<PathBuf> {
+        let PreparedAssets {
+            source_locations,
+            bank,
+            render_bank,
+            render_rate,
+            waveforms,
+            fonts,
+            missing,
+        } = assets;
+        for (id, stored, found) in source_locations {
+            self.relocate_source(id, &stored, &found);
+        }
+        self.bank = bank;
+        self.render_bank = render_bank;
+        self.render_bank_rate = render_rate;
+        self.waveforms = waveforms;
+        for (id, stored, found, font) in fonts {
+            self.relocate_font(id, &stored, &found);
+            self.cache_font(&found, Arc::clone(&font), false);
+            self.fonts.insert(id, font);
+        }
+        missing
+    }
+
     /// Reads every file the document names, reporting the references nothing could be found for.
     ///
     /// Two passes, because the second needs what the first learned. Anything whose stored
@@ -297,7 +415,7 @@ fn locate(
     search: &[PathBuf],
     expected_size: u64,
 ) -> Option<PathBuf> {
-    if let Some(direct) = stored.resolve(folder)
+    if let Some(direct) = stored.resolve_for_automatic_access(folder)
         && direct.is_file()
     {
         return Some(direct);

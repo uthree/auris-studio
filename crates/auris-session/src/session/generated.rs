@@ -14,7 +14,7 @@
 //! stretching a recipe means writing it again rather than repeating what was there.
 
 use auris_core::time::Ticks;
-use auris_core::{ClipId, ClipRecipe, Note, TrackId};
+use auris_core::{ClipId, ClipRecipe, MidiClip, Note, TrackId};
 
 use crate::error::SessionError;
 use crate::history::Edit;
@@ -176,19 +176,24 @@ impl Session {
         let notes = self.phrase(start, length, &recipe);
         recipe.text_digest = auris_core::notes_digest(&notes);
 
+        let mut candidate = MidiClip::new(ClipId(0), recipe.preset.name(), start, length);
+        candidate.notes = notes;
+        // The feel the preset starts with — the lean and the wander a recipe used to bake into
+        // the notes arrive as the performance stack instead, where the panel edits them.
+        candidate.transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
+        candidate.recipe = Some(recipe);
+        candidate.looped_note_instances()?;
+
         self.record(Edit::GenerateClip);
         let id = self
             .project
-            .add_midi_clip(track, recipe.preset.name(), start, length)
+            .add_midi_clip(track, candidate.name.clone(), start, length)
             .ok_or(SessionError::UnknownTrack(track.0))?;
-        if let Some(clip) = self.project.midi_clip_mut(id) {
-            clip.notes = notes;
-            // The feel the preset starts with — the lean and the wander a recipe used to bake
-            // into the notes arrive as the performance stack instead, where the panel edits
-            // them and writing the text again leaves them alone.
-            clip.transforms = auris_compose::clip_performance(recipe.preset, recipe.seed);
-            clip.recipe = Some(recipe);
-        }
+        candidate.id = id;
+        *self
+            .project
+            .midi_clip_mut(id)
+            .ok_or(SessionError::UnknownClip(id.0))? = candidate;
         self.invalidate_graph();
         Ok(id)
     }
@@ -327,11 +332,16 @@ impl Session {
         if midi.notes == notes && midi.recipe.as_ref() == Some(&recipe) {
             return Ok(count);
         }
+        let mut candidate = midi.clone();
+        candidate.notes = notes;
+        candidate.recipe = Some(recipe);
+        candidate.looped_note_instances()?;
+
         self.record(Edit::GenerateClip);
-        if let Some(midi) = self.project.midi_clip_mut(clip) {
-            midi.notes = notes;
-            midi.recipe = Some(recipe);
-        }
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(count)
     }
@@ -465,12 +475,17 @@ impl Session {
             return Ok(written);
         }
 
+        let mut candidate = midi.clone();
+        candidate.notes = notes;
+        candidate.transforms = transforms;
+        candidate.recipe = Some(recipe);
+        candidate.looped_note_instances()?;
+
         self.record(Edit::GenerateClip);
-        if let Some(midi) = self.project.midi_clip_mut(clip) {
-            midi.notes = notes;
-            midi.transforms = transforms;
-            midi.recipe = Some(recipe);
-        }
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(written)
     }

@@ -16,7 +16,8 @@ use clack_host::events::event_types::{
     MidiEvent, NoteChokeEvent, NoteExpressionEvent, NoteExpressionType, NoteOffEvent, NoteOnEvent,
     ParamValueEvent, TransportEvent, TransportFlags,
 };
-use clack_host::events::{Match, Pckn};
+use clack_host::events::io::{OutputEventBuffer, TryPushError};
+use clack_host::events::{Match, Pckn, UnknownEvent};
 use clack_host::prelude::*;
 use clack_host::utils::Cookie;
 
@@ -33,10 +34,50 @@ use crate::ports::PortLayout;
 /// exists and why the render graph fills it in from the arrangement it has just scheduled. This is
 /// what is left for the callers that cannot: an effect prepared on its own, a test, an example.
 ///
-/// Exceeding it still only costs one allocation, once, since the buffer keeps whatever capacity it
-/// grows to — but that one is on the audio thread, which is the thread that has no allowance for
-/// it at all.
+/// A block that exceeds the prepared room is rejected without growing the queue. The graph supplies
+/// the exact worst-case count during preparation; this floor is only for standalone callers.
 const EVENT_HEADROOM: usize = 256;
+
+/// Largest input-event queue one hosted instance may pre-allocate.
+///
+/// The render graph already bounds a track's complete flattened schedule, but
+/// [`PrepareContext`] is also a public input and may carry a hostile `usize`. More importantly,
+/// [`EventBuffer::with_capacity`] reserves worst-case standard-event storage for every requested
+/// slot, so even a numerically valid but unrealistic count can multiply into a process-sized
+/// allocation. Four thousand and ninety-six simultaneous events is already far beyond an ordinary
+/// realtime block; a denser block is rejected as one gesture and counted by
+/// [`Bridge::dropped_input_events`] instead of allocating more host storage.
+pub(crate) const MAX_PREPARED_EVENT_ROOM: usize = 4_096;
+
+/// Prepared input-event room, including one slot for every parameter that may be dirty at once.
+///
+/// [`PrepareContext`] is public and its count may originate in a decoded document or another
+/// host. Saturation prevents wraparound and the explicit ceiling prevents that numerical boundary
+/// from becoming a huge allocation. Requests above the ceiling follow the same whole-gesture
+/// drop-and-diagnostic contract as any other understated preparation.
+fn prepared_event_room(parameter_count: usize, max_block_events: usize) -> usize {
+    parameter_count
+        .saturating_add(max_block_events.max(EVENT_HEADROOM))
+        .min(MAX_PREPARED_EVENT_ROOM)
+}
+
+/// An allocation-free sink for plugin-generated events Auris cannot route yet.
+///
+/// [`Effect`](auris_core::plugin::Effect) and [`Instrument`](auris_core::plugin::Instrument) have
+/// no event-output channel, so retaining these events in an [`EventBuffer`] only made an unused
+/// vector capable of growing on the audio thread. Counting them preserves a useful diagnostic
+/// while accepting them exactly as the previous discard-after-process path did.
+#[derive(Default)]
+struct DiscardedOutputEvents {
+    count: u64,
+}
+
+impl OutputEventBuffer for DiscardedOutputEvents {
+    fn try_push(&mut self, _event: &UnknownEvent) -> Result<(), TryPushError> {
+        self.count = self.count.saturating_add(1);
+        Ok(())
+    }
+}
 
 /// A plugin instance as the render graph drives it.
 pub(crate) struct Bridge {
@@ -47,9 +88,10 @@ pub(crate) struct Bridge {
     changed: Vec<bool>,
     outgoing: EventBuffer,
     // CLAP output events are intentionally discarded for now: auris-core's Effect/Instrument
-    // process contract has no event-output channel to route generated notes downstream. Keep the
-    // buffer because plugins are still entitled to a valid output-events sink.
-    replies: EventBuffer,
+    // process contract has no event-output channel to route generated notes downstream. This
+    // allocation-free sink still gives plugins a valid output-events target and counts what was
+    // discarded for diagnostics.
+    replies: DiscardedOutputEvents,
     input_ports: AudioPorts,
     output_ports: AudioPorts,
     /// A buffer per channel of every input port the plugin declared, in its order. Every port is
@@ -66,11 +108,13 @@ pub(crate) struct Bridge {
     /// What the plugin's note input port speaks, or `None` if it has none — which is what an
     /// effect has, and also what an instrument Auris cannot drive has.
     language: Option<NoteLanguage>,
-    /// How many events `outgoing` and `replies` were sized for, parameters included.
+    /// How many events `outgoing` was sized for, parameters included.
     ///
     /// Written down because [`EventBuffer`] cannot be asked its capacity, and
     /// [`Self::reserve_events`] needs the old answer to know whether a new one is bigger.
     event_room: usize,
+    /// Requested host-to-plugin events rejected because the caller exceeded `event_room`.
+    dropped_input_events: u64,
     max_frames: usize,
     latency: usize,
     /// A counter that only ever goes up, which is what CLAP asks of `steady_time`. The project
@@ -96,7 +140,7 @@ impl Bridge {
         // host that says nothing — an effect prepared on its own, a test — still gets room for a
         // reasonable block, and one that has counted the arrangement gets the count.
         let count = params.descriptors.len();
-        let event_room = count + ctx.max_block_events.max(EVENT_HEADROOM);
+        let event_room = prepared_event_room(count, ctx.max_block_events);
         let values = params.descriptors.iter().map(|p| p.default).collect();
         let room = |port: &usize| vec![vec![0.0; frames]; *port];
 
@@ -107,7 +151,7 @@ impl Bridge {
             values,
             changed: vec![false; count],
             outgoing: EventBuffer::with_capacity(event_room),
-            replies: EventBuffer::with_capacity(event_room),
+            replies: DiscardedOutputEvents::default(),
             input_ports: AudioPorts::with_capacity(
                 ports.input_channels().max(1),
                 ports.inputs.len().max(1),
@@ -123,6 +167,7 @@ impl Bridge {
             main_output: ports.main_output,
             language,
             event_room,
+            dropped_input_events: 0,
             max_frames: frames,
             latency,
             steady_time: 0,
@@ -149,10 +194,9 @@ impl Bridge {
     /// allocating on it.
     pub(crate) fn reserve_events(&mut self, max_block_events: usize) {
         let count = self.params.descriptors.len();
-        let room = count + max_block_events.max(EVENT_HEADROOM);
+        let room = prepared_event_room(count, max_block_events);
         if room > self.event_room {
             self.outgoing = EventBuffer::with_capacity(room);
-            self.replies = EventBuffer::with_capacity(room);
             self.event_room = room;
         }
     }
@@ -169,6 +213,17 @@ impl Bridge {
     #[cfg(test)]
     pub(crate) fn event_room(&self) -> usize {
         self.event_room
+    }
+
+    /// How many requested input events have been rejected instead of growing on the audio thread.
+    pub(crate) fn dropped_input_events(&self) -> u64 {
+        self.dropped_input_events
+    }
+
+    /// How many plugin-generated events have been accepted and discarded because Auris has no
+    /// event-output route yet.
+    pub(crate) fn discarded_output_events(&self) -> u64 {
+        self.replies.count
     }
 
     /// Whether the plugin declared a port for a key to go in.
@@ -242,6 +297,8 @@ impl Bridge {
             main_output,
             sidechain_input,
             language,
+            event_room,
+            dropped_input_events,
             steady_time,
             processing_failed,
             ..
@@ -265,27 +322,79 @@ impl Bridge {
             let end = offset + frames;
 
             outgoing.clear();
-            replies.clear();
+            let dirty_count = changed.iter().filter(|dirty| **dirty).count();
+            let note_count = language.map_or(0, |language| {
+                notes
+                    .iter()
+                    .filter(|note| {
+                        let at = note.frame() as usize;
+                        at >= offset
+                            && at < end
+                            && !matches!(translate(**note, language), Translated::Nothing)
+                    })
+                    .count()
+            });
+            let required = dirty_count.saturating_add(note_count);
+
+            // A caller that skipped or understated preparation must not turn an input burst into
+            // a vector growth on the audio thread. Do not send a partial gesture: losing a late
+            // note-off would leave a voice stuck. Keep parameter changes dirty for the next block
+            // and replace the rejected note set with one dialect-correct emergency choke.
+            let overflowed = required > *event_room;
+            if overflowed {
+                *processing_failed = true;
+                add_dropped_events(dropped_input_events, required);
+                if let Some(language) = *language {
+                    // EVENT_HEADROOM keeps room for this event even for an unprepared caller.
+                    let _ = push_note(
+                        outgoing,
+                        NoteEvent::AllSoundOff { frame: 0 },
+                        language,
+                        *event_room,
+                    );
+                }
+            }
             // Parameters before notes: an automated cutoff belongs to the block it was written
             // for, and a note struck in the same block should hear it. Dirty flags are only taken
             // after start_processing succeeded, so a refused start retries them next time.
-            for (index, dirty) in changed.iter_mut().enumerate() {
-                if !std::mem::take(dirty) {
-                    continue;
+            if !overflowed {
+                for (index, dirty) in changed.iter_mut().enumerate() {
+                    if !std::mem::take(dirty) {
+                        continue;
+                    }
+                    if !push_bounded(
+                        outgoing,
+                        &ParamValueEvent::new(
+                            0,
+                            params.clap_ids[index],
+                            Pckn::match_all(),
+                            values[index] as f64,
+                            Cookie::empty(),
+                        ),
+                        *event_room,
+                    ) {
+                        // The preflight and capacity use the same count, so reaching this branch
+                        // means their contract drifted. Stay RT-safe and retry the parameter.
+                        *dirty = true;
+                        *processing_failed = true;
+                        add_dropped_events(dropped_input_events, 1);
+                    }
                 }
-                outgoing.push(&ParamValueEvent::new(
-                    0,
-                    params.clap_ids[index],
-                    Pckn::match_all(),
-                    values[index] as f64,
-                    Cookie::empty(),
-                ));
-            }
-            if let Some(language) = *language {
-                for note in notes {
-                    let at = note.frame() as usize;
-                    if at >= offset && at < end {
-                        push_note(outgoing, note.with_frame((at - offset) as u32), language);
+                if let Some(language) = *language {
+                    for note in notes {
+                        let at = note.frame() as usize;
+                        if at >= offset
+                            && at < end
+                            && !push_note(
+                                outgoing,
+                                note.with_frame((at - offset) as u32),
+                                language,
+                                *event_room,
+                            )
+                        {
+                            *processing_failed = true;
+                            add_dropped_events(dropped_input_events, 1);
+                        }
                     }
                 }
             }
@@ -439,11 +548,38 @@ fn silence(buffer: &mut AudioBuffer, offset: usize, frames: usize) {
     }
 }
 
+/// Adds one of the standard events Auris creates, provided the prepared room is not exhausted.
+///
+/// `EventBuffer::with_capacity` reserves enough bytes for the largest standard CLAP event, and
+/// Auris only constructs standard events below. Guarding the index count therefore bounds both of
+/// its internal vectors without relying on `EventBuffer::push`, which grows them when full.
+fn push_bounded<E: AsRef<UnknownEvent> + ?Sized>(
+    queue: &mut EventBuffer,
+    event: &E,
+    event_room: usize,
+) -> bool {
+    if queue.len() as usize >= event_room {
+        return false;
+    }
+    queue.push(event);
+    true
+}
+
+/// Saturating diagnostic accounting for input events that were not delivered.
+fn add_dropped_events(counter: &mut u64, count: usize) {
+    *counter = counter.saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
+}
+
 /// Pushes whatever `note` translates to onto the outgoing queue.
 ///
 /// The event's own frame is its timestamp, so a note lands on the sample it was scheduled for
 /// rather than at the start of the block it fell in.
-fn push_note(queue: &mut EventBuffer, note: NoteEvent, language: NoteLanguage) {
+fn push_note(
+    queue: &mut EventBuffer,
+    note: NoteEvent,
+    language: NoteLanguage,
+    event_room: usize,
+) -> bool {
     let at = note.frame();
     // Port zero and channel zero: Auris has one note stream per track, and no concept of a
     // plugin's second note port to point the other one at.
@@ -455,23 +591,34 @@ fn push_note(queue: &mut EventBuffer, note: NoteEvent, language: NoteLanguage) {
     };
 
     match translate(note, language) {
-        Translated::NoteOn { key, velocity } => {
-            queue.push(&NoteOnEvent::new(at, voice(key), velocity))
-        }
+        Translated::NoteOn { key, velocity } => push_bounded(
+            queue,
+            &NoteOnEvent::new(at, voice(key), velocity),
+            event_room,
+        ),
         // Zero release velocity: Auris does not record one, and inventing a number a plugin might
         // map to its release stage would be putting a gesture in that nobody made.
-        Translated::NoteOff { key } => queue.push(&NoteOffEvent::new(at, voice(key), 0.0)),
-        Translated::ReleaseAll => queue.push(&NoteOffEvent::new(at, Pckn::match_all(), 0.0)),
-        Translated::ChokeAll => queue.push(&NoteChokeEvent::new(at, Pckn::match_all())),
-        Translated::Tuning(semitones) => queue.push(&NoteExpressionEvent::new(
-            at,
-            Pckn::match_all(),
-            NoteExpressionType::Tuning,
-            semitones,
-        )),
-        Translated::Midi(data) => queue.push(&MidiEvent::new(at, 0, data)),
-        Translated::Nothing => {}
-    };
+        Translated::NoteOff { key } => {
+            push_bounded(queue, &NoteOffEvent::new(at, voice(key), 0.0), event_room)
+        }
+        Translated::ReleaseAll => push_bounded(
+            queue,
+            &NoteOffEvent::new(at, Pckn::match_all(), 0.0),
+            event_room,
+        ),
+        Translated::ChokeAll => push_bounded(
+            queue,
+            &NoteChokeEvent::new(at, Pckn::match_all()),
+            event_room,
+        ),
+        Translated::Tuning(semitones) => push_bounded(
+            queue,
+            &NoteExpressionEvent::new(at, Pckn::match_all(), NoteExpressionType::Tuning, semitones),
+            event_room,
+        ),
+        Translated::Midi(data) => push_bounded(queue, &MidiEvent::new(at, 0, data), event_room),
+        Translated::Nothing => true,
+    }
 }
 
 impl std::fmt::Debug for Bridge {
@@ -508,6 +655,18 @@ mod tests {
 
         let stopped = transport_event(&ProcessContext::realtime(48_000.0, 1, 0, 123.0, false), 0);
         assert!(!stopped.flags.contains(TransportFlags::IS_PLAYING));
+    }
+
+    #[test]
+    fn hostile_event_counts_are_capped_instead_of_wrapping_or_requesting_huge_storage() {
+        assert_eq!(prepared_event_room(7, 2_048), 2_055);
+        assert_eq!(prepared_event_room(7, 4_096), MAX_PREPARED_EVENT_ROOM);
+        assert_eq!(prepared_event_room(7, 0), EVENT_HEADROOM + 7);
+        assert_eq!(prepared_event_room(1, usize::MAX), MAX_PREPARED_EVENT_ROOM);
+        assert_eq!(
+            prepared_event_room(usize::MAX, EVENT_HEADROOM),
+            MAX_PREPARED_EVENT_ROOM
+        );
     }
 
     /// A stereo buffer whose every sample is `residue` — what the previous block left behind.

@@ -9,6 +9,11 @@ use ort::value::Tensor;
 use serde::Deserialize;
 
 use crate::backend::{BackendKind, SingingBackend};
+use crate::limits::{
+    MAX_COLLECTION_ITEMS, MAX_MEL_BINS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TOKEN_BYTES,
+    automatic_descendant_path, checked_product, checked_sample_count, read_text_file, try_copy_f32,
+    try_zeroed_f32, validate_audio_dimensions,
+};
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
 use crate::model::{Acceleration, open_session};
 use crate::score::{MAX_CHUNK_FRAMES, chunk_ranges};
@@ -96,39 +101,98 @@ pub(crate) struct DiffSingerBackend {
     acceleration: Acceleration,
     on_gpu: bool,
     mel_factor: f32,
+    automatic_access_safe: bool,
 }
 
 impl DiffSingerBackend {
-    pub(crate) fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
+    pub(crate) fn load(
+        path: &Path,
+        acceleration: Acceleration,
+        automatic: bool,
+    ) -> Result<Self, SingError> {
         let root = path
             .parent()
             .ok_or_else(|| load_error("dsconfig.yaml has no parent folder"))?;
-        let raw = std::fs::read_to_string(path).map_err(|error| load_error(error.to_string()))?;
+        let raw = read_text_file(path, "DiffSinger dsconfig.yaml")?;
         let config: DsConfig =
             serde_yaml_ng::from_str(&raw).map_err(|error| load_error(error.to_string()))?;
         validate_config(&config)?;
-
-        let symbols = read_lines(&root.join(&config.phonemes))?;
+        let checked_phonemes = automatic_descendant_path(root, Path::new(&config.phonemes));
+        let checked_acoustic = automatic_descendant_path(root, Path::new(&config.acoustic));
+        let primary_access_safe = checked_phonemes.is_some() && checked_acoustic.is_some();
+        if automatic && !primary_access_safe {
+            return Err(unsafe_access(
+                "DiffSinger manifest paths must resolve inside the voicebank folder",
+            ));
+        }
+        // Automatic work opens the canonical paths that passed the containment check. Explicit
+        // loading retains historical support for absolute and parent-relative manifests.
+        let phonemes_path = if automatic {
+            checked_phonemes
+                .clone()
+                .expect("automatic path safety was checked above")
+        } else {
+            root.join(&config.phonemes)
+        };
+        let acoustic_path = if automatic {
+            checked_acoustic
+                .clone()
+                .expect("automatic path safety was checked above")
+        } else {
+            root.join(&config.acoustic)
+        };
+        let symbols = read_lines(&phonemes_path)?;
         if !symbols.iter().any(|symbol| symbol == "SP") {
             return Err(SingError::Metadata(
                 "DiffSinger phonemes.txt has no SP silence token".into(),
             ));
         }
 
-        let vocoder_root = if root.join("dsvocoder/vocoder.yaml").is_file() {
-            root.join("dsvocoder")
+        let bundled_vocoder = Path::new("dsvocoder/vocoder.yaml");
+        let bundled_candidate = root.join(bundled_vocoder);
+        let use_bundled = bundled_candidate.is_file();
+        let configured_vocoder = Path::new(&config.vocoder).join("vocoder.yaml");
+        let checked_vocoder_config = if use_bundled {
+            automatic_descendant_path(root, bundled_vocoder)
         } else {
-            root.join(&config.vocoder)
+            automatic_descendant_path(root, &configured_vocoder)
         };
-        let vocoder_config_path = vocoder_root.join("vocoder.yaml");
-        let vocoder_raw = std::fs::read_to_string(&vocoder_config_path)
-            .map_err(|error| load_error(format!("{}: {error}", vocoder_config_path.display())))?;
+        if automatic && checked_vocoder_config.is_none() {
+            return Err(unsafe_access(
+                "DiffSinger vocoder config must resolve inside the voicebank folder",
+            ));
+        }
+        let vocoder_config_path = if automatic {
+            checked_vocoder_config
+                .clone()
+                .expect("automatic path safety was checked above")
+        } else if use_bundled {
+            bundled_candidate
+        } else {
+            root.join(&configured_vocoder)
+        };
+        let vocoder_root = vocoder_config_path
+            .parent()
+            .ok_or_else(|| load_error("vocoder.yaml has no parent folder"))?;
+        let vocoder_raw = read_text_file(&vocoder_config_path, "DiffSinger vocoder.yaml")?;
         let vocoder_config: VocoderConfig =
             serde_yaml_ng::from_str(&vocoder_raw).map_err(|error| load_error(error.to_string()))?;
         let mel_factor = validate_vocoder(&config, &vocoder_config)?;
+        let checked_vocoder_model =
+            automatic_descendant_path(vocoder_root, Path::new(&vocoder_config.model));
+        if automatic && checked_vocoder_model.is_none() {
+            return Err(unsafe_access(
+                "DiffSinger vocoder model must resolve inside the vocoder folder",
+            ));
+        }
 
-        let acoustic_path = root.join(&config.acoustic);
-        let vocoder_path = vocoder_root.join(&vocoder_config.model);
+        let vocoder_path = if automatic {
+            checked_vocoder_model
+                .clone()
+                .expect("automatic path safety was checked above")
+        } else {
+            vocoder_root.join(&vocoder_config.model)
+        };
         let (acoustic, acoustic_gpu) = open_session(&acoustic_path, acceleration)?;
         let (vocoder, vocoder_gpu) = open_session(&vocoder_path, acceleration)?;
         let display_name = root
@@ -165,6 +229,9 @@ impl DiffSingerBackend {
             acceleration,
             on_gpu: acoustic_gpu || vocoder_gpu,
             mel_factor,
+            automatic_access_safe: primary_access_safe
+                && checked_vocoder_config.is_some()
+                && checked_vocoder_model.is_some(),
         })
     }
 
@@ -240,12 +307,38 @@ impl DiffSingerBackend {
             .map_err(refused)?;
         let mel_shape: Vec<usize> = mel_shape
             .iter()
-            .map(|dimension| *dimension as usize)
-            .collect();
-        let mel: Vec<f32> = raw_mel
+            .map(|dimension| {
+                usize::try_from(*dimension).map_err(|_| {
+                    SingError::Inference(
+                        "DiffSinger acoustic model returned a negative mel axis".into(),
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        let mel_count = checked_product(
+            frame_count,
+            self.config.num_mel_bins,
+            "DiffSinger mel output",
+            MAX_CHUNK_FRAMES * MAX_MEL_BINS,
+        )?;
+        let shape_count = mel_shape
             .iter()
-            .map(|value| value * self.mel_factor)
-            .collect();
+            .try_fold(1usize, |product, dimension| product.checked_mul(*dimension));
+        if shape_count != Some(mel_count)
+            || raw_mel.len() != mel_count
+            || raw_mel.iter().any(|value| !value.is_finite())
+        {
+            return Err(SingError::Inference(format!(
+                "DiffSinger acoustic model answered {} mel values where {mel_count} finite values were expected",
+                raw_mel.len()
+            )));
+        }
+        let mut mel = Vec::new();
+        mel.try_reserve_exact(mel_count)
+            .map_err(|_| SingError::Allocation {
+                resource: "DiffSinger mel input",
+            })?;
+        mel.extend(raw_mel.iter().map(|value| value * self.mel_factor));
         let vocoder_inputs = ort::inputs![
             "mel" => Tensor::from_array((mel_shape, mel))?,
             "f0" => Tensor::from_array(([1, frame_count], score.f0))?,
@@ -253,7 +346,18 @@ impl DiffSingerBackend {
         .map_err(refused)?;
         let output = self.vocoder.run(vocoder_inputs).map_err(refused)?;
         let (_, samples) = output[0].try_extract_raw_tensor::<f32>().map_err(refused)?;
-        Ok(samples.to_vec())
+        let expected = checked_sample_count(
+            frame_count,
+            self.config.hop_size as usize,
+            "DiffSinger chunk audio",
+        )?;
+        if samples.len() != expected || samples.iter().any(|sample| !sample.is_finite()) {
+            return Err(SingError::Inference(format!(
+                "DiffSinger vocoder answered {} samples where {expected} finite samples were expected",
+                samples.len()
+            )));
+        }
+        try_copy_f32(samples, "DiffSinger chunk audio")
     }
 }
 
@@ -272,6 +376,9 @@ impl SingingBackend for DiffSingerBackend {
     }
     fn path(&self) -> &Path {
         &self.path
+    }
+    fn automatic_access_safe(&self) -> bool {
+        self.automatic_access_safe
     }
 
     fn sing_with(
@@ -294,7 +401,8 @@ impl SingingBackend for DiffSingerBackend {
             });
         }
         let hop = self.config.hop_size as usize;
-        let mut out = vec![0.0; frames.len() * hop];
+        let length = checked_sample_count(frames.len(), hop, "DiffSinger rendered audio")?;
+        let mut out = try_zeroed_f32(length, "DiffSinger rendered audio")?;
         let chunks = chunk_ranges(frames, MAX_CHUNK_FRAMES);
         let total = chunks.len();
         for (index, range) in chunks.into_iter().enumerate() {
@@ -302,14 +410,16 @@ impl SingingBackend for DiffSingerBackend {
                 return Err(SingError::Cancelled);
             }
             let samples = self.sing_chunk(frames, range.clone())?;
-            let expected = range.len() * hop;
+            let expected = checked_sample_count(range.len(), hop, "DiffSinger chunk audio")?;
             if samples.len() != expected {
                 return Err(SingError::Inference(format!(
                     "DiffSinger vocoder answered {} samples where {expected} were expected",
                     samples.len()
                 )));
             }
-            out[range.start * hop..range.end * hop].copy_from_slice(&samples);
+            let start = checked_sample_count(range.start, hop, "DiffSinger render offset")?;
+            let end = checked_sample_count(range.end, hop, "DiffSinger render offset")?;
+            out[start..end].copy_from_slice(&samples);
         }
         if !progress(total, total) {
             return Err(SingError::Cancelled);
@@ -410,17 +520,22 @@ fn diffsinger_symbol(symbol: &str, symbols: &[String]) -> Option<usize> {
 }
 
 fn read_lines(path: &Path) -> Result<Vec<String>, SingError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| load_error(format!("{}: {error}", path.display())))?;
+    let text = read_text_file(path, "DiffSinger phonemes.txt")?;
     let lines: Vec<String> = text
         .lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect();
-    if lines.is_empty() {
+    if lines.is_empty()
+        || lines.len() > MAX_COLLECTION_ITEMS
+        || lines
+            .iter()
+            .any(|line| line.len() > MAX_TOKEN_BYTES || line.split_whitespace().count() != 1)
+    {
         Err(SingError::Metadata(
-            "DiffSinger phonemes.txt is empty".into(),
+            "DiffSinger phonemes.txt must contain 1..=4096 tokens of at most 256 UTF-8 bytes"
+                .into(),
         ))
     } else {
         Ok(lines)
@@ -433,10 +548,30 @@ fn validate_config(config: &DsConfig) -> Result<(), SingError> {
             "DiffSinger dsconfig.yaml must name phonemes, acoustic, and vocoder".into(),
         ));
     }
-    if config.sample_rate == 0 || config.hop_size == 0 || config.num_mel_bins == 0 {
+    if [
+        config.phonemes.as_str(),
+        config.acoustic.as_str(),
+        config.vocoder.as_str(),
+    ]
+    .iter()
+    .any(|value| value.len() > MAX_PATH_BYTES)
+        || config.mel_base.len() > MAX_NAME_BYTES
+        || config.speakers.as_ref().is_some_and(|speakers| {
+            speakers.len() > MAX_COLLECTION_ITEMS
+                || speakers
+                    .iter()
+                    .any(|speaker| speaker.trim().is_empty() || speaker.len() > MAX_NAME_BYTES)
+        })
+    {
         return Err(SingError::Metadata(
-            "DiffSinger audio dimensions must be positive".into(),
+            "DiffSinger config strings or lists exceed their practical limits".into(),
         ));
+    }
+    validate_audio_dimensions(config.sample_rate, config.hop_size, "DiffSinger")?;
+    if !(1..=MAX_MEL_BINS).contains(&config.num_mel_bins) {
+        return Err(SingError::Metadata(format!(
+            "DiffSinger num_mel_bins must be 1..={MAX_MEL_BINS}"
+        )));
     }
     let unsupported = config.use_energy_embed
         || config.use_breathiness_embed
@@ -457,6 +592,20 @@ fn validate_config(config: &DsConfig) -> Result<(), SingError> {
 }
 
 fn validate_vocoder(acoustic: &DsConfig, vocoder: &VocoderConfig) -> Result<f32, SingError> {
+    if vocoder.model.is_empty()
+        || vocoder.model.len() > MAX_PATH_BYTES
+        || vocoder.mel_base.len() > MAX_NAME_BYTES
+    {
+        return Err(SingError::Metadata(
+            "DiffSinger vocoder config strings exceed their practical limits".into(),
+        ));
+    }
+    validate_audio_dimensions(vocoder.sample_rate, vocoder.hop_size, "DiffSinger vocoder")?;
+    if !(1..=MAX_MEL_BINS).contains(&vocoder.num_mel_bins) {
+        return Err(SingError::Metadata(format!(
+            "DiffSinger vocoder num_mel_bins must be 1..={MAX_MEL_BINS}"
+        )));
+    }
     if acoustic.sample_rate != vocoder.sample_rate
         || acoustic.hop_size != vocoder.hop_size
         || acoustic.num_mel_bins != vocoder.num_mel_bins
@@ -481,9 +630,35 @@ fn load_error(reason: impl Into<String>) -> SingError {
     }
 }
 
+fn unsafe_access(reason: impl Into<String>) -> SingError {
+    SingError::UnsafeAutomaticAccess {
+        reason: reason.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
+
+    fn valid_config() -> DsConfig {
+        DsConfig {
+            phonemes: "phonemes.txt".into(),
+            acoustic: "acoustic.onnx".into(),
+            vocoder: "vocoder".into(),
+            ..DsConfig::default()
+        }
+    }
+
+    fn temp_root() -> PathBuf {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        std::env::temp_dir().join(format!(
+            "auris-diffsinger-policy-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
 
     #[test]
     fn frames_are_run_length_encoded_in_the_diffsinger_vocabulary() {
@@ -533,5 +708,71 @@ mod tests {
             validate_config(&config),
             Err(SingError::Unsupported { .. })
         ));
+    }
+
+    #[test]
+    fn config_audio_and_collection_boundaries_are_explicit() {
+        let mut config = valid_config();
+        config.sample_rate = 8_000;
+        config.hop_size = 8;
+        config.num_mel_bins = MAX_MEL_BINS;
+        validate_config(&config).expect("inclusive lower clock and mel upper bound");
+
+        config.sample_rate = 192_000;
+        config.hop_size = 19_200;
+        validate_config(&config).expect("inclusive upper clock boundary");
+        config.hop_size += 1;
+        assert!(validate_config(&config).is_err());
+        config = valid_config();
+        config.num_mel_bins = MAX_MEL_BINS + 1;
+        assert!(validate_config(&config).is_err());
+        config = valid_config();
+        config.acoustic = "x".repeat(MAX_PATH_BYTES + 1);
+        assert!(validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn automatic_load_rejects_manifest_escape_before_opening_children() {
+        let root = temp_root();
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("dsconfig.yaml");
+        std::fs::write(
+            &path,
+            "phonemes: ../outside.txt\nacoustic: acoustic.onnx\nvocoder: vocoder\n",
+        )
+        .unwrap();
+        let error = match crate::VoiceModel::load_for_automatic_access(&path, Acceleration::Cpu) {
+            Err(error) => error,
+            Ok(_) => panic!("parent traversal must be rejected before phonemes.txt is opened"),
+        };
+        assert!(matches!(error, SingError::UnsafeAutomaticAccess { .. }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn automatic_load_rejects_nested_vocoder_escape_before_model_open() {
+        let root = temp_root();
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(root.join("vocoder")).unwrap();
+        std::fs::write(root.join("phonemes.txt"), "SP\na\n").unwrap();
+        std::fs::write(
+            root.join("dsconfig.yaml"),
+            "phonemes: phonemes.txt\nacoustic: acoustic.onnx\nvocoder: vocoder\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("vocoder/vocoder.yaml"),
+            "model: ../outside.onnx\n",
+        )
+        .unwrap();
+        let error = match crate::VoiceModel::load_for_automatic_access(
+            &root.join("dsconfig.yaml"),
+            Acceleration::Cpu,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("vocoder traversal must be rejected before acoustic.onnx is opened"),
+        };
+        assert!(matches!(error, SingError::UnsafeAutomaticAccess { .. }));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

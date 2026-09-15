@@ -1,5 +1,7 @@
 //! Per-conversation channels and cancellation; no process-global session or working directory.
 use super::*;
+use std::io::Read;
+use std::path::Path;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -8,6 +10,154 @@ use std::sync::{
 
 static HISTORY_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 use tokio::sync::{Mutex, mpsc as async_mpsc, oneshot};
+
+const HISTORY_GENERATION_BYTES: u64 = 32;
+
+/// The reset generation one worker observed while loading its persisted conversation.
+///
+/// The stable lock file serialises cooperating processes. The separately replaced generation
+/// file is the tombstone: clearing history advances it before removing the conversation, so a
+/// worker that loaded older text can no longer publish that text after the clear.
+#[derive(Clone, Debug)]
+pub(super) struct HistoryGeneration {
+    path: PathBuf,
+    generation: u64,
+    expected: memory::Memory,
+}
+
+/// One validated conversation snapshot shared by its preview and the worker that resumes it.
+///
+/// The memory and generation token remain opaque so a frontend cannot alter model history after
+/// showing it. Passing this value to [`Worker::spawn`] guarantees that the worker uses precisely
+/// the context returned by [`load_history_background`], rather than reading the file a second
+/// time after provider startup.
+#[derive(Clone, Debug)]
+pub struct HistorySnapshot {
+    memory: memory::Memory,
+    generation: HistoryGeneration,
+}
+
+impl HistorySnapshot {
+    /// Completed user and assistant turns, oldest first, for a transcript preview.
+    pub fn turns(&self) -> Vec<(String, String)> {
+        self.memory
+            .turns
+            .iter()
+            .map(|turn| (turn.user.clone(), turn.answer.clone()))
+            .collect()
+    }
+
+    /// Restored compacted context, when older turns were summarized.
+    ///
+    /// Frontends should show this text as context rather than as a new user instruction.
+    pub fn summary(&self) -> Option<&str> {
+        (!self.memory.summary.is_empty()).then_some(self.memory.summary.as_str())
+    }
+
+    fn path(&self) -> &Path {
+        &self.generation.path
+    }
+
+    pub(super) fn into_parts(self) -> (memory::Memory, HistoryGeneration) {
+        (self.memory, self.generation)
+    }
+}
+
+impl HistoryGeneration {
+    fn load(path: &Path, fresh: bool) -> Result<(memory::Memory, Self), String> {
+        let _lock = history_file_lock(path)?;
+        let generation = if fresh {
+            advance_history_generation(path)?
+        } else {
+            read_history_generation(path)?
+        };
+        let memory = if fresh {
+            memory::Memory::default()
+        } else {
+            memory::Memory::load(path)?
+        };
+        Ok((
+            memory.clone(),
+            Self {
+                path: path.to_path_buf(),
+                generation,
+                expected: memory,
+            },
+        ))
+    }
+
+    fn save_memory(&mut self, memory: &memory::Memory) -> Result<(), String> {
+        let _lock = history_file_lock(&self.path)?;
+        if read_history_generation(&self.path)? != self.generation {
+            return Err(
+                "Conversation history was reset in another window; the older worker will not overwrite it"
+                    .into(),
+            );
+        }
+        if memory::Memory::load(&self.path)? != self.expected {
+            return Err(
+                "Conversation history changed in another window; this worker will not overwrite it"
+                    .into(),
+            );
+        }
+        memory.save(&self.path)?;
+        self.expected = memory.clone();
+        Ok(())
+    }
+}
+
+fn history_file_lock(path: &Path) -> Result<std::fs::File, String> {
+    let lock_path = path.with_extension("lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|error| error.to_string())?;
+    file.lock().map_err(|error| error.to_string())?;
+    Ok(file)
+}
+
+fn read_history_generation(path: &Path) -> Result<u64, String> {
+    let generation_path = path.with_extension("generation");
+    let file = match std::fs::File::open(&generation_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.to_string()),
+    };
+    if file.metadata().map_err(|error| error.to_string())?.len() > HISTORY_GENERATION_BYTES {
+        return Err("Conversation history generation is invalid".into());
+    }
+    let mut text = String::new();
+    file.take(HISTORY_GENERATION_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|error| error.to_string())?;
+    text.trim()
+        .parse()
+        .map_err(|_| "Conversation history generation is invalid".into())
+}
+
+/// Advance the tombstone and remove the older generation while the stable file lock is held.
+fn advance_history_generation(path: &Path) -> Result<u64, String> {
+    let next = read_history_generation(path)?
+        .checked_add(1)
+        .ok_or("Conversation history generation is exhausted")?;
+    let generation_path = path.with_extension("generation");
+    auris_session::settings::write_config_bytes(&generation_path, next.to_string().as_bytes())
+        .map_err(|error| error.to_string())?;
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    Ok(next)
+}
+
+fn clear_history(path: &Path) -> Result<(), String> {
+    let _lock = history_file_lock(path)?;
+    advance_history_generation(path).map(drop)
+}
 
 #[derive(Clone)]
 pub(super) struct Bridge(Arc<Channels>);
@@ -88,6 +238,22 @@ impl Bridge {
         operation()
     }
 
+    pub(super) fn open_history(
+        &self,
+        path: &Path,
+        fresh: bool,
+    ) -> Result<(memory::Memory, HistoryGeneration), String> {
+        self.history(|| HistoryGeneration::load(path, fresh))
+    }
+
+    pub(super) fn save_history(
+        &self,
+        generation: &mut HistoryGeneration,
+        memory: &memory::Memory,
+    ) -> Result<(), String> {
+        self.history(|| generation.save_memory(memory))
+    }
+
     pub(super) fn emit(&self, event: serde_json::Value) {
         let _ = self.0.events.send(event);
     }
@@ -123,11 +289,20 @@ impl Worker {
         prefs: auris_session::AgentPreferences,
         folder: Option<PathBuf>,
         fresh: bool,
+        history: Option<HistorySnapshot>,
     ) -> Result<Self, String> {
         let Command::Run(options) = parse_command(&[], &|name| std::env::var(name).ok(), &prefs)?
         else {
             return Err("Expected agent settings".into());
         };
+        let history_path = folder
+            .as_ref()
+            .map(|folder| folder.join(".auris-conversation.json"));
+        if let Some(snapshot) = history.as_ref()
+            && history_path.as_deref() != Some(snapshot.path())
+        {
+            return Err("The conversation snapshot belongs to another project".into());
+        }
         let (commands, incoming) = async_mpsc::unbounded_channel();
         let (events_out, events) = mpsc::channel();
         let stopped = Arc::new(AtomicBool::new(false));
@@ -151,7 +326,7 @@ impl Worker {
                             let agent = build_for_worker(&options, Some(bridge.clone()))?;
                             let vision = runtime::preflight(&options).await?;
                             bridge.0.vision.store(vision, Ordering::Relaxed);
-                            json_conversation(&agent, &options, &bridge, folder.map(|folder| folder.join(".auris-conversation.json")), fresh).await
+                            json_conversation(&agent, &options, &bridge, history_path, fresh, history).await
                         } => result,
                     }
                 });
@@ -196,6 +371,57 @@ impl Drop for Worker {
     fn drop(&mut self) {
         self.cancel();
     }
+}
+
+/// Remove one persisted conversation after every older history operation has finished.
+///
+/// The wait happens on a short-lived worker thread. Once this reports success, a cancelled
+/// conversation cannot finish a late atomic write and recreate the file.
+pub fn clear_history_background(path: PathBuf) -> mpsc::Receiver<Result<(), String>> {
+    let (sender, receiver) = mpsc::channel();
+    let failed = sender.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("auris-history-clear".into())
+        .spawn(move || {
+            let result = HISTORY_IO
+                .lock()
+                .map_err(|_| "Conversation storage failed".to_string())
+                .and_then(|_guard| clear_history(&path));
+            let _ = sender.send(result);
+        })
+    {
+        let _ = failed.send(Err(error.to_string()));
+    }
+    receiver
+}
+
+/// Read one persisted conversation without constructing or contacting a model provider.
+///
+/// The desktop uses this when a project or its Agent panel opens, so the transcript is present
+/// before a first message can be sent. The same process and file locks as the conversation worker
+/// keep this read ordered with in-flight saves and clears.
+pub fn load_history_background(
+    path: PathBuf,
+    fresh: bool,
+) -> mpsc::Receiver<Result<HistorySnapshot, String>> {
+    let (sender, receiver) = mpsc::channel();
+    let failed = sender.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("auris-history-load".into())
+        .spawn(move || {
+            let result = HISTORY_IO
+                .lock()
+                .map_err(|_| "Conversation storage failed".to_string())
+                .and_then(|_guard| {
+                    HistoryGeneration::load(&path, fresh)
+                        .map(|(memory, generation)| HistorySnapshot { memory, generation })
+                });
+            let _ = sender.send(result);
+        })
+    {
+        let _ = failed.send(Err(error.to_string()));
+    }
+    receiver
 }
 
 /// List provider models on a bounded background thread, without starting a conversation.
@@ -262,6 +488,188 @@ mod tests {
     }
 
     #[test]
+    fn history_clear_waits_for_an_in_flight_writer_and_removes_its_final_file() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        std::fs::write(&history, b"old history").unwrap();
+
+        let writer = HISTORY_IO.lock().unwrap();
+        let cleared = clear_history_background(history.clone());
+        let early = cleared.try_recv();
+
+        // Reproduce a cancelled worker finishing the atomic replacement it already began.
+        let late_write = std::fs::write(&history, b"late worker history");
+        drop(writer);
+        assert_eq!(early, Err(mpsc::TryRecvError::Empty));
+        late_write.unwrap();
+
+        assert_eq!(
+            cleared.recv_timeout(Duration::from_secs(2)).unwrap(),
+            Ok(())
+        );
+        assert!(
+            !history.exists(),
+            "a cancelled worker's final write resurrected cleared history"
+        );
+    }
+
+    #[test]
+    fn history_load_reads_completed_turns_without_starting_a_provider() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        let mut memory = memory::Memory {
+            summary: "Restored decisions, not a new instruction.".into(),
+            ..Default::default()
+        };
+        memory.push("keep the intro", "The intro is unchanged.");
+        memory.push("add a bass", "Added the bass track.");
+        memory.save(&history).unwrap();
+
+        let snapshot = load_history_background(history, false)
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            snapshot.turns(),
+            vec![
+                ("keep the intro".into(), "The intro is unchanged.".into()),
+                ("add a bass".into(), "Added the bass track.".into()),
+            ]
+        );
+        assert_eq!(
+            snapshot.summary(),
+            Some("Restored decisions, not a new instruction.")
+        );
+    }
+
+    #[test]
+    fn history_file_lock_serializes_independent_handles() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        let first = history_file_lock(&history).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let other_history = history.clone();
+        let waiter = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let _second = history_file_lock(&other_history).unwrap();
+            acquired_tx.send(()).unwrap();
+        });
+
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(acquired_rx.try_recv(), Err(mpsc::TryRecvError::Empty));
+        drop(first);
+        acquired_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        waiter.join().unwrap();
+        assert!(
+            history.with_extension("lock").exists(),
+            "the stable coordination file must survive every operation"
+        );
+    }
+
+    #[test]
+    fn stale_generation_cannot_recreate_cleared_history() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        let mut original = memory::Memory::default();
+        original.push("old request", "old answer");
+        original.save(&history).unwrap();
+        let (_, mut stale) = HistoryGeneration::load(&history, false).unwrap();
+
+        clear_history(&history).unwrap();
+        let mut late = original;
+        late.push("late request", "late answer");
+        let error = stale.save_memory(&late).unwrap_err();
+
+        assert!(error.contains("reset in another window"), "{error}");
+        assert!(!history.exists(), "stale history was recreated after clear");
+        assert!(history.with_extension("generation").exists());
+        assert!(history.with_extension("lock").exists());
+    }
+
+    #[test]
+    fn successful_history_saves_advance_the_expected_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        let (mut memory, mut generation) = HistoryGeneration::load(&history, false).unwrap();
+
+        memory.push("first request", "first answer");
+        generation.save_memory(&memory).unwrap();
+        memory.push("second request", "second answer");
+        generation.save_memory(&memory).unwrap();
+
+        assert_eq!(memory::Memory::load(&history).unwrap(), memory);
+    }
+
+    #[test]
+    fn displayed_snapshot_drives_the_worker_but_cannot_clobber_a_concurrent_append() {
+        let root = tempfile::tempdir().unwrap();
+        let history = root.path().join(".auris-conversation.json");
+        let mut visible = memory::Memory {
+            summary: "Visible restored context".into(),
+            ..Default::default()
+        };
+        visible.push("visible request", "visible answer");
+        visible.save(&history).unwrap();
+        let snapshot = load_history_background(history.clone(), false)
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+
+        let mut concurrent = visible.clone();
+        concurrent.push("other window", "newer answer");
+        concurrent.save(&history).unwrap();
+
+        let done = completion(r#"{"role":"assistant","content":"local answer"}"#, "stop");
+        let (url, requests) = mock_server(vec![done]);
+        let worker = Worker::spawn(
+            prefs(url),
+            Some(root.path().to_path_buf()),
+            false,
+            Some(snapshot),
+        )
+        .unwrap();
+        let first = worker
+            .events
+            .recv_timeout(Duration::from_secs(3))
+            .expect("worker ready");
+        assert_eq!(
+            first["event"], "ready",
+            "a preloaded worker must not replay or save history during startup"
+        );
+        assert_eq!(memory::Memory::load(&history).unwrap(), concurrent);
+
+        worker
+            .send(r#"{"say":"new visible request","display":"new visible request"}"#)
+            .unwrap();
+        let mut notice = None;
+        loop {
+            let event = worker
+                .events
+                .recv_timeout(Duration::from_secs(3))
+                .expect("worker event");
+            match event["event"].as_str().unwrap_or_default() {
+                "notice" => notice = event["message"].as_str().map(str::to_string),
+                "answer" => break,
+                "error" | "ended" => panic!("{event}"),
+                _ => {}
+            }
+        }
+
+        let notice = notice.expect("the UI receives a nonfatal save-conflict notice");
+        assert!(notice.contains("changed in another window"), "{notice}");
+        assert_eq!(memory::Memory::load(&history).unwrap(), concurrent);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("Visible restored context"));
+        assert!(requests[0].contains("visible request"));
+        assert!(requests[0].contains("visible answer"));
+        assert!(!requests[0].contains("other window"));
+        assert!(!requests[0].contains("newer answer"));
+    }
+
+    #[test]
     fn ollama_inspection_sends_images_as_user_context_only_for_vision_models() {
         for vision in [false, true] {
             let show = serde_json::json!({"capabilities":if vision {vec!["tools","vision"]} else {vec!["tools"]}}).to_string();
@@ -270,7 +678,7 @@ mod tests {
             let (url, requests) = mock_server(vec![show, call, done]);
             let mut preferences = prefs(url);
             preferences.provider = "ollama".into();
-            let worker = Worker::spawn(preferences, None, false).unwrap();
+            let worker = Worker::spawn(preferences, None, false, None).unwrap();
             until(&worker, "ready");
             worker.send(r#"{"say":"Inspect one bar"}"#).unwrap();
             let permission = until(&worker, "permission");
@@ -392,7 +800,7 @@ mod tests {
             .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::from_beats(2.0)))
             .unwrap();
         let before = session.project().clone();
-        let worker = Worker::spawn(preferences, None, false).unwrap();
+        let worker = Worker::spawn(preferences, None, false, None).unwrap();
         worker.send(r#"{"say":"inspect_audioで1小節目だけを解析し、計測値と画像から分かることを短く説明してください。曲は変更しないでください。"}"#).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(180);
         let mut inspected = false;
@@ -472,6 +880,7 @@ mod tests {
             },
             None,
             false,
+            None,
         )
         .unwrap();
         worker.send(&serde_json::json!({"say":"ゲームのボス戦みたいな緊張感のある重厚なオーケストラのループBGMを作ってください。"}).to_string()).unwrap();
@@ -562,7 +971,7 @@ mod tests {
             response(serde_json::json!("drum")),
             done,
         ]);
-        let worker = Worker::spawn(prefs(url), None, false).unwrap();
+        let worker = Worker::spawn(prefs(url), None, false, None).unwrap();
         worker.send(r#"{"say":"Add a drum track"}"#).unwrap();
         let mut permissions = 0;
         let mut failures = 0;
@@ -628,9 +1037,9 @@ mod tests {
     }
 
     #[test]
-    fn instrument_listing_uses_the_permission_checked_live_session() {
+    fn instrument_search_uses_the_permission_checked_live_session() {
         let call = completion(
-            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"list_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,
+            r#"{"role":"assistant","tool_calls":[{"id":"sounds","type":"function","function":{"name":"search_instruments","arguments":"{\"query\":\"strings\"}"}}]}"#,
             "tool_calls",
         );
         let done = completion(
@@ -638,7 +1047,7 @@ mod tests {
             "stop",
         );
         let (url, requests) = mock_server(vec![call, done]);
-        let worker = Worker::spawn(prefs(url), None, false).unwrap();
+        let worker = Worker::spawn(prefs(url), None, false, None).unwrap();
         worker.send(r#"{"say":"Find string instruments"}"#).unwrap();
         let permission = until(&worker, "permission");
         let operation = auris_session::agent_policy::Operation::parse(
@@ -647,7 +1056,7 @@ mod tests {
         )
         .unwrap();
         assert!(!operation.mutating);
-        assert_eq!(operation.name, "list_instruments");
+        assert_eq!(operation.name, "search_instruments");
         worker
             .send(
                 &serde_json::json!({"event":"permission_result","id":permission["id"],"ok":true})
@@ -655,7 +1064,7 @@ mod tests {
             )
             .unwrap();
         let edit = until(&worker, "edit");
-        assert_eq!(edit["command"]["action"], "list_instruments");
+        assert_eq!(edit["command"]["action"], "search_instruments");
         assert_eq!(edit["command"]["query"], "strings");
         worker.send(&serde_json::json!({"event":"edit_result","ok":true,"text":"live-session-only-strings"}).to_string()).unwrap();
         until(&worker, "answer");
@@ -667,8 +1076,8 @@ mod tests {
         let done = completion(r#"{"role":"assistant","content":"Done"}"#, "stop");
         let (first_url, first_log) = mock_server(vec![edit_response(), done.clone()]);
         let (second_url, second_log) = mock_server(vec![edit_response(), done]);
-        let first = Worker::spawn(prefs(first_url), None, false).unwrap();
-        let second = Worker::spawn(prefs(second_url), None, false).unwrap();
+        let first = Worker::spawn(prefs(first_url), None, false, None).unwrap();
+        let second = Worker::spawn(prefs(second_url), None, false, None).unwrap();
         first.send(r#"{"say":"Create the lead"}"#).unwrap();
         second.send(r#"{"say":"Create the lead"}"#).unwrap();
         let first_permission = until(&first, "permission");
@@ -700,7 +1109,7 @@ mod tests {
     #[test]
     fn cancellation_releases_an_approval_wait_without_executing_the_edit() {
         let (url, _) = mock_server(vec![edit_response()]);
-        let mut worker = Worker::spawn(prefs(url), None, false).unwrap();
+        let mut worker = Worker::spawn(prefs(url), None, false, None).unwrap();
         worker.send(r#"{"say":"Create the lead"}"#).unwrap();
         until(&worker, "permission");
         worker.cancel();
@@ -722,7 +1131,7 @@ mod tests {
             accepted.send(()).unwrap();
             let _ = wait.recv_timeout(Duration::from_secs(5));
         });
-        let mut worker = Worker::spawn(prefs(url), None, false).unwrap();
+        let mut worker = Worker::spawn(prefs(url), None, false, None).unwrap();
         worker.send(r#"{"say":"hello"}"#).unwrap();
         connected.recv_timeout(Duration::from_secs(3)).unwrap();
         worker.cancel();

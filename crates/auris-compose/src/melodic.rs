@@ -31,10 +31,9 @@
 //!
 //! These rules make the intended rhythm observable; they do not prove catchiness. The
 //! `tools/eval/melody_ab.py` probe transplants the new melody into the same saved backing and
-//! mixer so listening comparisons isolate it. The account and paired measurements are in
-//! `docs/reviews/melody-hooks-2026-09-10.md` and
-//! `docs/reviews/melody-continuity-2026-09-10.md`. The tables below describe earlier pitch-focused
-//! experiments, not the results of these rhythm changes.
+//! mixer so listening comparisons isolate it. `docs/evaluation.md` describes the reproducible
+//! comparison workflow. The tables below describe earlier pitch-focused experiments, not the
+//! results of these rhythm changes.
 //!
 //! # A call and its response
 //!

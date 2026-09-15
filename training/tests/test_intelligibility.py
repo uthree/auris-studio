@@ -151,7 +151,9 @@ def test_the_alignment_is_a_shortest_path_and_reads_the_way_a_person_would():
     assert sorted(tail) == [("", "a"), ("a", "a"), ("ɾ", "r")]
     for heard in (asked[1:], asked + ["a"], ["k", "o"], []):
         pairs = align(asked, heard)
-        assert sum(a != h for a, h in pairs) == edit_distance(asked, heard), "the path costs the distance"
+        assert sum(a != h for a, h in pairs) == edit_distance(asked, heard), (
+            "the path costs the distance"
+        )
         assert [a for a, _ in pairs if a] == asked and [h for _, h in pairs if h] == heard
 
 

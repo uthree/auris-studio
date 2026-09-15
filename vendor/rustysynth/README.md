@@ -1,7 +1,7 @@
 # RustySynth, forked for Auris Studio
 
 This is [rustysynth](https://github.com/sinshu/rustysynth) 1.3.6 by Nobuaki Tanaka, MIT licensed,
-with one thing added. Everything below this section is the upstream README.
+with the Auris fixes described below. Everything after this section is the upstream README.
 
 ## What was added, and why
 
@@ -27,6 +27,12 @@ The fork also validates every preset, instrument, zone and generator span before
 tables. Upstream trusts those file-provided indices and can panic on a malformed SoundFont;
 Auris treats them as ordinary `SoundFontError` values so opening a bad library file cannot take
 down the application.
+
+The oscillator folds a high-rate looping sample with a remainder rather than subtracting one loop
+length per output frame, and checks sample indices before reading them. A one-frame loop claiming a
+rate hundreds of times above the output rate used to jump across several loops, escape the sample
+data and panic inside the audio callback. It now remains bounded in constant time. Saturating
+position advances likewise prevent extreme pitch metadata from overflowing fixed-point arithmetic.
 
 Overlapping notes now release in note-on order, preserving later notes at the same pitch.
 See [note release](doc/note-release.md) for the implementation and regression tests.

@@ -41,10 +41,15 @@ impl Session {
         if target.transforms == transforms {
             return Ok(());
         }
+        let mut candidate = target.clone();
+        candidate.transforms = transforms;
+        candidate.looped_note_instances()?;
+
         self.record_repeating(Edit::SetClipTransforms(clip));
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.transforms = transforms;
-        }
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -160,17 +165,22 @@ impl Session {
             .collect();
         notes.extend(performed.flatten());
         let count = notes.len();
-        self.record(Edit::FreezeClipTransforms);
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.notes = notes;
-            for (which, points) in controllers {
-                *target.curve_mut(which) = points;
-            }
-            if let Some(bend) = bend {
-                target.bend = bend;
-            }
-            target.transforms.clear();
+        let mut candidate = target.clone();
+        candidate.notes = notes;
+        for (which, points) in controllers {
+            *candidate.curve_mut(which) = points;
         }
+        if let Some(bend) = bend {
+            candidate.bend = bend;
+        }
+        candidate.transforms.clear();
+        candidate.looped_note_instances()?;
+
+        self.record(Edit::FreezeClipTransforms);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(count)
     }
@@ -178,8 +188,8 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use auris_core::Subdivision;
     use auris_core::time::Ticks;
+    use auris_core::{Note, Subdivision};
 
     use super::*;
     use crate::session::fixtures::{session_with_clip, undo_depth};
@@ -189,6 +199,33 @@ mod tests {
             percent: 67,
             subdivision: Subdivision::Eighth,
         }
+    }
+
+    #[test]
+    fn a_transform_cannot_make_one_loop_unsafe() {
+        let (mut session, _, clip) = session_with_clip();
+        let target = session.project.midi_clip_mut(clip).unwrap();
+        target.length = Ticks(1);
+        target.notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        session.set_clip_loop(clip, Ticks(250)).unwrap();
+        let before = session.project().clone();
+        let depth = undo_depth(&mut session);
+
+        let error = session
+            .set_clip_transforms(
+                clip,
+                vec![NoteTransform::Octaves {
+                    above: 1.0,
+                    below: 1.0,
+                }],
+            )
+            .expect_err("three voices would exceed this clip's expansion limit");
+
+        assert!(error.to_string().contains("reduce its notes or repeats"));
+        assert_eq!(session.project(), &before);
+        assert_eq!(undo_depth(&mut session), depth);
     }
 
     #[test]

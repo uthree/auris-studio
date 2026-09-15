@@ -28,7 +28,7 @@ impl ZoneInfo {
         reader: &mut R,
         size: usize,
     ) -> Result<Vec<ZoneInfo>, SoundFontError> {
-        if size == 0 || size % 4 != 0 {
+        if size == 0 || !size.is_multiple_of(4) {
             return Err(SoundFontError::InvalidZoneList);
         }
 

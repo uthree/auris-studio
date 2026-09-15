@@ -120,9 +120,10 @@ def measure_dataset(root: str | Path) -> dict[str, dict[str, list[float]]]:
     """:func:`measure` over a preprocessed dataset that stored labelled durations, one
     mapping per speaker — the shape :func:`summarize` takes."""
     from auris_singer.data.dataset import read_metadata
+    from auris_singer.dataset_layout import resolve_dataset_root
     from auris_singer.text.ipa import PhonemeTable
 
-    root = Path(root)
+    root = resolve_dataset_root(root)
     table = PhonemeTable.load(root / "phonemes.json")
     by_speaker: dict[str, list[tuple[list[str], list[int], np.ndarray]]] = {}
     for record in read_metadata(root):
@@ -157,7 +158,9 @@ def summarize(
     }
 
 
-def summarize_speaker(levels: dict[str, list[float]], min_samples: int = MIN_SAMPLES) -> dict[str, object]:
+def summarize_speaker(
+    levels: dict[str, list[float]], min_samples: int = MIN_SAMPLES
+) -> dict[str, object]:
     """Turn one speaker's raw per-phoneme levels into their table.
 
     A phoneme earns an entry when it was seen at least ``min_samples`` times; ``default`` is

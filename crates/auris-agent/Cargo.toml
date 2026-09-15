@@ -31,3 +31,6 @@ serde.workspace = true
 serde_json.workspace = true
 # `time` bounds the `models` listing, so a black-holed server resolves into an error.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true

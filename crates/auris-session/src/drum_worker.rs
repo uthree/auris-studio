@@ -1,6 +1,7 @@
 //! Process isolation for instrument probing, shared by every executable frontend.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -17,10 +18,24 @@ fn failure(error: impl std::fmt::Display) -> SessionError {
 }
 
 fn read_message(path: &Path) -> Result<Vec<u8>, SessionError> {
-    if fs::metadata(path).map_err(failure)?.len() > MAX_MESSAGE_BYTES {
+    let file = fs::File::open(path).map_err(failure)?;
+    let size = file.metadata().map_err(failure)?.len();
+    if size > MAX_MESSAGE_BYTES {
         return Err(failure("drum probe message exceeds 64 MiB"));
     }
-    fs::read(path).map_err(failure)
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size as usize)
+        .map_err(|_| failure("not enough memory to read the drum probe message"))?;
+    file.take(MAX_MESSAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(failure)?;
+    if bytes.len() as u64 > MAX_MESSAGE_BYTES {
+        return Err(failure(
+            "drum probe message grew beyond 64 MiB while it was read",
+        ));
+    }
+    Ok(bytes)
 }
 
 /// Handles the private probe-worker invocation before a frontend opens its UI or transport.

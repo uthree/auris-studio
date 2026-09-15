@@ -6,16 +6,16 @@
 //! text — and a click lands the caret on the character under it, which a one-line field never
 //! needed because its Return committed before anyone wanted to go back.
 //!
-//! No soft wrap: a lyric's line is a phrase, and a break the layout invented would look exactly
-//! like one the writer meant. A line longer than the box scrolls sideways under the caret
-//! instead, the way the one-line field always has.
+//! The lyric path does not soft-wrap: a lyric's line is a phrase, and a break the layout invented
+//! would look exactly like one the writer meant. [`editable_wrapped_area`] is the prose variant
+//! used by the Agent composer, where a long Japanese sentence should follow the panel width.
 
 use std::cell::Cell;
 use std::ops::Range;
 
 use gpui::{
-    Bounds, ElementInputHandler, IntoElement, Pixels, Point, SharedString, Window, canvas, point,
-    prelude::*, px, size,
+    Bounds, ElementInputHandler, IntoElement, Pixels, Point, SharedString, TextAlign, Window,
+    WrappedLine, canvas, point, prelude::*, px, size,
 };
 
 use crate::theme::Theme;
@@ -59,6 +59,13 @@ thread_local! {
     /// click arrives outside one. One cell serves the application for the caret's reason
     /// ([`crate::ui::text_field`]): one area at a time is being typed into.
     static AREA: Cell<Option<(Bounds<Pixels>, Pixels, Pixels)>> = const { Cell::new(None) };
+
+    /// Geometry of the soft-wrapped message editor painted most recently.
+    ///
+    /// Lyrics use [`AREA`] because authored line breaks are musical structure. Agent messages
+    /// use this second cell because prose must wrap at the panel edge. Keeping the two apart also
+    /// means clicking one editor can never reuse the other editor's scrolling coordinates.
+    static WRAPPED_AREA: Cell<Option<(Bounds<Pixels>, Pixels, usize)>> = const { Cell::new(None) };
 }
 
 /// One logical line of `text`: its byte range, excluding the newline that ends it.
@@ -99,6 +106,45 @@ pub(crate) fn area_offset_at(
     Some(range.start + shaped.closest_index_for_x(x))
 }
 
+/// The byte offset under a point in the soft-wrapped message editor.
+///
+/// The wrapped layout is recreated from the last painted bounds. Text shaping is cached by gpui,
+/// so this stays identical to the pixels under the pointer without retaining a frame-owned layout
+/// past paint.
+pub(crate) fn wrapped_area_offset_at(
+    window: &mut Window,
+    text: &str,
+    position: Point<Pixels>,
+) -> Option<usize> {
+    let (bounds, scroll_y, _) = WRAPPED_AREA.with(Cell::get)?;
+    let width = (bounds.size.width - FIELD_PADDING * 2.0).max(px(1.0));
+    let shared: SharedString = text.to_string().into();
+    let run = window.text_style().to_run(shared.len());
+    let shaped = window
+        .text_system()
+        .shape_text(shared, TEXT_SIZE, &[run], Some(width), None)
+        .ok()?;
+    let ranges = lines(text);
+    let x = (position.x - bounds.origin.x - FIELD_PADDING)
+        .max(px(0.0))
+        .min(width);
+    let y = (position.y - bounds.origin.y - AREA_PADDING_Y + scroll_y).max(px(0.0));
+    let mut row_top = px(0.0);
+    for (line, range) in shaped.iter().zip(ranges) {
+        let height = line.size(AREA_LINE_HEIGHT).height;
+        if y < row_top + height {
+            let within = point(x, y - row_top);
+            let local = line
+                .closest_index_for_position(within, AREA_LINE_HEIGHT)
+                .unwrap_or_else(|index| index)
+                .min(range.len());
+            return Some(range.start + local);
+        }
+        row_top += height;
+    }
+    Some(text.len())
+}
+
 /// How wide the margin the per-line annotations sit in is, when there are any.
 ///
 /// Room for a two-digit count and a breath of air; the text scrolls sideways before it runs
@@ -133,6 +179,40 @@ pub(crate) fn editable_area<V: gpui::EntityInputHandler>(
                 &selection,
                 marked.clone(),
                 &annotations,
+                &theme,
+            );
+        },
+    )
+    .size_full()
+}
+
+/// A soft-wrapped multi-line editor for ordinary prose.
+///
+/// The lyric editor above deliberately scrolls long authored lines sideways because its line
+/// breaks carry musical meaning. A message has no such contract: wrapping at the available width
+/// keeps Japanese text readable in a narrow Agent panel. The caller supplies the stable focus
+/// handle so this canvas is also a genuine platform text-input target and tab stop.
+pub(crate) fn editable_wrapped_area<V: gpui::EntityInputHandler>(
+    text: SharedString,
+    selection: Range<usize>,
+    marked: Option<Range<usize>>,
+    focused: bool,
+    focus: gpui::FocusHandle,
+    view: gpui::Entity<V>,
+    theme: Theme,
+) -> impl IntoElement + use<V> {
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, cx| {
+            window.handle_input(&focus, ElementInputHandler::new(bounds, view.clone()), cx);
+            paint_wrapped_area(
+                window,
+                cx,
+                bounds,
+                &text,
+                &selection,
+                marked.clone(),
+                focused,
                 &theme,
             );
         },
@@ -310,6 +390,182 @@ fn paint_area(
             );
         }
     });
+}
+
+/// The wrapped row and x coordinate of a byte offset within one logical line.
+fn wrapped_position(line: &WrappedLine, offset: usize) -> Point<Pixels> {
+    line.position_for_index(offset.min(line.len()), AREA_LINE_HEIGHT)
+        .unwrap_or_default()
+}
+
+/// Paints a selected or marked range across however many visual rows wrapping produced.
+fn paint_wrapped_decoration(
+    window: &mut Window,
+    line: &WrappedLine,
+    range: Range<usize>,
+    origin: Point<Pixels>,
+    width: Pixels,
+    colour: gpui::Hsla,
+    underline: bool,
+) {
+    if range.is_empty() {
+        return;
+    }
+    let start = wrapped_position(line, range.start);
+    let end = wrapped_position(line, range.end);
+    let first = (start.y / AREA_LINE_HEIGHT).floor().max(0.0) as usize;
+    let last = (end.y / AREA_LINE_HEIGHT).floor().max(0.0) as usize;
+    for row in first..=last {
+        let from = if row == first { start.x } else { px(0.0) };
+        let to = if row == last { end.x } else { width };
+        let (top, height) = if underline {
+            (
+                origin.y + AREA_LINE_HEIGHT * (row + 1) as f32 - px(3.0),
+                px(1.5),
+            )
+        } else {
+            (
+                origin.y + AREA_LINE_HEIGHT * row as f32 + px(1.0),
+                AREA_LINE_HEIGHT - px(2.0),
+            )
+        };
+        paint::rect(
+            window,
+            Bounds {
+                origin: point(origin.x + from, top),
+                size: size((to - from).max(px(1.0)), height),
+            },
+            colour,
+        );
+    }
+}
+
+/// Paints prose with soft wrapping and keeps the caret inside the fixed-height viewport.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one canvas, one bundle of what it draws"
+)]
+fn paint_wrapped_area(
+    window: &mut Window,
+    cx: &mut gpui::App,
+    bounds: Bounds<Pixels>,
+    text: &SharedString,
+    selection: &Range<usize>,
+    marked: Option<Range<usize>>,
+    focused: bool,
+    theme: &Theme,
+) {
+    let width = (bounds.size.width - FIELD_PADDING * 2.0).max(px(1.0));
+    let mut run = window.text_style().to_run(text.len());
+    run.color = theme.text;
+    let Ok(shaped) =
+        window
+            .text_system()
+            .shape_text(text.clone(), TEXT_SIZE, &[run], Some(width), None)
+    else {
+        return;
+    };
+    let ranges = lines(text);
+    let watched = watched_offset(selection, marked.as_ref()).min(text.len());
+    let watched_line = ranges
+        .iter()
+        .position(|range| watched >= range.start && watched <= range.end)
+        .unwrap_or(ranges.len() - 1);
+    let rows_before = shaped
+        .iter()
+        .take(watched_line)
+        .map(|line| line.wrap_boundaries().len() + 1)
+        .sum::<usize>();
+    let watched_local = watched.saturating_sub(ranges[watched_line].start);
+    let watched_position = wrapped_position(&shaped[watched_line], watched_local);
+    let watched_row =
+        rows_before + (watched_position.y / AREA_LINE_HEIGHT).floor().max(0.0) as usize;
+    let visible_rows = ((bounds.size.height - AREA_PADDING_Y * 2.0) / AREA_LINE_HEIGHT)
+        .floor()
+        .max(1.0) as usize;
+    let scroll_y = AREA_LINE_HEIGHT * first_visible_row(watched_row, visible_rows) as f32;
+    let total_rows = shaped
+        .iter()
+        .map(|line| line.wrap_boundaries().len() + 1)
+        .sum();
+    WRAPPED_AREA.with(|area| area.set(Some((bounds, scroll_y, total_rows))));
+
+    paint::clipped(window, bounds, |window| {
+        let left = bounds.origin.x + FIELD_PADDING;
+        let top = bounds.origin.y + AREA_PADDING_Y - scroll_y;
+        let mut visual_row = 0usize;
+        for (line, logical) in shaped.iter().zip(&ranges) {
+            let origin = point(left, top + AREA_LINE_HEIGHT * visual_row as f32);
+            let local_selection = Range {
+                start: selection.start.clamp(logical.start, logical.end) - logical.start,
+                end: selection.end.clamp(logical.start, logical.end) - logical.start,
+            };
+            if focused
+                && !selection.is_empty()
+                && selection.start <= logical.end
+                && selection.end >= logical.start
+            {
+                paint_wrapped_decoration(
+                    window,
+                    line,
+                    local_selection,
+                    origin,
+                    width,
+                    Theme::translucent(theme.accent, 0.35),
+                    false,
+                );
+            }
+            let _ = line.paint(
+                origin,
+                AREA_LINE_HEIGHT,
+                TextAlign::Left,
+                Some(Bounds {
+                    origin,
+                    size: size(width, line.size(AREA_LINE_HEIGHT).height),
+                }),
+                window,
+                cx,
+            );
+            if focused
+                && let Some(marked) = &marked
+                && marked.start <= logical.end
+                && marked.end >= logical.start
+            {
+                let local = Range {
+                    start: marked.start.clamp(logical.start, logical.end) - logical.start,
+                    end: marked.end.clamp(logical.start, logical.end) - logical.start,
+                };
+                paint_wrapped_decoration(window, line, local, origin, width, theme.accent, true);
+            }
+            visual_row += line.wrap_boundaries().len() + 1;
+        }
+
+        let caret = point(
+            left + watched_position.x,
+            top + AREA_LINE_HEIGHT * watched_row as f32,
+        );
+        crate::ui::text_field::set_caret_bounds(Bounds {
+            origin: caret,
+            size: size(px(1.0), AREA_LINE_HEIGHT),
+        });
+        if focused && selection.is_empty() {
+            paint::rect(
+                window,
+                Bounds {
+                    origin: point(caret.x, caret.y + px(2.0)),
+                    size: size(px(1.5), AREA_LINE_HEIGHT - px(4.0)),
+                },
+                theme.accent,
+            );
+        }
+    });
+}
+
+#[cfg(test)]
+pub(crate) fn wrapped_area_state() -> Option<(Pixels, usize)> {
+    WRAPPED_AREA
+        .with(Cell::get)
+        .map(|(_, scroll_y, rows)| (scroll_y, rows))
 }
 
 #[cfg(test)]

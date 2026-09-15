@@ -33,10 +33,12 @@ from pathlib import Path
 import numpy as np
 
 from auris_singer.text.ipa import SIL as MODEL_SILENCE
+from auris_singer.utils.durations import validated_duration_array
 
 __all__ = [
     "REPO_ROOT",
     "SILENCE",
+    "MAX_CONCATENATED_GAP_FRAMES",
     "energy_full_scale",
     "HostFrames",
     "frames_from_curves",
@@ -57,6 +59,12 @@ SCORE_RS = "crates/auris-singer/src/score.rs"
 #: frames file that wrote ``<sil>`` directly would be sung as an unknown symbol. Pinned to the
 #: Rust source by the contract test.
 SILENCE = "sil"
+
+#: Maximum total silence inserted while joining an evaluation song. Three
+#: Python lists are extended by this many entries, so one million frames keeps
+#: the helper bounded while leaving hours of ordinary 10 ms-hop evaluation
+#: gaps available.
+MAX_CONCATENATED_GAP_FRAMES = 1_000_000
 
 
 class HostError(RuntimeError):
@@ -178,12 +186,10 @@ def frames_from_curves(
     curve to the float — which can leave a loud frame above 1.0, and does: the host does not
     clamp, and a clamp here would quietly cap the very dynamics under test.
     """
-    durations = [int(d) for d in durations]
-    if len(durations) != len(phonemes):
-        raise ValueError(f"{len(durations)} durations for {len(phonemes)} phonemes")
+    durations = validated_duration_array(durations, len(phonemes))
     f0 = np.asarray(f0, dtype=np.float32)
     energy = np.asarray(energy, dtype=np.float32)
-    total = sum(durations)
+    total = sum(int(value) for value in durations)
     if f0.shape != (total,) or energy.shape != (total,):
         raise ValueError(
             f"durations sum to {total} frames but f0 has {f0.shape} and energy {energy.shape}"
@@ -199,7 +205,7 @@ def frames_from_curves(
         if token not in ids:
             ids[token] = len(inventory)
             inventory.append(token)
-        per_frame.extend([ids[token]] * count)
+        per_frame.extend([ids[token]] * int(count))
     return HostFrames(
         hop_seconds=hop_seconds,
         inventory=inventory,
@@ -220,6 +226,14 @@ def concatenate_frames(
     """
     if not parts:
         raise ValueError("nothing to concatenate")
+    if type(gap_frames) is not int or gap_frames < 0:
+        raise ValueError("gap_frames must be a non-negative integer")
+    total_gap_frames = gap_frames * (len(parts) - 1)
+    if total_gap_frames > MAX_CONCATENATED_GAP_FRAMES:
+        raise ValueError(
+            f"joined evaluation gaps require {total_gap_frames} frames; "
+            f"the limit is {MAX_CONCATENATED_GAP_FRAMES}"
+        )
     hop = parts[0].hop_seconds
     if any(abs(p.hop_seconds - hop) > hop * 1e-9 for p in parts):
         raise ValueError("every part must be sampled at the same hop")
@@ -347,7 +361,9 @@ class Host:
         facts["wall_seconds"] = self.last_wall_seconds
         return facts
 
-    def frames(self, project: str | Path, output: str | Path, track: str | None = None) -> HostFrames:
+    def frames(
+        self, project: str | Path, output: str | Path, track: str | None = None
+    ) -> HostFrames:
         """``auris frames``: what the project's singer track will be sung as."""
         output = Path(output).resolve()
         args = ["frames", str(Path(project).resolve()), "-o", str(output)]
@@ -371,7 +387,9 @@ class Host:
         for project in (output.parent / output.stem / output.name, output):
             if project.is_file():
                 return project
-        raise HostError(f"compose reported success but {output.name} is in neither place it could be")
+        raise HostError(
+            f"compose reported success but {output.name} is in neither place it could be"
+        )
 
     def sing(
         self,
@@ -397,7 +415,9 @@ class Host:
         self.run(*args)
         after = set((project.parent / "Audio").glob("*.wav")) - before
         if len(after) != 1:
-            raise HostError(f"expected one new take in {project.parent / 'Audio'}, found {sorted(after)}")
+            raise HostError(
+                f"expected one new take in {project.parent / 'Audio'}, found {sorted(after)}"
+            )
         return after.pop()
 
 

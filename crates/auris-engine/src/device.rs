@@ -7,7 +7,7 @@
 //! Inside the callback there is no allocation, no lock, no logging and no I/O.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use auris_core::AudioBuffer;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -19,7 +19,9 @@ use crossbeam_channel::{Receiver, Sender, TrySendError};
 use crate::command::EngineCommand;
 use crate::error::EngineError;
 use crate::graph::{RETIRED_GRAPH_SLOTS, RenderGraph};
-use crate::handle::{EngineHandle, OutputPreviewRequest, Retired};
+use crate::handle::{
+    EngineHandle, FATAL_STREAM_NOTICE, OutputPreviewRequest, RECOVERABLE_STREAM_NOTICE, Retired,
+};
 use crate::meter::MeterBank;
 use crate::renderer::render_block;
 use crate::transport::Transport;
@@ -336,6 +338,7 @@ fn start_with_device(
     let running = Arc::new(AtomicBool::new(false));
     let playing = Arc::new(AtomicBool::new(false));
     let latency_stale = Arc::new(AtomicBool::new(false));
+    let stream_notices = Arc::new(AtomicU32::new(0));
 
     let sample_rate = f64::from(setup.config.sample_rate);
     let channel_count = usize::from(setup.config.channels).max(1);
@@ -364,6 +367,7 @@ fn start_with_device(
         setup.sample_format,
         new_engine(),
         Arc::clone(&running),
+        Arc::clone(&stream_notices),
     ) {
         Ok(stream) => stream,
         // Several backends (WASAPI in particular) refuse an explicit buffer size outright.
@@ -380,6 +384,7 @@ fn start_with_device(
                 setup.sample_format,
                 new_engine(),
                 Arc::clone(&running),
+                Arc::clone(&stream_notices),
             )?
         }
         Err(error) => return Err(error),
@@ -396,6 +401,7 @@ fn start_with_device(
         running,
         playing,
         latency_stale,
+        stream_notices,
         sample_rate,
         channel_count,
         max_block: setup.max_block,
@@ -446,6 +452,7 @@ pub fn start_silent(settings: &AudioSettings) -> (AudioDevice, EngineHandle) {
         // is ever installed for its compensation to go stale.
         playing: Arc::new(AtomicBool::new(false)),
         latency_stale: Arc::new(AtomicBool::new(false)),
+        stream_notices: Arc::new(AtomicU32::new(0)),
         sample_rate,
         channel_count: 2,
         max_block,
@@ -583,27 +590,30 @@ pub(crate) fn stream_survives(kind: cpal::ErrorKind) -> bool {
     )
 }
 
+/// Publishes one backend error without formatting, allocating, locking or blocking.
+pub(crate) fn note_stream_error(kind: cpal::ErrorKind, running: &AtomicBool, notices: &AtomicU32) {
+    if stream_survives(kind) {
+        notices.fetch_or(RECOVERABLE_STREAM_NOTICE, Ordering::Release);
+    } else {
+        running.store(false, Ordering::Release);
+        notices.fetch_or(FATAL_STREAM_NOTICE, Ordering::Release);
+    }
+}
+
 fn build_stream(
     device: &cpal::Device,
     config: StreamConfig,
     format: SampleFormat,
     engine: AudioEngine,
     running: Arc<AtomicBool>,
+    notices: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, EngineError> {
-    // cpal reports stream errors from a thread of its own, not from the audio callback, so a
-    // log is allowed here — but a log alone tells nobody. Unplugging the device stops the
-    // callback for good while the stream object lives on, and everything reading `is_running`
-    // would go on seeing a live engine: the playhead frozen, the queue filling, every later
-    // command silently refused. Clearing the flag is what turns "the device is gone" into a
-    // state the rest of the application can see — but only for an error that really is a
-    // death; see `stream_survives`.
+    // Some backends invoke this under the same realtime constraints as the data callback. Publish
+    // flags only; Session polls and reports them from its ordinary thread. A fatal notice also
+    // clears `running`, which makes the otherwise-live stream object visibly dead and prevents a
+    // command queue nobody consumes from filling forever.
     let on_error = move |error: cpal::Error| {
-        if stream_survives(error.kind()) {
-            log::warn!("audio stream notice: {error}; the stream keeps running");
-            return;
-        }
-        running.store(false, Ordering::Relaxed);
-        log::error!("audio stream error: {error}; the output stream is dead");
+        note_stream_error(error.kind(), &running, &notices);
     };
     let mut engine = engine;
     let stream = match format {
@@ -970,8 +980,13 @@ impl AudioEngine {
                     self.retired.push(load);
                     break;
                 }
-                // The UI is gone, so this is shutdown and there is nobody left to free it.
-                Err(TrySendError::Disconnected(_)) => break,
+                // The owner disappeared while the stream is still alive. Keep ownership in the
+                // same bounded stash and stop accepting further retiring commands once it fills;
+                // dropping `load` here would run plugin and buffer destructors on the callback.
+                Err(TrySendError::Disconnected(load)) => {
+                    self.retired.push(load);
+                    break;
+                }
             }
         }
     }
@@ -980,7 +995,13 @@ impl AudioEngine {
         match self.returned_graphs.try_send(load) {
             Ok(()) => {}
             Err(TrySendError::Full(load)) => self.retired.push(load),
-            Err(TrySendError::Disconnected(_)) => {}
+            Err(TrySendError::Disconnected(load)) => {
+                // `poll_commands` admits an ownership-carrying command only while this bounded
+                // stash has room. Retain it until the stream and AudioEngine are destroyed by
+                // their owner; receiver disconnect is not permission to destroy it here.
+                debug_assert!(self.retired.len() < RETIRED_GRAPH_SLOTS);
+                self.retired.push(load);
+            }
         }
     }
 
@@ -1309,6 +1330,36 @@ mod tests {
         assert!(!stream_survives(cpal::ErrorKind::DeviceNotAvailable));
         assert!(!stream_survives(cpal::ErrorKind::StreamInvalidated));
         assert!(!stream_survives(cpal::ErrorKind::HostUnavailable));
+    }
+
+    #[test]
+    fn stream_callbacks_publish_atomic_notices_for_later_reporting() {
+        let running = AtomicBool::new(true);
+        let notices = AtomicU32::new(0);
+
+        note_stream_error(cpal::ErrorKind::DeviceChanged, &running, &notices);
+        assert!(running.load(Ordering::Acquire));
+        assert_eq!(
+            crate::handle::take_stream_notices(&notices),
+            crate::StreamNotices {
+                recoverable: true,
+                fatal: false,
+            }
+        );
+
+        note_stream_error(cpal::ErrorKind::DeviceNotAvailable, &running, &notices);
+        assert!(!running.load(Ordering::Acquire));
+        assert_eq!(
+            crate::handle::take_stream_notices(&notices),
+            crate::StreamNotices {
+                recoverable: false,
+                fatal: true,
+            }
+        );
+        assert_eq!(
+            crate::handle::take_stream_notices(&notices),
+            crate::StreamNotices::default()
+        );
     }
 
     fn held_note_project() -> Project {
@@ -2265,6 +2316,47 @@ mod tests {
         assert!(engine.transport.playing);
         assert_eq!(engine.retired.len(), RETIRED_GRAPH_SLOTS);
         drop(return_rx);
+    }
+
+    #[test]
+    fn a_disconnected_return_path_drops_retirements_only_after_the_callback_is_owned_again() {
+        use crate::handle::RetirementDropProbe;
+
+        let owner = std::thread::current().id();
+        let (command_tx, command_rx) = crossbeam_channel::bounded(1);
+        let (return_tx, return_rx) = crossbeam_channel::bounded(1);
+        drop(return_rx);
+        let engine = AudioEngine::new(
+            command_rx,
+            return_tx,
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(AtomicU64::new(0)),
+            Arc::new(MeterBank::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+            SAMPLE_RATE,
+            2,
+            128,
+        );
+        drop(command_tx);
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel();
+
+        let mut engine = std::thread::spawn(move || {
+            let mut engine = engine;
+            engine.retire(Retired::DropProbe(RetirementDropProbe(dropped_tx)));
+            engine
+        })
+        .join()
+        .expect("simulated callback returned its engine");
+
+        assert!(
+            dropped_rx.try_recv().is_err(),
+            "the callback destroyed the load"
+        );
+        assert_eq!(engine.retired.len(), 1);
+        // In production cpal returns ownership by dropping the stream on this control thread.
+        engine.retired.clear();
+        assert_eq!(dropped_rx.recv().unwrap(), owner);
     }
 
     #[test]

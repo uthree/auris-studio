@@ -255,6 +255,23 @@ impl Session {
     /// Copies a clip onto its own track, immediately after the original.
     pub fn duplicate_clip(&mut self, clip: ClipId) -> Result<ClipId, SessionError> {
         self.require_clip(clip)?;
+        // A MIDI copy has the same per-clip expansion as its validated source. An audio copy is
+        // placed at a new tempo and deliberately drops its old tempo anchor, so validate that
+        // exact destination before reserving an id or an undo step.
+        if let Some(source) = self.project.audio_clip(clip) {
+            let mut candidate = source.clone();
+            candidate.start = source.start
+                + auris_core::project::sounding_length(
+                    self.project.audio_clip_length_ticks(source),
+                    source.loop_end,
+                );
+            candidate.tempo_anchor = None;
+            auris_core::project::validated_loop_pass_count(
+                candidate.id,
+                self.project.audio_clip_length_ticks(&candidate),
+                candidate.loop_end,
+            )?;
+        }
         self.record(Edit::DuplicateClip);
         let copy = self
             .project
@@ -391,7 +408,11 @@ impl Session {
     ///
     /// Repeats fold, for the reason [`Session::move_notes`] gives: a held arrow key is one
     /// gesture arriving as thirty calls, and a drag is unaffected either way.
-    pub fn move_clips(&mut self, origins: &[(ClipId, Ticks)], delta: Ticks) {
+    pub fn move_clips(
+        &mut self,
+        origins: &[(ClipId, Ticks)],
+        delta: Ticks,
+    ) -> Result<(), SessionError> {
         // Only clips that still exist: a selection can outlive an undo, and a gesture over
         // nothing must not record a step over nothing.
         let present: Vec<(ClipId, Ticks)> = origins
@@ -400,14 +421,26 @@ impl Session {
             .filter(|(clip, _)| self.require_clip(*clip).is_ok())
             .collect();
         let Some(earliest) = present.iter().map(|(_, start)| *start).min() else {
-            return;
+            return Ok(());
         };
         let delta = delta.max(Ticks(earliest.raw().saturating_neg()));
         if present
             .iter()
             .all(|(_, start)| start.raw().saturating_add(delta.raw()).max(0) == start.raw())
         {
-            return;
+            return Ok(());
+        }
+        for (clip, start) in &present {
+            if let Some(audio) = self.project.audio_clip(*clip) {
+                let mut candidate = audio.clone();
+                candidate.start = Ticks(start.raw().saturating_add(delta.raw())).max_zero();
+                candidate.tempo_anchor = None;
+                auris_core::project::validated_loop_pass_count(
+                    candidate.id,
+                    self.project.audio_clip_length_ticks(&candidate),
+                    candidate.loop_end,
+                )?;
+            }
         }
         self.record_repeating(Edit::MoveClip);
         for (clip, start) in present {
@@ -420,6 +453,7 @@ impl Session {
             }
         }
         self.invalidate_graph();
+        Ok(())
     }
 
     /// Moves a clip of either kind to a new start position.
@@ -429,8 +463,18 @@ impl Session {
     /// what following the tempo means. See [`AudioClip::tempo_anchor`](auris_core::AudioClip::tempo_anchor).
     pub fn move_clip(&mut self, clip: ClipId, start: Ticks) -> Result<(), SessionError> {
         self.require_clip(clip)?;
-        self.record(Edit::MoveClip);
         let start = start.max_zero();
+        if let Some(audio) = self.project.audio_clip(clip) {
+            let mut candidate = audio.clone();
+            candidate.start = start;
+            candidate.tempo_anchor = None;
+            auris_core::project::validated_loop_pass_count(
+                candidate.id,
+                self.project.audio_clip_length_ticks(&candidate),
+                candidate.loop_end,
+            )?;
+        }
+        self.record(Edit::MoveClip);
         if let Some(midi) = self.project.midi_clip_mut(clip) {
             midi.start = start;
         } else if let Some(audio) = self.project.audio_clip_mut(clip) {
@@ -462,10 +506,10 @@ impl Session {
         self.require_clip(clip)?;
         let grid = self.project.grid;
 
-        if let Some((start, recipe)) = self
+        if let Some((start, recipe, mut candidate)) = self
             .project
             .midi_clip(clip)
-            .map(|(_, midi)| (midi.start, midi.recipe.clone()))
+            .map(|(_, midi)| (midi.start, midi.recipe.clone(), midi.clone()))
         {
             let length = (end - start).max(grid);
             // Written before anything is recorded, so the length and the notes land in the one
@@ -473,21 +517,25 @@ impl Session {
             let notes = recipe
                 .as_ref()
                 .map(|recipe| self.phrase(start, length, recipe));
-            self.record(Edit::ResizeClip);
-            if let Some(midi) = self.project.midi_clip_mut(clip) {
-                midi.length = length;
-                // The length is now the user's, so nothing grows it back. A clip dragged shorter
-                // to hide a tail used to reappear at full length on the next note edit.
-                midi.length_is_explicit = true;
-                if let Some(notes) = notes {
-                    midi.notes = notes;
-                    // The composer wrote this text, so the recipe's digest follows it — a
-                    // resize must not read as a hand edit.
-                    if let Some(recipe) = &mut midi.recipe {
-                        recipe.text_digest = auris_core::notes_digest(&midi.notes);
-                    }
+            candidate.length = length;
+            // The length is now the user's, so nothing grows it back. A clip dragged shorter to
+            // hide a tail used to reappear at full length on the next note edit.
+            candidate.length_is_explicit = true;
+            if let Some(notes) = notes {
+                candidate.notes = notes;
+                // The composer wrote this text, so the recipe's digest follows it — a resize
+                // must not read as a hand edit.
+                if let Some(recipe) = &mut candidate.recipe {
+                    recipe.text_digest = auris_core::notes_digest(&candidate.notes);
                 }
             }
+            candidate.looped_note_instances()?;
+
+            self.record(Edit::ResizeClip);
+            *self
+                .project
+                .midi_clip_mut(clip)
+                .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
             self.invalidate_graph();
             return Ok(());
         }
@@ -527,17 +575,23 @@ impl Session {
             // arrives here saying the same thing. Not an edit.
             return Ok(());
         }
+        let mut candidate = audio.clone();
+        candidate.length_frames = length;
+        candidate.fade_in_frames = candidate.fade_in_frames.min(candidate.length_frames);
+        candidate.fade_out_frames = candidate
+            .fade_out_frames
+            .min(candidate.length_frames - candidate.fade_in_frames);
+        auris_core::project::validated_loop_pass_count(
+            candidate.id,
+            self.project.audio_clip_length_ticks(&candidate),
+            candidate.loop_end,
+        )?;
+
         self.record(Edit::ResizeClip);
-        if let Some(audio) = self.project.audio_clip_mut(clip) {
-            audio.length_frames = length;
-            // The fades keep fitting inside the clip as it shrinks, under the same rule
-            // `set_clip_fades` writes them by: the fade-in keeps its place and the fade-out
-            // takes what is left.
-            audio.fade_in_frames = audio.fade_in_frames.min(audio.length_frames);
-            audio.fade_out_frames = audio
-                .fade_out_frames
-                .min(audio.length_frames - audio.fade_in_frames);
-        }
+        *self
+            .project
+            .audio_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -561,10 +615,10 @@ impl Session {
         self.require_clip(clip)?;
         let grid = Ticks(self.project.grid.raw().max(1));
 
-        if let Some((was, length, mut recipe)) = self
+        if let Some((was, length, mut recipe, mut candidate)) = self
             .project
             .midi_clip(clip)
-            .map(|(_, midi)| (midi.start, midi.length, midi.recipe.clone()))
+            .map(|(_, midi)| (midi.start, midi.length, midi.recipe.clone(), midi.clone()))
         {
             // Never past its own end: the clip keeps at least a grid division, which is the same
             // floor the other edge stops at. A clip that is *already* shorter than a division —
@@ -591,14 +645,21 @@ impl Session {
                     .map(|(_, midi)| auris_core::notes_trimmed_from_front(&midi.notes, by))
                     .unwrap_or_default(),
             };
-            self.record(Edit::ResizeClip);
-            if let Some(midi) = self.project.midi_clip_mut(clip) {
-                midi.start = now;
-                midi.length = length;
-                midi.length_is_explicit = true;
-                midi.notes = notes;
-                midi.recipe = recipe;
-                midi.bend.retain_mut(|point| {
+            candidate.start = now;
+            candidate.length = length;
+            candidate.length_is_explicit = true;
+            candidate.notes = notes;
+            candidate.recipe = recipe;
+            candidate.bend.retain_mut(|point| {
+                if point.at < by {
+                    false
+                } else {
+                    point.at -= by;
+                    true
+                }
+            });
+            for points in candidate.controllers.values_mut() {
+                points.retain_mut(|point| {
                     if point.at < by {
                         false
                     } else {
@@ -606,22 +667,19 @@ impl Session {
                         true
                     }
                 });
-                for points in midi.controllers.values_mut() {
-                    points.retain_mut(|point| {
-                        if point.at < by {
-                            false
-                        } else {
-                            point.at -= by;
-                            true
-                        }
-                    });
-                }
-                // The same digest rule as the other edge: text the composer wrote is text the
-                // recipe vouches for, so trimming a generated clip is not a hand edit.
-                if let Some(recipe) = &mut midi.recipe {
-                    recipe.text_digest = auris_core::notes_digest(&midi.notes);
-                }
             }
+            // The same digest rule as the other edge: text the composer wrote is text the recipe
+            // vouches for, so trimming a generated clip is not a hand edit.
+            if let Some(recipe) = &mut candidate.recipe {
+                recipe.text_digest = auris_core::notes_digest(&candidate.notes);
+            }
+            candidate.looped_note_instances()?;
+
+            self.record(Edit::ResizeClip);
+            *self
+                .project
+                .midi_clip_mut(clip)
+                .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
             self.invalidate_graph();
             return Ok(());
         }
@@ -665,20 +723,28 @@ impl Session {
         let now = tempo.seconds_to_ticks(Seconds(
             was_seconds + by as f64 * stretch / sample_rate.max(1.0),
         ));
+        let mut candidate = audio.clone();
+        // Pinned before the start moves, for the same reason a split pins the half it moves:
+        // hiding the front of a take is not a request to play the rest of it at another speed.
+        candidate.tempo_anchor = Some(candidate.anchored_at());
+        candidate.start = now.max_zero();
+        candidate.offset_frames = (offset as i64 + by) as u64;
+        candidate.length_frames = (length as i64 - by) as u64;
+        candidate.fade_in_frames = candidate.fade_in_frames.min(candidate.length_frames);
+        candidate.fade_out_frames = candidate
+            .fade_out_frames
+            .min(candidate.length_frames - candidate.fade_in_frames);
+        auris_core::project::validated_loop_pass_count(
+            candidate.id,
+            self.project.audio_clip_length_ticks(&candidate),
+            candidate.loop_end,
+        )?;
+
         self.record(Edit::ResizeClip);
-        if let Some(audio) = self.project.audio_clip_mut(clip) {
-            // Pinned before the start moves, for the same reason a split pins the half it moves:
-            // hiding the front of a take is not a request to play the rest of it at another speed,
-            // and dragging the edge past a tempo change would otherwise do exactly that.
-            audio.tempo_anchor = Some(audio.anchored_at());
-            audio.start = now.max_zero();
-            audio.offset_frames = (offset as i64 + by) as u64;
-            audio.length_frames = (length as i64 - by) as u64;
-            audio.fade_in_frames = audio.fade_in_frames.min(audio.length_frames);
-            audio.fade_out_frames = audio
-                .fade_out_frames
-                .min(audio.length_frames - audio.fade_in_frames);
-        }
+        *self
+            .project
+            .audio_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -727,11 +793,20 @@ impl Session {
         if self.require_audio_clip(clip)?.source_bpm == bpm {
             return Ok(());
         }
+        let mut candidate = self.require_audio_clip(clip)?.clone();
+        candidate.source_bpm = bpm;
+        candidate.follows_tempo = candidate.follows_tempo && bpm.is_some();
+        auris_core::project::validated_loop_pass_count(
+            candidate.id,
+            self.project.audio_clip_length_ticks(&candidate),
+            candidate.loop_end,
+        )?;
+
         self.record(Edit::SetClipTempo);
-        if let Some(audio) = self.project.audio_clip_mut(clip) {
-            audio.source_bpm = bpm;
-            audio.follows_tempo = audio.follows_tempo && bpm.is_some();
-        }
+        *self
+            .project
+            .audio_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -756,13 +831,22 @@ impl Session {
             true => Some(self.project.tempo_map.bpm_at(audio.anchored_at())),
             false => None,
         };
-        self.record(Edit::SetClipTempo);
-        if let Some(audio) = self.project.audio_clip_mut(clip) {
-            audio.follows_tempo = follows;
-            if let Some(bpm) = assumed {
-                audio.source_bpm = Some(bpm);
-            }
+        let mut candidate = audio.clone();
+        candidate.follows_tempo = follows;
+        if let Some(bpm) = assumed {
+            candidate.source_bpm = Some(bpm);
         }
+        auris_core::project::validated_loop_pass_count(
+            candidate.id,
+            self.project.audio_clip_length_ticks(&candidate),
+            candidate.loop_end,
+        )?;
+
+        self.record(Edit::SetClipTempo);
+        *self
+            .project
+            .audio_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -1114,6 +1198,7 @@ impl Session {
             true => loop_end,
             false => Ticks::ZERO,
         };
+        self.project.validate_clip_loop(clip, loop_end)?;
         if self.clip_loop_end(clip) == loop_end {
             // A drag that has run back over the clip's own end keeps sending the same answer,
             // and every frame of it arrives here. Not an edit.
@@ -1299,6 +1384,141 @@ mod tests {
 
         assert_eq!(session.undo(), Some(Edit::LoopClip));
         assert!(!session.clip_is_looped(clip));
+    }
+
+    #[test]
+    fn an_unsafe_loop_is_rejected_before_it_changes_the_document_or_history() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Lead").unwrap();
+        let clip = session
+            .add_midi_clip(track, "One tick", Ticks::ZERO, Ticks(1))
+            .unwrap();
+        let before = session.project().clone();
+        let depth = undo_depth(&mut session);
+
+        let error = session
+            .set_clip_loop(clip, Ticks(i64::MAX))
+            .expect_err("the loop cannot be saved and must not enter the document");
+
+        assert!(error.to_string().contains("loop passes"));
+        assert_eq!(session.project(), &before);
+        assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn individually_safe_loop_edits_are_not_a_project_file_size_limit() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Dense").unwrap();
+        let mut clips = Vec::new();
+        for index in 0..6 {
+            let clip = session
+                .add_midi_clip(track, format!("part {index}"), Ticks::ZERO, Ticks(1))
+                .unwrap();
+            session.project.midi_clip_mut(clip).unwrap().notes = (0..1_000)
+                .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+                .collect();
+            clips.push(clip);
+        }
+        for clip in &clips {
+            session.set_clip_loop(*clip, Ticks(400)).unwrap();
+        }
+        assert_eq!(session.clip_loop_end(clips[5]), Ticks(400));
+        assert!(session.project.validate_loop_expansion().is_ok());
+    }
+
+    #[test]
+    fn duplicating_individually_safe_midi_clips_is_not_a_project_size_limit() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Dense").unwrap();
+        let clip = session
+            .add_midi_clip(track, "part", Ticks::ZERO, Ticks(1))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        session.set_clip_loop(clip, Ticks(500)).unwrap();
+
+        for _ in 0..4 {
+            session.duplicate_clip(clip).unwrap();
+        }
+
+        assert_eq!(
+            session.project.tracks[0].kind.note_clips().unwrap().len(),
+            5
+        );
+        assert!(session.project.validate_loop_expansion().is_ok());
+    }
+
+    #[test]
+    fn duplicating_individually_safe_audio_loops_is_not_a_project_size_limit() {
+        let mut session = session();
+        let track = session.add_audio_track("Loops");
+        let source = session.project.add_audio_source(
+            "one frame",
+            auris_core::AssetPath::inside("Audio/one.wav"),
+            1,
+            48_000.0,
+            2,
+        );
+        let clip = session
+            .project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .unwrap();
+        session.install_source(
+            source,
+            std::sync::Arc::new(auris_core::AudioBuffer::stereo(1, 48_000.0)),
+        );
+        session.set_clip_loop(clip, Ticks(16_384)).unwrap();
+        for _ in 0..5 {
+            session.duplicate_clip(clip).unwrap();
+        }
+
+        let copy = session.duplicate_clip(clip).unwrap();
+
+        assert!(session.project.audio_clip(copy).is_some());
+        assert!(session.project.validate_loop_expansion().is_ok());
+        assert!(matches!(
+            session.graph_resource_error(),
+            Some(auris_engine::EngineError::ProjectAudioScheduleTooLarge {
+                windows: 114_688,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn an_audio_copy_is_validated_at_its_destination_tempo() {
+        let mut session = session();
+        session.project.tempo_map = TempoMap::constant(TempoMap::MAX_BPM);
+        let track = session.add_audio_track("Loop");
+        let source = session.project.add_audio_source(
+            "one second",
+            auris_core::AssetPath::inside("Audio/loop.wav"),
+            48_000,
+            48_000.0,
+            2,
+        );
+        let clip = session
+            .project
+            .add_audio_clip(track, source, Ticks::ZERO)
+            .unwrap();
+        let content = session.clip_content_length(clip).unwrap();
+        let loop_end = Ticks(content.raw().saturating_mul(10_000));
+        session
+            .project
+            .tempo_map
+            .set_point(loop_end, TempoMap::MIN_BPM);
+        session.set_clip_loop(clip, loop_end).unwrap();
+        let before = session.project().clone();
+        let depth = undo_depth(&mut session);
+
+        let error = session
+            .duplicate_clip(clip)
+            .expect_err("the unanchored copy would need too many passes at the slower tempo");
+
+        assert!(error.to_string().contains("loop passes"));
+        assert_eq!(session.project(), &before);
+        assert_eq!(undo_depth(&mut session), depth);
     }
 
     #[test]
@@ -2197,7 +2417,9 @@ mod tests {
         let origins = [(first, Ticks::ZERO), (second, Ticks::from_beats(8.0))];
 
         // Far enough left that the first clip would go negative on its own.
-        session.move_clips(&origins, Ticks::from_beats(-4.0));
+        session
+            .move_clips(&origins, Ticks::from_beats(-4.0))
+            .unwrap();
 
         assert_eq!(session.midi_clip(first).unwrap().start, Ticks::ZERO);
         assert_eq!(

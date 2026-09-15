@@ -1,7 +1,7 @@
 //! The UI-thread side of the engine.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use crossbeam_channel::{Receiver, Sender, TrySendError};
 
@@ -25,10 +25,47 @@ pub enum Retired {
     OutputPreview(OutputPreviewRequest),
     /// A solo-resolution array consumed by [`EngineCommand::SetSoloResolution`].
     SoloResolution(Box<[bool]>),
+    /// Test witness proving a disconnected return path still defers destruction.
+    #[cfg(test)]
+    DropProbe(RetirementDropProbe),
+}
+
+/// Test-only owner whose destructor records the thread that released it.
+#[cfg(test)]
+pub struct RetirementDropProbe(pub(crate) std::sync::mpsc::Sender<std::thread::ThreadId>);
+
+#[cfg(test)]
+impl Drop for RetirementDropProbe {
+    fn drop(&mut self) {
+        let _ = self.0.send(std::thread::current().id());
+    }
 }
 
 /// Retired data travelling back from the audio thread to be dropped here.
 pub(crate) type GraphReceiver = Receiver<Retired>;
+
+/// Stream errors reported since the frontend last polled the engine.
+///
+/// The backend's error handler may run under realtime constraints, so it publishes only these
+/// lock-free flags. Formatting and logging the notice is left to the frontend thread.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StreamNotices {
+    /// The backend reported a route change or scheduling downgrade while the stream kept running.
+    pub recoverable: bool,
+    /// The backend reported an error after which the stream is no longer usable.
+    pub fatal: bool,
+}
+
+pub(crate) const RECOVERABLE_STREAM_NOTICE: u32 = 1 << 0;
+pub(crate) const FATAL_STREAM_NOTICE: u32 = 1 << 1;
+
+pub(crate) fn take_stream_notices(cell: &AtomicU32) -> StreamNotices {
+    let flags = cell.swap(0, Ordering::AcqRel);
+    StreamNotices {
+        recoverable: flags & RECOVERABLE_STREAM_NOTICE != 0,
+        fatal: flags & FATAL_STREAM_NOTICE != 0,
+    }
+}
 
 /// Status and cancellation for one queued or playing output audition.
 ///
@@ -106,6 +143,7 @@ pub struct EngineHandle {
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) playing: Arc<AtomicBool>,
     pub(crate) latency_stale: Arc<AtomicBool>,
+    pub(crate) stream_notices: Arc<AtomicU32>,
     pub(crate) sample_rate: f64,
     pub(crate) channel_count: usize,
     pub(crate) max_block: usize,
@@ -253,6 +291,13 @@ impl EngineHandle {
     /// commands so the rest of the UI works unchanged.
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
+    }
+
+    /// Takes backend notices published since the previous call.
+    ///
+    /// Reading them here keeps formatting, logging and UI work off the backend's error callback.
+    pub fn take_stream_notices(&self) -> StreamNotices {
+        take_stream_notices(&self.stream_notices)
     }
 }
 

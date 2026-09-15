@@ -25,12 +25,16 @@ pub mod convert_track_to_audio {
     pub fn run(args: &Args) -> Result<String, String> {
         let mut session = opened(&args.project)?;
         let track = track_by_name(session.project(), &args.track)?.id;
+        let cancellation = cancellation::current();
+        let conversion = session
+            .convert_track_job(track)
+            .and_then(|job| job.render(&mut |_| {}, cancellation.flag()))
+            .map_err(|error| error.to_string())?;
+        cancellation.begin_commit()?;
         let clip = session
-            .convert_track_to_audio(track)
+            .land_track_conversion(conversion)
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok(serde_json::json!({"track": format!("id:{}", track.0), "clip": clip.0, "kind": "audio"}).to_string())
     }
 }
@@ -266,7 +270,7 @@ pub mod routing {
             }
         }
         if !matches!(args.operation, Operation::List) {
-            session.save_with_checkpoint().map_err(|e| e.to_string())?;
+            save_checkpointed(&mut session)?;
         }
         Ok(describe(&session, track))
     }
@@ -312,7 +316,7 @@ pub mod set_track_state {
                 .set_track_solo(id, solo)
                 .map_err(|e| e.to_string())?;
         }
-        session.save_with_checkpoint().map_err(|e| e.to_string())?;
+        save_checkpointed(&mut session)?;
         let track = session.project().track(id).expect("resolved track");
         let soloed: Vec<_> = session
             .project()
@@ -381,7 +385,7 @@ pub mod set_instrument_param {
         };
         let previous = session.param_value(target, descriptor);
         session.set_param(target, args.value);
-        session.save_with_checkpoint().map_err(|e| e.to_string())?;
+        save_checkpointed(&mut session)?;
         let automated = session.is_automated(target);
         Ok(serde_json::json!({
             "track":format!("id:{}",id.0),"param":descriptor.key,"previous":previous,

@@ -638,9 +638,9 @@ impl Session {
 mod tests {
     use super::*;
     use crate::session::fixtures::{named_font, session, session_with_clip, undo_depth};
-    use auris_core::SoundFontId;
     use auris_core::param::ParamId;
     use auris_core::time::Ticks;
+    use auris_core::{Note, SoundFontId};
 
     /// A session holding one instrument track and one bus, with nothing routed yet.
     fn routed_session() -> (Session, TrackId, TrackId) {
@@ -1252,6 +1252,27 @@ mod tests {
 
         session.undo().unwrap();
         assert_eq!(session.project().tracks.len(), 1);
+    }
+
+    #[test]
+    fn duplicating_a_safe_dense_track_is_not_a_project_size_limit() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Dense").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Loop", Ticks::ZERO, Ticks(1))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        session.set_clip_loop(clip, Ticks(500)).unwrap();
+
+        let mut latest = track;
+        for _ in 0..4 {
+            latest = session.duplicate_track(latest).unwrap();
+        }
+
+        assert_eq!(session.project.tracks.len(), 5);
+        assert!(session.project.validate_loop_expansion().is_ok());
     }
 
     #[test]

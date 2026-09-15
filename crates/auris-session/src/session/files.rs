@@ -16,6 +16,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use auris_core::project::CurvePoint;
 use auris_core::time::Ticks;
@@ -30,6 +31,7 @@ use auris_io::{
 use crate::error::SessionError;
 use crate::history::Edit;
 
+use super::assets::{PreparedAssets, prepare_project_assets};
 use super::{CachedFont, MidiReport, SaveReport, Session};
 
 /// Decodes an audio file to `sample_rate`, without a session and without touching a document.
@@ -63,6 +65,442 @@ const DRUM_INSTRUMENT: &str = "auris.synth.noisedrum";
 
 /// MIDI's drum channel, 0-based. Channel 10, counting the way a musician does.
 const DRUM_CHANNEL: u8 = 9;
+
+/// A MIDI import captured on the session thread and ready to parse on a worker.
+///
+/// The plugin choices and document revision are fixed before the worker starts. Running the job
+/// never touches the live document; [`Session::continue_midi_import`] is the only applying step.
+pub struct MidiImportJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    sample_rate: f64,
+    fallback: String,
+    drums: String,
+}
+
+/// A parsed MIDI document waiting for its short session-thread handoff.
+pub struct MidiImportResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    project: Project,
+    report: MidiReport,
+}
+
+/// A MIDI export snapshot that can be encoded and written away from the session thread.
+///
+/// The project and destination are fixed when the command starts. Running the job never reads
+/// the live document; [`Session::continue_midi_export`] only decides whether its completion still
+/// belongs to the document that requested it.
+pub struct MidiExportJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    project: Project,
+}
+
+/// A completed MIDI export waiting for its short session-thread acknowledgement.
+pub struct MidiExportResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    staged: auris_io::StagedMidi,
+}
+
+/// A project open captured for worker-side parsing and asset decoding.
+pub struct OpenProjectJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    render_rate: f64,
+}
+
+/// A complete project and its decoded files waiting for a short session-thread handoff.
+pub struct OpenProjectResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    path: PathBuf,
+    project: Project,
+    assets: PreparedAssets,
+}
+
+/// An archive copy plan captured without moving any bytes on the session thread.
+pub struct CollectAssetsJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    folder: PathBuf,
+    sources: Vec<(SourceId, PathBuf)>,
+    fonts: Vec<(SoundFontId, PathBuf)>,
+}
+
+/// Files copied by a worker and waiting for their document references to be updated.
+pub struct CollectAssetsResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    folder: PathBuf,
+    copied_sources: Vec<(SourceId, PathBuf, PathBuf)>,
+    copied_fonts: Vec<(SoundFontId, PathBuf, PathBuf)>,
+    failed: Option<SessionError>,
+}
+
+/// A document snapshot prepared for a worker-side Save or Save As operation.
+///
+/// Native plug-in state is collected before this value is created. Running the job performs all
+/// filesystem work without touching the live session; [`Session::continue_save`] is the only
+/// point that adopts the saved location and snapshot.
+pub struct SaveJob {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    original_path: Option<PathBuf>,
+    document: PathBuf,
+    project: Project,
+    saved_project: Project,
+    had_disk_fingerprint: bool,
+    policy: SaveAsPolicy,
+    collect_assets: bool,
+    audio: Vec<(SourceId, Option<PathBuf>)>,
+    fonts: Vec<(SoundFontId, Option<PathBuf>)>,
+}
+
+/// A durable document snapshot waiting for its short session-thread adoption.
+pub struct SaveResult {
+    owner: Arc<auris_core::PluginRegistry>,
+    revision: u64,
+    original_path: Option<PathBuf>,
+    document: PathBuf,
+    project: Project,
+    uncollected: Vec<PathBuf>,
+    staged_checkpoint: Option<auris_io::StagedProject>,
+    staged_document: auris_io::StagedProject,
+    _lock: std::fs::File,
+    disk_stamp: Option<std::time::SystemTime>,
+    disk_fingerprint: u64,
+}
+
+impl CollectAssetsJob {
+    /// Copies the planned files, reporting whole-operation progress between files.
+    ///
+    /// `None` means cancellation was observed. Copies already completed stay on disk but no live
+    /// document reference changes until [`Session::continue_collect_assets`] accepts the result.
+    pub fn run(
+        self,
+        cancelled: &AtomicBool,
+        mut report: impl FnMut(f32),
+    ) -> Option<CollectAssetsResult> {
+        let total = self.sources.len() + self.fonts.len();
+        let mut copied_sources = Vec::new();
+        let mut copied_fonts = Vec::new();
+        let mut failed = None;
+        let mut completed = 0usize;
+        let destination = self.folder.join(auris_io::AUDIO_DIR);
+        for (id, from) in self.sources {
+            if cancelled.load(Ordering::Relaxed) {
+                return None;
+            }
+            match auris_io::copy_into(&from, &destination) {
+                Ok(name) => copied_sources.push((id, from, name.into())),
+                Err(error) => failed = failed.or(Some(SessionError::from(error))),
+            }
+            completed += 1;
+            report(completed as f32 / total.max(1) as f32);
+        }
+        for (id, from) in self.fonts {
+            if cancelled.load(Ordering::Relaxed) {
+                return None;
+            }
+            match auris_io::copy_into(&from, &destination) {
+                Ok(name) => copied_fonts.push((id, from, name.into())),
+                Err(error) => failed = failed.or(Some(SessionError::from(error))),
+            }
+            completed += 1;
+            report(completed as f32 / total.max(1) as f32);
+        }
+        if total == 0 {
+            report(1.0);
+        }
+        (!cancelled.load(Ordering::Relaxed)).then_some(CollectAssetsResult {
+            owner: self.owner,
+            revision: self.revision,
+            folder: self.folder,
+            copied_sources,
+            copied_fonts,
+            failed,
+        })
+    }
+}
+
+impl OpenProjectJob {
+    /// Loads the document and every available asset, returning `None` when cancelled.
+    pub fn run(self, cancelled: &AtomicBool) -> Result<Option<OpenProjectResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let project = load_project(&self.path)?;
+        let folder = auris_io::project_folder(&self.path);
+        let Some(assets) = prepare_project_assets(&project, folder, self.render_rate, cancelled)
+        else {
+            return Ok(None);
+        };
+        Ok(Some(OpenProjectResult {
+            owner: self.owner,
+            revision: self.revision,
+            path: self.path,
+            project,
+            assets,
+        }))
+    }
+}
+
+impl MidiImportJob {
+    /// Reads and builds the replacement document, returning `None` when cancellation was seen.
+    pub fn run(self, cancelled: &AtomicBool) -> Result<Option<MidiImportResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let imported = auris_io::read_midi_file(&self.path)?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let name = self
+            .path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+        let mut project = Project::new(name, self.sample_rate);
+        project.tempo_map = imported.tempo_map.clone();
+        project.signatures = imported.signatures.clone();
+        let mut report = MidiReport {
+            tracks: 0,
+            notes: 0,
+            length: imported.end(),
+        };
+
+        for track in &imported.tracks {
+            if cancelled.load(Ordering::Relaxed) {
+                return Ok(None);
+            }
+            let instrument = match track.channel {
+                DRUM_CHANNEL => self.drums.clone(),
+                _ => self.fallback.clone(),
+            };
+            let track_id = if track.channel == DRUM_CHANNEL {
+                project.add_drum_track(&track.name, instrument)
+            } else {
+                project.add_instrument_track(&track.name, instrument)
+            };
+            let (Some(first), Some(last)) = (
+                track.notes.iter().map(|note| note.start).min(),
+                track.notes.iter().map(|note| note.end()).max(),
+            ) else {
+                continue;
+            };
+            let Some(clip_id) = project.add_midi_clip(
+                track_id,
+                &track.name,
+                first,
+                Ticks((last - first).raw().max(1)),
+            ) else {
+                continue;
+            };
+            if let Some(clip) = project.midi_clip_mut(clip_id) {
+                clip.notes = track
+                    .notes
+                    .iter()
+                    .map(|note| Note {
+                        start: note.start - first,
+                        ..note.clone()
+                    })
+                    .collect();
+                let rebase = |points: &[CurvePoint]| -> Vec<CurvePoint> {
+                    points
+                        .iter()
+                        .filter(|point| point.at >= first && point.at <= last)
+                        .map(|point| CurvePoint {
+                            at: point.at - first,
+                            ..*point
+                        })
+                        .collect()
+                };
+                clip.bend = rebase(&track.bend);
+                for (number, points) in &track.controllers {
+                    let points = rebase(points);
+                    if !points.is_empty() {
+                        clip.controllers.insert(*number, points);
+                    }
+                }
+                clip.length_is_explicit = true;
+                report.notes += clip.notes.len();
+            }
+            report.tracks += 1;
+        }
+        project.validate_loop_expansion()?;
+        Ok(Some(MidiImportResult {
+            owner: self.owner,
+            revision: self.revision,
+            project,
+            report,
+        }))
+    }
+}
+
+impl MidiExportJob {
+    /// Encodes and synchronises a private sibling, unless cancellation was requested.
+    ///
+    /// MIDI encoding is one library call and cannot be interrupted safely half way through. The
+    /// destination remains untouched throughout: cancellation observed after encoding drops the
+    /// private file, and [`Session::continue_midi_export`] alone can publish it after revalidation.
+    pub fn run(self, cancelled: &AtomicBool) -> Result<Option<MidiExportResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let staged = auris_io::stage_midi_file(&self.path, &self.project)?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        Ok(Some(MidiExportResult {
+            owner: self.owner,
+            revision: self.revision,
+            path: self.path,
+            staged,
+        }))
+    }
+}
+
+impl SaveJob {
+    /// Performs the slow half of saving while holding the cross-process project lock.
+    ///
+    /// The visible document is never replaced here. Cancellation or dropping the returned result
+    /// removes the private staged document, while [`Session::continue_save`] performs the atomic
+    /// publication only after the originating session is revalidated.
+    pub fn run(mut self, cancelled: &AtomicBool) -> Result<Option<SaveResult>, SessionError> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let folder = auris_io::project_folder(&self.document)
+            .ok_or(SessionError::NoPath)?
+            .to_path_buf();
+        std::fs::create_dir_all(&folder).map_err(|source| IoError::Filesystem {
+            path: folder.clone(),
+            source,
+        })?;
+        let lock = project_write_lock(&self.document)?;
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+
+        if self.collect_assets {
+            if self.policy == SaveAsPolicy::RefuseReplacement
+                && self.document.exists()
+                && self.original_path.as_deref() != Some(self.document.as_path())
+            {
+                return Err(SessionError::WouldReplace(self.document));
+            }
+        } else if (self.document.exists() || self.had_disk_fingerprint)
+            && load_project(&self.document)? != self.saved_project
+        {
+            return Err(SessionError::ExternalChanges(self.document));
+        }
+
+        let staged_checkpoint = if self.collect_assets && self.document.is_file() {
+            let previous = load_project(&self.document)?;
+            Some(super::checkpoints::stage_preserved_document_in_folder(&folder, &previous)?.1)
+        } else {
+            None
+        };
+
+        let destination = folder.join(auris_io::AUDIO_DIR);
+        let mut uncollected = Vec::new();
+        if self.collect_assets {
+            for (id, from) in self.audio {
+                let Some(from) = from else { continue };
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(None);
+                }
+                match auris_io::copy_into(&from, &destination) {
+                    Ok(name) => {
+                        if let Some(source) = self.project.audio_sources.get_mut(&id) {
+                            source.path =
+                                AssetPath::inside(Path::new(auris_io::AUDIO_DIR).join(&name));
+                            source.byte_size = byte_size(&from);
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("could not collect {}: {error}", from.display());
+                        if let Some(source) = self.project.audio_sources.get_mut(&id) {
+                            source.path = AssetPath::external(&from);
+                        }
+                        uncollected.push(from);
+                    }
+                }
+            }
+            for (id, from) in self.fonts {
+                let Some(from) = from else { continue };
+                if cancelled.load(Ordering::Relaxed) {
+                    return Ok(None);
+                }
+                match auris_io::copy_into(&from, &destination) {
+                    Ok(name) => {
+                        let collected = Path::new(auris_io::AUDIO_DIR).join(name);
+                        if let Some(previous) = self
+                            .project
+                            .soundfonts
+                            .get(&id)
+                            .map(|font| font.path.clone())
+                        {
+                            relocate_composed_font_in_project(
+                                &mut self.project,
+                                &previous,
+                                &AssetPath::inside(&collected),
+                            );
+                        }
+                        if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                            font.path = AssetPath::inside(collected);
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("could not collect {}: {error}", from.display());
+                        if let Some(previous) = self
+                            .project
+                            .soundfonts
+                            .get(&id)
+                            .map(|font| font.path.clone())
+                        {
+                            relocate_composed_font_in_project(
+                                &mut self.project,
+                                &previous,
+                                &AssetPath::external(&from),
+                            );
+                        }
+                        if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                            font.path = AssetPath::external(&from);
+                        }
+                        uncollected.push(from);
+                    }
+                }
+            }
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+
+        let staged_document = auris_io::stage_project(&self.document, &mut self.project)?;
+        let disk_stamp = staged_document.modified();
+        let disk_fingerprint = staged_document.fingerprint();
+        Ok(Some(SaveResult {
+            owner: self.owner,
+            revision: self.revision,
+            original_path: self.original_path,
+            document: self.document,
+            project: self.project,
+            uncollected,
+            staged_checkpoint,
+            staged_document,
+            _lock: lock,
+            disk_stamp,
+            disk_fingerprint,
+        }))
+    }
+}
 
 impl Session {
     /// Keeps a song picker's decoded font ready without importing it into the open document.
@@ -111,12 +549,18 @@ impl Session {
     /// one. It is the only thing a bare MIDI file says about what a track is *for*, and a General
     /// MIDI drum part played on a lead synth is not something anyone would keep.
     pub fn import_midi(&mut self, path: &Path) -> Result<MidiReport, SessionError> {
-        let imported = auris_io::read_midi_file(path)?;
-        let name = path
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Untitled".to_string());
+        let cancelled = AtomicBool::new(false);
+        let result = self
+            .begin_midi_import(path)?
+            .run(&cancelled)?
+            .expect("a local import is not cancelled");
+        Ok(self
+            .continue_midi_import(result)
+            .expect("a local import keeps the same session revision"))
+    }
 
+    /// Captures a MIDI import for worker execution without reading the file.
+    pub fn begin_midi_import(&self, path: &Path) -> Result<MidiImportJob, SessionError> {
         let fallback = self
             .registry
             .default_instrument_id()
@@ -126,88 +570,34 @@ impl Session {
             true => DRUM_INSTRUMENT.to_string(),
             false => fallback.clone(),
         };
+        Ok(MidiImportJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            path: path.to_path_buf(),
+            sample_rate: self.project.sample_rate,
+            fallback,
+            drums,
+        })
+    }
 
-        let mut project = Project::new(name, self.project.sample_rate);
-        project.tempo_map = imported.tempo_map.clone();
-        project.signatures = imported.signatures.clone();
-        let mut report = MidiReport {
-            tracks: 0,
-            notes: 0,
-            length: imported.end(),
-        };
-
-        for track in &imported.tracks {
-            let instrument = match track.channel {
-                DRUM_CHANNEL => drums.clone(),
-                _ => fallback.clone(),
-            };
-            let track_id = if track.channel == DRUM_CHANNEL {
-                project.add_drum_track(&track.name, instrument)
-            } else {
-                project.add_instrument_track(&track.name, instrument)
-            };
-            // One clip per track, spanning the material rather than the song: a part that does not
-            // start until bar forty gets a clip at bar forty, not forty bars of empty clip with
-            // its notes at the far end.
-            let (Some(first), Some(last)) = (
-                track.notes.iter().map(|note| note.start).min(),
-                track.notes.iter().map(|note| note.end()).max(),
-            ) else {
-                continue;
-            };
-            let Some(clip_id) = project.add_midi_clip(
-                track_id,
-                &track.name,
-                first,
-                Ticks((last - first).raw().max(1)),
-            ) else {
-                continue;
-            };
-            if let Some(clip) = project.midi_clip_mut(clip_id) {
-                clip.notes = track
-                    .notes
-                    .iter()
-                    .map(|note| Note {
-                        start: note.start - first,
-                        ..note.clone()
-                    })
-                    .collect();
-                // Rebased the same way the notes are, and cut to the clip: a curve written before
-                // the first note or after the last has nothing here to shape.
-                let rebase = |points: &[CurvePoint]| -> Vec<CurvePoint> {
-                    points
-                        .iter()
-                        .filter(|point| point.at >= first && point.at <= last)
-                        .map(|point| CurvePoint {
-                            at: point.at - first,
-                            ..*point
-                        })
-                        .collect()
-                };
-                clip.bend = rebase(&track.bend);
-                for (number, points) in &track.controllers {
-                    let points = rebase(points);
-                    if !points.is_empty() {
-                        clip.controllers.insert(*number, points);
-                    }
-                }
-                // The file said where the notes are; nothing should grow the clip past them on the
-                // next edit and quietly change what it holds.
-                clip.length_is_explicit = true;
-                report.notes += clip.notes.len();
-            }
-            report.tracks += 1;
+    /// Applies a prepared MIDI document if the originating session is still unchanged.
+    ///
+    /// `None` is a stale result. The prepared document is dropped without touching the current
+    /// project, path, history, or decoded sources.
+    pub fn continue_midi_import(&mut self, result: MidiImportResult) -> Option<MidiReport> {
+        if !Arc::ptr_eq(&self.registry, &result.owner) || self.revision != result.revision {
+            return None;
         }
-
         self.history.clear();
+        self.sound_scope = crate::transient_id::transient_id("session");
         self.path = None;
         self.clear_sources();
-        self.replace_project(project);
+        self.replace_project(result.project);
         self.install_shipped_fonts();
         // Dirty from the first frame: nothing on disk holds this document, and the `.mid` it came
         // from cannot hold it either.
         self.dirty = true;
-        Ok(report)
+        Some(result.report)
     }
 
     /// Writes the open document's instrument tracks as a Standard MIDI File.
@@ -217,6 +607,44 @@ impl Session {
     /// [`auris_io::midi`] for the whole list.
     pub fn export_midi(&self, path: &Path) -> Result<usize, SessionError> {
         Ok(auris_io::write_midi_file(path, &self.project)?)
+    }
+
+    /// Encodes and synchronises a private MIDI sibling for a caller-managed commit.
+    ///
+    /// Model-facing commands use this to put their cancellation boundary immediately before a
+    /// no-replace publication. Dropping the result leaves `path` untouched.
+    pub fn stage_midi_export(&self, path: &Path) -> Result<auris_io::StagedMidi, SessionError> {
+        Ok(auris_io::stage_midi_file(path, &self.project)?)
+    }
+
+    /// Captures the open document for a worker-side MIDI export.
+    pub fn begin_midi_export(&self, path: &Path) -> MidiExportJob {
+        MidiExportJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            path: path.to_path_buf(),
+            project: self.project.clone(),
+        }
+    }
+
+    /// Publishes a worker export if it still belongs to this unchanged, uncancelled command.
+    ///
+    /// `Ok(None)` means the result became stale or cancellation won before the commit. In either
+    /// case dropping the private sibling leaves an existing destination byte-for-byte unchanged.
+    /// A publication failure is returned and likewise keeps the previous destination intact.
+    pub fn continue_midi_export(
+        &self,
+        result: MidiExportResult,
+        cancelled: &AtomicBool,
+    ) -> Result<Option<(PathBuf, usize)>, SessionError> {
+        if cancelled.load(Ordering::Relaxed)
+            || !Arc::ptr_eq(&self.registry, &result.owner)
+            || self.revision != result.revision
+        {
+            return Ok(None);
+        }
+        let notes = result.staged.publish()?;
+        Ok(Some((result.path, notes)))
     }
 
     /// The folder relative asset paths resolve against.
@@ -296,12 +724,56 @@ impl Session {
         Ok(missing)
     }
 
+    /// Captures a project open without reading the document or any of its assets.
+    pub fn begin_open_project(&self, path: &Path) -> OpenProjectJob {
+        OpenProjectJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            path: path.to_path_buf(),
+            render_rate: self.engine.sample_rate(),
+        }
+    }
+
+    /// Applies a worker-loaded project if the originating session is still unchanged.
+    ///
+    /// `None` is a stale result and leaves all document, history, asset, and path state alone.
+    pub fn continue_open_project(&mut self, result: OpenProjectResult) -> Option<Vec<PathBuf>> {
+        if !Arc::ptr_eq(&self.registry, &result.owner)
+            || self.revision != result.revision
+            || self.engine.sample_rate() != result.assets.render_rate
+        {
+            return None;
+        }
+        self.history.clear();
+        self.clear_sources();
+        self.path = Some(result.path);
+        self.dirty = false;
+        self.mark_saved();
+        self.saved_project = result.project.clone();
+        self.saved_edit_project = result.project.clone();
+        self.hosted.clear();
+        self.vst3.clear();
+        self.armed.clear();
+        self.monitored.clear();
+        self.publish_monitors();
+        self.close_input_if_idle();
+        self.adopt_project(result.project);
+        let missing = self.install_prepared_assets(result.assets);
+        self.install_shipped_fonts();
+        self.rebuild_graph();
+        if self.realign_automation() {
+            self.rebuild_graph();
+        }
+        self.publish_loop();
+        Some(missing)
+    }
+
     /// Writes the document at exactly `path`, without moving or collecting anything.
     ///
     /// The project folder becomes the directory holding `path`, so a caller choosing a fresh
     /// location wants [`Self::save_as`] instead — this one would leave the audio behind.
     pub fn save(&mut self, path: &Path) -> Result<(), SessionError> {
-        self.collect_hosted_state();
+        self.collect_hosted_state()?;
         save_project(path, &mut self.project)?;
         self.path = Some(path.to_path_buf());
         self.dirty = false;
@@ -323,16 +795,12 @@ impl Session {
     /// [`Self::collect_assets`] is how someone archiving a project asks for those too. A font
     /// already *inside* the folder is a file this project owns like any other, and travels.
     pub fn save_as(&mut self, chosen: &Path) -> Result<SaveReport, SessionError> {
-        let document = document_in_folder(chosen);
-        // The system save dialog offered to replace whatever is at `chosen`. It is not what gets
-        // written: a project goes into a folder named after the file, so choosing `Songs/Ballad`
-        // when `Songs/Ballad/Ballad.auris` already exists looked to the dialog like a name
-        // nothing was using, and destroyed last week's song without a word. Saving back over
-        // *this* project is not a replacement and is allowed to proceed.
-        if document.exists() && self.path.as_deref() != Some(document.as_path()) {
-            return Err(SessionError::WouldReplace(document));
-        }
-        self.save_as_replacing(chosen)
+        let result = self
+            .begin_save_as(chosen)?
+            .run(&AtomicBool::new(false))?
+            .expect("a local save is not cancelled");
+        self.continue_save(result)
+            .expect("a local save keeps the same session identity and revision")
     }
 
     /// [`Self::save_as`] with the replacement already agreed to.
@@ -340,27 +808,34 @@ impl Session {
     /// For a host that has shown the user which project is about to be overwritten and been told
     /// to go ahead. Nothing else differs.
     pub fn save_as_replacing(&mut self, chosen: &Path) -> Result<SaveReport, SessionError> {
-        let document = document_in_folder(chosen);
-        let folder = auris_io::project_folder(&document)
-            .ok_or(SessionError::NoPath)?
-            .to_path_buf();
-        std::fs::create_dir_all(&folder).map_err(|source| IoError::Filesystem {
-            path: folder.clone(),
-            source,
-        })?;
-        let _lock = project_write_lock(&document)?;
-        if document.is_file() {
-            let previous_path = self.path.replace(document.clone());
-            let preserved = load_project(&document)
-                .map_err(SessionError::from)
-                .and_then(|project| self.preserve_document(&project));
-            self.path = previous_path;
-            preserved?;
-        }
+        let result = self
+            .begin_save_as_replacing(chosen)?
+            .run(&AtomicBool::new(false))?
+            .expect("a local save is not cancelled");
+        self.continue_save(result)
+            .expect("a local save keeps the same session identity and revision")
+    }
 
+    /// Captures a Save As request without touching its destination.
+    pub fn begin_save_as(&mut self, chosen: &Path) -> Result<SaveJob, SessionError> {
+        self.begin_save_as_with_policy(chosen, SaveAsPolicy::RefuseReplacement)
+    }
+
+    /// Captures a confirmed replacement Save As request without touching its destination.
+    pub fn begin_save_as_replacing(&mut self, chosen: &Path) -> Result<SaveJob, SessionError> {
+        self.begin_save_as_with_policy(chosen, SaveAsPolicy::Replace)
+    }
+
+    fn begin_save_as_with_policy(
+        &mut self,
+        chosen: &Path,
+        policy: SaveAsPolicy,
+    ) -> Result<SaveJob, SessionError> {
+        let document = document_in_folder(chosen);
+        self.collect_hosted_state()?;
         // Resolve before the document moves: an `Inside` reference read against the new folder
         // would point at a file that has not been copied there yet.
-        let audio: Vec<(SourceId, Option<PathBuf>)> = self
+        let audio = self
             .project
             .audio_sources
             .values()
@@ -371,81 +846,114 @@ impl Session {
         // carrying its reference across unchanged would leave the copy naming a file that is not
         // there: the save would report success, playback here would go on sounding from the
         // samples already in memory, and every track on that font would open silent elsewhere.
-        let fonts: Vec<(SoundFontId, Option<PathBuf>)> = self
+        let fonts = self
             .project
             .soundfonts
             .values()
             .filter(|font| font.path.is_inside())
             .map(|font| (font.id, font.path.resolve(self.project_folder())))
             .collect();
-
-        // From here the document belongs to the new folder even if the write below fails: the
-        // files land there, and their references are read against wherever `self.path` says the
-        // document is. Leaving it pointing at the old folder is what would be inconsistent.
-        self.path = Some(document.clone());
-        self.dirty = true;
-        if !document.is_file() {
-            // A failed first write may be retried once its destination becomes writable.
-            self.disk_stamp = None;
-            self.disk_fingerprint = None;
-        }
-        // A copy that fails has to have its reference pointed back *outside*, not left alone. The
-        // document belongs to the new folder from the line above, so an `Inside` reference is now
-        // read against a folder the copy never reached: the track opens silent, and nothing can
-        // repair it afterwards, because [`Self::collect_assets`] only looks at references that are
-        // not already inside and would skip this one on every retry. The path it was resolved from
-        // is a file that still exists, so naming it absolutely is what keeps
-        // [`SaveReport::uncollected`]'s promise that the project opens on this machine.
-        let mut uncollected = Vec::new();
-        for (id, from) in audio {
-            let Some(from) = from else { continue };
-            if let Err(error) = self.collect_source(id, &from) {
-                log::warn!("could not collect {}: {error}", from.display());
-                if let Some(source) = self.project.audio_sources.get_mut(&id) {
-                    source.path = AssetPath::external(&from);
-                }
-                uncollected.push(from);
-            }
-        }
-        for (id, from) in fonts {
-            let Some(from) = from else { continue };
-            if let Err(error) = self.collect_font(id, &from) {
-                log::warn!("could not collect {}: {error}", from.display());
-                if let Some(previous) = self
-                    .project
-                    .soundfonts
-                    .get(&id)
-                    .map(|font| font.path.clone())
-                {
-                    self.relocate_composed_font(&previous, &AssetPath::external(&from));
-                }
-                if let Some(font) = self.project.soundfonts.get_mut(&id) {
-                    font.path = AssetPath::external(&from);
-                }
-                uncollected.push(from);
-            }
-        }
-
-        self.collect_hosted_state();
-        save_project(&document, &mut self.project)?;
-        self.dirty = false;
-        self.mark_saved();
-        Ok(SaveReport {
+        Ok(SaveJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            original_path: self.path.clone(),
             document,
-            uncollected,
+            project: self.project.clone(),
+            saved_project: self.saved_project.clone(),
+            had_disk_fingerprint: self.disk_fingerprint.is_some(),
+            policy,
+            collect_assets: true,
+            audio,
+            fonts,
         })
     }
 
     /// Saves to the path the project was last saved to or opened from.
     pub fn save_in_place(&mut self) -> Result<(), SessionError> {
-        let path = self.path.clone().ok_or(SessionError::NoPath)?;
-        let _lock = project_write_lock(&path)?;
-        if (path.exists() || self.disk_fingerprint.is_some())
-            && load_project(&path)? != self.saved_project
+        let result = self
+            .begin_save_in_place()?
+            .run(&AtomicBool::new(false))?
+            .expect("a local save is not cancelled");
+        self.continue_save(result)
+            .expect("a local save keeps the same session identity and revision")
+            .map(drop)
+    }
+
+    /// Captures an in-place Save without reading or writing its document.
+    pub fn begin_save_in_place(&mut self) -> Result<SaveJob, SessionError> {
+        let document = self.path.clone().ok_or(SessionError::NoPath)?;
+        self.collect_hosted_state()?;
+        Ok(SaveJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            original_path: self.path.clone(),
+            document,
+            project: self.project.clone(),
+            saved_project: self.saved_project.clone(),
+            had_disk_fingerprint: self.disk_fingerprint.is_some(),
+            policy: SaveAsPolicy::RefuseReplacement,
+            collect_assets: false,
+            audio: Vec::new(),
+            fonts: Vec::new(),
+        })
+    }
+
+    /// Publishes and adopts a prepared save if its originating document is still unchanged.
+    ///
+    /// `None` is stale. In that case the staged document is dropped and the visible destination
+    /// remains untouched.
+    pub fn continue_save(
+        &mut self,
+        result: SaveResult,
+    ) -> Option<Result<SaveReport, SessionError>> {
+        if !Arc::ptr_eq(&self.registry, &result.owner)
+            || self.revision != result.revision
+            || self.path != result.original_path
         {
-            return Err(SessionError::ExternalChanges(path));
+            return None;
         }
-        self.save(&path)
+        let SaveResult {
+            document,
+            project,
+            uncollected,
+            staged_checkpoint,
+            staged_document,
+            _lock,
+            disk_stamp,
+            disk_fingerprint,
+            ..
+        } = result;
+        if let Some(checkpoint) = staged_checkpoint
+            && let Err(error) = checkpoint.publish()
+        {
+            return Some(Err(error.into()));
+        }
+        if let Err(error) = staged_document.publish() {
+            return Some(Err(error.into()));
+        }
+        drop(_lock);
+
+        self.project = project;
+        self.path = Some(document.clone());
+        let cached_fonts: Vec<_> = self
+            .project
+            .soundfonts
+            .values()
+            .filter_map(|font| {
+                let samples = self.fonts.get(font.id)?;
+                let path = font.path.resolve(self.project_folder())?;
+                Some((path, samples))
+            })
+            .collect();
+        for (path, samples) in cached_fonts {
+            self.cache_font(&path, samples, false);
+        }
+        self.dirty = false;
+        self.mark_saved_from_worker(disk_stamp, disk_fingerprint);
+        Some(Ok(SaveReport {
+            document,
+            uncollected,
+        }))
     }
 
     /// Accepts the open document's disk version as one undoable edit.
@@ -556,6 +1064,92 @@ impl Session {
             Some(error) => Err(error),
             None => Ok(collected),
         }
+    }
+
+    /// Captures the external loaded assets that an archive command needs to copy.
+    pub fn begin_collect_assets(&self) -> Result<CollectAssetsJob, SessionError> {
+        if self.path.is_none() {
+            return Err(SessionError::NoPath);
+        }
+        let folder = self
+            .project_folder()
+            .map(Path::to_path_buf)
+            .ok_or(SessionError::NoPath)?;
+        let sources = self
+            .project
+            .audio_sources
+            .values()
+            .filter(|source| !source.path.is_inside() && self.bank.get(source.id).is_some())
+            .filter_map(|source| source.path.resolve(None).map(|path| (source.id, path)))
+            .collect();
+        let fonts = self
+            .project
+            .soundfonts
+            .values()
+            .filter(|font| !font.path.is_inside() && self.fonts.contains(font.id))
+            .filter_map(|font| font.path.resolve(None).map(|path| (font.id, path)))
+            .collect();
+        Ok(CollectAssetsJob {
+            owner: Arc::clone(&self.registry),
+            revision: self.revision,
+            folder,
+            sources,
+            fonts,
+        })
+    }
+
+    /// Adopts worker copies when the document still matches the capture.
+    ///
+    /// The outer `None` is stale. The inner error is the first failed copy after every successful
+    /// reference has been made durable in the in-memory document, matching [`Self::collect_assets`].
+    pub fn continue_collect_assets(
+        &mut self,
+        result: CollectAssetsResult,
+    ) -> Option<Result<usize, SessionError>> {
+        if !Arc::ptr_eq(&self.registry, &result.owner) || self.revision != result.revision {
+            return None;
+        }
+        let CollectAssetsResult {
+            folder,
+            copied_sources,
+            copied_fonts,
+            failed,
+            ..
+        } = result;
+        let mut collected = 0;
+        for (id, from, name) in copied_sources {
+            if let Some(source) = self.project.audio_sources.get_mut(&id) {
+                source.path = AssetPath::inside(Path::new(auris_io::AUDIO_DIR).join(name));
+                source.byte_size = byte_size(&from);
+                collected += 1;
+            }
+        }
+        for (id, _from, name) in copied_fonts {
+            let collected_path = Path::new(auris_io::AUDIO_DIR).join(name);
+            if let Some(previous) = self
+                .project
+                .soundfonts
+                .get(&id)
+                .map(|font| font.path.clone())
+            {
+                self.relocate_composed_font(&previous, &AssetPath::inside(&collected_path));
+            }
+            if let Some(font) = self.project.soundfonts.get_mut(&id) {
+                font.path = AssetPath::inside(&collected_path);
+                collected += 1;
+            }
+            if let Some(samples) = self.fonts.get(id) {
+                self.cache_font(&folder.join(&collected_path), samples, false);
+            }
+        }
+        if collected > 0 {
+            self.revision = self.revision.wrapping_add(1);
+            self.dirty = true;
+        }
+        Some(match failed {
+            Some(error) => Err(error),
+            None => Ok(collected),
+        })
     }
 
     /// Imports an audio file, adds a track for it and places a clip at `start`.
@@ -875,6 +1469,33 @@ impl Session {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SaveAsPolicy {
+    RefuseReplacement,
+    Replace,
+}
+
+fn relocate_composed_font_in_project(project: &mut Project, from: &AssetPath, to: &AssetPath) {
+    let Some(text) = project.song_spec.as_ref() else {
+        return;
+    };
+    let Ok(mut spec) = auris_compose::SongSpec::parse(text) else {
+        return;
+    };
+    let mut changed = false;
+    for part in &mut spec.parts {
+        if let Some(auris_compose::PartSource::SoundFont { path, .. }) = &mut part.source
+            && path.as_path() == from.as_stored()
+        {
+            *path = to.as_stored().to_path_buf();
+            changed = true;
+        }
+    }
+    if changed {
+        project.song_spec = Some(spec.to_toml());
+    }
+}
+
 /// Adds library availability to one snapshot while preserving references the document owns.
 fn install_library_reference(
     project: &mut Project,
@@ -932,9 +1553,340 @@ fn project_write_lock(path: &Path) -> Result<std::fs::File, SessionError> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
     use super::*;
     use crate::session::fixtures::{Scratch, named_font, session};
     use auris_io::AUDIO_DIR;
+
+    fn directory_entries(path: &Path) -> Vec<PathBuf> {
+        let mut entries: Vec<_> = std::fs::read_dir(path)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        entries.sort();
+        entries
+    }
+
+    #[test]
+    fn detached_open_cancels_without_io_and_rejects_a_result_after_an_edit() {
+        let scratch = Scratch::new("detached-open-stale");
+        let document = scratch.join("Other.auris");
+        let mut stored = session();
+        stored.add_default_instrument_track("Stored").unwrap();
+        stored.save(&document).unwrap();
+
+        let mut live = session();
+        live.add_default_instrument_track("Live").unwrap();
+        let before_cancel = live.project().clone();
+        let cancelled = AtomicBool::new(true);
+        assert!(
+            live.begin_open_project(&document)
+                .run(&cancelled)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(live.project(), &before_cancel);
+
+        let job = live.begin_open_project(&document);
+        live.add_default_instrument_track("Newer live edit")
+            .unwrap();
+        let edited = live.project().clone();
+        let result = std::thread::spawn(move || job.run(&AtomicBool::new(false)))
+            .join()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(live.continue_open_project(result).is_none());
+        assert_eq!(live.project(), &edited);
+        assert!(
+            live.can_undo(),
+            "rejecting a stale open erased live history"
+        );
+    }
+
+    #[test]
+    fn detached_save_publishes_only_after_a_current_session_accepts_it() {
+        let scratch = Scratch::new("detached-save-stale");
+        let chosen = scratch.join("Song.auris");
+        let mut live = session();
+        live.add_default_instrument_track("Saved baseline").unwrap();
+        let document = live.save_as(&chosen).unwrap().document;
+        live.add_default_instrument_track("Captured edit").unwrap();
+        let before = std::fs::read(&document).unwrap();
+
+        let result = live
+            .begin_save_in_place()
+            .unwrap()
+            .run(&AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&document).unwrap(),
+            before,
+            "the worker must not publish its staged document"
+        );
+
+        live.add_default_instrument_track("Newer edit").unwrap();
+        assert!(live.continue_save(result).is_none());
+        assert_eq!(
+            std::fs::read(&document).unwrap(),
+            before,
+            "rejecting stale work must leave the visible document untouched"
+        );
+        assert!(live.is_dirty());
+    }
+
+    #[test]
+    fn detached_save_as_cancellation_does_not_create_a_document() {
+        let scratch = Scratch::new("detached-save-cancel");
+        let chosen = scratch.join("Cancelled.auris");
+        let document = document_in_folder(&chosen);
+        let mut live = session();
+        live.add_default_instrument_track("Unsaved").unwrap();
+
+        let cancelled = AtomicBool::new(true);
+        assert!(
+            live.begin_save_as(&chosen)
+                .unwrap()
+                .run(&cancelled)
+                .unwrap()
+                .is_none()
+        );
+        assert!(!document.exists());
+        assert!(live.path().is_none());
+        assert!(live.is_dirty());
+    }
+
+    #[test]
+    fn detached_midi_import_rejects_a_result_after_an_edit() {
+        let scratch = Scratch::new("detached-midi-stale");
+        let midi = scratch.join("Part.mid");
+        let mut source = Project::new("Part", 48_000.0);
+        let track = source.add_instrument_track("MIDI", "fixture.instrument");
+        let clip = source
+            .add_midi_clip(track, "MIDI", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        source
+            .midi_clip_mut(clip)
+            .unwrap()
+            .notes
+            .push(Note::new(60, Ticks::ZERO, Ticks::QUARTER));
+        auris_io::write_midi_file(&midi, &source).unwrap();
+
+        let mut live = session();
+        let job = live.begin_midi_import(&midi).unwrap();
+        live.add_default_instrument_track("Edit during import")
+            .unwrap();
+        let edited = live.project().clone();
+        let result = std::thread::spawn(move || job.run(&AtomicBool::new(false)))
+            .join()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        assert!(live.continue_midi_import(result).is_none());
+        assert_eq!(live.project(), &edited);
+        assert!(live.can_undo());
+    }
+
+    #[test]
+    fn midi_import_expires_discovery_handles_from_the_replaced_unsaved_document() {
+        let mut live = session();
+        let previous_sound_scope = live.sound_scope.clone();
+        let result = MidiImportResult {
+            owner: Arc::clone(&live.registry),
+            revision: live.revision,
+            project: Project::new("Imported", 48_000.0),
+            report: MidiReport {
+                tracks: 0,
+                notes: 0,
+                length: Ticks::ZERO,
+            },
+        };
+
+        assert!(live.continue_midi_import(result).is_some());
+        assert_ne!(live.sound_scope, previous_sound_scope);
+        assert!(live.path().is_none());
+    }
+
+    #[test]
+    fn detached_midi_export_only_replaces_bytes_after_current_uncancelled_continuation() {
+        let scratch = Scratch::new("detached-midi-export");
+        let cancelled_path = scratch.join("cancelled.mid");
+        let stale_path = scratch.join("stale.mid");
+        let current_path = scratch.join("current.mid");
+        for path in [&cancelled_path, &stale_path, &current_path] {
+            std::fs::write(path, b"previous MIDI bytes").unwrap();
+        }
+        let mut live = session();
+        let track = live.add_default_instrument_track("MIDI").unwrap();
+        let clip = live
+            .add_midi_clip(track, "MIDI", Ticks::ZERO, Ticks::QUARTER)
+            .unwrap();
+        live.add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+
+        assert!(
+            live.begin_midi_export(&cancelled_path)
+                .run(&AtomicBool::new(true))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            std::fs::read(&cancelled_path).unwrap(),
+            b"previous MIDI bytes"
+        );
+
+        let before_staging = directory_entries(stale_path.parent().unwrap());
+        let job = live.begin_midi_export(&stale_path);
+        live.add_default_instrument_track("Edit during export")
+            .unwrap();
+        let result = std::thread::spawn(move || job.run(&AtomicBool::new(false)))
+            .join()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&stale_path).unwrap(),
+            b"previous MIDI bytes",
+            "the worker must not publish before session revalidation"
+        );
+        assert!(
+            live.continue_midi_export(result, &AtomicBool::new(false))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(std::fs::read(&stale_path).unwrap(), b"previous MIDI bytes");
+        assert_eq!(
+            directory_entries(stale_path.parent().unwrap()),
+            before_staging
+        );
+
+        let cancelled_after_staging = AtomicBool::new(false);
+        let result = live
+            .begin_midi_export(&current_path)
+            .run(&cancelled_after_staging)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&current_path).unwrap(),
+            b"previous MIDI bytes"
+        );
+        cancelled_after_staging.store(true, Ordering::Relaxed);
+        assert!(
+            live.continue_midi_export(result, &cancelled_after_staging)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            std::fs::read(&current_path).unwrap(),
+            b"previous MIDI bytes"
+        );
+
+        let result = live
+            .begin_midi_export(&current_path)
+            .run(&AtomicBool::new(false))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&current_path).unwrap(),
+            b"previous MIDI bytes"
+        );
+        assert_eq!(
+            live.continue_midi_export(result, &AtomicBool::new(false))
+                .unwrap(),
+            Some((current_path.clone(), 1))
+        );
+        assert_eq!(&std::fs::read(&current_path).unwrap()[..4], b"MThd");
+        assert_eq!(
+            directory_entries(current_path.parent().unwrap()),
+            before_staging
+        );
+    }
+
+    #[test]
+    fn failed_midi_export_preserves_existing_bytes_without_scratch_residue() {
+        let scratch = Scratch::new("failed-midi-export");
+        let path = scratch.join("existing.mid");
+        std::fs::write(&path, b"previous MIDI bytes").unwrap();
+        let before = directory_entries(path.parent().unwrap());
+        let mut live = session();
+        let track = live.add_default_instrument_track("MIDI").unwrap();
+        let clip = live
+            .add_midi_clip(track, "Too far away", Ticks(0x1000_0000), Ticks::QUARTER)
+            .unwrap();
+        live.add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
+            .unwrap();
+
+        assert!(
+            live.begin_midi_export(&path)
+                .run(&AtomicBool::new(false))
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"previous MIDI bytes");
+        assert_eq!(directory_entries(path.parent().unwrap()), before);
+    }
+
+    #[test]
+    fn detached_collect_reports_progress_and_only_rewrites_an_unchanged_document() {
+        let scratch = Scratch::new("detached-collect");
+        let loose = scratch.tone("loose.wav");
+        let document = scratch.join("Song.auris");
+        let mut live = session();
+        live.import_audio(&loose, Ticks::ZERO).unwrap();
+        live.save(&document).unwrap();
+        let source = live.project().audio_sources.values().next().unwrap().id;
+        assert!(!live.project().audio_sources[&source].path.is_inside());
+
+        let job = live.begin_collect_assets().unwrap();
+        let mut progress = Vec::new();
+        let result = job
+            .run(&AtomicBool::new(false), |fraction| progress.push(fraction))
+            .unwrap();
+        assert_eq!(progress.last(), Some(&1.0));
+        live.add_default_instrument_track("Edit during copy")
+            .unwrap();
+        let edited = live.project().clone();
+        assert!(live.continue_collect_assets(result).is_none());
+        assert_eq!(live.project(), &edited);
+        assert!(!live.project().audio_sources[&source].path.is_inside());
+
+        let result = live
+            .begin_collect_assets()
+            .unwrap()
+            .run(&AtomicBool::new(false), |_| {})
+            .unwrap();
+        assert_eq!(live.continue_collect_assets(result).unwrap().unwrap(), 1);
+        assert!(live.project().audio_sources[&source].path.is_inside());
+        assert!(live.is_dirty());
+    }
+
+    #[test]
+    fn detached_collect_observes_cancellation_before_copying() {
+        let scratch = Scratch::new("detached-collect-cancel");
+        let loose = scratch.tone("loose.wav");
+        let document = scratch.join("Song.auris");
+        let mut live = session();
+        live.import_audio(&loose, Ticks::ZERO).unwrap();
+        live.save(&document).unwrap();
+        let cancelled = AtomicBool::new(true);
+
+        assert!(
+            live.begin_collect_assets()
+                .unwrap()
+                .run(&cancelled, |_| {})
+                .is_none()
+        );
+        assert!(!document.parent().unwrap().join(AUDIO_DIR).exists());
+        assert!(
+            live.project()
+                .audio_sources
+                .values()
+                .all(|source| !source.path.is_inside())
+        );
+    }
 
     #[test]
     fn a_downloaded_font_reuses_its_samples_without_becoming_an_edit() {
@@ -1343,6 +2295,11 @@ mod tests {
             second.is_dirty(),
             "nothing was written, so nothing is saved"
         );
+        assert_eq!(
+            load_project(&existing).unwrap().tracks[0].name,
+            "Old",
+            "refusing replacement must leave the existing document untouched"
+        );
 
         // And with the replacement agreed to it goes ahead.
         second
@@ -1357,7 +2314,85 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_save_as_keeps_the_new_location_dirty() {
+    fn simultaneous_first_saves_cannot_both_claim_the_same_project() {
+        #[derive(Debug)]
+        enum Outcome {
+            Saved(String),
+            Refused(String),
+        }
+
+        let scratch = Scratch::new("simultaneous-save-as");
+        let chosen = scratch.join("Ballad.auris");
+        let document = document_in_folder(&chosen);
+        std::fs::create_dir_all(document.parent().unwrap()).unwrap();
+        let blocker = project_write_lock(&document).expect("the test holds the project lock");
+        let start = Arc::new(Barrier::new(3));
+
+        let handles: Vec<_> = ["First", "Second"]
+            .into_iter()
+            .map(|name| {
+                let chosen = chosen.clone();
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    let mut session = session();
+                    session.add_default_instrument_track(name).unwrap();
+                    start.wait();
+                    match session.save_as(&chosen) {
+                        Ok(_) => Outcome::Saved(name.to_string()),
+                        Err(SessionError::WouldReplace(_)) => Outcome::Refused(name.to_string()),
+                        Err(error) => panic!("unexpected save error: {error}"),
+                    }
+                })
+            })
+            .collect();
+
+        start.wait();
+        // Both callers can finish the old check-before-lock path while this lock is held. The
+        // assertion remains scheduling-independent after the check moves under the lock.
+        std::thread::sleep(Duration::from_millis(100));
+        drop(blocker);
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("save thread finishes"))
+            .collect();
+
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, Outcome::Saved(_)))
+                .count(),
+            1,
+            "exactly one caller may create a previously absent project: {outcomes:?}"
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| matches!(outcome, Outcome::Refused(_)))
+                .count(),
+            1,
+            "the losing caller must be told that replacement needs consent: {outcomes:?}"
+        );
+        let winner = outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                Outcome::Saved(name) => Some(name),
+                Outcome::Refused(_) => None,
+            })
+            .unwrap();
+        let refused = outcomes
+            .iter()
+            .find_map(|outcome| match outcome {
+                Outcome::Refused(name) => Some(name),
+                Outcome::Saved(_) => None,
+            })
+            .unwrap();
+        let stored = load_project(&document).unwrap();
+        assert!(stored.tracks.iter().any(|track| &track.name == winner));
+        assert!(!stored.tracks.iter().any(|track| &track.name == refused));
+    }
+
+    #[test]
+    fn a_failed_save_as_rolls_back_to_the_previous_location() {
         let scratch = Scratch::new("failed-save-as-dirty");
         let mut session = session();
         session.add_default_instrument_track("Lead").unwrap();
@@ -1369,12 +2404,17 @@ mod tests {
         std::fs::create_dir_all(&document).unwrap();
 
         assert!(session.save_as_replacing(&chosen).is_err());
-        assert_eq!(session.path(), Some(document.as_path()));
-        assert!(session.is_dirty(), "autosave must retry the failed write");
+        let original = document_in_folder(&scratch.join("Original.auris"));
+        assert_eq!(session.path(), Some(original.as_path()));
+        assert!(
+            !session.is_dirty(),
+            "a failed save must not mutate live state"
+        );
         std::fs::remove_dir(&document).unwrap();
         session
-            .save_in_place()
-            .expect("retry at the new destination");
+            .save_as_replacing(&chosen)
+            .expect("retry at the requested destination");
+        assert_eq!(session.path(), Some(document.as_path()));
         assert!(!session.is_dirty());
     }
 

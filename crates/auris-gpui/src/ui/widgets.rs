@@ -25,6 +25,8 @@ pub enum ButtonStyle {
     Normal,
     /// Filled with the accent colour; for the primary action in a dialog.
     Primary,
+    /// Filled with the danger colour; for irreversible commitment in a dialog.
+    Danger,
     /// Borderless, for dense toolbars.
     Ghost,
 }
@@ -50,6 +52,26 @@ impl From<bool> for Latch {
         match active {
             true => Latch::On,
             false => Latch::Off,
+        }
+    }
+}
+
+/// Whether a shared button is actionable, including its latched appearance when available.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ButtonState {
+    /// The command participates in focus and input, with this latch state.
+    Enabled(Latch),
+    /// The command remains visible but cannot be focused or activated.
+    Disabled,
+}
+
+impl ButtonState {
+    /// Builds an enabled or disabled state while retaining the caller's latch vocabulary.
+    pub fn available<A: Into<Latch>>(active: A, enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled(active.into())
+        } else {
+            Self::Disabled
         }
     }
 }
@@ -80,7 +102,75 @@ where
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
     let label: SharedString = label.into();
-    button_with_content(id, label, style, active, active_color, theme, on_click)
+    button_with_content(
+        id,
+        label,
+        style,
+        ButtonState::Enabled(active.into()),
+        active_color,
+        theme,
+        on_click,
+    )
+}
+
+/// A [`button`] whose command may currently be unavailable.
+///
+/// Disabled buttons stay visible in their normal place so the layout and command vocabulary do
+/// not jump as data arrives. They are omitted from the Tab order, do not react to hover, Enter,
+/// Space or a pointer, and use the same quiet treatment everywhere in the application.
+pub fn button_enabled<I, L, F>(
+    id: I,
+    label: L,
+    style: ButtonStyle,
+    state: ButtonState,
+    active_color: Hsla,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let label: SharedString = label.into();
+    button_with_content(id, label, style, state, active_color, theme, on_click)
+}
+
+/// A [`button_enabled`] whose label yields to a narrower parent instead of escaping it.
+///
+/// Ordinary buttons keep their caption's intrinsic width so adjacent actions wrap as complete
+/// controls. A side panel can become narrower than one translated caption, however; this variant
+/// clamps that one button to the available row, ellipsizes its caption, and exposes the complete
+/// wording in a tooltip.
+pub fn bounded_button_enabled<I, L, F>(
+    id: I,
+    label: L,
+    style: ButtonStyle,
+    state: ButtonState,
+    active_color: Hsla,
+    theme: &Theme,
+    on_click: F,
+) -> gpui::Stateful<gpui::Div>
+where
+    I: Into<ElementId>,
+    L: Into<SharedString>,
+    F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+{
+    let label = label.into();
+    button_with_content(
+        id,
+        div().min_w_0().truncate().child(label.clone()),
+        style,
+        state,
+        active_color,
+        theme,
+        on_click,
+    )
+    .max_w_full()
+    .min_w_0()
+    .flex_shrink_0()
+    .overflow_hidden()
+    .tooltip(keyed_tip(label, "", theme))
 }
 
 /// A section heading that reveals or hides the rows following it.
@@ -113,6 +203,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_1().border_color(theme.selection))
         .flex()
         .items_center()
         .gap_1()
@@ -157,11 +249,11 @@ where
         .on_click(on_click)
 }
 
-fn button_with_content<I, L, A, F>(
+fn button_with_content<I, L, F>(
     id: I,
     label: L,
     style: ButtonStyle,
-    active: A,
+    state: ButtonState,
     active_color: Hsla,
     theme: &Theme,
     on_click: F,
@@ -169,10 +261,12 @@ fn button_with_content<I, L, A, F>(
 where
     I: Into<ElementId>,
     L: IntoElement,
-    A: Into<Latch>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
-    let active = active.into();
+    let (active, enabled) = match state {
+        ButtonState::Enabled(active) => (active, true),
+        ButtonState::Disabled => (Latch::Off, false),
+    };
     let (background, text_color, border) = match (style, active) {
         // Read against whatever it is latched to — mute is orange, solo is amber, a track's
         // colour is whatever the user chose — and not against the accent, which is behind none
@@ -182,6 +276,9 @@ where
         // reads as the same button rather than as a second latched one in a row of them.
         (_, Latch::Ready) => (theme.surface_raised, active_color, active_color),
         (ButtonStyle::Primary, Latch::Off) => (theme.accent, theme.text_on_accent, theme.accent),
+        (ButtonStyle::Danger, Latch::Off) => {
+            (theme.danger, theme.text_on(theme.danger), theme.danger)
+        }
         (ButtonStyle::Normal, Latch::Off) => (theme.surface_raised, theme.text, theme.border),
         (ButtonStyle::Ghost, Latch::Off) => (
             gpui::transparent_black(),
@@ -215,12 +312,20 @@ where
         .border_color(border)
         .bg(background)
         .text_xs()
-        .text_color(text_color)
-        .cursor_pointer()
-        .hover(|this| this.bg(hover))
-        .active(|this| this.opacity(0.75))
+        .text_color(if enabled {
+            text_color
+        } else {
+            theme.text_faint
+        })
+        .when(enabled, |this| {
+            this.tab_index(0)
+                .focus(|this| this.border_color(theme.selection))
+                .hover(|this| this.bg(hover))
+                .active(|this| this.opacity(0.75))
+                .on_click(on_click)
+        })
+        .when(!enabled, |this| this.opacity(0.62))
         .child(label)
-        .on_click(on_click)
 }
 
 /// A square button holding one drawn icon, used in the transport bar.
@@ -263,6 +368,8 @@ where
     div()
         .id(id)
         .debug_selector(move || handle.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -271,7 +378,6 @@ where
         .border_1()
         .border_color(if active { active_color } else { theme.border })
         .bg(background)
-        .cursor_pointer()
         .hover(|this| this.bg(hover))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(15.0), foreground))
@@ -291,8 +397,13 @@ where
     L: Into<SharedString>,
     F: Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 {
+    let id: ElementId = id.into();
+    let selector = id.clone();
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -305,7 +416,6 @@ where
         .bg(theme.surface_raised)
         .text_xs()
         .text_color(theme.text)
-        .cursor_pointer()
         .hover(|this| this.bg(theme.surface_hover))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(10.0), theme.text_muted))
@@ -331,6 +441,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .justify_center()
@@ -339,7 +451,6 @@ where
         .bg(theme.surface)
         .border_1()
         .border_color(theme.border_subtle)
-        .cursor_pointer()
         .hover(|this| this.bg(theme.surface_hover).border_color(theme.border))
         .active(|this| this.opacity(0.75))
         .child(icon(glyph, px(11.0), theme.text_muted))
@@ -517,7 +628,7 @@ where
             id,
             content,
             ButtonStyle::Normal,
-            false,
+            ButtonState::Enabled(Latch::Off),
             theme.accent,
             theme,
             on_click,
@@ -526,7 +637,7 @@ where
             id,
             content,
             ButtonStyle::Normal,
-            active,
+            ButtonState::Enabled(active.into()),
             theme.accent,
             theme,
             on_click,
@@ -564,6 +675,8 @@ where
     div()
         .id(id)
         .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .gap_1()
@@ -811,13 +924,77 @@ pub enum SliderFill {
     FromCentre,
 }
 
+/// A keyboard edit emitted by a shared slider, expressed in its normalised 0..1 range.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct SliderKeyboardEvent {
+    /// The new normalised position requested by the key.
+    pub fraction: f32,
+}
+
+/// The ordinary keyboard increment for controls whose displayed resolution is one percent.
+pub const SLIDER_PERCENT_STEP: f32 = 0.01;
+
+/// A slider-local action carrying the standard key that requested an adjustment.
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = auris_slider, no_json)]
+pub(crate) struct AdjustSlider {
+    key: &'static str,
+}
+
+/// Bindings installed independently of the editable application keymap.
+///
+/// The dedicated context is below the pane and window contexts in the focus path, so these win
+/// before actions such as Right-to-move-the-playhead while a slider itself owns focus.
+pub(crate) fn key_bindings() -> [gpui::KeyBinding; 8] {
+    [
+        gpui::KeyBinding::new("left", AdjustSlider { key: "left" }, Some("AurisSlider")),
+        gpui::KeyBinding::new("down", AdjustSlider { key: "down" }, Some("AurisSlider")),
+        gpui::KeyBinding::new("right", AdjustSlider { key: "right" }, Some("AurisSlider")),
+        gpui::KeyBinding::new("up", AdjustSlider { key: "up" }, Some("AurisSlider")),
+        gpui::KeyBinding::new(
+            "pagedown",
+            AdjustSlider { key: "pagedown" },
+            Some("AurisSlider"),
+        ),
+        gpui::KeyBinding::new(
+            "pageup",
+            AdjustSlider { key: "pageup" },
+            Some("AurisSlider"),
+        ),
+        gpui::KeyBinding::new("home", AdjustSlider { key: "home" }, Some("AurisSlider")),
+        gpui::KeyBinding::new("end", AdjustSlider { key: "end" }, Some("AurisSlider")),
+    ]
+}
+
+fn slider_fraction_after_key_with_step(fraction: f32, key: &str, step: f32) -> Option<f32> {
+    let fraction = fraction.clamp(0.0, 1.0);
+    let step = step.clamp(f32::EPSILON, 1.0);
+    let next = match key {
+        "left" | "down" => fraction - step,
+        "right" | "up" => fraction + step,
+        "pagedown" => fraction - step * 10.0,
+        "pageup" => fraction + step * 10.0,
+        "home" => 0.0,
+        "end" => 1.0,
+        _ => return None,
+    }
+    .clamp(0.0, 1.0);
+    (next != fraction).then_some(next)
+}
+
+fn slider_fraction_after_key(fraction: f32, key: &str) -> Option<f32> {
+    slider_fraction_after_key_with_step(fraction, key, SLIDER_PERCENT_STEP)
+}
+
 /// A horizontal drag-to-edit control: label on the left, filled bar, value on the right.
 ///
 /// `fraction` is the fill amount in 0..1 — normalised by the caller through the parameter's own
 /// curve, so a logarithmic frequency control fills linearly with the knob's travel.
 ///
-/// The widget only reports *where a drag began*; the owning view tracks the pointer from there,
-/// which is what lets a drag continue after the pointer leaves the bar.
+/// Pointer input reports *where a drag began*; the owning view tracks the pointer from there,
+/// which is what lets a drag continue after the pointer leaves the bar. Keyboard input reports
+/// an absolute normalised position. Arrow keys move by `keyboard_step`, Page Up and Page Down by
+/// ten steps, and Home and End reach the limits.
 ///
 /// # Why there is no wheel
 ///
@@ -836,21 +1013,24 @@ pub enum SliderFill {
 /// hides. Every parameter drawn as one of these can be automated, and the menu is where that is
 /// asked for.
 #[allow(clippy::too_many_arguments)]
-pub fn value_slider<I, L, V, D>(
+pub fn value_slider<I, L, V, D, K>(
     id: I,
     label: L,
     value_text: V,
     fraction: f32,
     fill: Hsla,
     origin: SliderFill,
+    keyboard_step: f32,
     theme: &Theme,
     on_drag_start: D,
+    on_keyboard: K,
 ) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     L: Into<SharedString>,
     V: Into<SharedString>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    K: Fn(&SliderKeyboardEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
     let (fill_start, fill_width) = match origin {
@@ -861,13 +1041,22 @@ where
     // The name lives outside the bar. When it sat inside, the fill boundary and the thumb cut
     // straight through the words — "Unison Spread" read as "Unison|Spread" — and the label was
     // the hardest thing on the control to read at exactly the moment it mattered.
+    let id: ElementId = id.into();
+    let selector = id.clone();
     div()
-        .id(id.into())
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .tab_index(0)
+        .key_context("AurisSlider")
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .gap_1p5()
         .h(Metrics::CONTROL_HEIGHT)
         .w_full()
+        .rounded(Metrics::RADIUS_SM)
+        .border_1()
+        .border_color(gpui::transparent_black())
         .cursor_pointer()
         .child(
             div()
@@ -949,6 +1138,13 @@ where
                 ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
+        .on_action(move |event: &AdjustSlider, window, cx| {
+            if let Some(fraction) =
+                slider_fraction_after_key_with_step(fraction, event.key, keyboard_step)
+            {
+                on_keyboard(&SliderKeyboardEvent { fraction }, window, cx);
+            }
+        })
 }
 
 /// A compact slider for a view setting, with no label and no readout.
@@ -962,15 +1158,18 @@ where
 /// with one bar exempted is a rule the next bar gets exempted from too, and the wheel over a zoom
 /// slider is the same unasked-for change as the wheel over a fader. Zooming by wheel still works
 /// where it always did, over the timeline and the roll.
-pub fn zoom_slider<I, D>(
+/// The keyboard uses one-percent arrow steps, ten-percent page steps, and Home/End limits.
+pub fn zoom_slider<I, D, K>(
     id: I,
     fraction: f32,
     theme: &Theme,
     on_drag_start: D,
-) -> impl IntoElement + use<I, D>
+    on_keyboard: K,
+) -> impl IntoElement + use<I, D, K>
 where
     I: Into<ElementId>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    K: Fn(&SliderKeyboardEvent, &mut Window, &mut App) + 'static,
 {
     let fraction = fraction.clamp(0.0, 1.0);
     // The id again, as a name a test can find the slider by — see the note in `icon_button`. It
@@ -981,11 +1180,17 @@ where
     div()
         .id(id)
         .debug_selector(move || handle.to_string())
+        .tab_index(0)
+        .key_context("AurisSlider")
+        .focus(|this| this.border_color(theme.selection))
         .flex()
         .items_center()
         .w(ZOOM_SLIDER_WIDTH)
         .flex_shrink_0()
         .h(Metrics::CONTROL_HEIGHT)
+        .rounded(Metrics::RADIUS_SM)
+        .border_1()
+        .border_color(gpui::transparent_black())
         .cursor_pointer()
         .child(
             div()
@@ -1018,6 +1223,11 @@ where
                 ),
         )
         .on_mouse_down(gpui::MouseButton::Left, on_drag_start)
+        .on_action(move |event: &AdjustSlider, window, cx| {
+            if let Some(fraction) = slider_fraction_after_key(fraction, event.key) {
+                on_keyboard(&SliderKeyboardEvent { fraction }, window, cx);
+            }
+        })
 }
 
 /// A read-only level meter.
@@ -1119,6 +1329,157 @@ pub fn db_to_meter_position(db: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{Context, FocusHandle, Render, TestAppContext};
+
+    struct ButtonHarness {
+        focus: FocusHandle,
+        primary: usize,
+        secondary: usize,
+        disabled: usize,
+    }
+
+    struct SliderHarness {
+        focus: FocusHandle,
+        fraction: f32,
+    }
+
+    impl Render for SliderHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::default();
+            div()
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev();
+                        } else {
+                            window.focus_next();
+                        }
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(value_slider(
+                    "keyboard-slider",
+                    "Value",
+                    format!("{:.0}%", self.fraction * 100.0),
+                    self.fraction,
+                    theme.accent,
+                    SliderFill::FromStart,
+                    SLIDER_PERCENT_STEP,
+                    &theme,
+                    |_: &MouseDownEvent, _, _| {},
+                    cx.listener(|this, event: &SliderKeyboardEvent, _, cx| {
+                        this.fraction = event.fraction;
+                        cx.notify();
+                    }),
+                ))
+        }
+    }
+
+    impl Render for ButtonHarness {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::default();
+            div()
+                .track_focus(&self.focus)
+                .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "tab" {
+                        if event.keystroke.modifiers.shift {
+                            window.focus_prev();
+                        } else {
+                            window.focus_next();
+                        }
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(button(
+                    "keyboard-primary",
+                    "Primary",
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.primary += 1),
+                ))
+                .child(button(
+                    "keyboard-secondary",
+                    "Secondary",
+                    ButtonStyle::Normal,
+                    false,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.secondary += 1),
+                ))
+                .child(button_enabled(
+                    "keyboard-disabled",
+                    "Disabled",
+                    ButtonStyle::Normal,
+                    ButtonState::Disabled,
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, _| this.disabled += 1),
+                ))
+        }
+    }
+
+    fn release(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+
+    #[gpui::test]
+    fn shared_buttons_tab_both_ways_activate_and_skip_disabled(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, cx| ButtonHarness {
+            focus: cx.focus_handle(),
+            primary: 0,
+            secondary: 0,
+            disabled: 0,
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| window.focus(&view.focus));
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("tab");
+        release("enter", cx);
+        cx.simulate_keystrokes("tab");
+        release("space", cx);
+        // The disabled third control is not a tab stop, so forward traversal wraps to Primary.
+        cx.simulate_keystrokes("tab");
+        release("enter", cx);
+        // Reverse traversal reaches Secondary again.
+        cx.simulate_keystrokes("shift-tab");
+        release("space", cx);
+        crate::harness::click("keyboard-disabled", cx);
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.primary, 2);
+            assert_eq!(view.secondary, 2);
+            assert_eq!(view.disabled, 0);
+        });
+    }
+
+    #[gpui::test]
+    fn shared_slider_is_a_tab_stop_and_answers_the_standard_keys(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.bind_keys(key_bindings()));
+        let (view, cx) = cx.add_window_view(|_, cx| SliderHarness {
+            focus: cx.focus_handle(),
+            fraction: 0.5,
+        });
+        cx.update(|window, cx| {
+            view.update(cx, |view, _| window.focus(&view.focus));
+        });
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("tab right pageup end left home");
+        view.read_with(cx, |view, _| assert_eq!(view.fraction, 0.0));
+        cx.update(|window, cx| {
+            view.read_with(cx, |view, cx| {
+                assert!(view.focus.contains_focused(window, cx));
+                assert!(!view.focus.is_focused(window));
+            });
+        });
+    }
 
     #[gpui::test]
     fn japanese_picker_labels_restore_the_complete_text_after_a_narrow_layout(
@@ -1163,6 +1524,25 @@ mod tests {
         assert_eq!(dragged(0.5, DRAG_RANGE_PIXELS * 10.0), 1.0);
         assert_eq!(dragged(0.5, -DRAG_RANGE_PIXELS * 10.0), 0.0);
         assert_eq!(dragged(0.25, 0.0), 0.25);
+    }
+
+    #[test]
+    fn slider_keys_nudge_page_and_reach_both_ends() {
+        let assert_position = |key: &str, expected: f32| {
+            let actual = slider_fraction_after_key(0.5, key).expect("the key moves the slider");
+            assert!((actual - expected).abs() < 1e-6, "{key}: {actual}");
+        };
+        assert_position("left", 0.49);
+        assert_position("down", 0.49);
+        assert_position("right", 0.51);
+        assert_position("up", 0.51);
+        assert_position("pagedown", 0.4);
+        assert_position("pageup", 0.6);
+        assert_eq!(slider_fraction_after_key(0.5, "home"), Some(0.0));
+        assert_eq!(slider_fraction_after_key(0.5, "end"), Some(1.0));
+        assert_eq!(slider_fraction_after_key(0.5, "enter"), None);
+        assert_eq!(slider_fraction_after_key(0.0, "left"), None);
+        assert_eq!(slider_fraction_after_key(1.0, "end"), None);
     }
 
     #[test]

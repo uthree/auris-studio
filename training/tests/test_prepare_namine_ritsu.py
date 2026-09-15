@@ -76,19 +76,134 @@ def test_the_script_writes_labels_beside_every_phrase(tmp_path, monkeypatch):
     song.mkdir(parents=True)
     sr = 44_100
     # pau a k a pau, three seconds, at 100 ns label units.
-    labels = [(0, 5_000_000, "pau"), (5_000_000, 12_000_000, "a"), (12_000_000, 13_000_000, "k"),
-              (13_000_000, 25_000_000, "a"), (25_000_000, 30_000_000, "pau")]
+    labels = [
+        (0, 5_000_000, "pau"),
+        (5_000_000, 12_000_000, "a"),
+        (12_000_000, 13_000_000, "k"),
+        (13_000_000, 25_000_000, "a"),
+        (25_000_000, 30_000_000, "pau"),
+    ]
     (song / "song1.lab").write_text("\n".join(f"{a} {b} {p}" for a, b, p in labels) + "\n")
     t = np.arange(int(3.0 * sr)) / sr
     sf.write(song / "song1.wav", (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), sr)
     out = tmp_path / "out"
-    monkeypatch.setattr(sys, "argv", ["prepare_namine_ritsu.py", "--db-dir", str(song.parent), "--output", str(out), "--min-seconds", "1", "--min-clip-seconds", "0.5"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_namine_ritsu.py",
+            "--db-dir",
+            str(song.parent),
+            "--output",
+            str(out),
+            "--min-seconds",
+            "1",
+            "--min-clip-seconds",
+            "0.5",
+        ],
+    )
     prepare.main()
-    names = sorted(p.stem for p in (out / "wav").glob("*.wav"))
-    assert names, "one phrase at least"
-    for name in names:
-        tokens = (out / "text" / f"{name}.txt").read_text(encoding="utf-8").split()
-        seconds = [float(x) for x in (out / "dur" / f"{name}.txt").read_text(encoding="utf-8").split()]
+    paths = sorted((out / "wav").rglob("*.wav"))
+    assert paths, "one phrase at least"
+    for path in paths:
+        relative = path.relative_to(out / "wav").with_suffix(".txt")
+        tokens = (out / "text" / relative).read_text(encoding="utf-8").split()
+        seconds = [float(x) for x in (out / "dur" / relative).read_text(encoding="utf-8").split()]
         assert len(seconds) == len(tokens), (tokens, seconds)
-        clip = sf.info(out / "wav" / f"{name}.wav").duration
+        clip = sf.info(path).duration
         assert sum(seconds) == pytest.approx(clip, abs=0.002)
+
+    with pytest.raises(FileExistsError, match="output already exists"):
+        prepare.main()
+
+
+def test_equal_wav_stems_in_separate_song_folders_do_not_overwrite(tmp_path, monkeypatch):
+    import sys
+
+    import numpy as np
+    import soundfile as sf
+
+    database = tmp_path / "DATABASE"
+    labels = [
+        (0, 5_000_000, "pau"),
+        (5_000_000, 25_000_000, "a"),
+        (25_000_000, 30_000_000, "pau"),
+    ]
+    sr = 44_100
+    t = np.arange(int(3.0 * sr)) / sr
+    for folder in ("first", "second"):
+        song = database / folder
+        song.mkdir(parents=True)
+        (song / "song.lab").write_text(
+            "\n".join(f"{start} {end} {symbol}" for start, end, symbol in labels) + "\n"
+        )
+        sf.write(
+            song / "song.wav",
+            (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32),
+            sr,
+        )
+
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_namine_ritsu.py",
+            "--db-dir",
+            str(database),
+            "--output",
+            str(output),
+            "--min-seconds",
+            "1",
+            "--min-clip-seconds",
+            "0.5",
+        ],
+    )
+    prepare.main()
+
+    clips = sorted((output / "wav").rglob("song_000.wav"))
+    assert len(clips) == 2
+    assert {clip.parent.name for clip in clips} == {"first", "second"}
+
+
+def test_missing_database_directory_is_refused_before_output_is_reserved(tmp_path, monkeypatch):
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_namine_ritsu.py",
+            "--db-dir",
+            str(tmp_path / "missing"),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="database directory does not exist"):
+        prepare.main()
+    assert not output.exists()
+
+
+def test_all_missing_labels_fail_and_keep_the_reserved_output(tmp_path, monkeypatch):
+    database = tmp_path / "DATABASE"
+    song = database / "song"
+    song.mkdir(parents=True)
+    # Missing labels are rejected before audio decoding.
+    (song / "song.wav").write_bytes(b"stand-in")
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_namine_ritsu.py",
+            "--db-dir",
+            str(database),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="no phrases were prepared"):
+        prepare.main()
+    assert output.is_dir(), "failed preparation remains available for inspection"

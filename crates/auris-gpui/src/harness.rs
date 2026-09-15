@@ -39,20 +39,27 @@ pub(crate) const WINDOW: gpui::Size<Pixels> = gpui::Size {
     height: px(1080.),
 };
 
-/// Points every `load()` in the frontend at a directory of this run's own.
+/// Points every persistent read in the frontend at directories of this run's own.
 ///
 /// The settings, the keymap, the colour scheme, the panel layout and the progression book are all
 /// read from `config_dir()`. Left alone, a test would take the developer's own preferences as its
 /// starting state — passing or failing depending on whose machine it ran on — and could write
-/// back over them. `AURIS_CONFIG_DIR` is the override the session layer already has for this.
+/// back over them. Crash recovery is isolated separately because its entries carry user work and
+/// the test UI includes a button that permanently discards one.
 fn isolate_config() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let dir = std::env::temp_dir().join(format!("auris-gpui-tests-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("a temp directory can be made");
+        let root = std::env::temp_dir().join(format!("auris-gpui-tests-{}", std::process::id()));
+        let config = root.join("config");
+        let recovery = root.join("recovery");
+        std::fs::create_dir_all(&config).expect("a temp configuration directory can be made");
+        std::fs::create_dir_all(&recovery).expect("a temp recovery directory can be made");
         // SAFETY: the first thing every test in this crate does, under a `Once`, and before
         // anything in the frontend has read the environment.
-        unsafe { std::env::set_var(auris_session::CONFIG_DIR_VAR, &dir) };
+        unsafe {
+            std::env::set_var(auris_session::CONFIG_DIR_VAR, &config);
+            std::env::set_var(auris_session::RECOVERY_DIR_VAR, &recovery);
+        }
     });
 }
 
@@ -402,6 +409,38 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    fn an_unsafe_live_graph_is_reported_on_the_failure_status_line(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            let clip = this
+                .session
+                .place_audio(
+                    std::path::Path::new("one.wav"),
+                    AudioBuffer::stereo(1, 48_000.0),
+                    Ticks::ZERO,
+                )
+                .unwrap();
+            this.session.set_clip_loop(clip, Ticks(16_384)).unwrap();
+            for _ in 0..6 {
+                this.session.duplicate_clip(clip).unwrap();
+            }
+
+            this.report_graph_resource_error();
+
+            assert!(this.status_failed, "the status must be drawn as a failure");
+            assert!(
+                this.session.graph_resource_error().is_none(),
+                "the notification must not repeat every repaint"
+            );
+            assert!(
+                this.status.contains("100000"),
+                "the status must explain the graph budget: {}",
+                this.status
+            );
+        });
+    }
+
     /// A menu command, dispatched where the menu dispatches it, reaching the document.
     #[gpui::test]
     fn an_action_from_the_menu_edits_the_document(cx: &mut TestAppContext) {
@@ -563,8 +602,8 @@ mod tests {
     #[gpui::test]
     fn a_shelf_voice_needs_a_singer_track(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
-        app.update(cx, |this, _| {
-            this.set_track_voice(std::path::Path::new("/nowhere/voice.onnx"));
+        app.update(cx, |this, cx| {
+            this.set_track_voice(std::path::PathBuf::from("/nowhere/voice.onnx"), cx);
             assert!(
                 this.status
                     .contains(auris_i18n::Key::ErrorNoSingerTrack.get(this.language())),
@@ -582,10 +621,14 @@ mod tests {
             return;
         };
         let (app, cx) = open(cx);
-        app.update(cx, |this, _| {
+        app.update(cx, |this, cx| {
             let track = this.session.add_singer_track("Voice");
             this.selected_track = Some(track);
-            this.set_track_voice(std::path::Path::new(&model));
+            this.set_track_voice(std::path::PathBuf::from(&model), cx);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            let track = this.selected_track.unwrap();
             let voice = this
                 .session
                 .singer_voice(track)
@@ -1002,8 +1045,11 @@ mod tests {
             // Shown, not toggled: a toggle depends on the shared layout file's mood.
             this.panels.show(crate::dock::Panel::Agent);
             this.settings.agent = Default::default();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
             this.agent_chat.configuring = true;
             // What the provider would have answered, so no provider request is involved.
+            this.agent_chat.models_loaded = true;
             this.agent_chat.models = vec![crate::ui::agent_chat::ModelOption {
                 name: "qwen3.8:27b".to_string(),
                 context_length: Some(262_144),
@@ -1130,6 +1176,13 @@ mod tests {
         bump(&app, cx, 4);
         app.update(cx, |this, cx| {
             this.watch_disk(cx);
+            assert!(
+                this.disk_watch_task.is_some(),
+                "the comparison itself is detached from GPUI"
+            );
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
             assert!(this.external_change.is_some(), "the offer stands");
             assert!(this.status_failed, "said in a warning's colour");
             assert!(
@@ -1148,6 +1201,9 @@ mod tests {
             this.session.save_in_place().unwrap();
             this.last_disk_watch = None;
             this.watch_disk(cx);
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
             assert!(this.external_change.is_none(), "the offer comes down");
         });
         std::fs::remove_dir_all(&root).unwrap();

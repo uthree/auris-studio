@@ -24,6 +24,8 @@
 //! * [`assets`] copies the files a project refers to into its folder, and finds them again when
 //!   they have moved.
 
+mod bounded;
+
 pub mod assets;
 pub mod error;
 pub mod export;
@@ -34,20 +36,22 @@ pub mod record;
 pub mod soundfont;
 
 pub use assets::{byte_size, copy_into, find_named};
-pub use error::{IoError, Result};
+pub use error::{IoError, MidiExportResource, MidiImportResource, Result};
 pub use export::{
-    AudioExportFormat, AudioExportSettings, Mp3Bitrate, WavBitDepth, WavExportSettings,
-    write_audio, write_audio_with_progress, write_wav,
+    AudioExportFormat, AudioExportSettings, AudioExportWriter, Mp3Bitrate, StagedAudioExport,
+    WavBitDepth, WavExportSettings, write_audio, write_audio_with_progress, write_wav,
 };
 pub use import::{
     DecodedAudio, decode_audio_file, import_audio_file, resample_buffer, supported_extensions,
 };
 pub use midi::{
-    MidiImport, MidiTrack, midi_extensions, read_midi_bytes, read_midi_file, write_midi_bytes,
-    write_midi_file,
+    MidiImport, MidiTrack, StagedMidi, midi_extensions, read_midi_bytes, read_midi_file,
+    stage_midi_file, write_midi_bytes, write_midi_file,
 };
 pub use project_file::{
-    AUDIO_DIR, PROJECT_EXTENSION, document_in_folder, load_project, project_folder, save_project,
+    AUDIO_DIR, MAX_PROJECT_FILE_BYTES, PROJECT_EXTENSION, StagedFile, StagedProject,
+    document_in_folder, load_project, project_folder, save_project, stage_file_bytes,
+    stage_project,
 };
 pub use record::WavRecorder;
 pub use soundfont::{

@@ -35,6 +35,7 @@ serde_json.workspace = true
 schemars = "1"
 serde_yaml_ng.workspace = true
 sha2.workspace = true
+same-file = "1"
 tempfile.workspace = true
 thiserror.workspace = true
 ureq.workspace = true

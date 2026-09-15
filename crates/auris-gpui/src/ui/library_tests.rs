@@ -12,6 +12,78 @@ fn prepare_library(app: &mut AurisApp) {
     app.leave_library_search();
 }
 
+#[gpui::test]
+fn plugin_discovery_error_offers_a_retry_that_clears_the_failed_state(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, _| {
+        prepare_library(this);
+        this.clap_files = None;
+        this.vst3_files = None;
+        this.plugin_discovery_error = Some("temporary worker failure".into());
+        // Keep the retry in the viewport. `debug_bounds` also reports clipped descendants,
+        // while a pointer gesture at their off-window coordinates correctly hits nothing.
+        this.library.set_open(Branch::Instruments, false);
+        this.library.set_open(Branch::SoundFonts, false);
+        this.library.set_open(Branch::Effects, false);
+    });
+
+    paint(&app, cx);
+    assert!(cx.debug_bounds("plugin-rescan").is_some());
+    click("plugin-rescan", cx);
+
+    app.read_with(cx, |this, _| {
+        assert!(this.plugin_discovery_error.is_none());
+    });
+}
+
+#[gpui::test]
+fn plugin_metadata_cache_evicts_before_adding_a_sixty_fifth_file(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, _| {
+        for index in 0..PLUGIN_METADATA_CACHE_LIMIT {
+            this.clap_contents.insert(
+                std::path::PathBuf::from(format!("plugin-{index}.clap")),
+                std::sync::Arc::from(Vec::<auris_session::ClapPluginInfo>::new()),
+            );
+        }
+        assert!(this.reserve_plugin_cache_slot(0));
+        this.vst3_contents.insert(
+            std::path::PathBuf::from("incoming.vst3"),
+            std::sync::Arc::from(Vec::<auris_session::Vst3PluginInfo>::new()),
+        );
+        assert_eq!(
+            this.clap_contents.len() + this.vst3_contents.len(),
+            PLUGIN_METADATA_CACHE_LIMIT
+        );
+    });
+}
+
+#[gpui::test]
+fn installed_plugin_rows_page_a_large_inventory_without_losing_search_reveal(
+    cx: &mut TestAppContext,
+) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| {
+        prepare_library(this);
+        this.settings.plugin_paths.clear();
+        this.clap_files = Some(std::sync::Arc::from(
+            (0..(PLUGIN_FILE_PAGE_SIZE * 2 + 1))
+                .map(|index| std::path::PathBuf::from(format!("plugin-{index}.clap")))
+                .collect::<Vec<_>>(),
+        ));
+        this.vst3_files = Some(std::sync::Arc::from(Vec::<std::path::PathBuf>::new()));
+
+        let rows = this.installed_plugin_rows(LibraryTarget::Track, 0, cx);
+        // Heading, hint, rescan, add-folder, page status and page controls stay in addition to one
+        // bounded file page; the remaining inventory is not eagerly materialised as GPUI rows.
+        assert_eq!(rows.len(), PLUGIN_FILE_PAGE_SIZE + 6);
+
+        let last = PLUGIN_FILE_PAGE_SIZE * 2;
+        this.reveal_library_branch(LibraryTarget::Track, Branch::PluginFile(last));
+        assert_eq!(this.library.plugin_page(last + 1), last..last + 1);
+    });
+}
+
 #[test]
 fn the_song_font_catalog_keeps_one_file_after_adoption_and_retains_available_imports() {
     let adopted_path = std::env::temp_dir().join("adopted.sf2");
@@ -246,6 +318,16 @@ fn song_library_typing_and_ime_never_change_the_covered_lyrics_editor(cx: &mut T
         )
     });
     paint(&app, cx);
+    let looping = app.read_with(cx, |this, _| this.project().loop_enabled);
+    cx.dispatch_action(crate::actions::ToggleLoop);
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.project().loop_enabled,
+            looping,
+            "a native-menu action cannot edit the document behind the library sheet"
+        );
+        assert!(this.song_library.is_some());
+    });
     cx.simulate_input("あいう");
     cx.simulate_keystrokes("backspace");
     paint(&app, cx);
@@ -358,47 +440,59 @@ fn song_library_selects_cached_hosted_instruments_and_excludes_effects(cx: &mut 
         };
         let before = app.update(cx, |this, cx| {
             prepare_library(this);
-            this.clap_files = Some(if vst3 { Vec::new() } else { vec![file.clone()] });
-            this.vst3_files = Some(if vst3 { vec![file.clone()] } else { Vec::new() });
+            this.clap_files = Some(std::sync::Arc::from(if vst3 {
+                Vec::new()
+            } else {
+                vec![file.clone()]
+            }));
+            this.vst3_files = Some(std::sync::Arc::from(if vst3 {
+                vec![file.clone()]
+            } else {
+                Vec::new()
+            }));
             if vst3 {
                 this.vst3_contents.insert(
                     file.clone(),
-                    [PluginKind::Instrument, PluginKind::Effect]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, kind)| auris_session::Vst3PluginInfo {
-                            class_id: format!("{:032}", index + 1),
-                            name: format!("Hosted {index}"),
-                            vendor: "Test".into(),
-                            version: "1".into(),
-                            kind,
-                            category: PluginCategory::Synth,
-                            has_gui: false,
-                        })
-                        .collect(),
+                    std::sync::Arc::from(
+                        [PluginKind::Instrument, PluginKind::Effect]
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, kind)| auris_session::Vst3PluginInfo {
+                                class_id: format!("{:032}", index + 1),
+                                name: format!("Hosted {index}"),
+                                vendor: "Test".into(),
+                                version: "1".into(),
+                                kind,
+                                category: PluginCategory::Synth,
+                                has_gui: false,
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
                 );
             } else {
                 this.clap_contents.insert(
                     file.clone(),
-                    [PluginKind::Instrument, PluginKind::Effect]
-                        .into_iter()
-                        .map(|kind| auris_session::ClapPluginInfo {
-                            clap_id: format!(
-                                "song-choice.{}",
-                                if kind == PluginKind::Instrument {
-                                    "instrument"
-                                } else {
-                                    "effect"
-                                }
-                            ),
-                            name: "Hosted".into(),
-                            vendor: "Test".into(),
-                            description: String::new(),
-                            version: "1".into(),
-                            kind,
-                            category: PluginCategory::Synth,
-                        })
-                        .collect(),
+                    std::sync::Arc::from(
+                        [PluginKind::Instrument, PluginKind::Effect]
+                            .into_iter()
+                            .map(|kind| auris_session::ClapPluginInfo {
+                                clap_id: format!(
+                                    "song-choice.{}",
+                                    if kind == PluginKind::Instrument {
+                                        "instrument"
+                                    } else {
+                                        "effect"
+                                    }
+                                ),
+                                name: "Hosted".into(),
+                                vendor: "Test".into(),
+                                description: String::new(),
+                                version: "1".into(),
+                                kind,
+                                category: PluginCategory::Synth,
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
                 );
             }
             this.open_song_sheet();
@@ -413,7 +507,7 @@ fn song_library_selects_cached_hosted_instruments_and_excludes_effects(cx: &mut 
             let rows = this.installed_plugin_rows(LibraryTarget::SongPart, 0, cx);
             let ordinary = this.installed_plugin_rows(LibraryTarget::Track, 0, cx);
             assert_eq!(ordinary.len(), 1);
-            assert_eq!(rows.len(), 5); // heading, hint, folder action, file, instrument.
+            assert_eq!(rows.len(), 6); // heading, hint, rescan, folder action, file, instrument.
             serde_json::to_value(this.project()).unwrap()
         });
         paint(&app, cx);
@@ -434,4 +528,51 @@ fn song_library_selects_cached_hosted_instruments_and_excludes_effects(cx: &mut 
             assert_eq!(serde_json::to_value(this.project()).unwrap(), before);
         });
     }
+}
+
+#[gpui::test]
+fn plugin_folder_removal_names_the_folder_and_requires_confirmation(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    let folder = std::env::temp_dir().join(format!(
+        "auris-plugin-folder-to-remove-{}",
+        std::process::id()
+    ));
+    app.update(cx, |this, _| {
+        prepare_library(this);
+        this.settings.plugin_paths = vec![folder.clone()];
+        // Put the plugin-folder row in the visible viewport. Hit-testing a debug node drawn far
+        // below a clipped scroll view would only prove that off-screen controls do not click.
+        for branch in [
+            Branch::Instruments,
+            Branch::SoundFonts,
+            Branch::Voices,
+            Branch::Effects,
+        ] {
+            this.library.set_open(branch, false);
+        }
+    });
+    paint(&app, cx);
+    click("forget-plugin-path-0", cx);
+    app.read_with(cx, |this, _| {
+        let prompt = this.prompt.as_ref().expect("removal asks first");
+        assert!(prompt.title.contains(&folder.display().to_string()));
+        assert!(matches!(
+            &prompt.body,
+            crate::ui::prompt::PromptBody::Ask(
+                crate::ui::prompt::Question::RemovePluginPath(path)
+            ) if path == &folder
+        ));
+        assert_eq!(
+            this.settings.plugin_paths.as_slice(),
+            std::slice::from_ref(&folder)
+        );
+    });
+
+    cx.simulate_keystrokes("escape");
+    app.read_with(cx, |this, _| {
+        assert_eq!(
+            this.settings.plugin_paths.as_slice(),
+            std::slice::from_ref(&folder)
+        )
+    });
 }

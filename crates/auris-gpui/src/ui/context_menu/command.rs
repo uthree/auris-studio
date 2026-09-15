@@ -867,7 +867,7 @@ impl AurisApp {
                 self.begin_audio_analysis(clip, transcribe, cx)
             }
             MenuCommand::CancelMusicAnalysis => {
-                self.music_analysis.cancel();
+                self.music_analysis.cancel_requested();
                 self.set_status(self.t(Key::AnalysisCancelled));
             }
             MenuCommand::ViewMusicAnalysis => self.view_music_analysis(),
@@ -916,7 +916,7 @@ impl AurisApp {
             }
             MenuCommand::SingerVoice { track, path } => {
                 self.select_track(track);
-                self.apply_singer_voice(track, &path);
+                self.apply_singer_voice(track, path, cx);
             }
             MenuCommand::SingerSpeaker { track, speaker } => {
                 self.set_singer_speaker_for(track, speaker)

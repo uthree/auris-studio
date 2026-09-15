@@ -527,9 +527,13 @@ impl Session {
         project.loop_region = Some((Ticks::ZERO, composition.length));
         project.loop_enabled = composition.looping;
 
+        // Composition builds outside the live document. Validate every finished clip before the
+        // single undo step so a refusing writer cannot leave an unsaveable project behind.
+        project.validate_loop_expansion()?;
+
         // Native preset changes live inside the hosted instance until collected. Capture them
         // before replacing slots so Undo restores the sound that was heard, not the last save.
-        self.collect_hosted_state();
+        self.collect_hosted_state()?;
         self.record(Edit::Compose);
         for (track, source) in hosted_sources {
             self.install_composed_hosted_source(track, source);

@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from torch.utils.data.distributed import DistributedSampler
 
+from auris_singer.dataset_layout import resolve_dataset_root
 from auris_singer.utils.audio import spectrogram
 
 __all__ = ["SingingDataset", "collate_batch", "DistributedBucketSampler"]
@@ -45,7 +46,7 @@ class SingingDataset(Dataset):
         win_length: int | None = None,
         use_durations: bool = True,
     ):
-        self.root = Path(root)
+        self.root = resolve_dataset_root(root)
         self.use_durations = use_durations
         audio_config = json.loads((self.root / "audio_config.json").read_text())
         self.sample_rate = int(audio_config["sample_rate"])
@@ -118,7 +119,7 @@ class SingingDataset(Dataset):
 
 def read_metadata(root: str | Path) -> list[dict]:
     """Read ``metadata.jsonl`` from a preprocessed dataset directory."""
-    path = Path(root) / "metadata.jsonl"
+    path = resolve_dataset_root(root) / "metadata.jsonl"
     with path.open(encoding="utf-8") as fp:
         return [json.loads(line) for line in fp if line.strip()]
 

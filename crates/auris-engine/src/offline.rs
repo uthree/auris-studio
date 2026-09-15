@@ -1,4 +1,4 @@
-//! Faster-than-realtime rendering of a whole project into one buffer.
+//! Faster-than-realtime rendering of a whole project into memory or a bounded block sink.
 //!
 //! Export runs the *same* [`render_block`] the audio callback does, block by block, with the
 //! transport rolling. Cycle exports warm up the graph before capturing one repetition.
@@ -14,6 +14,20 @@ use crate::graph::{RENDER_CHANNELS, RenderGraph};
 use crate::renderer::render_block;
 use crate::transport::Transport;
 
+/// Failure from either the render graph or the consumer of a streamed render block.
+///
+/// Keeping the two errors distinct lets a file exporter report a codec or filesystem failure
+/// without teaching the engine about file formats.
+#[derive(Debug, thiserror::Error)]
+pub enum OfflineStreamError<E> {
+    /// Rendering the next block failed or was cancelled.
+    #[error(transparent)]
+    Render(#[from] EngineError),
+    /// The caller could not consume a completed output block.
+    #[error("offline render sink failed: {0}")]
+    Sink(E),
+}
+
 /// Longest span an offline render will attempt, in frames: twenty-four hours at 192 kHz.
 ///
 /// This is a sanity bound, not a quota. Nothing a user can arrange comes anywhere near it, so
@@ -21,8 +35,50 @@ use crate::transport::Transport;
 /// export path from panicking in the allocator on a number it was handed rather than chose.
 const MAX_RENDER_FRAMES: u64 = 24 * 60 * 60 * 192_000;
 
+/// Raw `f32` sample storage a complete in-memory render may retain: 512 MiB.
+///
+/// Long file exports use [`OfflineRender::render_streamed`] and do not consume this budget.
+const MAX_BUFFERED_RENDER_BYTES: usize = 512 * 1024 * 1024;
+
 /// Largest block whose event offsets and scratch allocation remain practical and representable.
 const MAX_BLOCK_FRAMES: usize = 1_048_576;
+
+fn buffered_render_bytes(frames: usize) -> Result<usize, EngineError> {
+    let too_large = || EngineError::RenderBufferTooLarge {
+        frames,
+        channels: RENDER_CHANNELS,
+        limit_bytes: MAX_BUFFERED_RENDER_BYTES,
+    };
+    let bytes = frames
+        .checked_mul(RENDER_CHANNELS)
+        .and_then(|samples| samples.checked_mul(std::mem::size_of::<f32>()))
+        .ok_or_else(too_large)?;
+    if bytes > MAX_BUFFERED_RENDER_BYTES {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
+fn allocate_render_buffer(frames: usize, sample_rate: f64) -> Result<AudioBuffer, EngineError> {
+    buffered_render_bytes(frames)?;
+    let allocation_error = || EngineError::RenderBufferAllocation {
+        frames,
+        channels: RENDER_CHANNELS,
+    };
+    let mut channels = Vec::new();
+    channels
+        .try_reserve_exact(RENDER_CHANNELS)
+        .map_err(|_| allocation_error())?;
+    for _ in 0..RENDER_CHANNELS {
+        let mut channel = Vec::new();
+        channel
+            .try_reserve_exact(frames)
+            .map_err(|_| allocation_error())?;
+        channel.resize(frames, 0.0);
+        channels.push(channel);
+    }
+    AudioBuffer::from_planar(channels, sample_rate).map_err(EngineError::from)
+}
 
 /// How much of a project to render, and how.
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +145,7 @@ impl OfflineOptions {
 pub struct RenderProgress<'a> {
     report: Option<&'a mut dyn FnMut(f32)>,
     cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    commit: Option<&'a dyn Fn() -> bool>,
     /// Where this render sits inside the job the caller is watching: a start and a width, both
     /// fractions of the whole. `(0.0, 1.0)` for a render that is the whole of what is happening.
     window: (f32, f32),
@@ -100,6 +157,7 @@ impl<'a> RenderProgress<'a> {
         Self {
             report: Some(report),
             cancel: None,
+            commit: None,
             window: (0.0, 1.0),
         }
     }
@@ -129,6 +187,29 @@ impl<'a> RenderProgress<'a> {
     pub fn cancelled_by(mut self, flag: &'a std::sync::atomic::AtomicBool) -> Self {
         self.cancel = Some(flag);
         self
+    }
+
+    /// Uses `commit` to arbitrate cancellation immediately before durable output is published.
+    ///
+    /// Blockwise cancellation alone leaves a narrow race after the last block: a request can be
+    /// cancelled while an encoder is finalising but before its staged file is installed. A
+    /// frontend with request cancellation supplies one atomic gate here. Ordinary callers omit
+    /// it and retain the existing behavior.
+    pub fn committing_with(mut self, commit: &'a dyn Fn() -> bool) -> Self {
+        self.commit = Some(commit);
+        self
+    }
+
+    /// Attempts to cross the durable-output boundary.
+    ///
+    /// Returns `false` if cancellation was already visible or the frontend's atomic commit gate
+    /// gave cancellation priority. Once this succeeds, the frontend must ignore later
+    /// cancellation and let publication finish.
+    pub fn begin_commit(&self) -> bool {
+        if self.is_cancelled() {
+            return false;
+        }
+        self.commit.is_none_or(|commit| commit())
     }
 
     /// Reports how far along the render is, from 0.0 to 1.0 — of its own window, not of the job.
@@ -204,7 +285,7 @@ pub fn render_project_using(
     progress: &mut RenderProgress<'_>,
 ) -> Result<AudioBuffer, EngineError> {
     let mut render = OfflineRender::new(project, bank, registry, placed, instruments, options)?;
-    let mut out = render.buffer();
+    let mut out = render.buffer()?;
     render.render(&mut out, progress)?;
     Ok(out)
 }
@@ -255,7 +336,7 @@ impl OfflineRender {
         }
         let block_frames = options.block_frames.clamp(1, MAX_BLOCK_FRAMES);
 
-        let graph = RenderGraph::build_with(
+        let mut graph = RenderGraph::build_with(
             project,
             bank,
             registry,
@@ -264,6 +345,9 @@ impl OfflineRender {
             block_frames,
             sample_rate,
         );
+        if let Some(error) = graph.take_resource_error() {
+            return Err(error);
+        }
 
         let end_frames = options.end_frames.unwrap_or_else(|| {
             // Both figures measure the same thing, but `Project::end_tick` rounds an audio clip's
@@ -356,9 +440,15 @@ impl OfflineRender {
         self.sample_rate
     }
 
-    /// An output buffer of the right size and rate for [`Self::render`].
-    pub fn buffer(&self) -> AudioBuffer {
-        AudioBuffer::new(RENDER_CHANNELS, self.total, self.sample_rate)
+    /// Allocates an output buffer of the right size and rate for [`Self::render`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::RenderBufferTooLarge`] when retaining the complete render would
+    /// exceed the in-memory budget, or [`EngineError::RenderBufferAllocation`] when the allocator
+    /// refuses an otherwise bounded buffer. Use [`Self::render_streamed`] for long file exports.
+    pub fn buffer(&self) -> Result<AudioBuffer, EngineError> {
+        allocate_render_buffer(self.total, self.sample_rate)
     }
 
     /// Chooses which tracks are heard, by project position, settled rather than faded.
@@ -380,8 +470,54 @@ impl OfflineRender {
         out: &mut AudioBuffer,
         progress: &mut RenderProgress<'_>,
     ) -> Result<(), EngineError> {
-        self.graph.panic();
+        buffered_render_bytes(self.total)?;
+        if out.channel_count() != RENDER_CHANNELS
+            || out.frame_count() != self.total
+            || out.sample_rate() != self.sample_rate
+        {
+            return Err(auris_core::CoreError::LayoutMismatch(format!(
+                "offline render needs {RENDER_CHANNELS} channels, {} frames at {} Hz; the output has {} channels, {} frames at {} Hz",
+                self.total,
+                self.sample_rate,
+                out.channel_count(),
+                out.frame_count(),
+                out.sample_rate()
+            ))
+            .into());
+        }
         out.clear();
+        let mut written = 0;
+        let result = self.render_streamed(progress, |block| {
+            let next = written + block.frame_count();
+            for channel in 0..RENDER_CHANNELS {
+                out.channel_mut(channel)[written..next].copy_from_slice(block.channel(channel));
+            }
+            written = next;
+            Ok::<(), std::convert::Infallible>(())
+        });
+        match result {
+            Ok(()) => Ok(()),
+            Err(OfflineStreamError::Render(error)) => Err(error),
+            Err(OfflineStreamError::Sink(never)) => match never {},
+        }
+    }
+
+    /// Renders one pass as bounded output blocks and hands each block to `sink` in order.
+    ///
+    /// No allocation in this method grows with [`Self::frames`]: the render scratch and the
+    /// output block are each at most the configured processing block size. This is the path for
+    /// long file exports. [`Self::render`] remains available when a caller genuinely needs the
+    /// complete audio in memory.
+    ///
+    /// The graph is silenced before the pass, exactly as it is for [`Self::render`]. Blocks cover
+    /// the requested output with latency lead-in removed; their frame counts sum to
+    /// [`Self::frames`]. An empty render calls no sink and still completes progress.
+    pub fn render_streamed<E>(
+        &mut self,
+        progress: &mut RenderProgress<'_>,
+        mut sink: impl FnMut(&AudioBuffer) -> Result<(), E>,
+    ) -> Result<(), OfflineStreamError<E>> {
+        self.graph.panic();
         progress.report(0.0);
         if self.total == 0 {
             progress.report(1.0);
@@ -397,7 +533,9 @@ impl OfflineRender {
             );
         }
         let mut scratch = AudioBuffer::new(RENDER_CHANNELS, self.block_frames, self.sample_rate);
+        let mut output = AudioBuffer::new(RENDER_CHANNELS, self.block_frames, self.sample_rate);
         let mut rendered = 0;
+        let mut emitted = 0;
         while rendered < self.end {
             // The range's end is a Stop, exactly as realtime playback stops there: the voices are
             // released and what runs on into the tail is the effects' ring-out — not the material
@@ -416,21 +554,25 @@ impl OfflineRender {
             // How much of this block is still lead-in, and where the rest lands in the file.
             let skip = self.latency.saturating_sub(rendered).min(frames);
             if skip < frames {
-                let at = rendered + skip - self.latency;
-                let count = (frames - skip).min(self.total - at);
+                let count = (frames - skip).min(self.total - emitted);
+                output.set_frame_count(count);
                 for channel in 0..RENDER_CHANNELS {
-                    out.channel_mut(channel)[at..at + count]
+                    output
+                        .channel_mut(channel)
                         .copy_from_slice(&scratch.channel(channel)[skip..skip + count]);
                 }
+                sink(&output).map_err(OfflineStreamError::Sink)?;
+                emitted += count;
             }
             rendered += frames;
             progress.report(rendered as f32 / self.end as f32);
             // Between blocks, which is the only place a render can be interrupted — and cheap
             // enough that the check costs nothing next to the block that just ran.
             if progress.is_cancelled() {
-                return Err(EngineError::RenderCancelled);
+                return Err(OfflineStreamError::Render(EngineError::RenderCancelled));
             }
         }
+        debug_assert_eq!(emitted, self.total);
         Ok(())
     }
 }
@@ -551,6 +693,73 @@ mod tests {
 
     const SAMPLE_RATE: f64 = 48_000.0;
 
+    #[test]
+    fn aggregate_audio_windows_make_an_offline_render_fail() {
+        let mut project = Project::new("Audio aggregate", SAMPLE_RATE);
+        let track = project.add_audio_track("Loops");
+        let source = project.add_audio_source(
+            "one frame",
+            auris_core::AssetPath::inside("Audio/one.wav"),
+            1,
+            SAMPLE_RATE,
+            2,
+        );
+        for _ in 0..7 {
+            let clip = project.add_audio_clip(track, source, Ticks::ZERO).unwrap();
+            project.audio_clip_mut(clip).unwrap().loop_end = Ticks(16_384);
+        }
+        let mut bank = AudioSourceBank::new();
+        bank.insert(source, Arc::new(AudioBuffer::stereo(1, SAMPLE_RATE)));
+
+        let error = render_project(
+            &project,
+            &bank,
+            &testkit::registry(),
+            &OfflineOptions::default().with_range(0, 1),
+        )
+        .expect_err("an incomplete export must not be reported as successful");
+
+        assert!(matches!(
+            error,
+            EngineError::ProjectAudioScheduleTooLarge {
+                windows: 114_688,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn aggregate_midi_events_make_an_offline_render_fail() {
+        let mut project = Project::new("MIDI aggregate", SAMPLE_RATE);
+        for index in 0..5 {
+            let track = project.add_instrument_track(format!("Part {index}"), testkit::TONE_ID);
+            let clip = project
+                .add_midi_clip(track, "Dense", Ticks::ZERO, Ticks(1))
+                .unwrap();
+            let clip = project.midi_clip_mut(clip).unwrap();
+            clip.notes = (0..1_000)
+                .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+                .collect();
+            clip.loop_end = Ticks(401);
+        }
+
+        let error = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default().with_range(0, 1),
+        )
+        .expect_err("an incomplete export must not be reported as successful");
+
+        assert!(matches!(
+            error,
+            EngineError::ProjectScheduleTooLarge {
+                events: 4_010_000,
+                ..
+            }
+        ));
+    }
+
     /// Four beats of held note at 120 BPM: 96 000 frames.
     fn four_beat_project() -> Project {
         let mut project = Project::new("Export", SAMPLE_RATE);
@@ -597,11 +806,11 @@ mod tests {
         )
         .expect("a render");
 
-        let mut first = render.buffer();
+        let mut first = render.buffer().expect("the first output buffer");
         render
             .render(&mut first, &mut RenderProgress::default())
             .expect("the first pass");
-        let mut again = render.buffer();
+        let mut again = render.buffer().expect("the second output buffer");
         render
             .render(&mut again, &mut RenderProgress::default())
             .expect("the second pass");
@@ -622,7 +831,7 @@ mod tests {
         )
         .expect("a render");
 
-        let mut out = render.buffer();
+        let mut out = render.buffer().expect("an output buffer");
         render.set_audible(&[false]);
         render
             .render(&mut out, &mut RenderProgress::default())
@@ -1106,6 +1315,130 @@ mod tests {
     }
 
     #[test]
+    fn the_buffered_render_budget_counts_checked_stereo_f32_bytes() {
+        let frames = MAX_BUFFERED_RENDER_BYTES / RENDER_CHANNELS / std::mem::size_of::<f32>();
+
+        assert_eq!(
+            buffered_render_bytes(frames).expect("the exact boundary must fit"),
+            MAX_BUFFERED_RENDER_BYTES
+        );
+    }
+
+    #[test]
+    fn a_buffered_render_one_frame_over_budget_is_rejected_before_allocation() {
+        let frames = MAX_BUFFERED_RENDER_BYTES / RENDER_CHANNELS / std::mem::size_of::<f32>() + 1;
+        let project = Project::new("Too large for memory", SAMPLE_RATE);
+        let error = render_project(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &OfflineOptions::default().with_range(0, frames as u64),
+        )
+        .expect_err("the complete buffer must be rejected");
+
+        assert!(matches!(
+            error,
+            EngineError::RenderBufferTooLarge {
+                frames: requested,
+                channels: RENDER_CHANNELS,
+                limit_bytes: MAX_BUFFERED_RENDER_BYTES,
+            } if requested == frames
+        ));
+    }
+
+    #[test]
+    fn buffered_render_size_arithmetic_overflow_is_rejected() {
+        let error = buffered_render_bytes(usize::MAX).expect_err("the byte count must not wrap");
+
+        assert!(matches!(
+            error,
+            EngineError::RenderBufferTooLarge {
+                frames: usize::MAX,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn direct_full_buffer_rendering_obeys_the_memory_budget() {
+        let frames = MAX_BUFFERED_RENDER_BYTES / RENDER_CHANNELS / std::mem::size_of::<f32>() + 1;
+        let project = Project::new("Too large for direct render", SAMPLE_RATE);
+        let options = OfflineOptions::default().with_range(0, frames as u64);
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &options,
+        )
+        .expect("streamable render geometry");
+        let mut small_buffer = AudioBuffer::stereo(1, SAMPLE_RATE);
+        let error = render
+            .render(&mut small_buffer, &mut RenderProgress::default())
+            .expect_err("direct rendering must enforce the complete-buffer budget");
+
+        assert!(matches!(error, EngineError::RenderBufferTooLarge { .. }));
+    }
+
+    #[test]
+    fn direct_render_refuses_a_wrong_output_layout_instead_of_panicking() {
+        let project = Project::new("Output layout", SAMPLE_RATE);
+        let options = OfflineOptions::default().with_range(0, 8);
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &options,
+        )
+        .expect("render geometry");
+
+        for mut output in [
+            AudioBuffer::new(1, 8, SAMPLE_RATE),
+            AudioBuffer::stereo(7, SAMPLE_RATE),
+            AudioBuffer::stereo(8, 44_100.0),
+        ] {
+            let error = render
+                .render(&mut output, &mut RenderProgress::default())
+                .expect_err("an incompatible caller buffer must be refused");
+            assert!(matches!(
+                error,
+                EngineError::Core(auris_core::CoreError::LayoutMismatch(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn the_twenty_four_hour_frame_limit_remains_streamable() {
+        let project = Project::new("Maximum stream", SAMPLE_RATE);
+        let options = OfflineOptions::default()
+            .with_range(0, MAX_RENDER_FRAMES)
+            .with_block_frames(1);
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &options,
+        )
+        .expect("streamable render geometry");
+
+        let result = render.render_streamed(&mut RenderProgress::default(), |_block| {
+            Err("stop after the first bounded block")
+        });
+
+        assert!(matches!(
+            result,
+            Err(OfflineStreamError::Sink(
+                "stop after the first bounded block"
+            ))
+        ));
+    }
+
+    #[test]
     fn a_long_but_plausible_range_is_still_accepted() {
         // A minute at 48 kHz: well inside the bound, and cheap enough to actually render.
         let project = four_beat_project();
@@ -1119,6 +1452,42 @@ mod tests {
         )
         .expect("render");
         assert_eq!(rendered.frame_count(), 2_880_000);
+    }
+
+    #[test]
+    fn a_long_streamed_render_never_builds_a_whole_output_buffer() {
+        let project = Project::new("Long stream", SAMPLE_RATE);
+        let options = OfflineOptions::default()
+            .with_range(0, 2_880_000)
+            .with_block_frames(65_536);
+        let mut render = OfflineRender::new(
+            &project,
+            &AudioSourceBank::new(),
+            &testkit::registry(),
+            &mut crate::graph::PlacedEffects::new(),
+            &mut crate::graph::PlacedInstruments::new(),
+            &options,
+        )
+        .expect("render geometry");
+        let mut received = 0;
+        let mut largest = 0;
+        render
+            .render_streamed(&mut RenderProgress::default(), |block| {
+                received += block.frame_count();
+                largest = largest.max(block.frame_count());
+                assert!(
+                    block
+                        .channels()
+                        .iter()
+                        .all(|channel| channel.capacity() <= 65_536),
+                    "a channel retained an allocation larger than one render block"
+                );
+                Ok::<(), std::convert::Infallible>(())
+            })
+            .expect("streamed render");
+
+        assert_eq!(received, 2_880_000);
+        assert_eq!(largest, 65_536);
     }
 
     #[test]

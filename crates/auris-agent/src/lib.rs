@@ -5,6 +5,7 @@
 
 #![warn(missing_docs)]
 
+use std::io::Read;
 use std::path::PathBuf;
 
 use auris_toolbox as toolbox;
@@ -321,7 +322,10 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 
 mod worker;
 use worker::Bridge;
-pub use worker::{Worker, list_models_background};
+pub use worker::{
+    HistorySnapshot, Worker, clear_history_background, list_models_background,
+    load_history_background,
+};
 mod compaction;
 mod memory;
 mod permissions;
@@ -538,7 +542,14 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
         .preamble(&preamble())
         .tool(SearchDocumentation)
         .tool(InternetSearch);
+    let edits_live_document = bridge.is_some();
     for definition in toolbox::live_agent::definitions() {
+        // The legacy unfiltered list opens every installed native provider. Keep its small
+        // built-in-only fallback for the standalone agent, but never offer the synchronous
+        // session implementation to the window bridge; focused search has a bounded worker path.
+        if !offer_live_definition(&definition.name, edits_live_document) {
+            continue;
+        }
         let tool_name = definition.name.clone();
         let bridge = bridge.clone();
         builder = builder.dynamic_tool(rig::tool::DynamicTool::new(
@@ -583,6 +594,10 @@ fn armed(builder: AgentBuilder, bridge: Option<Bridge>) -> Agent {
         ));
     }
     builder.build()
+}
+
+fn offer_live_definition(name: &str, edits_live_document: bool) -> bool {
+    !edits_live_document || name != "list_instruments"
 }
 
 /// Builds the agent for whichever door the options chose.
@@ -864,29 +879,116 @@ fn audio_media_type(path: &std::path::Path) -> Result<rig::message::AudioMediaTy
 /// grown a third again by the encoding before anything could object.
 const ATTACHMENT_CEILING: u64 = 25 * 1024 * 1024;
 
+/// Audio parts retained by one model request. The aggregate byte ceiling below is authoritative;
+/// this count separately rejects a long list of empty files before opening any of them.
+const ATTACHMENT_COUNT_LIMIT: usize = 8;
+
+/// Largest aggregate of raw audio attached to one user turn.
+const ATTACHMENT_TOTAL_CEILING: u64 = 25 * 1024 * 1024;
+
+fn attachment_too_large(path: &std::path::Path, observed: u64) -> String {
+    format!(
+        "{} is at least {} MB; audio over {} MB is refused before it is encoded — trim or \
+         convert it first",
+        path.display(),
+        observed / (1024 * 1024),
+        ATTACHMENT_CEILING / (1024 * 1024),
+    )
+}
+
+fn aggregate_attachments_too_large(limit: u64) -> String {
+    let mib = 1024 * 1024;
+    if limit.is_multiple_of(mib) {
+        format!(
+            "audio attachments together exceed the {} MiB request limit",
+            limit / mib
+        )
+    } else {
+        format!("audio attachments together exceed the {limit}-byte request limit")
+    }
+}
+
+fn read_audio_attachment(
+    path: &std::path::Path,
+    remaining: u64,
+    total_ceiling: u64,
+) -> Result<Vec<u8>, String> {
+    let file = std::fs::File::open(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|error| format!("could not inspect {}: {error}", path.display()))?
+        .len();
+    if size > ATTACHMENT_CEILING {
+        return Err(attachment_too_large(path, size));
+    }
+    if size > remaining {
+        return Err(aggregate_attachments_too_large(total_ceiling));
+    }
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size as usize)
+        .map_err(|_| format!("not enough memory to read {}", path.display()))?;
+    file.take(remaining.min(ATTACHMENT_CEILING) + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    if bytes.len() as u64 > ATTACHMENT_CEILING {
+        return Err(attachment_too_large(path, bytes.len() as u64));
+    }
+    if bytes.len() as u64 > remaining {
+        return Err(aggregate_attachments_too_large(total_ceiling));
+    }
+    Ok(bytes)
+}
+
 /// One user turn with instructions followed by base64-encoded, typed audio attachments.
 /// This order also matches the Gemma4 audio model's documented input format.
 fn framed_message(text: &str, audio: &[String]) -> Result<Message, String> {
-    let mut content = vec![rig::message::UserContent::text(text)];
+    framed_message_with_limits(
+        text,
+        audio,
+        ATTACHMENT_TOTAL_CEILING,
+        ATTACHMENT_COUNT_LIMIT,
+    )
+}
+
+fn framed_message_with_limits(
+    text: &str,
+    audio: &[String],
+    total_ceiling: u64,
+    count_limit: usize,
+) -> Result<Message, String> {
+    if audio.len() > count_limit {
+        return Err(format!(
+            "one request accepts at most {count_limit} audio attachments"
+        ));
+    }
+    let mut content = Vec::new();
+    content
+        .try_reserve_exact(audio.len().saturating_add(1))
+        .map_err(|_| "not enough memory to prepare audio attachments".to_string())?;
+    content.push(rig::message::UserContent::text(text));
+    let mut total = 0_u64;
     for path in audio {
         let path = std::path::Path::new(path);
         let media_type = audio_media_type(path)?;
-        let size = std::fs::metadata(path)
-            .map_err(|error| format!("could not read {}: {error}", path.display()))?
-            .len();
-        if size > ATTACHMENT_CEILING {
-            return Err(format!(
-                "{} is {} MB; audio over {} MB is refused before it is read — trim or \
-                 convert it first",
-                path.display(),
-                size / (1024 * 1024),
-                ATTACHMENT_CEILING / (1024 * 1024),
-            ));
-        }
-        let bytes = std::fs::read(path)
-            .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+        let remaining = total_ceiling.saturating_sub(total);
+        let bytes = read_audio_attachment(path, remaining, total_ceiling)?;
+        total = total
+            .checked_add(bytes.len() as u64)
+            .filter(|total| *total <= total_ceiling)
+            .ok_or_else(|| aggregate_attachments_too_large(total_ceiling))?;
         use base64::Engine;
-        let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let encoded_len = bytes
+            .len()
+            .checked_add(2)
+            .and_then(|length| length.checked_div(3))
+            .and_then(|length| length.checked_mul(4))
+            .ok_or_else(|| "audio attachment is too large to encode".to_string())?;
+        let mut data = String::new();
+        data.try_reserve_exact(encoded_len)
+            .map_err(|_| format!("not enough memory to encode {}", path.display()))?;
+        base64::engine::general_purpose::STANDARD.encode_string(&bytes, &mut data);
         content.push(rig::message::UserContent::audio(data, Some(media_type)));
     }
     Ok(Message::User { content })
@@ -917,10 +1019,18 @@ struct Reporter {
     bridge: Option<Bridge>,
 }
 
+/// The rig correlation id is present for every provider, including ones that omit their own id.
+fn call_event(event: ToolCall<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "event": "call", "call_id": event.internal_call_id,
+        "tool": event.tool_name, "args": event.args,
+    })
+}
+
 /// A skipped or refused call is a failed result to the host, even without an execution error.
 fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
     serde_json::json!({
-        "event": "result", "tool": event.tool_name,
+        "event": "result", "call_id": event.internal_call_id, "tool": event.tool_name,
         "ok": event.raw_result.is_success(),
         "text": full_text(event.presentation),
     })
@@ -929,9 +1039,7 @@ fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
         if let Some(bridge) = &self.bridge {
-            bridge.emit(serde_json::json!({
-                "event": "call", "tool": event.tool_name, "args": event.args,
-            }));
+            bridge.emit(call_event(event));
         }
         match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
             Ok(()) => ToolCallAction::Run,
@@ -1027,15 +1135,30 @@ async fn json_conversation(
     bridge: &Bridge,
     memory_path: Option<PathBuf>,
     fresh_history: bool,
+    preloaded_history: Option<HistorySnapshot>,
 ) -> Result<(), String> {
-    let mut memory = match &memory_path {
-        Some(path) if !fresh_history => bridge.history(|| memory::Memory::load(path))?,
-        _ => memory::Memory::default(),
+    let history_was_preloaded = preloaded_history.is_some();
+    let (mut memory, mut history_generation) = match (preloaded_history, &memory_path) {
+        (Some(snapshot), Some(_)) => {
+            let (memory, generation) = snapshot.into_parts();
+            (memory, Some(generation))
+        }
+        (Some(_), None) => {
+            return Err("A conversation snapshot requires a saved project".into());
+        }
+        (None, Some(path)) => {
+            let (memory, generation) = bridge.open_history(path, fresh_history)?;
+            (memory, Some(generation))
+        }
+        (None, None) => (memory::Memory::default(), None),
     };
-    if let Some(path) = &memory_path {
-        bridge.history(|| memory.save(path))?;
+    if !history_was_preloaded {
+        bridge.emit(serde_json::json!({
+            "event": "history",
+            "summary": memory.summary,
+            "turns": memory.turns,
+        }));
     }
-    bridge.emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
     bridge.emit(serde_json::json!({
         "event": "ready",
         "provider": match options.provider {
@@ -1068,8 +1191,8 @@ async fn json_conversation(
             let result = compaction::compact(options, &mut memory).await;
             history = memory.messages();
             if result.is_ok()
-                && let Some(path) = &memory_path
-                && let Err(error) = bridge.history(|| memory.save(path))
+                && let Some(generation) = history_generation.as_mut()
+                && let Err(error) = bridge.save_history(generation, &memory)
             {
                 bridge.emit(
                     serde_json::json!({"event":"notice", "message":format!("Summary was not saved: {error}")}),
@@ -1099,7 +1222,7 @@ async fn json_conversation(
                 serde_json::from_value::<auris_session::agent_policy::Policy>(policy.clone())
         {
             said = format!(
-                "[User-selected permission mode: {}. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
+                "[User-selected permission mode: {}. In read-only mode inspect without changing the document. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
                 policy.mode.name(),
                 policy.deny,
                 policy.allow
@@ -1136,8 +1259,8 @@ async fn json_conversation(
                     .unwrap_or_else(|| said.clone());
                 memory.push(&display, &answer);
                 history = memory.messages();
-                if let Some(path) = &memory_path
-                    && let Err(error) = bridge.history(|| memory.save(path))
+                if let Some(generation) = history_generation.as_mut()
+                    && let Err(error) = bridge.save_history(generation, &memory)
                 {
                     bridge.emit(
                         serde_json::json!({ "event": "notice", "message": format!("Conversation history was not saved: {error}") }),
@@ -1154,8 +1277,8 @@ async fn json_conversation(
             Err(message) => {
                 memory.push_interrupted(&said, &message);
                 history = memory.messages();
-                if let Some(path) = &memory_path
-                    && let Err(error) = bridge.history(|| memory.save(path))
+                if let Some(generation) = history_generation.as_mut()
+                    && let Err(error) = bridge.save_history(generation, &memory)
                 {
                     bridge.emit(
                         serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}),
@@ -1183,6 +1306,13 @@ async fn converse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn live_bridge_hides_the_legacy_synchronous_instrument_scan() {
+        assert!(!offer_live_definition("list_instruments", true));
+        assert!(offer_live_definition("search_instruments", true));
+        assert!(offer_live_definition("list_instruments", false));
+    }
 
     #[tokio::test]
     async fn a_stalled_model_request_becomes_an_error() {
@@ -1404,7 +1534,34 @@ mod tests {
             });
             assert_eq!(event["ok"], result.is_success());
             assert_eq!(event["text"], full_text(result.output()));
+            assert_eq!(event["call_id"], "internal_1");
         }
+    }
+
+    #[test]
+    fn tool_call_and_result_events_carry_the_same_rig_correlation_id() {
+        use rig::tool::ToolResult;
+
+        let call = call_event(ToolCall {
+            tool_name: "inspect_audio",
+            tool_call_id: Some("provider_1"),
+            internal_call_id: "internal_7",
+            args: r#"{"track":1}"#,
+        });
+        let result = ToolResult::success(ToolOutput::text("measured"));
+        let context = ToolContext::new();
+        let result = result_event(ToolResultEvent {
+            tool_name: "inspect_audio",
+            tool_call_id: Some("provider_1"),
+            internal_call_id: "internal_7",
+            args: r#"{"track":1}"#,
+            presentation: result.output(),
+            raw_result: &result,
+            tool_context: &context,
+        });
+
+        assert_eq!(call["call_id"], "internal_7");
+        assert_eq!(result["call_id"], call["call_id"]);
     }
 
     #[test]
@@ -1903,6 +2060,24 @@ mod tests {
             framed_message("How is this mix?", &[clip.display().to_string()]).unwrap_err();
         std::fs::remove_file(&clip).unwrap();
         assert!(refused.contains("25 MB"), "{refused}");
+    }
+
+    #[test]
+    fn attachment_count_and_aggregate_bytes_are_bounded_before_encoding() {
+        let missing = vec!["missing.wav".to_string(); 9];
+        let error = framed_message_with_limits("Listen", &missing, 10, 8).unwrap_err();
+        assert!(error.contains("at most 8"), "{error}");
+
+        let folder = tempfile::tempdir().unwrap();
+        let first = folder.path().join("first.wav");
+        let second = folder.path().join("second.wav");
+        std::fs::write(&first, b"123456").unwrap();
+        std::fs::write(&second, b"abcdef").unwrap();
+        let paths = vec![first.display().to_string(), second.display().to_string()];
+
+        let error = framed_message_with_limits("Listen", &paths, 10, 8).unwrap_err();
+        assert!(error.contains("together exceed"), "{error}");
+        assert!(framed_message_with_limits("Listen", &paths, 12, 8).is_ok());
     }
 
     #[test]

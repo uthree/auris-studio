@@ -100,9 +100,7 @@ class SourceSignalGenerator(nn.Module):
         phase_inc = f0_up / self.sample_rate
         phase = torch.cumsum(phase_inc, dim=-1)
         if self.random_phase and self.training:
-            phase = phase + torch.rand(
-                f0.size(0), 1, 1, device=f0.device, dtype=f0.dtype
-            )
+            phase = phase + torch.rand(f0.size(0), 1, 1, device=f0.device, dtype=f0.dtype)
         wrapped = torch.floor(phase)
         impulse = (wrapped - F.pad(wrapped, (1, 0))[..., :-1] > 0).to(f0.dtype)
 

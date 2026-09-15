@@ -60,7 +60,7 @@ wav = synth.synthesize(
     energy=[0.0] * 20 + [0.15] * 100 + [0.0] * 20,
     speaker="my_singer",
     noise_scale=0.667,
-)   # -> float32 numpy array at synth.sample_rate
+)  # -> float32 numpy array at synth.sample_rate
 ```
 
 The checkpoint carries the phoneme table and the speaker map, so nothing else
@@ -105,9 +105,17 @@ uv run python scripts/export_onnx.py \
     --checkpoint runs/base/checkpoints/last.ckpt --output runs/base/model.onnx
 ```
 
-This writes `model.onnx` plus a `model.json` sidecar and, unless `--no-verify`
-is given, checks the graph against PyTorch with onnxruntime at input sizes the
-trace never saw. Weight norm is folded into the weights as part of the export
+This stages `model.onnx` plus a `model.json` sidecar and, unless `--no-verify`
+is given, checks the staged graph against PyTorch with onnxruntime at input
+sizes the trace never saw. Only a successful pair replaces the public files;
+failed validation or publication restores the previous pair. Concurrent
+exports to one name are serialized, and both metadata copies carry an
+`export_generation` marker. Code that consumes the optional sidecar must read
+it through `auris_singer.export.read_export_metadata` (or perform the same
+embedded-marker comparison) so a copied or interrupted mixed pair is rejected
+instead of being used silently. The Rust host reads the self-contained ONNX
+metadata and does not consume the sidecar.
+Weight norm is folded into the weights as part of the export
 (`remove_weight_norm()` — a one-way operation, which is why the script loads
 its own copy of the checkpoint).
 
@@ -119,7 +127,7 @@ generator gets bit-identical renders. All inputs are required.
 | --- | --- | --- | --- |
 | `phonemes` | `(B, S)` | int64 | ids into the phoneme table in the metadata |
 | `phoneme_lengths` | `(B,)` | int64 | valid entries per row |
-| `durations` | `(B, S)` | int64 | frames per phoneme; each row sums to `T` |
+| `durations` | `(B, S)` | int64 | non-negative frames per phoneme; each row sums to `T`, at most 2,000 |
 | `f0` | `(B, T)` | float32 | Hz; 0 on unvoiced and silent frames |
 | `energy` | `(B, T)` | float32 | linear RMS, as in the score input above |
 | `voiced` | `(B, T)` | float32 | 1.0 on voiced frames |
@@ -174,10 +182,12 @@ Getting DirectML (which is what an AMD GPU uses on Windows) to accept it took
 two things, because that provider rejects with a bare "the parameter is
 incorrect" two spellings the CPU provider is happy with:
 
-* **`Reshape` with `allowzero=1` and a `-1` in its shape tensor.** That is
-  what a traced `view(b, t, -1)` becomes, and the attention blocks had one.
-  They now write the head dimension out (`n_heads * head_dim`), which is the
-  same reshape with nothing to infer.
+* **`Reshape` carrying `allowzero=1`.** Torch attaches it to attention views
+  assembled from symbolic `B` and `T` dimensions, but DirectML rejects the
+  attribute even when the shape contains no literal zero. `export_onnx`
+  removes it only when every component is a nonzero constant or is provably
+  the same symbolic dimension as the corresponding input axis. An unfamiliar
+  shape fails export instead of being rewritten with guessed semantics.
 * **`ConvTranspose` carrying an `output_padding` attribute — even `[0]`.**
   The generator's upsampling stages need a nonzero one whenever
   `kernel - rate` is odd, so it cannot simply be dropped at the source.

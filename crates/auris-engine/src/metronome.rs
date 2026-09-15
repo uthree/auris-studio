@@ -113,7 +113,8 @@ pub fn clicks_in_block(
         return;
     }
     let start = tempo_map.samples_to_ticks(Samples(position), sample_rate);
-    let end = tempo_map.samples_to_ticks(Samples(position + frames as u64), sample_rate);
+    let end =
+        tempo_map.samples_to_ticks(Samples(position.saturating_add(frames as u64)), sample_rate);
 
     let mut tick = first_beat_from(signatures, start);
     while tick < end {
@@ -149,14 +150,15 @@ pub fn count_in_clicks(count: CountIn, frames: usize, out: &mut Vec<Click>) {
         return;
     }
     let from = count.elapsed_frames();
-    let to = from + frames as u64;
+    let to = from.saturating_add(frames as u64);
     let mut beat = from.div_ceil(count.beat_frames);
-    while beat < count.beats as u64 && beat * count.beat_frames < to {
+    while beat < count.beats as u64 && beat.saturating_mul(count.beat_frames) < to {
         if out.len() == MAX_CLICKS {
             return;
         }
+        let beat_frame = beat.saturating_mul(count.beat_frames);
         out.push(Click {
-            frame: (beat * count.beat_frames - from) as usize,
+            frame: beat_frame.saturating_sub(from).min(frames as u64 - 1) as usize,
             accent: beat.is_multiple_of(count.per_bar.max(1) as u64),
         });
         beat += 1;
@@ -375,6 +377,24 @@ mod tests {
             &mut out,
         );
         out
+    }
+
+    #[test]
+    fn click_ranges_saturate_at_the_sample_domain_ceiling() {
+        let timeline = clicks(&SignatureMap::default(), u64::MAX - 3, 512);
+        assert!(
+            timeline.iter().all(|click| click.frame < 512),
+            "a ceiling conversion escaped the output block"
+        );
+
+        let count = count_clicks(CountIn::new(u32::MAX, u64::MAX, 4), 512);
+        assert_eq!(
+            count,
+            vec![Click {
+                frame: 0,
+                accent: true
+            }]
+        );
     }
 
     #[test]

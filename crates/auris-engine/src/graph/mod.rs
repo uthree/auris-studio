@@ -49,7 +49,8 @@ use auris_core::{AudioBuffer, ParamId};
 use automation::{RenderAutomation, drive_automation, resolve_automation};
 use latency::{longest_paths, plan_latency};
 use schedule::{
-    max_events_in_window, max_sounding_notes, resolve_audio_clip, schedule_clip, sort_events,
+    MAX_SCHEDULED_EVENTS_PER_PROJECT, max_events_in_window, max_sounding_notes, resolve_audio_clip,
+    schedule_clip, sort_events,
 };
 
 /// Channel count of the internal mix bus.
@@ -125,6 +126,11 @@ pub struct RenderGraph {
     pub(crate) master: RenderStrip,
     sample_rate: f64,
     max_block: usize,
+    /// First bounded-resource failure found while flattening the project.
+    ///
+    /// The affected track still has a silent source so this graph remains safe for realtime
+    /// playback. Offline callers take the error and refuse to export an incomplete mix instead.
+    resource_error: Option<crate::EngineError>,
     /// Where every track's signal is summed on the way to the master, one buffer per bus.
     ///
     /// Cleared at the start of every segment and filled as the routing order is walked, so a bus
@@ -205,12 +211,26 @@ pub(crate) struct MonitorTap {
     pub(crate) track: usize,
 }
 
+fn retain_resource_error(
+    retained: &mut Option<crate::EngineError>,
+    track: &str,
+    resource: &str,
+    error: crate::EngineError,
+) {
+    log::error!("track `{track}` is silent because its {resource} is unsafe: {error}");
+    if retained.is_none() {
+        *retained = Some(error);
+    }
+}
+
 impl RenderGraph {
     /// Builds a render graph for `project` at the project's own sample rate.
     ///
-    /// Never fails: a plugin id the registry does not know is logged and replaced by a silent
-    /// stand-in, so a project still opens when a plugin has been removed — and every track and
-    /// effect slot keeps its position, which is what command indices are addressed by.
+    /// Always returns a safe graph. A plugin id the registry does not know is logged and replaced
+    /// by a silent stand-in, so a project still opens when a plugin has been removed. A track
+    /// whose flattened schedule exceeds a bounded resource limit is also silent, and the first
+    /// such failure is available through [`Self::resource_error`]. Every track and effect slot
+    /// keeps its position, which is what command indices are addressed by.
     pub fn build(
         project: &Project,
         bank: &AudioSourceBank,
@@ -279,6 +299,9 @@ impl RenderGraph {
         };
 
         let mut tracks = Vec::with_capacity(project.tracks.len());
+        let mut scheduled_events_total = 0usize;
+        let mut scheduled_audio_windows_total = 0usize;
+        let mut resource_error = None;
         for (index, track) in project.tracks.iter().enumerate() {
             // `audible` carries only the solo resolution; the strip keeps its own mute so a
             // mute toggle is a command rather than a rebuild.
@@ -318,14 +341,26 @@ impl RenderGraph {
                         auris_core::Ticks::ZERO,
                         entry,
                     );
-                    resolve_audio_clip(
+                    if let Err(error) = resolve_audio_clip(
                         &take_clip,
                         bank,
                         &project.tempo_map,
                         sample_rate,
                         entry.sample_rate,
+                        scheduled_audio_windows_total,
                         &mut clips,
-                    );
+                    ) {
+                        retain_resource_error(
+                            &mut resource_error,
+                            &track.name,
+                            "audio loop",
+                            error,
+                        );
+                        clips.clear();
+                    } else {
+                        scheduled_audio_windows_total =
+                            scheduled_audio_windows_total.saturating_add(clips.len());
+                    }
                     let built = match instruments.remove(&track.id) {
                         Some(instrument) => Ok(instrument),
                         None => registry.create_instrument(&inner.instrument_id),
@@ -359,27 +394,57 @@ impl RenderGraph {
                         Ok(mut instrument) => {
                             instrument.load_state(instrument_state);
                             let mut events = Vec::new();
-                            for clip in clips {
+                            let schedule_error = clips.iter().find_map(|clip| {
                                 schedule_clip(
                                     clip,
                                     &project.tempo_map,
                                     &project.signatures,
                                     sample_rate,
                                     &mut events,
-                                );
+                                )
+                                .err()
+                            });
+                            match schedule_error {
+                                Some(error) => {
+                                    retain_resource_error(
+                                        &mut resource_error,
+                                        &track.name,
+                                        "event schedule",
+                                        error,
+                                    );
+                                    RenderSource::Silence
+                                }
+                                None => {
+                                    let project_events = (scheduled_events_total as u128)
+                                        .saturating_add(events.len() as u128);
+                                    if project_events > MAX_SCHEDULED_EVENTS_PER_PROJECT as u128 {
+                                        let error = crate::EngineError::ProjectScheduleTooLarge {
+                                            events: project_events,
+                                            limit: MAX_SCHEDULED_EVENTS_PER_PROJECT,
+                                        };
+                                        retain_resource_error(
+                                            &mut resource_error,
+                                            &track.name,
+                                            "event schedule",
+                                            error,
+                                        );
+                                        RenderSource::Silence
+                                    } else {
+                                        scheduled_events_total = project_events as usize;
+                                        sort_events(&mut events);
+                                        // Scheduled before the instrument is prepared rather than
+                                        // after, so `prepare` can be told how many events a block
+                                        // will carry. A hosted plugin keeps an event buffer of its
+                                        // own and sizes it here; the alternative is discovering the
+                                        // number in `process` and growing the buffer there, on the
+                                        // thread that may not allocate.
+                                        instrument.prepare(&prepare.with_max_block_events(
+                                            block_event_capacity(&events, max_block),
+                                        ));
+                                        RenderSource::Instrument { instrument, events }
+                                    }
+                                }
                             }
-                            sort_events(&mut events);
-                            // Scheduled before the instrument is prepared rather than after, so
-                            // that `prepare` can be told how many events a block will carry. A
-                            // hosted plugin keeps an event buffer of its own and sizes it here;
-                            // the alternative is discovering the number in `process` and growing
-                            // the buffer there, on the thread that may not allocate.
-                            instrument.prepare(
-                                &prepare.with_max_block_events(block_event_capacity(
-                                    &events, max_block,
-                                )),
-                            );
-                            RenderSource::Instrument { instrument, events }
                         }
                         Err(error) => {
                             log::warn!(
@@ -392,7 +457,7 @@ impl RenderGraph {
                 }
                 TrackKind::Audio(audio_track) => {
                     let mut clips = Vec::with_capacity(audio_track.clips.len());
-                    for clip in &audio_track.clips {
+                    let resolution_error = audio_track.clips.iter().find_map(|clip| {
                         // A clip's trim is counted in the frames of the file it came from, which
                         // is not necessarily the rate this graph renders at.
                         let source_rate = project
@@ -405,11 +470,25 @@ impl RenderGraph {
                             &project.tempo_map,
                             sample_rate,
                             source_rate,
+                            scheduled_audio_windows_total,
                             &mut clips,
+                        )
+                        .err()
+                    });
+                    if let Some(error) = resolution_error {
+                        retain_resource_error(
+                            &mut resource_error,
+                            &track.name,
+                            "audio loop",
+                            error,
                         );
+                        RenderSource::Silence
+                    } else {
+                        scheduled_audio_windows_total =
+                            scheduled_audio_windows_total.saturating_add(clips.len());
+                        clips.sort_by_key(|clip| clip.start_frame);
+                        RenderSource::Audio { clips }
                     }
-                    clips.sort_by_key(|clip| clip.start_frame);
-                    RenderSource::Audio { clips }
                 }
                 // A bus that somehow has no slot cannot happen — the slots are made from exactly
                 // the tracks that are buses — but silence is the right answer if it ever did.
@@ -570,6 +649,7 @@ impl RenderGraph {
             master,
             sample_rate,
             max_block,
+            resource_error,
             bus_inputs,
             bus_tracks,
             sidechain_taps,
@@ -590,6 +670,22 @@ impl RenderGraph {
             visualizer_scope: Arc::new(crate::scope::Scope::new()),
             monitors: Vec::new(),
         }
+    }
+
+    /// First bounded-resource failure found while flattening this graph.
+    ///
+    /// The affected track is safely silent. Callers that must not produce incomplete output,
+    /// such as an offline export, should treat this as a failure.
+    pub fn resource_error(&self) -> Option<&crate::EngineError> {
+        self.resource_error.as_ref()
+    }
+
+    /// Takes the first bounded-resource failure found while flattening this graph.
+    ///
+    /// Taking the diagnostic does not change the graph: the affected track remains safely
+    /// silent and the graph can still be handed to the realtime renderer.
+    pub fn take_resource_error(&mut self) -> Option<crate::EngineError> {
+        self.resource_error.take()
     }
 
     /// Points this graph at the scope the UI is reading.
@@ -716,7 +812,7 @@ impl RenderGraph {
             return;
         }
         let continuing = self.automation_from == Some(frame);
-        self.automation_from = Some(frame + frames as u64);
+        self.automation_from = Some(frame.saturating_add(frames as u64));
         let tick = self
             .tempo_map
             .samples_to_ticks(Samples(frame), self.sample_rate);
@@ -810,7 +906,7 @@ impl RenderGraph {
                 }
                 RenderSource::Audio { clips } | RenderSource::Sung { clips, .. } => clips
                     .iter()
-                    .map(|clip| clip.start_frame + clip.length)
+                    .map(|clip| clip.start_frame.saturating_add(clip.length))
                     .max()
                     .unwrap_or(0),
                 // A bus has nothing of its own, so it can never be what makes a project longer.

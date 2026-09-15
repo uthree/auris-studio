@@ -208,9 +208,9 @@ impl MuteFade {
     /// boundaries fell, which is exactly the dependence this is here to avoid.
     fn gain_at(&self, first: usize, opening: bool, offset: usize) -> f32 {
         let position = if opening {
-            first + offset
+            first.saturating_add(offset)
         } else {
-            first - offset
+            first.saturating_sub(offset)
         };
         position as f32 / self.length as f32
     }
@@ -225,9 +225,9 @@ impl MuteFade {
         };
         let moving = remaining.min(frames);
         self.position = if self.open {
-            self.position + moving
+            self.position.saturating_add(moving)
         } else {
-            self.position - moving
+            self.position.saturating_sub(moving)
         };
         FadeStep {
             first,

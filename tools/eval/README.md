@@ -48,9 +48,9 @@ equal-duration first-chorus excerpts with linear LUFS matching (FFmpeg required)
 `seed_listening.py` creates a local, initially blinded A-H listening page with blank human
 ratings, JSON import/export, and an optional reveal of seed/model measurements.
 
-See [the measured seed comparison](../../docs/reviews/seed-diversity-2026-09-10.md) for
-commands, conditions, results and the listening protocol. Full unmodified renders feed the
-learned models; level-matched excerpts feed listening. Human ratings are never inferred.
+Full unmodified renders feed the learned models; level-matched excerpts feed listening.
+Human ratings are never inferred. Generated manifests retain the conditions and artifact
+hashes needed to reproduce an individual run.
 
 ## Melody continuity
 
@@ -65,8 +65,7 @@ and their digest in the old editable project, then renders using the frozen old
 CLI. Both sides use linear -23 LUFS chorus excerpts; the experiment scores those
 same excerpts with Audiobox and centered-window CLAP.
 
-See [the continuity experiment](../../docs/reviews/melody-continuity-2026-09-10.md)
-for reproduction commands, artifacts, paired results and limitations.
+The generated manifest records the reproduction inputs, artifacts and paired measurements.
 
 ## Pitch and rhythm comparisons
 
@@ -98,6 +97,6 @@ under `target/agent-tools`.
 `audio_input.ps1` submits actual WAVs and blinded speech, tone, noise, silence
 and no-audio controls. `-AudioFile` adds music, and `-ContrastFile` adds A/B,
 B/A and identical A/A requests. It records responses without declaring that a
-successful upload proves hearing. The [interface trial](../../docs/reviews/local-model-interface-2026-09-07.md)
-documents the tested configurations and observed failures; the
-[local audio service](../audio-review/README.md) supplies an optional separate critic.
+successful upload proves hearing. Each run retains its tested configuration and observed
+failures under `target`; the [local audio service](../audio-review/README.md) supplies an
+optional separate critic.

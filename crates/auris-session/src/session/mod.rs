@@ -62,6 +62,7 @@ mod musical_analysis;
 mod notes;
 mod output_preview;
 mod perform;
+pub(crate) mod plugin_discovery;
 mod punch;
 mod readiness;
 mod recognition;
@@ -83,7 +84,11 @@ mod fixtures;
 
 pub use accompany::{AccompanyReport, DEFAULT_PARTS};
 pub use analysis::{MixAnalysis, SectionLoudness, TrackLoudness};
-pub use autosave::{AUTOSAVE_INTERVAL, AutosaveState, should_autosave};
+pub use autosave::{
+    AUTOSAVE_INTERVAL, AutosaveJob, AutosaveResult, AutosaveState, DiscardRecoveryJob,
+    DiskWatchJob, DiskWatchResult, RECOVERY_DIR_VAR, RecoveryCleanupJob, RecoveryJob,
+    RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, recovery_dir, should_autosave,
+};
 pub use chord_preview::{ChordPreview, ChordPreviewJob};
 pub use clipboard::{Clipboard, CopiedClip, CopiedContent};
 pub use compose::{composed_gain_db, kit_trim_db};
@@ -92,7 +97,11 @@ pub use drum_analysis::{
     DrumKitAnalysis, DrumProbeFont, DrumProbeRequest, DrumProbeSample, DrumScanOptions,
     DrumVoiceAnalysis, probe_drum_request,
 };
-pub use files::{LoadedFont, decode_audio, read_soundfont};
+pub use files::{
+    CollectAssetsJob, CollectAssetsResult, LoadedFont, MidiExportJob, MidiExportResult,
+    MidiImportJob, MidiImportResult, OpenProjectJob, OpenProjectResult, SaveJob, SaveResult,
+    decode_audio, read_soundfont,
+};
 pub use hosted::PluginWindow;
 pub use levels::{
     BalanceReport, CEILING_DB, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
@@ -107,6 +116,8 @@ pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
 pub use output_preview::prepare_output_preview;
+pub use plugin_discovery::InstalledPluginFiles;
+pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use recognition::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
@@ -118,8 +129,9 @@ pub use reference_match::{
 };
 pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{
-    LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerTakeState,
-    SingerVoiceInfo, SungFrames, take_fingerprint,
+    LYRIC_CONTINUATION, MIN_PHONEME_SECONDS, PREVIEW_NOTE_SECONDS, SingPlan, SingerFramesExportJob,
+    SingerFramesExportResult, SingerLandingJob, SingerLandingResult, SingerTakeState,
+    SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, SungFrames, take_fingerprint,
 };
 pub use spectrogram::{RenderedSpectrogramJob, SpectrogramJob};
 
@@ -142,8 +154,8 @@ use auris_core::param::ParamDescriptor;
 use auris_core::time::{Seconds, Ticks};
 use auris_core::{AudioSourceBank, PluginRegistry, Project, SourceId, TrackId};
 use auris_engine::{
-    AudioDevice, AudioDeviceInfo, AudioSettings, EngineCommand, EngineHandle, MeterBank,
-    RenderGraph, start_audio,
+    AudioDevice, AudioDeviceInfo, AudioSettings, EngineCommand, EngineError, EngineHandle,
+    MeterBank, RenderGraph, start_audio,
 };
 use auris_gpu::{GpuContext, WaveformPeaks};
 use auris_io::SoundFont;
@@ -323,6 +335,10 @@ pub struct Session {
     registry: Arc<PluginRegistry>,
     device: Option<AudioDevice>,
     engine: EngineHandle,
+    /// First resource limit hit by the most recently built live graph, until a frontend takes it.
+    graph_resource_error: Option<EngineError>,
+    /// Input/output settings that could not be bridged by the bounded software-monitor ring.
+    monitor_configuration_error: Option<EngineError>,
     gpu: Option<Arc<GpuContext>>,
     /// What the audio backend was asked for, so a settings panel can show it back.
     audio: AudioPreferences,
@@ -352,8 +368,9 @@ pub struct Session {
     /// Private working storage for unsaved assets and the autosave recovery snapshot.
     ///
     /// This stays separate from `path`: generated audio has somewhere to live from the first
-    /// edit, while Save and the title bar still know no permanent destination was chosen.
-    work_dir: tempfile::TempDir,
+    /// edit, while Save and the title bar still know no permanent destination was chosen. A
+    /// registered workspace also holds its cross-process recovery lease here.
+    work_dir: autosave::SessionWorkspace,
     dirty: bool,
     /// The exact document state most recently read from or written to disk.
     saved_project: Project,
@@ -447,6 +464,8 @@ pub struct Session {
     /// worker thread while the session keeps answering commands. Immutable metadata sits beside
     /// that handle so selecting a speaker never waits for inference; see [`singer`].
     voices: HashMap<PathBuf, singer::LoadedVoice>,
+    /// Per-path worker generations preventing an older cold load from replacing a newer one.
+    voice_load_generations: HashMap<PathBuf, u64>,
     /// Where those models run their inference — the settings' choice, applied to every load.
     ///
     /// Kept beside the cache it governs: changing it empties [`Self::voices`], which is what
@@ -557,10 +576,7 @@ impl Session {
     /// Never fails for want of audio hardware: the engine falls back to running silently, so a
     /// machine with no output device still edits and exports.
     pub fn new(options: SessionOptions) -> Result<Self, SessionError> {
-        let work_dir = tempfile::Builder::new()
-            .prefix("auris-studio-")
-            .tempdir()
-            .map_err(|error| auris_io::IoError::from_fs(&std::env::temp_dir(), error))?;
+        let work_dir = autosave::create_session_workspace(options.autosave)?;
         let fonts = SoundFontBank::shared();
         let registry = default_registry(Arc::clone(&fonts));
         let project = Project::new("Untitled", options.sample_rate);
@@ -608,6 +624,8 @@ impl Session {
             registry,
             device: Some(device),
             engine,
+            graph_resource_error: None,
+            monitor_configuration_error: None,
             gpu,
             audio,
             headless: !options.audio,
@@ -641,6 +659,7 @@ impl Session {
             japanese: None,
             shipped_dictionary: options.shipped_dictionary,
             voices: HashMap::new(),
+            voice_load_generations: HashMap::new(),
             acceleration: auris_singer::Acceleration::default(),
             agent_instruments: agent_instruments::PluginCatalog::default(),
             sound_scope: crate::transient_id::transient_id("session"),
@@ -775,7 +794,17 @@ impl Session {
             if let Err(error) = self.open_input() {
                 log::warn!("could not reopen the input device: {error}");
                 self.monitored.clear();
+            } else if let Some(error) = self
+                .input
+                .as_ref()
+                .and_then(auris_engine::Capture::monitor_error)
+            {
+                log::warn!("could not restore input monitoring: {error}");
+                self.monitor_configuration_error = Some(error);
+                self.monitored.clear();
+                self.close_input_if_idle();
             } else {
+                self.monitor_configuration_error = None;
                 self.publish_monitors();
             }
         }
@@ -793,6 +822,22 @@ impl Session {
     /// latency out from under the delay compensation.
     pub fn poll(&mut self) {
         self.engine.collect_garbage();
+        let output_notices = self.engine.take_stream_notices();
+        if output_notices.recoverable {
+            log::warn!("the audio output backend reported a recoverable stream notice");
+        }
+        if output_notices.fatal {
+            log::error!("the audio output backend reported a fatal stream error");
+        }
+        if let Some(input) = self.input.as_ref() {
+            let input_notices = input.take_stream_notices();
+            if input_notices.recoverable {
+                log::warn!("the audio input backend reported a recoverable stream notice");
+            }
+            if input_notices.fatal {
+                log::error!("the audio input backend reported a fatal stream error");
+            }
+        }
         if let Some(device) = &mut self.device
             && !device.is_running()
         {
@@ -812,10 +857,13 @@ impl Session {
         // bar and invalidates answers rendered from its old sound. All three are things the
         // plugin says by setting a flag and nothing else. Service both formats on every tick.
         let hosted_changed = self.hosted.service();
-        let vst3_changed = self.vst3.service();
+        let (vst3_changed, rebuild_vst3) = self.vst3.service(&mut self.project);
         if hosted_changed || vst3_changed {
             self.dirty = true;
             self.revision = self.revision.wrapping_add(1);
+        }
+        if rebuild_vst3 {
+            self.invalidate_graph();
         }
     }
 
@@ -914,6 +962,30 @@ impl Session {
     /// makes it ask an expensive question again. Monotonic within a session, meaningless across two.
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// First bounded-resource failure in the most recently built live render graph.
+    ///
+    /// Playback remains safe because the affected track is silent. A frontend can inspect this
+    /// before deciding when and how to present the failure.
+    pub fn graph_resource_error(&self) -> Option<&EngineError> {
+        self.graph_resource_error.as_ref()
+    }
+
+    /// Takes the pending bounded-resource failure from the live render graph.
+    ///
+    /// This is a one-shot notification for frontends. A later rebuild records its own result,
+    /// clearing a stale failure when the project is once again renderable within the limits.
+    pub fn take_graph_resource_error(&mut self) -> Option<EngineError> {
+        self.graph_resource_error.take()
+    }
+
+    /// Takes a pending software-monitor configuration failure.
+    ///
+    /// Recording stays available and the incompatible monitor is switched off. This one-shot
+    /// notification lets a frontend explain that automatic change outside the audio callbacks.
+    pub fn take_monitor_configuration_error(&mut self) -> Option<EngineError> {
+        self.monitor_configuration_error.take()
     }
 
     /// Waveform peaks for an imported source, once it has been analysed.
@@ -1041,7 +1113,7 @@ impl Session {
         }
         let edit = self.history.undo_edit()?;
         if edit == Edit::Compose {
-            self.collect_hosted_state();
+            self.collect_hosted_state().ok()?;
         }
         let project = self.history.undo(&self.project)?;
         if edit == Edit::Compose {
@@ -1068,7 +1140,7 @@ impl Session {
         }
         let edit = self.history.redo_edit()?;
         if edit == Edit::Compose {
-            self.collect_hosted_state();
+            self.collect_hosted_state().ok()?;
         }
         let project = self.history.redo(&self.project)?;
         if edit == Edit::Compose {
@@ -1218,6 +1290,7 @@ impl Session {
             self.engine.max_block(),
             rate,
         );
+        self.graph_resource_error = graph.take_resource_error();
         graph.set_scope(Arc::clone(&self.scope));
         graph.set_visualizer_scope(Arc::clone(&self.visualizer_scope));
         // Re-attached rather than remembered by the graph, for the same reason the scope is: this
@@ -1407,7 +1480,9 @@ mod tests {
                 .is_err()
         );
         assert!(session.resize_note(ghost, 0, Ticks(960)).is_err());
-        session.move_clips(&[(ghost, Ticks::ZERO)], Ticks(960));
+        session
+            .move_clips(&[(ghost, Ticks::ZERO)], Ticks(960))
+            .unwrap();
         session.remove_effect(slot);
         session.set_effect_enabled(Some(track), slot, false);
         session.move_effect(Some(track), slot, 1);
@@ -1445,7 +1520,9 @@ mod tests {
             .unwrap();
         session.forget_history();
 
-        session.move_clips(&[(clip, Ticks::ZERO)], -Ticks::QUARTER);
+        session
+            .move_clips(&[(clip, Ticks::ZERO)], -Ticks::QUARTER)
+            .unwrap();
         session
             .move_notes(clip, &[(0, Ticks::ZERO, 0)], -Ticks::QUARTER, -100)
             .unwrap();
@@ -1598,7 +1675,9 @@ mod tests {
         let steps = session.history.can_undo();
 
         session.begin_transaction(Edit::MoveClip);
-        session.move_clips(&[(clip, Ticks::ZERO)], Ticks::QUARTER);
+        session
+            .move_clips(&[(clip, Ticks::ZERO)], Ticks::QUARTER)
+            .unwrap();
         assert_ne!(session.midi_clip(clip).unwrap().start, Ticks::ZERO);
 
         assert!(session.revert_transaction());
@@ -1703,17 +1782,21 @@ mod tests {
 
         // A drag first, which is what makes the second half of this test worth writing.
         session.begin_transaction(Edit::MoveClip);
-        session.move_clips(&[(clip, Ticks::ZERO)], Ticks(480));
+        session
+            .move_clips(&[(clip, Ticks::ZERO)], Ticks(480))
+            .unwrap();
         assert!(session.end_transaction());
         session.forget_history();
         session.begin_transaction(Edit::MoveClip);
-        session.move_clips(&[(clip, Ticks(480))], Ticks(480));
+        session
+            .move_clips(&[(clip, Ticks(480))], Ticks(480))
+            .unwrap();
         assert!(session.end_transaction());
 
         // Then a run of nudges, close together, all of them one step.
         for _ in 0..6 {
             let at = session.clip_start(clip).unwrap();
-            session.move_clips(&[(clip, at)], Ticks(240));
+            session.move_clips(&[(clip, at)], Ticks(240)).unwrap();
         }
         assert_eq!(session.clip_start(clip), Some(Ticks(960 + 6 * 240)));
 

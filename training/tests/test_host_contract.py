@@ -37,6 +37,7 @@ import pytest
 from auris_singer import host, host_eval, phoneme_levels
 from auris_singer.export import FORMAT_VERSION, METADATA_KEY, metadata_block
 from auris_singer.infer import Synthesizer
+from auris_singer.model import MAX_INFERENCE_FRAMES
 from auris_singer.phoneme_durations import METADATA_FIELD, summarize
 from auris_singer.text.ipa import (
     IPA_SYMBOLS,
@@ -101,9 +102,16 @@ def rust_f32_const(source: str, name: str) -> float:
     return float(found.group(1))
 
 
+def rust_usize_const(source: str, name: str) -> int:
+    """The value of a ``pub const NAME: usize = N;`` with digit separators."""
+    found = re.search(rf"pub const {name}: usize = ([0-9_]+)", rust(source))
+    assert found, f"no `pub const {name}: usize` in {source} — the parser or constant has moved"
+    return int(found.group(1).replace("_", ""))
+
+
 def rust_str_array(source: str, name: str) -> list[str]:
     """The items of a ``const NAME: [&str; N] = [...];``, checked against ``N``."""
-    found = re.search(rf'const {name}: \[&str; (\d+)\] = \[(.*?)\];', rust(source), re.S)
+    found = re.search(rf"const {name}: \[&str; (\d+)\] = \[(.*?)\];", rust(source), re.S)
     assert found, f"no `const {name}: [&str; N]` in {source} — the parser or the array has moved"
     declared, items = int(found.group(1)), re.findall(r'"([^"]*)"', found.group(2))
     assert len(items) == declared, (
@@ -191,6 +199,10 @@ def test_the_format_version_is_the_same_on_both_sides():
     )
 
 
+def test_the_inference_frame_limit_matches_the_hosts_chunk_limit():
+    assert MAX_INFERENCE_FRAMES == rust_usize_const(SCORE_RS, "MAX_CHUNK_FRAMES")
+
+
 def test_a_real_export_carries_every_field_the_host_requires(phoneme_table):
     """The block an export ships, held against the fields the host demands.
 
@@ -202,6 +214,7 @@ def test_a_real_export_carries_every_field_the_host_requires(phoneme_table):
     model = SimpleNamespace(
         sample_rate=48_000,
         hop_length=256,
+        spec_channels=1025,
         inter_channels=192,
         n_speakers=1,
         generator=SimpleNamespace(source_generator=SimpleNamespace(f0_min=40.0)),

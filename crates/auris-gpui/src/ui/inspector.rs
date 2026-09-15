@@ -15,7 +15,8 @@ use crate::theme::Metrics;
 use crate::theme::Theme;
 use crate::ui::icons::Icon;
 use crate::ui::plugin_editor::{
-    ParamControl, button_row, control_for, next_discrete_value, slider_row, value_after_drag,
+    ParamControl, button_row, control_for, next_discrete_value, slider_keyboard_step, slider_row,
+    value_after_drag,
 };
 use crate::ui::plugin_window::PluginSubject;
 use crate::ui::scrollbars::ScrollPanel;
@@ -440,6 +441,7 @@ impl AurisApp {
                 // The label again for the menu, which the control itself consumes.
                 let menu_label = label.clone();
                 let value_text = self.format_param(descriptor, value);
+                let keyboard_descriptor = descriptor.clone();
                 match control_for(descriptor) {
                     ParamControl::Slider => slider_row(
                         element_id,
@@ -464,6 +466,15 @@ impl AurisApp {
                                 fine: event.modifiers.shift,
                             });
                         }),
+                        cx.listener(
+                            move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
+                                this.session.set_param(
+                                    target,
+                                    keyboard_descriptor.denormalize(event.fraction),
+                                );
+                                cx.notify();
+                            },
+                        ),
                     )
                     .debug_selector(move || format!("{id_prefix}-param-{param_id}"))
                     .on_mouse_down(
@@ -541,6 +552,7 @@ impl AurisApp {
         let theme = self.theme.clone();
         let descriptor = Session::mixer_descriptor(target)
             .unwrap_or_else(|| ParamDescriptor::new(0u32, "value", "value", 0.0, 1.0, 0.0));
+        let keyboard_descriptor = descriptor.clone();
         crate::ui::widgets::value_slider(
             id,
             label,
@@ -548,6 +560,7 @@ impl AurisApp {
             descriptor.normalize(value),
             theme.accent,
             crate::ui::plugin_editor::slider_fill_for(&descriptor),
+            slider_keyboard_step(&descriptor),
             &theme,
             cx.listener(move |this, event: &MouseDownEvent, _, cx| {
                 if event.click_count >= 2 {
@@ -562,6 +575,13 @@ impl AurisApp {
                     fine: event.modifiers.shift,
                 });
             }),
+            cx.listener(
+                move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
+                    this.session
+                        .set_param(target, keyboard_descriptor.denormalize(event.fraction));
+                    cx.notify();
+                },
+            ),
         )
         .on_mouse_down(
             gpui::MouseButton::Right,

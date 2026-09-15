@@ -29,7 +29,6 @@ use auris_gpu::analysis::analyze_loudness;
 use auris_gpu::analysis::analyze_loudness_cpu;
 
 use crate::error::SessionError;
-use crate::history::Edit;
 
 use super::Session;
 
@@ -192,27 +191,14 @@ impl Session {
     /// predicted the answer instead of measuring it would be claiming the one thing this whole
     /// pass exists to stop anybody claiming.
     pub fn balance_levels(&mut self) -> Result<BalanceReport, SessionError> {
-        self.begin_transaction(Edit::BalanceLevels);
-        let balanced = self.balance_now();
-        self.finish_balance(balanced)
-    }
-
-    /// Closes the balance transaction, restoring every fader when any later measurement failed.
-    fn finish_balance(
-        &mut self,
-        balanced: Result<BalanceReport, SessionError>,
-    ) -> Result<BalanceReport, SessionError> {
-        match balanced.is_ok() {
-            true => {
-                self.end_transaction();
-            }
-            // Earlier faders may already have moved before a later stem or the full mix failed.
-            // Put both the document and the live graph back, and leave no history step behind.
-            false => {
-                self.revert_transaction();
+        let mut job = self.begin_balance_levels_job();
+        loop {
+            let result = job.run(&mut auris_engine::RenderProgress::default())?;
+            match self.continue_composed_balance(result)? {
+                ComposeBalanceStep::Pending(next) => job = next,
+                ComposeBalanceStep::Complete(report) => return Ok(report),
             }
         }
-        balanced
     }
 
     /// The balance pass itself, with no step of its own in the history.
@@ -222,7 +208,7 @@ impl Session {
     /// they had before it, not the same piece with the faders where the composer first guessed
     /// them.
     pub(super) fn balance_now(&mut self) -> Result<BalanceReport, SessionError> {
-        let mut job = self.begin_balance_job();
+        let mut job = self.begin_balance_job(None);
         loop {
             let result = job.run(&mut auris_engine::RenderProgress::default())?;
             match self.continue_composed_balance(result)? {
@@ -300,24 +286,23 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_balance_restores_faders_already_written() {
+    fn a_detached_balance_worker_never_writes_live_faders_or_history() {
         use super::super::SessionOptions;
 
         let mut session = Session::new(SessionOptions::headless()).expect("a headless session");
-        let track = session.project.add_audio_track("Part");
-        session.begin_transaction(Edit::BalanceLevels);
-        let before = session.project().track(track).unwrap().mixer.gain_db;
-        session.write_fader(track, before + 6.0);
+        session.project.add_audio_track("Part");
+        session.forget_history();
+        let before = session.project().clone();
+        let job = session.begin_balance_levels_job();
+        let cancel = std::sync::atomic::AtomicBool::new(true);
 
-        let failed = session.finish_balance(Err(SessionError::UnknownTrack(u64::MAX)));
+        let _detached = job.run(&mut auris_engine::RenderProgress::default().cancelled_by(&cancel));
 
-        assert!(failed.is_err());
-        assert_eq!(
-            session.project().track(track).unwrap().mixer.gain_db,
-            before,
-            "the partial fader move survived the error"
+        assert_eq!(session.project(), &before);
+        assert!(
+            !session.can_undo(),
+            "a worker-only balance left a history step"
         );
-        assert!(!session.can_undo(), "a failed balance left a history step");
     }
 
     #[test]
@@ -449,6 +434,17 @@ mod tests {
             );
         }
         assert_eq!(report.short_by_db(), 0.0, "nothing ran out of fader");
+    }
+
+    #[test]
+    fn an_explicit_balance_is_one_reversible_history_step() {
+        let (mut session, _) = balanced();
+        let balanced = session.project().clone();
+
+        assert_eq!(session.undo(), Some(crate::Edit::BalanceLevels));
+        assert_ne!(session.project(), &balanced);
+        assert_eq!(session.redo(), Some(crate::Edit::BalanceLevels));
+        assert_eq!(session.project(), &balanced);
     }
 
     #[test]

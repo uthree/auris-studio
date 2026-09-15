@@ -7,7 +7,8 @@
 
 use std::ops::Range;
 
-use auris_i18n::{Key, messages};
+use auris_i18n::{Key, Language, messages};
+use auris_session::RecoverySnapshot;
 use auris_session::prelude::*;
 
 use gpui::{
@@ -19,7 +20,7 @@ use crate::app::AurisApp;
 use crate::theme::{Metrics, Theme};
 use crate::ui::paint;
 use crate::ui::text_field::TextField;
-use crate::ui::widgets::{ButtonStyle, button};
+use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button, button_enabled};
 
 /// What a prompt is editing.
 ///
@@ -506,7 +507,7 @@ pub enum PendingAction {
 pub enum Answer {
     /// The safe one — Save, or Replace.
     Confirm,
-    /// The destructive one — Discard. Only [`Question::Unsaved`] offers it.
+    /// The destructive one — discard unsaved changes or a recovery snapshot.
     Deny,
 }
 
@@ -520,10 +521,17 @@ pub enum Question {
         /// Invalidates a notice after cancellation or document replacement.
         generation: u64,
     },
+    /// Permanently discard the Agent Panel's saved and visible conversation history.
+    NewAgentConversation,
     /// Something is about to destroy unsaved work.
     ///
     /// Three answers: save first, throw the changes away, or do neither.
     Unsaved(PendingAction),
+    /// Work preserved after the previous session ended unexpectedly.
+    ///
+    /// Three answers: restore it as an unsaved project, permanently delete this recovery copy,
+    /// or leave it untouched for the next launch.
+    Recovery(RecoverySnapshot),
     /// Saving would replace a project already in that folder.
     ///
     /// Two answers, because there is no third thing to do with it. The path is the one that
@@ -538,6 +546,11 @@ pub enum Question {
         /// opening, and dropping it here silently un-gave the command.
         then: Option<PendingAction>,
     },
+    /// Stops scanning one machine-local plugin search folder.
+    ///
+    /// The path, rather than a row index, keeps the answer attached to the folder named in the
+    /// question even if another asynchronous settings change rearranges the list first.
+    RemovePluginPath(std::path::PathBuf),
 }
 
 /// What an open sheet is for.
@@ -692,6 +705,24 @@ impl Prompt {
     }
 }
 
+/// User-facing project name for one recovery entry, with a useful damaged-metadata fallback.
+pub(crate) fn recovery_name(snapshot: &RecoverySnapshot, language: Language) -> String {
+    snapshot
+        .project_name()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| Key::RecoveryUntitled.get(language).to_owned())
+}
+
+/// The focused recovery decision for one registry entry.
+pub(crate) fn recovery_prompt(snapshot: &RecoverySnapshot, language: Language) -> Prompt {
+    Prompt::ask(
+        messages::recover_title(language, &recovery_name(snapshot, language)),
+        Question::Recovery(snapshot.clone()),
+    )
+}
+
 /// Font size of the edited text.
 pub(crate) const TEXT_SIZE: Pixels = px(13.0);
 /// Height of the field's box.
@@ -700,6 +731,17 @@ const FIELD_HEIGHT: Pixels = px(28.0);
 pub(crate) const FIELD_PADDING: Pixels = px(8.0);
 
 impl AurisApp {
+    /// Offers the newest queued recovery snapshot without consuming it.
+    ///
+    /// Only a successful Recover or Discard removes an entry from durable storage. Cancel closes
+    /// the sheet and deliberately leaves this queue alone, so the same work is offered next time.
+    pub(crate) fn offer_next_recovery(&mut self) {
+        let Some(snapshot) = self.recovery_queue.front() else {
+            return;
+        };
+        self.open_prompt(recovery_prompt(snapshot, self.language));
+    }
+
     /// Opens a rename sheet, replacing any open menu.
     pub(crate) fn open_prompt(&mut self, prompt: Prompt) {
         self.menu = None;
@@ -1202,8 +1244,19 @@ impl AurisApp {
         }
     }
 
+    /// Chooses a question's explicitly destructive answer.
+    fn deny_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Prompt {
+            body: PromptBody::Ask(question),
+            ..
+        }) = self.prompt.take()
+        {
+            self.answer(question, Answer::Deny, window, cx);
+        }
+    }
+
     /// Reports a rejected answer where it can be corrected, above any underlying song sheet.
-    fn reject_prompt(&mut self, error: impl Into<String>) {
+    pub(crate) fn reject_prompt(&mut self, error: impl Into<String>) {
         let error = error.into();
         if let Some(prompt) = self.prompt.as_mut() {
             prompt.error = Some(error.clone().into());
@@ -1261,24 +1314,50 @@ impl AurisApp {
                 self.choose_mixture_model(clip, generation, cx)
             }
             (Question::Muscriptor { .. }, Answer::Deny) => {}
+            (Question::NewAgentConversation, Answer::Confirm) => {
+                self.start_new_agent_conversation(cx)
+            }
+            (Question::NewAgentConversation, Answer::Deny) => {}
             // Save first, then carry on — but only if the save worked. A disk that is full must
             // not be the thing that throws the afternoon away.
             (Question::Unsaved(next), Answer::Confirm) => self.save_then(next, window, cx),
             (Question::Unsaved(next), Answer::Deny) => self.run_pending(next, window, cx),
-            (Question::Replace { chosen, then, .. }, _) => {
-                match self.session.save_as_replacing(&chosen) {
-                    Ok(report) => {
-                        self.report_save(&report);
-                        // The command the user actually gave — quit, close, new, open —
-                        // finishes now, exactly as it would have had the name not collided.
-                        if let Some(next) = then {
-                            self.run_pending(next, window, cx);
-                        }
+            (Question::Recovery(snapshot), Answer::Confirm) => self.recover_project(snapshot, cx),
+            (Question::Recovery(snapshot), Answer::Deny) => {
+                self.discard_recovery(snapshot, cx);
+            }
+            (Question::Replace { chosen, then, .. }, Answer::Confirm) => {
+                self.cancel_autosave_task();
+                match self.session.begin_save_as_replacing(&chosen) {
+                    Ok(job) => self.start_save_job(job, Some(chosen), then, window, cx),
+                    Err(error) => {
+                        self.set_failed_status(self.failure(Key::CmdSave, &error));
                     }
-                    Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
                 }
             }
+            (Question::Replace { .. }, Answer::Deny) => {}
+            (Question::RemovePluginPath(path), Answer::Confirm) => {
+                let shown = path.display().to_string();
+                match self.forget_plugin_path(&path) {
+                    Ok(true) => {
+                        self.set_status(messages::plugin_folder_removed(self.language(), &shown));
+                    }
+                    Ok(false) => {}
+                    Err(error) => self.reject_plugin_path_removal(path, error),
+                }
+            }
+            (Question::RemovePluginPath(_), Answer::Deny) => {}
         }
+    }
+
+    /// Restores the exact folder-removal question with its persistence error in the sheet.
+    fn reject_plugin_path_removal(&mut self, path: std::path::PathBuf, error: SessionError) {
+        let shown = path.display().to_string();
+        self.open_prompt(Prompt::ask(
+            messages::remove_plugin_folder_title(self.language(), &shown),
+            Question::RemovePluginPath(path),
+        ));
+        self.reject_prompt(self.failure(Key::BrowserRemovePluginFolder, &error));
     }
 
     /// Saves, and does `next` if that worked.
@@ -1289,13 +1368,12 @@ impl AurisApp {
             self.save_as_then(Some(next), window, cx);
             return;
         }
-        match self.session.save_in_place() {
-            Ok(()) => {
-                let path = self.session.path().map(|p| p.display().to_string());
-                self.set_status(messages::saved(self.language(), &path.unwrap_or_default()));
-                self.run_pending(next, window, cx);
+        self.cancel_autosave_task();
+        match self.session.begin_save_in_place() {
+            Ok(job) => self.start_save_job(job, None, Some(next), window, cx),
+            Err(error) => {
+                self.set_failed_status(self.failure(Key::CmdSave, &error));
             }
-            Err(error) => self.set_failed_status(self.failure(Key::CmdSave, &error)),
         }
     }
 
@@ -1334,6 +1412,46 @@ impl AurisApp {
         // Windows key, which opens the shell's own menu long before the application sees it.
         let command = event.keystroke.modifiers.secondary();
 
+        let button_prompt = self.prompt.as_ref().and_then(|prompt| match &prompt.body {
+            PromptBody::Ask(question) => Some((
+                matches!(question, Question::Unsaved(_) | Question::Recovery(_)),
+                matches!(question, Question::Recovery(_)),
+            )),
+            PromptBody::Notice(_) => Some((false, false)),
+            PromptBody::Text { .. } => None,
+        });
+        if let Some((has_deny, recovery_question)) = button_prompt {
+            match event.keystroke.key.as_str() {
+                "escape" => {
+                    self.cancel_prompt();
+                }
+                "tab" => {
+                    let mut handles = vec![self.modal_focus.prompt_cancel()];
+                    if has_deny {
+                        handles.push(self.modal_focus.prompt_deny());
+                    }
+                    handles.push(self.modal_focus.prompt_confirm());
+                    let current = handles
+                        .iter()
+                        .position(|focus| focus.is_focused(window))
+                        .unwrap_or(handles.len() - 1);
+                    let next = if shift {
+                        (current + handles.len() - 1) % handles.len()
+                    } else {
+                        (current + 1) % handles.len()
+                    };
+                    window.focus(handles[next]);
+                }
+                "enter" | "space" | " " => self.activate_focused_prompt_button(window, cx),
+                "delete" if recovery_question => self.deny_prompt(window, cx),
+                "backspace" if recovery_question && cfg!(target_os = "macos") => {
+                    self.deny_prompt(window, cx);
+                }
+                _ => {}
+            }
+            return true;
+        }
+
         // Tab walks the completions, and is answered before the field is taken. `field_mut` ends
         // a walk in progress, which is right for every key that changes the text and wrong for
         // the one key that is *continuing* the walk — taking it here would reset on every step.
@@ -1358,7 +1476,9 @@ impl AurisApp {
         };
         // Whether Return breaks a line or commits, decided before the field is borrowed.
         let multiline = prompt.target().is_some_and(PromptTarget::multiline);
-        // A question has no field to type into, so only the two keys that answer it apply.
+        // A question has no field to type into, so only its explicit answer keys apply. A Mac's
+        // key labelled Delete reports `backspace`; accepting that spelling only on macOS avoids
+        // making an ordinary PC Backspace permanently discard recovery data.
         let Some(field) = prompt.field_mut() else {
             match event.keystroke.key.as_str() {
                 "escape" => {
@@ -1399,6 +1519,22 @@ impl AurisApp {
         true
     }
 
+    fn activate_focused_prompt_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let has_deny = self.prompt.as_ref().is_some_and(|prompt| {
+            matches!(
+                &prompt.body,
+                PromptBody::Ask(Question::Unsaved(_) | Question::Recovery(_))
+            )
+        });
+        if self.modal_focus.prompt_cancel().is_focused(window) {
+            self.cancel_prompt();
+        } else if has_deny && self.modal_focus.prompt_deny().is_focused(window) {
+            self.deny_prompt(window, cx);
+        } else {
+            self.commit_prompt(window, cx);
+        }
+    }
+
     /// Draws the sheet over everything else.
     pub(crate) fn render_prompt(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let prompt = self.prompt.as_ref()?;
@@ -1408,6 +1544,15 @@ impl AurisApp {
         let view = cx.entity();
 
         let multiline = prompt.target().is_some_and(PromptTarget::multiline);
+        let medium = multiline
+            || matches!(
+                &prompt.body,
+                PromptBody::Ask(
+                    Question::Recovery(_)
+                        | Question::RemovePluginPath(_)
+                        | Question::NewAgentConversation
+                )
+            );
         let (body, buttons) = match &prompt.body {
             PromptBody::Text { target, field } => (
                 div()
@@ -1466,6 +1611,7 @@ impl AurisApp {
                         }
                         _ => self.t(Key::Rename).into(),
                     },
+                    ButtonStyle::Primary,
                     cx,
                 ),
             ),
@@ -1473,11 +1619,41 @@ impl AurisApp {
                 let (message, confirm, deny) = self.question_text(question);
                 (
                     div()
+                        .w_full()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
                         .text_xs()
                         .text_color(theme.text_muted)
                         .child(message)
+                        .children(prompt.error.as_ref().map(|error| {
+                            div()
+                                .id("prompt-error")
+                                .debug_selector(|| "prompt-error".into())
+                                .w_full()
+                                .min_w_0()
+                                .max_h(px(96.0))
+                                .overflow_hidden()
+                                .overflow_y_scroll()
+                                .text_xs()
+                                .text_color(theme.danger)
+                                .child(error.clone())
+                        }))
                         .into_any_element(),
-                    self.render_prompt_buttons(deny, confirm, cx),
+                    self.render_prompt_buttons(
+                        deny,
+                        confirm,
+                        if matches!(
+                            question,
+                            Question::RemovePluginPath(_) | Question::NewAgentConversation
+                        ) {
+                            ButtonStyle::Danger
+                        } else {
+                            ButtonStyle::Primary
+                        },
+                        cx,
+                    ),
                 )
             }
             PromptBody::Notice(lines) => (
@@ -1491,7 +1667,12 @@ impl AurisApp {
                     .text_color(theme.text_muted)
                     .children(lines.iter().cloned().map(|line| div().child(line)))
                     .into_any_element(),
-                self.render_prompt_buttons(None, self.t(Key::Close).into(), cx),
+                self.render_prompt_buttons(
+                    None,
+                    self.t(Key::Close).into(),
+                    ButtonStyle::Primary,
+                    cx,
+                ),
             ),
         };
 
@@ -1524,7 +1705,7 @@ impl AurisApp {
                         .gap_2()
                         // Wider for a field that holds verses: a phrase per line wants the
                         // room a name never needed.
-                        .w(px(if multiline { 480.0 } else { 360.0 }))
+                        .w(px(if medium { 480.0 } else { 360.0 }))
                         .max_w_full()
                         .max_h_full()
                         .p_3()
@@ -1756,58 +1937,63 @@ impl AurisApp {
         &self,
         deny: Option<SharedString>,
         confirm: SharedString,
+        confirm_style: ButtonStyle,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        let cancel_focus = self.modal_focus.prompt_cancel().clone();
+        let deny_focus = self.modal_focus.prompt_deny().clone();
+        let confirm_focus = self.modal_focus.prompt_confirm().clone();
         div()
             .flex()
             .flex_shrink_0()
             .justify_end()
             .gap_2()
-            .child(button(
-                "prompt-cancel",
-                self.t(Key::Cancel),
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, _, cx| {
-                    this.cancel_prompt();
-                    cx.notify();
-                }),
-            ))
-            .children(deny.map(|label| {
-                button(
-                    "prompt-deny",
-                    label,
+            .child(
+                button_enabled(
+                    "prompt-cancel",
+                    self.t(Key::Cancel),
                     ButtonStyle::Normal,
-                    false,
-                    theme.danger,
+                    ButtonState::Enabled(Latch::Off),
+                    theme.accent,
                     &theme,
-                    cx.listener(|this, _, window, cx| {
-                        if let Some(Prompt {
-                            body: PromptBody::Ask(question),
-                            ..
-                        }) = this.prompt.take()
-                        {
-                            this.answer(question, Answer::Deny, window, cx);
-                        }
+                    cx.listener(|this, _, _, cx| {
+                        this.cancel_prompt();
                         cx.notify();
                     }),
                 )
+                .track_focus(&cancel_focus),
+            )
+            .children(deny.map(|label| {
+                button_enabled(
+                    "prompt-deny",
+                    label,
+                    ButtonStyle::Danger,
+                    ButtonState::Enabled(Latch::Off),
+                    theme.danger,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.deny_prompt(window, cx);
+                        cx.notify();
+                    }),
+                )
+                .track_focus(&deny_focus)
             }))
-            .child(button(
-                "prompt-ok",
-                confirm,
-                ButtonStyle::Primary,
-                false,
-                theme.accent,
-                &theme,
-                cx.listener(|this, _, window, cx| {
-                    this.commit_prompt(window, cx);
-                    cx.notify();
-                }),
-            ))
+            .child(
+                button_enabled(
+                    "prompt-ok",
+                    confirm,
+                    confirm_style,
+                    ButtonState::Enabled(Latch::Off),
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.commit_prompt(window, cx);
+                        cx.notify();
+                    }),
+                )
+                .track_focus(&confirm_focus),
+            )
     }
 
     /// The words a question is asked in: the body, the affirmative, and the destructive answer.
@@ -1821,14 +2007,39 @@ impl AurisApp {
                 self.t(Key::MuscriptorAgree).into(),
                 None,
             ),
+            Question::NewAgentConversation => (
+                self.t(Key::AgentNewConversationBody).into(),
+                self.t(Key::AgentNewConversationConfirm).into(),
+                None,
+            ),
             Question::Unsaved(_) => (
                 self.t(Key::UnsavedBody).into(),
                 self.t(Key::CmdSave).into(),
                 Some(self.t(Key::Discard).into()),
             ),
+            Question::Recovery(snapshot) => (
+                format!(
+                    "{}\n\n{}",
+                    snapshot.source_document().map_or_else(
+                        || self.t(Key::RecoveryUnsavedBody).to_owned(),
+                        |source| {
+                            messages::recovery_from(self.language(), &source.display().to_string())
+                        },
+                    ),
+                    self.t(Key::RecoveryKeyboardHint),
+                )
+                .into(),
+                self.t(Key::Recover).into(),
+                Some(self.t(Key::DiscardRecovery).into()),
+            ),
             Question::Replace { existing, .. } => (
                 messages::would_replace(self.language(), &existing.display().to_string()).into(),
                 self.t(Key::Replace).into(),
+                None,
+            ),
+            Question::RemovePluginPath(_) => (
+                self.t(Key::BrowserRemovePluginFolderBody).into(),
+                self.t(Key::BrowserRemovePluginFolder).into(),
                 None,
             ),
         }
@@ -2444,14 +2655,460 @@ mod tests {
 /// here: the sheet's three buttons carry names a test can find them by.
 #[cfg(test)]
 mod window_tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    use auris_i18n::messages;
     use auris_session::prelude::*;
+    use auris_session::{RecoverySnapshot, Session, SessionOptions};
     use gpui::TestAppContext;
 
-    use super::{Prompt, PromptTarget};
+    use super::{PendingAction, Prompt, PromptBody, PromptTarget, Question};
     use crate::actions;
     use crate::harness::{
         CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
     };
+    use crate::ui::agent_chat::ChatEntry;
+
+    struct RecoveryFixture {
+        snapshot: RecoverySnapshot,
+        source_root: PathBuf,
+        source_document: PathBuf,
+        source_bytes: Vec<u8>,
+    }
+
+    #[gpui::test]
+    fn new_agent_conversation_keeps_history_until_explicit_confirmation(cx: &mut TestAppContext) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "auris-agent-conversation-confirm-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (app, cx) = open(cx);
+        let history = app.update(cx, |this, _| {
+            this.session.save_as(&root.join("Song.auris")).unwrap();
+            let history = this
+                .session
+                .project_folder()
+                .unwrap()
+                .join(".auris-conversation.json");
+            std::fs::write(&history, b"saved conversation").unwrap();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.entries = vec![ChatEntry::You("keep this request".into())];
+            history
+        });
+        paint(&app, cx);
+
+        click("agent-new-conversation", cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.is_some(),
+                "the destructive action must ask first"
+            );
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::You("keep this request".into())]
+            );
+        });
+        assert!(
+            history.exists(),
+            "the saved history was deleted before consent"
+        );
+
+        paint(&app, cx);
+        click("prompt-ok", cx);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while app.read_with(cx, |this, _| !this.agent_chat.entries.is_empty()) {
+            app.update(cx, |this, cx| this.drain_agent(cx));
+            assert!(
+                std::time::Instant::now() < deadline,
+                "conversation history deletion did not finish"
+            );
+            std::thread::yield_now();
+        }
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert!(this.agent_chat.entries.is_empty());
+            assert!(this.agent_chat.fresh_history);
+        });
+        assert!(
+            !history.exists(),
+            "confirmation did not delete saved history"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn cancelling_a_new_agent_conversation_keeps_history(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.entries = vec![ChatEntry::You("keep this request".into())];
+        });
+        paint(&app, cx);
+        click("agent-new-conversation", cx);
+        paint(&app, cx);
+
+        click("prompt-cancel", cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::You("keep this request".into())]
+            );
+            assert!(!this.agent_chat.fresh_history);
+        });
+    }
+
+    #[gpui::test]
+    fn question_buttons_trap_focus_activate_from_keys_and_restore_the_pane(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_default_instrument_track("Unsaved")
+                .unwrap();
+            this.open_prompt(Prompt::ask(
+                "Unsaved work",
+                Question::Unsaved(PendingAction::NewProject),
+            ));
+        });
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.prompt_confirm().is_focused(window));
+            });
+        });
+
+        cx.simulate_keystrokes("tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.prompt_cancel().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("shift-tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.prompt_deny().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("space");
+        paint(&app, cx);
+
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.prompt.is_none());
+                assert!(
+                    this.project().tracks.iter().all(|track| track
+                        .kind
+                        .as_instrument()
+                        .is_none_or(|instrument| instrument.clips.is_empty())),
+                    "Space activated Discard and opened a fresh document"
+                );
+                assert!(!this.session.is_dirty());
+                assert!(this.pane_focused(crate::app::Pane::Arrangement, window, cx));
+            });
+        });
+    }
+
+    impl Drop for RecoveryFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.source_root);
+            if let Some(workspace) = self.snapshot.document().parent() {
+                let _ = std::fs::remove_dir_all(workspace);
+            }
+        }
+    }
+
+    static NEXT_RECOVERY_TEST_DIR: AtomicU64 = AtomicU64::new(0);
+
+    fn private_recovery_test_dir(parent: &std::path::Path, prefix: &str) -> PathBuf {
+        private_recovery_test_dir_with_counter(parent, prefix, &NEXT_RECOVERY_TEST_DIR)
+    }
+
+    fn private_recovery_test_dir_with_counter(
+        parent: &std::path::Path,
+        prefix: &str,
+        next: &AtomicU64,
+    ) -> PathBuf {
+        std::fs::create_dir_all(parent).expect("the test directory parent can be made");
+        loop {
+            let unique = next.fetch_add(1, Ordering::Relaxed);
+            let path = parent.join(format!("{prefix}-{}-{unique}", std::process::id()));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return path,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => panic!("a private test folder can be made: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn recovery_fixture_skips_a_stale_directory_from_a_reused_process_id() {
+        let parent =
+            private_recovery_test_dir(&std::env::temp_dir(), "auris-gpui-collision-parent");
+        let stale = parent.join(format!("fixture-{}-0", std::process::id()));
+        std::fs::create_dir(&stale).unwrap();
+        std::fs::write(stale.join("keep"), b"previous test process").unwrap();
+
+        let claimed =
+            private_recovery_test_dir_with_counter(&parent, "fixture", &AtomicU64::new(0));
+
+        assert_ne!(claimed, stale);
+        assert_eq!(
+            std::fs::read(stale.join("keep")).unwrap(),
+            b"previous test process"
+        );
+        std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    fn recovery_fixture(project_name: &str) -> RecoveryFixture {
+        let source_root =
+            private_recovery_test_dir(&std::env::temp_dir(), "auris-gpui-recovery-source");
+        let mut source = Session::new(SessionOptions::headless().with_balance(false))
+            .expect("a headless source session");
+        source.new_project();
+        source
+            .add_default_instrument_track("Recovered track")
+            .expect("the built-in instrument is available");
+        let report = source
+            .save_as(&source_root.join(format!("{project_name}.auris")))
+            .expect("the source project can be saved");
+        let source_document = report.document;
+        let mut source_json: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&source_document).expect("the saved project can be read"),
+        )
+        .expect("a saved project is JSON");
+        source_json["name"] = serde_json::Value::String(project_name.to_owned());
+        std::fs::write(
+            &source_document,
+            serde_json::to_vec_pretty(&source_json).unwrap(),
+        )
+        .expect("the fixture project name can be aligned with its recovery metadata");
+        let source_bytes = std::fs::read(&source_document).expect("the saved project can be read");
+
+        let workspace =
+            private_recovery_test_dir(&auris_session::recovery_dir(), "session-ui-test");
+        let recovery_document = workspace.join("Autosave.auris");
+        std::fs::copy(&source_document, &recovery_document)
+            .expect("the project can be staged as a recovery snapshot");
+        let metadata = serde_json::json!({
+            "version": 1,
+            "project_name": project_name,
+            "source_document": source_document,
+        });
+        std::fs::write(
+            workspace.join("Recovery.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .expect("recovery metadata can be written");
+
+        let snapshot = Session::recovery_snapshots()
+            .expect("the isolated registry can be listed")
+            .into_iter()
+            .find(|snapshot| snapshot.document() == recovery_document)
+            .expect("the staged snapshot is discoverable");
+        RecoveryFixture {
+            snapshot,
+            source_root,
+            source_document,
+            source_bytes,
+        }
+    }
+
+    fn offer_recovery(
+        app: &gpui::Entity<crate::app::AurisApp>,
+        cx: &mut gpui::VisualTestContext,
+        snapshots: impl IntoIterator<Item = RecoverySnapshot>,
+    ) {
+        app.update(cx, |this, _| {
+            this.recovery_queue = snapshots.into_iter().collect();
+            this.offer_next_recovery();
+        });
+        paint(app, cx);
+    }
+
+    #[gpui::test]
+    fn recovering_opens_unsaved_work_without_overwriting_its_source(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let fixture = recovery_fixture("Recovered song");
+        let remaining = recovery_fixture("Later recovery");
+        app.update(cx, |this, _| {
+            this.timeline.scroll_ticks = Ticks(99_999);
+            this.agent_chat.model_label = "stale agent".to_owned();
+        });
+        offer_recovery(
+            &app,
+            cx,
+            [fixture.snapshot.clone(), remaining.snapshot.clone()],
+        );
+
+        click("prompt-ok", cx);
+        cx.run_until_parked();
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.session.project().name, "Recovered song");
+            assert!(
+                this.session
+                    .project()
+                    .tracks
+                    .iter()
+                    .any(|track| track.name == "Recovered track")
+            );
+            assert!(this.session.path().is_none());
+            assert!(this.session.is_dirty());
+            assert!(this.selected_track.is_some());
+            assert_eq!(this.timeline.scroll_ticks, Ticks::ZERO);
+            assert!(this.agent_chat.model_label.is_empty());
+            assert_eq!(this.recovery_queue.front(), Some(&remaining.snapshot));
+            assert!(this.prompt.is_none());
+        });
+        assert_eq!(
+            std::fs::read(&fixture.source_document).unwrap(),
+            fixture.source_bytes,
+            "recovery must not write the permanent source project"
+        );
+        assert!(
+            Session::recovery_snapshots()
+                .unwrap()
+                .iter()
+                .all(|snapshot| snapshot.document() != fixture.snapshot.document()),
+            "the consumed snapshot is no longer offered"
+        );
+        assert!(
+            remaining.snapshot.document().exists(),
+            "recovering one snapshot leaves the remaining queue for the next launch"
+        );
+    }
+
+    #[gpui::test]
+    fn discard_advances_the_queue_and_escape_keeps_the_next_recovery(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let first = recovery_fixture("First recovery");
+        let second = recovery_fixture("Second recovery");
+        offer_recovery(&app, cx, [first.snapshot.clone(), second.snapshot.clone()]);
+
+        cx.simulate_keystrokes("delete");
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.recovery_queue.len(), 1);
+            assert_eq!(this.recovery_queue.front(), Some(&second.snapshot));
+            assert!(matches!(
+                this.prompt.as_ref().map(|prompt| &prompt.body),
+                Some(PromptBody::Ask(Question::Recovery(snapshot)))
+                    if snapshot == &second.snapshot
+            ));
+        });
+        assert!(!first.snapshot.document().exists());
+        assert!(second.snapshot.document().exists());
+
+        cx.simulate_keystrokes("escape");
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.recovery_queue.front(), Some(&second.snapshot));
+        });
+        assert!(
+            second.snapshot.document().exists(),
+            "Not now leaves the recovery data for the next launch"
+        );
+    }
+
+    #[gpui::test]
+    fn a_committed_discard_wins_a_late_ui_cancellation(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let fixture = recovery_fixture("Committed discard");
+        let snapshot = fixture.snapshot.clone();
+        let discarded = Session::begin_discard_recovery(&snapshot)
+            .run(&AtomicBool::new(false))
+            .expect("the worker can quarantine the recovery snapshot");
+        assert!(
+            discarded.is_some(),
+            "the fixture discard reached its commit point"
+        );
+
+        app.update(cx, |this, _| {
+            this.recovery_queue.push_back(snapshot.clone());
+            let (id, _, _) = this
+                .start_background_command("Discarding".to_owned(), false)
+                .expect("the discard owns the background slot");
+            this.cancel_background_command();
+            assert!(this.background_command.is_none());
+
+            this.finish_discard_recovery(
+                id,
+                snapshot.clone(),
+                "Committed discard".to_owned(),
+                Ok(discarded),
+            );
+        });
+
+        app.read_with(cx, |this, _| {
+            assert!(this.recovery_queue.is_empty());
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.status.as_str(),
+                messages::recovery_discarded(this.language(), "Committed discard")
+            );
+        });
+        assert!(!snapshot.document().exists());
+    }
+
+    #[gpui::test]
+    fn cancelling_save_as_replacement_never_starts_a_save(cx: &mut TestAppContext) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "auris-gpui-decline-replace-{}-{nonce}",
+            std::process::id()
+        ));
+        let chosen = root.join("Existing.auris");
+        let mut existing = Session::new(SessionOptions::headless()).unwrap();
+        existing.add_default_instrument_track("Keep this").unwrap();
+        let document = existing.save_as(&chosen).unwrap().document;
+        let before = std::fs::read(&document).unwrap();
+        drop(existing);
+
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .add_default_instrument_track("Do not save")
+                .unwrap();
+            this.open_prompt(Prompt::ask(
+                "Replace?",
+                Question::Replace {
+                    chosen: chosen.clone(),
+                    existing: document.clone(),
+                    then: None,
+                },
+            ));
+        });
+        paint(&app, cx);
+        click("prompt-cancel", cx);
+        cx.run_until_parked();
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert!(this.background_command.is_none());
+            assert!(this.session.path().is_none());
+            assert!(this.session.is_dirty());
+        });
+        assert_eq!(std::fs::read(&document).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[gpui::test]
     fn the_audio_prompt_keeps_a_visible_field_above_its_wrapped_hint(cx: &mut TestAppContext) {
@@ -2949,18 +3606,45 @@ mod window_tests {
     fn a_binding_behind_the_sheet_does_not_fire_through_it(cx: &mut TestAppContext) {
         let (app, cx) = with_unsaved_work(cx);
         cx.dispatch_action(actions::NewProject);
+        paint(&app, cx);
         let looping = app.read_with(cx, |this, _| this.session.project().loop_enabled);
 
         cx.simulate_keystrokes("secondary-l");
+        cx.dispatch_action(actions::ToggleLoop);
 
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.session.project().loop_enabled,
                 looping,
-                "the cycle did not toggle behind the question"
+                "neither a shortcut nor a native-menu action toggled the cycle behind the question"
             );
         });
         assert!(asking(&app, cx), "and the sheet is still asking");
+    }
+
+    #[gpui::test]
+    fn plugin_folder_write_failure_keeps_the_named_confirmation_and_shows_the_error(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = open(cx);
+        let path = PathBuf::from("unwritable-plugin-folder");
+        app.update(cx, |this, cx| {
+            this.reject_plugin_path_removal(path.clone(), SessionError::NoPath);
+            cx.notify();
+        });
+        paint(&app, cx);
+
+        app.read_with(cx, |this, _| {
+            let prompt = this.prompt.as_ref().expect("the confirmation stays open");
+            assert!(prompt.title.contains(&path.display().to_string()));
+            assert!(prompt.error.is_some());
+            assert!(matches!(
+                &prompt.body,
+                PromptBody::Ask(Question::RemovePluginPath(question_path))
+                    if question_path == &path
+            ));
+        });
+        assert!(cx.debug_bounds("prompt-error").is_some());
     }
 
     /// The fixture's clip is what makes the document dirty; if that ever stops being true every

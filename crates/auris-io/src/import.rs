@@ -31,12 +31,88 @@ use crate::error::{IoError, Result};
 /// documentation recommends for offline work.
 const RESAMPLER_CHUNK_FRAMES: usize = 1024;
 
+/// Highest source or destination rate accepted by the importer.
+///
+/// 768 kHz includes the highest-rate PCM distributed by current high-resolution recorders. A
+/// larger value in a container is much more likely to be corrupt metadata, and several resampler
+/// implementations size their filters directly from it.
+const MAX_IMPORT_SAMPLE_RATE_HZ: f64 = 768_000.0;
+
+/// Greatest channel layout accepted by the whole-buffer importer.
+///
+/// Sixty-four channels covers large immersive and orchestral interchange files. More importantly,
+/// it bounds libraries that allocate one FFT scratch plane per declared channel before they can
+/// return an allocation error. Container channel counts are untrusted metadata and can otherwise
+/// turn a tiny file into a multi-gigabyte allocation.
+const MAX_IMPORT_CHANNELS: usize = 64;
+
+/// Greatest planar sample allocation made for one decoded or resampled buffer (512 MiB of `f32`).
+///
+/// Import currently retains the complete file because clips share their decoded source. Refusing
+/// an impractically large source is preferable to letting a compressed file exhaust the process;
+/// longer material needs to be split or converted before import until sources become streamed.
+const MAX_IMPORT_SAMPLES: usize = (512 * 1024 * 1024) / std::mem::size_of::<f32>();
+
 /// Largest FFT input block we are willing to build in exchange for a whole-frame delay.
 ///
-/// Sample rate pairs that share almost no common factor (48 000 → 44 101, say) force a block as
-/// long as the input rate itself; doubling that to make the block count even would cost more
-/// memory than the alignment is worth, so [`resampler_chunk_frames`] gives up past this point.
+/// Sample rate pairs that share almost no common factor (48 000 → 44 101, say) force large blocks
+/// even when the requested chunk is small. Both sides of the FFT must fit this bound before
+/// rubato is constructed, because asking rubato to use a smaller chunk cannot reduce its minimum.
 const MAX_RESAMPLER_BLOCK_FRAMES: usize = 1 << 16;
+
+fn validate_decoded_sample_rate(path: &Path, sample_rate: f64) -> Result<()> {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 || sample_rate > MAX_IMPORT_SAMPLE_RATE_HZ {
+        return Err(IoError::UnsupportedFormat(format!(
+            "{} declares a sample rate of {sample_rate} Hz; supported rates are positive and at \
+             most {MAX_IMPORT_SAMPLE_RATE_HZ} Hz",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_decoded_channels(path: &Path, channels: usize) -> Result<()> {
+    if channels == 0 || channels > MAX_IMPORT_CHANNELS {
+        return Err(IoError::UnsupportedFormat(format!(
+            "{} declares {channels} audio channels; supported files have between 1 and \
+             {MAX_IMPORT_CHANNELS} channels",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_decoded_allocation(path: &Path, channels: usize, frames: usize) -> Result<()> {
+    let samples = channels.checked_mul(frames).ok_or_else(|| {
+        IoError::UnsupportedFormat(format!(
+            "{} decodes beyond the addressable sample count",
+            path.display()
+        ))
+    })?;
+    if samples > MAX_IMPORT_SAMPLES {
+        return Err(IoError::UnsupportedFormat(format!(
+            "{} decodes to {samples} samples, above the {MAX_IMPORT_SAMPLES}-sample import \
+             allocation budget; split or convert the file before importing it",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn validate_resample_allocation(which: &str, channels: usize, frames: usize) -> Result<()> {
+    let samples = channels.checked_mul(frames).ok_or_else(|| {
+        IoError::Resample(format!(
+            "the {which} buffer exceeds the addressable sample count"
+        ))
+    })?;
+    if samples > MAX_IMPORT_SAMPLES {
+        return Err(IoError::Resample(format!(
+            "the {which} buffer needs {samples} samples, above the {MAX_IMPORT_SAMPLES}-sample \
+             import allocation budget; split or convert the file before importing it"
+        )));
+    }
+    Ok(())
+}
 
 /// The result of decoding a file, before any sample rate conversion.
 #[derive(Clone, Debug, PartialEq)]
@@ -71,8 +147,8 @@ pub fn supported_extensions() -> &'static [&'static str] {
 /// Decodes a whole audio file into planar `f32`, at the file's own sample rate.
 ///
 /// Every sample format Symphonia can produce (`u8`/`u16`/`u24`/`u32`, `s8`/`s16`/`s24`/`s32`,
-/// `f32`/`f64`) and any channel count are handled: the conversion goes through Symphonia's
-/// generic buffer, which normalises integer formats to `[-1.0, 1.0]` for us.
+/// `f32`/`f64`) and channel layouts up to `MAX_IMPORT_CHANNELS` are handled: the conversion goes
+/// through Symphonia's generic buffer, which normalises integer formats to `[-1.0, 1.0]` for us.
 pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     let file = File::open(path).map_err(|e| IoError::from_fs(path, e))?;
     let stream = MediaSourceStream::new(Box::new(file), Default::default());
@@ -116,6 +192,18 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         (track.id, params)
     };
 
+    let declared_sample_rate = codec_params.sample_rate.map(f64::from);
+    if let Some(rate) = declared_sample_rate {
+        validate_decoded_sample_rate(path, rate)?;
+    }
+    if let Some(channel_count) = codec_params
+        .channels
+        .as_ref()
+        .map(|channels| channels.count())
+    {
+        validate_decoded_channels(path, channel_count)?;
+    }
+
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(&codec_params, &AudioDecoderOptions::default())
         .map_err(|e| match e {
@@ -129,7 +217,6 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
     // HE-AAC the container advertises the base rate while the decoder emits twice that, and
     // treating the declared value as the first observation would reject those files as if the
     // rate changed mid-stream. Only rates seen on decoded packets are compared against each other.
-    let declared_sample_rate = codec_params.sample_rate.map(f64::from);
     let mut sample_rate: Option<f64> = None;
     let mut channels: Vec<Vec<f32>> = match codec_params.channels.as_ref().map(|c| c.count()) {
         Some(count) if count > 0 => vec![Vec::new(); count],
@@ -167,6 +254,7 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
         let spec = decoded.spec();
         let packet_rate = f64::from(spec.rate());
         if packet_rate > 0.0 {
+            validate_decoded_sample_rate(path, packet_rate)?;
             match sample_rate {
                 Some(rate) if rate != packet_rate => {
                     return Err(IoError::Decode(format!(
@@ -179,6 +267,9 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
             }
         }
 
+        let packet_channels = decoded.spec().channels().count();
+        validate_decoded_channels(path, packet_channels)?;
+        validate_decoded_allocation(path, packet_channels, decoded.frames())?;
         if decoded.frames() == 0 {
             continue;
         }
@@ -195,7 +286,23 @@ pub fn decode_audio_file(path: &Path) -> Result<DecodedAudio> {
             }
             channels = vec![Vec::new(); scratch.len()];
         }
+        let existing_frames = channels.first().map_or(0, Vec::len);
+        let packet_frames = scratch.first().map_or(0, Vec::len);
+        let total_frames = existing_frames.checked_add(packet_frames).ok_or_else(|| {
+            IoError::UnsupportedFormat(format!(
+                "{} decodes beyond the addressable frame count",
+                path.display()
+            ))
+        })?;
+        validate_decoded_allocation(path, channels.len(), total_frames)?;
         for (destination, source) in channels.iter_mut().zip(&scratch) {
+            destination.try_reserve(source.len()).map_err(|_| {
+                IoError::UnsupportedFormat(format!(
+                    "cannot reserve decoded audio for {}; split or convert the file before \
+                     importing it",
+                    path.display()
+                ))
+            })?;
             destination.extend_from_slice(source);
         }
     }
@@ -293,13 +400,51 @@ fn gcd(mut a: usize, mut b: usize) -> usize {
 /// delay a whole number of frames and lets [`resample_buffer`] line the output up with the input
 /// exactly. For 48 kHz → 44.1 kHz that is the difference between a peak error of 7 % and 0.03 %
 /// against an ideal band-limited resample.
-fn resampler_chunk_frames(source_hz: usize, target_hz: usize) -> usize {
-    let min_block_in = source_hz / gcd(source_hz, target_hz);
-    if min_block_in == 0 || min_block_in > MAX_RESAMPLER_BLOCK_FRAMES / 2 {
-        return RESAMPLER_CHUNK_FRAMES;
+fn resampler_chunk_frames(source_hz: usize, target_hz: usize) -> Result<usize> {
+    if source_hz == 0 || target_hz == 0 {
+        return Err(IoError::Resample(
+            "sample rates round below one hertz".to_owned(),
+        ));
     }
-    let block_pairs = RESAMPLER_CHUNK_FRAMES.div_ceil(2 * min_block_in).max(1);
-    block_pairs * 2 * min_block_in
+    let divisor = gcd(source_hz, target_hz);
+    let min_block_in = source_hz / divisor;
+    let min_block_out = target_hz / divisor;
+    if min_block_in > MAX_RESAMPLER_BLOCK_FRAMES || min_block_out > MAX_RESAMPLER_BLOCK_FRAMES {
+        return Err(IoError::Resample(format!(
+            "the {source_hz} Hz to {target_hz} Hz ratio requires an FFT block of at least \
+             {min_block_in} input and {min_block_out} output frames, above the \
+             {MAX_RESAMPLER_BLOCK_FRAMES}-frame allocation budget; convert the file to a \
+             standard sample rate first"
+        )));
+    }
+
+    let max_blocks = (MAX_RESAMPLER_BLOCK_FRAMES / min_block_in)
+        .min(MAX_RESAMPLER_BLOCK_FRAMES / min_block_out)
+        .max(1);
+    let desired_blocks = RESAMPLER_CHUNK_FRAMES.div_ceil(min_block_in).max(1);
+    let even_blocks = desired_blocks.saturating_add(desired_blocks % 2);
+    let blocks = if even_blocks <= max_blocks {
+        even_blocks
+    } else {
+        desired_blocks.min(max_blocks)
+    };
+    Ok(blocks * min_block_in)
+}
+
+fn integer_resample_rate(sample_rate: f64, which: &str) -> Result<usize> {
+    if !sample_rate.is_finite() || sample_rate <= 0.0 || sample_rate > MAX_IMPORT_SAMPLE_RATE_HZ {
+        return Err(IoError::Resample(format!(
+            "{which} sample rate {sample_rate} Hz is outside the supported positive range up to \
+             {MAX_IMPORT_SAMPLE_RATE_HZ} Hz"
+        )));
+    }
+    let rounded = sample_rate.round() as usize;
+    if rounded == 0 {
+        return Err(IoError::Resample(format!(
+            "{which} sample rate {sample_rate} Hz rounds below one hertz"
+        )));
+    }
+    Ok(rounded)
 }
 
 /// Converts `buffer` from its own sample rate to `target_sample_rate`.
@@ -316,24 +461,21 @@ fn resampler_chunk_frames(source_hz: usize, target_hz: usize) -> usize {
 /// the trim copies the wrong number of frames and corrupts one sample at the seam.
 pub fn resample_buffer(buffer: &AudioBuffer, target_sample_rate: f64) -> Result<AudioBuffer> {
     let source_sample_rate = buffer.sample_rate();
-    if !source_sample_rate.is_finite() || source_sample_rate <= 0.0 {
-        return Err(IoError::Resample(format!(
-            "source sample rate {source_sample_rate} is not a positive number"
-        )));
-    }
-    if !target_sample_rate.is_finite() || target_sample_rate <= 0.0 {
-        return Err(IoError::Resample(format!(
-            "target sample rate {target_sample_rate} is not a positive number"
-        )));
-    }
-
     // The synchronous resampler works from an integer ratio. Every real sample rate is a whole
     // number of hertz, so rounding here is exact in practice and keeps the ratio rational.
-    let source_hz = source_sample_rate.round() as usize;
-    let target_hz = target_sample_rate.round() as usize;
+    let source_hz = integer_resample_rate(source_sample_rate, "source")?;
+    let target_hz = integer_resample_rate(target_sample_rate, "target")?;
 
     let channel_count = buffer.channel_count();
     let input_frames = buffer.frame_count();
+
+    if channel_count == 0 || channel_count > MAX_IMPORT_CHANNELS {
+        return Err(IoError::Resample(format!(
+            "sample-rate conversion supports between 1 and {MAX_IMPORT_CHANNELS} channels, not \
+             {channel_count}"
+        )));
+    }
+    validate_resample_allocation("source", channel_count, input_frames)?;
 
     if source_hz == target_hz || input_frames == 0 {
         let mut passthrough = buffer.clone();
@@ -341,35 +483,85 @@ pub fn resample_buffer(buffer: &AudioBuffer, target_sample_rate: f64) -> Result<
         return Ok(passthrough);
     }
 
-    // A rate below half a hertz rounds to zero, which would divide by zero below.
-    if source_hz == 0 || target_hz == 0 {
-        return Err(IoError::Resample(format!(
-            "sample rates {source_sample_rate} Hz and {target_sample_rate} Hz are too low to \
-             resample between"
-        )));
-    }
+    let chunk_frames_in = resampler_chunk_frames(source_hz, target_hz)?;
+    let divisor = gcd(source_hz, target_hz);
+    let chunk_frames_out = chunk_frames_in
+        .checked_div(source_hz / divisor)
+        .and_then(|blocks| blocks.checked_mul(target_hz / divisor))
+        .ok_or_else(|| {
+            IoError::Resample("the FFT output block exceeds the addressable frame count".to_owned())
+        })?;
+
+    // `rubato::Fft` allocates, per channel, one overlap plane, two input-block planes and two
+    // output-block planes before returning from its constructor. Bound that infallible nested
+    // allocation before calling into the library.
+    let fft_frames_per_channel = chunk_frames_in
+        .checked_mul(2)
+        .and_then(|input| {
+            chunk_frames_out
+                .checked_mul(3)
+                .and_then(|output| input.checked_add(output))
+        })
+        .ok_or_else(|| {
+            IoError::Resample("the FFT working set exceeds the addressable frame count".to_owned())
+        })?;
+    validate_resample_allocation("FFT working set", channel_count, fft_frames_per_channel)?;
+
+    // Ideal output length, in exact integer arithmetic so it cannot drift by a frame the way
+    // `(frames as f64 * ratio).ceil()` can for long files.
+    let output_frames = usize::try_from(
+        (input_frames as u128 * target_hz as u128).div_ceil(source_hz as u128),
+    )
+    .map_err(|_| {
+        IoError::Resample(format!(
+            "resampling {input_frames} frames from {source_hz} Hz to {target_hz} Hz exceeds the \
+             addressable output length"
+        ))
+    })?;
+    let delay = chunk_frames_out / 2;
+    // Room for the startup delay, the audio itself, and the overshoot of the final chunk.
+    let capacity = delay
+        .checked_add(output_frames)
+        .and_then(|frames| frames.checked_add(chunk_frames_out))
+        .ok_or_else(|| {
+            IoError::Resample(
+                "the resampled output and FFT delay exceed the addressable frame count".to_owned(),
+            )
+        })?;
+    validate_resample_allocation("resampled output", channel_count, capacity)?;
 
     let mut resampler = Fft::<f32>::new(
         source_hz,
         target_hz,
-        resampler_chunk_frames(source_hz, target_hz),
+        chunk_frames_in,
         channel_count,
         FixedSync::Both,
     )
     .map_err(|e| IoError::Resample(e.to_string()))?;
-
-    // Ideal output length, in exact integer arithmetic so it cannot drift by a frame the way
-    // `(frames as f64 * ratio).ceil()` can for long files.
-    let output_frames =
-        ((input_frames as u128 * target_hz as u128).div_ceil(source_hz as u128)) as usize;
-    let delay = resampler.output_delay();
-    let chunk_frames_out = resampler.output_frames_max();
-    // Room for the startup delay, the audio itself, and the overshoot of the final chunk.
-    let capacity = delay + output_frames + chunk_frames_out;
+    debug_assert_eq!(resampler.output_delay(), delay);
+    debug_assert_eq!(resampler.output_frames_max(), chunk_frames_out);
 
     let input = SequentialSliceOfVecs::new(buffer.channels(), channel_count, input_frames)
         .map_err(|e| IoError::Resample(e.to_string()))?;
-    let mut output_planes = vec![vec![0.0f32; capacity]; channel_count];
+    let mut output_planes = Vec::new();
+    output_planes
+        .try_reserve_exact(channel_count)
+        .map_err(|_| {
+            IoError::Resample(format!(
+                "cannot reserve {channel_count} output channels for sample-rate conversion"
+            ))
+        })?;
+    for _ in 0..channel_count {
+        let mut plane = Vec::new();
+        plane.try_reserve_exact(capacity).map_err(|_| {
+            IoError::Resample(format!(
+                "cannot reserve {capacity} frames per channel for sample-rate conversion; \
+                 import a shorter file or use its current sample rate"
+            ))
+        })?;
+        plane.resize(capacity, 0.0f32);
+        output_planes.push(plane);
+    }
 
     {
         let mut output =
@@ -764,6 +956,70 @@ mod tests {
     }
 
     #[test]
+    fn an_extreme_rate_is_rejected_before_rubato_builds_its_fft_block() {
+        let error = resampler_chunk_frames(u32::MAX as usize, 48_000)
+            .expect_err("the declared rate must exceed the FFT allocation budget");
+        assert!(
+            error.to_string().contains("FFT block"),
+            "the error did not explain the bounded resource: {error}"
+        );
+    }
+
+    #[test]
+    fn excessive_channels_are_rejected_before_rubato_allocates_per_channel_scratch() {
+        let source = AudioBuffer::new(MAX_IMPORT_CHANNELS + 1, 1, 44_100.0);
+        let error = resample_buffer(&source, 48_000.0)
+            .expect_err("the channel layout must be rejected before constructing rubato");
+        assert!(
+            error.to_string().contains("between 1 and 64 channels"),
+            "the error did not explain the channel allocation boundary: {error}"
+        );
+    }
+
+    #[test]
+    fn a_tiny_file_cannot_declare_thousands_of_decode_planes() {
+        // One 16-bit frame is only 130 bytes even with 65 channels. Without a metadata boundary,
+        // a similarly tiny AIFF/WAV can make downstream libraries allocate one large scratch
+        // plane per channel before returning control to us.
+        let file = TempFile::new("too-many-channels.aiff");
+        let channels = (MAX_IMPORT_CHANNELS + 1) as u16;
+        let data_bytes = u32::from(channels) * 2;
+        let sound_chunk_bytes = 8 + data_bytes;
+        let form_bytes = 4 + (8 + 18) + (8 + sound_chunk_bytes);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"FORM");
+        bytes.extend_from_slice(&form_bytes.to_be_bytes());
+        bytes.extend_from_slice(b"AIFFCOMM");
+        bytes.extend_from_slice(&18u32.to_be_bytes());
+        bytes.extend_from_slice(&channels.to_be_bytes());
+        bytes.extend_from_slice(&1u32.to_be_bytes());
+        bytes.extend_from_slice(&16u16.to_be_bytes());
+        // IEEE 754 extended precision representation of 44,100 Hz.
+        bytes.extend_from_slice(&[0x40, 0x0e, 0xac, 0x44, 0, 0, 0, 0, 0, 0]);
+        bytes.extend_from_slice(b"SSND");
+        bytes.extend_from_slice(&sound_chunk_bytes.to_be_bytes());
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // offset
+        bytes.extend_from_slice(&0u32.to_be_bytes()); // block size
+        bytes.resize(bytes.len() + data_bytes as usize, 0);
+        std::fs::write(file.path(), bytes).unwrap();
+
+        let error = decode_audio_file(file.path())
+            .expect_err("the header must be refused before allocating channel planes");
+        assert!(
+            error
+                .to_string()
+                .contains("supported files have between 1 and 64 channels"),
+            "the error did not come from the pre-allocation boundary: {error}"
+        );
+    }
+
+    #[test]
+    fn recognised_high_resolution_rates_remain_supported() {
+        assert!(resampler_chunk_frames(768_000, 48_000).is_ok());
+        assert!(resampler_chunk_frames(384_000, 44_100).is_ok());
+    }
+
+    #[test]
     fn a_missing_file_reports_file_not_found() {
         let path = std::env::temp_dir().join("auris-io-definitely-missing.wav");
         match decode_audio_file(&path) {
@@ -808,5 +1064,20 @@ mod tests {
 
         // And through the importer, which is the door the session actually uses.
         assert!(import_audio_file(file.path(), 48_000.0).is_err());
+    }
+
+    #[test]
+    fn a_wav_with_an_extreme_declared_rate_is_rejected_at_the_header() {
+        let file = TempFile::new("extreme-rate.wav");
+        let mut wav = silent_header();
+        wav[24..28].copy_from_slice(&u32::MAX.to_le_bytes());
+        wav[28..32].copy_from_slice(&u32::MAX.to_le_bytes());
+        std::fs::write(file.path(), wav).unwrap();
+
+        let error = decode_audio_file(file.path()).expect_err("the header rate is not plausible");
+        assert!(
+            matches!(error, IoError::UnsupportedFormat(ref what) if what.contains("768000")),
+            "expected the supported-rate boundary, got {error:?}"
+        );
     }
 }

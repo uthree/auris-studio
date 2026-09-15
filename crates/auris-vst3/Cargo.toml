@@ -12,4 +12,5 @@ auris-core = { workspace = true }
 vst3-host = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+crossbeam-queue = { workspace = true }
 

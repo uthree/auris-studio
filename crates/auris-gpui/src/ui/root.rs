@@ -33,7 +33,79 @@ fn note_resize_end(end: Ticks, start: Ticks, grid: Ticks, snap: bool) -> Ticks {
 use crate::ui::drop::{drop_action, lanes_offset};
 use crate::ui::menu_bar;
 use crate::ui::music_analysis::AnalysisCommand;
-use crate::ui::widgets::splitter;
+use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button_enabled, splitter};
+
+/// One keyboard-selectable choice in the audio export dialog, in visual Tab order.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ExportDialogControl {
+    Format(AudioExportFormat),
+    Depth(WavBitDepth),
+    Rate(Option<u32>),
+    Bitrate(Mp3Bitrate),
+    Dither,
+}
+
+fn export_dialog_rates(settings: ExportPreferences, project_rate: f64) -> Vec<Option<u32>> {
+    let rate_choices: &[u32] = if matches!(settings.format, AudioExportFormat::Mp3) {
+        &ExportPreferences::MP3_RATE_CHOICES
+    } else {
+        &AudioPreferences::RATE_CHOICES
+    };
+    let mut rates = Vec::new();
+    if settings
+        .format
+        .supports_sample_rate(project_rate.round().max(1.0) as u32)
+    {
+        rates.push(None);
+    }
+    rates.extend(rate_choices.iter().copied().map(Some));
+    if let Some(custom) = settings.sample_rate
+        && settings.format.supports_sample_rate(custom)
+        && !rate_choices.contains(&custom)
+    {
+        rates.push(Some(custom));
+    }
+    rates
+}
+
+fn export_dialog_controls(
+    settings: ExportPreferences,
+    project_rate: f64,
+) -> Vec<ExportDialogControl> {
+    let mut controls = vec![
+        ExportDialogControl::Format(AudioExportFormat::Wav),
+        ExportDialogControl::Format(AudioExportFormat::Flac),
+        ExportDialogControl::Format(AudioExportFormat::Mp3),
+    ];
+    match settings.format {
+        AudioExportFormat::Wav => controls.extend([
+            ExportDialogControl::Depth(WavBitDepth::Int16),
+            ExportDialogControl::Depth(WavBitDepth::Int24),
+            ExportDialogControl::Depth(WavBitDepth::Float32),
+        ]),
+        AudioExportFormat::Flac => controls.extend([
+            ExportDialogControl::Depth(WavBitDepth::Int16),
+            ExportDialogControl::Depth(WavBitDepth::Int24),
+        ]),
+        AudioExportFormat::Mp3 => {}
+    }
+    controls.extend(
+        export_dialog_rates(settings, project_rate)
+            .into_iter()
+            .map(ExportDialogControl::Rate),
+    );
+    if matches!(settings.format, AudioExportFormat::Mp3) {
+        controls.extend([
+            ExportDialogControl::Bitrate(Mp3Bitrate::Kbps128),
+            ExportDialogControl::Bitrate(Mp3Bitrate::Kbps192),
+            ExportDialogControl::Bitrate(Mp3Bitrate::Kbps256),
+            ExportDialogControl::Bitrate(Mp3Bitrate::Kbps320),
+        ]);
+    } else if settings.dither_applies() {
+        controls.push(ExportDialogControl::Dither);
+    }
+    controls
+}
 
 /// The sizes the three docks are drawn at, once the window has had its say.
 ///
@@ -104,7 +176,7 @@ impl Render for AurisApp {
 
         // Before anything is built: a sheet needs the keyboard for the platform to type into it,
         // and a panel needs it back once the sheet is gone.
-        self.reconcile_focus(window);
+        self.reconcile_focus(window, cx);
 
         // A window that has gone away takes the key releases with it, so a chord held while
         // somebody switched apps would sound until they came back and pressed those keys again.
@@ -204,6 +276,16 @@ impl Render for AurisApp {
 }
 
 impl AurisApp {
+    fn modal_blocks_document_actions(&self) -> bool {
+        self.compose_progress.is_some()
+            || self.export_dialog.is_some()
+            || self.export.is_some()
+            || self.prompt.is_some()
+            || self.song_sheet.is_some()
+            || self.song_library.is_some()
+            || self.reference_match.open
+    }
+
     /// Transient editors stay in the window that opened them.
     pub(crate) fn render_document_overlays(
         &mut self,
@@ -286,6 +368,7 @@ impl AurisApp {
 
     /// Shared action and gesture routing for every document window.
     pub(crate) fn input_root(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let modal_blocks_document_actions = self.modal_blocks_document_actions();
         div()
             .capture_any_mouse_down(
                 cx.listener(|this, _, window, _| this.claim_event_window(window)),
@@ -293,19 +376,20 @@ impl AurisApp {
             .on_action(Self::window_listener(
                 cx,
                 |this, action: &crate::auxiliary_window::TogglePanelWindow, _, cx| {
-                    if this.compose_progress.is_none() {
+                    if !this.modal_blocks_document_actions() {
                         this.toggle_panel_window(action.panel);
                         cx.notify();
                     }
                 },
             ))
-            .when(self.compose_progress.is_some(), |this| {
+            .when(modal_blocks_document_actions, |this| {
                 // Consume Quit here so it cannot fall through to the application fallback.
                 this.on_action(|_: &actions::Quit, _, _| {})
             })
-            // The native menu dispatches actions without consulting key contexts. Register
-            // no document actions while the progress modal owns the root focus handle.
-            .when(self.compose_progress.is_none(), |this| {
+            // The native menu dispatches actions without consulting key contexts. Register no
+            // document actions while a modal owns the window, including prompts and export
+            // sheets whose keyboard context already shields them from ordinary shortcuts.
+            .when(!modal_blocks_document_actions, |this| {
                 this.on_action(Self::window_listener(cx, Self::on_toggle_play))
                     .on_action(Self::window_listener(cx, Self::on_return_to_zero))
                     .on_action(Self::window_listener(cx, Self::on_toggle_loop))
@@ -756,6 +840,15 @@ impl AurisApp {
             AudioExportTarget::Stems => self.t(Key::CmdExportStems),
         };
         let project_rate = self.project().sample_rate;
+        let controls = export_dialog_controls(dialog.settings, project_rate);
+        debug_assert!(controls.len() <= 16);
+        let focus_for = |control| {
+            let index = controls
+                .iter()
+                .position(|candidate| *candidate == control)
+                .expect("every rendered export option participates in keyboard focus");
+            self.modal_focus.export_option(index).clone()
+        };
         let formats = [
             AudioExportFormat::Wav,
             AudioExportFormat::Flac,
@@ -763,16 +856,17 @@ impl AurisApp {
         ]
         .into_iter()
         .map(|format| {
+            let focus = focus_for(ExportDialogControl::Format(format));
             let id = match format {
                 AudioExportFormat::Wav => "export-format-wav",
                 AudioExportFormat::Flac => "export-format-flac",
                 AudioExportFormat::Mp3 => "export-format-mp3",
             };
-            crate::ui::widgets::button(
+            button_enabled(
                 id,
                 self.t(crate::i18n::audio_export_format_key(format)),
-                crate::ui::widgets::ButtonStyle::Normal,
-                dialog.settings.format == format,
+                ButtonStyle::Normal,
+                ButtonState::Enabled(Latch::from(dialog.settings.format == format)),
                 theme.accent,
                 &theme,
                 cx.listener(move |this, _, _, cx| {
@@ -784,6 +878,7 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
+            .track_focus(&focus)
             .into_any_element()
         })
         .collect::<Vec<_>>();
@@ -798,11 +893,12 @@ impl AurisApp {
         let depths = depth_choices
             .into_iter()
             .map(|depth| {
-                crate::ui::widgets::button(
+                let focus = focus_for(ExportDialogControl::Depth(depth));
+                button_enabled(
                     ("export-depth", u64::from(depth.bits())),
                     self.t(crate::i18n::wav_bit_depth_key(depth)),
-                    crate::ui::widgets::ButtonStyle::Normal,
-                    dialog.settings.bit_depth == depth,
+                    ButtonStyle::Normal,
+                    ButtonState::Enabled(Latch::from(dialog.settings.bit_depth == depth)),
                     theme.accent,
                     &theme,
                     cx.listener(move |this, _, _, cx| {
@@ -812,33 +908,16 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
+                .track_focus(&focus)
                 .into_any_element()
             })
             .collect::<Vec<_>>();
 
-        let rate_choices: &[u32] = if matches!(dialog.settings.format, AudioExportFormat::Mp3) {
-            &ExportPreferences::MP3_RATE_CHOICES
-        } else {
-            &AudioPreferences::RATE_CHOICES
-        };
-        let mut rates = Vec::new();
-        if dialog
-            .settings
-            .format
-            .supports_sample_rate(project_rate.round().max(1.0) as u32)
-        {
-            rates.push(None);
-        }
-        rates.extend(rate_choices.iter().copied().map(Some));
-        if let Some(custom) = dialog.settings.sample_rate
-            && dialog.settings.format.supports_sample_rate(custom)
-            && !rate_choices.contains(&custom)
-        {
-            rates.push(Some(custom));
-        }
+        let rates = export_dialog_rates(dialog.settings, project_rate);
         let rate_buttons = rates
             .into_iter()
             .map(|rate| {
+                let focus = focus_for(ExportDialogControl::Rate(rate));
                 let id = ("export-rate", u64::from(rate.unwrap_or(0)));
                 let label = rate.map_or_else(
                     || {
@@ -850,11 +929,11 @@ impl AurisApp {
                     },
                     |rate| messages::rate_single(self.language(), f64::from(rate) / 1_000.0),
                 );
-                crate::ui::widgets::button(
+                button_enabled(
                     id,
                     label,
-                    crate::ui::widgets::ButtonStyle::Normal,
-                    dialog.settings.sample_rate == rate,
+                    ButtonStyle::Normal,
+                    ButtonState::Enabled(Latch::from(dialog.settings.sample_rate == rate)),
                     theme.accent,
                     &theme,
                     cx.listener(move |this, _, _, cx| {
@@ -864,46 +943,54 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
+                .track_focus(&focus)
                 .into_any_element()
             })
             .collect::<Vec<_>>();
 
-        let bitrates = [
-            Mp3Bitrate::Kbps128,
-            Mp3Bitrate::Kbps192,
-            Mp3Bitrate::Kbps256,
-            Mp3Bitrate::Kbps320,
-        ]
-        .into_iter()
-        .map(|bitrate| {
-            crate::ui::widgets::button(
-                ("export-bitrate", u64::from(bitrate.kbps())),
-                format!("{} kbps", bitrate.kbps()),
-                crate::ui::widgets::ButtonStyle::Normal,
-                dialog.settings.mp3_bitrate == bitrate,
-                theme.accent,
-                &theme,
-                cx.listener(move |this, _, _, cx| {
-                    if let Some(dialog) = this.export_dialog.as_mut() {
-                        dialog.settings.mp3_bitrate = bitrate;
-                    }
-                    cx.notify();
-                }),
-            )
-            .into_any_element()
-        })
-        .collect::<Vec<_>>();
+        let bitrates = if matches!(dialog.settings.format, AudioExportFormat::Mp3) {
+            [
+                Mp3Bitrate::Kbps128,
+                Mp3Bitrate::Kbps192,
+                Mp3Bitrate::Kbps256,
+                Mp3Bitrate::Kbps320,
+            ]
+            .into_iter()
+            .map(|bitrate| {
+                let focus = focus_for(ExportDialogControl::Bitrate(bitrate));
+                button_enabled(
+                    ("export-bitrate", u64::from(bitrate.kbps())),
+                    format!("{} kbps", bitrate.kbps()),
+                    ButtonStyle::Normal,
+                    ButtonState::Enabled(Latch::from(dialog.settings.mp3_bitrate == bitrate)),
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        if let Some(dialog) = this.export_dialog.as_mut() {
+                            dialog.settings.mp3_bitrate = bitrate;
+                        }
+                        cx.notify();
+                    }),
+                )
+                .track_focus(&focus)
+                .into_any_element()
+            })
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
         let dither = if dialog.settings.dither_applies() {
-            crate::ui::widgets::button(
+            let focus = focus_for(ExportDialogControl::Dither);
+            button_enabled(
                 "export-dialog-dither",
                 self.t(if dialog.settings.dither {
                     Key::ValueOn
                 } else {
                     Key::ValueOff
                 }),
-                crate::ui::widgets::ButtonStyle::Normal,
-                dialog.settings.dither,
+                ButtonStyle::Normal,
+                ButtonState::Enabled(Latch::from(dialog.settings.dither)),
                 theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
@@ -913,22 +1000,19 @@ impl AurisApp {
                     cx.notify();
                 }),
             )
+            .track_focus(&focus)
             .into_any_element()
         } else {
-            div()
-                .id("export-dialog-dither-disabled")
-                .debug_selector(|| "export-dialog-dither-disabled".to_string())
-                .flex()
-                .items_center()
-                .h(crate::theme::Metrics::CONTROL_HEIGHT)
-                .px_2()
-                .rounded(crate::theme::Metrics::RADIUS_SM)
-                .border_1()
-                .border_color(theme.border_subtle)
-                .text_xs()
-                .text_color(theme.text_faint)
-                .child(self.t(Key::ValueOff))
-                .into_any_element()
+            button_enabled(
+                "export-dialog-dither-disabled",
+                self.t(Key::ValueOff),
+                ButtonStyle::Normal,
+                ButtonState::Disabled,
+                theme.accent,
+                &theme,
+                |_, _, _| {},
+            )
+            .into_any_element()
         };
 
         Some(
@@ -1050,29 +1134,35 @@ impl AurisApp {
                                 .justify_end()
                                 .gap_2()
                                 .pt_1()
-                                .child(crate::ui::widgets::button(
-                                    "export-dialog-cancel",
-                                    self.t(Key::Cancel),
-                                    crate::ui::widgets::ButtonStyle::Normal,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.export_dialog = None;
-                                        cx.notify();
-                                    }),
-                                ))
-                                .child(crate::ui::widgets::button(
-                                    "export-dialog-confirm",
-                                    self.t(Key::Export),
-                                    crate::ui::widgets::ButtonStyle::Primary,
-                                    false,
-                                    theme.accent,
-                                    &theme,
-                                    cx.listener(|this, _, _, cx| {
-                                        this.confirm_export_dialog(cx);
-                                    }),
-                                )),
+                                .child(
+                                    button_enabled(
+                                        "export-dialog-cancel",
+                                        self.t(Key::Cancel),
+                                        ButtonStyle::Normal,
+                                        ButtonState::Enabled(Latch::Off),
+                                        theme.accent,
+                                        &theme,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.export_dialog = None;
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .track_focus(self.modal_focus.export_cancel()),
+                                )
+                                .child(
+                                    button_enabled(
+                                        "export-dialog-confirm",
+                                        self.t(Key::Export),
+                                        ButtonStyle::Primary,
+                                        ButtonState::Enabled(Latch::Off),
+                                        theme.accent,
+                                        &theme,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.confirm_export_dialog(cx);
+                                        }),
+                                    )
+                                    .track_focus(self.modal_focus.export_confirm()),
+                                ),
                         ),
                 )
                 .into_any_element(),
@@ -1180,18 +1270,23 @@ impl AurisApp {
                                 ),
                         )
                         .when(finished, |this| {
-                            this.child(crate::ui::widgets::button(
-                                "export-close",
-                                self.t(Key::Close),
-                                crate::ui::widgets::ButtonStyle::Primary,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.export = None;
-                                    cx.notify();
-                                }),
-                            ))
+                            this.child(
+                                crate::ui::widgets::button_enabled(
+                                    "export-close",
+                                    self.t(Key::Close),
+                                    crate::ui::widgets::ButtonStyle::Primary,
+                                    crate::ui::widgets::ButtonState::Enabled(
+                                        crate::ui::widgets::Latch::Off,
+                                    ),
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.export = None;
+                                        cx.notify();
+                                    }),
+                                )
+                                .track_focus(self.modal_focus.export_cancel()),
+                            )
                         })
                         // Export is the longest thing this application does, and until now the
                         // only way out of a bounce started by mistake — the wrong region, the
@@ -1199,20 +1294,25 @@ impl AurisApp {
                         // window. The render stops at the end of its current block and no file
                         // is written, because the file is written after the render, not during.
                         .when(!finished, |this| {
-                            this.child(crate::ui::widgets::button(
-                                "export-cancel",
-                                self.t(Key::Cancel),
-                                crate::ui::widgets::ButtonStyle::Normal,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    if let Some(export) = this.export.as_ref() {
-                                        export.cancel();
-                                    }
-                                    cx.notify();
-                                }),
-                            ))
+                            this.child(
+                                crate::ui::widgets::button_enabled(
+                                    "export-cancel",
+                                    self.t(Key::Cancel),
+                                    crate::ui::widgets::ButtonStyle::Normal,
+                                    crate::ui::widgets::ButtonState::Enabled(
+                                        crate::ui::widgets::Latch::Off,
+                                    ),
+                                    theme.accent,
+                                    &theme,
+                                    cx.listener(|this, _, _, cx| {
+                                        if let Some(export) = this.export.as_ref() {
+                                            export.cancel();
+                                        }
+                                        cx.notify();
+                                    }),
+                                )
+                                .track_focus(self.modal_focus.export_cancel()),
+                            )
                         }),
                 ),
         )
@@ -1405,7 +1505,7 @@ impl AurisApp {
                     .find(|(id, _)| *id == clip)
                     .map(|(_, from)| *from)
                     .unwrap_or(start);
-                self.session.move_clips(origins, start - anchor);
+                let _ = self.session.move_clips(origins, start - anchor);
 
                 // The same idea vertically: the lane under the pointer decides how far the whole
                 // selection shifts, so a pair of clips on adjacent tracks stays a pair.
@@ -1875,7 +1975,32 @@ impl AurisApp {
         // Choose one owner before handling the key. An editor must leave character keys to
         // platform text input, without offering those unhandled keys to a covered control.
         let handled = if self.export_dialog.is_some() {
-            self.export_dialog_key(event, cx)
+            self.export_dialog_key(event, window, cx)
+        } else if self.export.is_some() {
+            match event.keystroke.key.as_str() {
+                "escape"
+                    if self
+                        .export
+                        .as_ref()
+                        .is_some_and(|export| export.result.is_some()) =>
+                {
+                    self.export = None;
+                }
+                "tab" => window.focus(self.modal_focus.export_cancel()),
+                "enter" | "space" | " " => {
+                    if self
+                        .export
+                        .as_ref()
+                        .is_some_and(|export| export.result.is_some())
+                    {
+                        self.export = None;
+                    } else if let Some(export) = self.export.as_ref() {
+                        export.cancel();
+                    }
+                }
+                _ => {}
+            }
+            true
         } else if self.compose_progress.is_some() || self.typing_key(event) {
             true
         } else if self.menu.is_some() {
@@ -1889,8 +2014,19 @@ impl AurisApp {
         } else if self.song_library.is_some() {
             self.song_library_key(event, cx)
         } else if self.reference_match.open {
-            if event.keystroke.key == "escape" {
-                self.close_reference_match(cx);
+            match event.keystroke.key.as_str() {
+                "escape" => self.close_reference_match(cx),
+                "tab" => {
+                    Self::cycle_modal_focus(
+                        self.modal_focus.reference_match(),
+                        self.modal_focus.reference_match_last(),
+                        event.keystroke.modifiers.shift,
+                        window,
+                        cx,
+                    );
+                    self.modal_focus.reveal_reference_match_focus(window, cx);
+                }
+                _ => {}
             }
             true
         } else if self.song_sheet.is_some() {
@@ -1898,6 +2034,20 @@ impl AurisApp {
             if self.lyrics_edit.is_some() {
                 self.lyrics_key(event, cx)
             } else {
+                match event.keystroke.key.as_str() {
+                    "escape" => self.close_song_sheet(),
+                    "tab" => {
+                        Self::cycle_modal_focus(
+                            self.modal_focus.song_sheet(),
+                            self.modal_focus.song_sheet_last(),
+                            event.keystroke.modifiers.shift,
+                            window,
+                            cx,
+                        );
+                        self.modal_focus.reveal_song_sheet_focus(window, cx);
+                    }
+                    _ => {}
+                }
                 true
             }
         } else if self.library_search_focused {
@@ -1911,14 +2061,120 @@ impl AurisApp {
         }
     }
 
+    /// Moves Tab only through one modal's tab group, wrapping at both ends.
+    fn cycle_modal_focus(
+        group: &gpui::FocusHandle,
+        last: &gpui::FocusHandle,
+        backwards: bool,
+        window: &mut Window,
+        cx: &gpui::App,
+    ) {
+        if backwards {
+            if group.is_focused(window) || !group.contains_focused(window, cx) {
+                window.focus(last);
+                return;
+            }
+            window.focus_prev();
+            if !group.contains_focused(window, cx) {
+                window.focus(last);
+            }
+        } else {
+            if !group.contains_focused(window, cx) {
+                window.focus(group);
+            }
+            window.focus_next();
+            if !group.contains_focused(window, cx) {
+                window.focus(group);
+                window.focus_next();
+            }
+        }
+    }
+
     /// Owns the keyboard while the audio-export form is open.
-    fn export_dialog_key(&mut self, event: &gpui::KeyDownEvent, cx: &mut Context<Self>) -> bool {
+    fn export_dialog_key(
+        &mut self,
+        event: &gpui::KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(dialog) = self.export_dialog else {
+            return false;
+        };
+        let controls = export_dialog_controls(dialog.settings, self.project().sample_rate);
         match event.keystroke.key.as_str() {
             "escape" => self.export_dialog = None,
-            "enter" => self.confirm_export_dialog(cx),
+            "tab" => {
+                let mut handles = controls
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| self.modal_focus.export_option(index))
+                    .collect::<Vec<_>>();
+                handles.push(self.modal_focus.export_cancel());
+                handles.push(self.modal_focus.export_confirm());
+                let current = handles
+                    .iter()
+                    .position(|focus| focus.is_focused(window))
+                    .unwrap_or(handles.len() - 1);
+                let next = if event.keystroke.modifiers.shift {
+                    (current + handles.len() - 1) % handles.len()
+                } else {
+                    (current + 1) % handles.len()
+                };
+                window.focus(handles[next]);
+            }
+            "enter" | "space" | " " => self.activate_focused_export_dialog_control(window, cx),
             _ => {}
         }
         true
+    }
+
+    fn activate_focused_export_dialog_control(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dialog) = self.export_dialog else {
+            return;
+        };
+        let controls = export_dialog_controls(dialog.settings, self.project().sample_rate);
+        let selected = controls.iter().enumerate().find_map(|(index, control)| {
+            self.modal_focus
+                .export_option(index)
+                .is_focused(window)
+                .then_some(*control)
+        });
+        if let Some(control) = selected {
+            self.apply_export_dialog_control(control, cx);
+        } else if self.modal_focus.export_cancel().is_focused(window) {
+            self.export_dialog = None;
+        } else {
+            self.confirm_export_dialog(cx);
+        }
+    }
+
+    fn apply_export_dialog_control(
+        &mut self,
+        control: ExportDialogControl,
+        cx: &mut Context<Self>,
+    ) {
+        let project_rate = self.project().sample_rate;
+        let Some(dialog) = self.export_dialog.as_mut() else {
+            return;
+        };
+        match control {
+            ExportDialogControl::Format(format) => {
+                dialog.settings.format = format;
+                dialog.settings.normalize_for_project_rate(project_rate);
+            }
+            ExportDialogControl::Depth(depth) => dialog.settings.bit_depth = depth,
+            ExportDialogControl::Rate(rate) => dialog.settings.sample_rate = rate,
+            ExportDialogControl::Bitrate(bitrate) => dialog.settings.mp3_bitrate = bitrate,
+            ExportDialogControl::Dither if dialog.settings.dither_applies() => {
+                dialog.settings.dither = !dialog.settings.dither;
+            }
+            ExportDialogControl::Dither => {}
+        }
+        cx.notify();
     }
 
     /// Answers for a key while the library's search box holds the keyboard.
@@ -2063,7 +2319,7 @@ impl AurisApp {
             "left" | "right" => {
                 let delta = if event.keystroke.key == "left" { -1 } else { 1 };
                 let index = menu_bar::stepped_section(sections.len(), open.index, delta);
-                self.menu_bar = Some(menu_bar::OpenMenu::at(index));
+                self.set_menu_bar(Some(menu_bar::OpenMenu::at(index)));
             }
             "down" | "up" | "home" | "end" => {
                 let key = event.keystroke.key.as_str();
@@ -2077,8 +2333,12 @@ impl AurisApp {
                 let from = matches!(key, "down" | "up")
                     .then_some(open.highlighted)
                     .flatten();
+                let highlighted = menu_bar::stepped(&section.rows, from, delta);
+                if let Some(index) = highlighted {
+                    self.menu_bar_scroll.scroll_to_item(index);
+                }
                 self.menu_bar = Some(menu_bar::OpenMenu {
-                    highlighted: menu_bar::stepped(&section.rows, from, delta),
+                    highlighted,
                     ..open
                 });
             }
@@ -2128,10 +2388,11 @@ impl AurisApp {
             return;
         }
         self.menu = None;
-        self.menu_bar = match self.menu_bar {
+        let next = match self.menu_bar {
             Some(_) => None,
             None => Some(menu_bar::OpenMenu::at(0)),
         };
+        self.set_menu_bar(next);
         cx.notify();
     }
 
@@ -2254,7 +2515,7 @@ impl AurisApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.balance_levels();
+        self.balance_levels(cx);
         cx.notify();
     }
 
@@ -3362,11 +3623,12 @@ mod window_tests {
         assert!(cx.debug_bounds("export-dialog-confirm").is_some());
         let looping = app.read_with(cx, |this, _| this.session.project().loop_enabled);
         cx.simulate_keystrokes("secondary-l");
+        cx.dispatch_action(actions::ToggleLoop);
         app.read_with(cx, |this, _| {
             assert_eq!(
                 this.session.project().loop_enabled,
                 looping,
-                "a shortcut did not reach the document behind the dialog"
+                "neither a shortcut nor a native-menu action reached the document behind the dialog"
             );
         });
 
@@ -3412,6 +3674,46 @@ mod window_tests {
     }
 
     #[gpui::test]
+    fn export_dialog_traps_focus_activates_choices_and_restores_the_pane(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        let saved = app.read_with(cx, |this, _| this.settings.export);
+        cx.dispatch_action(actions::ExportAudio);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.export_confirm().is_focused(window));
+            });
+        });
+
+        cx.simulate_keystrokes("tab tab enter");
+        paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.export_dialog.unwrap().settings.format,
+                AudioExportFormat::Flac,
+                "Enter activates the focused choice instead of the default action"
+            );
+            assert_eq!(this.settings.export, saved);
+        });
+
+        cx.simulate_keystrokes("shift-tab shift-tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.export_cancel().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("space");
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.export_dialog.is_none());
+                assert_eq!(this.settings.export, saved);
+                assert!(this.pane_focused(crate::app::Pane::Arrangement, window, cx));
+            });
+        });
+    }
+
+    #[gpui::test]
     fn every_audio_export_command_opens_the_same_choice_flow(cx: &mut TestAppContext) {
         let (app, cx, _, _) = with_a_clip(cx);
 
@@ -3420,13 +3722,17 @@ mod window_tests {
         });
         cx.dispatch_action(actions::ExportCycle);
         cx.run_until_parked();
-        app.update(cx, |this, _| {
+        app.read_with(cx, |this, _| {
             assert_eq!(
                 this.export_dialog.map(|dialog| dialog.target),
                 Some(AudioExportTarget::Cycle)
             );
-            this.export_dialog = None;
         });
+        // Close the first modal as a user would and repaint its action listener tree. Mutating
+        // only the model would leave the old modal root mounted and correctly consuming the next
+        // native-menu command.
+        cx.simulate_keystrokes("escape");
+        paint(&app, cx);
 
         cx.dispatch_action(actions::ExportStems);
         cx.run_until_parked();
@@ -3435,6 +3741,124 @@ mod window_tests {
                 this.export_dialog.map(|dialog| dialog.target),
                 Some(AudioExportTarget::Stems)
             );
+        });
+    }
+
+    #[gpui::test]
+    fn composition_and_reference_sheets_trap_tab_and_close_with_escape(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        resize(&app, cx, size(px(640.0), px(480.0)));
+
+        cx.dispatch_action(actions::ComposeSong);
+        app.update(cx, |this, _| this.song_advanced = true);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.song_sheet().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("tab tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.modal_focus.song_sheet_contains_focused(window, cx));
+            });
+        });
+        let mut song_target = None;
+        for _ in 0..96 {
+            cx.simulate_keystrokes("tab");
+            paint(&app, cx);
+            let target = cx.update(|window, cx| {
+                app.read_with(cx, |this, cx| {
+                    (
+                        this.modal_focus.song_sheet_reveal_index(window, cx),
+                        this.modal_focus.song_sheet_scroll().offset().y,
+                    )
+                })
+            });
+            if target.0.is_some() && target.1 < px(-80.0) {
+                song_target = target.0;
+                break;
+            }
+        }
+        let song_target = song_target.expect("Tab reaches a song control below the viewport");
+        let song_selector: &'static str =
+            Box::leak(format!("song-focus-region-{song_target}").into_boxed_str());
+        let song_bounds = cx
+            .debug_bounds(song_selector)
+            .expect("focused song row is drawn");
+        let song_viewport = cx.debug_bounds("song-sheet-body").unwrap();
+        assert!(
+            song_bounds.top() >= song_viewport.top()
+                && song_bounds.bottom() <= song_viewport.bottom(),
+            "Tab reveals the focused song row: {song_bounds:?} in {song_viewport:?}"
+        );
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(this.song_sheet.is_none()));
+
+        cx.dispatch_action(actions::MatchReference);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.reference_match().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("tab tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(
+                    this.modal_focus
+                        .reference_match_contains_focused(window, cx)
+                );
+            });
+        });
+        let mut reference_target = None;
+        for _ in 0..64 {
+            cx.simulate_keystrokes("tab");
+            paint(&app, cx);
+            let target = cx.update(|window, cx| {
+                app.read_with(cx, |this, cx| {
+                    (
+                        this.modal_focus.reference_match_reveal_index(window, cx),
+                        this.modal_focus.reference_match_scroll().offset().y,
+                    )
+                })
+            });
+            if target.0.is_some() && target.1 < px(-80.0) {
+                reference_target = target.0;
+                break;
+            }
+        }
+        let reference_target =
+            reference_target.expect("Tab reaches a reference control below the viewport");
+        let reference_selector: &'static str =
+            Box::leak(format!("reference-focus-region-{reference_target}").into_boxed_str());
+        let reference_bounds = cx
+            .debug_bounds(reference_selector)
+            .expect("focused reference row is drawn");
+        let reference_viewport = cx.debug_bounds("reference-match-scroll").unwrap();
+        assert!(
+            reference_bounds.top() >= reference_viewport.top()
+                && reference_bounds.bottom() <= reference_viewport.bottom(),
+            "Tab reveals the focused reference row: {reference_bounds:?} in {reference_viewport:?}"
+        );
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(!this.reference_match.open));
+    }
+
+    #[gpui::test]
+    fn a_focused_slider_claims_right_before_the_window_playhead_binding(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        paint(&app, cx);
+        let (zoom, playhead) = app.read_with(cx, |this, _| {
+            (this.timeline.zoom_fraction(), this.session.playhead())
+        });
+
+        crate::harness::click("timeline-zoom", cx);
+        cx.simulate_keystrokes("right");
+
+        app.read_with(cx, |this, _| {
+            assert!((this.timeline.zoom_fraction() - (zoom + 0.01)).abs() < 1e-6);
+            assert_eq!(this.session.playhead(), playhead);
         });
     }
 
@@ -3454,6 +3878,42 @@ mod window_tests {
         assert!(cx.debug_bounds("export-progress-bar").is_some());
         assert!(cx.debug_bounds("export-progress-fill").is_some());
         assert!(cx.debug_bounds("export-progress-percentage").is_some());
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.export_cancel().is_focused(window));
+            });
+        });
+
+        let looping = app.read_with(cx, |this, _| this.project().loop_enabled);
+        cx.dispatch_action(actions::ToggleLoop);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.project().loop_enabled, looping);
+            assert!(
+                this.export.is_some(),
+                "Escape does not pretend that an in-flight export was cancelled"
+            );
+            assert!(!this.export.as_ref().unwrap().cancelling());
+        });
+        cx.simulate_keystrokes("enter");
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.export.as_ref().unwrap().cancelling(),
+                "the focused Cancel button is operable without a pointer"
+            );
+        });
+
+        app.update(cx, |this, _| {
+            this.export.as_mut().unwrap().result = Some(Ok("Done".into()));
+        });
+        paint(&app, cx);
+        cx.simulate_keystrokes("shift-tab space");
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.export.is_none(),
+                "Tab stays on the sole Close button and Space activates it"
+            );
+        });
     }
 
     /// Every surface the pointer works in, and where it was drawn.

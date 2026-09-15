@@ -41,24 +41,94 @@ SPECIAL_SYMBOLS: tuple[str, ...] = (PAD, UNK, SIL, PAU)
 #: change when a new language front-end is added.
 IPA_SYMBOLS: tuple[str, ...] = (
     # --- vowels -------------------------------------------------------
-    "a", "i", "u", "e", "o", "ɯ", "ɨ", "ə", "ɛ", "ɔ", "æ", "ʌ", "ɑ", "ɒ",
-    "ʊ", "ɪ", "y", "ø", "œ", "ɐ",
+    "a",
+    "i",
+    "u",
+    "e",
+    "o",
+    "ɯ",
+    "ɨ",
+    "ə",
+    "ɛ",
+    "ɔ",
+    "æ",
+    "ʌ",
+    "ɑ",
+    "ɒ",
+    "ʊ",
+    "ɪ",
+    "y",
+    "ø",
+    "œ",
+    "ɐ",
     # devoiced Japanese vowels
-    "ḁ", "i̥", "ɯ̥", "e̥", "o̥",
+    "ḁ",
+    "i̥",
+    "ɯ̥",
+    "e̥",
+    "o̥",
     # length mark, used as a standalone token by some front-ends
     "ː",
     # --- nasals -------------------------------------------------------
-    "m", "mʲ", "n", "nʲ", "ɲ", "ŋ", "ɴ",
+    "m",
+    "mʲ",
+    "n",
+    "nʲ",
+    "ɲ",
+    "ŋ",
+    "ɴ",
     # --- plosives -----------------------------------------------------
-    "p", "pʲ", "b", "bʲ", "t", "tʲ", "d", "dʲ", "k", "kʲ", "kʷ",
-    "g", "gʲ", "gʷ", "ʔ",
+    "p",
+    "pʲ",
+    "b",
+    "bʲ",
+    "t",
+    "tʲ",
+    "d",
+    "dʲ",
+    "k",
+    "kʲ",
+    "kʷ",
+    "g",
+    "gʲ",
+    "gʷ",
+    "ʔ",
     # --- affricates ---------------------------------------------------
-    "ts", "dz", "tɕ", "dʑ", "tʃ", "dʒ",
+    "ts",
+    "dz",
+    "tɕ",
+    "dʑ",
+    "tʃ",
+    "dʒ",
     # --- fricatives ---------------------------------------------------
-    "ɸ", "ɸʲ", "β", "f", "v", "θ", "ð", "s", "z", "ɕ", "ʑ", "ʃ", "ʒ",
-    "ç", "x", "ɣ", "h", "ɦ",
+    "ɸ",
+    "ɸʲ",
+    "β",
+    "f",
+    "v",
+    "θ",
+    "ð",
+    "s",
+    "z",
+    "ɕ",
+    "ʑ",
+    "ʃ",
+    "ʒ",
+    "ç",
+    "x",
+    "ɣ",
+    "h",
+    "ɦ",
     # --- approximants / liquids --------------------------------------
-    "j", "w", "ɰ", "ɹ", "ɾ", "ɾʲ", "r", "l", "ʎ",
+    "j",
+    "w",
+    "ɰ",
+    "ɹ",
+    "ɾ",
+    "ɾʲ",
+    "r",
+    "l",
+    "ʎ",
 )
 
 #: Symbols produced without vocal-fold vibration: voiceless obstruents, the
@@ -66,16 +136,36 @@ IPA_SYMBOLS: tuple[str, ...] = (
 #: frame's ``voiced`` flag when a caller supplies phonemes but no explicit
 #: voicing — a score front-end writes f0 as a contour across consonants, so
 #: voicing must come from the phoneme class, never from ``f0 > 0``.
-VOICELESS: frozenset[str] = frozenset(
-    SPECIAL_SYMBOLS
-) | frozenset(
+VOICELESS: frozenset[str] = frozenset(SPECIAL_SYMBOLS) | frozenset(
     {
         # ḁ is `a` + U+0325, the spelling the inventory and the front-end use — the
         # precomposed U+1E01 is another string to a set, and was here until a test looked
-        "ḁ", "i̥", "ɯ̥", "e̥", "o̥",
-        "p", "pʲ", "t", "tʲ", "k", "kʲ", "kʷ", "ʔ",
-        "ts", "tɕ", "tʃ",
-        "ɸ", "ɸʲ", "f", "θ", "s", "ɕ", "ʃ", "ç", "x", "h",
+        "ḁ",
+        "i̥",
+        "ɯ̥",
+        "e̥",
+        "o̥",
+        "p",
+        "pʲ",
+        "t",
+        "tʲ",
+        "k",
+        "kʲ",
+        "kʷ",
+        "ʔ",
+        "ts",
+        "tɕ",
+        "tʃ",
+        "ɸ",
+        "ɸʲ",
+        "f",
+        "θ",
+        "s",
+        "ɕ",
+        "ʃ",
+        "ç",
+        "x",
+        "h",
     }
 )
 
@@ -87,8 +177,34 @@ VOICELESS: frozenset[str] = frozenset(
 #: in a short utterance to average anything over.
 PHONEME_CLASSES: dict[str, frozenset[str]] = {
     "vowel": frozenset(
-        {"a", "i", "u", "e", "o", "ɯ", "ɨ", "ə", "ɛ", "ɔ", "æ", "ʌ", "ɑ", "ɒ",
-         "ʊ", "ɪ", "y", "ø", "œ", "ɐ", "a\u0325", "i̥", "ɯ̥", "e̥", "o̥", "ː"}
+        {
+            "a",
+            "i",
+            "u",
+            "e",
+            "o",
+            "ɯ",
+            "ɨ",
+            "ə",
+            "ɛ",
+            "ɔ",
+            "æ",
+            "ʌ",
+            "ɑ",
+            "ɒ",
+            "ʊ",
+            "ɪ",
+            "y",
+            "ø",
+            "œ",
+            "ɐ",
+            "a\u0325",
+            "i̥",
+            "ɯ̥",
+            "e̥",
+            "o̥",
+            "ː",
+        }
     ),
     "nasal": frozenset({"m", "mʲ", "n", "nʲ", "ɲ", "ŋ", "ɴ"}),
     "plosive": frozenset(
@@ -104,7 +220,9 @@ PHONEME_CLASSES: dict[str, frozenset[str]] = {
 
 #: The sibilants: the consonants whose identity lives above 4 kHz, and so the ones a
 #: synthesiser fails to form first. Measured as a group of their own for that reason.
-SIBILANTS: frozenset[str] = frozenset({"s", "z", "ɕ", "ʑ", "ʃ", "ʒ", "ts", "dz", "tɕ", "dʑ", "tʃ", "dʒ"})
+SIBILANTS: frozenset[str] = frozenset(
+    {"s", "z", "ɕ", "ʑ", "ʃ", "ʒ", "ts", "dz", "tɕ", "dʑ", "tʃ", "dʒ"}
+)
 
 
 def phoneme_class(symbol: str) -> str:

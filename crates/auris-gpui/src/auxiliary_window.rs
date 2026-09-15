@@ -322,7 +322,7 @@ impl Render for AuxiliaryWindow {
             if !surface.wanted(app) {
                 return div().into_any_element();
             }
-            app.reconcile_focus(window);
+            app.reconcile_focus(window, cx);
             if window.focused(cx).is_none() {
                 match surface {
                     Surface::Panel(panel) => app.focus_pane(panel.pane(), window),

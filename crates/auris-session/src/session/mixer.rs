@@ -468,6 +468,9 @@ impl Session {
                 if let Some(inner) = self.project.tracks[index].kind.as_instrument_mut() {
                     inner.instrument_state.params.insert(key, value);
                 }
+                if let Err(error) = self.vst3.set_instrument_param(track, param, value) {
+                    log::warn!("could not update VST3 instrument parameter: {error}");
+                }
                 self.send(EngineCommand::SetInstrumentParam {
                     track: index,
                     param,
@@ -497,6 +500,9 @@ impl Session {
                 self.record_repeating(Edit::AdjustParameter(target));
                 if let Some(strip) = self.strip_mut(track) {
                     strip.effects[slot_index].state.params.insert(key, value);
+                }
+                if let Err(error) = self.vst3.set_effect_param(slot, param, value) {
+                    log::warn!("could not update VST3 effect parameter: {error}");
                 }
                 self.send(EngineCommand::SetEffectParam {
                     track: track_index,

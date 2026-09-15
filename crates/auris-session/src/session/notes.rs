@@ -108,36 +108,48 @@ impl Session {
                 )));
             }
         }
-        if target.notes == notes {
+        let mut candidate = target.clone();
+        candidate.notes = notes;
+        candidate.looped_note_instances()?;
+        if target.notes == candidate.notes {
             return Ok(());
         }
         self.record(Edit::ExternalChanges);
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.notes = notes;
-        }
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
 
     /// Adds a note to a MIDI clip, returning its index.
     pub fn add_note(&mut self, clip: ClipId, note: Note) -> Result<usize, SessionError> {
-        if self.project.midi_clip(clip).is_none() {
-            return Err(SessionError::UnknownClip(clip.0));
-        }
-        self.record(Edit::AddNote);
         let grid = self.project.grid;
-        let mut index = 0;
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            target.notes.push(Note {
-                pitch: note.pitch.min(127),
-                velocity: Self::finite_unit(note.velocity),
-                start: note.start.max_zero(),
-                length: Ticks(note.length.raw().max(1)),
-                ..note
-            });
-            target.fit_length_to_notes(grid);
-            index = target.notes.len() - 1;
-        }
+        let mut candidate = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, target)| target.clone())
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        candidate.notes.push(Note {
+            pitch: note.pitch.min(127),
+            velocity: Self::finite_unit(note.velocity),
+            start: note.start.max_zero(),
+            length: Ticks(note.length.raw().max(1)),
+            ..note
+        });
+        candidate.fit_length_to_notes(grid);
+        candidate.looped_note_instances()?;
+        let index = candidate.notes.len() - 1;
+
+        // Validate the complete candidate before history or document state changes. This keeps a
+        // rejected addition atomic and avoids scanning unrelated tracks for a renderer-only
+        // complete-graph budget.
+        self.record(Edit::AddNote);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(index)
     }
@@ -244,20 +256,28 @@ impl Session {
             return Ok(Vec::new());
         }
 
-        self.record(Edit::DuplicateNotes);
         let grid = self.project.grid;
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
-        let base = target.notes.len();
+        let mut candidate = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, target)| target.clone())
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        let base = candidate.notes.len();
         for note in chosen {
-            target.notes.push(Note {
+            candidate.notes.push(Note {
                 start: Ticks(note.start.raw().saturating_add(offset.raw())).max_zero(),
                 ..note
             });
         }
-        target.fit_length_to_notes(grid);
-        let copies = (base..target.notes.len()).collect();
+        candidate.fit_length_to_notes(grid);
+        candidate.looped_note_instances()?;
+        let copies = (base..candidate.notes.len()).collect();
+
+        self.record(Edit::DuplicateNotes);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(copies)
     }
@@ -395,17 +415,26 @@ impl Session {
         if !changed {
             return Ok(());
         }
-        self.record_repeating(Edit::MoveNotes);
         let grid = self.project.grid;
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            for (index, start, pitch) in origins {
-                if let Some(note) = target.notes.get_mut(*index) {
-                    note.start = Ticks(start.raw().saturating_add(delta_ticks.raw())).max_zero();
-                    note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
-                }
+        let mut candidate = self
+            .project
+            .midi_clip(clip)
+            .map(|(_, target)| target.clone())
+            .ok_or(SessionError::UnknownClip(clip.0))?;
+        for (index, start, pitch) in origins {
+            if let Some(note) = candidate.notes.get_mut(*index) {
+                note.start = Ticks(start.raw().saturating_add(delta_ticks.raw())).max_zero();
+                note.pitch = (*pitch as i32 + delta_pitch).clamp(0, 127) as u8;
             }
-            target.fit_length_to_notes(grid);
         }
+        candidate.fit_length_to_notes(grid);
+        candidate.looped_note_instances()?;
+
+        self.record_repeating(Edit::MoveNotes);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -440,17 +469,22 @@ impl Session {
         }) {
             return Ok(());
         }
-        self.record(Edit::ResizeNote);
         let grid = Ticks(self.project.grid.raw().max(1));
-        if let Some(target) = self.project.midi_clip_mut(clip) {
-            for (index, end) in ends {
-                if let Some(note) = target.notes.get_mut(*index) {
-                    // Snapping is a frontend preference; the document minimum is one tick.
-                    note.length = (*end - note.start).max(Ticks(1));
-                }
+        let mut candidate = target.clone();
+        for (index, end) in ends {
+            if let Some(note) = candidate.notes.get_mut(*index) {
+                // Snapping is a frontend preference; the document minimum is one tick.
+                note.length = (*end - note.start).max(Ticks(1));
             }
-            target.fit_length_to_notes(grid);
         }
+        candidate.fit_length_to_notes(grid);
+        candidate.looped_note_instances()?;
+
+        self.record(Edit::ResizeNote);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(())
     }
@@ -491,17 +525,21 @@ impl Session {
             return Ok(0);
         }
 
-        self.record(Edit::QuantizeNotes);
         let project_grid = self.project.grid;
-        let Some(target) = self.project.midi_clip_mut(clip) else {
-            return Err(SessionError::UnknownClip(clip.0));
-        };
+        let mut candidate = target.clone();
         for index in &moving {
-            if let Some(note) = target.notes.get_mut(*index) {
+            if let Some(note) = candidate.notes.get_mut(*index) {
                 *note = quantized(note, grid, what);
             }
         }
-        target.fit_length_to_notes(project_grid);
+        candidate.fit_length_to_notes(project_grid);
+        candidate.looped_note_instances()?;
+
+        self.record(Edit::QuantizeNotes);
+        *self
+            .project
+            .midi_clip_mut(clip)
+            .ok_or(SessionError::UnknownClip(clip.0))? = candidate;
         self.invalidate_graph();
         Ok(moving.len())
     }
@@ -516,6 +554,55 @@ impl Session {
 mod tests {
     use super::*;
     use crate::session::fixtures::{session, session_with_clip, undo_depth};
+
+    #[test]
+    fn adding_a_note_cannot_make_one_loop_unsafe() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Dense").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Loop", Ticks::ZERO, Ticks(1))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        session.set_clip_loop(clip, Ticks(500)).unwrap();
+        let before = session.project().clone();
+        let depth = undo_depth(&mut session);
+
+        let error = session
+            .add_note(clip, Note::new(61, Ticks::ZERO, Ticks(1)))
+            .expect_err("the extra note would exceed this clip's expansion limit");
+
+        assert!(error.to_string().contains("reduce its notes or repeats"));
+        assert_eq!(session.project(), &before);
+        assert_eq!(undo_depth(&mut session), depth);
+    }
+
+    #[test]
+    fn replacing_notes_cannot_make_one_loop_unsafe() {
+        let mut session = session();
+        let track = session.add_default_instrument_track("Dense").unwrap();
+        let clip = session
+            .add_midi_clip(track, "Loop", Ticks::ZERO, Ticks(1))
+            .unwrap();
+        session.project.midi_clip_mut(clip).unwrap().notes = (0..1_000)
+            .map(|_| Note::new(60, Ticks::ZERO, Ticks(1)))
+            .collect();
+        session.set_clip_loop(clip, Ticks(500)).unwrap();
+        let before = session.project().clone();
+        let depth = undo_depth(&mut session);
+        let replacement = (0..1_001)
+            .map(|_| Note::new(61, Ticks::ZERO, Ticks(1)))
+            .collect();
+
+        let error = session
+            .replace_notes(clip, replacement)
+            .expect_err("the replacement would exceed this clip's expansion limit");
+
+        assert!(error.to_string().contains("reduce its notes or repeats"));
+        assert_eq!(session.project(), &before);
+        assert_eq!(undo_depth(&mut session), depth);
+    }
 
     #[test]
     fn resizing_a_group_is_one_edit_and_fits_the_furthest_note() {

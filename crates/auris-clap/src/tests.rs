@@ -1,5 +1,8 @@
 //! Hosting tests, run against the [`testkit`](crate::testkit) fixture.
 
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+
 use auris_core::buffer::AudioBuffer;
 use auris_core::param::ParamId;
 use auris_core::plugin::{
@@ -9,13 +12,60 @@ use auris_core::plugin::{
 
 use raw_window_handle::{RawWindowHandle, Win32WindowHandle};
 
+use crate::bridge::MAX_PREPARED_EVENT_ROOM;
 use crate::library::ClapLibrary;
 use crate::notes::NoteLanguage;
 use crate::plugin::ClapPlugin;
 use crate::testkit::{
-    FIXTURE_ID, INPUT_PORTS, TONE_ID, fixture_destroy_count, fixture_library, gui_step,
-    instrument_library,
+    FIXTURE_ID, INPUT_PORTS, OUTPUT_BURST_CONTROLLER, OUTPUT_BURST_EVENTS, TONE_ID,
+    fixture_destroy_count, fixture_library, gui_step, instrument_library,
 };
+
+thread_local! {
+    /// Whether this thread is inside [`count_allocations`].
+    static WATCHING_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+    /// Allocator calls made by this thread while the watch is active.
+    static ALLOCATION_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Counts heap allocator calls made by `body` on this thread.
+fn count_allocations(body: impl FnOnce()) -> usize {
+    ALLOCATION_COUNT.with(|count| count.set(0));
+    WATCHING_ALLOCATIONS.with(|watching| watching.set(true));
+    body();
+    WATCHING_ALLOCATIONS.with(|watching| watching.set(false));
+    ALLOCATION_COUNT.with(Cell::get)
+}
+
+fn note_allocation() {
+    if WATCHING_ALLOCATIONS.try_with(Cell::get).unwrap_or(false) {
+        let _ = ALLOCATION_COUNT.try_with(|count| count.set(count.get() + 1));
+    }
+}
+
+/// A pass-through allocator that counts requests on the watched thread.
+struct CountingAllocator;
+
+// SAFETY: every allocation operation is forwarded unchanged to `System`. The additional state is
+// const-initialised thread-local `Cell` storage, so observing it performs no allocation itself.
+unsafe impl GlobalAlloc for CountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        note_allocation();
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) }
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        note_allocation();
+        unsafe { System.realloc(ptr, layout, new_size) }
+    }
+}
+
+#[global_allocator]
+static ALLOCATOR: CountingAllocator = CountingAllocator;
 
 fn library() -> ClapLibrary {
     fixture_library()
@@ -471,6 +521,132 @@ fn prepare_grows_the_event_queues_off_the_audio_thread() {
     // allocated again.
     instrument.prepare(&context().with_max_block_events(8));
     assert_eq!(instrument.event_room(), grown);
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn hostile_prepare_counts_are_bounded_on_activation_and_reprepare() {
+    // Exercise both callers of `prepared_event_room`, not just its arithmetic helper. Clack's
+    // event buffer multiplies this count by its worst-case standard event storage, so letting
+    // `usize::MAX` reach it would panic on capacity overflow or request a process-sized buffer.
+    let mut activated = tone();
+    let instrument = activated
+        .activate_instrument(&context().with_max_block_events(usize::MAX))
+        .expect("the bounded activation must succeed");
+    assert_eq!(instrument.event_room(), MAX_PREPARED_EVENT_ROOM);
+    activated.deactivate_instrument(instrument);
+
+    let mut prepared = tone();
+    let mut instrument = prepared
+        .activate_instrument(&context())
+        .expect("must activate");
+    assert!(instrument.event_room() < MAX_PREPARED_EVENT_ROOM);
+    instrument.prepare(&context().with_max_block_events(usize::MAX));
+    assert_eq!(instrument.event_room(), MAX_PREPARED_EVENT_ROOM);
+    prepared.deactivate_instrument(instrument);
+}
+
+#[test]
+fn a_prepared_input_burst_is_delivered_without_allocating() {
+    const EVENT_COUNT: usize = 4_096;
+
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+    instrument.prepare(&context().with_max_block_events(EVENT_COUNT));
+    instrument.process(&[], &mut empty(64), &playing(64));
+
+    let burst = vec![
+        NoteEvent::NoteOn {
+            frame: 0,
+            pitch: 60,
+            velocity: 0.75,
+        };
+        EVENT_COUNT
+    ];
+    let mut output = empty(64);
+    let process = playing(64);
+    let allocations = count_allocations(|| instrument.process(&burst, &mut output, &process));
+
+    assert_eq!(allocations, 0, "the prepared input queue allocated");
+    assert_eq!(instrument.dropped_input_event_count(), 0);
+    assert!(!instrument.processing_failed());
+    assert_eq!(output.channel(0)[0], 0.75, "the burst reached the plugin");
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn an_unprepared_input_burst_is_rejected_without_allocating_or_sticking_notes() {
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    // Start the processor before observing the callback. CLAP start-processing is allowed to do
+    // plugin work of its own and is not the event-queue seam this regression guards.
+    instrument.process(&[], &mut empty(64), &playing(64));
+
+    // Deliberately exceed the standalone preparation floor. A real render graph supplies the
+    // exact maximum in `prepare`; a direct or buggy caller still must not grow a Vec on the RT
+    // thread. The whole gesture is rejected and replaced by one choke, rather than delivering a
+    // prefix whose missing note-offs could leave voices sounding forever.
+    let burst = vec![
+        NoteEvent::NoteOn {
+            frame: 0,
+            pitch: 60,
+            velocity: 1.0,
+        };
+        4_096
+    ];
+    let mut output = empty(64);
+    let process = playing(64);
+    let allocations = count_allocations(|| instrument.process(&burst, &mut output, &process));
+
+    assert_eq!(allocations, 0, "the overflowing input queue allocated");
+    assert_eq!(instrument.dropped_input_event_count(), burst.len() as u64);
+    assert!(
+        instrument.processing_failed(),
+        "the drop must be diagnosable"
+    );
+    assert!(
+        output
+            .channels()
+            .iter()
+            .flatten()
+            .all(|sample| *sample == 0.0),
+        "overflow recovery must leave no held voice"
+    );
+
+    plugin.deactivate_instrument(instrument);
+}
+
+#[test]
+fn a_plugin_output_event_burst_is_counted_and_discarded_without_allocating() {
+    let mut plugin = tone();
+    let mut instrument = plugin
+        .activate_instrument(&context())
+        .expect("must activate");
+
+    instrument.process(&[], &mut empty(64), &playing(64));
+
+    let trigger = [NoteEvent::Controller {
+        frame: 0,
+        number: OUTPUT_BURST_CONTROLLER,
+        value: 1.0,
+    }];
+    let mut output = empty(64);
+    let process = playing(64);
+    let allocations = count_allocations(|| instrument.process(&trigger, &mut output, &process));
+
+    assert_eq!(allocations, 0, "the unused output-event sink allocated");
+    assert_eq!(
+        instrument.discarded_output_event_count(),
+        u64::from(OUTPUT_BURST_EVENTS),
+        "discarded plugin output must remain observable"
+    );
 
     plugin.deactivate_instrument(instrument);
 }

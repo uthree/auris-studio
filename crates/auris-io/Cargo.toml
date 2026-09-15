@@ -19,4 +19,5 @@ rusty_mp3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 symphonia.workspace = true
+tempfile.workspace = true
 thiserror.workspace = true

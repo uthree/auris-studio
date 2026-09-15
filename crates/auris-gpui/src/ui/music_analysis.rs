@@ -49,6 +49,57 @@ pub(crate) enum MusicReport {
     Mixture(Box<auris_session::ClipMixtureAnalysis>),
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum MusicAnalysisOutcome {
+    #[default]
+    Empty,
+    Stale,
+    Cancelled,
+    Failed(String),
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum MusicAnalysisViewState {
+    Empty,
+    Running,
+    Ready,
+    Stale,
+    Cancelled,
+    Failed,
+}
+
+fn music_analysis_view_state(
+    running: bool,
+    has_report: bool,
+    report_current: bool,
+    outcome: &MusicAnalysisOutcome,
+) -> MusicAnalysisViewState {
+    if running {
+        MusicAnalysisViewState::Running
+    } else if has_report {
+        if report_current {
+            MusicAnalysisViewState::Ready
+        } else {
+            MusicAnalysisViewState::Stale
+        }
+    } else {
+        match outcome {
+            MusicAnalysisOutcome::Empty => MusicAnalysisViewState::Empty,
+            MusicAnalysisOutcome::Stale => MusicAnalysisViewState::Stale,
+            MusicAnalysisOutcome::Cancelled => MusicAnalysisViewState::Cancelled,
+            MusicAnalysisOutcome::Failed(_) => MusicAnalysisViewState::Failed,
+        }
+    }
+}
+
+fn scored_candidate(label: &str, score_label: &str, score: f32) -> String {
+    format!("{label} · {score_label} {score:.2}")
+}
+
+fn tempo_candidate(action: &str, score_label: &str, bpm: f64, score: f32) -> String {
+    format!("{action}: {bpm:.1} BPM · {score_label} {score:.2}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,6 +113,82 @@ mod tests {
             app.auxiliary_windows[&crate::auxiliary_window::Surface::Analysis]
         });
         VisualTestContext::from_window(handle.into(), cx)
+    }
+
+    #[test]
+    fn analysis_candidate_labels_name_the_unit_and_score() {
+        assert_eq!(
+            tempo_candidate("Use as source tempo", "score", 123.45, 0.876),
+            "Use as source tempo: 123.5 BPM · score 0.88"
+        );
+        assert_eq!(
+            scored_candidate("Cmaj7", "score", 0.876),
+            "Cmaj7 · score 0.88"
+        );
+    }
+
+    #[test]
+    fn music_analysis_state_distinguishes_every_terminal_outcome() {
+        let state = |running, report, current, outcome| {
+            music_analysis_view_state(running, report, current, outcome)
+        };
+        assert_eq!(
+            state(false, false, true, &MusicAnalysisOutcome::Empty),
+            MusicAnalysisViewState::Empty
+        );
+        assert_eq!(
+            state(true, false, true, &MusicAnalysisOutcome::Empty),
+            MusicAnalysisViewState::Running
+        );
+        assert_eq!(
+            state(false, true, true, &MusicAnalysisOutcome::Empty),
+            MusicAnalysisViewState::Ready
+        );
+        assert_eq!(
+            state(false, true, false, &MusicAnalysisOutcome::Empty),
+            MusicAnalysisViewState::Stale
+        );
+        assert_eq!(
+            state(false, false, true, &MusicAnalysisOutcome::Stale),
+            MusicAnalysisViewState::Stale
+        );
+        assert_eq!(
+            state(false, false, true, &MusicAnalysisOutcome::Cancelled),
+            MusicAnalysisViewState::Cancelled
+        );
+        assert_eq!(
+            state(
+                false,
+                false,
+                true,
+                &MusicAnalysisOutcome::Failed("decoder stopped".into()),
+            ),
+            MusicAnalysisViewState::Failed
+        );
+    }
+
+    #[gpui::test]
+    fn narrow_analysis_keeps_state_primary_action_and_close_reachable(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        cx.dispatch_action(crate::actions::OpenAnalysisResults);
+        paint(&app, cx);
+        let mut analysis = analysis_window(&app, cx);
+        analysis.simulate_resize(gpui::size(gpui::px(320.0), gpui::px(240.0)));
+        analysis.run_until_parked();
+
+        let panel = analysis
+            .debug_bounds("analysis-panel")
+            .expect("the analysis panel is visible");
+        for selector in ["analysis-state", "music-all", "analysis-close"] {
+            let bounds = analysis
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("`{selector}` is visible"));
+            assert!(bounds.size.width > gpui::px(0.0));
+            assert!(bounds.left() >= panel.left());
+            assert!(bounds.right() <= panel.right());
+            assert!(bounds.top() >= panel.top());
+            assert!(bounds.bottom() <= panel.bottom());
+        }
     }
 
     #[gpui::test]
@@ -145,6 +272,46 @@ mod tests {
         paint(&app, cx);
         click("analysis-close", &mut analysis);
         app.read_with(cx, |this, _| assert!(!this.analysis_panel));
+    }
+
+    #[gpui::test]
+    fn analysis_presentation_tracks_stale_failed_and_cancelled_work(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, cx| {
+            written_triad(this);
+            this.begin_chord_analysis(None, cx);
+        });
+        cx.run_until_parked();
+        app.update(cx, |this, cx| {
+            assert_eq!(this.music_analysis_state(), MusicAnalysisViewState::Ready);
+
+            this.session
+                .add_default_instrument_track("Newer document state")
+                .unwrap();
+            assert_eq!(this.music_analysis_state(), MusicAnalysisViewState::Stale);
+
+            this.begin_chord_analysis(Some(TrackId(u64::MAX)), cx);
+            assert_eq!(this.music_analysis_state(), MusicAnalysisViewState::Failed);
+            assert!(matches!(
+                &this.music_analysis.outcome,
+                MusicAnalysisOutcome::Failed(detail) if !detail.is_empty()
+            ));
+
+            this.begin_chord_analysis(None, cx);
+            this.run_menu_command(MenuCommand::CancelMusicAnalysis, cx);
+            assert_eq!(
+                this.music_analysis_state(),
+                MusicAnalysisViewState::Cancelled
+            );
+        });
+        cx.run_until_parked();
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.music_analysis_state(),
+                MusicAnalysisViewState::Cancelled,
+                "the cancelled worker cannot overwrite its terminal state"
+            );
+        });
     }
 
     #[gpui::test]
@@ -339,6 +506,7 @@ pub(crate) struct MusicAnalysisState {
     control: Option<AnalysisControl>,
     /// Current draft, cleared when the document is replaced or the draft is accepted.
     pub(crate) report: Option<MusicReport>,
+    outcome: MusicAnalysisOutcome,
 }
 
 impl MusicAnalysisState {
@@ -348,6 +516,32 @@ impl MusicAnalysisState {
         if let Some(control) = self.control.take() {
             control.cancel();
         }
+    }
+
+    /// Discards presentation state when a new document or analysis replaces it.
+    pub(crate) fn clear(&mut self) {
+        self.cancel();
+        self.report = None;
+        self.outcome = MusicAnalysisOutcome::Empty;
+    }
+
+    /// Records an explicit user cancellation after invalidating the active worker.
+    pub(crate) fn cancel_requested(&mut self) {
+        self.cancel();
+        self.report = None;
+        self.outcome = MusicAnalysisOutcome::Cancelled;
+    }
+
+    fn fail(&mut self, detail: String) {
+        self.cancel();
+        self.report = None;
+        self.outcome = MusicAnalysisOutcome::Failed(detail);
+    }
+
+    fn stale(&mut self) {
+        self.cancel();
+        self.report = None;
+        self.outcome = MusicAnalysisOutcome::Stale;
     }
 }
 
@@ -407,6 +601,7 @@ impl AurisApp {
         Some(
             div()
                 .id("analysis-panel")
+                .debug_selector(|| "analysis-panel".to_owned())
                 .size_full()
                 .flex()
                 .flex_col()
@@ -420,8 +615,16 @@ impl AurisApp {
                 .child(
                     div()
                         .flex()
+                        .min_w_0()
+                        .items_center()
                         .justify_between()
-                        .child(self.t(Key::AnalysisTitle))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(self.t(Key::AnalysisTitle)),
+                        )
                         .child(button(
                             "analysis-close",
                             self.t(Key::Close),
@@ -450,10 +653,15 @@ impl AurisApp {
         )
     }
 
+    fn fail_music_analysis(&mut self, detail: impl Into<String>) {
+        let detail = detail.into();
+        self.music_analysis.fail(detail.clone());
+        self.set_failed_status(detail);
+    }
+
     /// Shows the model-use notice before loading a model or source audio.
     pub(crate) fn request_mixture_transcription(&mut self, clip: ClipId) {
-        self.music_analysis.cancel();
-        self.music_analysis.report = None;
+        self.music_analysis.clear();
         self.open_prompt(Prompt::ask(
             self.t(Key::MenuTranscribeMixture),
             crate::ui::prompt::Question::Muscriptor {
@@ -479,7 +687,7 @@ impl AurisApp {
         {
             Ok(job) => job,
             Err(e) => {
-                self.set_failed_status(e.to_string());
+                self.fail_music_analysis(e.to_string());
                 return;
             }
         };
@@ -536,7 +744,7 @@ impl AurisApp {
         {
             Ok(job) => self
                 .start_music_worker(move |control| job.run(control).map(MusicReport::Chords), cx),
-            Err(e) => self.set_failed_status(e.to_string()),
+            Err(e) => self.fail_music_analysis(e.to_string()),
         }
     }
 
@@ -555,7 +763,7 @@ impl AurisApp {
                 move |control| job.run(control).map(|r| MusicReport::Audio(Box::new(r))),
                 cx,
             ),
-            Err(e) => self.set_failed_status(e.to_string()),
+            Err(e) => self.fail_music_analysis(e.to_string()),
         }
     }
 
@@ -567,12 +775,11 @@ impl AurisApp {
         {
             Ok(job) => job,
             Err(e) => {
-                self.set_failed_status(e.to_string());
+                self.fail_music_analysis(e.to_string());
                 return;
             }
         };
-        self.music_analysis.cancel();
-        self.music_analysis.report = None;
+        self.music_analysis.clear();
         let generation = self.music_analysis.generation;
         let title = self.t(Key::DialogYamnetModel).to_string();
         cx.spawn(async move |this, cx| {
@@ -606,8 +813,7 @@ impl AurisApp {
         work: impl FnOnce(&AnalysisControl) -> Result<MusicReport, SessionError> + Send + 'static,
         cx: &mut Context<Self>,
     ) {
-        self.music_analysis.cancel();
-        self.music_analysis.report = None;
+        self.music_analysis.clear();
         let generation = self.music_analysis.generation;
         let control = AnalysisControl::default();
         self.music_analysis.control = Some(control.clone());
@@ -626,10 +832,14 @@ impl AurisApp {
                 match result {
                     Ok(report) if this.music_report_current(&report) => {
                         this.music_analysis.report = Some(report);
+                        this.music_analysis.outcome = MusicAnalysisOutcome::Empty;
                         this.set_status(this.t(Key::AnalysisReady));
                     }
-                    Ok(_) => this.set_failed_status(this.t(Key::AnalysisStale)),
-                    Err(e) => this.set_failed_status(e.to_string()),
+                    Ok(_) => {
+                        this.music_analysis.stale();
+                        this.set_status(this.t(Key::AnalysisStale));
+                    }
+                    Err(e) => this.fail_music_analysis(e.to_string()),
                 }
                 cx.notify();
             });
@@ -665,6 +875,20 @@ impl AurisApp {
             MusicReport::Instruments(r) => self.session.instrument_analysis_is_current(r),
             MusicReport::Mixture(r) => self.session.mixture_analysis_is_current(r),
         }
+    }
+
+    fn music_analysis_state(&self) -> MusicAnalysisViewState {
+        let report_current = self
+            .music_analysis
+            .report
+            .as_ref()
+            .is_none_or(|report| self.music_report_current(report));
+        music_analysis_view_state(
+            self.music_analysis.control.is_some(),
+            self.music_analysis.report.is_some(),
+            report_current,
+            &self.music_analysis.outcome,
+        )
     }
 
     /// Applies the user's chosen report action as an undoable session command.
@@ -713,6 +937,7 @@ impl AurisApp {
         match outcome {
             Ok(()) => {
                 self.music_analysis.report = None;
+                self.music_analysis.outcome = MusicAnalysisOutcome::Empty;
                 self.set_status(self.t(if notes {
                     Key::AnalysisCreateNotes
                 } else if tempo.is_some() {
@@ -721,7 +946,7 @@ impl AurisApp {
                     Key::AnalysisApplyChords
                 }));
             }
-            Err(e) => self.set_failed_status(e.to_string()),
+            Err(e) => self.fail_music_analysis(e.to_string()),
         }
     }
 
@@ -879,22 +1104,51 @@ impl AurisApp {
             )
             .into_any_element()
         };
+        let view_state = self.music_analysis_state();
+        let state = match view_state {
+            MusicAnalysisViewState::Running => format!(
+                "{} {:.0}%",
+                self.t(Key::AnalysisMusicRunning),
+                self.music_analysis
+                    .control
+                    .as_ref()
+                    .map_or(0.0, |control| control.progress())
+                    * 100.0
+            ),
+            MusicAnalysisViewState::Ready => self.t(Key::AnalysisMusicReady).to_string(),
+            MusicAnalysisViewState::Stale => self.t(Key::AnalysisMusicStale).to_string(),
+            MusicAnalysisViewState::Cancelled => self.t(Key::AnalysisMusicCancelled).to_string(),
+            MusicAnalysisViewState::Failed => self.t(Key::AnalysisMusicFailed).to_string(),
+            MusicAnalysisViewState::Empty => self.t(Key::AnalysisMusicEmpty).to_string(),
+        };
+        rows.push(
+            div()
+                .debug_selector(|| "analysis-state".to_owned())
+                .text_xs()
+                .text_color(theme.text_muted)
+                .whitespace_normal()
+                .child(state)
+                .into_any_element(),
+        );
+        if view_state == MusicAnalysisViewState::Failed
+            && let MusicAnalysisOutcome::Failed(detail) = &self.music_analysis.outcome
+        {
+            rows.push(
+                div()
+                    .debug_selector(|| "analysis-state-detail".to_owned())
+                    .text_xs()
+                    .text_color(theme.danger)
+                    .whitespace_normal()
+                    .child(detail.clone())
+                    .into_any_element(),
+            );
+        }
         rows.push(action_button(
             "music-all",
             self.t(Key::MenuAnalyzeAllChords).to_string(),
             MenuCommand::AnalyzeChords(None),
         ));
-        if let Some(control) = &self.music_analysis.control {
-            rows.push(
-                div()
-                    .text_xs()
-                    .child(format!(
-                        "{} {:.0}%",
-                        self.t(Key::AnalysisRunning),
-                        control.progress() * 100.0
-                    ))
-                    .into_any_element(),
-            );
+        if self.music_analysis.control.is_some() {
             rows.push(action_button(
                 "music-cancel",
                 self.t(Key::AnalysisCancel).to_string(),
@@ -904,6 +1158,17 @@ impl AurisApp {
         let Some(report) = &self.music_analysis.report else {
             return rows;
         };
+        if !matches!(report, MusicReport::Mixture(_)) {
+            rows.push(
+                div()
+                    .debug_selector(|| "analysis-score-help".to_owned())
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .whitespace_normal()
+                    .child(self.t(Key::AnalysisScores))
+                    .into_any_element(),
+            );
+        }
         rows.push(action_button(
             "music-view",
             self.t(Key::AnalysisView).to_string(),
@@ -940,7 +1205,12 @@ impl AurisApp {
                 rows.push(
                     button(
                         ("music-tempo", i),
-                        format!("{}: {:.1}", self.t(Key::AnalysisSetSourceTempo), c.bpm),
+                        tempo_candidate(
+                            self.t(Key::AnalysisSetSourceTempo),
+                            self.t(Key::AnalysisScoreLabel),
+                            c.bpm,
+                            c.score,
+                        ),
                         ButtonStyle::Normal,
                         false,
                         theme.accent,
@@ -981,7 +1251,7 @@ impl AurisApp {
                     rows.push(
                         button(
                             ("music-candidate", i * 4 + j),
-                            format!("{} ({:.2})", c.symbol, c.score),
+                            scored_candidate(&c.symbol, self.t(Key::AnalysisScoreLabel), c.score),
                             ButtonStyle::Normal,
                             false,
                             theme.accent,

@@ -49,6 +49,39 @@ pub enum CoreError {
     /// real position.
     #[error("invalid automation lane: {0}")]
     InvalidAutomationLane(String),
+
+    /// A clip asks for more loop passes than readers may expand safely.
+    #[error(
+        "clip {clip} requests {passes} loop passes, above the {limit}-pass limit; shorten its \
+         loop or increase its content length"
+    )]
+    LoopPassLimit {
+        /// Clip carrying the excessive loop.
+        clip: u64,
+        /// Passes required to reach its loop end.
+        passes: u64,
+        /// Greatest supported pass count.
+        limit: usize,
+    },
+
+    /// Repeating and performing a MIDI clip would create an unsafe number of notes.
+    #[error(
+        "clip {clip} may expand {notes_per_pass} notes over {passes} passes into \
+         {instances} performed note instances, above the {limit}-instance limit; reduce its \
+         notes or repeats"
+    )]
+    LoopNoteLimit {
+        /// Clip carrying the excessive expansion.
+        clip: u64,
+        /// Conservative performed-note bound for one pass.
+        notes_per_pass: u128,
+        /// Passes requested by the loop.
+        passes: usize,
+        /// Conservative note-instance bound across all passes.
+        instances: u128,
+        /// Greatest supported note-instance count.
+        limit: usize,
+    },
 }
 
 /// Result alias used throughout the core crate.

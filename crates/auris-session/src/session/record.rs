@@ -556,8 +556,28 @@ impl Session {
                 // The rings belong to the device that was just replaced, so every one of them is
                 // pointed and switched on again — and the graph is holding the old device's,
                 // which is why a rebuild follows.
-                Ok(()) => {
+                Ok(())
+                    if self
+                        .input
+                        .as_ref()
+                        .and_then(|capture| capture.monitor_error())
+                        .is_none() =>
+                {
+                    self.monitor_configuration_error = None;
                     self.publish_monitors();
+                    self.rebuild_graph();
+                }
+                Ok(()) => {
+                    if let Some(error) = self
+                        .input
+                        .as_ref()
+                        .and_then(|capture| capture.monitor_error())
+                    {
+                        log::warn!("could not bridge the new input/output settings: {error}");
+                        self.monitor_configuration_error = Some(error);
+                    }
+                    self.monitored.clear();
+                    self.close_input_if_idle();
                     self.rebuild_graph();
                 }
                 Err(error) => {

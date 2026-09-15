@@ -106,8 +106,8 @@ impl Oscillator {
 
     fn fill_block_no_loop(&mut self, data: &[i16], block: &mut [f32], pitch_ratio_fp: i64) -> bool {
         for t in 0..block.len() {
-            let index = (self.position_fp >> Oscillator::FRAC_BITS) as usize;
-            if index >= self.end as usize {
+            let index = self.position_fp >> Oscillator::FRAC_BITS;
+            if index < 0 || index >= i64::from(self.end) {
                 if t > 0 {
                     let len = block.len();
                     block[t..len].fill(0_f32);
@@ -117,13 +117,22 @@ impl Oscillator {
                 }
             }
 
-            let x1 = data[index] as i64;
-            let x2 = data[index + 1] as i64;
+            let Ok(index) = usize::try_from(index) else {
+                block[t..].fill(0_f32);
+                return t > 0;
+            };
+            let (Some(&x1), Some(&x2)) = (data.get(index), data.get(index.saturating_add(1)))
+            else {
+                block[t..].fill(0_f32);
+                return t > 0;
+            };
+            let x1 = i64::from(x1);
+            let x2 = i64::from(x2);
             let a_fp = self.position_fp & (Oscillator::FRAC_UNIT - 1);
             block[t] = Oscillator::FP_TO_SAMPLE
                 * ((x1 << Oscillator::FRAC_BITS) + a_fp * (x2 - x1)) as f32;
 
-            self.position_fp += pitch_ratio_fp;
+            self.position_fp = self.position_fp.saturating_add(pitch_ratio_fp);
         }
 
         true
@@ -135,28 +144,53 @@ impl Oscillator {
         block: &mut [f32],
         pitch_ratio_fp: i64,
     ) -> bool {
+        let start_loop_fp = (self.start_loop as i64) << Oscillator::FRAC_BITS;
         let end_loop_fp = (self.end_loop as i64) << Oscillator::FRAC_BITS;
-        let loop_length = (self.end_loop - self.start_loop) as i64;
+        let loop_length = i64::from(self.end_loop) - i64::from(self.start_loop);
         let loop_length_fp = loop_length << Oscillator::FRAC_BITS;
+        if loop_length <= 0 || loop_length_fp <= 0 {
+            block.fill(0_f32);
+            return false;
+        }
 
-        for sample in block.iter_mut() {
+        for offset in 0..block.len() {
             if self.position_fp >= end_loop_fp {
-                self.position_fp -= loop_length_fp;
+                // A high-rate or highly transposed sample can advance by several complete loops
+                // in one output frame. Folding only once lets the next unchecked sample access
+                // escape the loop. The remainder is the exact same phase, however many loops
+                // were crossed, and remains constant-time for hostile SoundFont metadata.
+                let relative = i128::from(self.position_fp) - i128::from(start_loop_fp);
+                self.position_fp = (i128::from(start_loop_fp)
+                    + relative.rem_euclid(i128::from(loop_length_fp)))
+                    as i64;
             }
 
-            let index1 = (self.position_fp >> Oscillator::FRAC_BITS) as usize;
-            let mut index2 = index1 + 1;
-            if index2 >= self.end_loop as usize {
-                index2 -= loop_length as usize;
-            }
+            let index1 = self.position_fp >> Oscillator::FRAC_BITS;
+            let index2 = if index1.saturating_add(1) >= i64::from(self.end_loop) {
+                i64::from(self.start_loop)
+            } else {
+                index1.saturating_add(1)
+            };
 
-            let x1 = data[index1] as i64;
-            let x2 = data[index2] as i64;
+            let samples = usize::try_from(index1)
+                .ok()
+                .and_then(|index1| data.get(index1))
+                .zip(
+                    usize::try_from(index2)
+                        .ok()
+                        .and_then(|index2| data.get(index2)),
+                );
+            let Some((&x1, &x2)) = samples else {
+                block[offset..].fill(0_f32);
+                return offset > 0;
+            };
+            let x1 = i64::from(x1);
+            let x2 = i64::from(x2);
             let a_fp = self.position_fp & (Oscillator::FRAC_UNIT - 1);
-            *sample = Oscillator::FP_TO_SAMPLE
+            block[offset] = Oscillator::FP_TO_SAMPLE
                 * ((x1 << Oscillator::FRAC_BITS) + a_fp * (x2 - x1)) as f32;
 
-            self.position_fp += pitch_ratio_fp;
+            self.position_fp = self.position_fp.saturating_add(pitch_ratio_fp);
         }
 
         true

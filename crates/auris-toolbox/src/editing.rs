@@ -172,9 +172,7 @@ pub mod edit_harmony {
                 }
             }
         }
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok("Saved the timeline changes. Notes and mix are preserved. Use regenerate_clips only on parts you want regenerated; inspect_composition reads the result.".into())
     }
 }
@@ -315,9 +313,7 @@ pub mod edit_recipe {
             None => session.set_clip_recipe(clip, recipe),
         }
         .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok(format!(
             "Saved clip [{}]: {notes} notes. Other clips and the mix are unchanged.",
             args.clip
@@ -491,9 +487,7 @@ pub mod edit_clip {
             Action::Mute { muted } => session.set_clip_muted(clip, muted),
         };
         result.map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok("Saved the clip edit. Call describe again: clip numbers may have changed.".into())
     }
 }
@@ -532,6 +526,7 @@ pub mod checkpoints {
         match args.action {
             Action::List => Ok(session.checkpoints().map_err(|e| e.to_string())?.join("\n")),
             Action::Create => {
+                cancellation::begin_commit()?;
                 let path = session
                     .create_checkpoint(args.name.as_deref().ok_or("provide name")?)
                     .map_err(|e| e.to_string())?;
@@ -541,7 +536,7 @@ pub mod checkpoints {
                 let missing = session
                     .restore_checkpoint(args.name.as_deref().ok_or("provide name")?)
                     .map_err(|e| e.to_string())?;
-                session.save_with_checkpoint().map_err(|e| e.to_string())?;
+                save_checkpointed(&mut session)?;
                 Ok(format!(
                     "Checkpoint restored and saved. {} missing assets. Call describe before editing again.",
                     missing.len()

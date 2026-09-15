@@ -375,7 +375,7 @@ fn render_source(
                 if *continued_from != Some(start) {
                     chase_notes(events, start, block_events);
                 }
-                *continued_from = Some(start + ctx.block_frames as u64);
+                *continued_from = Some(start.saturating_add(ctx.block_frames as u64));
             } else {
                 // Resuming from a stop is itself a jump.
                 *continued_from = None;
@@ -387,7 +387,7 @@ fn render_source(
             }
             if transport.rolling() {
                 let start = transport.position_frames;
-                let end = start + ctx.block_frames as u64;
+                let end = start.saturating_add(ctx.block_frames as u64);
                 // A binary search rather than a cursor, so seeking and looping need no state.
                 let first = events.partition_point(|scheduled| scheduled.frame < start);
                 for scheduled in &events[first..] {
@@ -498,8 +498,12 @@ fn chase_notes(events: &[ScheduledEvent], position: u64, out: &mut Vec<NoteEvent
 }
 
 /// Adds the part of `clip` that overlaps `[position, position + frames)` into `out`.
+///
+/// The numeric end saturates at the last representable sample. A seek accepts the whole public
+/// tick domain, so reaching that ceiling must make the final block shorter rather than wrap its
+/// end back to the beginning of the song inside the audio callback.
 fn mix_clip(clip: &RenderAudioClip, out: &mut AudioBuffer, position: u64, frames: usize) {
-    let block_end = position + frames as u64;
+    let block_end = position.saturating_add(frames as u64);
     let clip_end = clip.start_frame.saturating_add(clip.length);
     if clip_end <= position || clip.start_frame >= block_end {
         return;
@@ -555,7 +559,9 @@ mod tests {
     use auris_core::ParamId;
     use auris_core::automation::AutomationCurve;
     use auris_core::param::{ParamTarget, db_to_gain};
-    use auris_core::project::{AudioSourceBank, AuxSend, Note, Output, Project, TrackId};
+    use auris_core::project::{
+        AudioSourceBank, AuxSend, FadeCurve, Note, Output, Project, TrackId,
+    };
     use auris_core::time::Ticks;
     use std::sync::Arc;
 
@@ -608,6 +614,64 @@ mod tests {
             &testkit::registry(),
             block,
         )
+    }
+
+    #[test]
+    fn an_extreme_seek_saturates_every_realtime_block_range() {
+        // Public ticks can convert to the top of the sample domain. Exercise one whole realtime
+        // segment there with both automation and the metronome enabled: neither their range ends
+        // nor the instrument's continuation/event window may wrap back to frame zero.
+        let mut project = one_note_project(Ticks::ZERO, Ticks::QUARTER);
+        let track = project.tracks[0].id;
+        project.automation.set_point(
+            ParamTarget::TrackGain(track),
+            None,
+            AutomationCurve::Linear,
+            Ticks::ZERO,
+            -3.0,
+        );
+        project.metronome = true;
+        let mut graph = build(&project, 16);
+        let mut transport = Transport::playing_from(u64::MAX - 3);
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 16, SAMPLE_RATE);
+
+        render_block(&mut graph, &mut transport, &mut out, false);
+
+        assert_eq!(transport.position_frames, u64::MAX);
+        assert!(
+            out.channels()
+                .iter()
+                .flatten()
+                .all(|sample| sample.is_finite()),
+            "the saturated terminal block produced an invalid sample"
+        );
+    }
+
+    #[test]
+    fn an_audio_clip_at_the_sample_ceiling_does_not_wrap_to_the_song_start() {
+        let clip = RenderAudioClip {
+            buffer: Arc::new(
+                AudioBuffer::from_planar(vec![vec![1.0; 4]], SAMPLE_RATE)
+                    .expect("one valid mono source"),
+            ),
+            start_frame: u64::MAX - 4,
+            source_offset: 0,
+            length: 4,
+            gain: 1.0,
+            fade_in: 0,
+            fade_out: 0,
+            fade_in_curve: FadeCurve::Linear,
+            fade_out_curve: FadeCurve::Linear,
+        };
+        let mut out = AudioBuffer::new(RENDER_CHANNELS, 16, SAMPLE_RATE);
+
+        mix_clip(&clip, &mut out, u64::MAX - 8, 16);
+
+        for channel in out.channels() {
+            assert_eq!(&channel[..4], &[0.0; 4]);
+            assert_eq!(&channel[4..8], &[1.0; 4]);
+            assert_eq!(&channel[8..], &[0.0; 8]);
+        }
     }
 
     #[test]
@@ -2371,7 +2435,12 @@ mod tests {
         let graph = build(&project, 512);
         let ring = Arc::new(crate::monitor::MonitorRing::new(SAMPLE_RATE));
         ring.set_enabled(true);
-        ring.write(&vec![level; 48_000], 1);
+        // Prime it with several ordinary callback blocks. A single callback as large as the
+        // complete ring is deliberately rejected by `MonitorRing`: publishing it while a live
+        // reader may be wrapping through the same slots would expose torn audio. Four thousand
+        // frames are comfortably beyond the three-block startup target without invoking that
+        // hostile-backend defence.
+        ring.write(&vec![level; 4_096], 1);
         (project, graph, ring)
     }
 

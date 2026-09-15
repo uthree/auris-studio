@@ -19,7 +19,7 @@ use auris_core::theory::chart::{Chart, ChartMode, catalog};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
-use crate::settings::config_dir;
+use crate::settings::{config_dir, read_config_text, write_config_bytes};
 
 /// One progression somebody wrote and kept.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -125,7 +125,7 @@ impl ProgressionBook {
     /// refusing to start over a list of chord progressions would be a poor trade.
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = read_config_text(&path) else {
             return Self::default();
         };
         match serde_json::from_str(&text) {
@@ -147,7 +147,8 @@ impl ProgressionBook {
             })?;
         }
         let text = serde_json::to_string_pretty(self).map_err(auris_io::IoError::from)?;
-        std::fs::write(&path, text).map_err(|source| SessionError::SettingsWrite { path, source })
+        write_config_bytes(&path, text.as_bytes())
+            .map_err(|source| SessionError::SettingsWrite { path, source })
     }
 
     /// Everything in it, in the order it was kept.

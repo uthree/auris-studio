@@ -12,8 +12,13 @@ from auris_singer.modules.flow import ResidualCouplingBlock, TransformerCoupling
 def test_flow_is_invertible(mean_only):
     torch.manual_seed(0)
     flow = ResidualCouplingBlock(
-        16, hidden_channels=16, n_flows=3, n_layers=1, n_heads=2,
-        cond_channels=8, mean_only=mean_only,
+        16,
+        hidden_channels=16,
+        n_flows=3,
+        n_layers=1,
+        n_heads=2,
+        cond_channels=8,
+        mean_only=mean_only,
     ).eval()
     # Zero-initialized coupling layers start as the identity, so perturb them.
     for parameter in flow.parameters():

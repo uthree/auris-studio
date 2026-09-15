@@ -15,10 +15,11 @@
 //!
 //! # What a crash costs
 //!
-//! The frame count in a WAV header is written when the file is closed, so a take whose
-//! application died is a file whose header says nothing was recorded. The samples are all there
-//! on disk; recovering them means repairing the header, which nothing here does yet. Worth
-//! knowing before trusting an hour of it to a first pass.
+//! The first complete frame and then roughly every half-second are recovery checkpoints: their
+//! samples, data length and RIFF length are flushed before a later call succeeds. A process crash
+//! therefore leaves an ordinary readable WAV and costs at most the most recent checkpoint interval.
+//! Updating the header for every device block would issue thousands of seeks and flushes per second
+//! on a multitrack take, eventually dropping capture blocks on a slow disk.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,8 @@ pub struct WavRecorder {
     /// ends mid-frame — which should not happen, but a driver is free to be strange — is still
     /// counted honestly.
     samples: u64,
+    checkpoint_interval_samples: u64,
+    checkpointed_samples: u64,
 }
 
 impl WavRecorder {
@@ -75,6 +78,8 @@ impl WavRecorder {
             path: path.to_path_buf(),
             channels,
             samples: 0,
+            checkpoint_interval_samples: ((rate as u64 / 2).max(1)).saturating_mul(channels as u64),
+            checkpointed_samples: 0,
         })
     }
 
@@ -82,6 +87,10 @@ impl WavRecorder {
     ///
     /// A sample that is not finite is written as silence. A driver that produces one is already
     /// broken, and an infinity in a take would go on to poison every mix it was ever dropped into.
+    /// The first complete frame and then roughly every half-second also checkpoint the WAV header
+    /// and buffered bytes. This runs on the recording worker, never the audio callback, and is
+    /// what leaves a readable take after a process crash without making startup guess how a
+    /// partial file was laid out.
     pub fn write(&mut self, block: &[f32]) -> Result<()> {
         let Some(writer) = self.writer.as_mut() else {
             return Err(IoError::WavWrite(format!(
@@ -96,6 +105,19 @@ impl WavRecorder {
                 .map_err(|error| wav_error(&self.path, error))?;
         }
         self.samples += block.len() as u64;
+        // A public caller may split an interleaved frame across two writes. Hound correctly
+        // refuses to publish such a header, so keep the partial frame buffered until the next
+        // call completes it. The recording engine itself always hands us whole frames.
+        let complete_frame = self.samples > 0 && self.samples.is_multiple_of(self.channels as u64);
+        let checkpoint_due = self.checkpointed_samples == 0
+            || self.samples.saturating_sub(self.checkpointed_samples)
+                >= self.checkpoint_interval_samples;
+        if complete_frame && checkpoint_due {
+            writer
+                .flush()
+                .map_err(|error| wav_error(&self.path, error))?;
+            self.checkpointed_samples = self.samples;
+        }
         Ok(())
     }
 
@@ -180,6 +202,53 @@ mod tests {
         assert_eq!(spec.bits_per_sample, 32);
         assert_eq!(spec.sample_format, SampleFormat::Float);
         assert_eq!(samples, vec![0.0, 0.5, -0.5, 1.0, 0.25, -1.0]);
+    }
+
+    #[test]
+    fn every_completed_block_is_readable_before_the_recorder_is_finished() {
+        let file = TempFile::new("interrupted-take.wav");
+        let mut recorder = WavRecorder::create(file.path(), 48_000.0, 2).unwrap();
+        recorder.write(&[0.25, -0.25, 0.5, -0.5]).unwrap();
+
+        // Model a process that never runs `Drop`: the on-disk checkpoint must stand on its own.
+        std::mem::forget(recorder);
+        let (spec, samples) = read_back(file.path());
+        assert_eq!(spec.channels, 2);
+        assert_eq!(samples, vec![0.25, -0.25, 0.5, -0.5]);
+    }
+
+    #[test]
+    fn a_frame_split_across_writes_is_checkpointed_when_it_becomes_whole() {
+        let file = TempFile::new("split-frame-take.wav");
+        let mut recorder = WavRecorder::create(file.path(), 48_000.0, 2).unwrap();
+        recorder.write(&[0.25]).unwrap();
+        recorder.write(&[-0.25]).unwrap();
+
+        std::mem::forget(recorder);
+        let (_, samples) = read_back(file.path());
+        assert_eq!(samples, vec![0.25, -0.25]);
+    }
+
+    #[test]
+    fn routine_device_blocks_checkpoint_twice_per_second_instead_of_flushing_each_one() {
+        let file = TempFile::new("bounded-checkpoints.wav");
+        let mut recorder = WavRecorder::create(file.path(), 48_000.0, 1).unwrap();
+        recorder.write(&[0.25]).unwrap();
+        recorder.write(&vec![0.5; 64]).unwrap();
+
+        // The first frame is durable immediately, but a routine 64-frame callback does not seek
+        // through the header again. The uncheckpointed tail is intentionally invisible to a
+        // reader after a crash.
+        let (_, first_checkpoint) = read_back(file.path());
+        assert_eq!(first_checkpoint, vec![0.25]);
+
+        recorder.write(&vec![-0.5; 24_000]).unwrap();
+        std::mem::forget(recorder);
+        let (_, second_checkpoint) = read_back(file.path());
+        assert_eq!(second_checkpoint.len(), 24_065);
+        assert_eq!(second_checkpoint[0], 0.25);
+        assert_eq!(second_checkpoint[1], 0.5);
+        assert_eq!(*second_checkpoint.last().unwrap(), -0.5);
     }
 
     #[test]

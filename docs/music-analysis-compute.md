@@ -1,7 +1,7 @@
 # Music analysis: compute and model deployment assessment
 
-Assessment date: 2026-09-07. This accompanies the
-[research and implementation plan](music-analysis-plan.md).
+Assessment date: 2026-09-07. This is the follow-on compute assessment for the implemented
+[music-analysis workflow](music-analysis.md).
 
 No cloud resources have been provisioned, no model has been trained, and no audio has been
 uploaded. YAMNet and the explicitly authorized noncommercial MuScriptor Small checkpoint

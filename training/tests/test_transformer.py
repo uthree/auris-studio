@@ -31,6 +31,11 @@ def test_swiglu_shape_and_hidden_multiple():
 def test_rope_preserves_norm_and_encodes_relative_position():
     rope = RotaryEmbedding(16)
     cos, sin = rope(12, torch.device("cpu"))
+    positions = torch.arange(12, dtype=rope.inv_freq.dtype)
+    outer = torch.outer(positions, rope.inv_freq)
+    expected = torch.cat((outer, outer), dim=-1)
+    assert torch.allclose(cos[0, 0], expected.cos())
+    assert torch.allclose(sin[0, 0], expected.sin())
     q = torch.randn(1, 2, 12, 16)
     rotated = apply_rotary(q, cos, sin)
     assert torch.allclose(rotated.norm(dim=-1), q.norm(dim=-1), atol=1e-5)

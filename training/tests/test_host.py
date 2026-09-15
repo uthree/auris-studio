@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import numpy as np
 import pytest
 
 from auris_singer.host import (
+    MAX_CONCATENATED_GAP_FRAMES,
     REPO_ROOT,
     SILENCE,
     Host,
@@ -71,6 +73,21 @@ def test_mismatched_curves_are_refused():
         frames_from_curves(["a"], [1], [220.0], [0.1], 0.01, 0.0)
 
 
+@pytest.mark.parametrize(
+    ("phonemes", "durations", "message"),
+    [
+        (["a"], [float("nan")], "finite"),
+        (["a"], [1.5], "whole frame counts"),
+        (["a"], [-1], "non-negative"),
+        (["a"], [2_001], "at most"),
+        (["a", "i"], [1_001, 1_000], "at most"),
+    ],
+)
+def test_frame_writer_rejects_hostile_durations_before_expansion(phonemes, durations, message):
+    with pytest.raises(ValueError, match=message):
+        frames_from_curves(phonemes, durations, [], [], 0.01, 0.25)
+
+
 def test_frames_refuse_a_wrong_inventory_or_ragged_sequences():
     with pytest.raises(ValueError, match="inventory\\[0\\]"):
         HostFrames(0.01, ["a"], [0], [220.0], [0.5])
@@ -113,6 +130,14 @@ def test_a_song_needs_parts_on_one_clock():
         concatenate_frames([], 1)
 
 
+def test_a_song_rejects_gap_allocations_before_extending_its_lists():
+    part = frames_from_curves(["a"], [1], [220.0], [0.1], 0.01, 0.25)
+    with pytest.raises(ValueError, match="non-negative integer"):
+        concatenate_frames([part, part], -1)
+    with pytest.raises(ValueError, match="the limit is"):
+        concatenate_frames([part, part], MAX_CONCATENATED_GAP_FRAMES + 1)
+
+
 def test_the_host_is_the_named_binary_before_it_is_cargo(monkeypatch, tmp_path):
     monkeypatch.setenv("AURIS_CLI", "/somewhere/auris")
     host = Host.find(tmp_path)
@@ -137,10 +162,12 @@ def test_without_a_manifest_there_is_nothing_for_cargo_to_run(monkeypatch, tmp_p
 
 
 def test_a_failed_command_carries_what_the_host_said(tmp_path):
-    script = tmp_path / "auris"
-    script.write_text("#!/bin/sh\necho 'auris: nope' >&2\nexit 1\n")
-    script.chmod(0o755)
-    host = Host(command=[str(script)], cwd=tmp_path)
+    script = tmp_path / "auris.py"
+    script.write_text(
+        "import sys\nprint('auris: nope', file=sys.stderr)\nraise SystemExit(1)\n",
+        encoding="utf-8",
+    )
+    host = Host(command=[sys.executable, str(script)], cwd=tmp_path)
     with pytest.raises(HostError, match="nope"):
         host.run("sing-frames", "x.json")
 
@@ -178,11 +205,19 @@ def test_paths_reach_the_host_absolute_whatever_they_were_given_as(tmp_path, mon
 def test_a_composed_project_is_found_wherever_the_folder_rule_put_it(tmp_path, nested):
     """One folder, one project: `-o dir/x.auris` lands in `dir/x/x.auris`, unless `dir` is
     already the folder named `x`, when it lands in `dir/x.auris` itself."""
-    script = tmp_path / "auris"
-    where = "$(dirname \"$4\")/$(basename \"$4\" .auris)/$(basename \"$4\")" if nested else "$4"
-    script.write_text(f'#!/bin/sh\nmkdir -p "$(dirname {where})" && echo x > "{where}"\n')
-    script.chmod(0o755)
-    host = Host(command=[str(script)], cwd=tmp_path)
+    script = tmp_path / "auris.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "output = Path(sys.argv[4])\n"
+        f"target = output.parent / output.stem / output.name if {nested!r} else output\n"
+        "target.parent.mkdir(parents=True, exist_ok=True)\n"
+        "target.write_text('x', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    host = Host(command=[sys.executable, str(script)], cwd=tmp_path)
     project = host.compose(tmp_path / "s.asong", tmp_path / "out" / "song.auris")
-    expected = tmp_path / "out" / "song" / "song.auris" if nested else tmp_path / "out" / "song.auris"
+    expected = (
+        tmp_path / "out" / "song" / "song.auris" if nested else tmp_path / "out" / "song.auris"
+    )
     assert project == expected and project.is_file()

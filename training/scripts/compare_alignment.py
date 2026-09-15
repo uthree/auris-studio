@@ -25,6 +25,7 @@ import numpy as np  # noqa: E402
 
 from auris_singer.data.dataset import read_metadata  # noqa: E402
 from auris_singer.text.ipa import SIBILANTS, phoneme_class  # noqa: E402
+from auris_singer.utils.audio_clock import require_same_audio_clock  # noqa: E402
 
 
 def alignment_table(rows: list[tuple[str, float, int]]) -> list[dict]:
@@ -45,7 +46,9 @@ def alignment_table(rows: list[tuple[str, float, int]]) -> list[dict]:
                 "count": len(pairs),
                 "labelled_frames": float(labelled.mean()),
                 "searched_frames": float(searched.mean()),
-                "ratio": float(searched.mean() / labelled.mean()) if labelled.mean() else float("nan"),
+                "ratio": float(searched.mean() / labelled.mean())
+                if labelled.mean()
+                else float("nan"),
                 "searched_at_most_two": float((searched <= 2).mean()),
                 "mean_abs_diff": float(np.abs(searched - labelled).mean()),
             }
@@ -72,7 +75,9 @@ def symbol_table(rows: list[tuple[str, float, int]], at_least: int = 20) -> list
                 "count": len(pairs),
                 "labelled_frames": float(labelled.mean()),
                 "searched_frames": float(searched.mean()),
-                "ratio": float(searched.mean() / labelled.mean()) if labelled.mean() else float("nan"),
+                "ratio": float(searched.mean() / labelled.mean())
+                if labelled.mean()
+                else float("nan"),
                 "searched_at_most_two": float((searched <= 2).mean()),
                 "mean_abs_diff": float(np.abs(searched - labelled).mean()),
             }
@@ -92,11 +97,34 @@ def format_table(table: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _labelled_records(corpus) -> list[dict]:
+    """Read labels from the exact immutable generation ``corpus`` selected."""
+    return [record for record in read_metadata(corpus.root) if record.get("has_durations")]
+
+
+def _require_matching_clock(corpus, aligner) -> None:
+    """Reject a checkpoint trained on a different corpus frame clock."""
+    require_same_audio_clock(
+        "corpus",
+        corpus.sample_rate,
+        corpus.hop_length,
+        "checkpoint",
+        aligner.synthesizer.sample_rate,
+        aligner.synthesizer.hop_length,
+    )
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--checkpoint", required=True, type=Path)
-    parser.add_argument("--data", required=True, type=Path, help="a preprocessed dataset with labelled durations")
-    parser.add_argument("--utterances", type=int, default=0, help="how many to compare (default: all)")
+    parser.add_argument(
+        "--data", required=True, type=Path, help="a preprocessed dataset with labelled durations"
+    )
+    parser.add_argument(
+        "--utterances", type=int, default=0, help="how many to compare (default: all)"
+    )
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
 
@@ -104,7 +132,8 @@ def main() -> None:
 
     corpus = Corpus(args.data)
     aligner = Aligner(args.checkpoint, device=args.device)
-    records = [r for r in read_metadata(args.data) if r.get("has_durations")]
+    _require_matching_clock(corpus, aligner)
+    records = _labelled_records(corpus)
     if not records:
         sys.exit(f"{args.data} holds no labelled durations; preprocess with a duration_dir first")
     if args.utterances:
@@ -114,8 +143,15 @@ def main() -> None:
         phonemes, f0, energy, voiced, wav = corpus.load(record)
         labelled = corpus.durations(record)
         searched = aligner.durations(
-            phonemes, wav, f0, energy, voiced, int(record["speaker_id"]),
-            corpus.n_fft, corpus.hop_length, corpus.win_length,
+            phonemes,
+            wav,
+            f0,
+            energy,
+            voiced,
+            int(record["speaker_id"]),
+            corpus.n_fft,
+            corpus.hop_length,
+            corpus.win_length,
         )
         rows.extend(zip(phonemes, labelled, searched))
     print(f"{len(records)} utterances, {len(rows)} phonemes")

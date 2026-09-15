@@ -38,6 +38,17 @@ impl AurisApp {
         } else {
             self.t(Key::EngineSilent).to_string()
         };
+        let background_fraction = self.background_command.as_ref().and_then(|state| {
+            state.progress.as_ref().map(|progress| {
+                f32::from_bits(progress.load(std::sync::atomic::Ordering::Relaxed)).clamp(0.0, 1.0)
+            })
+        });
+        let background_running = self.background_command.is_some();
+        let status = self
+            .background_command
+            .as_ref()
+            .map(|state| state.label.clone())
+            .unwrap_or_else(|| self.status.clone());
         div()
             .flex()
             .items_center()
@@ -59,7 +70,7 @@ impl AurisApp {
                     // A failure was reported in the same pale grey as the sample rate beside it,
                     // in a row a user has no reason to be looking at.
                     .when(self.status_failed, |this| this.text_color(theme.danger))
-                    .child(self.status.clone()),
+                    .child(status),
             )
             .children(self.soundfont_download.as_ref().map(|download| {
                 div()
@@ -69,6 +80,29 @@ impl AurisApp {
                     .text_color(theme.accent_text)
                     .child(download.message(self.language()))
             }))
+            .children(background_fraction.map(|fraction| {
+                div()
+                    .id("background-command-progress")
+                    .debug_selector(|| "background-command-progress".to_owned())
+                    .flex_shrink_0()
+                    .text_color(theme.accent_text)
+                    .child(format!("{:.0}%", fraction * 100.0))
+            }))
+            .when(background_running, |this| {
+                this.child(button(
+                    "background-command-cancel",
+                    self.t(Key::Cancel),
+                    ButtonStyle::Ghost,
+                    false,
+                    theme.danger,
+                    &theme,
+                    cx.listener(|this, _, window, cx| {
+                        this.cancel_background_command();
+                        window.focus(&this.focus);
+                        cx.notify();
+                    }),
+                ))
+            })
             // The standing offer when another writer changed the file under unsaved work:
             // the one button in the window that takes the disk's version deliberately.
             .when(self.external_change.is_some(), |this| {
@@ -79,10 +113,11 @@ impl AurisApp {
                     true,
                     theme.warning,
                     &theme,
-                    cx.listener(|this, _, _, cx| {
+                    cx.listener(|this, _, window, cx| {
                         if let Some(path) = this.external_change.take() {
                             this.set_status(String::new());
                             this.accept_agent_changes(path, cx);
+                            window.focus(&this.focus);
                         }
                         cx.notify();
                     }),
@@ -159,6 +194,13 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let open = self.panels.is_open(panel);
+        let agent_status = match panel {
+            Panel::Agent if !open => {
+                let status = self.agent_chat.panel_status();
+                (status != crate::ui::agent_chat::AgentPanelStatus::Idle).then_some(status)
+            }
+            _ => None,
+        };
         let icon_size = if size > SWITCH_SIZE {
             px(16.0)
         } else {
@@ -187,6 +229,15 @@ impl AurisApp {
         } else {
             theme.surface_hover
         };
+        let tooltip_label = match agent_status {
+            Some(status) => format!(
+                "{} · {}",
+                self.t(self.shown_panel_label(panel)),
+                self.t(status.label())
+            ),
+            None => self.t(self.shown_panel_label(panel)).to_string(),
+        };
+        let shortcut = self.keystroke_for(panel.command());
 
         div()
             .id(("panel-switch", panel as usize))
@@ -203,6 +254,32 @@ impl AurisApp {
             .hover(|this| this.bg(hover))
             .active(|this| this.opacity(0.75))
             .child(icon(panel.icon(), icon_size, mark))
+            .when_some(agent_status, |switch, status| {
+                let colour = match status {
+                    crate::ui::agent_chat::AgentPanelStatus::Running
+                    | crate::ui::agent_chat::AgentPanelStatus::Completed => theme.accent,
+                    crate::ui::agent_chat::AgentPanelStatus::Pending => theme.warning,
+                    crate::ui::agent_chat::AgentPanelStatus::Failed => theme.danger,
+                    crate::ui::agent_chat::AgentPanelStatus::Idle => theme.text_faint,
+                };
+                let selector = format!("agent-panel-state-{}", status.slug());
+                switch.child(
+                    div()
+                        .debug_selector(move || selector.clone())
+                        .absolute()
+                        .top(px(-1.0))
+                        .right(px(-1.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(10.0))
+                        .rounded_full()
+                        .bg(colour)
+                        .text_size(px(7.0))
+                        .text_color(theme.text_on(colour))
+                        .child(status.mark()),
+                )
+            })
             .when(open, |switch| {
                 switch.child(
                     div()
@@ -215,7 +292,11 @@ impl AurisApp {
                         .bg(theme.accent),
                 )
             })
-            .tooltip(self.tip(self.shown_panel_label(panel), panel.command()))
+            .tooltip(crate::ui::tooltip::keyed_tip(
+                tooltip_label,
+                shortcut,
+                theme,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {

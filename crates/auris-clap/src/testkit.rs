@@ -88,6 +88,13 @@ pub const GUI_ID: u32 = 4345;
 /// should do while nothing is keying the slot.
 pub const KEY_ID: u32 = 4346;
 
+/// Opaque fixture state that deliberately makes the state extension refuse to save.
+///
+/// A quiet NaN payload is used because it is outside every musical parameter range while still
+/// round-tripping through the fixture's ordinary four-byte state loader. This exists solely to
+/// prove that hosts distinguish an unavailable state extension from one that reports failure.
+pub const REFUSE_STATE_SAVE: [u8; 4] = 0x7fc0_a511u32.to_le_bytes();
+
 static FIXTURE_DESTROYS: AtomicU32 = AtomicU32::new(0);
 
 /// How many times the gain fixture's GUI has been destroyed in this process.
@@ -525,6 +532,11 @@ impl PluginMainThreadParams for MainThread<'_> {
 
 impl PluginStateImpl for MainThread<'_> {
     fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
+        if self.shared.gain.load(Ordering::Relaxed) == u32::from_le_bytes(REFUSE_STATE_SAVE) {
+            return Err(PluginError::Message(
+                "the fixture refuses to save this state",
+            ));
+        }
         output.write_all(&self.shared.get().to_le_bytes())?;
         Ok(())
     }
@@ -549,6 +561,13 @@ pub const LEVEL_ID: u32 = 7001;
 pub const BEND_ID: u32 = 7002;
 /// The read-only parameter reporting the last modulation amount the fixture was sent.
 pub const WHEEL_ID: u32 = 7003;
+/// Controller that asks the fixture to emit [`OUTPUT_BURST_EVENTS`] output events in one block.
+///
+/// This is deliberately test-only fixture behaviour: it lets the host prove that a hostile or
+/// unusually chatty plugin cannot grow host storage from its audio callback.
+pub const OUTPUT_BURST_CONTROLLER: u8 = 127;
+/// Number of events emitted when [`OUTPUT_BURST_CONTROLLER`] is received.
+pub const OUTPUT_BURST_EVENTS: u32 = 4_096;
 /// The read-only parameter reporting what the host has done to [`Tone`]'s window.
 ///
 /// The other half of what [`GUI_ID`] covers. The gain fixture will only float and this one will
@@ -764,6 +783,7 @@ impl<'a> PluginAudioProcessor<'a, ToneShared, ToneMainThread<'a>> for ToneProces
     ) -> Result<ProcessStatus, PluginError> {
         let frames = audio.frames_count() as usize;
         let mut cursor = 0usize;
+        let mut emit_output_burst = false;
 
         for event in events.input {
             let at = (event.header().time() as usize).min(frames);
@@ -784,9 +804,15 @@ impl<'a> PluginAudioProcessor<'a, ToneShared, ToneMainThread<'a>> for ToneProces
                     .store((expression.value() as f32).to_bits(), Ordering::Relaxed);
             } else if let Some(midi) = event.as_event::<MidiEvent>() {
                 let data = midi.data();
-                if data[0] == 0xB0 && data[1] == 1 {
-                    let amount = data[2] as f32 / 127.0;
-                    self.shared.wheel.store(amount.to_bits(), Ordering::Relaxed);
+                if data[0] == 0xB0 {
+                    match data[1] {
+                        1 => {
+                            let amount = data[2] as f32 / 127.0;
+                            self.shared.wheel.store(amount.to_bits(), Ordering::Relaxed);
+                        }
+                        OUTPUT_BURST_CONTROLLER => emit_output_burst = true,
+                        _ => {}
+                    }
                 }
             } else if let Some(param) = event.as_event::<ParamValueEvent>()
                 && param.param_id().map(|id| id.get()) == Some(LEVEL_ID)
@@ -797,6 +823,13 @@ impl<'a> PluginAudioProcessor<'a, ToneShared, ToneMainThread<'a>> for ToneProces
             }
         }
         self.envelope[cursor..frames].fill(self.amplitude);
+
+        if emit_output_burst {
+            let reply = MidiEvent::new(0, 0, [0xB0, 1, 0]);
+            for _ in 0..OUTPUT_BURST_EVENTS {
+                let _ = events.output.try_push(reply);
+            }
+        }
 
         let level = f32::from_bits(self.shared.level.load(Ordering::Relaxed));
         for mut port in &mut audio {
@@ -978,7 +1011,13 @@ impl PluginMainThreadParams for ToneMainThread<'_> {
 
 impl PluginStateImpl for ToneMainThread<'_> {
     fn save(&mut self, output: &mut OutputStream) -> Result<(), PluginError> {
-        output.write_all(&self.shared.level.load(Ordering::Relaxed).to_le_bytes())?;
+        let level = self.shared.level.load(Ordering::Relaxed);
+        if level == u32::from_le_bytes(REFUSE_STATE_SAVE) {
+            return Err(PluginError::Message(
+                "the fixture refuses to save this state",
+            ));
+        }
+        output.write_all(&level.to_le_bytes())?;
         Ok(())
     }
 

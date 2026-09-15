@@ -52,7 +52,7 @@ impl SampleHeader {
         reader: &mut R,
         size: usize,
     ) -> Result<Vec<SampleHeader>, SoundFontError> {
-        if size == 0 || size % 46 != 0 {
+        if size == 0 || !size.is_multiple_of(46) {
             return Err(SoundFontError::InvalidSampleHeaderList);
         }
 

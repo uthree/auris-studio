@@ -40,6 +40,7 @@ use auris_session::{Session, SessionError, SessionOptions};
 mod audition;
 #[path = "capabilities.rs"]
 mod availability;
+mod cancellation;
 mod catalog;
 mod tool_exposure;
 pub use tool_exposure::{
@@ -64,6 +65,7 @@ mod track_editing;
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
+pub use cancellation::{Cancellation, with_cancellation};
 pub use catalog::{ToolDefinition, argument_error_hint, parameter_schema, tool_catalog, tool_help};
 pub use drums::{analyze_drum_kit, set_drum_assignment};
 pub use editing::{
@@ -448,7 +450,7 @@ pub fn writes_project(tool: &str, args: &serde_json::Value) -> bool {
         automation::NAME => {
             args.pointer("/operation/action").and_then(|v| v.as_str()) != Some("read")
         }
-        checkpoints::NAME => args.get("action").and_then(|v| v.as_str()) == Some("restore"),
+        checkpoints::NAME => args.get("action").and_then(|v| v.as_str()) != Some("list"),
         _ => true,
     }
 }
@@ -552,6 +554,7 @@ pub mod compose {
         // `save_as`, never `save`: the project must land in a folder of its own, and a folder
         // already holding a different project is a refusal the caller answers deliberately.
         let chosen = Path::new(&args.output);
+        cancellation::begin_commit()?;
         let saved = match args.force {
             true => session.save_as_replacing(chosen),
             false => session.save_as(chosen),
@@ -657,28 +660,27 @@ pub mod render {
             ));
         }
 
-        // Nobody is watching a progress bar here — the call simply takes as long as it takes —
-        // so the default progress: unreported, uncancellable.
+        let cancellation = cancellation::current();
+        let commit = || cancellation.begin_commit().is_ok();
+        let mut progress = RenderProgress::default()
+            .cancelled_by(cancellation.flag())
+            .committing_with(&commit);
         let mut job = session.render_job();
         if let Some(folder) = &args.stems {
             let folder = PathBuf::from(folder);
             let folder = std::path::absolute(&folder).unwrap_or(folder);
             protect_project_assets(&session, &folder, true)?;
             std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-            let written = match job.render_stems_with_partial(
-                &folder,
-                &settings,
-                &options,
-                &mut RenderProgress::default(),
-            ) {
-                Ok(written) => written,
-                Err(failure) => {
-                    for stem in &failure.written {
-                        text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
+            let written =
+                match job.render_stems_with_partial(&folder, &settings, &options, &mut progress) {
+                    Ok(written) => written,
+                    Err(failure) => {
+                        for stem in &failure.written {
+                            text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
+                        }
+                        return Err(format!("{text}Stem export stopped: {}", failure.error));
                     }
-                    return Err(format!("{text}Stem export stopped: {}", failure.error));
-                }
-            };
+                };
             for stem in &written {
                 text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
             }
@@ -693,7 +695,7 @@ pub mod render {
             let output = std::path::absolute(&output).unwrap_or(output);
             protect_project_assets(&session, &output, false)?;
             let summary = job
-                .render_to_wav(&output, &settings, &options, &mut RenderProgress::default())
+                .render_to_wav(&output, &settings, &options, &mut progress)
                 .map_err(|error| error.to_string())?;
             text.push_str(&wrote_line(&output, &summary, &settings));
         }
@@ -1200,9 +1202,7 @@ pub mod set_level {
             }
             session.set_param(pan_target, pan);
         }
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
 
         let (gain, pan) = match strip {
             Some(id) => {
@@ -1347,9 +1347,7 @@ pub mod set_effect {
         let before = session.param_value(target, &descriptor);
         let automated = session.is_automated(target);
         session.set_param(target, args.value);
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
 
         let mut text = format!(
             "{effect_id} {}: {} -> {}. Saved.",
@@ -1422,9 +1420,7 @@ pub mod section_gain {
             if !session.clear_automation(target) {
                 return Err(format!("nothing is automated on '{}'", args.track));
             }
-            session
-                .save_with_checkpoint()
-                .map_err(|error| error.to_string())?;
+            save_checkpointed(&mut session)?;
             return Ok(format!(
                 "The gain lane on '{}' is gone; the fader rules everywhere again. Saved.",
                 args.track
@@ -1505,9 +1501,7 @@ pub mod section_gain {
                 args.track
             ));
         }
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         text.push_str(
             "The fader keeps ruling outside the stretch. Saved — `analyze` will show the arc.",
         );
@@ -1659,9 +1653,7 @@ pub mod regenerate_clips {
                 ));
             }
         }
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         text.push_str("Saved. Render again to hear it.");
         Ok(text)
     }
@@ -1885,7 +1877,7 @@ pub mod add_track {
         #[schemars(skip)]
         pub instrument: Option<String>,
         /// Exact ID from search_instruments or similar_instruments for this project.
-        /// Includes native plugin presets; expires on rescan or cache eviction.
+        /// Includes native plugin presets; expires on refresh, library changes, or handle eviction.
         pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
         /// 0-127, out of the shipped library.
@@ -1959,9 +1951,7 @@ pub mod add_track {
                 kind.label().to_string()
             }
         };
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if matches!(kind, Kind::Instrument | Kind::Drum) {
             text.push_str(" The track holds no clips yet. For authored notes, use `add_clip` then `replace_notes` (inline notes or a JSON source file); `add_part` generates a part automatically.");
@@ -2085,9 +2075,7 @@ pub mod add_part {
         let clip = session
             .generate_clip(track, start, length, ClipRecipe::new(preset, seed))
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
 
         let notes = session
             .project()
@@ -2139,7 +2127,7 @@ pub mod set_instrument {
         #[schemars(skip)]
         pub instrument: Option<String>,
         /// Exact ID from search_instruments or similar_instruments for this project.
-        /// Includes native plugin presets; expires on rescan or cache eviction.
+        /// Includes native plugin presets; expires on refresh, library changes, or handle eviction.
         #[schemars(required)]
         pub sound_id: Option<String>,
         /// A General MIDI sound instead — a name like "Electric Piano 1" or a program number
@@ -2179,9 +2167,7 @@ pub mod set_instrument {
                 .map_err(|error| format!("{error} — `list_instruments` names the real ones"))?;
         }
         let voiced = add_track::voice(&mut session, track, &args.sound, args.drums, &None)?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok(format!("{} — now {voiced}. Saved.", args.track))
     }
 }
@@ -2219,9 +2205,7 @@ pub mod rename_track {
         session
             .rename_track(track, args.name.trim())
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok(format!(
             "'{}' is now '{}'. Saved.",
             args.track,
@@ -2257,9 +2241,7 @@ pub mod remove_track {
         session
             .remove_track(track)
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         Ok(format!(
             "Removed '{}' — {} tracks remain. Saved.",
             args.track,
@@ -2310,9 +2292,7 @@ pub mod add_clip {
         let clip = session
             .add_midi_clip(track, name, start, length)
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         let number = clip_number(session.project(), track, clip).unwrap_or(0);
         Ok(format!(
             "Opened clip [{number}] '{name}' on {} — bars {start_bar}-{}, empty. Saved. \
@@ -2580,9 +2560,7 @@ pub mod edit_notes {
                 .add_note(id, note)
                 .map_err(|error| error.to_string())?;
         }
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
 
         let now = session
             .project()
@@ -2659,9 +2637,7 @@ pub mod accompany {
         let report = session
             .accompany(id, &parts, args.seed.unwrap_or(0))
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
 
         let band: Vec<String> = report
             .parts
@@ -2758,9 +2734,7 @@ pub mod write_lyrics {
         let filled = session
             .write_lyrics(id, &indices, &args.text)
             .map_err(|error| error.to_string())?;
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         let mut text = format!(
             "Laid '{}' across {filled} notes starting at [{from}]. Saved.",
             args.text.trim()
@@ -2822,6 +2796,7 @@ pub mod compose_lyrics {
 
         // `save_as`, never `save` — the compose tool's reasoning, verbatim.
         let chosen = Path::new(&args.output);
+        cancellation::begin_commit()?;
         let saved = match args.force {
             true => session.save_as_replacing(chosen),
             false => session.save_as(chosen),
@@ -2956,14 +2931,31 @@ pub mod sing {
             })
             .unwrap_or_default();
         let name = bounded_label(&name);
+        let plan = session
+            .sing_plan(target, args.seed)
+            .map_err(|error| error.to_string())?;
+        let model = session
+            .singer_voice_model(target)
+            .map_err(|error| error.to_string())?;
+        let cancellation = cancellation::current();
+        let render = model
+            .lock()
+            .map_err(|_| "the singer worker stopped unexpectedly".to_string())?
+            .sing_render_with(
+                &plan.frames,
+                &plan.score,
+                plan.speaker,
+                plan.seed,
+                |_, _| !cancellation.is_cancelled(),
+            )
+            .map_err(|error| error.to_string())?;
+        cancellation.begin_commit()?;
         let seconds = session
-            .sing(target, args.seed)
+            .land_singer_render(&plan, &render)
             .map_err(|error| error.to_string())?;
         // A take names its audio by a pointer in the document; a pointer that only lived in
         // memory would leave the rendered file orphaned on disk.
-        session
-            .save_with_checkpoint()
-            .map_err(|error| error.to_string())?;
+        save_checkpointed(&mut session)?;
         let seed = session
             .project()
             .track(target)
@@ -2978,12 +2970,21 @@ pub mod sing {
     }
 }
 
+/// Saves one headless edit only after this request wins its cancellation/commit race.
+fn save_checkpointed(session: &mut Session) -> Result<(), String> {
+    cancellation::begin_commit()?;
+    session
+        .save_with_checkpoint()
+        .map_err(|error| error.to_string())
+}
+
 /// A session with no audio device and no GPU, with the shipped SoundFonts.
 ///
 /// The fonts for the same reason `auris compose` loads them: `compose` here and **Compose a
 /// Song…** in the window have to write the same piece, and half the instruments a piece asks
 /// for are in that library.
 fn headless() -> Result<Session, String> {
+    cancellation::check()?;
     Session::new(
         SessionOptions::headless()
             .with_shipped_fonts(true)
@@ -3031,6 +3032,7 @@ fn opened(path: &str) -> Result<Session, String> {
     session
         .open(&resolve_project(path)?)
         .map_err(|error| error.to_string())?;
+    cancellation::check()?;
     Ok(session)
 }
 
@@ -3450,6 +3452,22 @@ mod tests {
             .set_point(change + Ticks::QUARTER * 3, TimeSignature::new(3, 4));
         assert!(placed_at(&project, 3, 4.0).is_err());
         assert_eq!(placed_at(&project, 3, 1.0).unwrap(), Ticks::QUARTER * 7);
+    }
+
+    #[test]
+    fn checkpoint_creation_is_classified_as_a_durable_project_write() {
+        assert!(!writes_project(
+            checkpoints::NAME,
+            &serde_json::json!({"action":"list"})
+        ));
+        assert!(writes_project(
+            checkpoints::NAME,
+            &serde_json::json!({"action":"create"})
+        ));
+        assert!(writes_project(
+            checkpoints::NAME,
+            &serde_json::json!({"action":"restore"})
+        ));
     }
 
     #[test]

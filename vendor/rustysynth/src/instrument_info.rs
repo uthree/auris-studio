@@ -28,7 +28,7 @@ impl InstrumentInfo {
         reader: &mut R,
         size: usize,
     ) -> Result<Vec<InstrumentInfo>, SoundFontError> {
-        if size == 0 || size % 22 != 0 {
+        if size == 0 || !size.is_multiple_of(22) {
             return Err(SoundFontError::InvalidInstrumentList);
         }
 

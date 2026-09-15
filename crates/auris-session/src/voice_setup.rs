@@ -3,6 +3,8 @@
 //! These are session-level commands rather than gpui helpers so every frontend can create the
 //! same files, validate the same fields and start the same engine without duplicating policy.
 
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::Duration;
@@ -11,6 +13,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::library::VOICES_FOLDER;
 use crate::settings::config_dir;
+
+/// Largest connection or voicebank text file accepted by the setup workflow.
+///
+/// These files contain a few paths, labels and numeric settings. A MiB leaves generous room for
+/// third-party catalogues while ensuring a selected or replaced file cannot be copied without a
+/// bound before JSON or YAML validation begins.
+const MAX_VOICE_CONFIG_BYTES: usize = 1024 * 1024;
+
+/// Largest `/version` response accepted from a VOICEVOX Engine.
+const MAX_VERSION_BYTES: usize = 1024;
+
+/// Largest `/singers` response accepted from a VOICEVOX Engine.
+const MAX_SINGER_CATALOG_BYTES: usize = 1024 * 1024;
+
+/// Most singing styles retained from one Engine catalogue or connection file.
+const MAX_VOICEVOX_STYLES: usize = 4_096;
+
+/// Largest human-facing name accepted from a configuration or Engine response.
+const MAX_VOICE_LABEL_BYTES: usize = 512;
+
+/// Leaves room for `.voicevox.json` within a portable 255-unit path component.
+const MAX_VOICE_FILE_NAME_BYTES: usize = 200;
+
+/// Largest configured Engine URL.
+const MAX_VOICE_URL_BYTES: usize = 2_048;
+
+/// Audio clocks supported by the rest of the singer pipeline.
+const MIN_VOICE_SAMPLE_RATE: u32 = 8_000;
+const MAX_VOICE_SAMPLE_RATE: u32 = 192_000;
+const MIN_VOICE_FRAME_RATE: f64 = 10.0;
+const MAX_VOICE_FRAME_RATE: f64 = 1_000.0;
 
 /// A VOICEVOX Engine connection that can be written as an Auris voice entry.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -245,12 +278,141 @@ pub enum VoiceSetupError {
     Encode(String),
 }
 
+/// Reads one small configuration through a single open handle and enforces the bound again while
+/// reading. The second check is authoritative when another process grows the file after metadata
+/// was observed.
+fn read_voice_config(path: &Path) -> Result<Vec<u8>, VoiceSetupError> {
+    read_voice_config_after_metadata(path, || {})
+}
+
+fn read_voice_config_after_metadata(
+    path: &Path,
+    after_metadata: impl FnOnce(),
+) -> Result<Vec<u8>, VoiceSetupError> {
+    let file = File::open(path)?;
+    let observed = file.metadata()?.len();
+    if observed > MAX_VOICE_CONFIG_BYTES as u64 {
+        return Err(VoiceSetupError::Invalid(format!(
+            "Voice configuration is too large: {} is {observed} bytes; the limit is {MAX_VOICE_CONFIG_BYTES} bytes",
+            path.display()
+        )));
+    }
+    after_metadata();
+
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(observed as usize).map_err(|_| {
+        VoiceSetupError::Invalid("Not enough memory to read the voice configuration".into())
+    })?;
+    file.take(MAX_VOICE_CONFIG_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_VOICE_CONFIG_BYTES {
+        return Err(VoiceSetupError::Invalid(format!(
+            "Voice configuration is too large: {} is at least {} bytes; the limit is {MAX_VOICE_CONFIG_BYTES} bytes",
+            path.display(),
+            bytes.len()
+        )));
+    }
+    Ok(bytes)
+}
+
+/// Reads a bounded HTTP body even when Content-Length is absent, false, or bypassed by chunking.
+fn read_voicevox_response(
+    response: ureq::Response,
+    endpoint: &str,
+    limit: usize,
+) -> Result<Vec<u8>, VoiceSetupError> {
+    let length = response
+        .header("Content-Length")
+        .and_then(|length| length.parse::<usize>().ok());
+    if length.is_some_and(|length| length > limit) {
+        return Err(VoiceSetupError::Connection(format!(
+            "VOICEVOX {endpoint} response is too large: {} bytes; the limit is {limit} bytes",
+            length.unwrap_or_default()
+        )));
+    }
+    read_voicevox_body_with_capacity(
+        response.into_reader(),
+        endpoint,
+        limit,
+        length.unwrap_or_default(),
+    )
+}
+
+#[cfg(test)]
+fn read_voicevox_body(
+    reader: impl Read,
+    endpoint: &str,
+    limit: usize,
+) -> Result<Vec<u8>, VoiceSetupError> {
+    read_voicevox_body_with_capacity(reader, endpoint, limit, 0)
+}
+
+fn read_voicevox_body_with_capacity(
+    reader: impl Read,
+    endpoint: &str,
+    limit: usize,
+    capacity: usize,
+) -> Result<Vec<u8>, VoiceSetupError> {
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(capacity.min(limit)).map_err(|_| {
+        VoiceSetupError::Connection(format!(
+            "Not enough memory to read the VOICEVOX {endpoint} response"
+        ))
+    })?;
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX {endpoint}: {error}")))?;
+    if bytes.len() > limit {
+        return Err(VoiceSetupError::Connection(format!(
+            "VOICEVOX {endpoint} response exceeds the {limit}-byte limit"
+        )));
+    }
+    Ok(bytes)
+}
+
+fn label_is_valid(label: &str) -> bool {
+    !label.trim().is_empty()
+        && label.len() <= MAX_VOICE_LABEL_BYTES
+        && !label.chars().any(char::is_control)
+}
+
+fn voice_clock_is_valid(sample_rate: u32, frame_rate: f64) -> bool {
+    if !(MIN_VOICE_SAMPLE_RATE..=MAX_VOICE_SAMPLE_RATE).contains(&sample_rate)
+        || !frame_rate.is_finite()
+        || !(MIN_VOICE_FRAME_RATE..=MAX_VOICE_FRAME_RATE).contains(&frame_rate)
+    {
+        return false;
+    }
+    let hop = f64::from(sample_rate) / frame_rate;
+    hop >= 1.0 && (hop - hop.round()).abs() <= 1.0e-8
+}
+
+fn validate_voicevox_styles(styles: &[VoicevoxSpeakerChoice]) -> Result<(), VoiceSetupError> {
+    if styles.is_empty() || styles.len() > MAX_VOICEVOX_STYLES {
+        return Err(VoiceSetupError::Invalid(format!(
+            "VOICEVOX connections need 1..={MAX_VOICEVOX_STYLES} singing styles"
+        )));
+    }
+    let mut names = std::collections::HashSet::with_capacity(styles.len());
+    if styles
+        .iter()
+        .any(|style| !label_is_valid(&style.name) || !names.insert(&style.name))
+    {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX style names must be unique, nonempty, printable, and no more than 512 bytes"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn read_voicevox_connection(
     path: &Path,
     speaker: Option<&str>,
     track: auris_core::TrackId,
 ) -> Result<VoicevoxConnection, VoiceSetupError> {
-    let raw = std::fs::read(path)?;
+    let raw = read_voice_config(path)?;
     let file: serde_json::Value = serde_json::from_slice(&raw)
         .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
     if file
@@ -264,6 +426,7 @@ pub(crate) fn read_voicevox_connection(
     }
     let styles: Vec<VoicevoxSpeakerChoice> = serde_json::from_value(file["styles"].clone())
         .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+    validate_voicevox_styles(&styles)?;
     let style = match speaker {
         Some(name) => styles.iter().find(|style| style.name == name),
         None => styles.first(),
@@ -303,9 +466,17 @@ pub(crate) fn read_voicevox_connection(
         styles,
     };
     validate_voicevox_url(&connection.url)?;
-    if sample_rate == 0 || !frame_rate.is_finite() || frame_rate <= 0.0 {
+    if !voice_clock_is_valid(sample_rate, frame_rate) {
         return Err(VoiceSetupError::Invalid(
-            "VOICEVOX sample rate and frame rate must be positive".into(),
+            "VOICEVOX needs an 8000..=192000 Hz sample rate and a 10..=1000 Hz frame rate that divide into an integer sample hop".into(),
+        ));
+    }
+    if !label_is_valid(&connection.name)
+        || connection.url.len() > MAX_VOICE_URL_BYTES
+        || connection.url.chars().any(char::is_control)
+    {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX names and URLs are empty, too long, or contain control characters".into(),
         ));
     }
     Ok(connection)
@@ -315,12 +486,12 @@ pub(crate) fn append_voicevox_speaker(
     connection: &VoicevoxConnection,
     choice: &VoicevoxSpeakerChoice,
 ) -> Result<(), VoiceSetupError> {
-    if choice.name.trim().is_empty() {
+    if !label_is_valid(&choice.name) {
         return Err(VoiceSetupError::Invalid(
-            "VOICEVOX style name cannot be empty".into(),
+            "VOICEVOX style name must be nonempty, printable, and no more than 512 bytes".into(),
         ));
     }
-    if std::fs::read(&connection.path)? != connection.raw {
+    if read_voice_config(&connection.path)? != connection.raw {
         return Err(VoiceSetupError::Invalid(
             "The VOICEVOX connection changed; fetch the singers again".into(),
         ));
@@ -338,6 +509,11 @@ pub(crate) fn append_voicevox_speaker(
             ))
         };
     }
+    if connection.styles.len() >= MAX_VOICEVOX_STYLES {
+        return Err(VoiceSetupError::Invalid(format!(
+            "VOICEVOX connections cannot contain more than {MAX_VOICEVOX_STYLES} styles"
+        )));
+    }
     let mut file: serde_json::Value = serde_json::from_slice(&connection.raw)
         .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
     file["styles"]
@@ -349,48 +525,85 @@ pub(crate) fn append_voicevox_speaker(
         );
     let bytes = serde_json::to_vec_pretty(&file)
         .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
-    replace_voicevox_file(&connection.path, &bytes, Some(&connection.raw))
+    replace_config_file(
+        &connection.path,
+        &bytes,
+        Some(&connection.raw),
+        "The VOICEVOX connection changed; fetch the singers again",
+    )
 }
 
-fn replace_voicevox_file(
+fn replace_config_file(
     path: &Path,
     bytes: &[u8],
     expected: Option<&[u8]>,
+    changed: &str,
+) -> Result<(), VoiceSetupError> {
+    replace_config_file_after_check(path, bytes, expected, changed, || {})
+}
+
+fn replace_config_file_after_check(
+    path: &Path,
+    bytes: &[u8],
+    expected: Option<&[u8]>,
+    changed: &str,
+    after_check: impl FnOnce(),
 ) -> Result<(), VoiceSetupError> {
     use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT_WRITE: AtomicU64 = AtomicU64::new(0);
 
-    let temporary = path.with_file_name(format!(
-        ".auris-voicevox-{}-{}.tmp",
-        std::process::id(),
-        NEXT_WRITE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporary)?;
-    let written = (|| -> Result<(), VoiceSetupError> {
-        output.write_all(bytes)?;
-        output.sync_all()?;
-        drop(output);
-        // Check again after the write: the catalogue may have been open for several minutes.
-        let unchanged = match expected {
-            Some(original) => std::fs::read(path)? == original,
-            None => !path.try_exists()?,
-        };
-        if !unchanged {
-            return Err(VoiceSetupError::Invalid(
-                "The VOICEVOX connection changed; fetch the singers again".into(),
-            ));
-        }
-        std::fs::rename(&temporary, path)?;
-        Ok(())
-    })();
-    if written.is_err() {
-        let _ = std::fs::remove_file(&temporary);
+    if bytes.len() > MAX_VOICE_CONFIG_BYTES {
+        return Err(VoiceSetupError::Invalid(format!(
+            "Voice configuration is too large to save: {} bytes; the limit is {MAX_VOICE_CONFIG_BYTES} bytes",
+            bytes.len()
+        )));
     }
-    written
+
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    // Serialize cooperating setup windows across processes. The expected-byte check stays under
+    // this lock, so two writers that started from one catalogue cannot both publish it.
+    let lock_path = parent.join(".auris-voice-config.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)?;
+    lock.lock()?;
+    // A random, exclusively created sibling cannot collide with debris from an earlier process
+    // whose PID has since been reused. Keeping it beside the destination also keeps publication
+    // on one filesystem, where `persist` can atomically replace an existing connection on both
+    // desktop platforms.
+    let mut staged = tempfile::NamedTempFile::new_in(parent)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+
+    // Check again after the write: the catalogue may have been open for several minutes.
+    let unchanged = match expected {
+        Some(original) => read_voice_config(path)? == original,
+        None => !path.try_exists()?,
+    };
+    if !unchanged {
+        return Err(VoiceSetupError::Invalid(changed.into()));
+    }
+    after_check();
+    let published = match expected {
+        Some(_) => staged.persist(path),
+        // The destination was absent when this writer started. Refuse a non-cooperating writer
+        // that creates it after our check instead of silently replacing its new file.
+        None => staged.persist_noclobber(path),
+    };
+    published.map(drop).map_err(|error| {
+        if expected.is_none() && error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            VoiceSetupError::Invalid(changed.into())
+        } else {
+            VoiceSetupError::Io(error.error)
+        }
+    })?;
+    crate::settings::sync_config_parent(parent)?;
+    Ok(())
 }
 
 /// Writes a VOICEVOX connection into the application's managed Voices folder.
@@ -409,10 +622,10 @@ fn write_voicevox_connection_in(
     validate_voicevox(setup)?;
     std::fs::create_dir_all(folder)?;
     let path = folder.join(format!("{}.voicevox.json", safe_name(&setup.name)));
-    let original = match std::fs::read(&path) {
+    let original = match read_voice_config(&path) {
         Ok(bytes) => Some(bytes),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
+        Err(VoiceSetupError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
     };
     let mut styles: Vec<VoicevoxSpeakerChoice> = match &original {
         Some(bytes) => {
@@ -422,6 +635,15 @@ fn write_voicevox_connection_in(
                 .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
             let file: serde_json::Value = serde_json::from_slice(bytes)
                 .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?;
+            let existing_name = file
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("VOICEVOX");
+            if existing_name != setup.name.trim() {
+                return Err(VoiceSetupError::Invalid(format!(
+                    "A different VOICEVOX connection named '{existing_name}' already uses this portable file name"
+                )));
+            }
             serde_json::from_value(file["styles"].clone())
                 .map_err(|error| VoiceSetupError::Invalid(error.to_string()))?
         }
@@ -436,6 +658,7 @@ fn write_voicevox_connection_in(
         Some(existing) => *existing = selected,
         None => styles.push(selected),
     }
+    validate_voicevox_styles(&styles)?;
     let file = serde_json::json!({
         "format_version": 1,
         "name": setup.name.trim(),
@@ -446,7 +669,12 @@ fn write_voicevox_connection_in(
     });
     let bytes = serde_json::to_vec_pretty(&file)
         .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
-    replace_voicevox_file(&path, &bytes, original.as_deref())?;
+    replace_config_file(
+        &path,
+        &bytes,
+        original.as_deref(),
+        "The VOICEVOX connection changed while it was being saved; retry",
+    )?;
     Ok(path)
 }
 
@@ -467,35 +695,54 @@ pub fn fetch_voicevox_catalog(url: &str) -> Result<VoicevoxCatalog, VoiceSetupEr
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(3))
         .build();
-    let version = agent
+    let version_response = agent
         .get(&format!("{root}/version"))
         .call()
-        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /version: {error}")))?
-        .into_string()
-        .map_err(|error| VoiceSetupError::Connection(error.to_string()))?;
-    let singers: Vec<EngineSinger> = agent
+        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /version: {error}")))?;
+    let version_bytes = read_voicevox_response(version_response, "/version", MAX_VERSION_BYTES)?;
+    let version: String = serde_json::from_slice(&version_bytes)
+        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /version: {error}")))?;
+    if !label_is_valid(&version) {
+        return Err(VoiceSetupError::Connection(
+            "VOICEVOX advertised an invalid version label".into(),
+        ));
+    }
+
+    let singers_response = agent
         .get(&format!("{root}/singers"))
         .call()
-        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /singers: {error}")))?
-        .into_json()
-        .map_err(|error| VoiceSetupError::Connection(error.to_string()))?;
+        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /singers: {error}")))?;
+    let singers_bytes =
+        read_voicevox_response(singers_response, "/singers", MAX_SINGER_CATALOG_BYTES)?;
+    let singers: Vec<EngineSinger> = serde_json::from_slice(&singers_bytes)
+        .map_err(|error| VoiceSetupError::Connection(format!("VOICEVOX /singers: {error}")))?;
     let mut catalog = VoicevoxCatalog {
-        version: version.trim_matches(['"', '\n', '\r']).to_string(),
+        version,
         query: Vec::new(),
         decode: Vec::new(),
     };
     for singer in singers {
         for style in singer.styles {
-            let destination = match style.kind.as_str() {
-                "sing" | "singing_teacher" => &mut catalog.query,
-                "frame_decode" => &mut catalog.decode,
+            let query = match style.kind.as_str() {
+                "sing" | "singing_teacher" => true,
+                "frame_decode" => false,
                 _ => continue,
             };
-            if singer.name.trim().is_empty() || style.name.trim().is_empty() {
+            if !label_is_valid(&singer.name) || !label_is_valid(&style.name) {
                 return Err(VoiceSetupError::Connection(
-                    "VOICEVOX advertised an unnamed singing style".into(),
+                    "VOICEVOX advertised an empty, oversized, or unprintable singing style".into(),
                 ));
             }
+            if catalog.query.len() + catalog.decode.len() >= MAX_VOICEVOX_STYLES {
+                return Err(VoiceSetupError::Connection(format!(
+                    "VOICEVOX advertised more than {MAX_VOICEVOX_STYLES} singing styles"
+                )));
+            }
+            let destination = if query {
+                &mut catalog.query
+            } else {
+                &mut catalog.decode
+            };
             destination.push(VoicevoxStyle {
                 id: style.id,
                 singer: singer.name.clone(),
@@ -563,8 +810,10 @@ pub fn write_diffsinger_config(setup: &DiffSingerSetup) -> Result<PathBuf, Voice
         ("acoustic", setup.acoustic.as_str()),
         ("vocoder", setup.vocoder.as_str()),
     ] {
-        if value.trim().is_empty() {
-            return Err(VoiceSetupError::Invalid(format!("{label} cannot be empty")));
+        if value.trim().is_empty() || value.len() > 4_096 || value.chars().any(char::is_control) {
+            return Err(VoiceSetupError::Invalid(format!(
+                "{label} must be a printable path no longer than 4096 bytes"
+            )));
         }
     }
     for (label, path) in [
@@ -582,9 +831,15 @@ pub fn write_diffsinger_config(setup: &DiffSingerSetup) -> Result<PathBuf, Voice
             )));
         }
     }
-    if setup.sample_rate == 0 || setup.hop_size == 0 || setup.num_mel_bins == 0 {
+    let hop_seconds = f64::from(setup.hop_size) / f64::from(setup.sample_rate);
+    if !(MIN_VOICE_SAMPLE_RATE..=MAX_VOICE_SAMPLE_RATE).contains(&setup.sample_rate)
+        || setup.hop_size == 0
+        || !(0.001..=0.100).contains(&hop_seconds)
+        || setup.num_mel_bins == 0
+        || setup.num_mel_bins > 4_096
+    {
         return Err(VoiceSetupError::Invalid(
-            "DiffSinger audio dimensions must be positive".into(),
+            "DiffSinger needs an 8000..=192000 Hz sample rate, a 1..=100 ms hop, and 1..=4096 mel bins".into(),
         ));
     }
     if !matches!(setup.mel_base.as_str(), "10" | "e") {
@@ -595,47 +850,104 @@ pub fn write_diffsinger_config(setup: &DiffSingerSetup) -> Result<PathBuf, Voice
     let path = setup.folder.join("dsconfig.yaml");
     let text = serde_yaml_ng::to_string(setup)
         .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
-    std::fs::write(&path, text)?;
+    let original = match read_voice_config(&path) {
+        Ok(bytes) => Some(bytes),
+        Err(VoiceSetupError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error),
+    };
+    replace_config_file(
+        &path,
+        text.as_bytes(),
+        original.as_deref(),
+        "The DiffSinger configuration changed while it was being saved; retry",
+    )?;
     Ok(path)
 }
 
 fn validate_voicevox(setup: &VoicevoxSetup) -> Result<(), VoiceSetupError> {
-    if setup.name.trim().is_empty() || setup.style_name.trim().is_empty() {
+    if !label_is_valid(&setup.name)
+        || setup.name.len() > MAX_VOICE_FILE_NAME_BYTES
+        || !label_is_valid(&setup.style_name)
+    {
         return Err(VoiceSetupError::Invalid(
-            "VOICEVOX name and style name cannot be empty".into(),
+            "VOICEVOX names must be nonempty and printable; the connection name is limited to 200 bytes and the style name to 512 bytes".into(),
         ));
     }
     validate_voicevox_url(setup.url.trim())?;
-    if setup.sample_rate == 0 || !setup.frame_rate.is_finite() || setup.frame_rate <= 0.0 {
+    if !voice_clock_is_valid(setup.sample_rate, setup.frame_rate) {
         return Err(VoiceSetupError::Invalid(
-            "VOICEVOX sample rate and frame rate must be positive".into(),
+            "VOICEVOX needs an 8000..=192000 Hz sample rate and a 10..=1000 Hz frame rate that divide into an integer sample hop".into(),
         ));
     }
     Ok(())
 }
 
 fn validate_voicevox_url(url: &str) -> Result<(), VoiceSetupError> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
+    if url.is_empty() || url.len() > MAX_VOICE_URL_BYTES || url.chars().any(char::is_control) {
         return Err(VoiceSetupError::Invalid(
-            "VOICEVOX URL must begin with http:// or https://".into(),
+            "VOICEVOX URL must be a printable http:// or https:// URL no longer than 2048 bytes"
+                .into(),
+        ));
+    }
+    let parsed = ureq::get(url).request_url().map_err(|_| {
+        VoiceSetupError::Invalid(
+            "VOICEVOX URL must be a complete http:// or https:// Engine base URL".into(),
+        )
+    })?;
+    let parsed = parsed.as_url();
+    if !matches!(parsed.scheme(), "http" | "https")
+        || parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(VoiceSetupError::Invalid(
+            "VOICEVOX URL must be an http:// or https:// Engine base URL without credentials, a query, or a fragment".into(),
         ));
     }
     Ok(())
 }
 
 fn safe_name(name: &str) -> String {
-    let safe: String = name
+    let cleaned: String = name
         .trim()
         .chars()
         .map(|character| match character {
             '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            character if character.is_control() => '_',
             other => other,
         })
         .collect();
+    let safe = cleaned
+        .trim()
+        .trim_end_matches(|character: char| character == '.' || character.is_whitespace());
     if safe.is_empty() {
-        "VOICEVOX".into()
-    } else {
-        safe
+        return "VOICEVOX".into();
+    }
+    // Windows treats these as devices even when another extension follows the name. Prefixing
+    // rather than replacing keeps the singer recognizable in the managed Voices folder.
+    let device = safe
+        .split('.')
+        .next()
+        .unwrap_or(safe)
+        .trim_end()
+        .to_ascii_uppercase();
+    let reserved = matches!(
+        device.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || device
+        .strip_prefix("COM")
+        .or_else(|| device.strip_prefix("LPT"))
+        .is_some_and(|number| {
+            matches!(
+                number,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        });
+    match reserved {
+        true => format!("_{safe}"),
+        false => safe.to_string(),
     }
 }
 
@@ -811,8 +1123,110 @@ mod tests {
     }
 
     #[test]
+    fn voice_configuration_reads_are_bounded_before_and_after_metadata() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("oversized.voicevox.json");
+        std::fs::write(&path, vec![b' '; MAX_VOICE_CONFIG_BYTES + 1]).unwrap();
+        assert!(matches!(
+            read_voice_config(&path),
+            Err(VoiceSetupError::Invalid(message)) if message.contains("too large")
+        ));
+
+        std::fs::write(&path, vec![b' '; MAX_VOICE_CONFIG_BYTES]).unwrap();
+        let result = read_voice_config_after_metadata(&path, || {
+            let mut append = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
+            append.write_all(b"x").unwrap();
+            append.flush().unwrap();
+        });
+        assert!(matches!(
+            result,
+            Err(VoiceSetupError::Invalid(message)) if message.contains("too large")
+        ));
+    }
+
+    #[test]
+    fn a_new_voice_configuration_never_clobbers_a_late_competing_file() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("new.voicevox.json");
+        let error =
+            replace_config_file_after_check(&path, b"ours", None, "configuration changed", || {
+                std::fs::write(&path, b"theirs").unwrap()
+            })
+            .unwrap_err();
+
+        assert!(matches!(error, VoiceSetupError::Invalid(_)));
+        assert_eq!(std::fs::read(path).unwrap(), b"theirs");
+        assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn voicevox_streamed_responses_stop_at_the_byte_limit() {
+        const LIMIT: usize = 32;
+        assert_eq!(
+            read_voicevox_body(std::io::Cursor::new(vec![0_u8; LIMIT]), "/fixture", LIMIT)
+                .unwrap()
+                .len(),
+            LIMIT
+        );
+        assert!(matches!(
+            read_voicevox_body(
+                std::io::Cursor::new(vec![0_u8; LIMIT + 1]),
+                "/fixture",
+                LIMIT
+            ),
+            Err(VoiceSetupError::Connection(message)) if message.contains("32-byte limit")
+        ));
+    }
+
+    #[test]
+    fn voicevox_configuration_limits_match_the_singer_pipeline() {
+        let mut setup = VoicevoxSetup::default();
+        for (rate, frames) in [
+            (7_999, 93.75),
+            (192_001, 93.75),
+            (24_000, 9.0),
+            (24_000, 1_001.0),
+            (44_100, 93.75),
+        ] {
+            setup.sample_rate = rate;
+            setup.frame_rate = frames;
+            assert!(
+                validate_voicevox(&setup).is_err(),
+                "{rate} Hz at {frames} fps"
+            );
+        }
+        setup.sample_rate = 192_000;
+        setup.frame_rate = 1_000.0;
+        assert!(validate_voicevox(&setup).is_ok());
+
+        let mut styles = (0..MAX_VOICEVOX_STYLES)
+            .map(|index| VoicevoxSpeakerChoice {
+                name: format!("Singer {index}"),
+                query_style_id: 1,
+                decode_style_id: index as u32,
+            })
+            .collect::<Vec<_>>();
+        assert!(validate_voicevox_styles(&styles).is_ok());
+        styles.push(styles[0].clone());
+        assert!(validate_voicevox_styles(&styles).is_err());
+    }
+
+    #[test]
     fn connection_names_are_safe_on_every_platform() {
         assert_eq!(safe_name("波音/normal:*"), "波音_normal__");
+        assert_eq!(safe_name("CON"), "_CON");
+        assert_eq!(safe_name("CONIN$"), "_CONIN$");
+        assert_eq!(safe_name("conout$.json"), "_conout$.json");
+        assert_eq!(safe_name("lpt9.demo"), "_lpt9.demo");
+        assert_eq!(safe_name("COM¹"), "_COM¹");
+        assert_eq!(safe_name("CON .demo"), "_CON .demo");
+        assert_eq!(safe_name("COM10"), "COM10");
+        assert_eq!(safe_name(". ."), "VOICEVOX");
+        assert_eq!(safe_name("voice. ."), "voice");
+        assert_eq!(safe_name("voice\nname"), "voice_name");
     }
 
     #[test]
@@ -820,6 +1234,21 @@ mod tests {
         let setup = VoicevoxSetup::default();
         assert_eq!(setup.url, "http://127.0.0.1:50021");
         assert!(validate_voicevox(&setup).is_ok());
+
+        for url in [
+            "http://",
+            "file:///voicevox",
+            "http://name@127.0.0.1:50021",
+            "http://127.0.0.1:50021?engine=voicevox",
+            "http://127.0.0.1:50021#engine",
+        ] {
+            assert!(validate_voicevox_url(url).is_err(), "{url}");
+        }
+        let oversized_name = VoicevoxSetup {
+            name: "x".repeat(MAX_VOICE_FILE_NAME_BYTES + 1),
+            ..VoicevoxSetup::default()
+        };
+        assert!(validate_voicevox(&oversized_name).is_err());
     }
 
     #[test]
@@ -848,6 +1277,26 @@ mod tests {
         assert_eq!(value["styles"][0]["query_style_id"], 6000);
         assert_eq!(value["styles"][0]["decode_style_id"], 3009);
         std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[test]
+    fn portable_name_collisions_never_replace_another_connection() {
+        let folder = tempfile::tempdir().unwrap();
+        let first = VoicevoxSetup {
+            name: "Singer/Normal".into(),
+            ..VoicevoxSetup::default()
+        };
+        let path = write_voicevox_connection_in(&first, folder.path()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let colliding = VoicevoxSetup {
+            name: "Singer:Normal".into(),
+            ..VoicevoxSetup::default()
+        };
+
+        let error = write_voicevox_connection_in(&colliding, folder.path()).unwrap_err();
+
+        assert!(error.to_string().contains("different VOICEVOX connection"));
+        assert_eq!(std::fs::read(path).unwrap(), before);
     }
 
     #[test]

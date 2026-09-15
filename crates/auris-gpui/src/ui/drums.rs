@@ -212,10 +212,15 @@ impl AurisApp {
                 Key::MenuRetryDrumAnalysis,
                 MenuCommand::AnalyzeDrums(track),
             ),
-            Some(Outcome::Pending) | None => (
+            Some(Outcome::Pending) => (
                 Key::DrumAnalysisQueued,
                 Key::MenuCancelDrumAnalysis,
                 MenuCommand::CancelDrumAnalysis(track),
+            ),
+            None => (
+                Key::DrumAnalysisNotStarted,
+                Key::MenuAnalyzeDrums,
+                MenuCommand::AnalyzeDrums(track),
             ),
         };
         rows.push(

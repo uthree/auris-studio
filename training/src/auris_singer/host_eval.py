@@ -34,6 +34,7 @@ at the repository root says why, and it applies here word for word.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import math
@@ -48,8 +49,9 @@ import soundfile as sf
 import torch
 
 from auris_singer.data.dataset import read_metadata
-from auris_singer.export import METADATA_KEY
+from auris_singer.export import read_export_metadata
 from auris_singer.host import (
+    MAX_CONCATENATED_GAP_FRAMES,
     SILENCE,
     Host,
     HostFrames,
@@ -70,6 +72,11 @@ from auris_singer.intelligibility import (
 from auris_singer.metrics import energy_metrics, pitch_metrics
 from auris_singer.text.ipa import PhonemeTable, is_voiceless
 from auris_singer.utils.audio import frame_energy, mel_spectrogram, spectrogram
+from auris_singer.utils.audio_clock import require_same_audio_clock
+from auris_singer.utils.durations import (
+    validate_inference_extent,
+    validated_duration_array,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +104,25 @@ __all__ = [
 #: differ by runtime and noise stream alone. Pinned to the Rust source by the contract test.
 NOISE_SCALE = 0.667
 
+#: Bounds for an evaluation request. A corpus item can itself contain 2,000
+#: frames and every take may run the ONNX host, PyTorch reference and listener;
+#: these ceilings permit large comparison runs without letting a typo create
+#: an effectively unbounded local job.
+MAX_EVALUATION_UTTERANCES = 1_024
+MAX_EVALUATION_TAKES = 64
+MAX_EVALUATION_RENDER_JOBS = 4_096
+MAX_EVALUATION_GAP_SECONDS = 60.0
+MAX_EVALUATION_MELS = 2_048
+MAX_PITCH_TOLERANCE_CENTS = 1_200.0
+
+
+def _positive_bounded_int(name: str, value: Any, maximum: int) -> int:
+    """Validate a positive integer evaluation cardinality."""
+    if type(value) is not int or value <= 0 or value > maximum:
+        raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+    return value
+
+
 #: Every metric a column can hold, in the order the table prints them.
 METRICS = (
     "mel_l1",
@@ -116,6 +142,16 @@ METRICS = (
 #: The columns a report can hold, in table order. ``recording`` holds the listener's own
 #: ceiling — what it makes of the real singer — and nothing else.
 COLUMNS = ("host", "reference", "song", "recording", "score")
+
+
+def _artifact_stem(identifier: str) -> str:
+    """Return a bounded, filesystem-safe key that does not flatten corpus ids."""
+    readable = "".join(
+        character if character.isascii() and (character.isalnum() or character in "._-") else "_"
+        for character in identifier
+    ).strip("._")
+    digest = hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:16]
+    return f"{(readable[:48] or 'utterance')}-{digest}"
 
 
 # ----------------------------------------------------------------------------------------------
@@ -145,19 +181,9 @@ class VoiceInfo:
 
 
 def voice_info(path: str | Path) -> VoiceInfo:
-    """Read a voice's metadata: from the ``.json`` sidecar the export writes, or from the
-    ``.onnx`` itself where the sidecar has gone missing."""
+    """Read one verified metadata generation from an exported voice."""
     path = Path(path)
-    sidecar = path.with_suffix(".json")
-    if sidecar.is_file():
-        block = json.loads(sidecar.read_text(encoding="utf-8"))
-    else:
-        import onnx
-
-        props = {p.key: p.value for p in onnx.load(str(path), load_external_data=False).metadata_props}
-        if METADATA_KEY not in props:
-            raise ValueError(f"{path} carries no {METADATA_KEY!r} metadata; it is not an exported voice")
-        block = json.loads(props[METADATA_KEY])
+    block = read_export_metadata(path)
     audio = block.get("audio") or {}
     return VoiceInfo(
         path=path,
@@ -187,6 +213,14 @@ class Utterance:
     energy: np.ndarray
     wav: np.ndarray
 
+    def __post_init__(self) -> None:
+        """Validate durations before either frame-level property expands them."""
+        values = validated_duration_array(self.durations, len(self.phonemes))
+        total = sum(int(value) for value in values)
+        if total != self.n_frames:
+            raise ValueError(f"durations cover {total} frames but f0 contains {self.n_frames}")
+        self.durations = values.tolist()
+
     @property
     def n_frames(self) -> int:
         return int(self.f0.shape[0])
@@ -208,6 +242,7 @@ def validation_records(root: str | Path, seed: int = 1234, val_size: int = 8) ->
     Same shuffle, same seed, same cap, so the utterances measured here are the ones the
     training log's ``val/…`` numbers were measured on.
     """
+    val_size = _positive_bounded_int("val_size", val_size, MAX_EVALUATION_UTTERANCES)
     records = read_metadata(root)
     rng = random.Random(seed)
     rng.shuffle(records)
@@ -219,7 +254,9 @@ class Corpus:
     """A preprocessed dataset directory, read the way the dataset reads it."""
 
     def __init__(self, root: str | Path):
-        self.root = Path(root)
+        from auris_singer.dataset_layout import resolve_dataset_root
+
+        self.root = resolve_dataset_root(root)
         audio = json.loads((self.root / "audio_config.json").read_text(encoding="utf-8"))
         self.sample_rate = int(audio["sample_rate"])
         self.n_fft = int(audio["n_fft"])
@@ -228,6 +265,8 @@ class Corpus:
         self.table = PhonemeTable.load(self.root / "phonemes.json")
 
     def records(self, split: str, count: int, seed: int, val_size: int) -> list[dict]:
+        count = _positive_bounded_int("utterances", count, MAX_EVALUATION_UTTERANCES)
+        val_size = _positive_bounded_int("val_size", val_size, MAX_EVALUATION_UTTERANCES)
         if split == "val":
             records = validation_records(self.root, seed=seed, val_size=val_size)
         elif split == "all":
@@ -237,7 +276,9 @@ class Corpus:
             raise ValueError(f"split must be 'val' or 'all', not {split!r}")
         return records[:count]
 
-    def load(self, record: dict) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def load(
+        self, record: dict
+    ) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """``(phonemes, f0, energy, voiced, wav)`` for one record, trimmed to whole frames."""
         with np.load(self.root / record["path"]) as data:
             wav = data["wav"].astype(np.float32) / 32768.0
@@ -259,7 +300,8 @@ class Corpus:
         with np.load(self.root / record["path"]) as data:
             if "durations" not in data:
                 return None
-            return data["durations"].astype(np.int64).tolist()
+            values = validated_duration_array(data["durations"], int(data["phonemes"].size))
+            return values.tolist()
 
 
 class Aligner:
@@ -276,7 +318,9 @@ class Aligner:
     def __init__(self, checkpoint: str | Path, device: str = "cpu"):
         from auris_singer.lightning_module import AurisSingerModule
 
-        module = AurisSingerModule.load_from_checkpoint(str(checkpoint), map_location="cpu")
+        module = AurisSingerModule.load_from_checkpoint(
+            str(checkpoint), map_location="cpu", weights_only=True
+        )
         self.synthesizer = Synthesizer(module, device=device)
         self.device = torch.device(device)
 
@@ -352,6 +396,18 @@ class Analyst:
         f0_max: float = 1600.0,
         tolerance_cents: float = 50.0,
     ):
+        _positive_bounded_int("n_mels", n_mels, MAX_EVALUATION_MELS)
+        if (
+            isinstance(tolerance_cents, bool)
+            or not isinstance(tolerance_cents, (int, float))
+            or not math.isfinite(float(tolerance_cents))
+            or tolerance_cents <= 0
+            or tolerance_cents > MAX_PITCH_TOLERANCE_CENTS
+        ):
+            raise ValueError(
+                "tolerance_cents must be finite and between 0 (exclusive) "
+                f"and {MAX_PITCH_TOLERANCE_CENTS:g}"
+            )
         self.sample_rate = sample_rate
         self.n_fft = n_fft
         self.hop_length = hop_length
@@ -400,11 +456,19 @@ class Analyst:
             mel_pred, mel_real = self.mel(pred), self.mel(real)
             out["mel_l1"] = float((mel_pred - mel_real).abs().mean())
             if tokens is not None:
-                power = lambda w: spectrogram(w, self.n_fft, self.hop_length, self.win_length, power=2.0)  # noqa: E731
+
+                def power(w):
+                    return spectrogram(w, self.n_fft, self.hop_length, self.win_length, power=2.0)
+
                 out.update(
                     class_spectral_metrics(
-                        mel_pred, mel_real, power(pred), power(real), tokens,
-                        self.sample_rate, self.n_fft,
+                        mel_pred,
+                        mel_real,
+                        power(pred),
+                        power(real),
+                        tokens,
+                        self.sample_rate,
+                        self.n_fft,
                     )
                 )
 
@@ -462,7 +526,9 @@ def summarize(rows: list[dict[str, float]]) -> dict[str, float]:
     out: dict[str, float] = {}
     for name in METRICS:
         values = [
-            row[name] for row in rows if name in row and row[name] is not None and math.isfinite(row[name])
+            row[name]
+            for row in rows
+            if name in row and row[name] is not None and math.isfinite(row[name])
         ]
         if values:
             out[name] = float(sum(values) / len(values))
@@ -503,6 +569,59 @@ class Settings:
     #: Options for the recogniser's constructor (``precision``, ``device`` for ReazonSpeech).
     asr_options: dict[str, Any] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
+        """Reject accidental unbounded work before any evaluator is created."""
+        utterances = _positive_bounded_int("utterances", self.utterances, MAX_EVALUATION_UTTERANCES)
+        _positive_bounded_int("val_size", self.val_size, MAX_EVALUATION_UTTERANCES)
+        takes = _positive_bounded_int("take_seeds", self.take_seeds, MAX_EVALUATION_TAKES)
+        _positive_bounded_int("n_mels", self.n_mels, MAX_EVALUATION_MELS)
+        jobs = utterances * takes
+        if jobs > MAX_EVALUATION_RENDER_JOBS:
+            raise ValueError(
+                f"utterances * take_seeds requests {jobs} renders; "
+                f"the limit is {MAX_EVALUATION_RENDER_JOBS}"
+            )
+        if (
+            isinstance(self.song_gap_seconds, bool)
+            or not isinstance(self.song_gap_seconds, (int, float))
+            or not math.isfinite(float(self.song_gap_seconds))
+            or self.song_gap_seconds < 0
+            or self.song_gap_seconds > MAX_EVALUATION_GAP_SECONDS
+        ):
+            raise ValueError(
+                f"song_gap_seconds must be finite and between 0 and {MAX_EVALUATION_GAP_SECONDS:g}"
+            )
+        if (
+            isinstance(self.tolerance_cents, bool)
+            or not isinstance(self.tolerance_cents, (int, float))
+            or not math.isfinite(float(self.tolerance_cents))
+            or self.tolerance_cents <= 0
+            or self.tolerance_cents > MAX_PITCH_TOLERANCE_CENTS
+        ):
+            raise ValueError(
+                "tolerance_cents must be finite and between 0 (exclusive) "
+                f"and {MAX_PITCH_TOLERANCE_CENTS:g}"
+            )
+
+
+def _validated_song_gap_frames(settings: Settings, hop_seconds: float, parts: int) -> int:
+    """Resolve a bounded gap before constructing the three joined frame lists."""
+    if not settings.song or parts < 2:
+        return 0
+    if not math.isfinite(hop_seconds) or hop_seconds <= 0:
+        raise ValueError("voice hop_seconds must be a positive finite number")
+    gap_frames = int(round(settings.song_gap_seconds / hop_seconds))
+    total_gap_frames = gap_frames * (parts - 1)
+    if total_gap_frames > MAX_CONCATENATED_GAP_FRAMES:
+        raise ValueError(
+            f"joined evaluation gaps require {total_gap_frames} frames; "
+            f"the limit is {MAX_CONCATENATED_GAP_FRAMES}"
+        )
+    return gap_frames
 
 
 def make_listener(settings: Settings, listener: Any = None) -> Any:
@@ -557,12 +676,50 @@ def sum_facts(facts: list[dict]) -> dict:
     """The host's reports of several takes as one: times and chunks added, the rest the
     first's, and ``takes`` saying how many were added."""
     out = dict(facts[0])
-    for key in ("seconds", "chunks", "load_seconds", "render_seconds", "wall_seconds", "asr_seconds"):
+    for key in (
+        "seconds",
+        "chunks",
+        "load_seconds",
+        "render_seconds",
+        "wall_seconds",
+        "asr_seconds",
+    ):
         if key in facts[0]:
             out[key] = sum(f[key] for f in facts)
     out["on_gpu"] = all(f.get("on_gpu", False) for f in facts)
     out["takes"] = len(facts)
     return out
+
+
+def _record_durations(corpus, aligner, record, phonemes, f0, energy, voiced, wav):
+    """Resolve durations only after bounding the expensive alignment axes."""
+    validate_inference_extent(len(phonemes), int(f0.shape[0]))
+    labelled = corpus.durations(record)
+    if labelled is not None:
+        return labelled
+    return aligner.durations(
+        phonemes,
+        wav,
+        f0,
+        energy,
+        voiced,
+        int(record["speaker_id"]),
+        corpus.n_fft,
+        corpus.hop_length,
+        corpus.win_length,
+    )
+
+
+def _require_checkpoint_clock(corpus, aligner) -> None:
+    """Keep checkpoint references on the same clock as corpus and exported voice."""
+    require_same_audio_clock(
+        "corpus",
+        corpus.sample_rate,
+        corpus.hop_length,
+        "checkpoint",
+        aligner.synthesizer.sample_rate,
+        aligner.synthesizer.hop_length,
+    )
 
 
 def evaluate(
@@ -583,18 +740,28 @@ def evaluate(
     listens without a model.
     """
     settings = settings or Settings()
+    settings.validate()
+    info = voice_info(voice)
+    corpus = Corpus(data_root)
+    require_same_audio_clock(
+        "corpus",
+        corpus.sample_rate,
+        corpus.hop_length,
+        "voice",
+        info.sample_rate,
+        info.hop_length,
+    )
+    records = corpus.records(settings.split, settings.utterances, settings.seed, settings.val_size)
+    if not records:
+        raise ValueError(f"no utterances in {data_root}")
+    song_gap_frames = _validated_song_gap_frames(settings, info.hop_seconds, len(records))
+
     listener = make_listener(settings, listener)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    info = voice_info(voice)
-    corpus = Corpus(data_root)
-    if corpus.sample_rate != info.sample_rate or corpus.hop_length != info.hop_length:
-        raise ValueError(
-            f"the corpus is at {corpus.sample_rate} Hz / hop {corpus.hop_length} and the voice "
-            f"at {info.sample_rate} Hz / hop {info.hop_length}; they do not share a clock"
-        )
     scale = energy_full_scale()
     aligner = Aligner(checkpoint, device=settings.device)
+    _require_checkpoint_clock(corpus, aligner)
     analyst = Analyst(
         corpus.sample_rate,
         corpus.n_fft,
@@ -608,10 +775,7 @@ def evaluate(
         tolerance_cents=settings.tolerance_cents,
     )
 
-    records = corpus.records(settings.split, settings.utterances, settings.seed, settings.val_size)
-    if not records:
-        raise ValueError(f"no utterances in {data_root}")
-    seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
+    seeds = [settings.take_seed + at for at in range(settings.take_seeds)]
 
     utterances: list[Utterance] = []
     tallies: dict[str, dict[tuple[str, str], int]] = {column: {} for column in COLUMNS}
@@ -619,18 +783,18 @@ def evaluate(
     frames_list: list[HostFrames] = []
     for record in records:
         phonemes, f0, energy, voiced, wav = corpus.load(record)
-        durations = corpus.durations(record) or aligner.durations(
-            phonemes, wav, f0, energy, voiced, int(record["speaker_id"]),
-            corpus.n_fft, corpus.hop_length, corpus.win_length,
-        )
-        if sum(durations) != f0.shape[0]:
-            raise RuntimeError(f"{record['id']}: {sum(durations)} frames of durations for {f0.shape[0]}")
+        durations = _record_durations(corpus, aligner, record, phonemes, f0, energy, voiced, wav)
         utterance = Utterance(
-            id=record["id"], speaker_id=int(record["speaker_id"]), phonemes=phonemes,
-            durations=durations, f0=f0, energy=energy, wav=wav,
+            id=record["id"],
+            speaker_id=int(record["speaker_id"]),
+            phonemes=phonemes,
+            durations=durations,
+            f0=f0,
+            energy=energy,
+            wav=wav,
         )
         utterances.append(utterance)
-        stem = record["id"].replace("/", "_")
+        stem = _artifact_stem(str(record["id"]))
         frames = frames_from_curves(phonemes, durations, f0, energy, info.hop_seconds, scale)
         frames_list.append(frames)
         frames_path = frames.write(workdir / f"{stem}.frames.json")
@@ -645,7 +809,11 @@ def evaluate(
             suffix = "" if len(seeds) == 1 else f".s{seed}"
             rendered = workdir / f"{stem}{suffix}.host.wav"
             facts = host.sing_frames(
-                frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
+                frames_path,
+                info.path,
+                rendered,
+                seed=seed,
+                acceleration=settings.acceleration,
                 speaker=speaker,
             )
             sung = read_wav(rendered, info.sample_rate)
@@ -661,13 +829,20 @@ def evaluate(
                 started = time.perf_counter()
                 reference = aligner.reference(utterance, seed)
                 take["reference_seconds"] = time.perf_counter() - started
-                sf.write(str(workdir / f"{stem}{suffix}.reference.wav"), reference, info.sample_rate)
+                sf.write(
+                    str(workdir / f"{stem}{suffix}.reference.wav"), reference, info.sample_rate
+                )
                 take["reference"] = analyst.measure(
                     reference, f0, energy, utterance.voiced, reference=wav, tokens=utterance.tokens
                 )
                 if listener is not None:
                     listen(
-                        listener, reference, info.sample_rate, asked, take["reference"], tallies["reference"]
+                        listener,
+                        reference,
+                        info.sample_rate,
+                        asked,
+                        take["reference"],
+                        tallies["reference"],
                     )
             takes.append(take)
         row: dict[str, Any] = {
@@ -698,8 +873,7 @@ def evaluate(
             "use --speaker to render the joined song in one voice"
         )
     if settings.song and len(utterances) > 1 and song_supported:
-        gap = int(round(settings.song_gap_seconds / info.hop_seconds))
-        joined, spans = concatenate_frames(frames_list, gap)
+        joined, spans = concatenate_frames(frames_list, song_gap_frames)
         frames_path = joined.write(workdir / "song.frames.json")
         song_takes: list[dict] = []
         per_row: list[list[dict]] = [[] for _ in rows]
@@ -708,7 +882,11 @@ def evaluate(
             rendered = workdir / f"song{suffix}.host.wav"
             song_takes.append(
                 host.sing_frames(
-                    frames_path, info.path, rendered, seed=seed, acceleration=settings.acceleration,
+                    frames_path,
+                    info.path,
+                    rendered,
+                    seed=seed,
+                    acceleration=settings.acceleration,
                     speaker=song_speaker,
                 )
             )
@@ -716,12 +894,20 @@ def evaluate(
             for at, (utterance, (start, end)) in enumerate(zip(utterances, spans)):
                 piece = sung[start * info.hop_length : end * info.hop_length]
                 measured = analyst.measure(
-                    piece, utterance.f0, utterance.energy, utterance.voiced,
-                    reference=utterance.wav, tokens=utterance.tokens,
+                    piece,
+                    utterance.f0,
+                    utterance.energy,
+                    utterance.voiced,
+                    reference=utterance.wav,
+                    tokens=utterance.tokens,
                 )
                 if listener is not None:
                     listen(
-                        listener, piece, info.sample_rate, hearable(utterance.phonemes), measured,
+                        listener,
+                        piece,
+                        info.sample_rate,
+                        hearable(utterance.phonemes),
+                        measured,
                         tallies["song"],
                     )
                 per_row[at].append(measured)
@@ -737,7 +923,8 @@ def evaluate(
         "audio_seconds": audio_seconds,
         "render_seconds": render_seconds,
         "rtf": render_seconds / audio_seconds if audio_seconds else math.nan,
-        "load_seconds_mean": sum(row["timing"]["load_seconds"] for row in rows) / (len(rows) * len(seeds)),
+        "load_seconds_mean": sum(row["timing"]["load_seconds"] for row in rows)
+        / (len(rows) * len(seeds)),
         "wall_seconds": sum(row["timing"]["wall_seconds"] for row in rows),
         "on_gpu": all(row["timing"]["on_gpu"] for row in rows),
         "chunks": sum(row["timing"]["chunks"] for row in rows),
@@ -765,8 +952,10 @@ def evaluate(
     return {
         "kind": "corpus",
         "voice": {
-            "path": str(info.path), "name": info.name,
-            "sample_rate": info.sample_rate, "hop_length": info.hop_length,
+            "path": str(info.path),
+            "name": info.name,
+            "sample_rate": info.sample_rate,
+            "hop_length": info.hop_length,
         },
         "checkpoint": str(checkpoint),
         "dataset": {"root": str(corpus.root), "utterances": [row["id"] for row in rows]},
@@ -823,6 +1012,7 @@ def evaluate_score(
     exists to measure spectral distance against, so ``mel_l1`` is absent here by design.
     """
     settings = settings or Settings()
+    settings.validate()
     listener = make_listener(settings, listener)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -836,12 +1026,18 @@ def evaluate_score(
     asked = None
     tokens: list[str] = []
     analyst = Analyst(
-        info.sample_rate, info.n_fft, info.hop_length, info.win_length,
-        n_mels=settings.n_mels, pitch=settings.pitch, device=settings.device,
-        f0_min=info.f0_min, f0_max=info.f0_max,
+        info.sample_rate,
+        info.n_fft,
+        info.hop_length,
+        info.win_length,
+        n_mels=settings.n_mels,
+        pitch=settings.pitch,
+        device=settings.device,
+        f0_min=info.f0_min,
+        f0_max=info.f0_max,
         tolerance_cents=settings.tolerance_cents,
     )
-    seeds = [settings.take_seed + at for at in range(max(1, settings.take_seeds))]
+    seeds = [settings.take_seed + at for at in range(settings.take_seeds)]
     takes: list[dict] = []
     tally: dict[tuple[str, str], int] = {}
     wall = 0.0
@@ -864,7 +1060,10 @@ def evaluate_score(
             f0 = np.asarray(frames.f0_hz, dtype=np.float32)
             energy = np.asarray(frames.energy, dtype=np.float32) * scale
             voiced = np.asarray(
-                [1.0 if (hz > 0 and t != SILENCE and not is_voiceless(t)) else 0.0 for hz, t in zip(f0, tokens)],
+                [
+                    1.0 if (hz > 0 and t != SILENCE and not is_voiceless(t)) else 0.0
+                    for hz, t in zip(f0, tokens)
+                ],
                 dtype=np.float32,
             )
             asked = phonemes_of_frames(tokens)
@@ -979,7 +1178,9 @@ def format_report(report: dict, baseline: dict | None = None) -> str:
                 f"chunk(s), sung in {song['render_seconds']:.2f} s"
             )
         if "asr_seconds" in timing:
-            lines.append(f"        the listener took {timing['asr_seconds']:.2f} s over every column")
+            lines.append(
+                f"        the listener took {timing['asr_seconds']:.2f} s over every column"
+            )
     elif "wall_rtf" in timing:
         lines.append(
             f"timing: `auris sing` took {timing['wall_seconds']:.2f} s wall for "

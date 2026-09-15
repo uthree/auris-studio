@@ -51,9 +51,7 @@ def test_phrases_are_cut_at_long_pauses():
         + [("t", 0.2), ("o", 2.0)]
         + [("pau", 0.5)]
     )
-    phrases = prepare.split_into_phrases(
-        phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0
-    )
+    phrases = prepare.split_into_phrases(phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0)
     assert len(phrases) == 2
     assert [p.symbol for p in phrases[0]] == ["pau", "k", "a", "pau"]
     # The boundary pause is kept by both neighbours, so each phrase has silence
@@ -63,17 +61,13 @@ def test_phrases_are_cut_at_long_pauses():
 
 def test_short_pauses_do_not_cut():
     phonemes = make([("k", 0.2), ("a", 1.0), ("pau", 0.1), ("t", 0.2), ("o", 1.0)])
-    phrases = prepare.split_into_phrases(
-        phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0
-    )
+    phrases = prepare.split_into_phrases(phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0)
     assert len(phrases) == 1
 
 
 def test_silence_only_phrases_are_dropped():
     phonemes = make([("pau", 3.0), ("pau", 3.0), ("k", 0.2), ("a", 3.0), ("pau", 0.5)])
-    phrases = prepare.split_into_phrases(
-        phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0
-    )
+    phrases = prepare.split_into_phrases(phonemes, min_pause=0.25, min_seconds=2.0, max_seconds=8.0)
     assert all(any(not p.is_pause for p in phrase) for phrase in phrases)
 
 
@@ -136,7 +130,9 @@ def test_durations_line_up_with_the_transcript_and_the_trimmed_edges():
     # A long leading pause is clipped to the pad; a symbol the mapping drops leaves its
     # time with the token before it; the trailing pause is kept whole, being shorter than
     # the pad. Whatever happens, the seconds sum to the clip.
-    phrase = make([("pau", 1.0), ("k", 0.08), ("a", 0.4), ("xx", 0.05), ("t", 0.06), ("o", 0.3), ("pau", 0.1)])
+    phrase = make(
+        [("pau", 1.0), ("k", 0.08), ("a", 0.4), ("xx", 0.05), ("t", 0.06), ("o", 0.3), ("pau", 0.1)]
+    )
     start, end, symbols = prepare.trim_edges(phrase, 0.15)
     tokens = prepare.to_ipa_line(symbols).split()
     durations = prepare.to_durations(phrase, start, end)
@@ -163,9 +159,22 @@ def test_the_script_writes_a_duration_beside_every_transcript(tmp_path, monkeypa
         "\n".join(f"{a * 1_000_000} {b * 1_000_000} x-{s}+y" for a, b, s in lines), encoding="utf-8"
     )
     done = subprocess.run(
-        [sys.executable, str(SCRIPT), "--wav-dir", str(wav_dir), "--label-dir", str(label_dir),
-         "--output", str(out), "--min-seconds", "0.5", "--min-clip-seconds", "0.5"],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--wav-dir",
+            str(wav_dir),
+            "--label-dir",
+            str(label_dir),
+            "--output",
+            str(out),
+            "--min-seconds",
+            "0.5",
+            "--min-clip-seconds",
+            "0.5",
+        ],
+        capture_output=True,
+        text=True,
     )
     assert done.returncode == 0, done.stderr
     texts = sorted((out / "text").glob("*.txt"))
@@ -174,3 +183,56 @@ def test_the_script_writes_a_duration_beside_every_transcript(tmp_path, monkeypa
         tokens = text.read_text(encoding="utf-8").split()
         seconds = [float(x) for x in (out / "dur" / text.name).read_text(encoding="utf-8").split()]
         assert len(seconds) == len(tokens) and all(s >= 0 for s in seconds)
+
+    rerun = subprocess.run(done.args, capture_output=True, text=True)
+    assert rerun.returncode != 0
+    assert "output already exists" in rerun.stderr
+
+
+def test_missing_source_directory_is_refused_before_output_is_reserved(tmp_path, monkeypatch):
+    label_dir = tmp_path / "lab"
+    label_dir.mkdir()
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_jsut_song.py",
+            "--wav-dir",
+            str(tmp_path / "missing"),
+            "--label-dir",
+            str(label_dir),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="wav directory does not exist"):
+        prepare.main()
+    assert not output.exists()
+
+
+def test_all_missing_labels_fail_and_keep_the_reserved_output(tmp_path, monkeypatch):
+    wav_dir, label_dir = tmp_path / "wav", tmp_path / "lab"
+    wav_dir.mkdir(), label_dir.mkdir()
+    # The label check happens before decoding, so a stand-in is enough to
+    # exercise the all-skipped postcondition without doing audio work.
+    (wav_dir / "song.wav").write_bytes(b"stand-in")
+    output = tmp_path / "out"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "prepare_jsut_song.py",
+            "--wav-dir",
+            str(wav_dir),
+            "--label-dir",
+            str(label_dir),
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="no phrases were prepared"):
+        prepare.main()
+    assert output.is_dir(), "failed preparation remains available for inspection"

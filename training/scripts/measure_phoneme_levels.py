@@ -28,10 +28,16 @@ from auris_singer.text.ipa import phoneme_class  # noqa: E402
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data", required=True, type=Path, help="a preprocessed dataset with labelled durations")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--data", required=True, type=Path, help="a preprocessed dataset with labelled durations"
+    )
     parser.add_argument("--output", required=True, type=Path, help="output .json path")
-    parser.add_argument("--measured-from", required=True, help="free text naming the corpus and label set")
+    parser.add_argument(
+        "--measured-from", required=True, help="free text naming the corpus and label set"
+    )
     parser.add_argument("--min-samples", type=int, default=MIN_SAMPLES)
     args = parser.parse_args()
 
@@ -41,9 +47,13 @@ def main() -> None:
     block = summarize(levels, args.measured_from, min_samples=args.min_samples)
     write(block, args.output)
     for speaker, table in block["speakers"].items():
-        print(f"{speaker}: {len(table['db'])} phonemes measured, default {table['default']:+.1f} dB:")
+        print(
+            f"{speaker}: {len(table['db'])} phonemes measured, default {table['default']:+.1f} dB:"
+        )
         for symbol, db in table["db"].items():
-            print(f"  {symbol:4s} {db:+6.1f} dB  n={table['counts'][symbol]:4d}  {phoneme_class(symbol)}")
+            print(
+                f"  {symbol:4s} {db:+6.1f} dB  n={table['counts'][symbol]:4d}  {phoneme_class(symbol)}"
+            )
     print(f"wrote {args.output}")
 
 

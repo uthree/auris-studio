@@ -34,22 +34,57 @@ fn mode_key(mode: Mode) -> Key {
 }
 
 impl AurisApp {
-    fn save_agent_policy(&mut self) {
+    /// Opens or closes the permission rules and reveals their start when they become visible.
+    fn set_agent_rules_open(&mut self, open: bool) {
+        self.agent_chat.controls.rules_open = open;
+        if open {
+            // The rules are the first child of the transcript scroller. A retained tail offset
+            // otherwise opens them above the viewport, making the button appear to do nothing.
+            self.agent_chat
+                .scroll
+                .set_offset(gpui::point(px(0.0), px(0.0)));
+        }
+    }
+
+    fn save_agent_policy_with<E>(
+        &mut self,
+        previous: AgentPreferences,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) -> Result<(), E> {
+        if let Err(error) = save(&self.settings) {
+            self.settings.agent = previous.clone();
+            self.agent_chat.policy = previous.policy;
+            self.agent_chat.auto_compact_percent = previous.auto_compact_percent;
+            return Err(error);
+        }
         self.agent_chat.policy = self.settings.agent.policy.clone();
-        if let Err(error) = self.settings.save() {
+        self.agent_chat.auto_compact_percent = self.settings.agent.auto_compact_percent;
+        Ok(())
+    }
+
+    fn save_agent_policy(&mut self, previous: AgentPreferences) {
+        if let Err(error) = self.save_agent_policy_with(previous, |settings| settings.save()) {
             self.agent_chat
                 .push_entry(ChatEntry::Error(error.to_string()));
         }
     }
 
     pub(super) fn agent_mode(&mut self, mode: Mode) {
+        if self.settings.agent.policy.mode == mode {
+            self.focus_agent_field(AgentField::Chat);
+            return;
+        }
+        if self.agent_operation_busy() {
+            return;
+        }
         // Changing permissions invalidates previously approved operations.
         if self.agent_chat.controls.pending.is_some() {
             self.agent_approval(Approval::Deny);
         }
         self.agent_chat.controls.permits.clear();
+        let previous = self.settings.agent.clone();
         self.settings.agent.policy.mode = mode;
-        self.save_agent_policy();
+        self.save_agent_policy(previous);
         self.focus_agent_field(AgentField::Chat);
     }
 
@@ -59,8 +94,9 @@ impl AurisApp {
         if let Some(link) = self.agent_chat.link.as_mut()
             && let Err(error) = link.send(&wire.to_string())
         {
-            self.agent_chat
-                .push_entry(ChatEntry::Error(error.to_string()));
+            let message = error.to_string();
+            self.agent_chat.finish_open_tools("failed", &message);
+            self.agent_chat.push_entry(ChatEntry::Error(message));
             self.agent_chat.link = None;
             self.agent_chat.busy = false;
         }
@@ -96,14 +132,31 @@ impl AurisApp {
                     args,
                     revision: self.session.revision(),
                 });
+                self.agent_chat.restore_pending_focus =
+                    !self.panels.is_open(crate::dock::Panel::Agent);
                 self.focus_agent_field(AgentField::Chat);
             }
         }
     }
 
     pub(super) fn agent_approval(&mut self, answer: Approval) {
-        let Some(pending) = self.agent_chat.controls.pending.take() else {
-            return;
+        let result = self.agent_approval_with_save(answer, |settings| {
+            settings.save().map_err(|error| error.to_string())
+        });
+        if let Err(error) = result {
+            self.agent_chat.push_entry(ChatEntry::Error(error));
+        }
+        self.focus_agent_field(AgentField::Chat);
+    }
+
+    fn agent_approval_with_save(
+        &mut self,
+        answer: Approval,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.agent_chat.restore_pending_focus = false;
+        let Some(pending) = self.agent_chat.controls.pending.as_ref() else {
+            return Ok(());
         };
         let denied = matches!(answer, Approval::Deny);
         let changed = self.agent_chat.bound_project.as_deref() != self.session.path()
@@ -113,20 +166,21 @@ impl AurisApp {
             Decision::Deny(_)
         );
         if denied || changed || forbidden {
+            let pending = self.agent_chat.controls.pending.take().unwrap();
             self.permission_result(pending.id, false, if changed { "The document changed while confirmation was pending. Inspect it and request approval again." } else { "The operation was denied. Do not retry it unchanged." });
         } else {
             if matches!(answer, Approval::Always) {
-                if let Err(error) = self
-                    .settings
-                    .agent
-                    .policy
-                    .set_rule(&pending.operation.name, Some(true))
-                {
-                    self.permission_result(pending.id, false, &error);
-                    return;
+                let operation = pending.operation.name.clone();
+                let previous = self.settings.agent.clone();
+                if let Err(error) = self.settings.agent.policy.set_rule(&operation, Some(true)) {
+                    self.settings.agent = previous.clone();
+                    self.agent_chat.policy = previous.policy;
+                    self.agent_chat.auto_compact_percent = previous.auto_compact_percent;
+                    return Err(error);
                 }
-                self.save_agent_policy();
+                self.save_agent_policy_with(previous, save)?;
             }
+            let pending = self.agent_chat.controls.pending.take().unwrap();
             if let Some(command) = pending.args.get("command") {
                 self.agent_chat
                     .controls
@@ -135,7 +189,7 @@ impl AurisApp {
             }
             self.permission_result(pending.id, true, "Explicitly approved by the user");
         }
-        self.focus_agent_field(AgentField::Chat);
+        Ok(())
     }
 
     pub(super) fn check_agent_edit(&mut self, command: &serde_json::Value) -> Result<(), String> {
@@ -182,7 +236,7 @@ impl AurisApp {
         } else {
             match command {
                 "/permissions" => {
-                    self.agent_chat.controls.rules_open = !self.agent_chat.controls.rules_open
+                    self.set_agent_rules_open(!self.agent_chat.controls.rules_open);
                 }
                 "/allow" | "/deny" | "/default" => {
                     let allow = match command {
@@ -190,19 +244,20 @@ impl AurisApp {
                         "/deny" => Some(false),
                         _ => None,
                     };
+                    let previous = self.settings.agent.clone();
                     match self.settings.agent.policy.set_rule(value, allow) {
                         Ok(()) => {
                             if self.agent_chat.controls.pending.is_some() {
                                 self.agent_approval(Approval::Deny);
                             }
                             self.agent_chat.controls.permits.clear();
-                            self.save_agent_policy();
+                            self.save_agent_policy(previous);
                         }
                         Err(error) => {
                             self.agent_chat.push_entry(ChatEntry::Error(error));
                         }
                     }
-                    self.agent_chat.controls.rules_open = true;
+                    self.set_agent_rules_open(true);
                 }
                 "/compact" => self.agent_compact(),
                 "/mode" => {
@@ -218,7 +273,7 @@ impl AurisApp {
     }
 
     pub(super) fn agent_compact(&mut self) {
-        if self.agent_chat.busy {
+        if self.agent_operation_busy() {
             return;
         }
         let Some(link) = self.agent_chat.link.as_mut() else {
@@ -237,19 +292,14 @@ impl AurisApp {
 
     pub(super) fn agent_controls(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = &self.theme;
-        let mut row = div()
-            .flex()
-            .flex_wrap()
-            .gap_1()
-            .p_1()
-            .border_b_1()
-            .border_color(theme.border);
+        let operation_busy = self.agent_operation_busy();
+        let mut actions = div().flex().flex_wrap().gap_1();
         for mode in [Mode::ReadOnly, Mode::Edit, Mode::Plan, Mode::Bypass] {
-            row = row.child(button(
+            actions = actions.child(button_enabled(
                 SharedString::from(format!("agent-mode-{}", mode.name())),
                 self.t(mode_key(mode)),
                 ButtonStyle::Normal,
-                self.settings.agent.policy.mode == mode,
+                ButtonState::available(self.settings.agent.policy.mode == mode, !operation_busy),
                 if mode == Mode::Bypass {
                     theme.warning
                 } else {
@@ -262,38 +312,47 @@ impl AurisApp {
                 }),
             ));
         }
-        row = row.child(button(
-            "agent-permissions",
-            self.t(Key::AgentPermissions),
+        let compact = bounded_button_enabled(
+            "agent-compact",
+            self.t(Key::AgentCompact),
             ButtonStyle::Normal,
-            self.agent_chat.controls.rules_open,
+            ButtonState::available(false, !operation_busy),
             theme.accent,
             theme,
             cx.listener(|this, _, _, cx| {
-                this.agent_chat.controls.rules_open = !this.agent_chat.controls.rules_open;
-                this.focus_agent_field(AgentField::Chat);
+                this.agent_compact();
                 cx.notify();
             }),
-        ));
-        if !self.agent_chat.busy {
-            row = row.child(button(
-                "agent-compact",
-                self.t(Key::AgentCompact),
-                ButtonStyle::Normal,
-                false,
-                theme.accent,
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(actions)
+            .child(compact)
+            .child(disclosure(
+                "agent-permissions",
+                self.t(Key::AgentPermissions),
+                self.agent_chat.controls.rules_open,
                 theme,
                 cx.listener(|this, _, _, cx| {
-                    this.agent_compact();
+                    if let Some(field) = this.agent_chat.field_mut() {
+                        field.unmark();
+                    }
+                    this.agent_chat.focused = None;
+                    this.set_agent_rules_open(!this.agent_chat.controls.rules_open);
                     cx.notify();
                 }),
-            ));
-        }
-        row.into_any_element()
+            ))
+            .into_any_element()
     }
 
     pub(super) fn agent_rules(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = &self.theme;
+        let operation_busy = self.agent_operation_busy();
         let mut content = div()
             .flex()
             .flex_col()
@@ -305,6 +364,7 @@ impl AurisApp {
             .into_iter()
             .chain(OPERATIONS.iter().copied())
         {
+            let broad = matches!(operation, "*" | "edit_project.*");
             let allow = self
                 .settings
                 .agent
@@ -333,27 +393,28 @@ impl AurisApp {
                     .gap_1()
                     .flex_wrap()
                     .child(div().flex_1().min_w_0().child(operation))
-                    .child(button(
+                    .child(button_enabled(
                         SharedString::from(format!("agent-rule-{operation}")),
                         self.t(state),
                         ButtonStyle::Normal,
-                        allow || deny,
+                        ButtonState::available(allow || deny, !operation_busy),
                         if deny { theme.danger } else { theme.accent },
                         theme,
                         cx.listener(move |this, _, _, cx| {
                             let next = if deny {
                                 None
-                            } else if allow {
+                            } else if allow || broad {
                                 Some(false)
                             } else {
                                 Some(true)
                             };
+                            let previous = this.settings.agent.clone();
                             if this.settings.agent.policy.set_rule(operation, next).is_ok() {
                                 if this.agent_chat.controls.pending.is_some() {
                                     this.agent_approval(Approval::Deny);
                                 }
                                 this.agent_chat.controls.permits.clear();
-                                this.save_agent_policy();
+                                this.save_agent_policy(previous);
                             }
                             cx.notify();
                         }),
@@ -369,7 +430,7 @@ impl AurisApp {
                     .gap_1()
                     .items_center()
                     .child(self.t(Key::AgentAutoCompact))
-                    .child(button(
+                    .child(button_enabled(
                         "agent-auto-compact",
                         if percent == 0 {
                             self.t(Key::AgentCompactOff).to_string()
@@ -377,10 +438,11 @@ impl AurisApp {
                             format!("{percent}%")
                         },
                         ButtonStyle::Normal,
-                        percent > 0,
+                        ButtonState::available(percent > 0, !operation_busy),
                         theme.accent,
                         theme,
                         cx.listener(|this, _, _, cx| {
+                            let previous = this.settings.agent.clone();
                             let value = match this.settings.agent.auto_compact_percent.unwrap_or(85)
                             {
                                 0 => 70,
@@ -389,7 +451,7 @@ impl AurisApp {
                             };
                             this.settings.agent.auto_compact_percent = Some(value);
                             this.agent_chat.auto_compact_percent = Some(value);
-                            this.save_agent_policy();
+                            this.save_agent_policy(previous);
                             cx.notify();
                         }),
                     )),
@@ -467,38 +529,233 @@ impl AurisApp {
 mod tests {
     use super::*;
 
-    fn command() -> serde_json::Value {
-        serde_json::json!({"action":"add_track","name":"Approved lead","kind":"instrument"})
+    fn release_key(key: &str, cx: &mut gpui::VisualTestContext) {
+        cx.simulate_event(gpui::KeyUpEvent {
+            keystroke: gpui::Keystroke::parse(key).unwrap(),
+        });
+    }
+
+    fn command(track: u64) -> serde_json::Value {
+        serde_json::json!({"action":"remove_track","track":track})
+    }
+
+    #[gpui::test]
+    fn broad_permission_rules_cannot_be_allowed_with_one_click(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.controls.rules_open = true;
+            this.settings.agent.policy = PolicyForTest::default();
+        });
+        for (operation, selector) in [
+            ("*", "agent-rule-*"),
+            ("edit_project.*", "agent-rule-edit_project.*"),
+        ] {
+            crate::harness::paint(&app, cx);
+            crate::harness::click(selector, cx);
+            app.read_with(cx, |this, _| {
+                assert!(
+                    !this
+                        .settings
+                        .agent
+                        .policy
+                        .allow
+                        .iter()
+                        .any(|rule| rule == operation),
+                    "{operation} became a persistent allow rule after one click"
+                );
+            });
+            app.update(cx, |this, _| {
+                let previous = this.settings.agent.clone();
+                this.settings.agent.policy = PolicyForTest::default();
+                this.save_agent_policy(previous);
+            });
+        }
+    }
+
+    #[gpui::test]
+    fn permission_disclosure_reveals_rules_and_answers_enter_and_space(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.model = "offline-fixture".into();
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.models_error = Some("offline fixture".into());
+            this.agent_chat.entries = (0..40)
+                .map(|index| ChatEntry::Status(format!("older line {index}")))
+                .collect();
+        });
+        crate::harness::paint(&app, cx);
+        app.update(cx, |this, _| {
+            this.agent_chat
+                .scroll
+                .set_offset(gpui::point(px(0.0), px(-120.0)));
+        });
+
+        crate::harness::click("agent-permissions", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.controls.rules_open);
+            assert_eq!(this.agent_chat.scroll.offset().y, px(0.0));
+        });
+        assert!(cx.debug_bounds("agent-rule-*").is_some());
+
+        release_key("enter", cx);
+        app.read_with(cx, |this, _| assert!(!this.agent_chat.controls.rules_open));
+        release_key("space", cx);
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.controls.rules_open));
+        assert!(cx.debug_bounds("agent-rule-*").is_some());
+    }
+
+    #[gpui::test]
+    fn shift_tab_moves_focus_without_answering_a_pending_approval(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.settings.agent.policy = PolicyForTest::default();
+            this.settings.agent.policy.mode = Mode::Edit;
+            this.agent_chat.focused = Some(AgentField::Chat);
+            this.agent_permission(
+                7,
+                "search_internet".into(),
+                serde_json::json!({"query":"approval shortcut"}),
+            );
+            assert!(this.agent_chat.controls.pending.is_some());
+        });
+
+        crate::harness::paint(&app, cx);
+        crate::harness::click("agent-input", cx);
+        cx.simulate_keystrokes("shift-tab");
+
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.agent_chat.controls.pending.is_some());
+                assert_eq!(this.settings.agent.policy.mode, Mode::Edit);
+                assert!(this.pane_focused(crate::app::Pane::Agent, window, cx));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn reselecting_the_current_mode_keeps_a_pending_approval(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.settings.agent.policy = PolicyForTest::default();
+            this.settings.agent.policy.mode = Mode::Edit;
+            this.agent_permission(
+                9,
+                "search_internet".into(),
+                serde_json::json!({"query":"same mode"}),
+            );
+            assert!(this.agent_chat.controls.pending.is_some());
+
+            this.agent_mode(Mode::Edit);
+
+            assert!(this.agent_chat.controls.pending.is_some());
+            assert_eq!(this.settings.agent.policy.mode, Mode::Edit);
+        });
+    }
+
+    #[gpui::test]
+    fn a_hidden_approval_restores_keys_once_without_reclaiming_later_focus(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.panels.hide(crate::dock::Panel::Agent);
+            this.settings.agent.policy = PolicyForTest::default();
+            this.settings.agent.policy.mode = Mode::Edit;
+            this.agent_permission(
+                8,
+                "search_internet".into(),
+                serde_json::json!({"query":"hidden approval"}),
+            );
+        });
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.controls.pending.is_some());
+            assert!(this.agent_chat.focused.is_none());
+            assert!(this.agent_chat.restore_pending_focus);
+        });
+
+        app.update(cx, |this, _| this.panels.show(crate::dock::Panel::Agent));
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window))
+                );
+                assert_eq!(this.agent_chat.focused, Some(AgentField::Chat));
+                assert!(!this.agent_chat.restore_pending_focus);
+            });
+        });
+
+        cx.update(|window, cx| {
+            app.update(cx, |this, _| {
+                this.focus_pane(crate::app::Pane::Arrangement, window)
+            });
+        });
+        crate::harness::paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.agent_chat.controls.pending.is_some());
+                assert!(this.agent_chat.focused.is_none());
+                assert!(this.pane_focused(crate::app::Pane::Arrangement, window, cx));
+            });
+        });
+
+        // Hiding a visible, already-pending approval is the same suspended state as receiving
+        // it while hidden. Returning to the panel restores the advertised keys one more time.
+        app.update(cx, |this, _| this.panels.hide(crate::dock::Panel::Agent));
+        crate::harness::paint(&app, cx);
+        app.read_with(cx, |this, _| assert!(this.agent_chat.restore_pending_focus));
+        app.update(cx, |this, _| this.panels.show(crate::dock::Panel::Agent));
+        crate::harness::paint(&app, cx);
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| {
+            assert!(this.agent_chat.controls.pending.is_none());
+            assert!(!this.agent_chat.restore_pending_focus);
+        });
     }
 
     #[gpui::test]
     fn approval_is_visible_and_allows_exactly_one_edit(cx: &mut gpui::TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
-        app.update(cx, |this, _| {
+        let (command, track) = app.update(cx, |this, _| {
             this.settings.agent.policy = PolicyForTest::default();
-            this.settings.agent.policy.mode = Mode::ReadOnly;
+            this.settings.agent.policy.mode = Mode::Edit;
             this.panels.show(crate::dock::Panel::Agent);
+            let track = this
+                .session
+                .add_default_instrument_track("Temporary lead")
+                .unwrap();
+            let command = command(track.0);
             this.agent_permission(
                 1,
                 "edit_project".into(),
-                serde_json::json!({"command":command()}),
+                serde_json::json!({"command":command.clone()}),
             );
             assert!(this.agent_chat.controls.pending.is_some());
-            assert!(this.agent_edit(command()).is_err());
+            assert!(this.agent_edit(command.clone()).is_err());
+            (command, track)
         });
         crate::harness::paint(&app, cx);
         assert!(cx.debug_bounds("agent-approval").is_some());
         assert!(cx.debug_bounds("agent-allow-once").is_some());
         crate::harness::click("agent-allow-once", cx);
         app.update(cx, |this, _| {
-            this.agent_edit(command()).unwrap();
-            assert!(this.agent_edit(command()).is_err());
-            assert!(
-                this.project()
-                    .tracks
-                    .iter()
-                    .any(|track| track.name == "Approved lead")
-            );
+            this.agent_edit(command.clone()).unwrap();
+            assert!(this.agent_edit(command.clone()).is_err());
+            assert!(this.project().track(track).is_none());
             assert!(this.session.path().is_none());
         });
     }
@@ -508,23 +765,35 @@ mod tests {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, _| {
             this.settings.agent.policy = PolicyForTest::default();
-            this.settings.agent.policy.mode = Mode::ReadOnly;
+            this.settings.agent.policy.mode = Mode::Edit;
+            let track = this
+                .session
+                .add_default_instrument_track("Protected lead")
+                .unwrap();
+            let command = command(track.0);
             this.agent_permission(
                 2,
                 "edit_project".into(),
-                serde_json::json!({"command":command()}),
+                serde_json::json!({"command":command.clone()}),
             );
             this.session
-                .agent_command(serde_json::from_value(command()).unwrap())
+                .agent_command(
+                    serde_json::from_value(serde_json::json!({
+                        "action":"add_track",
+                        "name":"Concurrent edit",
+                        "kind":"instrument"
+                    }))
+                    .unwrap(),
+                )
                 .unwrap();
             let before = this.project().clone();
             this.agent_approval(Approval::Once);
-            assert!(this.agent_edit(command()).is_err());
+            assert!(this.agent_edit(command.clone()).is_err());
             assert_eq!(this.project(), &before);
             this.agent_permission(
                 3,
                 "edit_project".into(),
-                serde_json::json!({"command":command()}),
+                serde_json::json!({"command":command.clone()}),
             );
             this.agent_approval(Approval::Once);
             this.settings.agent.policy.mode = Mode::Bypass;
@@ -533,8 +802,38 @@ mod tests {
                 .policy
                 .set_rule("edit_project.*", Some(false))
                 .unwrap();
-            assert!(this.agent_edit(command()).is_err());
+            assert!(this.agent_edit(command).is_err());
             assert_eq!(this.project(), &before);
+        });
+    }
+
+    #[gpui::test]
+    fn always_approval_rolls_back_and_remains_actionable_when_policy_save_fails(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, _| {
+            this.settings.agent.policy = PolicyForTest::default();
+            this.settings.agent.policy.mode = Mode::Edit;
+            this.agent_chat.policy = this.settings.agent.policy.clone();
+            let before = this.settings.agent.policy.clone();
+            let command = command(42);
+            this.agent_permission(
+                99,
+                "edit_project".into(),
+                serde_json::json!({"command":command}),
+            );
+            assert!(this.agent_chat.controls.pending.is_some());
+
+            let result = this.agent_approval_with_save(Approval::Always, |_| {
+                Err("settings fixture failure".to_string())
+            });
+
+            assert_eq!(result, Err("settings fixture failure".to_string()));
+            assert_eq!(this.settings.agent.policy, before);
+            assert_eq!(this.agent_chat.policy, before);
+            assert!(this.agent_chat.controls.pending.is_some());
+            assert!(this.agent_chat.controls.permits.is_empty());
         });
     }
 

@@ -89,7 +89,11 @@ class RotaryEmbedding(nn.Module):
 
     def forward(self, seq_len: int, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
         t = torch.arange(seq_len, device=device, dtype=self.inv_freq.dtype)
-        freqs = torch.outer(t, self.inv_freq.to(device))
+        # Spell the outer product without ``torch.outer``. Torch 2.14 lowers the latter to a
+        # Reshape carrying both ``allowzero=1`` and a ``-1`` shape component; ONNX Runtime's CPU
+        # provider accepts it, but DirectML rejects the graph while loading it. These explicit
+        # singleton dimensions preserve the exact operation and export portably.
+        freqs = t.unsqueeze(1) * self.inv_freq.to(device).unsqueeze(0)
         emb = torch.cat((freqs, freqs), dim=-1)
         # (1, 1, T, head_dim) so it broadcasts over (B, H, T, D)
         return emb.cos()[None, None], emb.sin()[None, None]
@@ -100,9 +104,7 @@ def _rotate_half(x: torch.Tensor) -> torch.Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 
-def apply_rotary(
-    x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor
-) -> torch.Tensor:
+def apply_rotary(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
     """Apply RoPE to ``x`` of shape ``(B, H, T, D)``."""
     cos = cos.to(x.dtype)
     sin = sin.to(x.dtype)
@@ -154,10 +156,10 @@ class SelfAttention(nn.Module):
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=attn_mask, dropout_p=self.dropout if self.training else 0.0
         )
-        # The head dimension is written out rather than inferred with -1: a -1 in
-        # a traced view becomes an ONNX Reshape with allowzero=1 whose shape
-        # tensor holds -1, and onnxruntime's DirectML provider rejects that
-        # combination outright (see doc/inference.md).
+        # Keep the head dimension explicit rather than inferring it with -1.
+        # Torch still marks the symbolic B/T reshape with allowzero=1; the ONNX
+        # export removes that attribute only after proving those values are the
+        # corresponding input axes (see doc/inference.md).
         out = out.transpose(1, 2).reshape(b, t, self.n_heads * self.head_dim)
         return self.proj(out)
 
