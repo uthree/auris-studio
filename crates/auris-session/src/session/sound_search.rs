@@ -8,8 +8,9 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 /// A bounded discovery operation shared by saved-file and live-session frontends.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
@@ -93,12 +94,14 @@ enum Source {
         id: String,
         preset: Option<auris_clap::ClapPreset>,
         discovery_stamp: String,
+        isolated_metadata: bool,
     },
     Vst3 {
         file: PathBuf,
         id: String,
         preset: Option<auris_vst3::Vst3Preset>,
         discovery_stamp: String,
+        isolated_metadata: bool,
     },
 }
 #[derive(Clone, Debug)]
@@ -147,6 +150,7 @@ impl Sound {
                 id,
                 preset,
                 discovery_stamp,
+                isolated_metadata: _,
             } => {
                 let mut bytes = file
                     .as_os_str()
@@ -192,6 +196,7 @@ impl Sound {
                 id,
                 preset,
                 discovery_stamp,
+                isolated_metadata: _,
             } => file
                 .as_os_str()
                 .len()
@@ -245,6 +250,7 @@ struct Catalog {
     index: Mutex<IndexState>,
     completed: AtomicUsize,
     control: TimbreMapControl,
+    native_status: Option<NativePluginStatus>,
 }
 static CATALOGS: OnceLock<Mutex<Vec<Arc<Catalog>>>> = OnceLock::new();
 static CATALOG_BUILD: Mutex<()> = Mutex::new(());
@@ -260,7 +266,48 @@ const DISCOVERY_FILE_LIMIT: usize = 16_384;
 const DISCOVERY_PATH_BYTE_LIMIT: usize = 16 * 1024 * 1024;
 const DISCOVERY_ENTRY_LIMIT: usize = 65_536;
 const DISCOVERY_DEPTH_LIMIT: usize = 64;
+const ISOLATED_PLUGIN_FILE_LIMIT: usize = 256;
+const ISOLATED_PLUGIN_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(10);
+const ISOLATED_PLUGIN_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const ISOLATED_PLUGIN_CATALOG_TIMEOUT: Duration = Duration::from_secs(30);
 static ACOUSTIC_WORKERS: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Clone, Debug, Default)]
+struct NativePluginStatus {
+    discovered_files: usize,
+    inspected_files: usize,
+    failed_files: usize,
+    skipped_files: usize,
+    truncated: bool,
+}
+
+impl NativePluginStatus {
+    fn value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "mode": "isolated_metadata",
+            "discovered_files": self.discovered_files,
+            "inspected_files": self.inspected_files,
+            "failed_files": self.failed_files,
+            "skipped_files": self.skipped_files,
+            "truncated": self.truncated,
+            "presets": "not_enumerated",
+            "acoustic_similarity": "not_supported"
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+struct IsolatedPluginEntry {
+    path: PathBuf,
+    metadata: crate::PluginProbeResult,
+}
+
+#[derive(Clone, Debug, Default)]
+struct IsolatedPluginCatalog {
+    entries: Vec<IsolatedPluginEntry>,
+    diagnostics: Vec<String>,
+    status: NativePluginStatus,
+}
 
 fn try_discovery_lock(lock: &Mutex<()>) -> Result<MutexGuard<'_, ()>, String> {
     match lock.try_lock() {
@@ -766,6 +813,10 @@ fn resolve_sound(key: &str, id: &str) -> Result<Sound, String> {
     Ok(sound.as_ref().clone())
 }
 
+fn resolve_library_sound(key: &str, id: &str) -> Result<Sound, String> {
+    resolve_sound(key, id).or_else(|_| resolve_sound(&isolated_sound_library_key(key), id))
+}
+
 fn generated_sound_id(generation: &str, source_id: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(generation.as_bytes());
@@ -790,6 +841,8 @@ pub struct SoundLibraryJob {
     font_paths: Vec<PathBuf>,
     extra_paths: Vec<PathBuf>,
     scan_plugins: bool,
+    isolated_plugin_discovery: bool,
+    isolated_plugin_snapshot: Option<IsolatedPluginCatalog>,
     sample_rate: f64,
 }
 
@@ -819,6 +872,10 @@ fn lexical_path_identity(path: &Path) -> String {
 fn hash_scope_part(digest: &mut Sha256, value: &str) {
     digest.update((value.len() as u64).to_le_bytes());
     digest.update(value.as_bytes());
+}
+
+fn isolated_sound_library_key(key: &str) -> String {
+    format!("{key}:isolated-native-metadata-v1")
 }
 
 impl Session {
@@ -924,6 +981,8 @@ impl Session {
             font_paths,
             extra_paths: extra_paths.to_vec(),
             scan_plugins: true,
+            isolated_plugin_discovery: false,
+            isolated_plugin_snapshot: None,
             sample_rate: self.sample_rate(),
         }
     }
@@ -946,7 +1005,7 @@ impl Session {
         let key = self.sound_library_scope(paths);
         // Selection can run on the UI thread. Resolve only metadata previously issued by a worker;
         // rebuilding a heavy catalog here would synchronously invoke every native provider.
-        let source = resolve_sound(&key, id)?;
+        let source = resolve_library_sound(&key, id)?;
         let prepare = PrepareContext::new(self.sample_rate(), 512, 2);
         match source.source {
             Source::Builtin(instrument_id) => self
@@ -967,8 +1026,11 @@ impl Session {
                 id,
                 preset,
                 discovery_stamp,
+                isolated_metadata,
             } => {
-                if clap_selection_stamp(&file, preset.as_ref()) != discovery_stamp {
+                if !isolated_metadata
+                    && clap_selection_stamp(&file, preset.as_ref()) != discovery_stamp
+                {
                     return Err(
                         "The selected CLAP plugin or preset changed after discovery; refresh the sound search"
                             .into(),
@@ -1004,8 +1066,11 @@ impl Session {
                 id,
                 preset,
                 discovery_stamp,
+                isolated_metadata,
             } => {
-                if vst3_selection_stamp(&file, preset.as_ref()) != discovery_stamp {
+                if !isolated_metadata
+                    && vst3_selection_stamp(&file, preset.as_ref()) != discovery_stamp
+                {
                     return Err(
                         "The selected VST3 plugin or preset changed after discovery; refresh the sound search"
                             .into(),
@@ -1050,12 +1115,14 @@ impl SoundLibraryJob {
         if !(1..=16).contains(&limit) {
             return Err("limit must be 1..16".into());
         }
+        let isolated_key = isolated_sound_library_key(&self.key);
         let catalog = CATALOGS
             .get_or_init(Default::default)
             .lock()
             .map_err(|_| "Sound catalog lock failed")?
             .iter()
-            .find(|c| c.key == self.key)
+            .rev()
+            .find(|c| c.key == self.key || c.key == isolated_key)
             .cloned()
             .ok_or("No sound snapshot; search_instruments first")?;
         let state = catalog
@@ -1088,6 +1155,34 @@ impl SoundLibraryJob {
     /// Returns a bounded search response. First acoustic use starts a background index and
     /// returns `status: indexing`; subsequent calls report progress or completed neighbors.
     pub fn run(self, request: SoundSearch, refresh: bool) -> Result<String, String> {
+        self.run_inner(request, refresh, None)
+    }
+
+    /// Runs live-window discovery through bounded child processes before searching metadata.
+    ///
+    /// Native presets and acoustic measurements are deliberately unavailable in this mode: both
+    /// require instantiating third-party code, while the returned default descriptors remain valid
+    /// handles for the ordinary explicit instrument-selection command.
+    pub fn run_isolated(
+        mut self,
+        request: SoundSearch,
+        refresh: bool,
+        cancelled: &AtomicBool,
+    ) -> Result<String, String> {
+        self.key = isolated_sound_library_key(&self.key);
+        self.isolated_plugin_discovery = true;
+        self.run_inner(request, refresh, Some(cancelled))
+    }
+
+    fn run_inner(
+        self,
+        request: SoundSearch,
+        refresh: bool,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<String, String> {
+        if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Relaxed)) {
+            return Err("Sound search cancelled".into());
+        }
         let limit = match &request {
             SoundSearch::Text { limit, .. } | SoundSearch::Similar { limit, .. } => *limit,
         };
@@ -1108,7 +1203,7 @@ impl SoundLibraryJob {
             issued_sound(&self.key, id)
                 .map_err(|_| "Unknown or expired sound ID; search_instruments first")?;
         }
-        let catalog = self.catalog(refresh)?;
+        let catalog = self.catalog_with_cancel(refresh, cancelled)?;
         match request {
             SoundSearch::Text {
                 query,
@@ -1137,10 +1232,11 @@ impl SoundLibraryJob {
                 let next = offset + page.len();
                 issue_sounds(&self.key, &catalog.generation, page.iter().copied())?;
                 let page = page.into_iter().map(Sound::value).collect::<Vec<_>>();
-                Ok(sound_page(
+                Ok(sound_page(with_native_status(
                     serde_json::json!({"status":"ready","sounds":page,"total":matches.len(),"next_offset":(next<matches.len()).then_some(next),
                     "scan_error_count":catalog.errors.len()}),
-                ))
+                    &catalog,
+                )))
             }
             SoundSearch::Similar { id, filter, .. } => {
                 let reference = catalog
@@ -1149,6 +1245,12 @@ impl SoundLibraryJob {
                     .position(|s| s.id == id)
                     .ok_or("Unknown sound ID; search_instruments first")?;
                 if !measurable(&catalog.sounds[reference]) {
+                    if isolated_native(&catalog.sounds[reference]) {
+                        return Err(
+                            "Native plugins discovered by the live Agent use isolated metadata; acoustic similarity is unavailable because measuring them would load third-party code in the application process"
+                                .into(),
+                        );
+                    }
                     return Err("Drum kits are searchable but are not comparable with the melodic timbre reference".into());
                 }
                 let mut state = catalog
@@ -1197,10 +1299,11 @@ impl SoundLibraryJob {
                             v
                         })
                         .collect::<Vec<_>>();
-                    return Ok(sound_page(
+                    return Ok(sound_page(with_native_status(
                         serde_json::json!({"status":"ready","reference":id,"sounds":sounds,"indexed":index.sounds.len(),
                         "skipped_count":index.skipped.len(),"limited":index.limited}),
-                    ));
+                        &catalog,
+                    )));
                 }
                 if !state.started {
                     let permit = AcousticWorkerPermit::acquire().ok_or(
@@ -1224,13 +1327,26 @@ impl SoundLibraryJob {
                     state.started = true;
                     state.reference = Some(reference);
                 }
-                Ok(serde_json::json!({"status":"indexing","completed":catalog.completed.load(Ordering::Relaxed),"total":catalog.sounds.iter().filter(|s| measurable(s)).count().min(ACOUSTIC_SOUND_LIMIT),"limited":catalog.sounds.iter().filter(|s| measurable(s)).count()>ACOUSTIC_SOUND_LIMIT,"retry_after_seconds":5,
-                    "usage":"Acoustic analysis runs in the background once per library snapshot. Continue other work and retry similar_instruments later with the same id; do not refresh while indexing."}).to_string())
+                Ok(with_native_status(
+                    serde_json::json!({"status":"indexing","completed":catalog.completed.load(Ordering::Relaxed),"total":catalog.sounds.iter().filter(|s| measurable(s)).count().min(ACOUSTIC_SOUND_LIMIT),"limited":catalog.sounds.iter().filter(|s| measurable(s)).count()>ACOUSTIC_SOUND_LIMIT,"retry_after_seconds":5,
+                    "usage":"Acoustic analysis runs in the background once per library snapshot. Continue other work and retry similar_instruments later with the same id; do not refresh while indexing."}),
+                    &catalog,
+                )
+                .to_string())
             }
         }
     }
 
+    #[cfg(test)]
     fn catalog(&self, refresh: bool) -> Result<Arc<Catalog>, String> {
+        self.catalog_with_cancel(refresh, None)
+    }
+
+    fn catalog_with_cancel(
+        &self,
+        refresh: bool,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<Arc<Catalog>, String> {
         let cache = CATALOGS.get_or_init(Default::default);
         if !refresh {
             let mut entries = cache.lock().map_err(|_| "Sound catalog lock failed")?;
@@ -1298,25 +1414,77 @@ impl SoundLibraryJob {
             errors_truncated: false,
         };
         let mut errors = Vec::new();
-        let plugin_files = if self.scan_plugins {
-            installed_plugin_files(&self.extra_paths)
-        } else {
-            PluginFiles::default()
-        };
-        if plugin_files.truncated {
-            budget.push_error(
-                &mut errors,
-                "Plugin discovery reached its bounded path or traversal limit",
-            );
-        }
-        let plugins = plugin_files.entries;
         let mut stamps = self
             .font_paths
             .iter()
             .map(|path| stamp(path))
             .collect::<Vec<_>>();
-        stamps.extend(plugins.iter().map(|(path, _)| stamp(path)));
-        stamps.extend(vst_preset_roots().iter().map(|path| stamp(path)));
+        let mut native_status = None;
+        if self.scan_plugins && self.isolated_plugin_discovery {
+            let snapshot = match &self.isolated_plugin_snapshot {
+                Some(snapshot) => snapshot.clone(),
+                None => isolated_plugin_catalog(&self.extra_paths, cancelled)?,
+            };
+            for diagnostic in &snapshot.diagnostics {
+                budget.push_error(&mut errors, diagnostic);
+            }
+            stamps.extend(
+                snapshot
+                    .entries
+                    .iter()
+                    .map(|entry| lexical_path_identity(&entry.path)),
+            );
+            for entry in &snapshot.entries {
+                if budget.sounds_truncated {
+                    break;
+                }
+                discover_isolated_plugin(entry, &mut sounds, &mut budget);
+            }
+            native_status = Some(snapshot.status);
+        } else if self.scan_plugins {
+            let plugin_files = installed_plugin_files(&self.extra_paths);
+            if plugin_files.truncated {
+                budget.push_error(
+                    &mut errors,
+                    "Plugin discovery reached its bounded path or traversal limit",
+                );
+            }
+            let plugins = plugin_files.entries;
+            stamps.extend(plugins.iter().map(|(path, _)| stamp(path)));
+            stamps.extend(vst_preset_roots().iter().map(|path| stamp(path)));
+            let (preset_files, presets_truncated) = if plugins.iter().any(|(_, vst3)| *vst3) {
+                vst_preset_files()
+            } else {
+                (Vec::new(), false)
+            };
+            if presets_truncated {
+                budget.push_error(
+                    &mut errors,
+                    "VST3 preset discovery reached its bounded path or traversal limit",
+                );
+            }
+            for (file, vst3) in &plugins {
+                if budget.sounds_truncated {
+                    break;
+                }
+                let result = if *vst3 {
+                    discover_vst3(
+                        file,
+                        &preset_files,
+                        self.sample_rate,
+                        &mut sounds,
+                        &mut errors,
+                        &mut budget,
+                    )
+                } else {
+                    discover_clap(file, &mut sounds, &mut errors, &mut budget)
+                };
+                if let Err(error) = result {
+                    budget.push_error(&mut errors, format!("{}: {error}", file.display()));
+                }
+            }
+        }
+        budget.report_sound_limit(&mut errors);
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(format!(
@@ -1324,38 +1492,6 @@ impl SoundLibraryJob {
                 self.key, stamps, self.sounds, self.sample_rate
             ))
         );
-        let (preset_files, presets_truncated) = if plugins.iter().any(|(_, vst3)| *vst3) {
-            vst_preset_files()
-        } else {
-            (Vec::new(), false)
-        };
-        if presets_truncated {
-            budget.push_error(
-                &mut errors,
-                "VST3 preset discovery reached its bounded path or traversal limit",
-            );
-        }
-        for (file, vst3) in &plugins {
-            if budget.sounds_truncated {
-                break;
-            }
-            let result = if *vst3 {
-                discover_vst3(
-                    file,
-                    &preset_files,
-                    self.sample_rate,
-                    &mut sounds,
-                    &mut errors,
-                    &mut budget,
-                )
-            } else {
-                discover_clap(file, &mut sounds, &mut errors, &mut budget)
-            };
-            if let Err(error) = result {
-                budget.push_error(&mut errors, format!("{}: {error}", file.display()));
-            }
-        }
-        budget.report_sound_limit(&mut errors);
         sounds.sort_by(|a, b| {
             a.name
                 .to_lowercase()
@@ -1381,6 +1517,7 @@ impl SoundLibraryJob {
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
             control: TimbreMapControl::default(),
+            native_status,
         });
         let mut entries = cache.lock().map_err(|_| "Sound catalog lock failed")?;
         if let Some(existing) = reuse_cached_catalog(&mut entries, &self.key)? {
@@ -1487,14 +1624,39 @@ fn sound_page(mut value: serde_json::Value) -> String {
     value.to_string()
 }
 
+fn with_native_status(mut value: serde_json::Value, catalog: &Catalog) -> serde_json::Value {
+    if let Some(status) = &catalog.native_status {
+        value["native_plugins"] = status.value();
+    }
+    value
+}
+
 fn measurable(sound: &Sound) -> bool {
     match &sound.source {
         Source::Font(p) => p.bank != 128,
         Source::Builtin(id) => {
             !matches!(id.as_str(), "auris.synth.drumkit" | "auris.synth.noisedrum")
         }
-        _ => true,
+        Source::Clap {
+            isolated_metadata, ..
+        }
+        | Source::Vst3 {
+            isolated_metadata, ..
+        } => !isolated_metadata,
     }
+}
+
+fn isolated_native(sound: &Sound) -> bool {
+    matches!(
+        &sound.source,
+        Source::Clap {
+            isolated_metadata: true,
+            ..
+        } | Source::Vst3 {
+            isolated_metadata: true,
+            ..
+        }
+    )
 }
 
 fn short_text(text: &str, limit: usize) -> String {
@@ -1504,6 +1666,237 @@ fn short_text(text: &str, limit: usize) -> String {
         result.push('…');
     }
     result
+}
+
+fn isolated_plugin_catalog(
+    extra_paths: &[PathBuf],
+    cancelled: Option<&AtomicBool>,
+) -> Result<IsolatedPluginCatalog, String> {
+    let never_cancelled = AtomicBool::new(false);
+    let cancelled = cancelled.unwrap_or(&never_cancelled);
+    if cancelled.load(Ordering::Relaxed) {
+        return Err("Sound search cancelled".into());
+    }
+    let started = Instant::now();
+    let deadline = started + ISOLATED_PLUGIN_CATALOG_TIMEOUT;
+    let mut catalog = IsolatedPluginCatalog::default();
+    let inventory = match crate::PluginDiscoveryJob::new(extra_paths).run(
+        cancelled,
+        ISOLATED_PLUGIN_DISCOVERY_TIMEOUT.min(ISOLATED_PLUGIN_CATALOG_TIMEOUT),
+    ) {
+        Ok(inventory) => inventory,
+        Err(_) if cancelled.load(Ordering::Relaxed) => {
+            return Err("Sound search cancelled".into());
+        }
+        Err(error) => {
+            catalog.status.truncated = true;
+            catalog.diagnostics.push(format!(
+                "Isolated native plugin inventory failed; built-in and SoundFont results remain available: {error}"
+            ));
+            return Ok(catalog);
+        }
+    };
+    catalog.status.discovered_files = inventory.clap.len().saturating_add(inventory.vst3.len());
+    catalog.status.truncated = inventory.truncated;
+    if inventory.truncated {
+        catalog.diagnostics.push(
+            "Isolated native plugin inventory reached its shared count or path-byte limit; additional files were omitted"
+                .into(),
+        );
+    }
+
+    let candidates = isolated_plugin_candidates(&inventory);
+    if catalog.status.discovered_files > candidates.len() {
+        catalog.status.truncated = true;
+    }
+
+    let mut metadata_classes = 0usize;
+    let mut metadata_bytes = 0usize;
+    for (path, format) in candidates {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err("Sound search cancelled".into());
+        }
+        let now = Instant::now();
+        let Some(overall_remaining) = deadline.checked_duration_since(now) else {
+            catalog.status.truncated = true;
+            break;
+        };
+        if overall_remaining < Duration::from_millis(100) {
+            catalog.status.truncated = true;
+            break;
+        }
+        let probe_deadline = now + overall_remaining.min(ISOLATED_PLUGIN_PROBE_TIMEOUT);
+        catalog.status.inspected_files += 1;
+        match crate::PluginProbeJob::new(format, path.clone()).run_until(cancelled, probe_deadline)
+        {
+            Ok(metadata) => {
+                let (classes, bytes) = plugin_probe_usage(&metadata);
+                if metadata_classes.saturating_add(classes) > CATALOG_SOUND_LIMIT
+                    || metadata_bytes.saturating_add(bytes) > CATALOG_SOUND_BYTE_LIMIT
+                {
+                    catalog.status.truncated = true;
+                    catalog.diagnostics.push(
+                        "Isolated native plugin descriptors reached the shared catalog count or byte limit; additional files were omitted"
+                            .into(),
+                    );
+                    break;
+                }
+                metadata_classes += classes;
+                metadata_bytes += bytes;
+                catalog.entries.push(IsolatedPluginEntry { path, metadata });
+            }
+            Err(_) if cancelled.load(Ordering::Relaxed) => {
+                return Err("Sound search cancelled".into());
+            }
+            Err(error) => {
+                catalog.status.failed_files += 1;
+                catalog.diagnostics.push(format!(
+                    "{}: isolated metadata inspection failed: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    catalog.status.skipped_files = catalog
+        .status
+        .discovered_files
+        .saturating_sub(catalog.entries.len());
+    if catalog.status.skipped_files > 0 {
+        catalog.status.truncated = true;
+        catalog.diagnostics.push(format!(
+            "Isolated native plugin search inspected {} of {} discovered files; {} were unavailable because of failed inspection or the 256-file, shared-metadata, or 30-second limit",
+            catalog.status.inspected_files,
+            catalog.status.discovered_files,
+            catalog.status.skipped_files
+        ));
+    }
+    if catalog.status.discovered_files > 0 {
+        catalog.diagnostics.push(
+            "Live Agent native plugins use isolated default descriptors; native preset enumeration and acoustic similarity are unavailable"
+                .into(),
+        );
+    }
+    Ok(catalog)
+}
+
+fn isolated_plugin_candidates(
+    inventory: &crate::InstalledPluginFiles,
+) -> Vec<(PathBuf, crate::PluginFormat)> {
+    // Alternate formats so a machine with hundreds of CLAP files cannot use the whole live
+    // catalog allowance before the first VST3 descriptor (or vice versa).
+    let mut clap = inventory.clap.iter().cloned();
+    let mut vst3 = inventory.vst3.iter().cloned();
+    let mut candidates = Vec::with_capacity(
+        inventory
+            .clap
+            .len()
+            .saturating_add(inventory.vst3.len())
+            .min(ISOLATED_PLUGIN_FILE_LIMIT),
+    );
+    while candidates.len() < ISOLATED_PLUGIN_FILE_LIMIT {
+        let mut advanced = false;
+        if let Some(path) = clap.next() {
+            candidates.push((path, crate::PluginFormat::Clap));
+            advanced = true;
+        }
+        if candidates.len() < ISOLATED_PLUGIN_FILE_LIMIT
+            && let Some(path) = vst3.next()
+        {
+            candidates.push((path, crate::PluginFormat::Vst3));
+            advanced = true;
+        }
+        if !advanced {
+            break;
+        }
+    }
+    candidates
+}
+
+fn plugin_probe_usage(metadata: &crate::PluginProbeResult) -> (usize, usize) {
+    match metadata {
+        crate::PluginProbeResult::Clap(plugins) => (
+            plugins.len(),
+            plugins.iter().fold(0usize, |bytes, plugin| {
+                bytes
+                    .saturating_add(std::mem::size_of_val(plugin))
+                    .saturating_add(plugin.clap_id.len())
+                    .saturating_add(plugin.name.len())
+                    .saturating_add(plugin.vendor.len())
+                    .saturating_add(plugin.description.len())
+                    .saturating_add(plugin.version.len())
+            }),
+        ),
+        crate::PluginProbeResult::Vst3(plugins) => (
+            plugins.len(),
+            plugins.iter().fold(0usize, |bytes, plugin| {
+                bytes
+                    .saturating_add(std::mem::size_of_val(plugin))
+                    .saturating_add(plugin.class_id.len())
+                    .saturating_add(plugin.name.len())
+                    .saturating_add(plugin.vendor.len())
+                    .saturating_add(plugin.version.len())
+            }),
+        ),
+    }
+}
+
+fn discover_isolated_plugin(
+    entry: &IsolatedPluginEntry,
+    sounds: &mut Vec<Sound>,
+    budget: &mut CatalogBudget,
+) {
+    match &entry.metadata {
+        crate::PluginProbeResult::Clap(plugins) => {
+            for info in plugins
+                .iter()
+                .filter(|info| info.kind == PluginKind::Instrument)
+            {
+                let label = format!("{} / {}", info.vendor, info.name);
+                if !budget.push_sound(
+                    sounds,
+                    Sound::new(
+                        format!("{} (default)", info.name),
+                        label,
+                        info.description.clone(),
+                        Source::Clap {
+                            file: entry.path.clone(),
+                            id: info.clap_id.clone(),
+                            preset: None,
+                            discovery_stamp: String::new(),
+                            isolated_metadata: true,
+                        },
+                    ),
+                ) {
+                    break;
+                }
+            }
+        }
+        crate::PluginProbeResult::Vst3(plugins) => {
+            for info in plugins
+                .iter()
+                .filter(|info| info.kind == PluginKind::Instrument)
+            {
+                let label = format!("{} / {}", info.vendor, info.name);
+                if !budget.push_sound(
+                    sounds,
+                    Sound::new(
+                        format!("{} (default)", info.name),
+                        label,
+                        String::new(),
+                        Source::Vst3 {
+                            file: entry.path.clone(),
+                            id: info.class_id.clone(),
+                            preset: None,
+                            discovery_stamp: String::new(),
+                            isolated_metadata: true,
+                        },
+                    ),
+                ) {
+                    break;
+                }
+            }
+        }
+    }
 }
 
 fn measure_sound(
@@ -1634,6 +2027,7 @@ fn discover_clap(
                     id: info.clap_id.clone(),
                     preset: None,
                     discovery_stamp: plugin_stamp.clone(),
+                    isolated_metadata: false,
                 },
             ),
         ) {
@@ -1669,6 +2063,7 @@ fn discover_clap(
                         id: info.clap_id.clone(),
                         preset: Some(preset.clone()),
                         discovery_stamp: clap_selection_stamp(file, Some(preset)),
+                        isolated_metadata: false,
                     },
                 ),
             ) {
@@ -1713,6 +2108,7 @@ fn discover_vst3(
                     id: info.class_id.clone(),
                     preset: None,
                     discovery_stamp: plugin_stamp.clone(),
+                    isolated_metadata: false,
                 },
             ),
         ) {
@@ -1770,6 +2166,7 @@ fn discover_vst3(
                         id: info.class_id.clone(),
                         discovery_stamp: vst3_selection_stamp(file, Some(&preset)),
                         preset: Some(preset),
+                        isolated_metadata: false,
                     },
                 ),
             ) {
@@ -1933,11 +2330,184 @@ mod tests {
         job
     }
 
+    fn isolated_metadata_job(session: &Session) -> SoundLibraryJob {
+        let mut job = session.sound_library_job(&[]);
+        job.isolated_plugin_snapshot = Some(IsolatedPluginCatalog {
+            entries: vec![IsolatedPluginEntry {
+                // This path deliberately does not exist. A successful test therefore proves the
+                // live search consumes the supplied descriptor instead of loading the binary.
+                path: PathBuf::from("NeverLoad.clap"),
+                metadata: crate::PluginProbeResult::Clap(vec![crate::ClapPluginInfo {
+                    clap_id: "example.quarantine.synth".into(),
+                    name: "Quarantine Synth".into(),
+                    vendor: "Example Vendor".into(),
+                    description: "safe isolated descriptor".into(),
+                    version: "1.0".into(),
+                    kind: PluginKind::Instrument,
+                    category: PluginCategory::Synth,
+                }]),
+            }],
+            diagnostics: vec![
+                "Live Agent native plugins use isolated default descriptors; native preset enumeration and acoustic similarity are unavailable"
+                    .into(),
+            ],
+            status: NativePluginStatus {
+                discovered_files: 3,
+                inspected_files: 2,
+                failed_files: 1,
+                skipped_files: 2,
+                truncated: true,
+            },
+        });
+        job
+    }
+
     fn pressure_catalog_cache() {
         for _ in 0..6 {
             let other = session();
             drop(isolated_job(&other).catalog(false).unwrap());
         }
+    }
+
+    #[test]
+    fn isolated_live_search_issues_selectable_metadata_without_loading_native_code() {
+        let _serial = serial_test();
+        let session = session();
+        let cancelled = AtomicBool::new(false);
+        let response = isolated_metadata_job(&session)
+            .run_isolated(
+                SoundSearch::Text {
+                    query: "quarantine".into(),
+                    limit: 10,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+                &cancelled,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let id = response["sounds"][0]["id"].as_str().unwrap();
+
+        assert_eq!(response["native_plugins"]["mode"], "isolated_metadata");
+        assert_eq!(response["native_plugins"]["skipped_files"], 2);
+        assert_eq!(response["native_plugins"]["truncated"], true);
+        assert_eq!(
+            response["native_plugins"]["acoustic_similarity"],
+            "not_supported"
+        );
+        let source = resolve_library_sound(&session.sound_library_scope(&[]), id).unwrap();
+        assert!(isolated_native(&source));
+        assert!(!measurable(&source));
+        let diagnostics = session.sound_library_job(&[]).diagnostics(0, 10).unwrap();
+        assert!(diagnostics.contains("isolated default descriptors"));
+    }
+
+    #[test]
+    fn isolated_search_handles_still_drive_the_existing_selection_contract() {
+        let _serial = serial_test();
+        let mut session = session();
+        let track = session
+            .add_default_instrument_track("Safe selection")
+            .unwrap();
+        let cancelled = AtomicBool::new(false);
+        let response = isolated_metadata_job(&session)
+            .run_isolated(
+                SoundSearch::Text {
+                    query: "FM 2-Op".into(),
+                    limit: 1,
+                    offset: 0,
+                    filter: SoundFilter {
+                        source: Some(SoundSource::Builtin),
+                        library: None,
+                    },
+                },
+                false,
+                &cancelled,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let id = response["sounds"][0]["id"].as_str().unwrap();
+
+        session.forget_history();
+        session.use_library_sound(track, id, &[]).unwrap();
+
+        assert_eq!(session.undo(), Some(crate::Edit::ChangeInstrument));
+    }
+
+    #[test]
+    fn isolated_native_sound_explains_why_similarity_is_unavailable() {
+        let _serial = serial_test();
+        let session = session();
+        let cancelled = AtomicBool::new(false);
+        let response = isolated_metadata_job(&session)
+            .run_isolated(
+                SoundSearch::Text {
+                    query: "quarantine".into(),
+                    limit: 1,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+                &cancelled,
+            )
+            .unwrap();
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+        let id = response["sounds"][0]["id"].as_str().unwrap().to_string();
+
+        let error = isolated_metadata_job(&session)
+            .run_isolated(
+                SoundSearch::Similar {
+                    id,
+                    limit: 10,
+                    filter: SoundFilter::default(),
+                },
+                false,
+                &cancelled,
+            )
+            .unwrap_err();
+
+        assert!(error.contains("isolated metadata"));
+        assert!(error.contains("third-party code"));
+    }
+
+    #[test]
+    fn isolated_live_search_honors_cancellation_before_discovery() {
+        let _serial = serial_test();
+        let session = session();
+        let cancelled = AtomicBool::new(true);
+
+        let error = isolated_metadata_job(&session)
+            .run_isolated(
+                SoundSearch::Text {
+                    query: "quarantine".into(),
+                    limit: 1,
+                    offset: 0,
+                    filter: SoundFilter::default(),
+                },
+                false,
+                &cancelled,
+            )
+            .unwrap_err();
+
+        assert_eq!(error, "Sound search cancelled");
+    }
+
+    #[test]
+    fn isolated_native_candidates_are_bounded_without_starving_a_format() {
+        let inventory = crate::InstalledPluginFiles {
+            clap: (0..300)
+                .map(|index| PathBuf::from(format!("Clap-{index:03}.clap")))
+                .collect(),
+            vst3: vec![PathBuf::from("First.vst3"), PathBuf::from("Second.vst3")],
+            truncated: false,
+        };
+
+        let candidates = isolated_plugin_candidates(&inventory);
+
+        assert_eq!(candidates.len(), ISOLATED_PLUGIN_FILE_LIMIT);
+        assert!(candidates.contains(&(PathBuf::from("First.vst3"), crate::PluginFormat::Vst3)));
+        assert!(candidates.contains(&(PathBuf::from("Second.vst3"), crate::PluginFormat::Vst3)));
     }
 
     fn catalog_is_cached(key: &str) -> bool {
@@ -2176,6 +2746,7 @@ mod tests {
             index: Mutex::new(IndexState::default()),
             completed: AtomicUsize::new(0),
             control: TimbreMapControl::default(),
+            native_status: None,
         })
     }
 

@@ -9,8 +9,9 @@
 
 use gpui::{
     Context, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Window, deferred,
-    div, prelude::*, px,
+    div, point, prelude::*, px,
 };
+use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use crate::app::AurisApp;
 use crate::menu::{MenuRow, MenuSection, model};
@@ -21,6 +22,12 @@ pub const HEIGHT: Pixels = px(26.0);
 
 /// Height of one row in an open menu.
 const ROW_HEIGHT: Pixels = px(22.0);
+
+/// Total vertical space occupied by one separator, including its margins.
+const SEPARATOR_HEIGHT: Pixels = px(7.0);
+
+/// Padding and border above and below the scrolling rows.
+const MENU_FRAME_HEIGHT: Pixels = px(10.0);
 
 /// Width of an open menu.
 ///
@@ -139,7 +146,33 @@ impl AurisApp {
 
     /// Closes any open menu-bar dropdown, reporting whether there was one.
     pub(crate) fn close_menu_bar(&mut self) -> bool {
-        self.menu_bar.take().is_some()
+        let was_open = self.menu_bar.is_some();
+        self.set_menu_bar(None);
+        was_open
+    }
+
+    /// Replaces the open dropdown and starts a newly opened section at its first row.
+    pub(crate) fn set_menu_bar(&mut self, next: Option<OpenMenu>) {
+        if self.menu_bar.map(|open| open.index) != next.map(|open| open.index) {
+            self.menu_bar_scroll.set_offset(point(px(0.0), px(0.0)));
+        }
+        self.menu_bar = next;
+    }
+
+    /// Keeps pointer hover and keyboard activation aimed at the same dropdown row.
+    fn set_menu_bar_highlight(
+        &mut self,
+        section: usize,
+        highlighted: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(open) = &mut self.menu_bar else {
+            return;
+        };
+        if open.index == section && open.highlighted != highlighted {
+            open.highlighted = highlighted;
+            cx.notify();
+        }
     }
 
     /// The menu as it stands right now: this language, these panels, these switches.
@@ -179,6 +212,7 @@ impl AurisApp {
                 .is_none_or(|id| id == window.window_handle().window_id())
         });
         let sections = self.menu_model();
+        let viewport_height = window.viewport_size().height;
 
         Some(
             div()
@@ -218,7 +252,8 @@ impl AurisApp {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                this.menu_bar = after_click(this.menu_bar, index);
+                                let next = after_click(this.menu_bar, index);
+                                this.set_menu_bar(next);
                                 cx.stop_propagation();
                                 cx.notify();
                             }),
@@ -226,13 +261,19 @@ impl AurisApp {
                         .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
                             let next = after_hover(this.menu_bar, index);
                             if next != this.menu_bar {
-                                this.menu_bar = next;
+                                this.set_menu_bar(next);
                                 cx.notify();
                             }
                         }))
                         .children(is_open.then(|| {
                             let highlighted = open.and_then(|open| open.highlighted);
-                            self.render_menu_bar_dropdown(index, &section, highlighted, cx)
+                            self.render_menu_bar_dropdown(
+                                index,
+                                &section,
+                                highlighted,
+                                viewport_height,
+                                cx,
+                            )
                         }))
                 }))
                 .into_any_element(),
@@ -245,6 +286,7 @@ impl AurisApp {
         section_index: usize,
         section: &MenuSection,
         highlighted: Option<usize>,
+        viewport_height: Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
@@ -255,11 +297,15 @@ impl AurisApp {
             .enumerate()
             .map(|(index, row)| match row {
                 MenuRow::Separator => div()
+                    .debug_selector(move || format!("menu-bar-separator-{section_index}-{index}"))
                     .my(px(3.0))
                     .h(px(1.0))
                     .w_full()
                     .flex_shrink_0()
                     .bg(theme.border)
+                    .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                        this.set_menu_bar_highlight(section_index, None, cx);
+                    }))
                     .into_any_element(),
                 // A submenu the system fills in has nothing behind it here, so it is not drawn.
                 // `model` only produces one on macOS, where this bar does not run at all.
@@ -292,6 +338,13 @@ impl AurisApp {
                             true => theme.text,
                             false => theme.text_faint,
                         })
+                        .on_mouse_move(cx.listener(move |this, _: &MouseMoveEvent, _, cx| {
+                            this.set_menu_bar_highlight(
+                                section_index,
+                                enabled.then_some(index),
+                                cx,
+                            );
+                        }))
                         // Neither the pointer's fill nor the keyboard's lands on a dead row, and
                         // neither does the pointer itself: a hand cursor over something that will
                         // not answer is the row promising twice over.
@@ -345,6 +398,21 @@ impl AurisApp {
             })
             .collect();
 
+        let natural_height = section
+            .rows
+            .iter()
+            .map(|row| match row {
+                MenuRow::Command { .. } => ROW_HEIGHT,
+                MenuRow::Separator => SEPARATOR_HEIGHT,
+                MenuRow::System { .. } => px(0.0),
+            })
+            .fold(MENU_FRAME_HEIGHT, |height, row| height + row);
+        let available_height = (viewport_height - crate::titlebar::HEIGHT - HEIGHT)
+            .max(ROW_HEIGHT + MENU_FRAME_HEIGHT);
+        let height = natural_height.min(available_height);
+        let scroll = self.menu_bar_scroll.clone();
+        let needs_scroll = natural_height > available_height;
+
         // Deferred so it paints above the panels below it. Without this the menu would open
         // *behind* the transport bar, because gpui paints siblings in the order they are given
         // and the bar is the first child of the window.
@@ -354,6 +422,7 @@ impl AurisApp {
                 .top(HEIGHT - px(3.0))
                 .left(px(0.0))
                 .w(MENU_WIDTH)
+                .h(height)
                 .flex()
                 .flex_col()
                 .p_1()
@@ -369,7 +438,27 @@ impl AurisApp {
                     MouseButton::Left,
                     |_: &MouseDownEvent, _, cx: &mut gpui::App| cx.stop_propagation(),
                 )
-                .children(rows),
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .child(
+                            div()
+                                .id("menu-bar-scroll")
+                                .debug_selector(|| "menu-bar-scroll".to_string())
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&scroll)
+                                .when(needs_scroll, |this| this.pr_3())
+                                .children(rows),
+                        )
+                        .when(needs_scroll, |this| {
+                            this.child(
+                                Scrollbar::vertical(&scroll).scrollbar_show(ScrollbarShow::Always),
+                            )
+                        }),
+                ),
         )
     }
 }
@@ -594,9 +683,9 @@ mod tests {
 /// do — which is the only reason a Mac can find out that the Windows menu bar has stopped opening.
 #[cfg(test)]
 mod window_tests {
-    use gpui::{Action, TestAppContext};
+    use gpui::{Action, Modifiers, MouseButton, TestAppContext, px, size};
 
-    use crate::harness::{click, open, paint};
+    use crate::harness::{click, open, paint, resize};
     use crate::menu::MenuRow;
 
     /// Where the row carrying `action` is, as the section it is in and its place in that section.
@@ -697,6 +786,109 @@ mod window_tests {
         assert_eq!(open_menu(&app, cx), Some(1));
     }
 
+    #[gpui::test]
+    fn hovering_a_row_replaces_the_keyboard_highlight(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        let (section, first) = row_of(&app, cx, crate::actions::NewProject.name());
+        let (same_section, hovered) = row_of(&app, cx, crate::actions::OpenProject.name());
+        assert_eq!(same_section, section);
+        paint(&app, cx);
+        let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+        click(title, cx);
+        paint(&app, cx);
+
+        cx.simulate_keystrokes("down");
+        app.read_with(cx, |this, _| {
+            assert_eq!(this.menu_bar.and_then(|open| open.highlighted), Some(first));
+        });
+        paint(&app, cx);
+        let row: &'static str =
+            Box::leak(format!("menu-bar-item-{section}-{hovered}").into_boxed_str());
+        let bounds = cx.debug_bounds(row).expect("the hovered row is drawn");
+        cx.simulate_mouse_move(bounds.center(), MouseButton::Left, Modifiers::none());
+
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.menu_bar.and_then(|open| open.highlighted),
+                Some(hovered),
+                "the pointer and Enter share one current row"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn hovering_a_disabled_row_or_separator_clears_keyboard_activation(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        app.update(cx, |this, _| {
+            this.session
+                .add_default_instrument_track("Undo sentinel")
+                .unwrap();
+            assert!(this.session.can_undo());
+        });
+        let before = app.read_with(cx, |this, _| this.project().clone());
+        let (section, undo) = row_of(&app, cx, crate::actions::Undo.name());
+        let (same_section, disabled) = row_of(&app, cx, crate::actions::Redo.name());
+        assert_eq!(same_section, section);
+        let separator = app.read_with(cx, |this, _| {
+            this.menu_model()[section]
+                .rows
+                .iter()
+                .position(|row| matches!(row, MenuRow::Separator))
+                .expect("the Edit menu separates history from clipboard commands")
+        });
+        let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+
+        for selector in [
+            format!("menu-bar-item-{section}-{disabled}"),
+            format!("menu-bar-separator-{section}-{separator}"),
+        ] {
+            paint(&app, cx);
+            click(title, cx);
+            cx.simulate_keystrokes("down");
+            app.read_with(cx, |this, _| {
+                assert_eq!(
+                    this.menu_bar.and_then(|open| open.highlighted),
+                    Some(undo),
+                    "Down initially arms the observable Undo command"
+                );
+            });
+            paint(&app, cx);
+            let selector: &'static str = Box::leak(selector.into_boxed_str());
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("`{selector}` is drawn"));
+            cx.simulate_mouse_move(bounds.center(), MouseButton::Left, Modifiers::none());
+
+            app.read_with(cx, |this, _| {
+                assert_eq!(
+                    this.menu_bar.and_then(|open| open.highlighted),
+                    None,
+                    "a non-actionable pointer target must clear stale keyboard activation"
+                );
+            });
+            cx.simulate_keystrokes("enter");
+            assert_eq!(
+                open_menu(&app, cx),
+                None,
+                "Enter dismisses a menu with no highlighted command"
+            );
+            app.read_with(cx, |this, _| {
+                assert_eq!(
+                    this.project(),
+                    &before,
+                    "Enter must not run the stale Undo command"
+                );
+                assert!(this.session.can_undo());
+            });
+        }
+    }
+
     /// Choosing a row runs its command, through the same dispatch the keymap uses.
     #[gpui::test]
     fn choosing_a_row_runs_the_command_and_shuts_the_menu(cx: &mut TestAppContext) {
@@ -761,5 +953,52 @@ mod window_tests {
         assert!(!ticked(&app, cx), "a new project is not cycling");
         cx.dispatch_action(crate::actions::ToggleLoop);
         assert!(ticked(&app, cx), "and the row says so once it is");
+    }
+
+    #[gpui::test]
+    fn a_long_menu_keeps_the_keyboard_highlight_inside_the_viewport(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        if !crate::app::AurisApp::wants_menu_bar() {
+            return;
+        }
+        resize(&app, cx, size(px(800.0), px(500.0)));
+        let (section, _) = row_of(&app, cx, crate::actions::NudgeNotesRight.name());
+        let title: &'static str = Box::leak(format!("menu-title-{section}").into_boxed_str());
+        click(title, cx);
+        paint(&app, cx);
+
+        cx.simulate_keystrokes("end");
+        paint(&app, cx);
+        let last = app.read_with(cx, |this, _| {
+            this.menu_bar
+                .and_then(|open| open.highlighted)
+                .expect("End highlights the last available row")
+        });
+        let row: &'static str =
+            Box::leak(format!("menu-bar-item-{section}-{last}").into_boxed_str());
+        let bounds = cx.debug_bounds(row).expect("the highlighted row is drawn");
+        let viewport = cx
+            .debug_bounds("menu-bar-scroll")
+            .expect("the menu has a scrolling viewport");
+        assert!(bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom());
+        app.read_with(cx, |this, _| {
+            assert!(this.menu_bar_scroll.offset().y < px(0.0))
+        });
+
+        cx.simulate_keystrokes("home");
+        paint(&app, cx);
+        let first = app.read_with(cx, |this, _| {
+            this.menu_bar
+                .and_then(|open| open.highlighted)
+                .expect("Home highlights the first available row")
+        });
+        let row: &'static str =
+            Box::leak(format!("menu-bar-item-{section}-{first}").into_boxed_str());
+        let bounds = cx.debug_bounds(row).expect("the highlighted row is drawn");
+        let viewport = cx.debug_bounds("menu-bar-scroll").unwrap();
+        assert!(bounds.top() >= viewport.top() && bounds.bottom() <= viewport.bottom());
+
+        cx.simulate_keystrokes("escape");
+        assert_eq!(open_menu(&app, cx), None, "Escape dismisses the dropdown");
     }
 }

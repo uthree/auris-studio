@@ -194,6 +194,13 @@ impl AurisApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let open = self.panels.is_open(panel);
+        let agent_status = match panel {
+            Panel::Agent if !open => {
+                let status = self.agent_chat.panel_status();
+                (status != crate::ui::agent_chat::AgentPanelStatus::Idle).then_some(status)
+            }
+            _ => None,
+        };
         let icon_size = if size > SWITCH_SIZE {
             px(16.0)
         } else {
@@ -222,6 +229,15 @@ impl AurisApp {
         } else {
             theme.surface_hover
         };
+        let tooltip_label = match agent_status {
+            Some(status) => format!(
+                "{} · {}",
+                self.t(self.shown_panel_label(panel)),
+                self.t(status.label())
+            ),
+            None => self.t(self.shown_panel_label(panel)).to_string(),
+        };
+        let shortcut = self.keystroke_for(panel.command());
 
         div()
             .id(("panel-switch", panel as usize))
@@ -238,6 +254,32 @@ impl AurisApp {
             .hover(|this| this.bg(hover))
             .active(|this| this.opacity(0.75))
             .child(icon(panel.icon(), icon_size, mark))
+            .when_some(agent_status, |switch, status| {
+                let colour = match status {
+                    crate::ui::agent_chat::AgentPanelStatus::Running
+                    | crate::ui::agent_chat::AgentPanelStatus::Completed => theme.accent,
+                    crate::ui::agent_chat::AgentPanelStatus::Pending => theme.warning,
+                    crate::ui::agent_chat::AgentPanelStatus::Failed => theme.danger,
+                    crate::ui::agent_chat::AgentPanelStatus::Idle => theme.text_faint,
+                };
+                let selector = format!("agent-panel-state-{}", status.slug());
+                switch.child(
+                    div()
+                        .debug_selector(move || selector.clone())
+                        .absolute()
+                        .top(px(-1.0))
+                        .right(px(-1.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .size(px(10.0))
+                        .rounded_full()
+                        .bg(colour)
+                        .text_size(px(7.0))
+                        .text_color(theme.text_on(colour))
+                        .child(status.mark()),
+                )
+            })
             .when(open, |switch| {
                 switch.child(
                     div()
@@ -250,7 +292,11 @@ impl AurisApp {
                         .bg(theme.accent),
                 )
             })
-            .tooltip(self.tip(self.shown_panel_label(panel), panel.command()))
+            .tooltip(crate::ui::tooltip::keyed_tip(
+                tooltip_label,
+                shortcut,
+                theme,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _: &MouseDownEvent, _, cx| {

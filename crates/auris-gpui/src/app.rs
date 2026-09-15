@@ -21,8 +21,8 @@ use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::{RecoverySnapshot, Session, SessionOptions, WindowPlacement};
 use gpui::{
-    App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, Task, Window,
-    WindowBounds, WindowHandle, WindowOptions, point, px, size,
+    App, AppContext, Bounds, Context, FocusHandle, Focusable, Pixels, Point, ScrollHandle, Task,
+    Window, WindowBounds, WindowHandle, WindowOptions, point, px, size,
 };
 
 use crate::actions;
@@ -30,7 +30,7 @@ use crate::appearance::Appearance;
 use crate::dock::{Dock, Panel, PanelLayout};
 use crate::gestures::PointerGestures;
 use crate::keymap::{InputSettings, Keymap};
-use crate::settings_window::SettingsWindow;
+use crate::settings_window::{SettingsTab, SettingsWindow};
 use crate::theme::{Metrics, Theme};
 use crate::ui::context_menu::ContextMenu;
 use crate::ui::menu_bar::OpenMenu;
@@ -258,6 +258,86 @@ impl PaneFocus {
 ///
 /// Keeping these handles in the view makes the focus ring stable across repaints and lets the
 /// modal key handlers walk only their own controls instead of escaping into the obscured panes.
+struct ModalScrollTarget {
+    focus: FocusHandle,
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+}
+
+struct ModalScrollFocus {
+    scroll: ScrollHandle,
+    targets: RefCell<Vec<ModalScrollTarget>>,
+}
+
+impl ModalScrollFocus {
+    fn new() -> Self {
+        Self {
+            scroll: ScrollHandle::new(),
+            targets: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn target(
+        &self,
+        index: usize,
+        cx: &mut App,
+    ) -> (FocusHandle, Rc<Cell<Option<Bounds<Pixels>>>>) {
+        let mut targets = self.targets.borrow_mut();
+        while targets.len() <= index {
+            targets.push(ModalScrollTarget {
+                focus: cx.focus_handle().tab_stop(false),
+                bounds: Rc::new(Cell::new(None)),
+            });
+        }
+        let target = &targets[index];
+        (target.focus.clone(), target.bounds.clone())
+    }
+
+    fn reveal_focused(&self, window: &mut Window, cx: &mut App) {
+        let bounds = self
+            .targets
+            .borrow()
+            .iter()
+            .find(|target| target.focus.contains_focused(window, cx))
+            .and_then(|target| target.bounds.get());
+        let Some(bounds) = bounds else {
+            return;
+        };
+        let viewport = self.scroll.bounds();
+        let offset = self.scroll.offset();
+        let margin = px(4.0);
+        let dy = if bounds.bottom() > viewport.bottom() - margin
+            || bounds.size.height > viewport.size.height - margin * 2.0
+        {
+            viewport.bottom() - margin - bounds.bottom()
+        } else if bounds.top() < viewport.top() + margin {
+            viewport.top() + margin - bounds.top()
+        } else {
+            px(0.0)
+        };
+        if dy != px(0.0) {
+            self.scroll.set_offset(point(
+                offset.x,
+                (offset.y + dy).clamp(-self.scroll.max_offset().height, px(0.0)),
+            ));
+        }
+    }
+
+    fn reset(&self) {
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
+        for target in self.targets.borrow().iter() {
+            target.bounds.set(None);
+        }
+    }
+
+    #[cfg(test)]
+    fn focused_index(&self, window: &Window, cx: &App) -> Option<usize> {
+        self.targets
+            .borrow()
+            .iter()
+            .position(|target| target.focus.contains_focused(window, cx))
+    }
+}
+
 pub(crate) struct ModalFocus {
     prompt_cancel: FocusHandle,
     prompt_deny: FocusHandle,
@@ -265,6 +345,12 @@ pub(crate) struct ModalFocus {
     export_options: Vec<FocusHandle>,
     export_cancel: FocusHandle,
     export_confirm: FocusHandle,
+    song_sheet: FocusHandle,
+    song_sheet_last: FocusHandle,
+    song_sheet_scroll: ModalScrollFocus,
+    reference_match: FocusHandle,
+    reference_match_last: FocusHandle,
+    reference_match_scroll: ModalScrollFocus,
 }
 
 impl ModalFocus {
@@ -272,6 +358,7 @@ impl ModalFocus {
 
     fn new(cx: &mut App) -> Self {
         let stop = |cx: &mut App| cx.focus_handle().tab_stop(true);
+        let group = |cx: &mut App| cx.focus_handle().tab_index(0).tab_stop(false);
         Self {
             prompt_cancel: stop(cx),
             prompt_deny: stop(cx),
@@ -279,6 +366,12 @@ impl ModalFocus {
             export_options: (0..Self::EXPORT_OPTION_COUNT).map(|_| stop(cx)).collect(),
             export_cancel: stop(cx),
             export_confirm: stop(cx),
+            song_sheet: group(cx),
+            song_sheet_last: stop(cx),
+            song_sheet_scroll: ModalScrollFocus::new(),
+            reference_match: group(cx),
+            reference_match_last: stop(cx),
+            reference_match_scroll: ModalScrollFocus::new(),
         }
     }
 
@@ -306,6 +399,72 @@ impl ModalFocus {
         &self.export_confirm
     }
 
+    pub(crate) fn song_sheet(&self) -> &FocusHandle {
+        &self.song_sheet
+    }
+
+    pub(crate) fn song_sheet_last(&self) -> &FocusHandle {
+        &self.song_sheet_last
+    }
+
+    pub(crate) fn song_sheet_scroll(&self) -> &ScrollHandle {
+        &self.song_sheet_scroll.scroll
+    }
+
+    pub(crate) fn song_sheet_reveal_target(
+        &self,
+        index: usize,
+        cx: &mut App,
+    ) -> (FocusHandle, Rc<Cell<Option<Bounds<Pixels>>>>) {
+        self.song_sheet_scroll.target(index, cx)
+    }
+
+    pub(crate) fn reveal_song_sheet_focus(&self, window: &mut Window, cx: &mut App) {
+        self.song_sheet_scroll.reveal_focused(window, cx);
+    }
+
+    pub(crate) fn reset_song_sheet_scroll(&self) {
+        self.song_sheet_scroll.reset();
+    }
+
+    pub(crate) fn reference_match(&self) -> &FocusHandle {
+        &self.reference_match
+    }
+
+    pub(crate) fn reference_match_last(&self) -> &FocusHandle {
+        &self.reference_match_last
+    }
+
+    pub(crate) fn reference_match_scroll(&self) -> &ScrollHandle {
+        &self.reference_match_scroll.scroll
+    }
+
+    pub(crate) fn reference_match_reveal_target(
+        &self,
+        index: usize,
+        cx: &mut App,
+    ) -> (FocusHandle, Rc<Cell<Option<Bounds<Pixels>>>>) {
+        self.reference_match_scroll.target(index, cx)
+    }
+
+    pub(crate) fn reveal_reference_match_focus(&self, window: &mut Window, cx: &mut App) {
+        self.reference_match_scroll.reveal_focused(window, cx);
+    }
+
+    pub(crate) fn reset_reference_match_scroll(&self) {
+        self.reference_match_scroll.reset();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn song_sheet_reveal_index(&self, window: &Window, cx: &App) -> Option<usize> {
+        self.song_sheet_scroll.focused_index(window, cx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reference_match_reveal_index(&self, window: &Window, cx: &App) -> Option<usize> {
+        self.reference_match_scroll.focused_index(window, cx)
+    }
+
     pub(crate) fn prompt_contains_focused(&self, window: &Window) -> bool {
         self.prompt_cancel.is_focused(window)
             || self.prompt_deny.is_focused(window)
@@ -320,8 +479,19 @@ impl ModalFocus {
             || self.export_confirm.is_focused(window)
     }
 
-    fn contains_focused(&self, window: &Window) -> bool {
-        self.prompt_contains_focused(window) || self.export_contains_focused(window)
+    pub(crate) fn song_sheet_contains_focused(&self, window: &Window, cx: &App) -> bool {
+        self.song_sheet.contains_focused(window, cx)
+    }
+
+    pub(crate) fn reference_match_contains_focused(&self, window: &Window, cx: &App) -> bool {
+        self.reference_match.contains_focused(window, cx)
+    }
+
+    fn contains_focused(&self, window: &Window, cx: &App) -> bool {
+        self.prompt_contains_focused(window)
+            || self.export_contains_focused(window)
+            || self.song_sheet_contains_focused(window, cx)
+            || self.reference_match_contains_focused(window, cx)
     }
 }
 
@@ -1568,6 +1738,11 @@ pub struct AurisApp {
     pub(crate) inspector_scroll: gpui::ScrollHandle,
     /// The same, for the log's lines.
     pub(crate) log_scroll: gpui::ScrollHandle,
+    /// The viewport of the open custom menu-bar dropdown.
+    ///
+    /// Kept beside the menu state so keyboard movement can reveal the highlighted command and
+    /// pointer-wheel scrolling survives the repaint that redraws its hover state.
+    pub(crate) menu_bar_scroll: gpui::ScrollHandle,
     /// The open right-click menu, if any.
     pub(crate) menu: Option<ContextMenu>,
     /// Which menu-bar menu is open, on the platforms that draw their own bar.
@@ -1600,26 +1775,37 @@ pub struct AurisApp {
     pub(crate) library: crate::ui::library::LibraryTree,
     /// A tree row that should be brought into view after search expands it.
     pub(crate) library_reveal: Option<crate::ui::library::Branch>,
-    /// The `.clap` files found on this machine, scanned once and kept.
-    ///
-    /// `None` until the plugins section is first drawn: walking three directory trees is not a
-    /// thing to do on every frame, and not a thing to do at all for somebody who never opens it.
-    pub(crate) clap_files: Option<Vec<std::path::PathBuf>>,
-    /// The `.vst3` bundles found on this machine, scanned with the same lazy policy as CLAP.
-    pub(crate) vst3_files: Option<Vec<std::path::PathBuf>>,
+    /// The `.clap` files found by the isolated discovery worker, scanned once and kept.
+    /// `None` means the first scan has not completed.
+    pub(crate) clap_files: Option<Arc<[std::path::PathBuf]>>,
+    /// The `.vst3` bundles found by the same lazy worker as CLAP.
+    pub(crate) vst3_files: Option<Arc<[std::path::PathBuf]>>,
+    /// Cancellation handle for the installed-plugin discovery process, when it is running.
+    pub(crate) plugin_discovery_cancel: Option<Arc<AtomicBool>>,
+    /// Generation protecting the UI from a result started before plugin paths changed.
+    pub(crate) plugin_discovery_generation: u64,
+    /// Whether the bounded discovery worker omitted paths after reaching a safety limit.
+    pub(crate) plugin_discovery_truncated: bool,
+    /// Last discovery failure, kept so rendering does not retry a failing scan every frame.
+    pub(crate) plugin_discovery_error: Option<String>,
     /// The singer voices found on this machine, scanned once and kept — the
     /// [`Self::clap_files`] arrangement, cleared when a voice folder is added or forgotten.
     pub(crate) voices: Option<Vec<(String, std::path::PathBuf)>>,
-    /// What each opened `.clap` file turned out to hold.
-    ///
-    /// Filled the first time a file's branch is opened, which is also the first time its binary
-    /// is loaded. Kept afterwards so that shutting and reopening the branch is free — the file
-    /// stays open in the session either way.
+    /// Bounded metadata returned after an opened `.clap` file is inspected in a child process.
+    /// Empty results are cached too, so a broken plugin is not retried on every repaint.
     pub(crate) clap_contents:
-        std::collections::HashMap<std::path::PathBuf, Vec<auris_session::ClapPluginInfo>>,
-    /// VST3 audio classes cached after a bundle is first expanded.
+        std::collections::HashMap<std::path::PathBuf, Arc<[auris_session::ClapPluginInfo]>>,
+    /// VST3 audio classes cached after isolated inspection of an expanded bundle.
     pub(crate) vst3_contents:
-        std::collections::HashMap<std::path::PathBuf, Vec<auris_session::Vst3PluginInfo>>,
+        std::collections::HashMap<std::path::PathBuf, Arc<[auris_session::Vst3PluginInfo]>>,
+    /// Native metadata probes currently running in isolated child processes.
+    pub(crate) plugin_probe_cancel: std::collections::HashMap<
+        (auris_session::PluginFormat, std::path::PathBuf),
+        Arc<AtomicBool>,
+    >,
+    /// Failed probes, distinct from a valid plugin file that exports no supported classes.
+    pub(crate) plugin_probe_errors:
+        std::collections::HashMap<(auris_session::PluginFormat, std::path::PathBuf), String>,
     /// The title the operating system was last told, so it is only told again on a change.
     pub(crate) titled: String,
     /// Last state handed to the macOS menu bar, so it is rebuilt only when a visible fact changes.
@@ -1759,6 +1945,16 @@ fn selection_with_primary(clips: &mut BTreeSet<ClipId>, primary: Option<ClipId>)
 
 impl Drop for AurisApp {
     fn drop(&mut self) {
+        if let Some(cancelled) = self.plugin_discovery_cancel.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        for cancelled in self
+            .plugin_probe_cancel
+            .drain()
+            .map(|(_, cancelled)| cancelled)
+        {
+            cancelled.store(true, Ordering::Relaxed);
+        }
         self.drum_analysis.reset();
         self.music_analysis.cancel();
         self.timbre_map.cancel();
@@ -1949,6 +2145,7 @@ impl AurisApp {
             library_scroll: gpui::ScrollHandle::new(),
             inspector_scroll: gpui::ScrollHandle::new(),
             log_scroll: gpui::ScrollHandle::new(),
+            menu_bar_scroll: gpui::ScrollHandle::new(),
             menu: None,
             menu_bar: None,
             prompt: None,
@@ -1962,11 +2159,17 @@ impl AurisApp {
             pending_auxiliary: Default::default(),
             library: crate::ui::library::LibraryTree::default(),
             library_reveal: None,
-            clap_files: None,
-            vst3_files: None,
+            clap_files: cfg!(test).then(|| Arc::from(Vec::<std::path::PathBuf>::new())),
+            vst3_files: cfg!(test).then(|| Arc::from(Vec::<std::path::PathBuf>::new())),
+            plugin_discovery_cancel: None,
+            plugin_discovery_generation: 0,
+            plugin_discovery_truncated: false,
+            plugin_discovery_error: None,
             voices: None,
             clap_contents: std::collections::HashMap::new(),
             vst3_contents: std::collections::HashMap::new(),
+            plugin_probe_cancel: std::collections::HashMap::new(),
+            plugin_probe_errors: std::collections::HashMap::new(),
             titled: String::new(),
             native_menu_snapshot: None,
             voice_setup_window: None,
@@ -2054,8 +2257,8 @@ impl AurisApp {
     /// field that goes grey, swallows every binding, and receives nothing: that is exactly what
     /// the library's search box did on the day it was written.
     ///
-    /// All three of these are on the *window's* handle, which is why one question serves them.
-    /// See [`Self::reconcile_focus`].
+    /// Modal fields and library search use the window handle. The Agent composer owns a child
+    /// handle so it can be a real tab stop; [`Self::reconcile_focus`] selects the matching one.
     pub(crate) fn taking_text_input(&self) -> bool {
         self.prompt.is_some()
             || self.palette.is_some()
@@ -2145,10 +2348,15 @@ impl AurisApp {
                 field.unmark();
             }
             self.agent_chat.focused = None;
+            self.agent_chat.model_menu = false;
         }
         // A same-pane click must not blur its field during capture, before the field's own
         // listener sees the press. Modal fields likewise keep their existing input handle.
-        if self.taking_text_input() {
+        if self.agent_chat.typing()
+            && let Some(focus) = self.agent_chat.input_focus()
+        {
+            window.focus(focus);
+        } else if self.taking_text_input() {
             window.focus(&self.focus);
         } else {
             window.focus(self.panes.handle(pane));
@@ -2165,7 +2373,7 @@ impl AurisApp {
     ///
     /// Reconciled here rather than at each of the dozen places a sheet opens, most of which have
     /// no window to hand — and this way it is right again after any path that misses.
-    pub(crate) fn reconcile_focus(&mut self, window: &mut Window) {
+    pub(crate) fn reconcile_focus(&mut self, window: &mut Window, cx: &App) {
         // A busy modal owns the root even when there was no editable sheet underneath it.
         // Keeping focus here also removes pane action handlers from native menu dispatch.
         if self.compose_progress.is_some() {
@@ -2198,6 +2406,30 @@ impl AurisApp {
             }
             return;
         }
+        if self.reference_match.open
+            && self.prompt.is_none()
+            && self.palette.is_none()
+            && self.song_library.is_none()
+        {
+            if !self
+                .modal_focus
+                .reference_match_contains_focused(window, cx)
+            {
+                window.focus(self.modal_focus.reference_match());
+            }
+            return;
+        }
+        if self.song_sheet.is_some()
+            && self.lyrics_edit.is_none()
+            && self.prompt.is_none()
+            && self.palette.is_none()
+            && self.song_library.is_none()
+        {
+            if !self.modal_focus.song_sheet_contains_focused(window, cx) {
+                window.focus(self.modal_focus.song_sheet());
+            }
+            return;
+        }
         // A dock switch can hide a field without clicking another pane. Hidden fields must not
         // keep taking input, and a hidden pane is no longer a place to restore the keyboard to.
         if !self.panels.is_open(Panel::Library) {
@@ -2208,23 +2440,43 @@ impl AurisApp {
             }
         }
         if !self.panels.is_open(Panel::Agent) {
+            let input_had_focus = self
+                .agent_chat
+                .input_focus()
+                .is_some_and(|focus| focus.is_focused(window));
+            // A pending approval keeps advertising keyboard shortcuts when the panel returns.
+            // Remember every hidden transition, not only an approval that originally arrived
+            // while hidden: the user may close an already-waiting panel and reopen it later.
+            if self.agent_chat.has_pending_approval() {
+                self.agent_chat.restore_pending_focus = true;
+            }
             if let Some(field) = self.agent_chat.field_mut() {
                 field.unmark();
             }
             self.agent_chat.focused = None;
+            self.agent_chat.model_menu = false;
             if self.last_pane == Pane::Agent {
                 self.last_pane = Pane::Arrangement;
+            }
+            if input_had_focus {
+                window.focus(self.panes.handle(Pane::Arrangement));
             }
         }
         // [`Self::taking_text_input`] rather than a list written out again here. The library's
         // search box is in a panel and covers nothing, but as far as *this* question goes it is
         // a sheet: something is being typed into, and the handle it is typed through has to be
         // the focused one or nothing reaches it at all.
-        if self.taking_text_input() {
+        if self.agent_chat.typing()
+            && let Some(focus) = self.agent_chat.input_focus()
+        {
+            if !focus.is_focused(window) {
+                window.focus(focus);
+            }
+        } else if self.taking_text_input() {
             if !self.focus.is_focused(window) {
                 window.focus(&self.focus);
             }
-        } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window) {
+        } else if self.focus.is_focused(window) || self.modal_focus.contains_focused(window, cx) {
             // Back where it came from, so the panel bindings work again the moment the sheet is
             // gone rather than after the next click.
             if let Some(pane) = self.local_pane(self.last_pane, window) {
@@ -3180,6 +3432,16 @@ impl AurisApp {
         }
     }
 
+    /// Opens Settings at a category named by the control that led there.
+    pub(crate) fn open_settings_tab(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
+        self.open_settings(cx);
+        if let Some(handle) = self.settings_window {
+            let _ = handle.update(cx, |settings, window, cx| {
+                settings.show_tab(tab, window, cx);
+            });
+        }
+    }
+
     // ---------------------------------------------------------------- panels
 
     /// Shows `panel` when it is hidden, and hides it when its dock is showing it.
@@ -3416,7 +3678,11 @@ mod panel_input_tests {
         paint(&app, cx);
         cx.update(|window, cx| {
             app.read_with(cx, |this, _| {
-                assert!(this.focus.is_focused(window));
+                assert!(
+                    this.agent_chat
+                        .input_focus()
+                        .is_some_and(|focus| focus.is_focused(window))
+                );
                 assert_eq!(this.agent_chat.input.marked(), Some(6..12));
             });
         });

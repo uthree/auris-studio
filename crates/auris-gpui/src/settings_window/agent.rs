@@ -27,10 +27,20 @@ impl AgentSettings {
 
 impl SettingsWindow {
     fn apply_agent(&mut self, cx: &mut Context<Self>) {
+        self.apply_agent_with(cx, |settings| settings.save());
+    }
+
+    fn apply_agent_with<E>(
+        &mut self,
+        cx: &mut Context<Self>,
+        save: impl FnOnce(&auris_session::Settings) -> Result<(), E>,
+    ) where
+        E: std::fmt::Display,
+    {
         self.agent.prefs.url = self.agent.fields[0].content().trim().to_owned();
         self.agent.prefs.api_key_env = self.agent.fields[1].content().trim().to_owned();
         let draft = self.agent.prefs.clone();
-        let result = self.app.update(cx, |app, cx| {
+        let result = self.app.update(cx, move |app, cx| {
             // Model and live permission controls belong to the panel and may have changed
             // since this settings window opened. Never overwrite them with this draft.
             let mut prefs = app.settings.agent.clone();
@@ -40,16 +50,13 @@ impl SettingsWindow {
             prefs.context_tokens = draft.context_tokens;
             prefs.output_tokens = draft.output_tokens;
             prefs.thinking = draft.thinking;
-            app.agent_chat.load_preferences(&prefs);
-            app.agent_apply_settings();
-            app.agent_chat.models.clear();
-            app.agent_chat.models_error = None;
-            app.agent_chat.models_rx = None;
-            app.agent_chat.fetching_models = false;
+            app.agent_apply_preferences_with(prefs, save)?;
             cx.notify();
+            Ok::<(), E>(())
         });
         self.status = match result {
-            Ok(()) => self.t(Key::AgentSettingsApplied).to_owned(),
+            Ok(Ok(())) => self.t(Key::AgentSettingsApplied).to_owned(),
+            Ok(Err(error)) => error.to_string(),
             Err(error) => error.to_string(),
         };
         cx.notify();
@@ -225,6 +232,8 @@ impl SettingsWindow {
         div()
             .flex()
             .flex_col()
+            .w_full()
+            .min_w_0()
             .gap_2()
             .children(rows)
             .into_any_element()
@@ -262,6 +271,22 @@ mod tests {
         cx.simulate_resize(gpui::size(px(760.0), px(1200.0)));
         cx.run_until_parked();
         crate::harness::click("tab-agent", cx);
+        let body = cx
+            .debug_bounds("settings-body")
+            .expect("the settings body is visible");
+        for selector in ["agent-url", "agent-key-env"] {
+            let field = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} is visible"));
+            assert!(
+                field.left() >= body.left() && field.right() <= body.right(),
+                "{selector} escapes the settings body: {field:?} outside {body:?}"
+            );
+            assert!(
+                field.size.width >= body.size.width * 0.5,
+                "{selector} collapsed despite a wide settings body: {field:?} inside {body:?}"
+            );
+        }
         crate::harness::click("agent-url", cx);
         cx.update(|_, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string("http://127.0.0.1:2".into()))
@@ -302,5 +327,65 @@ mod tests {
                 assert_eq!(this.search.content(), "出力トークン")
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    fn failed_apply_preserves_the_draft_and_never_reports_success(cx: &mut TestAppContext) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.settings.agent = AgentPreferences {
+                model: "saved-model".to_string(),
+                provider: "ollama".to_string(),
+                url: "http://127.0.0.1:11434".to_string(),
+                ..Default::default()
+            };
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
+            this.open_settings(cx);
+        });
+        let handle = app.read_with(cx, |this, _| this.settings_window.unwrap());
+        let cx = &mut VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+
+        handle
+            .update(cx, |this, _, cx| {
+                this.agent.prefs.provider = "openai".to_string();
+                this.agent.fields[0] = TextField::new("https://example.invalid/v1");
+                this.agent.fields[1] = TextField::new("TEST_AGENT_KEY");
+
+                this.apply_agent_with(cx, |_| Err("settings fixture failure"));
+
+                assert_eq!(
+                    (
+                        this.agent.prefs.provider.as_str(),
+                        this.agent.fields[0].content(),
+                        this.agent.fields[1].content(),
+                        this.status.as_str(),
+                    ),
+                    (
+                        "openai",
+                        "https://example.invalid/v1",
+                        "TEST_AGENT_KEY",
+                        "settings fixture failure",
+                    )
+                );
+            })
+            .unwrap();
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                (
+                    this.settings.agent.provider.as_str(),
+                    this.settings.agent.url.as_str(),
+                    this.agent_chat.provider_openai,
+                    this.agent_chat.url_field.content(),
+                ),
+                (
+                    "ollama",
+                    "http://127.0.0.1:11434",
+                    false,
+                    "http://127.0.0.1:11434",
+                )
+            );
+        });
     }
 }

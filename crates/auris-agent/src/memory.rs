@@ -13,13 +13,13 @@ const TEXT_BUDGET: usize = 1_000_000;
 const TURN_LIMIT: usize = 256;
 const FILE_BUDGET: u64 = 8 * 1024 * 1024;
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Turn {
     pub(crate) user: String,
     pub(crate) answer: String,
 }
 
-#[derive(Default, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Memory {
     #[serde(default)]
     pub(crate) summary: String,

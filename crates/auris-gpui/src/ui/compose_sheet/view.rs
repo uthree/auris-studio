@@ -5,7 +5,7 @@
 //! body holds the fields and part cards, while the title and actions stay visible. The pickers
 //! the selection fields open are in `menus`; the words' own rules and elements are in `lyrics`.
 
-use gpui::{AnyElement, Context, IntoElement, MouseDownEvent, Window, div, prelude::*, px};
+use gpui::{AnyElement, Context, IntoElement, MouseDownEvent, Window, canvas, div, prelude::*, px};
 use gpui_component::scroll::{Scrollbar, ScrollbarShow};
 
 use auris_i18n::Key;
@@ -15,13 +15,23 @@ use crate::app::{AurisApp, Drag};
 use crate::theme::{Metrics, Theme};
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
-    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, divider, picker_row, value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent,
+    button, divider, picker_row, value_slider,
 };
 
 use super::dials::*;
 
 /// How wide the label at the start of a row is drawn.
 const LABEL_WIDTH: gpui::Pixels = px(116.0);
+
+fn song_dial_keyboard_step(target: DialTarget) -> f32 {
+    match target {
+        DialTarget::Song(SongDial::Tempo) => 1.0 / (*TEMPO.end() - *TEMPO.start()) as f32,
+        DialTarget::Song(SongDial::Swing) => 1.0 / f32::from(*SWING.end() - *SWING.start()),
+        DialTarget::Section(_, SectionDial::Bars) => 1.0 / (*BARS.end() - *BARS.start()) as f32,
+        _ => SLIDER_PERCENT_STEP,
+    }
+}
 
 impl AurisApp {
     /// Opens the song sheet: on the song it was last set to, on the one the document was written
@@ -34,6 +44,7 @@ impl AurisApp {
         if self.song_sheet.is_some() {
             return;
         }
+        self.modal_focus.reset_song_sheet_scroll();
         self.composition_search.dismiss();
         // A document written by a build that spelled something differently is not an error worth
         // a dialog: the sheet opens on its defaults, which is where it opened before any of this.
@@ -49,6 +60,62 @@ impl AurisApp {
             project.tempo_map.initial_bpm(),
             project.signatures.initial(),
         ));
+    }
+
+    /// Dismisses the composition sheet and every transient interaction owned by it.
+    pub(crate) fn close_song_sheet(&mut self) {
+        self.composition_search.dismiss();
+        self.song_sheet = None;
+        self.clear_chord_preview();
+        // The lyrics box edits the song sheet's sections; it cannot outlive them.
+        self.lyrics_edit = None;
+    }
+
+    fn song_focus_region(
+        &self,
+        child: AnyElement,
+        index: usize,
+        full_span: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (focus, bounds) = self.modal_focus.song_sheet_reveal_target(index, cx);
+        div()
+            .id(("song-focus-region", index))
+            .debug_selector(move || format!("song-focus-region-{index}"))
+            .relative()
+            .flex()
+            .flex_shrink_0()
+            .w_full()
+            .min_w_0()
+            .when(full_span, |this| this.col_span_full())
+            .track_focus(&focus)
+            .child(child)
+            .child(
+                canvas(
+                    move |measured, _, _| bounds.set(Some(measured)),
+                    |_, _, _, _| (),
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .into_any_element()
+    }
+
+    fn song_focus_regions(
+        &self,
+        rows: Vec<AnyElement>,
+        cursor: &mut usize,
+        first_full_span: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        rows.into_iter()
+            .enumerate()
+            .map(|(row, child)| {
+                let index = *cursor;
+                *cursor += 1;
+                self.song_focus_region(child, index, first_full_span && row == 0, cx)
+            })
+            .collect()
     }
 
     /// The song sheet, or nothing when it is closed.
@@ -69,12 +136,57 @@ impl AurisApp {
         let width = (viewport.width - px(32.0)).max(px(0.0)).min(px(1120.0));
         let columns = if width >= px(760.0) { 2 } else { 1 };
         // The offset lasts while the sheet is open, and starts at the song fields on reopening.
-        let scroll = window
-            .use_keyed_state("song-sheet-scroll", cx, |_, _| gpui::ScrollHandle::new())
-            .read(cx)
-            .clone();
+        let scroll = self.modal_focus.song_sheet_scroll().clone();
         let spec = song_spec(&dials);
         let search_status = self.song_search_view_status();
+        let mut focus_region = 0usize;
+        let search = if self.composition_search.open {
+            let search = self
+                .render_song_search(&dials, search_status, cx)
+                .into_any_element();
+            let index = focus_region;
+            focus_region += 1;
+            Some(self.song_focus_region(search, index, false, cx))
+        } else {
+            None
+        };
+        let song_rows = self.song_rows(&dials, cx);
+        let song_rows = self.song_focus_regions(song_rows, &mut focus_region, false, cx);
+        let lyrics_rows = self.song_lyrics_rows(&dials, &scroll, cx);
+        let lyrics_rows = self.song_focus_regions(lyrics_rows, &mut focus_region, false, cx);
+        let advanced = if self.song_advanced {
+            let matrix = self
+                .song_participation_matrix(&dials, width, window, cx)
+                .into_any_element();
+            let matrix_index = focus_region;
+            focus_region += 1;
+            let matrix = self.song_focus_region(matrix, matrix_index, false, cx);
+            let harmony = self.song_harmony_rows(&dials, cx);
+            let harmony = self.song_focus_regions(harmony, &mut focus_region, false, cx);
+            let performance = self.song_performance_rows(&dials, cx);
+            let performance = self.song_focus_regions(performance, &mut focus_region, false, cx);
+            let form = self.song_form_rows(&dials, cx);
+            let form = self.song_focus_regions(form, &mut focus_region, false, cx);
+            let drums = self.song_drum_rows(&dials, cx);
+            let drums = self.song_focus_regions(drums, &mut focus_region, false, cx);
+            let parts_header = self.song_parts_header(&dials, cx);
+            let parts_header_index = focus_region;
+            focus_region += 1;
+            let parts_header = self.song_focus_region(parts_header, parts_header_index, false, cx);
+            let parts = self.song_part_rows(&dials, cx);
+            let parts = self.song_focus_regions(parts, &mut focus_region, false, cx);
+            Some((
+                matrix,
+                harmony,
+                performance,
+                form,
+                drums,
+                parts_header,
+                parts,
+            ))
+        } else {
+            None
+        };
         let length = format!(
             "{} · {} {}",
             self.t(Key::SongLength),
@@ -101,6 +213,9 @@ impl AurisApp {
                 .child(
                     div()
                         .debug_selector(|| "song-sheet-panel".to_string())
+                        .track_focus(self.modal_focus.song_sheet())
+                        .tab_group()
+                        .tab_stop(false)
                         .flex()
                         .flex_col()
                         .gap_3()
@@ -179,9 +294,7 @@ impl AurisApp {
                                                         .text_color(theme.text_muted)
                                                         .child(self.t(Key::SongStartHint)),
                                                 )
-                                                .when(self.composition_search.open, |body| {
-                                                    body.child(self.render_song_search(&dials, search_status, cx))
-                                                })
+                                                .children(search)
                                                 .child(
                                                     div()
                                                         .grid()
@@ -197,9 +310,7 @@ impl AurisApp {
                                                                 .flex_col()
                                                                 .gap_1()
                                                                 .min_w_0()
-                                                                .children(
-                                                                    self.song_rows(&dials, cx),
-                                                                ),
+                                                                .children(song_rows),
                                                         )
                                                         .child(
                                                             div()
@@ -210,16 +321,12 @@ impl AurisApp {
                                                                 .flex_col()
                                                                 .gap_1()
                                                                 .min_w_0()
-                                                                .children(
-                                                                    self.song_lyrics_rows(
-                                                                        &dials, &scroll, cx,
-                                                                    ),
-                                                                ),
+                                                                .children(lyrics_rows),
                                                         ),
                                                 )
-                                                .when(self.song_advanced, |this| {
+                                                .when_some(advanced, |this, (matrix, harmony, performance, form, drums, parts_header, parts)| {
                                                     this.child(divider(&theme))
-                                                        .child(self.song_participation_matrix(&dials, width, window, cx))
+                                                        .child(matrix)
                                                         .child(divider(&theme))
                                                         .child(
                                                             div().text_xs().text_color(theme.text_muted)
@@ -230,19 +337,19 @@ impl AurisApp {
                                                                 .child(
                                                                     div().debug_selector(|| "song-sheet-harmony".to_string())
                                                                         .flex().flex_col().gap_1().min_w_0()
-                                                                        .children(self.song_harmony_rows(&dials, cx)),
+                                                                        .children(harmony),
                                                                 )
                                                                 .child(
                                                                     div().debug_selector(|| "song-sheet-performance".to_string())
                                                                         .flex().flex_col().gap_1().min_w_0()
-                                                                        .children(self.song_performance_rows(&dials, cx)),
+                                                                        .children(performance),
                                                                 ),
                                                         )
                                                         .child(divider(&theme))
                                                         .child(
                                                             div().debug_selector(|| "song-sheet-form".to_string())
                                                                 .grid().grid_cols(columns).gap_2().min_w_0()
-                                                                .children(self.song_form_rows(&dials, cx)),
+                                                                .children(form),
                                                         )
                                                         .child(divider(&theme))
                                                         .child(
@@ -253,12 +360,10 @@ impl AurisApp {
                                                                 .flex()
                                                                 .flex_col()
                                                                 .gap_2()
-                                                                .children(
-                                                                    self.song_drum_rows(&dials, cx),
-                                                                ),
+                                                                .children(drums),
                                                         )
                                                         .child(divider(&theme))
-                                                        .child(self.song_parts_header(&dials, cx))
+                                                        .child(parts_header)
                                                         .child(
                                                             div()
                                                                 .debug_selector(|| {
@@ -267,9 +372,7 @@ impl AurisApp {
                                                                 .grid()
                                                                 .grid_cols(columns)
                                                                 .gap_2()
-                                                                .children(
-                                                                    self.song_part_rows(&dials, cx),
-                                                                ),
+                                                                .children(parts),
                                                         )
                                                 }),
                                         ),
@@ -308,12 +411,7 @@ impl AurisApp {
                                     theme.accent,
                                     &theme,
                                     cx.listener(|this, _, _, cx| {
-                                        this.composition_search.dismiss();
-                                        this.song_sheet = None;
-                                        this.clear_chord_preview();
-                                        // The lyrics box edits the song sheet's sections;
-                                        // it cannot outlive them.
-                                        this.lyrics_edit = None;
+                                        this.close_song_sheet();
                                         cx.notify();
                                     }),
                                 ))
@@ -361,7 +459,8 @@ impl AurisApp {
                                         this.write_song_from_sheet(true, cx);
                                         cx.notify();
                                     }),
-                                )),
+                                )
+                                .track_focus(self.modal_focus.song_sheet_last())),
                         ),
                 ),
         )
@@ -661,6 +760,7 @@ impl AurisApp {
             fraction,
             theme.accent,
             SliderFill::FromStart,
+            song_dial_keyboard_step(target),
             &theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
                 this.begin_drag(Drag::SongDial {
@@ -668,6 +768,12 @@ impl AurisApp {
                     start_fraction: fraction,
                     start_x: event.position.x,
                 });
+            }),
+            cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                if let Some(dials) = this.song_sheet.as_mut() {
+                    target.set(dials, event.fraction);
+                    cx.notify();
+                }
             }),
         );
         if dial == SongDial::Tempo {
@@ -800,6 +906,7 @@ impl AurisApp {
                     fraction,
                     theme.accent,
                     SliderFill::FromStart,
+                    song_dial_keyboard_step(target),
                     &theme,
                     cx.listener(move |this, event: &MouseDownEvent, _, _| {
                         this.begin_drag(Drag::SongDial {
@@ -807,6 +914,12 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
+                    }),
+                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                        if let Some(dials) = this.song_sheet.as_mut() {
+                            target.set(dials, event.fraction);
+                            cx.notify();
+                        }
                     }),
                 )));
             }
@@ -1076,6 +1189,7 @@ impl AurisApp {
                         true => SliderFill::FromCentre,
                         false => SliderFill::FromStart,
                     },
+                    song_dial_keyboard_step(target),
                     &theme,
                     cx.listener(move |this, event: &MouseDownEvent, _, _| {
                         this.begin_drag(Drag::SongDial {
@@ -1083,6 +1197,12 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
+                    }),
+                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                        if let Some(dials) = this.song_sheet.as_mut() {
+                            target.set(dials, event.fraction);
+                            cx.notify();
+                        }
                     }),
                 )));
             }
@@ -1265,6 +1385,7 @@ impl AurisApp {
                         fraction,
                         theme.accent,
                         SliderFill::FromStart,
+                        song_dial_keyboard_step(DialTarget::Part(index, PartDial::Density)),
                         theme,
                         cx.listener(move |this, event: &MouseDownEvent, _, _| {
                             this.begin_drag(Drag::SongDial {
@@ -1272,6 +1393,13 @@ impl AurisApp {
                                 start_fraction: fraction,
                                 start_x: event.position.x,
                             });
+                        }),
+                        cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                            if let Some(dials) = this.song_sheet.as_mut() {
+                                DialTarget::Part(index, PartDial::Density)
+                                    .set(dials, event.fraction);
+                                cx.notify();
+                            }
                         }),
                     )
                     .debug_selector(move || format!("song-part-density-{index}")),

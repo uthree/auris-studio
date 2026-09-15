@@ -60,8 +60,13 @@ pub mod composition_search {
 pub mod drum_maps;
 mod drum_worker;
 pub mod error;
+mod plugin_worker;
 pub use drum_maps::{DrumMapBook, DrumMapSoundFont, DrumMapSource, SavedDrumMap};
 pub use drum_worker::{handle_drum_probe_worker, run_drum_probe_isolated};
+pub use plugin_worker::{
+    PluginDiscoveryJob, PluginFormat, PluginProbeJob, PluginProbeResult,
+    handle_plugin_discovery_worker,
+};
 pub mod guide;
 pub mod history;
 pub mod library;
@@ -103,6 +108,7 @@ pub use library::{
 pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
+pub use session::InstalledPluginFiles;
 pub use session::prepare_output_preview;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,

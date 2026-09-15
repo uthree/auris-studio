@@ -358,21 +358,29 @@ The rig Agent Panel has four persistent modes, following the permission model in
 
 | Mode | Behavior |
 | --- | --- |
-| Read-only | Read immediately; request approval for edits and internet search unless allowed by a rule. |
+| Read-only | Read immediately; reject document changes and request approval for internet search unless allowed by a rule. |
 | Edit | Apply ordinary live edits; confirm removals, arrangement replacement, and internet search. |
 | Plan | Inspect and propose a plan; reject document changes, including allow-listed changes. |
 | Bypass | Skip confirmations while continuing to enforce deny rules. |
 
-Deny rules win over every mode and allow rule. The Permissions section offers
-Default, Allow, and Deny for each operation, `edit_project.*`, and `*`.
+Deny rules win over every mode and allow rule. Read-only and Plan reject document
+changes before allow rules are considered. The Permissions section offers Default,
+Allow, and Deny for each exact operation. Its `edit_project.*` and `*` rows switch
+only between Default and Deny; deliberate broad allowances remain available through
+the `/allow` command.
 An approval shows the project, operation and exact arguments. Allow once applies
 only to that command at the current document revision; edits made while awaiting
 approval invalidate it. Always allow saves an operation rule. Rejecting an operation
 returns a refusal to the model. Changing modes or rules cancels pending approvals.
 Stopping the agent cancels its pending work.
 
+Starting a new conversation asks for explicit confirmation before it stops active
+work, clears the visible transcript, and deletes the saved conversation history.
+Cancelling the confirmation leaves the conversation and active work untouched.
+
 Use the mode buttons or `/mode read_only|edit|plan|bypass`. Shift+Tab cycles the
-three ordinary modes; bypass requires an explicit choice. `/permissions` opens
+three ordinary modes; bypass requires an explicit choice. While an approval is
+pending, Shift+Tab denies it without changing the mode. `/permissions` opens
 rules, and `/allow OPERATION`, `/deny OPERATION`, `/default OPERATION` edit them.
 While confirmation is pending, Escape denies, Ctrl+Enter (Command+Enter on macOS)
 allows once, and adding Shift always allows.

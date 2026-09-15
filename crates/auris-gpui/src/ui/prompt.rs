@@ -521,6 +521,8 @@ pub enum Question {
         /// Invalidates a notice after cancellation or document replacement.
         generation: u64,
     },
+    /// Permanently discard the Agent Panel's saved and visible conversation history.
+    NewAgentConversation,
     /// Something is about to destroy unsaved work.
     ///
     /// Three answers: save first, throw the changes away, or do neither.
@@ -1312,6 +1314,10 @@ impl AurisApp {
                 self.choose_mixture_model(clip, generation, cx)
             }
             (Question::Muscriptor { .. }, Answer::Deny) => {}
+            (Question::NewAgentConversation, Answer::Confirm) => {
+                self.start_new_agent_conversation(cx)
+            }
+            (Question::NewAgentConversation, Answer::Deny) => {}
             // Save first, then carry on — but only if the save worked. A disk that is full must
             // not be the thing that throws the afternoon away.
             (Question::Unsaved(next), Answer::Confirm) => self.save_then(next, window, cx),
@@ -1541,7 +1547,11 @@ impl AurisApp {
         let medium = multiline
             || matches!(
                 &prompt.body,
-                PromptBody::Ask(Question::Recovery(_) | Question::RemovePluginPath(_))
+                PromptBody::Ask(
+                    Question::Recovery(_)
+                        | Question::RemovePluginPath(_)
+                        | Question::NewAgentConversation
+                )
             );
         let (body, buttons) = match &prompt.body {
             PromptBody::Text { target, field } => (
@@ -1634,7 +1644,10 @@ impl AurisApp {
                     self.render_prompt_buttons(
                         deny,
                         confirm,
-                        if matches!(question, Question::RemovePluginPath(_)) {
+                        if matches!(
+                            question,
+                            Question::RemovePluginPath(_) | Question::NewAgentConversation
+                        ) {
                             ButtonStyle::Danger
                         } else {
                             ButtonStyle::Primary
@@ -1992,6 +2005,11 @@ impl AurisApp {
             Question::Muscriptor { .. } => (
                 self.t(Key::MuscriptorWarning).into(),
                 self.t(Key::MuscriptorAgree).into(),
+                None,
+            ),
+            Question::NewAgentConversation => (
+                self.t(Key::AgentNewConversationBody).into(),
+                self.t(Key::AgentNewConversationConfirm).into(),
                 None,
             ),
             Question::Unsaved(_) => (
@@ -2650,12 +2668,106 @@ mod window_tests {
     use crate::harness::{
         CLIP_LENGTH, click, open, paint, resize, with_a_clip, with_a_singer_clip,
     };
+    use crate::ui::agent_chat::ChatEntry;
 
     struct RecoveryFixture {
         snapshot: RecoverySnapshot,
         source_root: PathBuf,
         source_document: PathBuf,
         source_bytes: Vec<u8>,
+    }
+
+    #[gpui::test]
+    fn new_agent_conversation_keeps_history_until_explicit_confirmation(cx: &mut TestAppContext) {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "auris-agent-conversation-confirm-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let (app, cx) = open(cx);
+        let history = app.update(cx, |this, _| {
+            this.session.save_as(&root.join("Song.auris")).unwrap();
+            let history = this
+                .session
+                .project_folder()
+                .unwrap()
+                .join(".auris-conversation.json");
+            std::fs::write(&history, b"saved conversation").unwrap();
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.entries = vec![ChatEntry::You("keep this request".into())];
+            history
+        });
+        paint(&app, cx);
+
+        click("agent-new-conversation", cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(
+                this.prompt.is_some(),
+                "the destructive action must ask first"
+            );
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::You("keep this request".into())]
+            );
+        });
+        assert!(
+            history.exists(),
+            "the saved history was deleted before consent"
+        );
+
+        paint(&app, cx);
+        click("prompt-ok", cx);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while app.read_with(cx, |this, _| !this.agent_chat.entries.is_empty()) {
+            app.update(cx, |this, cx| this.drain_agent(cx));
+            assert!(
+                std::time::Instant::now() < deadline,
+                "conversation history deletion did not finish"
+            );
+            std::thread::yield_now();
+        }
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert!(this.agent_chat.entries.is_empty());
+            assert!(this.agent_chat.fresh_history);
+        });
+        assert!(
+            !history.exists(),
+            "confirmation did not delete saved history"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[gpui::test]
+    fn cancelling_a_new_agent_conversation_keeps_history(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.panels.show(crate::dock::Panel::Agent);
+            this.agent_chat.models_loaded = true;
+            this.agent_chat.entries = vec![ChatEntry::You("keep this request".into())];
+        });
+        paint(&app, cx);
+        click("agent-new-conversation", cx);
+        paint(&app, cx);
+
+        click("prompt-cancel", cx);
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(
+                this.agent_chat.entries,
+                vec![ChatEntry::You("keep this request".into())]
+            );
+            assert!(!this.agent_chat.fresh_history);
+        });
     }
 
     #[gpui::test]

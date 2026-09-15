@@ -867,7 +867,7 @@ impl AurisApp {
                 self.begin_audio_analysis(clip, transcribe, cx)
             }
             MenuCommand::CancelMusicAnalysis => {
-                self.music_analysis.cancel();
+                self.music_analysis.cancel_requested();
                 self.set_status(self.t(Key::AnalysisCancelled));
             }
             MenuCommand::ViewMusicAnalysis => self.view_music_analysis(),

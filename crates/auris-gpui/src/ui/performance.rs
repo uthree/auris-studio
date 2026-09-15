@@ -23,7 +23,10 @@ use crate::ui::context_menu::{ContextMenu, MenuCommand, subdivision_key};
 use crate::ui::expression::{expression_settings, with_expression_settings};
 use crate::ui::part::{GATE_MIN, SWING_MAX, SWING_MIN};
 use crate::ui::strum::{strum_settings, with_strum_settings};
-use crate::ui::widgets::{ButtonStyle, SliderFill, button, disclosure, divider, value_slider};
+use crate::ui::widgets::{
+    ButtonStyle, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent, button, disclosure, divider,
+    value_slider,
+};
 
 /// One slider of the performance section.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -72,6 +75,13 @@ pub enum PerformDial {
     /// How much of each note's length is held. Whole is as written, and is stored as no
     /// transform at all.
     Gate,
+}
+
+fn perform_keyboard_step(dial: PerformDial) -> f32 {
+    match dial {
+        PerformDial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
+        _ => SLIDER_PERCENT_STEP,
+    }
 }
 
 /// The sliders in the order the panel shows them — which is also the order the stack plays them.
@@ -551,6 +561,7 @@ impl AurisApp {
             } else {
                 SliderFill::FromStart
             },
+            perform_keyboard_step(dial),
             &self.theme,
             cx.listener(move |this, event: &MouseDownEvent, _, _| {
                 this.begin_drag(Drag::PerformDial {
@@ -559,6 +570,10 @@ impl AurisApp {
                     start_fraction: fraction,
                     start_x: event.position.x,
                 })
+            }),
+            cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                this.set_perform_dial(clip, dial, event.fraction);
+                cx.notify();
             }),
         )
         .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
@@ -604,6 +619,7 @@ impl AurisApp {
                     fraction,
                     theme.accent,
                     SliderFill::FromStart,
+                    perform_keyboard_step(dial),
                     theme,
                     cx.listener(move |this, event: &MouseDownEvent, _, _| {
                         this.begin_drag(Drag::PerformDial {
@@ -612,6 +628,10 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         })
+                    }),
+                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                        this.set_perform_dial(clip, dial, event.fraction);
+                        cx.notify();
                     }),
                 )
                 .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))
@@ -755,6 +775,7 @@ impl AurisApp {
                     fraction,
                     theme.accent,
                     SliderFill::FromStart,
+                    perform_keyboard_step(dial),
                     &theme,
                     cx.listener(move |this, event: &MouseDownEvent, _, _| {
                         this.begin_drag(Drag::PerformDial {
@@ -763,6 +784,10 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
+                    }),
+                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                        this.set_perform_dial(clip, dial, event.fraction);
+                        cx.notify();
                     }),
                 )
                 .debug_selector(move || format!("perform-dial-{}", dial_element_key(dial)))

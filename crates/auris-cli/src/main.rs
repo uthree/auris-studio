@@ -34,6 +34,9 @@ fn main() -> ExitCode {
     if let Some(code) = auris_session::handle_drum_probe_worker() {
         std::process::exit(code);
     }
+    if let Some(code) = auris_session::handle_plugin_discovery_worker() {
+        std::process::exit(code);
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     // Nothing here reads the configuration, but this is still the frontend that may run first on

@@ -176,7 +176,7 @@ impl Render for AurisApp {
 
         // Before anything is built: a sheet needs the keyboard for the platform to type into it,
         // and a panel needs it back once the sheet is gone.
-        self.reconcile_focus(window);
+        self.reconcile_focus(window, cx);
 
         // A window that has gone away takes the key releases with it, so a chord held while
         // somebody switched apps would sound until they came back and pressed those keys again.
@@ -2014,8 +2014,19 @@ impl AurisApp {
         } else if self.song_library.is_some() {
             self.song_library_key(event, cx)
         } else if self.reference_match.open {
-            if event.keystroke.key == "escape" {
-                self.close_reference_match(cx);
+            match event.keystroke.key.as_str() {
+                "escape" => self.close_reference_match(cx),
+                "tab" => {
+                    Self::cycle_modal_focus(
+                        self.modal_focus.reference_match(),
+                        self.modal_focus.reference_match_last(),
+                        event.keystroke.modifiers.shift,
+                        window,
+                        cx,
+                    );
+                    self.modal_focus.reveal_reference_match_focus(window, cx);
+                }
+                _ => {}
             }
             true
         } else if self.song_sheet.is_some() {
@@ -2023,6 +2034,20 @@ impl AurisApp {
             if self.lyrics_edit.is_some() {
                 self.lyrics_key(event, cx)
             } else {
+                match event.keystroke.key.as_str() {
+                    "escape" => self.close_song_sheet(),
+                    "tab" => {
+                        Self::cycle_modal_focus(
+                            self.modal_focus.song_sheet(),
+                            self.modal_focus.song_sheet_last(),
+                            event.keystroke.modifiers.shift,
+                            window,
+                            cx,
+                        );
+                        self.modal_focus.reveal_song_sheet_focus(window, cx);
+                    }
+                    _ => {}
+                }
                 true
             }
         } else if self.library_search_focused {
@@ -2033,6 +2058,35 @@ impl AurisApp {
         if handled {
             cx.stop_propagation();
             cx.notify();
+        }
+    }
+
+    /// Moves Tab only through one modal's tab group, wrapping at both ends.
+    fn cycle_modal_focus(
+        group: &gpui::FocusHandle,
+        last: &gpui::FocusHandle,
+        backwards: bool,
+        window: &mut Window,
+        cx: &gpui::App,
+    ) {
+        if backwards {
+            if group.is_focused(window) || !group.contains_focused(window, cx) {
+                window.focus(last);
+                return;
+            }
+            window.focus_prev();
+            if !group.contains_focused(window, cx) {
+                window.focus(last);
+            }
+        } else {
+            if !group.contains_focused(window, cx) {
+                window.focus(group);
+            }
+            window.focus_next();
+            if !group.contains_focused(window, cx) {
+                window.focus(group);
+                window.focus_next();
+            }
         }
     }
 
@@ -2265,7 +2319,7 @@ impl AurisApp {
             "left" | "right" => {
                 let delta = if event.keystroke.key == "left" { -1 } else { 1 };
                 let index = menu_bar::stepped_section(sections.len(), open.index, delta);
-                self.menu_bar = Some(menu_bar::OpenMenu::at(index));
+                self.set_menu_bar(Some(menu_bar::OpenMenu::at(index)));
             }
             "down" | "up" | "home" | "end" => {
                 let key = event.keystroke.key.as_str();
@@ -2279,8 +2333,12 @@ impl AurisApp {
                 let from = matches!(key, "down" | "up")
                     .then_some(open.highlighted)
                     .flatten();
+                let highlighted = menu_bar::stepped(&section.rows, from, delta);
+                if let Some(index) = highlighted {
+                    self.menu_bar_scroll.scroll_to_item(index);
+                }
                 self.menu_bar = Some(menu_bar::OpenMenu {
-                    highlighted: menu_bar::stepped(&section.rows, from, delta),
+                    highlighted,
                     ..open
                 });
             }
@@ -2330,10 +2388,11 @@ impl AurisApp {
             return;
         }
         self.menu = None;
-        self.menu_bar = match self.menu_bar {
+        let next = match self.menu_bar {
             Some(_) => None,
             None => Some(menu_bar::OpenMenu::at(0)),
         };
+        self.set_menu_bar(next);
         cx.notify();
     }
 
@@ -3682,6 +3741,124 @@ mod window_tests {
                 this.export_dialog.map(|dialog| dialog.target),
                 Some(AudioExportTarget::Stems)
             );
+        });
+    }
+
+    #[gpui::test]
+    fn composition_and_reference_sheets_trap_tab_and_close_with_escape(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        resize(&app, cx, size(px(640.0), px(480.0)));
+
+        cx.dispatch_action(actions::ComposeSong);
+        app.update(cx, |this, _| this.song_advanced = true);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.song_sheet().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("tab tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(this.modal_focus.song_sheet_contains_focused(window, cx));
+            });
+        });
+        let mut song_target = None;
+        for _ in 0..96 {
+            cx.simulate_keystrokes("tab");
+            paint(&app, cx);
+            let target = cx.update(|window, cx| {
+                app.read_with(cx, |this, cx| {
+                    (
+                        this.modal_focus.song_sheet_reveal_index(window, cx),
+                        this.modal_focus.song_sheet_scroll().offset().y,
+                    )
+                })
+            });
+            if target.0.is_some() && target.1 < px(-80.0) {
+                song_target = target.0;
+                break;
+            }
+        }
+        let song_target = song_target.expect("Tab reaches a song control below the viewport");
+        let song_selector: &'static str =
+            Box::leak(format!("song-focus-region-{song_target}").into_boxed_str());
+        let song_bounds = cx
+            .debug_bounds(song_selector)
+            .expect("focused song row is drawn");
+        let song_viewport = cx.debug_bounds("song-sheet-body").unwrap();
+        assert!(
+            song_bounds.top() >= song_viewport.top()
+                && song_bounds.bottom() <= song_viewport.bottom(),
+            "Tab reveals the focused song row: {song_bounds:?} in {song_viewport:?}"
+        );
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(this.song_sheet.is_none()));
+
+        cx.dispatch_action(actions::MatchReference);
+        paint(&app, cx);
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, _| {
+                assert!(this.modal_focus.reference_match().is_focused(window));
+            });
+        });
+        cx.simulate_keystrokes("tab tab shift-tab");
+        cx.update(|window, cx| {
+            app.read_with(cx, |this, cx| {
+                assert!(
+                    this.modal_focus
+                        .reference_match_contains_focused(window, cx)
+                );
+            });
+        });
+        let mut reference_target = None;
+        for _ in 0..64 {
+            cx.simulate_keystrokes("tab");
+            paint(&app, cx);
+            let target = cx.update(|window, cx| {
+                app.read_with(cx, |this, cx| {
+                    (
+                        this.modal_focus.reference_match_reveal_index(window, cx),
+                        this.modal_focus.reference_match_scroll().offset().y,
+                    )
+                })
+            });
+            if target.0.is_some() && target.1 < px(-80.0) {
+                reference_target = target.0;
+                break;
+            }
+        }
+        let reference_target =
+            reference_target.expect("Tab reaches a reference control below the viewport");
+        let reference_selector: &'static str =
+            Box::leak(format!("reference-focus-region-{reference_target}").into_boxed_str());
+        let reference_bounds = cx
+            .debug_bounds(reference_selector)
+            .expect("focused reference row is drawn");
+        let reference_viewport = cx.debug_bounds("reference-match-scroll").unwrap();
+        assert!(
+            reference_bounds.top() >= reference_viewport.top()
+                && reference_bounds.bottom() <= reference_viewport.bottom(),
+            "Tab reveals the focused reference row: {reference_bounds:?} in {reference_viewport:?}"
+        );
+        cx.simulate_keystrokes("escape");
+        app.read_with(cx, |this, _| assert!(!this.reference_match.open));
+    }
+
+    #[gpui::test]
+    fn a_focused_slider_claims_right_before_the_window_playhead_binding(cx: &mut TestAppContext) {
+        let (app, cx) = open(cx);
+        paint(&app, cx);
+        let (zoom, playhead) = app.read_with(cx, |this, _| {
+            (this.timeline.zoom_fraction(), this.session.playhead())
+        });
+
+        crate::harness::click("timeline-zoom", cx);
+        cx.simulate_keystrokes("right");
+
+        app.read_with(cx, |this, _| {
+            assert!((this.timeline.zoom_fraction() - (zoom + 0.01)).abs() < 1e-6);
+            assert_eq!(this.session.playhead(), playhead);
         });
     }
 

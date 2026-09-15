@@ -12,7 +12,8 @@ use gpui::{
 
 use crate::theme::Theme;
 use crate::ui::widgets::{
-    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, dragged, picker_row, value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent,
+    button, dragged, picker_row, value_slider,
 };
 
 /// Which control shape suits a parameter.
@@ -40,7 +41,7 @@ pub fn control_for(descriptor: &ParamDescriptor) -> ParamControl {
 /// `label` and `value_text` arrive already translated: this module knows how a control behaves,
 /// not what language it speaks.
 #[allow(clippy::too_many_arguments)]
-pub fn slider_row<I, D>(
+pub fn slider_row<I, D, K>(
     id: I,
     descriptor: &ParamDescriptor,
     label: String,
@@ -49,10 +50,12 @@ pub fn slider_row<I, D>(
     fill: Hsla,
     theme: &Theme,
     on_drag_start: D,
+    on_keyboard: K,
 ) -> gpui::Stateful<gpui::Div>
 where
     I: Into<ElementId>,
     D: Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    K: Fn(&SliderKeyboardEvent, &mut Window, &mut App) + 'static,
 {
     value_slider(
         id,
@@ -61,9 +64,19 @@ where
         descriptor.normalize(value),
         fill,
         slider_fill_for(descriptor),
+        slider_keyboard_step(descriptor),
         theme,
         on_drag_start,
+        on_keyboard,
     )
+}
+
+/// Returns the smallest keyboard move that reaches a parameter's next representable position.
+pub fn slider_keyboard_step(descriptor: &ParamDescriptor) -> f32 {
+    descriptor
+        .steps
+        .filter(|steps| *steps > 1)
+        .map_or(SLIDER_PERCENT_STEP, |steps| 1.0 / (steps - 1) as f32)
 }
 
 /// Which way a parameter's bar should fill.

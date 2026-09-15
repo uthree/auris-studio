@@ -1045,8 +1045,11 @@ mod tests {
             // Shown, not toggled: a toggle depends on the shared layout file's mood.
             this.panels.show(crate::dock::Panel::Agent);
             this.settings.agent = Default::default();
+            this.agent_chat
+                .load_preferences(&this.settings.agent.clone());
             this.agent_chat.configuring = true;
             // What the provider would have answered, so no provider request is involved.
+            this.agent_chat.models_loaded = true;
             this.agent_chat.models = vec![crate::ui::agent_chat::ModelOption {
                 name: "qwen3.8:27b".to_string(),
                 context_length: Some(262_144),

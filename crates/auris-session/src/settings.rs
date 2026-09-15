@@ -23,15 +23,22 @@ const APP_FOLDER: &str = "auris-studio";
 /// Preference files are hand-editable, but none should approach this eight-megabyte ceiling.
 const CONFIG_TEXT_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
-/// Serialises the final replacement on this process, where Windows cannot replace a destination
-/// while another successful publication still has the same file open.
-static CONFIG_PUBLISH_LOCK: Mutex<()> = Mutex::new(());
+/// Serialises final-file reads and publication inside this process.
+///
+/// Windows cannot replace a destination while another thread still has it open. An atomic rename
+/// prevents partial contents, but it does not by itself prevent that sharing violation, so readers
+/// and the short publication step use the same lock. Staging and synchronising the private sibling
+/// remain concurrent.
+static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
 
 /// Reads a small UTF-8 configuration file without trusting a stale pathname size check.
 ///
 /// The opened handle supplies both metadata and bytes. The `take` limit catches a file that grows
 /// after metadata was read and prevents a corrupt preference from exhausting memory at startup.
 pub fn read_config_text(path: &Path) -> std::io::Result<String> {
+    let _read = CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let file = File::open(path)?;
     let size = file.metadata()?.len();
     if size > CONFIG_TEXT_MAX_BYTES {
@@ -75,7 +82,7 @@ pub fn write_config_bytes(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     staged.flush()?;
     staged.as_file().sync_all()?;
 
-    let _publish = CONFIG_PUBLISH_LOCK
+    let _publish = CONFIG_FILE_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     staged
@@ -552,6 +559,40 @@ mod tests {
 
         assert_eq!(std::fs::read(&path).unwrap(), b"new settings");
         assert_eq!(std::fs::read_dir(folder.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn concurrent_configuration_reads_do_not_block_atomic_publication() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("appearance.json");
+        write_config_bytes(&path, br#"{"writer":0,"round":0}"#).unwrap();
+        let barrier = std::sync::Barrier::new(4);
+
+        std::thread::scope(|scope| {
+            for writer in 0..2 {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for round in 0..16 {
+                        let text = format!(r#"{{"writer":{writer},"round":{round}}}"#);
+                        write_config_bytes(path, text.as_bytes()).unwrap();
+                    }
+                });
+            }
+            for _ in 0..2 {
+                let path = &path;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    for _ in 0..64 {
+                        let text = read_config_text(path).unwrap();
+                        serde_json::from_str::<serde_json::Value>(&text)
+                            .expect("a reader sees one complete publication");
+                    }
+                });
+            }
+        });
     }
 
     #[test]

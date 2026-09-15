@@ -18,8 +18,8 @@ use crate::theme::Metrics;
 use crate::ui::paint;
 use crate::ui::prompt::{Prompt, PromptTarget};
 use crate::ui::widgets::{
-    ButtonStyle, PickerBehavior, RowColumn, SliderFill, button, divider, dragged, picker_row,
-    value_slider,
+    ButtonStyle, PickerBehavior, RowColumn, SLIDER_PERCENT_STEP, SliderFill, SliderKeyboardEvent,
+    button, divider, dragged, picker_row, value_slider,
 };
 
 /// How wide the value button in one of this panel's rows is drawn.
@@ -41,6 +41,13 @@ pub const SWING_MAX: u8 = 75;
 /// Not zero: a note of no length is a note nobody hears, and a dial whose bottom end silences the
 /// part is a dial with a broken position on it. A twentieth of the gap is already a click.
 pub const GATE_MIN: f32 = 0.05;
+
+fn dial_keyboard_step(dial: Dial) -> f32 {
+    match dial {
+        Dial::Swing => 1.0 / f32::from(SWING_MAX - SWING_MIN),
+        _ => SLIDER_PERCENT_STEP,
+    }
+}
 
 /// One continuous dial on a [`ClipRecipe`].
 ///
@@ -422,6 +429,7 @@ impl AurisApp {
                     fraction,
                     theme.accent,
                     SliderFill::FromStart,
+                    dial_keyboard_step(dial),
                     &theme,
                     cx.listener(move |this, event: &MouseDownEvent, _, _| {
                         this.begin_drag(Drag::PartDial {
@@ -430,6 +438,10 @@ impl AurisApp {
                             start_fraction: fraction,
                             start_x: event.position.x,
                         });
+                    }),
+                    cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                        this.set_dial(clip, dial, event.fraction);
+                        cx.notify();
                     }),
                 )
                 .debug_selector(move || format!("part-dial-{}", dial_element_key(dial)))
@@ -811,6 +823,7 @@ impl AurisApp {
                     continue;
                 }
                 let name = voice.name.clone();
+                let keyboard_name = name.clone();
                 let fraction = dial.fraction(writer);
                 rows.push(
                     value_slider(
@@ -824,6 +837,7 @@ impl AurisApp {
                         fraction,
                         theme.accent,
                         SliderFill::FromStart,
+                        dial_keyboard_step(dial),
                         &theme,
                         cx.listener(move |this, event: &MouseDownEvent, _, _| {
                             this.begin_drag(Drag::DrumVoiceDial {
@@ -833,6 +847,10 @@ impl AurisApp {
                                 start_fraction: fraction,
                                 start_x: event.position.x,
                             });
+                        }),
+                        cx.listener(move |this, event: &SliderKeyboardEvent, _, cx| {
+                            this.set_drum_voice_dial(clip, &keyboard_name, dial, event.fraction);
+                            cx.notify();
                         }),
                     )
                     .debug_selector(move || {
@@ -870,6 +888,17 @@ impl AurisApp {
         start_fraction: f32,
         delta: f32,
     ) {
+        self.set_drum_voice_dial(clip, voice, dial, dragged(start_fraction, delta));
+    }
+
+    /// Rewrites one kit piece at an absolute keyboard-selected dial position.
+    pub(crate) fn set_drum_voice_dial(
+        &mut self,
+        clip: ClipId,
+        voice: &str,
+        dial: Dial,
+        fraction: f32,
+    ) {
         let Some(current) = self.session.clip_recipe(clip).and_then(|recipe| {
             recipe
                 .drum_voices
@@ -880,7 +909,7 @@ impl AurisApp {
             return;
         };
         let mut recipe = current.clone();
-        dial.set(&mut recipe, dragged(start_fraction, delta));
+        dial.set(&mut recipe, fraction);
         if &recipe != current
             && self
                 .session

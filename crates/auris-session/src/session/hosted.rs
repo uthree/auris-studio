@@ -873,27 +873,6 @@ pub fn clap_search_paths() -> Vec<PathBuf> {
     }
 }
 
-/// Every `.clap` under `directory`, however deep.
-///
-/// On macOS a `.clap` is a bundle *directory*, so the extension is tested before the file type —
-/// the other order would walk into the bundle and find nothing.
-fn collect_clap_files(directory: &Path, found: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path
-            .extension()
-            .is_some_and(|extension| extension == "clap")
-        {
-            found.push(path);
-        } else if path.is_dir() {
-            collect_clap_files(&path, found);
-        }
-    }
-}
-
 impl Session {
     /// Every `.clap` file installed in the usual places, plus anywhere else asked for.
     ///
@@ -905,24 +884,12 @@ impl Session {
     /// Each entry is either a `.clap` taken as it stands or a directory walked like the standard
     /// roots, so pointing at one plugin and pointing at a hundred are the same gesture.
     pub fn installed_clap_files(&self, extra: &[PathBuf]) -> Vec<PathBuf> {
-        let mut found = Vec::new();
-        for root in clap_search_paths() {
-            collect_clap_files(&root, &mut found);
+        let (found, truncated) = super::plugin_discovery::scan_clap_files(extra);
+        if truncated {
+            log::warn!(
+                "CLAP discovery reached its safety limit; narrow the configured plugin paths"
+            );
         }
-        for root in extra {
-            // A `.clap` bundle on macOS is a directory, so walking into it would find nothing
-            // and drop the plugin somebody explicitly pointed at. The extension decides first,
-            // exactly as it does inside the walk.
-            match root
-                .extension()
-                .is_some_and(|extension| extension == "clap")
-            {
-                true => found.push(root.clone()),
-                false => collect_clap_files(root, &mut found),
-            }
-        }
-        found.sort();
-        found.dedup();
         found
     }
 
@@ -1512,6 +1479,19 @@ mod tests {
         // A plugin whose own id starts with the prefix is not double-stripped.
         assert_eq!(clap_id_of("clap:clap:odd"), "clap:odd");
         assert_eq!(clap_id_of("auris.dsp.gain"), "auris.dsp.gain");
+    }
+
+    #[test]
+    fn installed_clap_files_accepts_case_insensitive_extensions() {
+        let scratch = super::super::fixtures::Scratch::new("uppercase-clap-discovery");
+        let plugin = scratch.join("Synth.CLAP");
+        std::fs::write(&plugin, b"not loaded during discovery").unwrap();
+        let session = super::super::fixtures::session();
+
+        let root = plugin.parent().unwrap().to_path_buf();
+        let found = session.installed_clap_files(&[root]);
+
+        assert!(found.contains(&plugin), "discovered files: {found:?}");
     }
 
     #[test]

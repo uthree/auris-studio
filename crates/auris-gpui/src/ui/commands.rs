@@ -563,6 +563,12 @@ impl AurisApp {
                     start_x: event.position.x,
                 });
             }),
+            cx.listener(
+                move |this, event: &crate::ui::widgets::SliderKeyboardEvent, _, cx| {
+                    this.timeline.set_zoom_fraction(event.fraction);
+                    cx.notify();
+                },
+            ),
         ))
     }
 
@@ -864,6 +870,7 @@ impl AurisApp {
         let Some((id, cancelled, _)) = self.start_background_command(label, false) else {
             return;
         };
+        let previous_document = self.session.path().map(Path::to_path_buf);
         let view = cx.entity().downgrade();
         cx.notify();
         window
@@ -880,6 +887,7 @@ impl AurisApp {
                         match saved {
                             Ok(Some(result)) => match this.session.continue_save(result) {
                                 Some(Ok(report)) => {
+                                    this.agent_document_saved_from(previous_document.as_deref());
                                     this.report_save(&report);
                                     if let Some(next) = then {
                                         this.run_pending(next, window, cx);
@@ -998,8 +1006,7 @@ impl AurisApp {
         self.close_visualizer();
         self.visualizer = Default::default();
         self.spectrogram_tracks.clear();
-        self.music_analysis.cancel();
-        self.music_analysis.report = None;
+        self.music_analysis.clear();
         self.close_timbre_map();
         self.timbre_map.map = None;
         self.spectrograms.clear();
@@ -3296,13 +3303,29 @@ impl AurisApp {
     }
 
     /// Makes the browser look again after the plugin folders were durably changed.
-    fn invalidate_plugin_files(&mut self) {
+    pub(crate) fn invalidate_plugin_files(&mut self) {
+        self.plugin_discovery_generation = self.plugin_discovery_generation.wrapping_add(1);
+        if let Some(cancelled) = self.plugin_discovery_cancel.take() {
+            cancelled.store(true, Ordering::Relaxed);
+        }
+        for cancelled in self
+            .plugin_probe_cancel
+            .drain()
+            .map(|(_, cancelled)| cancelled)
+        {
+            cancelled.store(true, Ordering::Relaxed);
+        }
         // The list of files was cached the first time the browser drew it, and the whole point
         // of this edit is that the answer has changed.
-        self.clap_files = None;
-        self.vst3_files = None;
+        self.clap_files =
+            cfg!(test).then(|| std::sync::Arc::from(Vec::<std::path::PathBuf>::new()));
+        self.vst3_files =
+            cfg!(test).then(|| std::sync::Arc::from(Vec::<std::path::PathBuf>::new()));
+        self.plugin_discovery_truncated = false;
+        self.plugin_discovery_error = None;
         self.clap_contents.clear();
         self.vst3_contents.clear();
+        self.plugin_probe_errors.clear();
         // Plugin-file branches are indexed into that cached list. A rescan may put a different
         // native binary at the same index, and stale disclosure state must never load it without
         // a new click from the user.

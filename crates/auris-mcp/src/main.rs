@@ -784,6 +784,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(code) = auris_session::handle_drum_probe_worker() {
         std::process::exit(code);
     }
+    if let Some(code) = auris_session::handle_plugin_discovery_worker() {
+        std::process::exit(code);
+    }
     // Stderr, and only stderr: stdout is the protocol channel, and one stray line on it is a
     // broken connection.
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();

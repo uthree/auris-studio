@@ -62,6 +62,7 @@ mod musical_analysis;
 mod notes;
 mod output_preview;
 mod perform;
+pub(crate) mod plugin_discovery;
 mod punch;
 mod readiness;
 mod recognition;
@@ -115,6 +116,8 @@ pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
 pub use notes::{Quantize, quantized};
 pub use output_preview::prepare_output_preview;
+pub use plugin_discovery::InstalledPluginFiles;
+pub(crate) use plugin_discovery::scan_installed_plugin_files;
 pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use recognition::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,

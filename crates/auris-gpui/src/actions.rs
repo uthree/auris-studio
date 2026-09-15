@@ -866,6 +866,8 @@ pub fn install_bindings(cx: &mut App, bindings: impl IntoIterator<Item = KeyBind
     cx.clear_key_bindings();
     cx.bind_keys(bindings);
     cx.bind_keys(crate::ui::rhythm_grid::key_bindings());
+    cx.bind_keys(crate::ui::widgets::key_bindings());
+    cx.bind_keys(crate::ui::agent_chat::model_key_bindings());
 }
 
 #[cfg(test)]

@@ -322,7 +322,10 @@ fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
 
 mod worker;
 use worker::Bridge;
-pub use worker::{Worker, list_models_background};
+pub use worker::{
+    HistorySnapshot, Worker, clear_history_background, list_models_background,
+    load_history_background,
+};
 mod compaction;
 mod memory;
 mod permissions;
@@ -1016,10 +1019,18 @@ struct Reporter {
     bridge: Option<Bridge>,
 }
 
+/// The rig correlation id is present for every provider, including ones that omit their own id.
+fn call_event(event: ToolCall<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "event": "call", "call_id": event.internal_call_id,
+        "tool": event.tool_name, "args": event.args,
+    })
+}
+
 /// A skipped or refused call is a failed result to the host, even without an execution error.
 fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
     serde_json::json!({
-        "event": "result", "tool": event.tool_name,
+        "event": "result", "call_id": event.internal_call_id, "tool": event.tool_name,
         "ok": event.raw_result.is_success(),
         "text": full_text(event.presentation),
     })
@@ -1028,9 +1039,7 @@ fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
         if let Some(bridge) = &self.bridge {
-            bridge.emit(serde_json::json!({
-                "event": "call", "tool": event.tool_name, "args": event.args,
-            }));
+            bridge.emit(call_event(event));
         }
         match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
             Ok(()) => ToolCallAction::Run,
@@ -1126,15 +1135,30 @@ async fn json_conversation(
     bridge: &Bridge,
     memory_path: Option<PathBuf>,
     fresh_history: bool,
+    preloaded_history: Option<HistorySnapshot>,
 ) -> Result<(), String> {
-    let mut memory = match &memory_path {
-        Some(path) if !fresh_history => bridge.history(|| memory::Memory::load(path))?,
-        _ => memory::Memory::default(),
+    let history_was_preloaded = preloaded_history.is_some();
+    let (mut memory, mut history_generation) = match (preloaded_history, &memory_path) {
+        (Some(snapshot), Some(_)) => {
+            let (memory, generation) = snapshot.into_parts();
+            (memory, Some(generation))
+        }
+        (Some(_), None) => {
+            return Err("A conversation snapshot requires a saved project".into());
+        }
+        (None, Some(path)) => {
+            let (memory, generation) = bridge.open_history(path, fresh_history)?;
+            (memory, Some(generation))
+        }
+        (None, None) => (memory::Memory::default(), None),
     };
-    if let Some(path) = &memory_path {
-        bridge.history(|| memory.save(path))?;
+    if !history_was_preloaded {
+        bridge.emit(serde_json::json!({
+            "event": "history",
+            "summary": memory.summary,
+            "turns": memory.turns,
+        }));
     }
-    bridge.emit(serde_json::json!({ "event": "history", "turns": memory.turns }));
     bridge.emit(serde_json::json!({
         "event": "ready",
         "provider": match options.provider {
@@ -1167,8 +1191,8 @@ async fn json_conversation(
             let result = compaction::compact(options, &mut memory).await;
             history = memory.messages();
             if result.is_ok()
-                && let Some(path) = &memory_path
-                && let Err(error) = bridge.history(|| memory.save(path))
+                && let Some(generation) = history_generation.as_mut()
+                && let Err(error) = bridge.save_history(generation, &memory)
             {
                 bridge.emit(
                     serde_json::json!({"event":"notice", "message":format!("Summary was not saved: {error}")}),
@@ -1198,7 +1222,7 @@ async fn json_conversation(
                 serde_json::from_value::<auris_session::agent_policy::Policy>(policy.clone())
         {
             said = format!(
-                "[User-selected permission mode: {}. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
+                "[User-selected permission mode: {}. In read-only mode inspect without changing the document. In plan mode investigate and present a plan without changes. Deny rules: {:?}; allow rules: {:?}.]\n{said}",
                 policy.mode.name(),
                 policy.deny,
                 policy.allow
@@ -1235,8 +1259,8 @@ async fn json_conversation(
                     .unwrap_or_else(|| said.clone());
                 memory.push(&display, &answer);
                 history = memory.messages();
-                if let Some(path) = &memory_path
-                    && let Err(error) = bridge.history(|| memory.save(path))
+                if let Some(generation) = history_generation.as_mut()
+                    && let Err(error) = bridge.save_history(generation, &memory)
                 {
                     bridge.emit(
                         serde_json::json!({ "event": "notice", "message": format!("Conversation history was not saved: {error}") }),
@@ -1253,8 +1277,8 @@ async fn json_conversation(
             Err(message) => {
                 memory.push_interrupted(&said, &message);
                 history = memory.messages();
-                if let Some(path) = &memory_path
-                    && let Err(error) = bridge.history(|| memory.save(path))
+                if let Some(generation) = history_generation.as_mut()
+                    && let Err(error) = bridge.save_history(generation, &memory)
                 {
                     bridge.emit(
                         serde_json::json!({"event":"notice","message":format!("Conversation history was not saved: {error}")}),
@@ -1510,7 +1534,34 @@ mod tests {
             });
             assert_eq!(event["ok"], result.is_success());
             assert_eq!(event["text"], full_text(result.output()));
+            assert_eq!(event["call_id"], "internal_1");
         }
+    }
+
+    #[test]
+    fn tool_call_and_result_events_carry_the_same_rig_correlation_id() {
+        use rig::tool::ToolResult;
+
+        let call = call_event(ToolCall {
+            tool_name: "inspect_audio",
+            tool_call_id: Some("provider_1"),
+            internal_call_id: "internal_7",
+            args: r#"{"track":1}"#,
+        });
+        let result = ToolResult::success(ToolOutput::text("measured"));
+        let context = ToolContext::new();
+        let result = result_event(ToolResultEvent {
+            tool_name: "inspect_audio",
+            tool_call_id: Some("provider_1"),
+            internal_call_id: "internal_7",
+            args: r#"{"track":1}"#,
+            presentation: result.output(),
+            raw_result: &result,
+            tool_context: &context,
+        });
+
+        assert_eq!(call["call_id"], "internal_7");
+        assert_eq!(result["call_id"], call["call_id"]);
     }
 
     #[test]

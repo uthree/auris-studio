@@ -634,7 +634,13 @@ impl Session {
 
     /// Every installed `.vst3` bundle in standard and user-selected plugin paths.
     pub fn installed_vst3_files(&self, extra: &[PathBuf]) -> Vec<PathBuf> {
-        auris_vst3::installed_vst3_files(extra)
+        let (found, truncated) = super::plugin_discovery::scan_vst3_files(extra);
+        if truncated {
+            log::warn!(
+                "VST3 discovery reached its safety limit; narrow the configured plugin paths"
+            );
+        }
+        found
     }
 
     /// Inspects one VST3 bundle and lists its audio classes.

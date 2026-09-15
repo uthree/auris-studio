@@ -42,6 +42,9 @@ pub enum SessionError {
     /// A measured drum scan failed, or no longer describes the selected instrument state.
     #[error("drum analysis: {0}")]
     DrumAnalysis(String),
+    /// Installed plugin discovery or isolated metadata inspection failed.
+    #[error("plugin discovery: {0}")]
+    PluginDiscovery(String),
     /// A manual drum assignment names an invalid MIDI key or incompatible source state.
     #[error("invalid drum assignment: {0}")]
     InvalidDrumAssignment(String),

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
-    /// Read freely; ask before changes or network access unless explicitly allow-listed.
+    /// Read freely; deny document changes and ask before network access unless allow-listed.
     ReadOnly,
     /// Allow ordinary document edits; ask before removal, replacement or network access.
     #[default]
@@ -44,7 +44,7 @@ impl Mode {
 pub struct Policy {
     /// The selected permission mode.
     pub mode: Mode,
-    /// Operations that may run without confirmation, except mutations in plan mode.
+    /// Operations that may run without confirmation, except mutations in read-only and plan mode.
     pub allow: Vec<String>,
     /// Operations that are denied in every mode, including bypass.
     pub deny: Vec<String>,
@@ -93,6 +93,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.remove_notes",
     "list_instruments",
     "search_instruments",
+    "instrument_diagnostics",
     "similar_instruments",
     "list_presets",
     "list_progressions",
@@ -133,7 +134,10 @@ impl Operation {
             Ok(Self {
                 name: if matches!(
                     action,
-                    "list_instruments" | "search_instruments" | "similar_instruments"
+                    "list_instruments"
+                        | "search_instruments"
+                        | "instrument_diagnostics"
+                        | "similar_instruments"
                 ) {
                     action.into()
                 } else {
@@ -169,6 +173,9 @@ impl Policy {
                 "{} is prohibited by the user's deny list. Do not retry it.",
                 operation.name
             ));
+        }
+        if self.mode == Mode::ReadOnly && operation.mutating {
+            return Decision::Deny("Read-only mode does not permit document changes. Switch to Edit mode before requesting this operation.".into());
         }
         if self.mode == Mode::Plan && operation.mutating {
             return Decision::Deny("Plan mode does not permit document changes. Inspect and present a plan; the user must switch modes before execution.".into());
@@ -212,9 +219,9 @@ mod tests {
         let mut policy = Policy::default();
         assert_eq!(policy.decide(&edit()), Decision::Allow);
         policy.mode = Mode::ReadOnly;
-        assert_eq!(policy.decide(&edit()), Decision::Ask);
+        assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
         policy.set_rule("edit_project.*", Some(true)).unwrap();
-        assert_eq!(policy.decide(&edit()), Decision::Allow);
+        assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
         policy.mode = Mode::Plan;
         assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
         policy.mode = Mode::Bypass;
@@ -222,6 +229,35 @@ mod tests {
             .set_rule("edit_project.add_track", Some(false))
             .unwrap();
         assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn read_only_denies_allow_listed_document_changes() {
+        let mut policy = Policy {
+            mode: Mode::ReadOnly,
+            ..Policy::default()
+        };
+        policy.set_rule("edit_project.*", Some(true)).unwrap();
+
+        assert!(matches!(policy.decide(&edit()), Decision::Deny(_)));
+    }
+
+    #[test]
+    fn read_only_keeps_network_confirmation_and_exact_allow_rules() {
+        let operation = Operation::parse(
+            "search_internet",
+            &serde_json::json!({"query":"music theory"}),
+        )
+        .unwrap();
+        let mut policy = Policy {
+            mode: Mode::ReadOnly,
+            ..Policy::default()
+        };
+        assert_eq!(policy.decide(&operation), Decision::Ask);
+
+        policy.set_rule("search_internet", Some(true)).unwrap();
+
+        assert_eq!(policy.decide(&operation), Decision::Allow);
     }
 
     #[test]
@@ -244,5 +280,22 @@ mod tests {
         }
         assert!(Operation::parse("render", &serde_json::json!({})).is_err());
         assert!(Operation::parse("edit_project.remove_track", &serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn instrument_diagnostics_has_an_exact_user_editable_rule() {
+        let operation = Operation::parse(
+            "edit_project",
+            &serde_json::json!({"command":{"action":"instrument_diagnostics","offset":0,"limit":20}}),
+        )
+        .unwrap();
+        assert_eq!(operation.name, "instrument_diagnostics");
+        assert!(!operation.mutating);
+
+        let mut policy = Policy::default();
+        policy
+            .set_rule("instrument_diagnostics", Some(false))
+            .unwrap();
+        assert!(matches!(policy.decide(&operation), Decision::Deny(_)));
     }
 }

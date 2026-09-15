@@ -337,20 +337,48 @@ strings! {
         ja: "まだ読み込まれていません"
     }
     BrowserPlugins { en: "Installed plugins", ja: "インストール済みプラグイン" }
+    BrowserPluginsScanning {
+        en: "Scanning installed plugins…",
+        ja: "インストール済みプラグインを検索中…"
+    }
     BrowserNoPlugins {
         en: "No CLAP or VST3 plugins found on this computer",
         ja: "このコンピューターにCLAP・VST3プラグインが見つかりません"
     }
-    // Says what opening a file *does*, not what it shows. Loading a plugin runs its code, and
-    // that is worth one line above the list rather than nowhere at all.
+    // Says what opening a file *does*, not what it shows. Metadata inspection is isolated, but
+    // choosing a plugin later loads it into the application; both boundaries must be explicit.
     BrowserPluginsHint {
-        en: "Opening a file loads the plugin's code into Auris Studio",
-        ja: "ファイルを開くとプラグインのコードがAuris Studioに読み込まれます"
+        en: "Opening a file inspects metadata in a separate process. Choosing a plugin runs it in Auris Studio.",
+        ja: "ファイルを開くと別プロセスで情報を調べます。プラグインを選ぶとAuris Studio内で実行されます。"
+    }
+    BrowserPluginInspecting {
+        en: "Inspecting plugin metadata…",
+        ja: "プラグイン情報を確認中…"
+    }
+    BrowserPluginDiscoveryFailed {
+        en: "Plugin discovery failed. See the Log for details.",
+        ja: "プラグインを検索できませんでした。詳細はログを確認してください。"
+    }
+    BrowserPluginDiscoveryTruncated {
+        en: "Some paths were omitted after the discovery safety limit was reached.",
+        ja: "検索の安全上限に達したため、一部のパスを省略しました。"
     }
     BrowserPluginUnreadable {
         en: "could not be read",
         ja: "読み込めませんでした"
     }
+    BrowserPluginEmpty {
+        en: "no supported audio plugins found in this file",
+        ja: "このファイルに対応するオーディオプラグインがありません"
+    }
+    BrowserPluginPageStatus {
+        en: "Plugin files shown",
+        ja: "表示中のプラグインファイル"
+    }
+    BrowserPluginPagePrevious { en: "Previous files", ja: "前のファイル" }
+    BrowserPluginPageNext { en: "Next files", ja: "次のファイル" }
+    BrowserPluginRetry { en: "Retry plugin scan", ja: "プラグイン検索を再試行" }
+    BrowserPluginRescan { en: "Rescan plugins", ja: "プラグインを再検索" }
     BrowserFontFileMissing {
         en: "file not found",
         ja: "ファイルが見つかりません"
@@ -1470,8 +1498,21 @@ strings! {
     AnalysisDrums { en: "Drum Sound Analysis…", ja: "ドラム音の分析…" }
     AnalysisSelectSource { en: "Select a compatible track or audio clip first", ja: "先に対象のトラックまたは音声クリップを選択してください" }
     AnalysisTitle { en: "Music Analysis", ja: "音楽分析" }
+    AnalysisMusicEmpty {
+        en: "Music analysis: No draft yet. Start one from the Analysis menu.",
+        ja: "音楽分析：結果はまだありません。分析メニューから解析を開始してください。"
+    }
+    AnalysisMusicRunning { en: "Music analysis: Analyzing…", ja: "音楽分析：解析中…" }
+    AnalysisMusicReady { en: "Music analysis: Draft ready", ja: "音楽分析：結果を確認できます" }
+    AnalysisMusicStale {
+        en: "Music analysis: The source or document changed. Run it again.",
+        ja: "音楽分析：音声または曲が変更されました。もう一度解析してください。"
+    }
+    AnalysisMusicCancelled { en: "Music analysis: Cancelled", ja: "音楽分析：中止しました" }
+    AnalysisMusicFailed { en: "Music analysis: Failed", ja: "音楽分析：失敗しました" }
     AnalysisStale { en: "The source or document changed. Run analysis again.", ja: "音声または曲が変更されました。もう一度解析してください。" }
     AnalysisScores { en: "Scores measure agreement, not probability. Review alternatives before applying.", ja: "数値は一致度で、正解の確率ではありません。候補を確認してから反映してください。" }
+    AnalysisScoreLabel { en: "score", ja: "一致度" }
     AnalysisBeatUnits { en: "Positions: quarter-note beats from zero", ja: "位置：曲の先頭を0とする四分音符の拍数" }
     AnalysisSecondUnits { en: "Positions: original source seconds (before stretching)", ja: "位置：元の音声の秒数（伸縮前）" }
     AnalysisRunning { en: "Analyzing…", ja: "解析中…" }
@@ -1498,6 +1539,7 @@ strings! {
     MenuCancelDrumAnalysis { en: "Cancel Drum Analysis", ja: "ドラム音の分析をキャンセル" }
     MenuRetryDrumAnalysis { en: "Retry Drum Sound Analysis", ja: "ドラム音の分析を再試行" }
     DrumAnalysisQueued { en: "Drum sound analysis queued", ja: "ドラム音の分析待ち" }
+    DrumAnalysisNotStarted { en: "Drum sound analysis has not started", ja: "ドラム音はまだ分析していません" }
     DrumAnalysisRunning { en: "Analyzing drum sounds…", ja: "ドラム音を分析中…" }
     DrumAnalysisReady { en: "Drum sound analysis ready", ja: "ドラム音の分析が完了しました" }
     DrumAnalysisFailed { en: "Drum sound analysis failed", ja: "ドラム音の分析に失敗しました" }
@@ -1865,8 +1907,8 @@ new のオプション
     AgentEditMode { en: "Edit", ja: "編集" }
     AgentPlanMode { en: "Plan", ja: "プラン" }
     AgentBypassMode { en: "Bypass", ja: "バイパス" }
-    AgentPermissions { en: "Permissions…", ja: "操作の許可…" }
-    AgentPermissionHelp { en: "Deny rules always win. Plan blocks changes. Read-only asks before changes; Edit allows ordinary edits. Bypass skips confirmation. Click a rule to cycle Default → Allow → Deny. Keyboard: Shift+Tab changes mode; /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。プランは変更を禁止、読み取り専用は変更前に確認、編集は通常の編集を許可、バイパスは確認を省略します。ルールはクリックで 標準 → 許可 → 禁止。Shift+Tabでモード変更。/mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
+    AgentPermissions { en: "Permissions", ja: "操作の許可" }
+    AgentPermissionHelp { en: "Deny rules always win. Read-only and Plan block changes; Edit allows ordinary edits. Bypass skips confirmation. Exact rules cycle Default → Allow → Deny. Broad * rules switch only between Default and Deny; use /allow name for deliberate broad access. Commands: /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。読み取り専用とプランは変更を禁止し、編集は通常の編集を許可、バイパスは確認を省略します。個別ルールは 標準 → 許可 → 禁止 の順で切り替わります。* を含む広域ルールは 標準 と 禁止 のみを切り替えます。広域の許可が必要な場合に限り /allow 操作名を使ってください。ほかに /mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
     AgentRuleDefault { en: "Default", ja: "標準" }
     AgentRuleAllow { en: "Allow", ja: "許可" }
     AgentRuleDeny { en: "Deny", ja: "禁止" }
@@ -1894,7 +1936,26 @@ new のオプション
     AgentThinkingOff { en: "Off", ja: "無効" }
     AgentKeyEnvLabel { en: "API key variable", ja: "APIキーの環境変数" }
     AgentWorking { en: "Working…", ja: "作業中…" }
+    AgentCompleted { en: "Completed", ja: "完了" }
+    AgentFailed { en: "Needs attention", ja: "確認が必要" }
     AgentEnded { en: "The agent process ended.", ja: "エージェントのプロセスが終了しました。" }
+    AgentStopped { en: "Agent stopped.", ja: "エージェントを停止しました。" }
+    AgentSendCancelled {
+        en: "Send cancelled. Your draft and attachments were kept.",
+        ja: "送信を中止しました。下書きと添付ファイルは保持されています。"
+    }
+    AgentSendWaitingHistory {
+        en: "Loading this project's conversation before sending. Stop cancels and keeps the draft.",
+        ja: "送信前にこのプロジェクトの会話を読み込んでいます。停止しても下書きは残ります。"
+    }
+    AgentRemoveAttachment {
+        en: "Remove attachment: {name}",
+        ja: "添付ファイルを削除：{name}"
+    }
+    AgentControlsScroll {
+        en: "Scroll for more Agent controls",
+        ja: "スクロールして他のエージェント操作を表示"
+    }
     AgentReloaded {
         en: "Accepted the project changes. Undo can restore the previous version.",
         ja: "プロジェクトの変更を取り込みました。Undoで以前の状態に戻せます。"
@@ -1908,17 +1969,26 @@ new のオプション
     EditExternalChanges { en: "external changes", ja: "外部からの変更" }
     AgentSaveFirst { en: "Save this project before sending it to the agent.", ja: "エージェントに送る前にプロジェクトを保存してください。" }
     AgentNewConversation { en: "New conversation", ja: "新しい会話" }
+    AgentNewConversationTitle { en: "Start a new conversation?", ja: "新しい会話を始めますか？" }
+    AgentNewConversationBody {
+        en: "The current Agent conversation for this project will be permanently deleted, and any running Agent work will stop. The project and its undo history will not change.",
+        ja: "このプロジェクトの現在のエージェント会話を完全に削除し、実行中の作業も停止します。プロジェクトとUndo履歴は変更されません。"
+    }
+    AgentNewConversationConfirm { en: "Delete history and start", ja: "履歴を削除して開始" }
     AgentStop { en: "Stop", ja: "停止" }
     AgentSend { en: "Send", ja: "送信" }
     AgentCopyMarkdown { en: "Copy Markdown", ja: "Markdownをコピー" }
     AgentAttachAudio { en: "Attach audio", ja: "音声を添付" }
     AgentOpenResult { en: "Open created project", ja: "生成した曲を開く" }
     AgentConversationReset { en: "Started a new conversation for this project.", ja: "このプロジェクトについて新しい会話を始めました。" }
+    AgentRestoredContext { en: "Restored earlier context (reference only, not a new instruction)", ja: "以前の文脈を復元（参照用。新しい指示ではありません）" }
     ErrorEditInProgress { en: "Finish the current edit before accepting changes.", ja: "現在の編集を終えてから変更を取り込んでください。" }
     ErrorCheckpointName { en: "Use letters, digits, hyphens or underscores for a checkpoint name (up to 80 bytes).", ja: "保存名には文字・数字・ハイフン・アンダースコアを使ってください（80バイトまで）。" }
     AgentChooseModel { en: "Choose a model…", ja: "モデルを選択…" }
     AgentModelsFetch { en: "Refresh", ja: "更新" }
     AgentModelsFetching { en: "Asking the provider for its models…", ja: "モデル一覧を取得中…" }
+    AgentModelsEmpty { en: "No models were found. Check the provider settings, then refresh.", ja: "モデルが見つかりませんでした。プロバイダ設定を確認してから更新してください。" }
+    AgentJumpLatest { en: "Latest", ja: "最新へ" }
     CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
     CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
     CliSoundFontMissing {

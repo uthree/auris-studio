@@ -415,6 +415,17 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    /// Selects a settings category requested by another application surface.
+    pub(crate) fn show_tab(
+        &mut self,
+        tab: SettingsTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.select_tab(tab, window, cx);
+        window.activate_window();
+    }
+
     /// Keeps the last text field active while a button or dropdown holds focus.
     fn sync_text_focus(&mut self, window: &Window) -> bool {
         if let Some(index) = self
@@ -1973,6 +1984,9 @@ impl Render for SettingsWindow {
             .child(
                 div()
                     .id("settings-body")
+                    .debug_selector(|| "settings-body".to_string())
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()

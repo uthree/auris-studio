@@ -40,6 +40,55 @@ const INDENT: Pixels = px(11.0);
 /// The branch's disclosure triangle and its following gap, also reserved by tree leaves.
 const DISCLOSURE_SPACE: Pixels = px(17.0);
 
+/// A bounded number of inspected files is enough for normal browsing and prevents a long-running
+/// window from retaining metadata for every binary it has ever opened.
+const PLUGIN_METADATA_CACHE_LIMIT: usize = 64;
+
+/// Aggregate retained descriptor storage, in addition to the per-worker response limit.
+const PLUGIN_METADATA_CACHE_BYTE_LIMIT: usize = 16 * 1024 * 1024;
+
+/// Native plugin file rows rendered at once. Every discovered path remains reachable by paging or
+/// search, while an accidentally broad root cannot make one GPUI frame build tens of thousands of
+/// elements.
+const PLUGIN_FILE_PAGE_SIZE: usize = 200;
+
+fn clap_metadata_bytes(path: &std::path::Path, plugins: &[auris_session::ClapPluginInfo]) -> usize {
+    plugins.iter().fold(
+        path.as_os_str()
+            .len()
+            .saturating_add(std::mem::size_of_val(plugins)),
+        |bytes, plugin| {
+            bytes
+                .saturating_add(plugin.clap_id.len())
+                .saturating_add(plugin.name.len())
+                .saturating_add(plugin.vendor.len())
+                .saturating_add(plugin.description.len())
+                .saturating_add(plugin.version.len())
+        },
+    )
+}
+
+fn vst3_metadata_bytes(path: &std::path::Path, plugins: &[auris_session::Vst3PluginInfo]) -> usize {
+    plugins.iter().fold(
+        path.as_os_str()
+            .len()
+            .saturating_add(std::mem::size_of_val(plugins)),
+        |bytes, plugin| {
+            bytes
+                .saturating_add(plugin.class_id.len())
+                .saturating_add(plugin.name.len())
+                .saturating_add(plugin.vendor.len())
+                .saturating_add(plugin.version.len())
+        },
+    )
+}
+
+enum PluginContents<T> {
+    Loading,
+    Ready(std::sync::Arc<[T]>),
+    Failed,
+}
+
 /// A branch of the library — anything that can be open or shut.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Branch {
@@ -72,10 +121,9 @@ impl Branch {
     /// all fit on screen at once, and a browser that hides them is one you have to operate before
     /// you can look at it; a font's sounds run to three figures and are worth asking for.
     ///
-    /// A `.clap` file is shut for a stronger reason than size. Opening one means *loading* it,
-    /// and loading a plugin means running somebody else's code in this process. That has to be
-    /// something a person did, not something a panel did on their behalf while they were looking
-    /// for a reverb.
+    /// A native plugin file is shut for a stronger reason than size. Opening one explicitly
+    /// starts isolated metadata inspection, rather than probing every installed binary merely
+    /// because the panel was drawn.
     fn opens_by_default(self) -> bool {
         !matches!(
             self,
@@ -93,6 +141,8 @@ impl Branch {
 pub(crate) struct LibraryTree {
     /// Branches whose state has been chosen, and what was chosen.
     chosen: HashMap<Branch, bool>,
+    /// First installed-plugin file in the bounded page currently shown by this browser.
+    plugin_page_start: usize,
 }
 
 /// An imported font offered while choosing a song part, without editing the document.
@@ -220,10 +270,36 @@ impl LibraryTree {
         self.chosen.insert(branch, open);
     }
 
+    fn plugin_page(&self, total: usize) -> std::ops::Range<usize> {
+        if total == 0 {
+            return 0..0;
+        }
+        let last_start = ((total - 1) / PLUGIN_FILE_PAGE_SIZE) * PLUGIN_FILE_PAGE_SIZE;
+        let start = self.plugin_page_start.min(last_start);
+        start..start.saturating_add(PLUGIN_FILE_PAGE_SIZE).min(total)
+    }
+
+    fn next_plugin_page(&mut self, total: usize) {
+        let page = self.plugin_page(total);
+        if page.end < total {
+            self.plugin_page_start = page.end;
+        }
+    }
+
+    fn previous_plugin_page(&mut self, total: usize) {
+        let page = self.plugin_page(total);
+        self.plugin_page_start = page.start.saturating_sub(PLUGIN_FILE_PAGE_SIZE);
+    }
+
+    fn reveal_plugin_file(&mut self, index: usize) {
+        self.plugin_page_start = (index / PLUGIN_FILE_PAGE_SIZE) * PLUGIN_FILE_PAGE_SIZE;
+    }
+
     /// Forgets disclosures whose positional identities become invalid after a rescan.
     pub(crate) fn forget_plugin_files(&mut self) {
         self.chosen
             .retain(|branch, _| !matches!(branch, Branch::PluginFile(_)));
+        self.plugin_page_start = 0;
     }
 }
 
@@ -361,17 +437,63 @@ fn plugin_search_name(name: &str, language: auris_i18n::Language) -> String {
 /// The scoring is the command palette's, so `revb` finds Reverb in both places and means the
 /// same thing in both. Ties keep the order they were collected in, which is the order the tree
 /// shows them.
+#[cfg(test)]
 pub(crate) fn best_matches<T>(entries: Vec<(String, T)>, query: &str, limit: usize) -> Vec<T> {
-    let mut scored: Vec<(usize, i32, T)> = entries
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, (name, entry))| {
-            crate::ui::palette::match_score(query, &name).map(|score| (index, score, entry))
-        })
-        .collect();
-    scored.sort_by_key(|(index, score, _)| (std::cmp::Reverse(*score), *index));
-    scored.truncate(limit);
-    scored.into_iter().map(|(_, _, entry)| entry).collect()
+    let mut matches = BestMatches::new(query, limit);
+    for (name, entry) in entries {
+        matches.consider(&name, || entry);
+    }
+    matches.finish()
+}
+
+struct BestMatches<'a, T> {
+    query: &'a str,
+    limit: usize,
+    next_index: usize,
+    scored: Vec<(usize, i32, T)>,
+}
+
+impl<'a, T> BestMatches<'a, T> {
+    fn new(query: &'a str, limit: usize) -> Self {
+        Self {
+            query,
+            limit,
+            next_index: 0,
+            scored: Vec::with_capacity(limit),
+        }
+    }
+
+    fn consider(&mut self, name: &str, entry: impl FnOnce() -> T) {
+        let index = self.next_index;
+        self.next_index += 1;
+        let Some(score) = crate::ui::palette::match_score(self.query, name) else {
+            return;
+        };
+        if self.limit == 0 {
+            return;
+        }
+        if self.scored.len() < self.limit {
+            self.scored.push((index, score, entry()));
+            return;
+        }
+        let worst = self
+            .scored
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (index, score, _))| (*score, std::cmp::Reverse(*index)))
+            .map(|(slot, _)| slot)
+            .expect("a full nonzero match set has a worst entry");
+        let (worst_index, worst_score, _) = &self.scored[worst];
+        if score > *worst_score || (score == *worst_score && index < *worst_index) {
+            self.scored[worst] = (index, score, entry());
+        }
+    }
+
+    fn finish(mut self) -> Vec<T> {
+        self.scored
+            .sort_by_key(|(index, score, _)| (std::cmp::Reverse(*score), *index));
+        self.scored.into_iter().map(|(_, _, entry)| entry).collect()
+    }
 }
 
 /// One thing a search turned up, and enough to draw and act on it.
@@ -387,9 +509,9 @@ enum Found {
     /// The file rather than the plugins in it, because the plugins in it are not known until it
     /// is loaded — and a result list that loads a shared library per row is a result list that
     /// runs somebody else's code to answer a keystroke.
-    ClapFile(usize, String, std::path::PathBuf),
+    ClapFile(usize),
     /// A `.vst3` bundle, represented without loading its executable code.
-    Vst3File(usize, String, std::path::PathBuf),
+    Vst3File(usize),
     /// A singer voice on the shelf: its name, and the file it is.
     Voice(String, std::path::PathBuf),
 }
@@ -581,6 +703,23 @@ impl AurisApp {
         }
     }
 
+    fn page_library_plugins(&mut self, target: LibraryTarget, forward: bool, total: usize) {
+        let tree = match target {
+            LibraryTarget::Track => &mut self.library,
+            LibraryTarget::SongPart => {
+                let Some(browser) = self.song_library.as_mut() else {
+                    return;
+                };
+                &mut browser.tree
+            }
+        };
+        if forward {
+            tree.next_plugin_page(total);
+        } else {
+            tree.previous_plugin_page(total);
+        }
+    }
+
     fn library_query(&self, target: LibraryTarget) -> &TextField {
         match target {
             LibraryTarget::Track => &self.library_search,
@@ -607,6 +746,16 @@ impl AurisApp {
     }
 
     fn reveal_library_branch(&mut self, target: LibraryTarget, branch: Branch) {
+        if let Branch::PluginFile(index) = branch {
+            match target {
+                LibraryTarget::Track => self.library.reveal_plugin_file(index),
+                LibraryTarget::SongPart => {
+                    if let Some(browser) = self.song_library.as_mut() {
+                        browser.tree.reveal_plugin_file(index);
+                    }
+                }
+            }
+        }
         self.clear_library_query(target);
         self.set_library_branch(target, Branch::Plugins, true);
         self.set_library_branch(target, branch, true);
@@ -925,14 +1074,14 @@ impl AurisApp {
         query: &str,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
-        let mut entries: Vec<(String, Found)> = Vec::new();
+        let mut entries = BestMatches::new(query, SEARCH_LIMIT + 1);
         for descriptor in self
             .registry()
             .instruments()
             .filter(|descriptor| target == LibraryTarget::Track || descriptor.id != SAMPLER_ID)
         {
-            entries.push((
-                plugin_search_name(&descriptor.name, self.language()),
+            let name = plugin_search_name(&descriptor.name, self.language());
+            entries.consider(&name, || {
                 Found::Instrument(
                     LibraryPlugin {
                         id: descriptor.id.to_string(),
@@ -940,16 +1089,16 @@ impl AurisApp {
                         description: descriptor.description.to_string(),
                     },
                     descriptor.category,
-                ),
-            ));
+                )
+            });
         }
         for descriptor in self
             .registry()
             .effects()
             .filter(|_| target == LibraryTarget::Track)
         {
-            entries.push((
-                plugin_search_name(&descriptor.name, self.language()),
+            let name = plugin_search_name(&descriptor.name, self.language());
+            entries.consider(&name, || {
                 Found::Effect(
                     LibraryPlugin {
                         id: descriptor.id.to_string(),
@@ -957,39 +1106,39 @@ impl AurisApp {
                         description: descriptor.description.to_string(),
                     },
                     descriptor.category,
-                ),
-            ));
+                )
+            });
         }
         for (font, _) in self.library_fonts(target) {
             for preset in self.library_presets(target, font) {
-                entries.push((preset.name.clone(), Found::Preset(font, preset)));
+                let name = preset.name.clone();
+                entries.consider(&name, || Found::Preset(font, preset));
             }
         }
-        for (index, file) in self.clap_files().to_vec().into_iter().enumerate() {
+        let (clap_files, vst3_files) = self.plugin_files(cx);
+        for (index, file) in clap_files.iter().enumerate() {
             let name = file
                 .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
+                .and_then(std::ffi::OsStr::to_str)
                 .unwrap_or_default();
-            entries.push((name.clone(), Found::ClapFile(index, name, file)));
+            entries.consider(name, || Found::ClapFile(index));
         }
-        let vst_offset = self.clap_files().len();
-        for (index, file) in self.vst3_files().to_vec().into_iter().enumerate() {
+        let vst_offset = clap_files.len();
+        for (index, file) in vst3_files.iter().enumerate() {
             let name = file
                 .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
+                .and_then(std::ffi::OsStr::to_str)
                 .unwrap_or_default();
-            entries.push((
-                name.clone(),
-                Found::Vst3File(vst_offset + index, name, file),
-            ));
+            entries.consider(name, || Found::Vst3File(vst_offset + index));
         }
         if target == LibraryTarget::Track {
             for (name, path) in self.voice_list() {
-                entries.push((name.clone(), Found::Voice(name, path)));
+                let search_name = name.clone();
+                entries.consider(&search_name, || Found::Voice(name, path));
             }
         }
 
-        let mut found = best_matches(entries, query, SEARCH_LIMIT + 1);
+        let mut found = entries.finish();
         let limited = found.len() > SEARCH_LIMIT;
         found.truncate(SEARCH_LIMIT);
         if found.is_empty() {
@@ -1047,7 +1196,12 @@ impl AurisApp {
                 // list that loads a shared library per row is a result list that stutters. The
                 // row clears the search and opens the file's branch in the tree, which is where
                 // the plugins inside it are listed the way they always were.
-                Found::ClapFile(index, name, file) => {
+                Found::ClapFile(index) => {
+                    let file = clap_files[index].clone();
+                    let name = file
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default();
                     let branch = Branch::PluginFile(index);
                     self.plugin_row(
                         target,
@@ -1064,7 +1218,12 @@ impl AurisApp {
                         }),
                     )
                 }
-                Found::Vst3File(index, name, file) => {
+                Found::Vst3File(index) => {
+                    let file = vst3_files[index - vst_offset].clone();
+                    let name = file
+                        .file_stem()
+                        .map(|stem| stem.to_string_lossy().into_owned())
+                        .unwrap_or_default();
                     let branch = Branch::PluginFile(index);
                     self.plugin_row(
                         target,
@@ -1313,15 +1472,18 @@ impl AurisApp {
         row_offset: usize,
         cx: &mut gpui::Context<Self>,
     ) -> Vec<AnyElement> {
-        let files = self.clap_files().to_vec();
-        let vst3_files = self.vst3_files().to_vec();
+        let discovery_loading = self.plugin_discovery_error.is_none()
+            && (self.clap_files.is_none() || self.vst3_files.is_none());
+        let (files, vst3_files) = self.plugin_files(cx);
+        let total_files = files.len() + vst3_files.len();
+        let plugin_page = self.library_tree(target).plugin_page(total_files);
 
         let mut rows = vec![self.section_row(
             target,
             Branch::Plugins,
             Key::BrowserPlugins,
             Icon::Knob,
-            files.len() + vst3_files.len(),
+            total_files,
             cx,
         )];
         if !self.library_tree(target).is_open(Branch::Plugins) {
@@ -1329,17 +1491,99 @@ impl AurisApp {
         }
         rows.push(self.note_row(
             1,
-            self.t(match files.is_empty() && vst3_files.is_empty() {
-                true => Key::BrowserNoPlugins,
-                false => Key::BrowserPluginsHint,
+            self.t(if discovery_loading {
+                Key::BrowserPluginsScanning
+            } else if self.plugin_discovery_error.is_some() {
+                Key::BrowserPluginDiscoveryFailed
+            } else if files.is_empty() && vst3_files.is_empty() {
+                Key::BrowserNoPlugins
+            } else {
+                Key::BrowserPluginsHint
             }),
         ));
+        if self.plugin_discovery_truncated {
+            rows.push(self.note_row(1, self.t(Key::BrowserPluginDiscoveryTruncated)));
+        }
+        rows.push(
+            div()
+                .pl(indent(1))
+                .pr_1()
+                .py_1()
+                .child(button(
+                    target.element_id("plugin-rescan"),
+                    self.t(if self.plugin_discovery_error.is_some() {
+                        Key::BrowserPluginRetry
+                    } else {
+                        Key::BrowserPluginRescan
+                    }),
+                    ButtonStyle::Ghost,
+                    discovery_loading,
+                    self.theme.accent,
+                    &self.theme,
+                    cx.listener(|this, _, _, cx| {
+                        this.invalidate_plugin_files();
+                        cx.notify();
+                    }),
+                ))
+                .into_any_element(),
+        );
         // The conventional folders are not the only places plugins live: a build tree, an
         // external disk, a folder shared between the machines in a studio. Until now a plugin
         // outside them could not be reached at all, however plainly somebody could point at it.
         rows.extend(self.plugin_path_rows(cx));
 
-        for (index, file) in files.iter().enumerate() {
+        if total_files > PLUGIN_FILE_PAGE_SIZE {
+            rows.push(self.note_row(
+                1,
+                &format!(
+                    "{}: {}–{} / {}",
+                    self.t(Key::BrowserPluginPageStatus),
+                    plugin_page.start + 1,
+                    plugin_page.end,
+                    total_files
+                ),
+            ));
+            let previous_disabled = plugin_page.start == 0;
+            let next_disabled = plugin_page.end >= total_files;
+            let theme = self.theme.clone();
+            rows.push(
+                div()
+                    .pl(indent(1))
+                    .pr_1()
+                    .py_1()
+                    .flex()
+                    .gap_1()
+                    .child(button(
+                        target.element_id("plugin-page-previous"),
+                        self.t(Key::BrowserPluginPagePrevious),
+                        ButtonStyle::Ghost,
+                        previous_disabled,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.page_library_plugins(target, false, total_files);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(button(
+                        target.element_id("plugin-page-next"),
+                        self.t(Key::BrowserPluginPageNext),
+                        ButtonStyle::Ghost,
+                        next_disabled,
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.page_library_plugins(target, true, total_files);
+                            cx.notify();
+                        }),
+                    ))
+                    .into_any_element(),
+            );
+        }
+
+        let clap_start = plugin_page.start.min(files.len());
+        let clap_end = plugin_page.end.min(files.len());
+        for (index, file) in files.iter().enumerate().take(clap_end).skip(clap_start) {
             let branch = Branch::PluginFile(index);
             let open = self.library_tree(target).is_open(branch);
             // A search opens the file to choose a plugin, so reveal the first child along
@@ -1350,15 +1594,28 @@ impl AurisApp {
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| file.to_string_lossy().into_owned());
 
-            let mut listed = match open {
-                true => self.clap_plugins_in(file),
-                false => Vec::new(),
+            let loaded = match open {
+                true => self.clap_plugins_in(file, cx),
+                false => PluginContents::Ready(std::sync::Arc::from(Vec::<
+                    auris_session::ClapPluginInfo,
+                >::new())),
             };
-            let readable = !listed.is_empty();
-            if target == LibraryTarget::SongPart {
-                listed.retain(|plugin| plugin.kind == PluginKind::Instrument);
-            }
+            let loading = matches!(&loaded, PluginContents::Loading);
+            let failed = matches!(&loaded, PluginContents::Failed);
+            let plugins = match &loaded {
+                PluginContents::Ready(plugins) => Some(plugins),
+                PluginContents::Loading | PluginContents::Failed => None,
+            };
+            let readable = plugins.is_some_and(|plugins| !plugins.is_empty());
+            let listed: Vec<_> = plugins
+                .into_iter()
+                .flat_map(|plugins| plugins.iter())
+                .filter(|plugin| {
+                    target != LibraryTarget::SongPart || plugin.kind == PluginKind::Instrument
+                })
+                .collect();
             let theme = self.theme.clone();
+            let probe_path = file.clone();
             rows.push(
                 self.branch_row(
                     target,
@@ -1374,6 +1631,12 @@ impl AurisApp {
                     },
                     self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if open {
+                            this.cancel_plugin_probe(
+                                auris_session::PluginFormat::Clap,
+                                &probe_path,
+                            );
+                        }
                         this.set_library_branch(target, branch, !open);
                         cx.notify();
                     }),
@@ -1383,13 +1646,19 @@ impl AurisApp {
             if !open {
                 continue;
             }
+            if loading {
+                rows.push(self.note_row(2, self.t(Key::BrowserPluginInspecting)));
+                continue;
+            }
             if listed.is_empty() {
                 rows.push(self.note_row(
                     2,
-                    self.t(if readable {
+                    self.t(if failed {
+                        Key::BrowserPluginUnreadable
+                    } else if readable {
                         Key::SongLibraryNoInstruments
                     } else {
-                        Key::BrowserPluginUnreadable
+                        Key::BrowserPluginEmpty
                     }),
                 ));
                 continue;
@@ -1443,7 +1712,17 @@ impl AurisApp {
             }
         }
         let offset = files.len();
-        for (vst_index, file) in vst3_files.iter().enumerate() {
+        let vst3_start = plugin_page
+            .start
+            .saturating_sub(offset)
+            .min(vst3_files.len());
+        let vst3_end = plugin_page.end.saturating_sub(offset).min(vst3_files.len());
+        for (vst_index, file) in vst3_files
+            .iter()
+            .enumerate()
+            .take(vst3_end)
+            .skip(vst3_start)
+        {
             let index = offset + vst_index;
             let branch = Branch::PluginFile(index);
             let open = self.library_tree(target).is_open(branch);
@@ -1452,16 +1731,29 @@ impl AurisApp {
                 .file_stem()
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_else(|| file.to_string_lossy().into_owned());
-            let mut listed = if open {
-                self.vst3_plugins_in(file)
+            let loaded = if open {
+                self.vst3_plugins_in(file, cx)
             } else {
-                Vec::new()
+                PluginContents::Ready(std::sync::Arc::from(
+                    Vec::<auris_session::Vst3PluginInfo>::new(),
+                ))
             };
-            let readable = !listed.is_empty();
-            if target == LibraryTarget::SongPart {
-                listed.retain(|plugin| plugin.kind == PluginKind::Instrument);
-            }
+            let loading = matches!(&loaded, PluginContents::Loading);
+            let failed = matches!(&loaded, PluginContents::Failed);
+            let plugins = match &loaded {
+                PluginContents::Ready(plugins) => Some(plugins),
+                PluginContents::Loading | PluginContents::Failed => None,
+            };
+            let readable = plugins.is_some_and(|plugins| !plugins.is_empty());
+            let listed: Vec<_> = plugins
+                .into_iter()
+                .flat_map(|plugins| plugins.iter())
+                .filter(|plugin| {
+                    target != LibraryTarget::SongPart || plugin.kind == PluginKind::Instrument
+                })
+                .collect();
             let theme = self.theme.clone();
+            let probe_path = file.clone();
             rows.push(
                 self.branch_row(
                     target,
@@ -1478,6 +1770,12 @@ impl AurisApp {
                     },
                     self.row_style(theme.text, None),
                     cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                        if open {
+                            this.cancel_plugin_probe(
+                                auris_session::PluginFormat::Vst3,
+                                &probe_path,
+                            );
+                        }
                         this.set_library_branch(target, branch, !open);
                         cx.notify();
                     }),
@@ -1487,13 +1785,19 @@ impl AurisApp {
             if !open {
                 continue;
             }
+            if loading {
+                rows.push(self.note_row(2, self.t(Key::BrowserPluginInspecting)));
+                continue;
+            }
             if listed.is_empty() {
                 rows.push(self.note_row(
                     2,
-                    self.t(if readable {
+                    self.t(if failed {
+                        Key::BrowserPluginUnreadable
+                    } else if readable {
                         Key::SongLibraryNoInstruments
                     } else {
-                        Key::BrowserPluginUnreadable
+                        Key::BrowserPluginEmpty
                     }),
                 ));
                 continue;
@@ -1543,55 +1847,289 @@ impl AurisApp {
         rows
     }
 
-    /// The `.clap` files installed on this machine, scanned once.
-    fn clap_files(&mut self) -> &[std::path::PathBuf] {
-        self.clap_files.get_or_insert_with(|| {
-            self.session
-                .installed_clap_files(&self.settings.plugin_paths)
-        })
+    /// Returns the last installed-plugin snapshot and starts its isolated worker when needed.
+    fn plugin_files(
+        &mut self,
+        cx: &mut gpui::Context<Self>,
+    ) -> (
+        std::sync::Arc<[std::path::PathBuf]>,
+        std::sync::Arc<[std::path::PathBuf]>,
+    ) {
+        self.start_plugin_discovery(cx);
+        (
+            self.clap_files
+                .as_ref()
+                .map(std::sync::Arc::clone)
+                .unwrap_or_else(|| std::sync::Arc::from(Vec::<std::path::PathBuf>::new())),
+            self.vst3_files
+                .as_ref()
+                .map(std::sync::Arc::clone)
+                .unwrap_or_else(|| std::sync::Arc::from(Vec::<std::path::PathBuf>::new())),
+        )
     }
 
-    /// What one `.clap` file holds, loading it the first time and remembering after that.
-    ///
-    /// An empty answer is cached too. A file that cannot be read is a file that will not become
-    /// readable while the window is open, and retrying it on every frame would mean trying to
-    /// load a broken binary sixty times a second.
-    fn clap_plugins_in(&mut self, file: &std::path::Path) -> Vec<auris_session::ClapPluginInfo> {
-        if let Some(known) = self.clap_contents.get(file) {
-            return known.clone();
+    /// Starts the lazy file-system scan without making rendering wait for it.
+    fn start_plugin_discovery(&mut self, cx: &mut gpui::Context<Self>) {
+        if (self.clap_files.is_some() && self.vst3_files.is_some())
+            || self.plugin_discovery_cancel.is_some()
+            || self.plugin_discovery_error.is_some()
+        {
+            return;
         }
-        let listed = self
-            .session
-            .hosted_plugins_in(file)
-            .unwrap_or_else(|error| {
-                log::warn!("cannot read `{}`: {error}", file.display());
-                Vec::new()
+        let generation = self.plugin_discovery_generation;
+        let job = auris_session::PluginDiscoveryJob::new(&self.settings.plugin_paths);
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = std::sync::Arc::clone(&cancelled);
+        self.plugin_discovery_cancel = Some(std::sync::Arc::clone(&cancelled));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        if let Err(error) = std::thread::Builder::new()
+            .name("auris-plugin-discovery".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    job.run(&worker_cancelled, std::time::Duration::from_secs(15))
+                }))
+                .unwrap_or_else(|_| {
+                    Err(auris_session::SessionError::PluginDiscovery(
+                        "plugin discovery worker panicked".into(),
+                    ))
+                });
+                let _ = sender.send(result);
+            })
+        {
+            self.plugin_discovery_cancel = None;
+            self.plugin_discovery_error = Some(error.to_string());
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = loop {
+                match receiver.try_recv() {
+                    Ok(result) => break result,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        break Err(auris_session::SessionError::PluginDiscovery(
+                            "plugin discovery worker stopped".into(),
+                        ));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(25))
+                            .await;
+                    }
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.plugin_discovery_generation != generation {
+                    return;
+                }
+                this.plugin_discovery_cancel = None;
+                match result {
+                    Ok(files) => {
+                        this.clap_files = Some(std::sync::Arc::from(files.clap));
+                        this.vst3_files = Some(std::sync::Arc::from(files.vst3));
+                        this.plugin_discovery_truncated = files.truncated;
+                        this.plugin_discovery_error = None;
+                    }
+                    Err(error) => {
+                        log::warn!("installed plugin discovery failed: {error}");
+                        this.clap_files = None;
+                        this.vst3_files = None;
+                        this.plugin_discovery_error = Some(error.to_string());
+                    }
+                }
+                cx.notify();
             });
-        self.clap_contents
-            .insert(file.to_path_buf(), listed.clone());
-        listed
+        })
+        .detach();
     }
 
-    /// The `.vst3` bundles installed on this machine, scanned once without loading them.
-    fn vst3_files(&mut self) -> &[std::path::PathBuf] {
-        self.vst3_files.get_or_insert_with(|| {
-            self.session
-                .installed_vst3_files(&self.settings.plugin_paths)
-        })
+    /// What one `.clap` file holds, inspecting it once in an isolated process.
+    ///
+    /// An empty successful answer is cached too. Failures remain a separate UI state so a retry
+    /// cannot be mistaken for a file that legitimately exports no supported audio classes.
+    fn clap_plugins_in(
+        &mut self,
+        file: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) -> PluginContents<auris_session::ClapPluginInfo> {
+        if let Some(known) = self.clap_contents.get(file) {
+            return PluginContents::Ready(std::sync::Arc::clone(known));
+        }
+        if self
+            .plugin_probe_errors
+            .contains_key(&(auris_session::PluginFormat::Clap, file.to_path_buf()))
+        {
+            return PluginContents::Failed;
+        }
+        self.start_plugin_probe(auris_session::PluginFormat::Clap, file, cx);
+        PluginContents::Loading
     }
 
     /// The audio classes exported by one VST3 bundle.
-    fn vst3_plugins_in(&mut self, file: &std::path::Path) -> Vec<auris_session::Vst3PluginInfo> {
+    fn vst3_plugins_in(
+        &mut self,
+        file: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) -> PluginContents<auris_session::Vst3PluginInfo> {
         if let Some(known) = self.vst3_contents.get(file) {
-            return known.clone();
+            return PluginContents::Ready(std::sync::Arc::clone(known));
         }
-        let listed = self.session.vst3_plugins_in(file).unwrap_or_else(|error| {
-            log::warn!("cannot read VST3 `{}`: {error}", file.display());
-            Vec::new()
-        });
-        self.vst3_contents
-            .insert(file.to_path_buf(), listed.clone());
-        listed
+        if self
+            .plugin_probe_errors
+            .contains_key(&(auris_session::PluginFormat::Vst3, file.to_path_buf()))
+        {
+            return PluginContents::Failed;
+        }
+        self.start_plugin_probe(auris_session::PluginFormat::Vst3, file, cx);
+        PluginContents::Loading
+    }
+
+    fn plugin_metadata_cache_bytes(&self) -> usize {
+        self.clap_contents
+            .iter()
+            .fold(0usize, |bytes, (path, plugins)| {
+                bytes.saturating_add(clap_metadata_bytes(path, plugins))
+            })
+            .saturating_add(
+                self.vst3_contents
+                    .iter()
+                    .fold(0usize, |bytes, (path, plugins)| {
+                        bytes.saturating_add(vst3_metadata_bytes(path, plugins))
+                    }),
+            )
+    }
+
+    fn reserve_plugin_cache_slot(&mut self, incoming_bytes: usize) -> bool {
+        if incoming_bytes > PLUGIN_METADATA_CACHE_BYTE_LIMIT {
+            return false;
+        }
+        while self.clap_contents.len() + self.vst3_contents.len() >= PLUGIN_METADATA_CACHE_LIMIT
+            || self
+                .plugin_metadata_cache_bytes()
+                .saturating_add(incoming_bytes)
+                > PLUGIN_METADATA_CACHE_BYTE_LIMIT
+        {
+            if let Some(path) = self.clap_contents.keys().next().cloned() {
+                self.clap_contents.remove(&path);
+            } else if let Some(path) = self.vst3_contents.keys().next().cloned() {
+                self.vst3_contents.remove(&path);
+            } else {
+                break;
+            }
+        }
+        true
+    }
+
+    fn cancel_plugin_probe(&mut self, format: auris_session::PluginFormat, file: &std::path::Path) {
+        let key = (format, file.to_path_buf());
+        if let Some(cancelled) = self.plugin_probe_cancel.get(&key) {
+            cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.plugin_probe_errors.remove(&key);
+    }
+
+    /// Inspects one native plugin in a child process and adopts only bounded metadata.
+    fn start_plugin_probe(
+        &mut self,
+        format: auris_session::PluginFormat,
+        file: &std::path::Path,
+        cx: &mut gpui::Context<Self>,
+    ) {
+        let key = (format, file.to_path_buf());
+        if self.plugin_probe_cancel.contains_key(&key) {
+            return;
+        }
+        let generation = self.plugin_discovery_generation;
+        let job = auris_session::PluginProbeJob::new(format, file.to_path_buf());
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = std::sync::Arc::clone(&cancelled);
+        let callback_cancelled = std::sync::Arc::clone(&cancelled);
+        self.plugin_probe_cancel
+            .insert(key.clone(), std::sync::Arc::clone(&cancelled));
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        if let Err(error) = std::thread::Builder::new()
+            .name("auris-plugin-probe".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    job.run(&worker_cancelled, std::time::Duration::from_secs(15))
+                }))
+                .unwrap_or_else(|_| {
+                    Err(auris_session::SessionError::PluginDiscovery(
+                        "plugin inspection worker panicked".into(),
+                    ))
+                });
+                let _ = sender.send(result);
+            })
+        {
+            self.plugin_probe_cancel.remove(&key);
+            self.plugin_probe_errors.insert(key, error.to_string());
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = loop {
+                match receiver.try_recv() {
+                    Ok(result) => break result,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        break Err(auris_session::SessionError::PluginDiscovery(
+                            "plugin inspection worker stopped".into(),
+                        ));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        cx.background_executor()
+                            .timer(std::time::Duration::from_millis(25))
+                            .await;
+                    }
+                }
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.plugin_discovery_generation != generation {
+                    return;
+                }
+                this.plugin_probe_cancel.remove(&key);
+                if callback_cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                    cx.notify();
+                    return;
+                }
+                match result {
+                    Ok(auris_session::PluginProbeResult::Clap(plugins))
+                        if format == auris_session::PluginFormat::Clap =>
+                    {
+                        let plugins: std::sync::Arc<[auris_session::ClapPluginInfo]> =
+                            std::sync::Arc::from(plugins);
+                        let bytes = clap_metadata_bytes(&key.1, &plugins);
+                        if this.reserve_plugin_cache_slot(bytes) {
+                            this.clap_contents.insert(key.1.clone(), plugins);
+                        }
+                    }
+                    Ok(auris_session::PluginProbeResult::Vst3(plugins))
+                        if format == auris_session::PluginFormat::Vst3 =>
+                    {
+                        let plugins: std::sync::Arc<[auris_session::Vst3PluginInfo]> =
+                            std::sync::Arc::from(plugins);
+                        let bytes = vst3_metadata_bytes(&key.1, &plugins);
+                        if this.reserve_plugin_cache_slot(bytes) {
+                            this.vst3_contents.insert(key.1.clone(), plugins);
+                        }
+                    }
+                    Ok(_) => {
+                        log::warn!(
+                            "plugin worker returned a mismatched result for `{}`",
+                            key.1.display()
+                        );
+                    }
+                    Err(error) => {
+                        log::warn!("cannot inspect `{}`: {error}", key.1.display());
+                        if this.plugin_probe_errors.len() >= PLUGIN_METADATA_CACHE_LIMIT
+                            && let Some(expired) = this.plugin_probe_errors.keys().next().cloned()
+                        {
+                            this.plugin_probe_errors.remove(&expired);
+                        }
+                        this.plugin_probe_errors
+                            .insert(key.clone(), error.to_string());
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// The instruments section: every registered instrument, under its category.
@@ -2563,11 +3101,34 @@ mod tests {
         let mut tree = LibraryTree::default();
         tree.set_open(Branch::PluginFile(0), true);
         tree.set_open(Branch::Instruments, false);
+        tree.next_plugin_page(PLUGIN_FILE_PAGE_SIZE * 3);
 
         tree.forget_plugin_files();
 
         assert!(!tree.is_open(Branch::PluginFile(0)));
         assert!(!tree.is_open(Branch::Instruments));
+        assert_eq!(
+            tree.plugin_page(PLUGIN_FILE_PAGE_SIZE * 3),
+            0..PLUGIN_FILE_PAGE_SIZE
+        );
+    }
+
+    #[test]
+    fn plugin_pages_bound_rows_and_reveal_any_search_result() {
+        let total = PLUGIN_FILE_PAGE_SIZE * 3 + 17;
+        let mut tree = LibraryTree::default();
+
+        assert_eq!(tree.plugin_page(total), 0..PLUGIN_FILE_PAGE_SIZE);
+        tree.next_plugin_page(total);
+        assert_eq!(
+            tree.plugin_page(total),
+            PLUGIN_FILE_PAGE_SIZE..PLUGIN_FILE_PAGE_SIZE * 2
+        );
+        tree.previous_plugin_page(total);
+        assert_eq!(tree.plugin_page(total), 0..PLUGIN_FILE_PAGE_SIZE);
+
+        tree.reveal_plugin_file(total - 1);
+        assert_eq!(tree.plugin_page(total), PLUGIN_FILE_PAGE_SIZE * 3..total);
     }
 
     #[test]
@@ -2646,6 +3207,21 @@ mod tests {
             best_matches(entries, "delay", SEARCH_LIMIT).len(),
             SEARCH_LIMIT
         );
+    }
+
+    #[test]
+    fn streaming_search_does_not_materialise_every_matching_payload() {
+        let built = std::cell::Cell::new(0usize);
+        let mut matches = BestMatches::new("plugin", SEARCH_LIMIT + 1);
+        for index in 0..32_768 {
+            matches.consider("Plugin", || {
+                built.set(built.get() + 1);
+                index
+            });
+        }
+
+        assert_eq!(matches.finish().len(), SEARCH_LIMIT + 1);
+        assert_eq!(built.get(), SEARCH_LIMIT + 1);
     }
 
     #[test]
