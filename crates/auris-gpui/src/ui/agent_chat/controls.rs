@@ -8,6 +8,15 @@ pub(super) struct Controls {
     pub(super) permits: Vec<(serde_json::Value, u64)>,
     pub(super) rules_open: bool,
     pub(super) compacting: bool,
+    pub(super) mode_menu: bool,
+    pub(super) effort_menu: bool,
+    pub(super) slash_selected: usize,
+}
+
+pub(super) struct SlashMatch {
+    pub(super) fill: String,
+    pub(super) label: String,
+    pub(super) description: Key,
 }
 
 pub(super) struct Pending {
@@ -31,6 +40,116 @@ fn mode_key(mode: Mode) -> Key {
         Mode::Plan => Key::AgentPlanMode,
         Mode::Bypass => Key::AgentBypassMode,
     }
+}
+
+pub(crate) fn effort_key(effort: ReasoningEffort) -> Key {
+    match effort {
+        ReasoningEffort::Default => Key::AgentEffortDefault,
+        ReasoningEffort::None => Key::AgentEffortNone,
+        ReasoningEffort::Minimal => Key::AgentEffortMinimal,
+        ReasoningEffort::Low => Key::AgentEffortLow,
+        ReasoningEffort::Medium => Key::AgentEffortMedium,
+        ReasoningEffort::High => Key::AgentEffortHigh,
+        ReasoningEffort::Xhigh => Key::AgentEffortXhigh,
+        ReasoningEffort::Max => Key::AgentEffortMax,
+    }
+}
+
+pub(super) fn effort_choices(openai: bool) -> &'static [ReasoningEffort] {
+    if openai {
+        &[
+            ReasoningEffort::Default,
+            ReasoningEffort::None,
+            ReasoningEffort::Minimal,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::Xhigh,
+        ]
+    } else {
+        &[
+            ReasoningEffort::Default,
+            ReasoningEffort::None,
+            ReasoningEffort::Low,
+            ReasoningEffort::Medium,
+            ReasoningEffort::High,
+            ReasoningEffort::Max,
+        ]
+    }
+}
+
+pub(super) fn slash_matches(value: &str) -> Vec<SlashMatch> {
+    if !value.starts_with('/') || value.contains('\n') {
+        return Vec::new();
+    }
+    let commands = [
+        ("/mode", true, Key::AgentSlashMode),
+        ("/effort", true, Key::AgentSlashEffort),
+        ("/permissions", false, Key::AgentSlashPermissions),
+        ("/allow", true, Key::AgentSlashAllow),
+        ("/deny", true, Key::AgentSlashDeny),
+        ("/default", true, Key::AgentSlashDefault),
+        ("/compact", false, Key::AgentSlashCompact),
+        ("/read-only", false, Key::AgentSlashMode),
+        ("/edit", false, Key::AgentSlashMode),
+        ("/plan", false, Key::AgentSlashMode),
+        ("/bypass", false, Key::AgentSlashMode),
+    ];
+    let Some((command, argument)) = value.split_once(' ') else {
+        return commands
+            .into_iter()
+            .filter(|(name, _, _)| name.starts_with(value))
+            .map(|(name, takes_argument, description)| SlashMatch {
+                fill: format!("{name}{}", if takes_argument { " " } else { "" }),
+                label: name.to_string(),
+                description,
+            })
+            .collect();
+    };
+    let argument = argument.trim_start();
+    let (values, description): (Vec<&str>, Key) = match command {
+        "/mode" => (
+            vec!["read-only", "edit", "plan", "bypass"],
+            Key::AgentSlashMode,
+        ),
+        "/effort" => (
+            vec![
+                "default", "none", "minimal", "low", "medium", "high", "xhigh", "max",
+            ],
+            Key::AgentSlashEffort,
+        ),
+        "/allow" => (
+            std::iter::once("*")
+                .chain(std::iter::once("edit_project.*"))
+                .chain(OPERATIONS.iter().copied())
+                .collect(),
+            Key::AgentSlashAllow,
+        ),
+        "/deny" => (
+            std::iter::once("*")
+                .chain(std::iter::once("edit_project.*"))
+                .chain(OPERATIONS.iter().copied())
+                .collect(),
+            Key::AgentSlashDeny,
+        ),
+        "/default" => (
+            std::iter::once("*")
+                .chain(std::iter::once("edit_project.*"))
+                .chain(OPERATIONS.iter().copied())
+                .collect(),
+            Key::AgentSlashDefault,
+        ),
+        _ => return Vec::new(),
+    };
+    values
+        .into_iter()
+        .filter(|candidate| candidate.starts_with(argument))
+        .map(|candidate| SlashMatch {
+            fill: format!("{command} {candidate}"),
+            label: candidate.to_string(),
+            description,
+        })
+        .collect()
 }
 
 impl AurisApp {
@@ -84,7 +203,21 @@ impl AurisApp {
         self.agent_chat.controls.permits.clear();
         let previous = self.settings.agent.clone();
         self.settings.agent.policy.mode = mode;
+        self.agent_chat.controls.mode_menu = false;
         self.save_agent_policy(previous);
+        self.focus_agent_field(AgentField::Chat);
+    }
+
+    pub(super) fn agent_effort(&mut self, effort: ReasoningEffort) {
+        let previous = (self.agent_chat.effort, self.agent_chat.thinking);
+        self.agent_chat.effort = effort;
+        self.agent_chat.thinking = None;
+        self.agent_chat.controls.effort_menu = false;
+        if let Err(error) = self.agent_write_through_with(|settings| settings.save()) {
+            (self.agent_chat.effort, self.agent_chat.thinking) = previous;
+            self.agent_chat
+                .push_entry(ChatEntry::Error(error.to_string()));
+        }
         self.focus_agent_field(AgentField::Chat);
     }
 
@@ -260,6 +393,15 @@ impl AurisApp {
                     self.set_agent_rules_open(true);
                 }
                 "/compact" => self.agent_compact(),
+                "/effort" => match ReasoningEffort::named(value) {
+                    Some(effort) => self.agent_effort(effort),
+                    None => {
+                        self.agent_chat.push_entry(ChatEntry::Error(
+                            "/effort default | none | minimal | low | medium | high | xhigh | max"
+                                .into(),
+                        ));
+                    }
+                },
                 "/mode" => {
                     self.agent_chat.push_entry(ChatEntry::Error(
                         "/mode read_only | edit | plan | bypass".into(),
@@ -293,26 +435,68 @@ impl AurisApp {
     pub(super) fn agent_controls(&self, cx: &mut gpui::Context<Self>) -> AnyElement {
         let theme = &self.theme;
         let operation_busy = self.agent_operation_busy();
-        let mut actions = div().flex().flex_wrap().gap_1();
-        for mode in [Mode::ReadOnly, Mode::Edit, Mode::Plan, Mode::Bypass] {
-            actions = actions.child(button_enabled(
-                SharedString::from(format!("agent-mode-{}", mode.name())),
-                self.t(mode_key(mode)),
-                ButtonStyle::Normal,
-                ButtonState::available(self.settings.agent.policy.mode == mode, !operation_busy),
-                if mode == Mode::Bypass {
-                    theme.warning
-                } else {
-                    theme.accent
-                },
+        let mode = self.settings.agent.policy.mode;
+        let effort = self.settings.agent.effort;
+        let mut row = div()
+            .flex()
+            .flex_wrap()
+            .gap_1()
+            .p_1()
+            .border_b_1()
+            .border_color(theme.border);
+        row = row
+            .child(div().flex_1().min_w_0().child(self.dropdown(
+                "agent-mode-menu",
+                format!(
+                    "{}: {}",
+                    self.t(Key::AgentApprovalMode),
+                    self.t(mode_key(mode))
+                ),
+                self.agent_chat.controls.mode_menu,
                 theme,
-                cx.listener(move |this, _, _, cx| {
-                    this.agent_mode(mode);
-                    cx.notify();
-                }),
-            ));
-        }
-        let compact = bounded_button_enabled(
+                |this, _| {
+                    if !this.agent_operation_busy() {
+                        this.agent_chat.controls.mode_menu = !this.agent_chat.controls.mode_menu;
+                        this.agent_chat.controls.effort_menu = false;
+                    }
+                },
+                cx,
+            )))
+            .child(div().flex_1().min_w_0().child(self.dropdown(
+                "agent-effort-menu",
+                format!(
+                    "{}: {}",
+                    self.t(Key::AgentEffort),
+                    self.t(effort_key(effort))
+                ),
+                self.agent_chat.controls.effort_menu,
+                theme,
+                |this, _| {
+                    if !this.agent_operation_busy() {
+                        this.agent_chat.controls.effort_menu =
+                            !this.agent_chat.controls.effort_menu;
+                        this.agent_chat.controls.mode_menu = false;
+                    }
+                },
+                cx,
+            )));
+        row = row.child(button_enabled(
+            "agent-permissions",
+            self.t(Key::AgentPermissions),
+            ButtonStyle::Normal,
+            ButtonState::available(self.agent_chat.controls.rules_open, !operation_busy),
+            theme.accent,
+            theme,
+            cx.listener(|this, _, _, cx| {
+                if let Some(field) = this.agent_chat.field_mut() {
+                    field.unmark();
+                }
+                this.agent_chat.focused = None;
+                this.set_agent_rules_open(!this.agent_chat.controls.rules_open);
+                cx.notify();
+            }),
+        ));
+        row = row.child(bounded_button_enabled(
             "agent-compact",
             self.t(Key::AgentCompact),
             ButtonStyle::Normal,
@@ -323,30 +507,50 @@ impl AurisApp {
                 this.agent_compact();
                 cx.notify();
             }),
-        );
+        ));
+        let mode_names = [Mode::ReadOnly, Mode::Edit, Mode::Plan, Mode::Bypass]
+            .map(|choice| self.t(mode_key(choice)).to_string());
+        let efforts = effort_choices(self.agent_chat.provider_openai);
+        let effort_names: Vec<String> = efforts
+            .iter()
+            .map(|choice| self.t(effort_key(*choice)).to_string())
+            .collect();
         div()
             .flex()
             .flex_col()
-            .gap_1()
-            .p_1()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(actions)
-            .child(compact)
-            .child(disclosure(
-                "agent-permissions",
-                self.t(Key::AgentPermissions),
-                self.agent_chat.controls.rules_open,
-                theme,
-                cx.listener(|this, _, _, cx| {
-                    if let Some(field) = this.agent_chat.field_mut() {
-                        field.unmark();
-                    }
-                    this.agent_chat.focused = None;
-                    this.set_agent_rules_open(!this.agent_chat.controls.rules_open);
-                    cx.notify();
-                }),
-            ))
+            .child(row)
+            .when(self.agent_chat.controls.mode_menu, |this| {
+                this.child(self.option_rows(
+                    "agent-mode-option",
+                    &mode_names,
+                    theme,
+                    |this, index, _| {
+                        if let Some(mode) = [Mode::ReadOnly, Mode::Edit, Mode::Plan, Mode::Bypass]
+                            .get(index)
+                            .copied()
+                        {
+                            this.agent_mode(mode);
+                        }
+                    },
+                    cx,
+                ))
+            })
+            .when(self.agent_chat.controls.effort_menu, |this| {
+                this.child(self.option_rows(
+                    "agent-effort-option",
+                    &effort_names,
+                    theme,
+                    move |this, index, _| {
+                        if let Some(effort) = effort_choices(this.agent_chat.provider_openai)
+                            .get(index)
+                            .copied()
+                        {
+                            this.agent_effort(effort);
+                        }
+                    },
+                    cx,
+                ))
+            })
             .into_any_element()
     }
 
@@ -838,4 +1042,20 @@ mod tests {
     }
 
     use auris_session::agent_policy::Policy as PolicyForTest;
+
+    #[test]
+    fn slash_completion_covers_commands_arguments_and_plain_text() {
+        let commands = slash_matches("/m");
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].fill, "/mode ");
+
+        let modes = slash_matches("/mode p");
+        assert_eq!(modes.len(), 1);
+        assert_eq!(modes[0].fill, "/mode plan");
+
+        let effort = slash_matches("/effort h");
+        assert_eq!(effort.len(), 1);
+        assert_eq!(effort[0].fill, "/effort high");
+        assert!(slash_matches("write a chorus").is_empty());
+    }
 }

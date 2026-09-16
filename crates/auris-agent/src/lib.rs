@@ -8,15 +8,19 @@
 use std::io::Read;
 use std::path::PathBuf;
 
+use auris_session::ReasoningEffort;
 use auris_toolbox as toolbox;
+use futures::StreamExt;
 
 use rig::agent::{
-    AgentHook, HookContext, ToolCall, ToolCallAction, ToolResultAction, ToolResultEvent,
+    AgentHook, HookContext, MultiTurnStreamItem, ToolCall, ToolCallAction, ToolResultAction,
+    ToolResultEvent,
 };
 use rig::completion::Message;
-use rig::message::ToolResultContent;
+use rig::message::{ReasoningContent, ToolResultContent};
 use rig::prelude::*;
 use rig::providers::{ollama, openai};
+use rig::streaming::StreamedAssistantContent;
 use rig::tool::{ToolExecutionError, ToolOutput};
 use rig::{Agent, AgentBuilder};
 
@@ -39,6 +43,8 @@ struct Options {
     output_tokens: u32,
     /// Ollama thinking override.
     thinking: Option<bool>,
+    /// Provider-native reasoning effort.
+    effort: ReasoningEffort,
     /// The API dialect.
     provider: Provider,
     /// Base URL override; each provider has its own default.
@@ -107,6 +113,7 @@ fn parse_args(
     let mut context_tokens = prefs.context_tokens.unwrap_or(32768);
     let output_tokens = prefs.output_tokens.unwrap_or(4096);
     let mut thinking = prefs.thinking;
+    let mut effort = prefs.effort;
     let mut json = false;
     let mut live_session = false;
     let mut attachments: Vec<String> = Vec::new();
@@ -146,6 +153,14 @@ fn parse_args(
                     "auto" => None,
                     _ => return Err("--thinking must be on, off or auto".into()),
                 }
+            }
+            "--effort" => {
+                let value = value_of("--effort")?;
+                effort = ReasoningEffort::named(&value).ok_or_else(|| {
+                    "--effort must be default, none, minimal, low, medium, high, xhigh or max"
+                        .to_string()
+                })?;
+                thinking = None;
             }
             "--attach" => attachments.push(value_of("--attach")?),
             flag if flag.starts_with('-') => {
@@ -228,6 +243,7 @@ fn parse_args(
         context_tokens,
         output_tokens,
         thinking,
+        effort,
         provider,
         url,
         model,
@@ -628,8 +644,14 @@ fn build_with(
             }
             let client = builder.build().map_err(could_not)?;
             let mut params = serde_json::json!({"num_ctx":options.context_tokens});
-            if let Some(thinking) = options.thinking {
-                params["think"] = thinking.into();
+            match options.effort {
+                ReasoningEffort::Default => {
+                    if let Some(thinking) = options.thinking {
+                        params["think"] = thinking.into();
+                    }
+                }
+                ReasoningEffort::None => params["think"] = false.into(),
+                effort => params["think"] = effort.as_str().into(),
             }
             Ok(armed(
                 // Tool arguments benefit from repeatability; do not inherit a local model's
@@ -649,7 +671,13 @@ fn build_with(
                 builder = builder.base_url(url);
             }
             let client = builder.build().map_err(could_not)?;
-            Ok(armed(client.agent(&options.model)))
+            let mut builder = client.agent(&options.model);
+            if options.effort != ReasoningEffort::Default {
+                builder = builder.additional_params(serde_json::json!({
+                    "reasoning_effort": options.effort.as_str()
+                }));
+            }
+            Ok(armed(builder))
         }
     }
 }
@@ -1039,6 +1067,7 @@ fn result_event(event: ToolResultEvent<'_>) -> serde_json::Value {
 impl AgentHook for Reporter {
     async fn on_tool_call(&self, _ctx: &HookContext, event: ToolCall<'_>) -> ToolCallAction {
         if let Some(bridge) = &self.bridge {
+            bridge.emit(serde_json::json!({"event":"phase", "phase":"tool"}));
             bridge.emit(call_event(event));
         }
         match permissions::authorize(self.bridge.as_ref(), event.tool_name, event.args).await {
@@ -1057,6 +1086,18 @@ impl AgentHook for Reporter {
         }
         ToolResultAction::Keep
     }
+}
+
+fn reasoning_text(reasoning: &rig::message::Reasoning) -> String {
+    reasoning
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            ReasoningContent::Text { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One prompt through the loop: ask, narrate, answer — and hand back the transcript so a
@@ -1083,29 +1124,72 @@ async fn converse_with_bridge(
         }
     }
     let activity = guard.activity.clone();
+    let event_bridge = bridge.clone();
     let asked = prompt.clone();
     let request = agent
-        .prompt(prompt)
+        .stream_prompt(prompt)
         .history(history.clone())
         .max_turns(max_turns)
         .max_invalid_tool_call_retries(2)
         .add_hook(guard);
     let request = request.add_hook(Reporter { bridge });
-    let response = runtime::await_active(request.extended_details(), activity).await?;
-    // The run's usage sums every model call; only the final request measures occupied context.
-    let context_tokens = response
-        .completion_calls
-        .last()
-        .map_or(0, |call| call.usage.input_tokens);
-    // The runner hands the accumulated transcript back; when it does not, the two ends of the
-    // exchange are still worth keeping — better a thin memory than none.
-    let history = response.messages.unwrap_or_else(|| {
-        let mut kept = history;
-        kept.push(asked);
-        kept.push(Message::assistant(&response.output));
-        kept
-    });
-    Ok((response.output, history, response.usage, context_tokens))
+    let mut stream = request.await;
+    let mut reasoning_delta_seen = false;
+    let mut context_tokens = 0;
+    loop {
+        let item =
+            runtime::await_active(async { stream.next().await.transpose() }, activity.clone())
+                .await?
+                .ok_or_else(|| "model stream ended without a final response".to_string())?;
+        *activity.lock().unwrap() = (std::time::Instant::now(), 0);
+        match item {
+            MultiTurnStreamItem::StreamAssistantItem(content) => match content {
+                StreamedAssistantContent::Text(text) => {
+                    if let Some(bridge) = &event_bridge {
+                        bridge.emit(serde_json::json!({"event":"phase", "phase":"decode"}));
+                        bridge.emit(serde_json::json!({"event":"text_delta", "text":text.text}));
+                    }
+                }
+                StreamedAssistantContent::ReasoningDelta { reasoning, .. } => {
+                    reasoning_delta_seen = true;
+                    if let Some(bridge) = &event_bridge {
+                        bridge.emit(serde_json::json!({"event":"phase", "phase":"thinking"}));
+                        bridge
+                            .emit(serde_json::json!({"event":"reasoning_delta", "text":reasoning}));
+                    }
+                }
+                StreamedAssistantContent::Reasoning { reasoning, .. } if !reasoning_delta_seen => {
+                    let text = reasoning_text(&reasoning);
+                    if !text.is_empty()
+                        && let Some(bridge) = &event_bridge
+                    {
+                        bridge.emit(serde_json::json!({"event":"phase", "phase":"thinking"}));
+                        bridge.emit(serde_json::json!({"event":"reasoning_delta", "text":text}));
+                    }
+                }
+                _ => {}
+            },
+            MultiTurnStreamItem::CompletionCall(call) => {
+                context_tokens = call.usage.input_tokens;
+                reasoning_delta_seen = false;
+            }
+            MultiTurnStreamItem::FinalResponse(response) => {
+                let kept = match response.messages {
+                    Some(new_messages) => {
+                        history.extend(new_messages);
+                        history
+                    }
+                    None => {
+                        history.push(asked);
+                        history.push(Message::assistant(&response.output));
+                        history
+                    }
+                };
+                return Ok((response.output, kept, response.usage, context_tokens));
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Waits for a provider operation without allowing a dead connection to park its caller forever.
@@ -1623,13 +1707,40 @@ mod tests {
                         break String::from_utf8_lossy(&body).into_owned();
                     }
                 };
-                log.lock().unwrap().push(body);
+                log.lock().unwrap().push(body.clone());
                 let Some(reply) = responses.get(index) else {
                     break;
                 };
+                let (content_type, reply) = if body.contains("\"stream\":true")
+                    && String::from_utf8_lossy(&raw).contains("/chat/completions")
+                {
+                    let mut chunk: serde_json::Value = serde_json::from_str(reply).unwrap();
+                    chunk["object"] = "chat.completion.chunk".into();
+                    for choice in chunk["choices"].as_array_mut().unwrap() {
+                        let mut delta = choice
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("message")
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        if let Some(calls) = delta["tool_calls"].as_array_mut() {
+                            for (index, call) in calls.iter_mut().enumerate() {
+                                call["index"] = index.into();
+                            }
+                        }
+                        choice["delta"] = delta;
+                    }
+                    (
+                        "text/event-stream",
+                        format!("data: {}\n\ndata: [DONE]\n\n", chunk),
+                    )
+                } else if body.contains("\"stream\":true") {
+                    ("application/x-ndjson", format!("{reply}\n"))
+                } else {
+                    ("application/json", reply.clone())
+                };
                 let _ = write!(
                     connection,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                    "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n\
                      Content-Length: {}\r\nConnection: close\r\n\r\n{reply}",
                     reply.len()
                 );
@@ -1708,6 +1819,59 @@ mod tests {
             "Ollama options must not be nested twice"
         );
         assert!(parse("--model mock --context-tokens 4096", &no_env).is_err());
+    }
+
+    #[tokio::test]
+    async fn reasoning_effort_reaches_both_provider_request_formats() {
+        let ollama = serde_json::json!({
+            "model":"mock", "created_at":"2026-09-15T00:00:00Z",
+            "message":{"role":"assistant","content":"ready"},
+            "done":true, "done_reason":"stop", "prompt_eval_count":10, "eval_count":1,
+        });
+        let (url, seen) = mock_server(vec![ollama.to_string()]);
+        let Command::Run(options) =
+            parse(&format!("--model mock --url {url} --effort high"), &no_env).unwrap()
+        else {
+            panic!()
+        };
+        let agent = build_agent(&options).unwrap();
+        converse_with_bridge(
+            &agent,
+            Message::user("hello"),
+            Vec::new(),
+            2,
+            None,
+            options.context_limit(),
+            options.output_tokens,
+        )
+        .await
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&seen.lock().unwrap()[0]).unwrap();
+        assert_eq!(body["think"], "high");
+
+        let done = completion(r#"{"role":"assistant","content":"ready"}"#, "stop");
+        let (url, seen) = mock_server(vec![done]);
+        let Command::Run(options) = parse(
+            &format!("--provider openai --model mock --url {url} --effort low"),
+            &no_env,
+        )
+        .unwrap() else {
+            panic!()
+        };
+        let agent = build_agent(&options).unwrap();
+        converse_with_bridge(
+            &agent,
+            Message::user("hello"),
+            Vec::new(),
+            2,
+            None,
+            options.context_limit(),
+            options.output_tokens,
+        )
+        .await
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_str(&seen.lock().unwrap()[0]).unwrap();
+        assert_eq!(body["reasoning_effort"], "low");
     }
 
     #[tokio::test]
@@ -1926,6 +2090,7 @@ mod tests {
             context_tokens: 32768,
             output_tokens: 4096,
             thinking: None,
+            effort: ReasoningEffort::Default,
             provider: Provider::OpenAi,
             url: Some(url),
             model: "mock".to_string(),
@@ -2001,6 +2166,7 @@ mod tests {
             context_tokens: 32768,
             output_tokens: 4096,
             thinking: None,
+            effort: ReasoningEffort::Default,
             provider: Provider::OpenAi,
             url: Some(url),
             model: "mock".to_string(),

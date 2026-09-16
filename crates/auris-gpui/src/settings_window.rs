@@ -5,9 +5,9 @@
 //! and applies every change through that, so there is still exactly one owner of the session.
 
 use auris_i18n::{Key, Language, messages};
-use auris_session::AgentPreferences;
 use auris_session::prelude::*;
 use auris_session::session::AudioStatus;
+use auris_session::{AgentPreferences, ReasoningEffort};
 use gpui::{
     AnyElement, App, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
     WeakEntity, Window, div, prelude::*, px,

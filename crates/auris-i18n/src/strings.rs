@@ -1907,7 +1907,8 @@ new のオプション
     AgentEditMode { en: "Edit", ja: "編集" }
     AgentPlanMode { en: "Plan", ja: "プラン" }
     AgentBypassMode { en: "Bypass", ja: "バイパス" }
-    AgentPermissions { en: "Permissions", ja: "操作の許可" }
+    AgentApprovalMode { en: "Approval mode", ja: "承認モード" }
+    AgentPermissions { en: "Permission rules…", ja: "許可ルール…" }
     AgentPermissionHelp { en: "Deny rules always win. Read-only and Plan block changes; Edit allows ordinary edits. Bypass skips confirmation. Exact rules cycle Default → Allow → Deny. Broad * rules switch only between Default and Deny; use /allow name for deliberate broad access. Commands: /mode bypass, /allow name, /deny name, /default name, /permissions.", ja: "禁止ルールは常に優先されます。読み取り専用とプランは変更を禁止し、編集は通常の編集を許可、バイパスは確認を省略します。個別ルールは 標準 → 許可 → 禁止 の順で切り替わります。* を含む広域ルールは 標準 と 禁止 のみを切り替えます。広域の許可が必要な場合に限り /allow 操作名を使ってください。ほかに /mode bypass、/allow 操作名、/deny 操作名、/default 操作名、/permissions も使えます。" }
     AgentRuleDefault { en: "Default", ja: "標準" }
     AgentRuleAllow { en: "Allow", ja: "許可" }
@@ -1917,11 +1918,11 @@ new のオプション
     AgentAllowOnce { en: "Allow once", ja: "今回のみ許可" }
     AgentAllowAlways { en: "Always allow this operation", ja: "この操作を常に許可" }
     AgentDenyOnce { en: "Deny", ja: "拒否" }
-    AgentAwaitingApproval { en: "Waiting for permission", ja: "操作の許可を待っています" }
-    AgentCompact { en: "Compact context", ja: "文脈を圧縮" }
-    AgentCompacting { en: "Summarizing earlier conversation…", ja: "以前の会話を要約しています…" }
-    AgentCompactEmpty { en: "Start a conversation before compacting. /compact summarizes earlier turns.", ja: "会話を始めてから圧縮できます。/compact でも以前の会話を要約できます。" }
-    AgentAutoCompact { en: "Auto-compact", ja: "自動圧縮" }
+    AgentAwaitingApproval { en: "Waiting for approval", ja: "操作の承認待ち" }
+    AgentCompact { en: "Summarize context", ja: "会話を要約" }
+    AgentCompacting { en: "Summarizing earlier conversation…", ja: "過去の会話を要約中…" }
+    AgentCompactEmpty { en: "Start a conversation before summarizing. /compact summarizes earlier turns.", ja: "会話を始めてから要約できます。/compact は過去のやり取りを要約します。" }
+    AgentAutoCompact { en: "Auto-summarize", ja: "自動要約" }
     AgentCompactOff { en: "Off", ja: "オフ" }
     AgentModelLabel { en: "Model", ja: "モデル" }
     AgentUrlLabel { en: "Base URL", ja: "ベースURL" }
@@ -1934,6 +1935,31 @@ new のオプション
     AgentThinkingAuto { en: "Model default", ja: "モデルの標準設定" }
     AgentThinkingOn { en: "On", ja: "有効" }
     AgentThinkingOff { en: "Off", ja: "無効" }
+    AgentEffort { en: "Reasoning effort", ja: "推論レベル" }
+    AgentEffortDefault { en: "Model default", ja: "モデルの既定値" }
+    AgentEffortNone { en: "Off", ja: "オフ" }
+    AgentEffortMinimal { en: "Minimal", ja: "最小" }
+    AgentEffortLow { en: "Low", ja: "低" }
+    AgentEffortMedium { en: "Medium", ja: "中" }
+    AgentEffortHigh { en: "High", ja: "高" }
+    AgentEffortXhigh { en: "Extra high", ja: "非常に高い" }
+    AgentEffortMax { en: "Maximum", ja: "最大" }
+    AgentPhaseIdle { en: "Ready", ja: "待機" }
+    AgentPhaseWaiting { en: "Waiting for model", ja: "モデルの応答待ち" }
+    AgentPhasePrefill { en: "Reading context", ja: "入力を処理中" }
+    AgentPhaseThinking { en: "Reasoning", ja: "推論中" }
+    AgentPhaseDecode { en: "Generating", ja: "応答を生成中" }
+    AgentPhaseTool { en: "Running tool", ja: "ツールを実行中" }
+    AgentReasoningLog { en: "Reasoning", ja: "推論ログ" }
+    AgentToolArguments { en: "Arguments", ja: "引数" }
+    AgentToolResult { en: "Result", ja: "実行結果" }
+    AgentSlashMode { en: "Change approval mode", ja: "承認モードを変更" }
+    AgentSlashEffort { en: "Change reasoning effort", ja: "推論レベルを変更" }
+    AgentSlashPermissions { en: "Show permission rules", ja: "許可ルールを表示" }
+    AgentSlashAllow { en: "Always allow an operation", ja: "操作を常に許可" }
+    AgentSlashDeny { en: "Always deny an operation", ja: "操作を常に禁止" }
+    AgentSlashDefault { en: "Reset an operation rule", ja: "許可ルールを標準に戻す" }
+    AgentSlashCompact { en: "Summarize earlier context", ja: "過去の会話を要約" }
     AgentKeyEnvLabel { en: "API key variable", ja: "APIキーの環境変数" }
     AgentWorking { en: "Working…", ja: "作業中…" }
     AgentCompleted { en: "Completed", ja: "完了" }

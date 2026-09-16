@@ -18,6 +18,7 @@ path = "src/lib.rs"
 [dependencies]
 auris-session.workspace = true
 auris-toolbox.workspace = true
+futures.workspace = true
 log.workspace = true
 rig = "0.42"
 # Audio attachments ride the wire base64-encoded. The same version rig resolves, so no
