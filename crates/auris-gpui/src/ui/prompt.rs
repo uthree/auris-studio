@@ -27,7 +27,8 @@ use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button, button_enabled
 /// A key and a chord are typed rather than picked from a list because there is no list worth
 /// showing: twelve tonics times thirteen scales is a hundred and fifty-six menu rows, and
 /// [`MusicalKey::parse`] already reads `Bb minor` — the thing a musician would have written down
-/// anyway. [`Numeral::parse`] does the same for `bVII7`.
+/// anyway. [`Session::set_chord_from_text`] reads both `bVII7` and an absolute name such as
+/// `F#m`, interpreting the latter in the key at that point on the timeline.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PromptTarget {
     /// A track's name.
@@ -359,15 +360,14 @@ impl Notation {
     }
 }
 
-/// The chord degrees a person actually writes, offered under the chord field.
+/// The chord degrees and qualities a person actually writes, offered under the chord field.
 ///
-/// Roman numerals and not chord names, because numerals are what the document stores: `V` is `V`
-/// in every key, which is the whole reason the harmony lane holds a key and degrees rather than a
-/// list of notes. The diatonic seven, then the sevenths, then the borrowings that turn up in
-/// nearly every pop song.
+/// Numerals lead because they are what the document stores: `V` is `V` in every key. Absolute
+/// chord names are still accepted and translated against the current key. The quality examples
+/// make the less ordinary shapes discoverable without turning the completion row into a table.
 const CHORD_VOCABULARY: &[&str] = &[
     "I", "ii", "iii", "IV", "V", "vi", "vii", "Imaj7", "ii7", "iii7", "IVmaj7", "V7", "vi7",
-    "bIII", "bVI", "bVII", "iv", "bVII7",
+    "IIdim", "Isus2", "Isus4", "Iaug", "V7sus4", "bIII", "bVI", "bVII", "iv", "bVII7",
 ];
 
 /// The section names a person actually writes, offered under the section field.
@@ -878,7 +878,7 @@ impl AurisApp {
                     }
                 }
             }
-            // These two parse rather than rename, and a rejection has to say what was rejected:
+            // These parse rather than rename, and a rejection has to say what was rejected:
             // `Bbb minor` and `H7` look plausible enough that "invalid input" would not help.
             PromptTarget::Key(at) => match MusicalKey::parse(&text) {
                 Some(key) => {
@@ -890,16 +890,14 @@ impl AurisApp {
                     return;
                 }
             },
-            PromptTarget::Chord(at) => match Numeral::parse(&text) {
-                Some(chord) => {
-                    self.session.set_chord(at, chord);
+            PromptTarget::Chord(at) => {
+                if self.session.set_chord_from_text(at, &text) {
                     Ok(())
-                }
-                None => {
+                } else {
                     self.reject_prompt(messages::not_a_chord(self.language(), &text));
                     return;
                 }
-            },
+            }
             // Any text is a name, so there is nothing to parse and nothing to refuse; the
             // empty case was already turned away above, and removing a section is the menu's
             // job rather than an empty field's.
@@ -2577,6 +2575,15 @@ mod tests {
     }
 
     #[test]
+    fn unusual_chord_qualities_are_offered_by_name() {
+        let diminished = completions(PromptTarget::Chord(AT), "dim");
+        assert!(diminished.contains(&"IIdim"), "{diminished:?}");
+
+        let suspended = completions(PromptTarget::Chord(AT), "sus2");
+        assert!(suspended.contains(&"Isus2"), "{suspended:?}");
+    }
+
+    #[test]
     fn the_list_never_grows_into_a_table() {
         for typed in ["", "i", "v", "b", "major", "minor"] {
             for target in [PromptTarget::Chord(AT), PromptTarget::Key(AT)] {
@@ -3172,6 +3179,29 @@ mod window_tests {
                 "Return accepts the foreground prompt"
             );
             assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "7/8");
+        });
+    }
+
+    #[gpui::test]
+    fn chord_prompt_accepts_an_absolute_name_in_the_current_key(cx: &mut TestAppContext) {
+        let at = Ticks(3_840);
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .set_key(at, MusicalKey::parse("D major").unwrap());
+            this.open_prompt(Prompt::new(
+                "Chord",
+                PromptTarget::Chord(at - Ticks(100)),
+                "Cdim",
+            ));
+        });
+        paint(&app, cx);
+
+        cx.simulate_keystrokes("enter");
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.session.harmony().chord_at(at), Chord::parse("Cdim"));
         });
     }
 

@@ -234,6 +234,43 @@ impl Numeral {
         })
     }
 
+    /// Reads either a roman numeral or an absolute chord symbol against `key`.
+    ///
+    /// Absolute symbols such as `F#m`, `Cdim` and `Gsus2` are converted to the degree that
+    /// produces the same chord in `key`. The quality and slash bass are kept explicit, so the
+    /// conversion never changes what was written even when it is chromatic or non-diatonic.
+    pub fn parse_in_key(text: &str, key: Key) -> Option<Self> {
+        Self::parse(text)
+            .or_else(|| Chord::parse(text).map(|chord| Self::from_chord_in(chord, key)))
+    }
+
+    /// Names an absolute `chord` as a roman numeral in `key` without changing its notes.
+    pub fn from_chord_in(chord: Chord, key: Key) -> Self {
+        let degree_of_pitch = |pitch| {
+            let preferred = degree_of(key, pitch);
+            // `degree_of` prefers conventional spellings, but an unaltered degree is read from
+            // the actual scale. Check every spelling through the reader so chromatic roots in a
+            // minor key and slash basses round-trip exactly.
+            std::iter::once(preferred)
+                .chain(
+                    [0, -1, 1, -2, 2]
+                        .into_iter()
+                        .flat_map(|accidental| (1..=7).map(move |degree| (degree, accidental))),
+                )
+                .find(|(degree, accidental)| {
+                    let mut numeral = Self::new(*degree, false);
+                    numeral.accidental = *accidental;
+                    numeral.chord_in(key).root == pitch
+                })
+                .expect("every pitch class has a roman-numeral spelling")
+        };
+        let (degree, accidental) = degree_of_pitch(chord.root);
+        let mut numeral = Self::new(degree, chord.quality.is_minor()).with_quality(chord.quality);
+        numeral.accidental = accidental;
+        numeral.bass_degree = chord.bass.map(degree_of_pitch);
+        numeral
+    }
+
     /// The same chord, named from a different key.
     ///
     /// This is what lets a progression written in one mode be asked for in the other. The chords
@@ -625,6 +662,33 @@ mod tests {
         // the key, not of the chord, so `/5` is the key's fifth wherever the chord sits.
         assert_eq!(chord_of("I/3", "Eb major"), "Eb/G");
         assert_eq!(chord_of("IV/5", "Eb major"), "Ab/Bb");
+    }
+
+    #[test]
+    fn absolute_chord_symbols_are_named_without_changing_the_chord() {
+        let key = key("D major");
+        for symbol in [
+            "D", "F#m", "Cdim", "Esus2", "Asus4", "Faug", "A7sus4", "Bm/D",
+        ] {
+            let chord = Chord::parse(symbol).unwrap();
+            let numeral = Numeral::parse_in_key(symbol, key).unwrap();
+            assert_eq!(numeral.chord_in(key), chord, "{symbol} became {numeral}");
+            assert_eq!(
+                Numeral::parse(&numeral.to_text()).unwrap().chord_in(key),
+                chord,
+                "the stored numeral for {symbol} did not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn roman_numerals_stay_relative_when_parsed_in_a_key() {
+        let parsed = Numeral::parse_in_key("vi", key("D major")).unwrap();
+        assert_eq!(parsed, Numeral::parse("vi").unwrap());
+        assert_eq!(
+            parsed.quality, None,
+            "a bare numeral became an absolute chord"
+        );
     }
 
     #[test]

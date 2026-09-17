@@ -108,6 +108,21 @@ impl Session {
         self.project.harmony.chords.set_point(at, Some(chord));
     }
 
+    /// Reads and sets a roman numeral or absolute chord symbol at `at`.
+    ///
+    /// An absolute symbol is interpreted in the key and scale at the snapped destination, then
+    /// stored as a numeral so it continues to follow later key changes. Returns `false` without
+    /// editing the project when `text` is not a chord.
+    pub fn set_chord_from_text(&mut self, at: Ticks, text: &str) -> bool {
+        let at = self.snap_harmony(at);
+        let key = self.project.harmony.key_at(at);
+        let Some(chord) = Numeral::parse_in_key(text, key) else {
+            return false;
+        };
+        self.set_chord(at, chord);
+        true
+    }
+
     /// Removes the chord change in force at `at`, letting the chord before it run through.
     ///
     /// Found through [`ChordMap::change_at`](auris_core::harmony::ChordMap::change_at) rather
@@ -365,7 +380,7 @@ mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, Scratch, numeral, session, with_a_progression};
     use auris_core::time::TimeSignature;
-    use auris_core::{ClipPreset, ClipRecipe, Note};
+    use auris_core::{ClipPreset, ClipRecipe, Note, theory::chord::Quality};
 
     #[test]
     fn a_section_is_written_on_a_bar_line_and_found_from_anywhere_inside_it() {
@@ -508,6 +523,36 @@ mod tests {
             BAR + Ticks(960),
             "rounded up to beat two"
         );
+    }
+
+    #[test]
+    fn an_absolute_chord_uses_the_key_at_its_snapped_destination() {
+        let mut session = self::tests::session();
+        session.set_key(BAR, MusicalKey::parse("D major").unwrap());
+
+        assert!(session.set_chord_from_text(BAR - Ticks(100), "Cdim"));
+        let point = &session.harmony().chords.points()[0];
+        assert_eq!(point.tick, BAR);
+        let numeral = point.chord.unwrap();
+        assert_eq!((numeral.degree, numeral.accidental), (7, -1));
+        assert_eq!(numeral.quality, Some(Quality::Diminished));
+        assert_eq!(session.harmony().chord_at(BAR), Chord::parse("Cdim"));
+
+        assert!(session.set_chord_from_text(BAR + Ticks(900), "Esus2"));
+        assert_eq!(
+            session.harmony().chord_at(BAR + Ticks::QUARTER),
+            Chord::parse("Esus2")
+        );
+    }
+
+    #[test]
+    fn invalid_chord_text_does_not_edit_the_project() {
+        let mut session = self::tests::session();
+        let before = session.project().clone();
+
+        assert!(!session.set_chord_from_text(BAR, "Hwhat"));
+        assert_eq!(session.project(), &before);
+        assert!(!session.can_undo());
     }
 
     #[test]

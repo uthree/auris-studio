@@ -676,8 +676,8 @@ messages! {
 
     /// The text typed into the chord prompt is not a chord.
     fn not_a_chord(text: &str) {
-        en: "`{text}` is not a chord — try `IV`, `vi` or `bVII7`",
-        ja: "`{text}` はコードではありません — `IV`、`vi`、`bVII7` のように"
+        en: "`{text}` is not a chord — try `IV`, `F#m`, `IIdim` or `Csus2`",
+        ja: "`{text}` はコードではありません — `IV`、`F#m`、`IIdim`、`Csus2` のように"
     }
 
     /// The text typed into the motif prompt is not a motif.
