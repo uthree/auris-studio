@@ -633,6 +633,8 @@ pub struct Prompt {
     /// Chord names depend on the key at the point being edited, so [`AurisApp::open_prompt`]
     /// installs them when the sheet enters the window. Other fields keep using their static list.
     vocabulary: Option<Vec<String>>,
+    /// The key that names and colours the dynamic chord vocabulary.
+    chord_key: Option<MusicalKey>,
 }
 
 impl Prompt {
@@ -651,6 +653,7 @@ impl Prompt {
             error: None,
             completing: None,
             vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -662,6 +665,7 @@ impl Prompt {
             error: None,
             completing: None,
             vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -676,6 +680,7 @@ impl Prompt {
             error: None,
             completing: None,
             vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -766,10 +771,24 @@ impl Prompt {
         }
     }
 
-    /// Replaces the notation's static vocabulary with entries derived from document state.
-    fn set_vocabulary(&mut self, vocabulary: Vec<String>) {
+    /// The scale degree that supplies an offered chord's colour.
+    fn completion_degree(&self, entry: &str) -> Option<u8> {
+        match self.target()?.notation()? {
+            Notation::Chord => self
+                .chord_key
+                .and_then(|key| Numeral::parse_in_key(entry, key))
+                .or_else(|| Numeral::parse(entry)),
+            Notation::Progression => Numeral::parse(entry),
+            _ => None,
+        }
+        .map(|numeral| numeral.degree)
+    }
+
+    /// Replaces the static chord vocabulary with names and degrees derived from `key`.
+    fn set_chord_vocabulary(&mut self, key: MusicalKey) {
         self.completing = None;
-        self.vocabulary = Some(vocabulary);
+        self.vocabulary = Some(chord_vocabulary(key));
+        self.chord_key = Some(key);
     }
 }
 
@@ -814,7 +833,7 @@ impl AurisApp {
     pub(crate) fn open_prompt(&mut self, mut prompt: Prompt) {
         if let Some(PromptTarget::Chord(at)) = prompt.target() {
             let at = self.session.snap_harmony(at);
-            prompt.set_vocabulary(chord_vocabulary(self.session.project().harmony.key_at(at)));
+            prompt.set_chord_vocabulary(self.session.project().harmony.key_at(at));
         }
         self.menu = None;
         self.menu_bar = None;
@@ -1925,7 +1944,7 @@ impl AurisApp {
         prompt: &Prompt,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let PromptBody::Text { target, field } = &prompt.body else {
+        let PromptBody::Text { field, .. } = &prompt.body else {
             return None;
         };
         // While Tab is walking, the row is the list it is walking rather than one recomputed from
@@ -1952,13 +1971,9 @@ impl AurisApp {
                 .flex_wrap()
                 .gap_1()
                 .children(offered.into_iter().enumerate().map(|(index, entry)| {
-                    let degree_color = matches!(
-                        target.notation(),
-                        Some(Notation::Chord | Notation::Progression)
-                    )
-                    .then(|| Numeral::parse(&entry))
-                    .flatten()
-                    .map(|numeral| theme.chord_color(numeral.degree));
+                    let degree_color = prompt
+                        .completion_degree(&entry)
+                        .map(|degree| theme.chord_color(degree));
                     let completion = entry.clone();
                     button(
                         SharedString::from(format!("complete:{entry}")),
@@ -2666,7 +2681,7 @@ mod tests {
     fn alphabetic_chord_completions_follow_the_current_key() {
         let key = MusicalKey::parse("D major").unwrap();
         let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "f");
-        prompt.set_vocabulary(chord_vocabulary(key));
+        prompt.set_chord_vocabulary(key);
 
         let offered = prompt.completion_options("f");
         assert_eq!(offered.first(), Some(&"F#m"), "{offered:?}");
@@ -2677,8 +2692,20 @@ mod tests {
         );
 
         let key = MusicalKey::parse("F major").unwrap();
-        prompt.set_vocabulary(chord_vocabulary(key));
+        prompt.set_chord_vocabulary(key);
         assert_eq!(prompt.completion_options("bb").first(), Some(&"Bb"));
+    }
+
+    #[test]
+    fn alphabetic_chord_completion_colours_follow_their_scale_degrees() {
+        let key = MusicalKey::parse("D major").unwrap();
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "");
+        prompt.set_chord_vocabulary(key);
+
+        assert_eq!(prompt.completion_degree("F#m"), Some(3));
+        assert_eq!(prompt.completion_degree("C#dim"), Some(7));
+        assert_eq!(prompt.completion_degree("Dsus2"), Some(1));
+        assert_eq!(prompt.completion_degree("V"), Some(5));
     }
 
     #[test]
