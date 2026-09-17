@@ -281,8 +281,9 @@ impl Default for Project {
 
 impl Project {
     /// Schema version written into saved files and required when opening them.
+    /// Version 30 adds eleventh chord qualities to stored harmony.
     /// Version 29 adds ordered, named manual drum lanes beside generation-role assignments.
-    pub const FORMAT_VERSION: u32 = 29;
+    pub const FORMAT_VERSION: u32 = 30;
 
     /// An empty project.
     ///

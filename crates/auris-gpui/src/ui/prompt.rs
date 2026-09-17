@@ -2709,6 +2709,21 @@ mod tests {
     }
 
     #[test]
+    fn extended_alphabetic_chords_are_offered_from_the_current_scale() {
+        let key = MusicalKey::parse("D major").unwrap();
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "");
+        prompt.set_chord_vocabulary(key);
+
+        for symbol in ["F#add9", "F#6", "F#m6", "F#11", "F#maj11", "F#m11"] {
+            let typed = symbol.to_ascii_lowercase();
+            assert!(
+                prompt.completion_options(&typed).contains(&symbol),
+                "`{symbol}` was not offered in D major"
+            );
+        }
+    }
+
+    #[test]
     fn every_key_derived_chord_completion_is_accepted() {
         let key = MusicalKey::parse("Eb minor").unwrap();
         for entry in chord_vocabulary(key) {

@@ -156,7 +156,7 @@ impl Numeral {
         Ok(())
     }
 
-    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `ii/V`, `IV/5`, `v/b7`.
+    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `V11`, `IVmaj7`, `V7/V`, `ii/V`, `IV/5`, `v/b7`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.is_empty() {
@@ -219,7 +219,7 @@ impl Numeral {
         // else is a quality the user spelled out, and is taken at face value.
         let (quality, extension) = match quality_text {
             "" => (None, None),
-            "6" | "7" | "9" => (None, Some(quality_text.parse::<u8>().ok()?)),
+            "6" | "7" | "9" | "11" => (None, Some(quality_text.parse::<u8>().ok()?)),
             text => (Some(Quality::parse(text)?), None),
         };
 
@@ -389,7 +389,9 @@ impl Numeral {
                 } else {
                     diatonic_seventh(key, self.degree).unwrap_or_else(|| triad.with_seventh())
                 };
-                if extension >= 9 {
+                if extension >= 11 {
+                    seventh.with_ninth().with_eleventh()
+                } else if extension >= 9 {
                     seventh.with_ninth()
                 } else {
                     seventh
@@ -668,7 +670,8 @@ mod tests {
     fn absolute_chord_symbols_are_named_without_changing_the_chord() {
         let key = key("D major");
         for symbol in [
-            "D", "F#m", "Cdim", "Esus2", "Asus4", "Faug", "A7sus4", "Bm/D",
+            "D", "F#m", "Cdim", "Esus2", "Asus4", "Faug", "A7sus4", "Dadd9", "A11", "Dmaj11",
+            "Em11", "Bm/D",
         ] {
             let chord = Chord::parse(symbol).unwrap();
             let numeral = Numeral::parse_in_key(symbol, key).unwrap();
@@ -711,7 +714,7 @@ mod tests {
                             "`{text}` did not read back as what wrote it"
                         );
                     }
-                    for extension in [6u8, 7, 9] {
+                    for extension in [6u8, 7, 9, 11] {
                         let numeral = Numeral {
                             extension: Some(extension),
                             ..plain
@@ -734,7 +737,7 @@ mod tests {
         for quality in Quality::ALL {
             let stored = quality.numeral_suffix();
             assert!(
-                !matches!(stored, "6" | "7" | "9"),
+                !matches!(stored, "6" | "7" | "9" | "11"),
                 "{quality:?} stores as `{stored}`, which reads back as an extension"
             );
             assert_eq!(
@@ -858,6 +861,9 @@ mod tests {
             "Dm7",
             "a lower-case seven is a minor seventh"
         );
+        assert_eq!(chord_of("V11", "C major"), "G11");
+        assert_eq!(chord_of("Imaj11", "C major"), "Cmaj11");
+        assert_eq!(chord_of("ii11", "C major"), "Dm11");
     }
 
     #[test]

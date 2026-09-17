@@ -288,8 +288,8 @@ pub fn stage_file_bytes(path: &Path, bytes: &[u8]) -> Result<StagedFile> {
 
 /// Reads a project from `path`.
 ///
-/// The format version must match this build, version 28 without named drum lanes, or version 27,
-/// whose volume contour is defaulted.
+/// The format version must match this build, version 29 without eleventh chords, version 28
+/// without named drum lanes, or version 27, whose volume contour is defaulted.
 /// After parsing, the
 /// id counter is repaired, which is what stops freshly created tracks and clips from colliding
 /// with ids already in the document, and so is the routing — a file whose buses feed each other
@@ -298,7 +298,7 @@ pub fn load_project(path: &Path) -> Result<Project> {
     let bytes = read_project_source(path, MAX_PROJECT_FILE_BYTES)?;
 
     let probe: FormatVersionProbe = serde_json::from_slice(&bytes)?;
-    if probe.format_version != Project::FORMAT_VERSION && !matches!(probe.format_version, 27 | 28) {
+    if probe.format_version != Project::FORMAT_VERSION && !matches!(probe.format_version, 27..=29) {
         return Err(IoError::ProjectVersionMismatch {
             found: probe.format_version,
             supported: Project::FORMAT_VERSION,

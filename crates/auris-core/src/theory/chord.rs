@@ -45,6 +45,12 @@ pub enum Quality {
     Major9,
     /// Minor seventh with a ninth.
     Minor9,
+    /// Dominant seventh with a ninth and eleventh.
+    Dominant11,
+    /// Major seventh with a ninth and eleventh.
+    Major11,
+    /// Minor seventh with a ninth and eleventh.
+    Minor11,
     /// Dominant seventh with a thirteenth.
     Dominant13,
     /// Suspended fourth with a minor seventh.
@@ -53,7 +59,7 @@ pub enum Quality {
 
 impl Quality {
     /// Every quality, for tests and pickers.
-    pub const ALL: [Quality; 20] = [
+    pub const ALL: [Quality; 23] = [
         Quality::Major,
         Quality::Minor,
         Quality::Diminished,
@@ -72,6 +78,9 @@ impl Quality {
         Quality::Dominant9,
         Quality::Major9,
         Quality::Minor9,
+        Quality::Dominant11,
+        Quality::Major11,
+        Quality::Minor11,
         Quality::Dominant13,
         Quality::Dominant7Sus4,
     ];
@@ -97,6 +106,9 @@ impl Quality {
             Quality::Dominant9 => &[0, 4, 7, 10, 14],
             Quality::Major9 => &[0, 4, 7, 11, 14],
             Quality::Minor9 => &[0, 3, 7, 10, 14],
+            Quality::Dominant11 => &[0, 4, 7, 10, 14, 17],
+            Quality::Major11 => &[0, 4, 7, 11, 14, 17],
+            Quality::Minor11 => &[0, 3, 7, 10, 14, 17],
             Quality::Dominant13 => &[0, 4, 7, 10, 21],
             Quality::Dominant7Sus4 => &[0, 5, 7, 10],
         }
@@ -123,6 +135,9 @@ impl Quality {
             Quality::Dominant9 => "9",
             Quality::Major9 => "maj9",
             Quality::Minor9 => "m9",
+            Quality::Dominant11 => "11",
+            Quality::Major11 => "maj11",
+            Quality::Minor11 => "m11",
             Quality::Dominant13 => "13",
             Quality::Dominant7Sus4 => "7sus4",
         }
@@ -133,7 +148,7 @@ impl Quality {
     /// After a chord *letter*, `C7` can only be a dominant seventh. After a *numeral*, `V7` means
     /// "with a seventh, whichever one the key holds" — an extension, which the key resolves —
     /// and a quality that was forced to `Dominant7` has to be spelled out to survive being read
-    /// back. The same goes for `6` and `9`, and for a plain major, whose suffix is empty and
+    /// back. The same goes for `6`, `9` and `11`, and for a plain major, whose suffix is empty and
     /// would vanish entirely.
     ///
     /// Every spelling here is one [`Self::parse`] already accepts; nothing new is invented.
@@ -143,6 +158,7 @@ impl Quality {
             Quality::Major6 => "maj6",
             Quality::Dominant7 => "dom7",
             Quality::Dominant9 => "dom9",
+            Quality::Dominant11 => "dom11",
             other => other.suffix(),
         }
     }
@@ -168,6 +184,9 @@ impl Quality {
             "9" | "dom9" => Quality::Dominant9,
             "maj9" | "M9" | "Δ9" => Quality::Major9,
             "m9" | "min9" | "-9" => Quality::Minor9,
+            "11" | "dom11" => Quality::Dominant11,
+            "maj11" | "M11" | "Δ11" => Quality::Major11,
+            "m11" | "min11" | "-11" => Quality::Minor11,
             "13" | "dom13" => Quality::Dominant13,
             "7sus4" | "7sus" => Quality::Dominant7Sus4,
             _ => return None,
@@ -210,6 +229,16 @@ impl Quality {
             Quality::Major7 => Quality::Major9,
             Quality::Dominant7 => Quality::Dominant9,
             Quality::Minor7 => Quality::Minor9,
+            other => other,
+        }
+    }
+
+    /// The same ninth chord with an eleventh added, or itself when that means nothing.
+    pub fn with_eleventh(self) -> Self {
+        match self {
+            Quality::Major9 => Quality::Major11,
+            Quality::Dominant9 => Quality::Dominant11,
+            Quality::Minor9 => Quality::Minor11,
             other => other,
         }
     }
@@ -343,7 +372,7 @@ impl Chord {
         Ok(())
     }
 
-    /// Reads a chord symbol such as `C`, `Am7`, `F#m7b5` or `G7/B`.
+    /// Reads a chord symbol such as `C`, `Am7`, `F#m7b5`, `G11` or `G7/B`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         let (body, bass) = match text.split_once('/') {
@@ -461,6 +490,9 @@ mod tests {
         assert_eq!(Chord::parse("F#m7").unwrap().root, class("F#"));
         assert_eq!(Chord::parse("Bbmaj7").unwrap().root, class("Bb"));
         assert_eq!(Chord::parse("Ebm9").unwrap().quality, Quality::Minor9);
+        assert_eq!(Chord::parse("G11").unwrap().quality, Quality::Dominant11);
+        assert_eq!(Chord::parse("Cmaj11").unwrap().quality, Quality::Major11);
+        assert_eq!(Chord::parse("Dm11").unwrap().quality, Quality::Minor11);
         assert_eq!(
             Chord::parse("G7sus4").unwrap().quality,
             Quality::Dominant7Sus4
@@ -508,6 +540,10 @@ mod tests {
         assert_eq!(
             Chord::parse("C9").unwrap().voiced_from(48),
             vec![48, 52, 55, 58, 62]
+        );
+        assert_eq!(
+            Chord::parse("C11").unwrap().voiced_from(48),
+            vec![48, 52, 55, 58, 62, 65]
         );
     }
 
@@ -570,6 +606,18 @@ mod tests {
         assert_eq!(Quality::Major.with_ninth(), Quality::Add9);
         assert_eq!(
             Quality::Diminished7.with_ninth(),
+            Quality::Diminished7,
+            "nothing sensible to add"
+        );
+    }
+
+    #[test]
+    fn adding_an_eleventh_keeps_the_ninth_and_seventh_that_were_there() {
+        assert_eq!(Quality::Major9.with_eleventh(), Quality::Major11);
+        assert_eq!(Quality::Dominant9.with_eleventh(), Quality::Dominant11);
+        assert_eq!(Quality::Minor9.with_eleventh(), Quality::Minor11);
+        assert_eq!(
+            Quality::Diminished7.with_eleventh(),
             Quality::Diminished7,
             "nothing sensible to add"
         );
