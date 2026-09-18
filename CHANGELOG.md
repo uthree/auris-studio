@@ -7,6 +7,58 @@ a migration path. The version number is the promise, and `0` is the promise that
 The release workflow reads the section whose heading matches the tag, so the headings are the
 format rather than a convention: `## <version> — <date>`.
 
+## 0.8.0 — 2026-09-19
+
+### Composition and editing
+
+* **Build larger arrangements with clearer musical controls.** The composer adds B and C
+  sections, phrase-aware development, instrument participation controls and responsive progress.
+  Mood, tonality and pace provide a simpler starting point, while bounded composition search can
+  preview and adopt exact chord progressions before writing the song.
+* **Enter and shape richer harmony.** Chord input accepts absolute names, Roman numerals, added
+  tones, 6/9, eleventh and thirteenth qualities. Key-aware completions are coloured by scale
+  degree, and accompaniment presets now share one density model across composition workflows.
+* **Edit notes and rhythms directly.** Piano-roll selections can be moved, resized and edited as
+  a group, with clearer drag readouts and Alt-drag duplication. Melodic and drum generators gain
+  manual rhythm grids in resizable utility windows.
+
+### Agent workflow
+
+* **Work with an agent inside the desktop application.** The embedded worker streams progress,
+  supports cancellation and permission modes, compacts long conversations and keeps editable
+  session history. It can compose through explicit track and note edits, inspect rendered audio
+  and use the instruments that are currently available in the session.
+* **Use smaller, safer tool contracts.** Live editing and MCP schemas provide bounded paging,
+  compact responses, atomic track setup and note replacement, file-backed score input and
+  actionable validation errors. Large reports and searches remain usable without unbounded model
+  context or partial project edits.
+* **Use the agent panel comfortably at different sizes.** Responsive controls, clearer status,
+  corrected Markdown lists, improved focus handling and settings integration make conversations
+  easier to manage in both narrow and wide layouts.
+
+### Audio and desktop
+
+* **Inspect audio in stereo and in time.** The visualizer adds stereo spectrum monitoring, a
+  time-domain oscilloscope and clearer monitoring controls. The piano roll can overlay performed
+  notes while keeping source and performance views distinct and editable.
+* **Export through a dedicated dialog.** WAV, FLAC and MP3 share one export workflow with saved
+  settings. Track-list density is resizable, detachable panels use native utility windows, and
+  dropdowns, theme colours and platform font fallbacks are more consistent.
+* **Configure singing voices from Settings.** Voice connections and setup live with the other
+  application preferences. VOICEVOX lyrics, short rests and tempo changes preserve note timing
+  more reliably and report invalid notes in the editor.
+* **Map drum instruments manually.** The drum workflow can analyze, audition and assign named
+  lanes, retain ordered manual mappings and remap generated parts without rewriting unrelated
+  notes.
+
+### Compatibility
+
+* **Projects use format 31, and this release opens format 31 only.** Projects saved by v0.7.0
+  use format 26 and cannot be opened here; projects saved by v0.8.0 cannot be opened in v0.7.0.
+  No automatic migration is provided.
+* Local Windows builds enable ASIO explicitly when required. Release builds continue to package
+  their supported audio backends and the standard project resources.
+
 ## 0.7.0 — 2026-09-08
 
 ### Composition and performance
