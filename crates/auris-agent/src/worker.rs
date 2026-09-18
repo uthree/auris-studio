@@ -336,6 +336,7 @@ impl Worker {
                 result
             })).unwrap_or_else(|_| Err("The agent worker panicked".into()));
             if let Err(message) = result { bridge.emit(serde_json::json!({"event":"error", "message":message})); }
+            bridge.0.stopped.store(true, Ordering::Release);
             bridge.emit(serde_json::json!({"event":"ended"}));
         }).map_err(|error| error.to_string())?;
         Ok(Self {
@@ -356,6 +357,9 @@ impl Worker {
 
     /// Send a user request or a host response without waiting for the worker.
     pub fn send(&self, message: &str) -> Result<(), String> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err("The agent worker stopped".into());
+        }
         self.commands
             .send(message.into())
             .map_err(|_| "The agent worker stopped".into())
@@ -1113,11 +1117,11 @@ mod tests {
         worker.send(r#"{"say":"Create the lead"}"#).unwrap();
         until(&worker, "permission");
         worker.cancel();
+        assert!(worker.send(r#"{"say":"too late"}"#).is_err());
         assert_eq!(
             worker.events.recv_timeout(Duration::from_secs(2)).unwrap()["event"],
             "ended"
         );
-        assert!(worker.send(r#"{"say":"too late"}"#).is_err());
     }
 
     #[test]
