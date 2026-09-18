@@ -13,6 +13,8 @@ pub enum Quality {
     Major,
     /// A minor triad.
     Minor,
+    /// Root and perfect fifth, with no third.
+    Power5,
     /// A diminished triad.
     Diminished,
     /// An augmented triad.
@@ -37,8 +39,14 @@ pub enum Quality {
     Major6,
     /// Minor triad with an added sixth.
     Minor6,
+    /// Major triad with an added sixth and ninth.
+    Major6Add9,
     /// Major triad with an added ninth and no seventh.
     Add9,
+    /// Minor triad with an added ninth and no seventh.
+    MinorAdd9,
+    /// Major triad with an added eleventh and no seventh or ninth.
+    Add11,
     /// Dominant seventh with a ninth.
     Dominant9,
     /// Major seventh with a ninth.
@@ -53,15 +61,20 @@ pub enum Quality {
     Minor11,
     /// Dominant seventh with a thirteenth.
     Dominant13,
+    /// Major seventh with a thirteenth.
+    Major13,
+    /// Minor seventh with a thirteenth.
+    Minor13,
     /// Suspended fourth with a minor seventh.
     Dominant7Sus4,
 }
 
 impl Quality {
     /// Every quality, for tests and pickers.
-    pub const ALL: [Quality; 23] = [
+    pub const ALL: [Quality; 29] = [
         Quality::Major,
         Quality::Minor,
+        Quality::Power5,
         Quality::Diminished,
         Quality::Augmented,
         Quality::Sus2,
@@ -74,7 +87,10 @@ impl Quality {
         Quality::MinorMajor7,
         Quality::Major6,
         Quality::Minor6,
+        Quality::Major6Add9,
         Quality::Add9,
+        Quality::MinorAdd9,
+        Quality::Add11,
         Quality::Dominant9,
         Quality::Major9,
         Quality::Minor9,
@@ -82,6 +98,8 @@ impl Quality {
         Quality::Major11,
         Quality::Minor11,
         Quality::Dominant13,
+        Quality::Major13,
+        Quality::Minor13,
         Quality::Dominant7Sus4,
     ];
 
@@ -90,6 +108,7 @@ impl Quality {
         match self {
             Quality::Major => &[0, 4, 7],
             Quality::Minor => &[0, 3, 7],
+            Quality::Power5 => &[0, 7],
             Quality::Diminished => &[0, 3, 6],
             Quality::Augmented => &[0, 4, 8],
             Quality::Sus2 => &[0, 2, 7],
@@ -102,7 +121,10 @@ impl Quality {
             Quality::MinorMajor7 => &[0, 3, 7, 11],
             Quality::Major6 => &[0, 4, 7, 9],
             Quality::Minor6 => &[0, 3, 7, 9],
+            Quality::Major6Add9 => &[0, 4, 7, 9, 14],
             Quality::Add9 => &[0, 4, 7, 14],
+            Quality::MinorAdd9 => &[0, 3, 7, 14],
+            Quality::Add11 => &[0, 4, 7, 17],
             Quality::Dominant9 => &[0, 4, 7, 10, 14],
             Quality::Major9 => &[0, 4, 7, 11, 14],
             Quality::Minor9 => &[0, 3, 7, 10, 14],
@@ -110,6 +132,8 @@ impl Quality {
             Quality::Major11 => &[0, 4, 7, 11, 14, 17],
             Quality::Minor11 => &[0, 3, 7, 10, 14, 17],
             Quality::Dominant13 => &[0, 4, 7, 10, 21],
+            Quality::Major13 => &[0, 4, 7, 11, 21],
+            Quality::Minor13 => &[0, 3, 7, 10, 21],
             Quality::Dominant7Sus4 => &[0, 5, 7, 10],
         }
     }
@@ -119,6 +143,7 @@ impl Quality {
         match self {
             Quality::Major => "",
             Quality::Minor => "m",
+            Quality::Power5 => "5",
             Quality::Diminished => "dim",
             Quality::Augmented => "aug",
             Quality::Sus2 => "sus2",
@@ -131,7 +156,10 @@ impl Quality {
             Quality::MinorMajor7 => "mMaj7",
             Quality::Major6 => "6",
             Quality::Minor6 => "m6",
+            Quality::Major6Add9 => "6/9",
             Quality::Add9 => "add9",
+            Quality::MinorAdd9 => "madd9",
+            Quality::Add11 => "add11",
             Quality::Dominant9 => "9",
             Quality::Major9 => "maj9",
             Quality::Minor9 => "m9",
@@ -139,6 +167,8 @@ impl Quality {
             Quality::Major11 => "maj11",
             Quality::Minor11 => "m11",
             Quality::Dominant13 => "13",
+            Quality::Major13 => "maj13",
+            Quality::Minor13 => "m13",
             Quality::Dominant7Sus4 => "7sus4",
         }
     }
@@ -156,6 +186,7 @@ impl Quality {
         match self {
             Quality::Major => "M",
             Quality::Major6 => "maj6",
+            Quality::Major6Add9 => "6add9",
             Quality::Dominant7 => "dom7",
             Quality::Dominant9 => "dom9",
             Quality::Dominant11 => "dom11",
@@ -168,6 +199,7 @@ impl Quality {
         Some(match text {
             "" | "M" | "maj" | "major" => Quality::Major,
             "m" | "min" | "-" | "minor" => Quality::Minor,
+            "5" => Quality::Power5,
             "dim" | "o" | "°" => Quality::Diminished,
             "aug" | "+" => Quality::Augmented,
             "sus2" => Quality::Sus2,
@@ -180,7 +212,10 @@ impl Quality {
             "mMaj7" | "mM7" | "minmaj7" => Quality::MinorMajor7,
             "6" | "maj6" | "M6" => Quality::Major6,
             "m6" | "min6" => Quality::Minor6,
+            "6/9" | "6add9" | "69" => Quality::Major6Add9,
             "add9" | "add2" => Quality::Add9,
+            "madd9" | "minadd9" => Quality::MinorAdd9,
+            "add11" => Quality::Add11,
             "9" | "dom9" => Quality::Dominant9,
             "maj9" | "M9" | "Δ9" => Quality::Major9,
             "m9" | "min9" | "-9" => Quality::Minor9,
@@ -188,6 +223,8 @@ impl Quality {
             "maj11" | "M11" | "Δ11" => Quality::Major11,
             "m11" | "min11" | "-11" => Quality::Minor11,
             "13" | "dom13" => Quality::Dominant13,
+            "maj13" | "M13" | "\u{394}13" => Quality::Major13,
+            "m13" | "min13" | "-13" => Quality::Minor13,
             "7sus4" | "7sus" => Quality::Dominant7Sus4,
             _ => return None,
         })
@@ -229,6 +266,7 @@ impl Quality {
             Quality::Major7 => Quality::Major9,
             Quality::Dominant7 => Quality::Dominant9,
             Quality::Minor7 => Quality::Minor9,
+            Quality::Major6 => Quality::Major6Add9,
             other => other,
         }
     }
@@ -375,8 +413,11 @@ impl Chord {
     /// Reads a chord symbol such as `C`, `Am7`, `F#m7b5`, `G11` or `G7/B`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
-        let (body, bass) = match text.split_once('/') {
-            Some((body, bass)) => (body, Some(PitchClass::parse(bass.trim())?)),
+        let (body, bass) = match text.rsplit_once('/') {
+            Some((body, bass)) => match PitchClass::parse(bass.trim()) {
+                Some(bass) => (body, Some(bass)),
+                None => (text, None),
+            },
             None => (text, None),
         };
         if body.is_empty() {
@@ -493,6 +534,12 @@ mod tests {
         assert_eq!(Chord::parse("G11").unwrap().quality, Quality::Dominant11);
         assert_eq!(Chord::parse("Cmaj11").unwrap().quality, Quality::Major11);
         assert_eq!(Chord::parse("Dm11").unwrap().quality, Quality::Minor11);
+        assert_eq!(Chord::parse("C5").unwrap().quality, Quality::Power5);
+        assert_eq!(Chord::parse("C6/9").unwrap().quality, Quality::Major6Add9);
+        assert_eq!(Chord::parse("Cmadd9").unwrap().quality, Quality::MinorAdd9);
+        assert_eq!(Chord::parse("Cadd11").unwrap().quality, Quality::Add11);
+        assert_eq!(Chord::parse("Cmaj13").unwrap().quality, Quality::Major13);
+        assert_eq!(Chord::parse("Cm13").unwrap().quality, Quality::Minor13);
         assert_eq!(
             Chord::parse("G7sus4").unwrap().quality,
             Quality::Dominant7Sus4
@@ -544,6 +591,15 @@ mod tests {
         assert_eq!(
             Chord::parse("C11").unwrap().voiced_from(48),
             vec![48, 52, 55, 58, 62, 65]
+        );
+        assert_eq!(
+            Chord::parse("Cadd11").unwrap().voiced_from(48),
+            vec![48, 52, 55, 65],
+            "an added eleventh does not imply a seventh or ninth"
+        );
+        assert_eq!(
+            Chord::parse("C6/9").unwrap().voiced_from(48),
+            vec![48, 52, 55, 57, 62]
         );
     }
 
@@ -604,6 +660,7 @@ mod tests {
         assert_eq!(Quality::Dominant7.with_ninth(), Quality::Dominant9);
         assert_eq!(Quality::Minor7.with_ninth(), Quality::Minor9);
         assert_eq!(Quality::Major.with_ninth(), Quality::Add9);
+        assert_eq!(Quality::Major6.with_ninth(), Quality::Major6Add9);
         assert_eq!(
             Quality::Diminished7.with_ninth(),
             Quality::Diminished7,

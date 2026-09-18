@@ -2703,8 +2703,10 @@ mod tests {
         prompt.set_chord_vocabulary(key);
 
         assert_eq!(prompt.completion_degree("F#m"), Some(3));
+        assert_eq!(prompt.completion_degree("F#6/9"), Some(3));
         assert_eq!(prompt.completion_degree("C#dim"), Some(7));
         assert_eq!(prompt.completion_degree("Dsus2"), Some(1));
+        assert_eq!(prompt.completion_degree("Dadd11"), Some(1));
         assert_eq!(prompt.completion_degree("V"), Some(5));
     }
 
@@ -2714,7 +2716,10 @@ mod tests {
         let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "");
         prompt.set_chord_vocabulary(key);
 
-        for symbol in ["F#add9", "F#6", "F#m6", "F#11", "F#maj11", "F#m11"] {
+        for symbol in [
+            "F#5", "F#add9", "F#madd9", "F#add11", "F#6", "F#m6", "F#6/9", "F#11", "F#maj11",
+            "F#m11", "F#maj13", "F#m13",
+        ] {
             let typed = symbol.to_ascii_lowercase();
             assert!(
                 prompt.completion_options(&typed).contains(&symbol),

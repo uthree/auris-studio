@@ -168,6 +168,9 @@ impl Numeral {
         // the flat seventh — so the accidentals come off first and what is left of the tail is
         // what says which of the two was written.
         let (head, tail) = match text.rsplit_once('/') {
+            // `6/9` is a quality suffix, not a ninth scale degree in the bass. A slash bass may
+            // still follow it (`I6/9/3`), because `rsplit_once` leaves the quality in `head`.
+            Some((head, "9")) if head.ends_with('6') => (text, None),
             Some((head, tail)) => (head, Some(tail)),
             None => (text, None),
         };
@@ -671,7 +674,7 @@ mod tests {
         let key = key("D major");
         for symbol in [
             "D", "F#m", "Cdim", "Esus2", "Asus4", "Faug", "A7sus4", "Dadd9", "A11", "Dmaj11",
-            "Em11", "Bm/D",
+            "Em11", "D5", "D6/9", "Bmadd9", "Dadd11", "Dmaj13", "Bm13", "Bm/D",
         ] {
             let chord = Chord::parse(symbol).unwrap();
             let numeral = Numeral::parse_in_key(symbol, key).unwrap();
