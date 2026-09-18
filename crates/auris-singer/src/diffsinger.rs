@@ -653,7 +653,7 @@ mod tests {
 
     fn temp_root() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        std::env::temp_dir().join(format!(
+        crate::limits::test_temp_dir().join(format!(
             "auris-diffsinger-policy-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)

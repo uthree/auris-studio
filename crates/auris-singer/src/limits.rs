@@ -345,6 +345,18 @@ pub(crate) fn validate_audio_dimensions(
 }
 
 #[cfg(test)]
+pub(crate) fn test_temp_dir() -> PathBuf {
+    let temp_dir = std::env::temp_dir();
+    // macOS exposes this directory through `/var`; resolve that system redirect so automatic
+    // access tests reach the fixture redirects they create inside the temporary directory.
+    if cfg!(target_os = "macos") {
+        std::fs::canonicalize(temp_dir).expect("the system temp directory can be resolved")
+    } else {
+        temp_dir
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -352,7 +364,7 @@ mod tests {
 
     fn temp_file() -> std::path::PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        std::env::temp_dir().join(format!(
+        test_temp_dir().join(format!(
             "auris-singer-limit-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
