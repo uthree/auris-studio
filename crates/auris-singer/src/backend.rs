@@ -338,6 +338,13 @@ mod tests {
         }
     }
 
+    fn remove_directory_redirect(link: &Path) {
+        #[cfg(unix)]
+        std::fs::remove_file(link).unwrap();
+        #[cfg(windows)]
+        std::fs::remove_dir(link).unwrap();
+    }
+
     impl SingingBackend for NativePredictor {
         fn kind(&self) -> BackendKind {
             BackendKind::Auris
@@ -437,7 +444,7 @@ mod tests {
             VoiceModel::load_for_automatic_access(&entry, Acceleration::Cpu).err();
         let explicit_error = VoiceModel::load(&entry, Acceleration::Cpu).err();
 
-        std::fs::remove_dir(redirect).unwrap();
+        remove_directory_redirect(&redirect);
         std::fs::remove_file(target_entry).unwrap();
         std::fs::remove_dir(target).unwrap();
         std::fs::remove_dir(root).unwrap();

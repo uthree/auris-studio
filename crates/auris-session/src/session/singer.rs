@@ -2473,6 +2473,13 @@ mod tests {
         }
     }
 
+    fn remove_directory_redirect(link: &Path) {
+        #[cfg(unix)]
+        std::fs::remove_file(link).unwrap();
+        #[cfg(windows)]
+        std::fs::remove_dir(link).unwrap();
+    }
+
     fn redirected_voicevox_fixture(scratch: &Scratch) -> (PathBuf, PathBuf) {
         let target = scratch.join("target");
         let redirect = scratch.join("redirect");
@@ -3336,7 +3343,7 @@ mod tests {
             .unwrap()
             .run(&AtomicBool::new(false));
 
-        std::fs::remove_dir(redirect).unwrap();
+        remove_directory_redirect(&redirect);
         assert!(cache_was_automatic_safe);
         assert!(matches!(
             automatic_error,
@@ -3360,7 +3367,7 @@ mod tests {
 
         let error = session.sing_plan_for_automatic_access(track, None).err();
 
-        std::fs::remove_dir(redirect).unwrap();
+        remove_directory_redirect(&redirect);
         assert!(matches!(
             error,
             Some(SessionError::Sing(

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use auris_session::prelude::*;
 use auris_session::{DrumKitAnalysis, Session, SessionOptions};
@@ -11,12 +11,10 @@ struct Fixture(PathBuf);
 
 impl Fixture {
     fn new() -> Self {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path =
-            std::env::temp_dir().join(format!("auris-cli-drum-{}-{stamp}", std::process::id()));
+            std::env::temp_dir().join(format!("auris-cli-drum-{}-{unique}", std::process::id()));
         std::fs::create_dir(&path).unwrap();
         Self(path)
     }

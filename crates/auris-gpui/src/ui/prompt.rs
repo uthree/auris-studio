@@ -2907,6 +2907,15 @@ mod window_tests {
             !history.exists(),
             "confirmation did not delete saved history"
         );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while app.read_with(cx, |this, _| this.agent_chat.fresh_history) {
+            app.update(cx, |this, cx| this.drain_agent(cx));
+            assert!(
+                std::time::Instant::now() < deadline,
+                "fresh conversation history did not finish reopening"
+            );
+            std::thread::yield_now();
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
