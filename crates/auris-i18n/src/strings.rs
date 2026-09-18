@@ -1218,8 +1218,8 @@ strings! {
         ja: "主音とモード: C major、Bb minor、D dorian"
     }
     HintChord {
-        en: "Roman numeral of the degree. CAPITALS are major, lower case minor: IV, vi, bVII7",
-        ja: "度数のローマ数字。大文字がメジャー、小文字がマイナー: IV、vi、bVII7"
+        en: "Roman degree (CAPITALS major, lower case minor) or chord name in the current key. Qualities include dim and sus2: IV, F#m, IIdim, Csus2",
+        ja: "現在のキー／スケールを基準に、ローマ数字（大文字はメジャー、小文字はマイナー）またはコード名で入力。dim、sus2 なども指定できます: IV、F#m、IIdim、Csus2"
     }
     HintTempo { en: "Beats per minute", ja: "1分あたりの拍数" }
     HintSignature {

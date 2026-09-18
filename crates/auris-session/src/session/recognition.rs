@@ -12,11 +12,7 @@ use auris_core::{
     AudioBuffer, AudioClip, ClipId, Note, TrackId,
     harmony::{ChordMap, ChordPoint},
     project::loop_passes,
-    theory::{
-        chord::Chord,
-        key::Key,
-        numeral::{Numeral, degree_of},
-    },
+    theory::{chord::Chord, numeral::Numeral},
     time::{Seconds, Ticks},
 };
 use serde::Serialize;
@@ -515,7 +511,8 @@ impl Session {
             for tick in boundaries {
                 points.push(ChordPoint {
                     tick,
-                    chord: chord.map(|c| numeral(c, self.project.harmony.key_at(tick))),
+                    chord: chord
+                        .map(|c| Numeral::from_chord_in(c, self.project.harmony.key_at(tick))),
                 });
             }
             map = ChordMap::new(points);
@@ -865,37 +862,11 @@ impl Session {
     }
 }
 
-fn numeral(chord: Chord, key: Key) -> Numeral {
-    let degree = |pitch| {
-        let preferred = degree_of(key, pitch);
-        // The composer's inverse can name a parallel-major degree with zero alteration.
-        // For a saved absolute measurement, check the actual reading: unaltered VI in
-        // C minor resolves to Ab, even when the detected pitch was A. Search spellings
-        // through the reader itself so bass notes and non-major modes round-trip exactly.
-        std::iter::once(preferred)
-            .chain(
-                [0, -1, 1, -2, 2]
-                    .into_iter()
-                    .flat_map(|a| (1..=7).map(move |d| (d, a))),
-            )
-            .find(|(d, a)| {
-                let mut n = Numeral::new(*d, false);
-                n.accidental = *a;
-                n.chord_in(key).root == pitch
-            })
-            .expect("chromatic pitch has a representable degree")
-    };
-    let (d, accidental) = degree(chord.root);
-    let mut n = Numeral::new(d, chord.quality.is_minor()).with_quality(chord.quality);
-    n.accidental = accidental;
-    n.bass_degree = chord.bass.map(degree);
-    n
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::SessionOptions;
+    use auris_core::theory::key::Key;
     fn session() -> Session {
         Session::new(SessionOptions::headless()).unwrap()
     }
@@ -1083,7 +1054,7 @@ mod tests {
                     for bass in 0..12 {
                         let chord = Chord::new(PitchClass::new(root), Quality::Dominant7)
                             .over(PitchClass::new(bass));
-                        let n = numeral(chord, key);
+                        let n = Numeral::from_chord_in(chord, key);
                         assert_eq!(n.chord_in(key), chord, "{key:?}: {n}");
                         assert_eq!(Numeral::parse(&n.to_text()).unwrap().chord_in(key), chord);
                     }

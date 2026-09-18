@@ -156,7 +156,7 @@ impl Numeral {
         Ok(())
     }
 
-    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `IVmaj7`, `V7/V`, `ii/V`, `IV/5`, `v/b7`.
+    /// Reads a numeral: `I`, `vi`, `bVII`, `V7`, `V11`, `IVmaj7`, `V7/V`, `ii/V`, `IV/5`, `v/b7`.
     pub fn parse(text: &str) -> Option<Self> {
         let text = text.trim();
         if text.is_empty() {
@@ -168,6 +168,9 @@ impl Numeral {
         // the flat seventh — so the accidentals come off first and what is left of the tail is
         // what says which of the two was written.
         let (head, tail) = match text.rsplit_once('/') {
+            // `6/9` is a quality suffix, not a ninth scale degree in the bass. A slash bass may
+            // still follow it (`I6/9/3`), because `rsplit_once` leaves the quality in `head`.
+            Some((head, "9")) if head.ends_with('6') => (text, None),
             Some((head, tail)) => (head, Some(tail)),
             None => (text, None),
         };
@@ -219,7 +222,7 @@ impl Numeral {
         // else is a quality the user spelled out, and is taken at face value.
         let (quality, extension) = match quality_text {
             "" => (None, None),
-            "6" | "7" | "9" => (None, Some(quality_text.parse::<u8>().ok()?)),
+            "6" | "7" | "9" | "11" => (None, Some(quality_text.parse::<u8>().ok()?)),
             text => (Some(Quality::parse(text)?), None),
         };
 
@@ -232,6 +235,43 @@ impl Numeral {
             secondary_of,
             bass_degree,
         })
+    }
+
+    /// Reads either a roman numeral or an absolute chord symbol against `key`.
+    ///
+    /// Absolute symbols such as `F#m`, `Cdim` and `Gsus2` are converted to the degree that
+    /// produces the same chord in `key`. The quality and slash bass are kept explicit, so the
+    /// conversion never changes what was written even when it is chromatic or non-diatonic.
+    pub fn parse_in_key(text: &str, key: Key) -> Option<Self> {
+        Self::parse(text)
+            .or_else(|| Chord::parse(text).map(|chord| Self::from_chord_in(chord, key)))
+    }
+
+    /// Names an absolute `chord` as a roman numeral in `key` without changing its notes.
+    pub fn from_chord_in(chord: Chord, key: Key) -> Self {
+        let degree_of_pitch = |pitch| {
+            let preferred = degree_of(key, pitch);
+            // `degree_of` prefers conventional spellings, but an unaltered degree is read from
+            // the actual scale. Check every spelling through the reader so chromatic roots in a
+            // minor key and slash basses round-trip exactly.
+            std::iter::once(preferred)
+                .chain(
+                    [0, -1, 1, -2, 2]
+                        .into_iter()
+                        .flat_map(|accidental| (1..=7).map(move |degree| (degree, accidental))),
+                )
+                .find(|(degree, accidental)| {
+                    let mut numeral = Self::new(*degree, false);
+                    numeral.accidental = *accidental;
+                    numeral.chord_in(key).root == pitch
+                })
+                .expect("every pitch class has a roman-numeral spelling")
+        };
+        let (degree, accidental) = degree_of_pitch(chord.root);
+        let mut numeral = Self::new(degree, chord.quality.is_minor()).with_quality(chord.quality);
+        numeral.accidental = accidental;
+        numeral.bass_degree = chord.bass.map(degree_of_pitch);
+        numeral
     }
 
     /// The same chord, named from a different key.
@@ -352,7 +392,9 @@ impl Numeral {
                 } else {
                     diatonic_seventh(key, self.degree).unwrap_or_else(|| triad.with_seventh())
                 };
-                if extension >= 9 {
+                if extension >= 11 {
+                    seventh.with_ninth().with_eleventh()
+                } else if extension >= 9 {
                     seventh.with_ninth()
                 } else {
                     seventh
@@ -628,6 +670,34 @@ mod tests {
     }
 
     #[test]
+    fn absolute_chord_symbols_are_named_without_changing_the_chord() {
+        let key = key("D major");
+        for symbol in [
+            "D", "F#m", "Cdim", "Esus2", "Asus4", "Faug", "A7sus4", "Dadd9", "A11", "Dmaj11",
+            "Em11", "D5", "D6/9", "Bmadd9", "Dadd11", "Dmaj13", "Bm13", "Bm/D",
+        ] {
+            let chord = Chord::parse(symbol).unwrap();
+            let numeral = Numeral::parse_in_key(symbol, key).unwrap();
+            assert_eq!(numeral.chord_in(key), chord, "{symbol} became {numeral}");
+            assert_eq!(
+                Numeral::parse(&numeral.to_text()).unwrap().chord_in(key),
+                chord,
+                "the stored numeral for {symbol} did not round-trip"
+            );
+        }
+    }
+
+    #[test]
+    fn roman_numerals_stay_relative_when_parsed_in_a_key() {
+        let parsed = Numeral::parse_in_key("vi", key("D major")).unwrap();
+        assert_eq!(parsed, Numeral::parse("vi").unwrap());
+        assert_eq!(
+            parsed.quality, None,
+            "a bare numeral became an absolute chord"
+        );
+    }
+
+    #[test]
     fn a_numeral_survives_the_round_trip_to_stored_text_and_back() {
         // Every quality on every degree, in both cases, with and without an accidental: whatever
         // the composer or a chart can produce has to come back out of a file unchanged.
@@ -647,7 +717,7 @@ mod tests {
                             "`{text}` did not read back as what wrote it"
                         );
                     }
-                    for extension in [6u8, 7, 9] {
+                    for extension in [6u8, 7, 9, 11] {
                         let numeral = Numeral {
                             extension: Some(extension),
                             ..plain
@@ -670,7 +740,7 @@ mod tests {
         for quality in Quality::ALL {
             let stored = quality.numeral_suffix();
             assert!(
-                !matches!(stored, "6" | "7" | "9"),
+                !matches!(stored, "6" | "7" | "9" | "11"),
                 "{quality:?} stores as `{stored}`, which reads back as an extension"
             );
             assert_eq!(
@@ -794,6 +864,9 @@ mod tests {
             "Dm7",
             "a lower-case seven is a minor seventh"
         );
+        assert_eq!(chord_of("V11", "C major"), "G11");
+        assert_eq!(chord_of("Imaj11", "C major"), "Cmaj11");
+        assert_eq!(chord_of("ii11", "C major"), "Dm11");
     }
 
     #[test]

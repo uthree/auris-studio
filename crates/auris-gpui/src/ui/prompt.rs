@@ -27,7 +27,8 @@ use crate::ui::widgets::{ButtonState, ButtonStyle, Latch, button, button_enabled
 /// A key and a chord are typed rather than picked from a list because there is no list worth
 /// showing: twelve tonics times thirteen scales is a hundred and fifty-six menu rows, and
 /// [`MusicalKey::parse`] already reads `Bb minor` — the thing a musician would have written down
-/// anyway. [`Numeral::parse`] does the same for `bVII7`.
+/// anyway. [`Session::set_chord_from_text`] reads both `bVII7` and an absolute name such as
+/// `F#m`, interpreting the latter in the key at that point on the timeline.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum PromptTarget {
     /// A track's name.
@@ -359,16 +360,47 @@ impl Notation {
     }
 }
 
-/// The chord degrees a person actually writes, offered under the chord field.
+/// The chord degrees and qualities a person actually writes, offered under the chord field.
 ///
-/// Roman numerals and not chord names, because numerals are what the document stores: `V` is `V`
-/// in every key, which is the whole reason the harmony lane holds a key and degrees rather than a
-/// list of notes. The diatonic seven, then the sevenths, then the borrowings that turn up in
-/// nearly every pop song.
+/// Numerals lead because they are what the document stores: `V` is `V` in every key. Absolute
+/// chord names are still accepted and translated against the current key. The quality examples
+/// make the less ordinary shapes discoverable without turning the completion row into a table.
 const CHORD_VOCABULARY: &[&str] = &[
     "I", "ii", "iii", "IV", "V", "vi", "vii", "Imaj7", "ii7", "iii7", "IVmaj7", "V7", "vi7",
-    "bIII", "bVI", "bVII", "iv", "bVII7",
+    "IIdim", "Isus2", "Isus4", "Iaug", "V7sus4", "bIII", "bVI", "bVII", "iv", "bVII7",
 ];
+
+/// Chord completions for one point on the timeline, including names spelled in its key.
+///
+/// The seven diatonic chords lead the alphabetic half of the list, then every supported quality
+/// is offered on each of those roots. That keeps a short prefix such as `f` useful — `F#m` is the
+/// first answer in D major — while a more specific one such as `f#sus` can discover `F#sus2`.
+fn chord_vocabulary(key: MusicalKey) -> Vec<String> {
+    let mut vocabulary = CHORD_VOCABULARY
+        .iter()
+        .map(|entry| (*entry).to_owned())
+        .collect::<Vec<_>>();
+    let diatonic = (1..=7)
+        .map(|degree| Numeral::new(degree, false).as_diatonic(key))
+        .collect::<Vec<_>>();
+
+    for numeral in &diatonic {
+        let name = numeral.name_in(key);
+        if !vocabulary.contains(&name) {
+            vocabulary.push(name);
+        }
+    }
+    for numeral in diatonic {
+        let root = numeral.chord_in(key).root;
+        for quality in Quality::ALL {
+            let name = Chord::new(root, quality).name_in(key);
+            if !vocabulary.contains(&name) {
+                vocabulary.push(name);
+            }
+        }
+    }
+    vocabulary
+}
 
 /// The section names a person actually writes, offered under the section field.
 ///
@@ -440,19 +472,25 @@ const COMPLETION_LIMIT: usize = 8;
 ///
 /// Matched against the stretch a completion would replace rather than against the whole box, so a
 /// progression offers chords for the one being written instead of trying to match the line.
-pub fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
+#[cfg(test)]
+fn completions(target: PromptTarget, typed: &str) -> Vec<&'static str> {
     let Some(notation) = target.notation() else {
         return Vec::new();
     };
-    let vocabulary = notation.vocabulary();
-    if vocabulary.is_empty() {
-        return Vec::new();
-    }
+    matching_completions(notation, typed, notation.vocabulary().iter().copied())
+}
+
+/// Narrows one completion vocabulary, with prefixes ahead of substring matches.
+fn matching_completions<'a>(
+    notation: Notation,
+    typed: &str,
+    vocabulary: impl IntoIterator<Item = &'a str>,
+) -> Vec<&'a str> {
     let needle = typed[notation.completing_range(typed)]
         .trim()
         .to_ascii_lowercase();
-    let mut offered: Vec<&'static str> = Vec::new();
-    let mut contained: Vec<&'static str> = Vec::new();
+    let mut offered = Vec::new();
+    let mut contained = Vec::new();
     for entry in vocabulary {
         let candidate = entry.to_ascii_lowercase();
         if needle.is_empty() || candidate.starts_with(&needle) {
@@ -590,6 +628,13 @@ pub struct Prompt {
     /// original prefix is what makes the second press offer the second candidate for what was
     /// typed rather than the second candidate for what the first press wrote.
     completing: Option<(String, usize)>,
+    /// A vocabulary derived from document state, when the static notation list is not enough.
+    ///
+    /// Chord names depend on the key at the point being edited, so [`AurisApp::open_prompt`]
+    /// installs them when the sheet enters the window. Other fields keep using their static list.
+    vocabulary: Option<Vec<String>>,
+    /// The key that names and colours the dynamic chord vocabulary.
+    chord_key: Option<MusicalKey>,
 }
 
 impl Prompt {
@@ -607,6 +652,8 @@ impl Prompt {
             },
             error: None,
             completing: None,
+            vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -617,6 +664,8 @@ impl Prompt {
             body: PromptBody::Ask(question),
             error: None,
             completing: None,
+            vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -630,6 +679,8 @@ impl Prompt {
             body: PromptBody::Notice(lines.into_iter().collect()),
             error: None,
             completing: None,
+            vocabulary: None,
+            chord_key: None,
         }
     }
 
@@ -680,18 +731,18 @@ impl Prompt {
             Some((from, index)) => (from.clone(), index + 1),
             None => (field.content().to_string(), 0),
         };
-        let offered = completions(target, &from);
+        let offered = self.completion_options(&from);
         if offered.is_empty() {
             return false;
         }
         let index = next % offered.len();
-        let chosen = offered[index];
+        let chosen = offered[index].to_owned();
         if let PromptBody::Text { field, .. } = &mut self.body {
             // From where the word being completed began, to the end of whatever the last step of
             // the walk left there. The text in front of it is untouched by the walk, so its start
             // is still the one the original text gave.
             let word = notation.completing_range(&from).start;
-            field.replace(word..field.content().len(), chosen);
+            field.replace(word..field.content().len(), &chosen);
         }
         self.completing = Some((from, index));
         true
@@ -702,6 +753,42 @@ impl Prompt {
         self.completing
             .as_ref()
             .map(|(from, index)| (from.as_str(), *index))
+    }
+
+    /// The values this prompt offers for the text typed so far.
+    fn completion_options(&self, typed: &str) -> Vec<&str> {
+        let Some(target) = self.target() else {
+            return Vec::new();
+        };
+        let Some(notation) = target.notation() else {
+            return Vec::new();
+        };
+        match &self.vocabulary {
+            Some(vocabulary) => {
+                matching_completions(notation, typed, vocabulary.iter().map(String::as_str))
+            }
+            None => matching_completions(notation, typed, notation.vocabulary().iter().copied()),
+        }
+    }
+
+    /// The scale degree that supplies an offered chord's colour.
+    fn completion_degree(&self, entry: &str) -> Option<u8> {
+        match self.target()?.notation()? {
+            Notation::Chord => self
+                .chord_key
+                .and_then(|key| Numeral::parse_in_key(entry, key))
+                .or_else(|| Numeral::parse(entry)),
+            Notation::Progression => Numeral::parse(entry),
+            _ => None,
+        }
+        .map(|numeral| numeral.degree)
+    }
+
+    /// Replaces the static chord vocabulary with names and degrees derived from `key`.
+    fn set_chord_vocabulary(&mut self, key: MusicalKey) {
+        self.completing = None;
+        self.vocabulary = Some(chord_vocabulary(key));
+        self.chord_key = Some(key);
     }
 }
 
@@ -743,7 +830,11 @@ impl AurisApp {
     }
 
     /// Opens a rename sheet, replacing any open menu.
-    pub(crate) fn open_prompt(&mut self, prompt: Prompt) {
+    pub(crate) fn open_prompt(&mut self, mut prompt: Prompt) {
+        if let Some(PromptTarget::Chord(at)) = prompt.target() {
+            let at = self.session.snap_harmony(at);
+            prompt.set_chord_vocabulary(self.session.project().harmony.key_at(at));
+        }
         self.menu = None;
         self.menu_bar = None;
         self.prompt = Some(prompt);
@@ -878,7 +969,7 @@ impl AurisApp {
                     }
                 }
             }
-            // These two parse rather than rename, and a rejection has to say what was rejected:
+            // These parse rather than rename, and a rejection has to say what was rejected:
             // `Bbb minor` and `H7` look plausible enough that "invalid input" would not help.
             PromptTarget::Key(at) => match MusicalKey::parse(&text) {
                 Some(key) => {
@@ -890,16 +981,14 @@ impl AurisApp {
                     return;
                 }
             },
-            PromptTarget::Chord(at) => match Numeral::parse(&text) {
-                Some(chord) => {
-                    self.session.set_chord(at, chord);
+            PromptTarget::Chord(at) => {
+                if self.session.set_chord_from_text(at, &text) {
                     Ok(())
-                }
-                None => {
+                } else {
                     self.reject_prompt(messages::not_a_chord(self.language(), &text));
                     return;
                 }
-            },
+            }
             // Any text is a name, so there is nothing to parse and nothing to refuse; the
             // empty case was already turned away above, and removing a section is the menu's
             // job rather than an empty field's.
@@ -1855,7 +1944,7 @@ impl AurisApp {
         prompt: &Prompt,
         cx: &mut Context<Self>,
     ) -> Option<impl IntoElement + use<>> {
-        let PromptBody::Text { target, field } = &prompt.body else {
+        let PromptBody::Text { field, .. } = &prompt.body else {
             return None;
         };
         // While Tab is walking, the row is the list it is walking rather than one recomputed from
@@ -1865,7 +1954,13 @@ impl AurisApp {
             Some((from, index)) => (from, Some(index)),
             None => (field.content(), None),
         };
-        let offered = completions(*target, typed);
+        // Buttons and their callbacks outlive this render pass, so carry the key-derived names
+        // as owned strings instead of borrowing them from the prompt.
+        let offered = prompt
+            .completion_options(typed)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
         if offered.is_empty() {
             return None;
         }
@@ -1876,13 +1971,10 @@ impl AurisApp {
                 .flex_wrap()
                 .gap_1()
                 .children(offered.into_iter().enumerate().map(|(index, entry)| {
-                    let degree_color = matches!(
-                        target.notation(),
-                        Some(Notation::Chord | Notation::Progression)
-                    )
-                    .then(|| Numeral::parse(entry))
-                    .flatten()
-                    .map(|numeral| theme.chord_color(numeral.degree));
+                    let degree_color = prompt
+                        .completion_degree(&entry)
+                        .map(|degree| theme.chord_color(degree));
+                    let completion = entry.clone();
                     button(
                         SharedString::from(format!("complete:{entry}")),
                         entry,
@@ -1891,7 +1983,7 @@ impl AurisApp {
                         degree_color.unwrap_or(theme.accent),
                         &theme,
                         cx.listener(move |this, _, window, cx| {
-                            this.complete_prompt(entry, window, cx);
+                            this.complete_prompt(&completion, window, cx);
                             cx.notify();
                         }),
                     )
@@ -2577,6 +2669,78 @@ mod tests {
     }
 
     #[test]
+    fn unusual_chord_qualities_are_offered_by_name() {
+        let diminished = completions(PromptTarget::Chord(AT), "dim");
+        assert!(diminished.contains(&"IIdim"), "{diminished:?}");
+
+        let suspended = completions(PromptTarget::Chord(AT), "sus2");
+        assert!(suspended.contains(&"Isus2"), "{suspended:?}");
+    }
+
+    #[test]
+    fn alphabetic_chord_completions_follow_the_current_key() {
+        let key = MusicalKey::parse("D major").unwrap();
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "f");
+        prompt.set_chord_vocabulary(key);
+
+        let offered = prompt.completion_options("f");
+        assert_eq!(offered.first(), Some(&"F#m"), "{offered:?}");
+        assert!(offered.contains(&"F#sus2"), "{offered:?}");
+        assert!(
+            prompt.completion_options("c#").contains(&"C#dim"),
+            "the seventh degree was not spelled in D major"
+        );
+
+        let key = MusicalKey::parse("F major").unwrap();
+        prompt.set_chord_vocabulary(key);
+        assert_eq!(prompt.completion_options("bb").first(), Some(&"Bb"));
+    }
+
+    #[test]
+    fn alphabetic_chord_completion_colours_follow_their_scale_degrees() {
+        let key = MusicalKey::parse("D major").unwrap();
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "");
+        prompt.set_chord_vocabulary(key);
+
+        assert_eq!(prompt.completion_degree("F#m"), Some(3));
+        assert_eq!(prompt.completion_degree("F#6/9"), Some(3));
+        assert_eq!(prompt.completion_degree("C#dim"), Some(7));
+        assert_eq!(prompt.completion_degree("Dsus2"), Some(1));
+        assert_eq!(prompt.completion_degree("Dadd11"), Some(1));
+        assert_eq!(prompt.completion_degree("V"), Some(5));
+    }
+
+    #[test]
+    fn extended_alphabetic_chords_are_offered_from_the_current_scale() {
+        let key = MusicalKey::parse("D major").unwrap();
+        let mut prompt = Prompt::new("", PromptTarget::Chord(AT), "");
+        prompt.set_chord_vocabulary(key);
+
+        for symbol in [
+            "F#5", "F#add9", "F#madd9", "F#add11", "F#6", "F#m6", "F#6/9", "F#11", "F#maj11",
+            "F#m11", "F#maj13", "F#m13",
+        ] {
+            let typed = symbol.to_ascii_lowercase();
+            assert!(
+                prompt.completion_options(&typed).contains(&symbol),
+                "`{symbol}` was not offered in D major"
+            );
+        }
+    }
+
+    #[test]
+    fn every_key_derived_chord_completion_is_accepted() {
+        let key = MusicalKey::parse("Eb minor").unwrap();
+        for entry in chord_vocabulary(key) {
+            assert!(
+                Numeral::parse_in_key(&entry, key).is_some(),
+                "`{entry}` is offered in {} and is not a chord",
+                key.to_text()
+            );
+        }
+    }
+
+    #[test]
     fn the_list_never_grows_into_a_table() {
         for typed in ["", "i", "v", "b", "major", "minor"] {
             for target in [PromptTarget::Chord(AT), PromptTarget::Key(AT)] {
@@ -3172,6 +3336,61 @@ mod window_tests {
                 "Return accepts the foreground prompt"
             );
             assert_eq!(this.session.signature_at(Ticks::ZERO).to_string(), "7/8");
+        });
+    }
+
+    #[gpui::test]
+    fn chord_prompt_accepts_an_absolute_name_in_the_current_key(cx: &mut TestAppContext) {
+        let at = Ticks(3_840);
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .set_key(at, MusicalKey::parse("D major").unwrap());
+            this.open_prompt(Prompt::new(
+                "Chord",
+                PromptTarget::Chord(at - Ticks(100)),
+                "Cdim",
+            ));
+        });
+        paint(&app, cx);
+
+        cx.simulate_keystrokes("enter");
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.session.harmony().chord_at(at), Chord::parse("Cdim"));
+        });
+    }
+
+    #[gpui::test]
+    fn chord_prompt_completes_an_alphabetic_name_from_the_current_key(cx: &mut TestAppContext) {
+        let at = Ticks(3_840);
+        let (app, cx) = open(cx);
+        app.update(cx, |this, _| {
+            this.session
+                .set_key(at, MusicalKey::parse("D major").unwrap());
+            this.open_prompt(Prompt::new(
+                "Chord",
+                PromptTarget::Chord(at - Ticks(100)),
+                "f",
+            ));
+        });
+        paint(&app, cx);
+
+        assert!(cx.debug_bounds("complete:F#m").is_some());
+        assert!(cx.debug_bounds("complete:F#sus2").is_some());
+        cx.simulate_keystrokes("tab");
+        app.read_with(cx, |this, _| {
+            assert_eq!(
+                this.prompt.as_ref().unwrap().field().unwrap().content(),
+                "F#m"
+            );
+        });
+        cx.simulate_keystrokes("enter");
+
+        app.read_with(cx, |this, _| {
+            assert!(this.prompt.is_none());
+            assert_eq!(this.session.harmony().chord_at(at), Chord::parse("F#m"));
         });
     }
 
