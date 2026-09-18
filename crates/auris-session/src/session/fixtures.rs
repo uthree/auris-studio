@@ -52,7 +52,16 @@ impl Scratch {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
+        // macOS exposes its temporary directory through `/var`, which is a symlink to
+        // `/private/var`. Tests of automatic file access need the real path so that the system
+        // redirect is not mistaken for the hostile redirect each fixture is trying to create.
+        let temp_dir = std::env::temp_dir();
+        let temp_dir = if cfg!(target_os = "macos") {
+            std::fs::canonicalize(temp_dir).expect("the system temp directory can be resolved")
+        } else {
+            temp_dir
+        };
+        let path = temp_dir.join(format!(
             "auris-session-{}-{unique}-{name}",
             std::process::id()
         ));
