@@ -89,7 +89,11 @@ impl AurisApp {
             .min_w_0()
             .when(full_span, |this| this.col_span_full())
             .track_focus(&focus)
-            .child(child)
+            // This region is a row flexbox only so its absolute measurement canvas can share
+            // the bounds. An unwrapped row is otherwise sized to its contents on the main axis:
+            // picker labels are painted by an absolute canvas and contribute no intrinsic
+            // width, leaving only the padding and chevron (and therefore only an ellipsis).
+            .child(div().flex_1().min_w_0().child(child))
             .child(
                 canvas(
                     move |measured, _, _| bounds.set(Some(measured)),
@@ -1827,6 +1831,20 @@ mod window_tests {
                         assert!(lyrics.top() >= song.bottom());
                     }
                     assert!(form.top() >= song.bottom().max(lyrics.bottom()));
+                    for selector in [
+                        "song-style",
+                        "song-ending",
+                        "song-singer",
+                        "song-tonality",
+                        "song-sound",
+                        "song-pace",
+                    ] {
+                        let field = cx.debug_bounds(selector).unwrap();
+                        assert!(
+                            field.size.width >= px(200.0),
+                            "{selector} must use the row width so its selected value is visible: {field:?}"
+                        );
+                    }
                     let body = cx.debug_bounds("song-sheet-body").unwrap();
                     assert_eq!(cx.debug_bounds("song-sheet-scrollbar").unwrap(), body);
                     assert!(

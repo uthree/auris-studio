@@ -38,7 +38,10 @@ impl AurisApp {
             .w_full()
             .min_w_0()
             .track_focus(&focus)
-            .child(child)
+            // Keep the measured child on the full main axis. Without this flex item the
+            // focus-region wrapper shrink-wraps controls whose own contents have no intrinsic
+            // width, just as the song sheet's canvas-painted picker labels do.
+            .child(div().flex_1().min_w_0().child(child))
             .child(
                 canvas(
                     move |measured, _, _| bounds.set(Some(measured)),
@@ -825,27 +828,32 @@ impl AurisApp {
         let state = &self.reference_match;
         let editable = !state.busy();
         let theme = &self.theme;
-        let mut target = div().flex().flex_col().gap_2().child(
-            reference_row(self, Key::AudioMatchObjective).children(
-                [
-                    ("audio-match-acoustic", MatchObjective::AcousticReference),
-                    ("audio-match-clap-reference", MatchObjective::ClapReference),
-                    ("audio-match-clap-text", MatchObjective::ClapText),
-                ]
-                .into_iter()
-                .map(|(id, objective)| {
-                    choice(
-                        self,
-                        cx,
-                        id,
-                        self.t(objective.label()),
-                        editable,
-                        state.objective == objective,
-                        move |state| state.objective = objective,
-                    )
-                }),
-            ),
-        );
+        let mut target = div()
+            .debug_selector(|| "audio-match-target".to_string())
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                reference_row(self, Key::AudioMatchObjective).children(
+                    [
+                        ("audio-match-acoustic", MatchObjective::AcousticReference),
+                        ("audio-match-clap-reference", MatchObjective::ClapReference),
+                        ("audio-match-clap-text", MatchObjective::ClapText),
+                    ]
+                    .into_iter()
+                    .map(|(id, objective)| {
+                        choice(
+                            self,
+                            cx,
+                            id,
+                            self.t(objective.label()),
+                            editable,
+                            state.objective == objective,
+                            move |state| state.objective = objective,
+                        )
+                    }),
+                ),
+            );
         if state.objective.uses_clap() {
             target = target
                 .child(

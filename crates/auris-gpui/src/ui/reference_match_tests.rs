@@ -118,6 +118,21 @@ fn expanded_search_scopes_and_budget_are_selected_without_editing_the_project(
 }
 
 #[gpui::test]
+fn focus_regions_do_not_shrink_wrap_their_controls(cx: &mut TestAppContext) {
+    let (app, cx) = open(cx);
+    app.update(cx, |this, cx| this.open_reference_match(cx));
+    resize(&app, cx, size(px(900.0), px(650.0)));
+
+    let region = cx.debug_bounds("reference-focus-region-0").unwrap();
+    let scroll = cx.debug_bounds("reference-match-scroll").unwrap();
+    assert!(region.size.width >= scroll.size.width - px(16.0));
+    let target = cx.debug_bounds("audio-match-target").unwrap();
+    assert_eq!(target.size.width, region.size.width);
+    let label = cx.debug_bounds("audio-match-acoustic").unwrap();
+    assert!(label.right() <= region.right());
+}
+
+#[gpui::test]
 fn the_reference_modal_runs_on_pcm_without_editing_the_song(cx: &mut TestAppContext) {
     let (app, cx, _, clip) = with_a_clip(cx);
     let before = app.update(cx, |this, cx| {
