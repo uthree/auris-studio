@@ -71,7 +71,7 @@ impl AurisMcp {
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::open_project::run(&args)).await
     }
-    /// Add 1..16 tracks with optional sound_id and empty clip in one atomic save. Use a unique request_id; identical retries return the same result while the document is unchanged (last 32 receipts, this server lifetime). Existing track names are rejected. On conflict, inspect the project before a new request.
+    /// Add 1..16 tracks with optional sound_id and empty clip in one atomic save. The result echoes selected sound IDs; after writing notes, run analyze to measure their actual levels. Use a unique request_id; identical retries return the same result while the document is unchanged (last 32 receipts, this server lifetime). Existing track names are rejected. On conflict, inspect the project before a new request.
     #[tool(input_schema = tool_schema("setup_tracks"))]
     async fn setup_tracks(
         &self,
@@ -358,13 +358,22 @@ impl AurisMcp {
         blocking(move || toolbox::compose::run(&args)).await
     }
 
-    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.
+    /// Renders a project to a WAV file — or, with `stems`, to one file per track — and inspects each encoded file for loudness, peaks, saturation and ending level. Use verify_render with a target_lufs and ending limit for a delivery pass/fail check. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.
     #[tool(input_schema = tool_schema("render"))]
     async fn render(
         &self,
         Parameters(args): Parameters<toolbox::render::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::render::run(&args)).await
+    }
+
+    /// Decodes the saved WAV file itself and reports sample rate, channels, bit depth, duration, integrated LUFS, true peak, full-scale samples, final 0.5 s RMS and SHA-256. Pass target_lufs and optional ending_rms_max_db to check the delivery target; omit ending limit for intentional loops or hard cuts. A failed check keeps the file for repair.
+    #[tool(input_schema = tool_schema("verify_render"))]
+    async fn verify_render(
+        &self,
+        Parameters(args): Parameters<toolbox::verify_render::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::verify_render::run(&args)).await
     }
 
     /// Describes a project on disk: tempo, meter, duration, and every track with its instrument, clip count, effects and routing. Large results return an immutable report_id snapshot; use read_report for details instead of repeating analysis or edits.
@@ -419,6 +428,15 @@ impl AurisMcp {
         Parameters(args): Parameters<toolbox::set_level::Args>,
     ) -> Result<CallToolResult, ErrorData> {
         blocking(move || toolbox::set_level::run(&args)).await
+    }
+
+    /// Measures the whole mix, moves all source faders by one common dB offset toward target_lufs, measures again, and saves. Preserves their relative balance and master gain. A true-peak ceiling and fader limits can leave the mix short of the target; inspect the reported result. Refuses automated source gain.
+    #[tool(input_schema = tool_schema("normalize_mix"))]
+    async fn normalize_mix(
+        &self,
+        Parameters(args): Parameters<toolbox::normalize_mix::Args>,
+    ) -> Result<CallToolResult, ErrorData> {
+        blocking(move || toolbox::normalize_mix::run(&args)).await
     }
 
     /// Sets one static effect parameter. Read mixer, then provide track (or master), slot (1-based chain position), param (key/name) and value in its listed units. Example: slot 1, param threshold_db, value -18. Optional effect checks that the slot contains the expected effect id. Out-of-range values are refused. Changes are saved. Lower the master limiter's input_db when loud sections hit its ceiling.
@@ -502,7 +520,7 @@ impl AurisMcp {
         blocking(move || toolbox::similar_instruments::run(&args)).await
     }
 
-    /// Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.
+    /// Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. After notes are written, analyze their actual level. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.
     #[tool(input_schema = tool_schema("add_track"))]
     async fn add_track(
         &self,
@@ -520,7 +538,7 @@ impl AurisMcp {
         blocking(move || toolbox::add_part::run(&args)).await
     }
 
-    /// Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. Saves the change.
+    /// Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. The new sound can change loudness substantially: remeasure with analyze, then normalize_mix if needed. Saves the change.
     #[tool(input_schema = tool_schema("set_instrument"))]
     async fn set_instrument(
         &self,

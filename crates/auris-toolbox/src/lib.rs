@@ -37,6 +37,7 @@ use std::path::{Path, PathBuf};
 use auris_session::prelude::*;
 use auris_session::{Session, SessionError, SessionOptions};
 
+mod audio_quality;
 mod audition;
 #[path = "capabilities.rs"]
 mod availability;
@@ -62,6 +63,7 @@ mod sound_input;
 mod sound_search;
 pub use sound_search::{instrument_diagnostics, search_instruments, similar_instruments};
 mod track_editing;
+pub use audio_quality::{normalize_mix, verify_render};
 pub use audition::{RenderRange, preview};
 pub use availability::capabilities;
 use availability::playback_warnings;
@@ -143,6 +145,14 @@ cannot hear, report that limitation instead of claiming a listening check passed
 preview creates a short WAV; render exports audio. Audio files do not mean you can hear them:
 claim listening only with actual audio input. analyze measures loudness; analyze_music reads
 note statistics. Neither is a subjective listening judgment.
+
+After choosing or replacing a sound, analyze the mix again: fader settings are retained but
+the instrument's output level may change. Set an explicit loudness and true-peak goal for the
+delivery, and use normalize_mix if a shared fader move is appropriate. This can stop short of
+the target at the peak ceiling or fader limits; read the measured result. Render then inspects
+the encoded WAV itself. Use verify_render with the delivery target, true-peak ceiling and, for
+a fade ending, ending_rms_max_db. For an intentional loop or hard cut, omit the ending limit.
+Treat FAIL as unfinished and adjust the mix or arrangement before claiming completion.
 
 The requested song length is the sum of all sections, not the length of each section. Add the
 section bars before composing, then verify the total bars and duration in the saved result.
@@ -418,6 +428,7 @@ pub const WRITES_PROJECTS: &[&str] = &[
     compose_lyrics::NAME,
     regenerate_clips::NAME,
     set_level::NAME,
+    normalize_mix::NAME,
     set_effect::NAME,
     section_gain::NAME,
     add_track::NAME,
@@ -617,7 +628,7 @@ pub mod render {
     pub const NAME: &str = "render";
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Renders a project to a WAV file — or, with `stems`, to one \
-        file per track — and reports each file's length, channels and peak level. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.";
+        file per track — and inspects each encoded file for loudness, peaks, saturation and ending level. Use verify_render with a target_lufs and ending limit for a delivery pass/fail check. Optionally select start_bar + bars or one section occurrence; ranges omit tails by default.";
 
     /// Arguments to `render`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -683,6 +694,21 @@ pub mod render {
                 };
             for stem in &written {
                 text.push_str(&wrote_line(&stem.path, &stem.summary, &settings));
+                let inspected = auris_session::inspect_export(&stem.path).map_err(|error| {
+                    format!(
+                        "Wrote {} but encoded WAV inspection failed: {error}",
+                        stem.path.display()
+                    )
+                })?;
+                audio_quality::check_layout(
+                    &inspected,
+                    &stem.summary,
+                    &settings,
+                    session.project().sample_rate,
+                )?;
+                text.push_str(&audio_quality::report(
+                    &stem.path, &inspected, None, 1.0, None, None,
+                ));
             }
         } else {
             let output = args
@@ -698,6 +724,21 @@ pub mod render {
                 .render_to_wav(&output, &settings, &options, &mut progress)
                 .map_err(|error| error.to_string())?;
             text.push_str(&wrote_line(&output, &summary, &settings));
+            let inspected = auris_session::inspect_export(&output).map_err(|error| {
+                format!(
+                    "Wrote {} but encoded WAV inspection failed: {error}",
+                    output.display()
+                )
+            })?;
+            audio_quality::check_layout(
+                &inspected,
+                &summary,
+                &settings,
+                session.project().sample_rate,
+            )?;
+            text.push_str(&audio_quality::report(
+                &output, &inspected, None, 1.0, None, None,
+            ));
         }
         Ok(text.trim_end().to_string())
     }
@@ -1834,7 +1875,7 @@ pub mod add_track {
     /// The tool's wire name.
     pub const NAME: &str = "add_track";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.";
+    pub const DESCRIPTION: &str = "Add a named track and save. Required kind selects instrument, drum, singer, audio or bus. Use sound_id from search_instruments/similar_instruments for an exact sound on instrument/drum tracks; omit for the default. New note tracks have no clips. After notes are written, analyze their actual level. Prefer setup_tracks to create multiple tracks with sounds and empty clips atomically.";
 
     /// The explicit type of track to create.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
@@ -1954,7 +1995,7 @@ pub mod add_track {
         save_checkpointed(&mut session)?;
         let mut text = format!("Added track '{}' — {voiced}. Saved.", args.name);
         if matches!(kind, Kind::Instrument | Kind::Drum) {
-            text.push_str(" The track holds no clips yet. For authored notes, use `add_clip` then `replace_notes` (inline notes or a JSON source file); `add_part` generates a part automatically.");
+            text.push_str(" The track holds no clips yet. For authored notes, use `add_clip` then `replace_notes` (inline notes or a JSON source file); `add_part` generates a part automatically. Analyze the mix after notes are written because this sound's output level may differ from the previous tracks.");
         }
         if kind == Kind::Singer {
             text.push_str(
@@ -2113,7 +2154,7 @@ pub mod set_instrument {
     /// The tool's wire name.
     pub const NAME: &str = "set_instrument";
     /// The tool's model-facing description.
-    pub const DESCRIPTION: &str = "Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. Saves the change.";
+    pub const DESCRIPTION: &str = "Replace an instrument/drum track sound using sound_id from search_instruments/similar_instruments for this project. Keeps notes and mixer settings but clears previous instrument parameters and their automation. The new sound can change loudness substantially: remeasure with analyze, then normalize_mix if needed. Saves the change.";
 
     /// Arguments to `set_instrument`.
     #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2154,7 +2195,10 @@ pub mod set_instrument {
         if let Some(sound_id) = &args.sound_id {
             session.use_library_sound(track, sound_id, &[])?;
             session.save_with_checkpoint().map_err(|e| e.to_string())?;
-            return Ok(format!("{} — now {sound_id}. Saved.", args.track));
+            return Ok(format!(
+                "{} — now {sound_id}. Saved. Mixer settings stayed the same; run analyze before export because the new sound may be much louder or quieter.",
+                args.track
+            ));
         }
         if let Some(id) = &args.instrument {
             if args.sound.is_some() {
@@ -2168,7 +2212,10 @@ pub mod set_instrument {
         }
         let voiced = add_track::voice(&mut session, track, &args.sound, args.drums, &None)?;
         save_checkpointed(&mut session)?;
-        Ok(format!("{} — now {voiced}. Saved.", args.track))
+        Ok(format!(
+            "{} — now {voiced}. Saved. Mixer settings stayed the same; run analyze before export because the new sound may be much louder or quieter.",
+            args.track
+        ))
     }
 }
 

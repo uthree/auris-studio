@@ -7,6 +7,9 @@ use thiserror::Error;
 /// Anything that can go wrong while driving a session.
 #[derive(Debug, Error)]
 pub enum SessionError {
+    /// The requested whole-mix level cannot be measured or safely applied.
+    #[error("mix normalization: {0}")]
+    MixNormalization(String),
     /// An authored note batch cannot be applied without changing its requested values.
     #[error("invalid notes: {0}")]
     InvalidNotes(String),

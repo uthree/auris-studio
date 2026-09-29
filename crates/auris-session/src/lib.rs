@@ -47,7 +47,9 @@ pub mod audio_evaluation;
 pub mod audio_inspection;
 pub mod audio_review;
 pub mod clap_evaluation;
+mod export_inspection;
 pub mod live_agent;
+pub use export_inspection::{ExportInspection, inspect_export};
 pub mod note_pitch;
 /// Headless composition search and its request/result types.
 ///
@@ -118,16 +120,16 @@ pub use session::{
     DEFAULT_OCTAVE, DEFAULT_PARTS, DEFAULT_VELOCITY, DiscardRecoveryJob, DiskWatchJob,
     DiskWatchResult, InputChannels, LAYOUT, LIMITER_ALLOWANCE_DB, LoadedFont, LyricSongReport,
     MIN_PHONEME_SECONDS, MidiExportJob, MidiExportResult, MidiImportJob, MidiImportResult,
-    MixAnalysis, MusicalTyping, OCTAVE_RANGE, OpenProjectJob, OpenProjectResult, Played,
-    PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport, RecordingStatus, RecoveryCleanupJob,
-    RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult, RecoverySnapshot, Release, SaveJob,
-    SaveReport, SaveResult, SectionLoudness, Session, SessionOptions, SingPlan,
-    SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob, SingerLandingResult,
-    SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob, SingerVoiceLoadResult, Struck,
-    SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel, TrackLoudness, TypingRole,
-    VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db, input_level_of,
-    master_gain_db, quantized, read_soundfont, recovery_dir, shadows_musical_typing,
-    take_fingerprint,
+    MixAnalysis, MusicalTyping, NormalizeMixReport, OCTAVE_RANGE, OpenProjectJob,
+    OpenProjectResult, Played, PluginWindow, Quantize, RECOVERY_DIR_VAR, RecordingReport,
+    RecordingStatus, RecoveryCleanupJob, RecoveryJob, RecoveryQuarantineCleanupJob, RecoveryResult,
+    RecoverySnapshot, Release, SaveJob, SaveReport, SaveResult, SectionLoudness, Session,
+    SessionOptions, SingPlan, SingerFramesExportJob, SingerFramesExportResult, SingerLandingJob,
+    SingerLandingResult, SingerTakeState, SingerVoiceInfo, SingerVoiceLoadJob,
+    SingerVoiceLoadResult, Struck, SungFrames, TARGET_LUFS, TYPING_BEND, TakeReport, TrackLevel,
+    TrackLoudness, TypingRole, VELOCITY_STEP, WHEEL_STEPS, decode_audio, fader_for, faders_lift_db,
+    input_level_of, master_gain_db, quantized, read_soundfont, recovery_dir,
+    shadows_musical_typing, take_fingerprint,
 };
 pub use session::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,

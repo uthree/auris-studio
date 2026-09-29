@@ -90,6 +90,7 @@ pub fn command(tool: &str, args: &Value) -> Result<Option<Command>, String> {
         | "set_tempo"
         | "set_loop"
         | "set_level"
+        | "normalize_mix"
         | "set_track_state"
         | "add_clip"
         | "add_note"
@@ -331,6 +332,10 @@ mod tests {
                 serde_json::json!({"track":1,"gain_db":-6.0,"pan":0.0}),
             ),
             (
+                "normalize_mix",
+                serde_json::json!({"target_lufs":-23.0,"ceiling_db":-1.0}),
+            ),
+            (
                 "set_track_state",
                 serde_json::json!({"track":1,"mute":false,"solo":false}),
             ),
@@ -406,7 +411,7 @@ mod tests {
     #[test]
     fn flat_catalog_covers_commands_without_a_tagged_union_or_file_destinations() {
         let tools = definitions();
-        assert_eq!(tools.len(), 20);
+        assert_eq!(tools.len(), 21);
         assert!(
             command("compose_song", &serde_json::json!({}))
                 .unwrap()

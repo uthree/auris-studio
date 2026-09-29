@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock};
 /// Wire name.
 pub const NAME: &str = "setup_tracks";
 /// Model-facing contract.
-pub const DESCRIPTION: &str = "Add 1..16 tracks with optional sound_id and empty clip in one atomic save. Use a unique request_id; identical retries return the same result while the document is unchanged (last 32 receipts, this server lifetime). Existing track names are rejected. On conflict, inspect the project before a new request.";
+pub const DESCRIPTION: &str = "Add 1..16 tracks with optional sound_id and empty clip in one atomic save. The result echoes selected sound IDs; after writing notes, run analyze to measure their actual levels. Use a unique request_id; identical retries return the same result while the document is unchanged (last 32 receipts, this server lifetime). Existing track names are rejected. On conflict, inspect the project before a new request.";
 /// One atomic setup request.
 #[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

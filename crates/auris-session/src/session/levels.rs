@@ -29,6 +29,7 @@ use auris_gpu::analysis::analyze_loudness;
 use auris_gpu::analysis::analyze_loudness_cpu;
 
 use crate::error::SessionError;
+use crate::{Edit, ParamTarget};
 
 use super::Session;
 
@@ -164,6 +165,21 @@ pub struct BalanceReport {
     pub now_lufs: Option<f32>,
 }
 
+/// Measured result of moving every source fader by one common offset.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NormalizeMixReport {
+    /// Requested integrated loudness in LUFS.
+    pub target_lufs: f32,
+    /// Requested true-peak ceiling in dBTP.
+    pub ceiling_db: f32,
+    /// Original whole-mix loudness and peak.
+    pub before: super::MixAnalysis,
+    /// Measured whole-mix loudness and peak after the change.
+    pub after: super::MixAnalysis,
+    /// Shared change applied to every source fader in dB.
+    pub offset_db: f32,
+}
+
 impl BalanceReport {
     /// How far the loudest part is from where it was aiming, in decibels.
     ///
@@ -180,6 +196,79 @@ impl BalanceReport {
 }
 
 impl Session {
+    /// Adjusts overall loudness while preserving source-fader differences.
+    ///
+    /// The target is approached without exceeding the measured true-peak ceiling or the
+    /// faders' travel. Master gain and any authored automation remain untouched. Refuses
+    /// automated source gain, which would make the common offset ineffective.
+    pub fn normalize_mix(
+        &mut self,
+        target_lufs: f32,
+        ceiling_db: f32,
+    ) -> Result<NormalizeMixReport, SessionError> {
+        if !target_lufs.is_finite() || !(-60.0..=-6.0).contains(&target_lufs) {
+            return Err(SessionError::MixNormalization(
+                "target_lufs must be finite and between -60 and -6".into(),
+            ));
+        }
+        if !ceiling_db.is_finite() || !(-12.0..=0.0).contains(&ceiling_db) {
+            return Err(SessionError::MixNormalization(
+                "ceiling_db must be finite and between -12 and 0".into(),
+            ));
+        }
+        let faders: Vec<_> = self
+            .project
+            .tracks
+            .iter()
+            .filter(|track| !track.kind.is_bus())
+            .map(|track| (track.id, track.mixer.gain_db))
+            .collect();
+        if faders.is_empty() {
+            return Err(SessionError::MixNormalization("no source tracks".into()));
+        }
+        if faders
+            .iter()
+            .any(|(id, _)| self.is_automated(ParamTarget::TrackGain(*id)))
+        {
+            return Err(SessionError::MixNormalization(
+                "a source gain is automated; clear its gain lane before normalizing".into(),
+            ));
+        }
+        let before = self.analyze(false)?;
+        let Some(lufs) = before.lufs else {
+            return Err(SessionError::MixNormalization("the mix is silent".into()));
+        };
+        let desired = (target_lufs - lufs).min(ceiling_db - before.true_peak_db);
+        let lower = faders
+            .iter()
+            .map(|(_, gain)| FADER_RANGE_DB.0 - gain)
+            .fold(f32::NEG_INFINITY, f32::max);
+        let upper = faders
+            .iter()
+            .map(|(_, gain)| FADER_RANGE_DB.1 - gain)
+            .fold(f32::INFINITY, f32::min);
+        let offset_db = desired.clamp(lower, upper);
+        self.begin_transaction(Edit::BalanceLevels);
+        for (id, gain) in faders {
+            self.set_param(ParamTarget::TrackGain(id), gain + offset_db);
+        }
+        let after = match self.analyze(false) {
+            Ok(after) => after,
+            Err(error) => {
+                self.revert_transaction();
+                return Err(error);
+            }
+        };
+        self.end_transaction();
+        Ok(NormalizeMixReport {
+            target_lufs,
+            ceiling_db,
+            before,
+            after,
+            offset_db,
+        })
+    }
+
     /// Renders every track alone, measures it, and sets the mix from what it heard.
     ///
     /// One undo step. Everything it moves is a fader, so taking it back is exactly as cheap as
@@ -274,6 +363,37 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalization_preserves_fader_difference_and_undoes_together() {
+        let (mut session, _) = balanced();
+        let ids: Vec<_> = session
+            .project()
+            .tracks
+            .iter()
+            .filter(|track| !track.kind.is_bus())
+            .map(|track| track.id)
+            .collect();
+        let before: Vec<_> = ids
+            .iter()
+            .map(|id| session.project().track(*id).unwrap().mixer.gain_db)
+            .collect();
+        let report = session.normalize_mix(-23.0, -1.0).unwrap();
+        assert!(report.offset_db < 0.0, "expected attenuation: {report:?}");
+        let after: Vec<_> = ids
+            .iter()
+            .map(|id| session.project().track(*id).unwrap().mixer.gain_db)
+            .collect();
+        for (was, now) in before.iter().zip(&after) {
+            assert!((now - was - report.offset_db).abs() < 1.0e-4);
+        }
+        assert!(((after[0] - after[1]) - (before[0] - before[1])).abs() < 1.0e-4);
+        assert!(report.after.true_peak_db <= -0.9);
+        assert_eq!(session.undo(), Some(Edit::BalanceLevels));
+        for (id, was) in ids.iter().zip(&before) {
+            assert_eq!(session.project().track(*id).unwrap().mixer.gain_db, *was);
+        }
+    }
 
     #[test]
     fn a_fader_moves_by_the_distance_the_measurement_is_out() {

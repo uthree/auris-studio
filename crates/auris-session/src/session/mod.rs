@@ -105,8 +105,8 @@ pub use files::{
 pub use hosted::PluginWindow;
 pub use levels::{
     BalanceReport, CEILING_DB, ComposeBalanceJob, ComposeBalancePhase, ComposeBalanceProgress,
-    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, TARGET_LUFS, TrackLevel,
-    fader_for, faders_lift_db, master_gain_db,
+    ComposeBalanceResult, ComposeBalanceStep, LIMITER_ALLOWANCE_DB, NormalizeMixReport,
+    TARGET_LUFS, TrackLevel, fader_for, faders_lift_db, master_gain_db,
 };
 pub use lyrics::{DEFAULT_LYRIC_PROGRESSION, LyricSongReport, LyricsMeasure};
 pub use mixture::{

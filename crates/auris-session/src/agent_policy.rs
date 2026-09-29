@@ -83,6 +83,7 @@ pub const OPERATIONS: &[&str] = &[
     "edit_project.remove_track",
     "edit_project.set_instrument",
     "edit_project.set_level",
+    "edit_project.normalize_mix",
     "edit_project.set_track_state",
     "edit_project.add_clip",
     "edit_project.add_note",

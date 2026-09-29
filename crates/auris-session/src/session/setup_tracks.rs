@@ -137,9 +137,9 @@ impl Session {
                 } else {
                     None
                 };
-                output.push(serde_json::json!({"track":format!("id:{}",id.0),"name":track.name,"clip_id":clip,"clip":clip.map(|_|1)}));
+                output.push(serde_json::json!({"track":format!("id:{}",id.0),"name":track.name,"sound_id":track.sound_id,"clip_id":clip,"clip":clip.map(|_|1)}));
             }
-            Ok(serde_json::json!({"tracks":output}).to_string())
+            Ok(serde_json::json!({"tracks":output,"next":"After writing notes, run analyze: selected sounds can have very different output levels."}).to_string())
         })();
         if result.is_ok() {
             self.end_transaction();

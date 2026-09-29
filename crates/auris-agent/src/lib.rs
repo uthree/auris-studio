@@ -294,6 +294,11 @@ For example, two successive quarter notes:
 {\"pitch\":65,\"start_beat\":1,\"duration_beats\":1,\"velocity\":0.8}]}.
 Use short batches of up to 32 notes to keep each response manageable.
 Use multiple tracks for distinct musical parts and set_level to balance them.
+After changing a sound, inspect_audio again: retained faders do not guarantee retained loudness.
+Set an explicit loudness and true-peak goal. normalize_mix moves all source faders together
+and reports the measured result; a peak or fader limit can leave it short of the goal.
+The live rig tools do not export a WAV. For saved WAV delivery, the separate MCP path has
+render and verify_render; never claim a delivery target passed from live inspection alone.
 Track kind is one lowercase string, for example {\"name\":\"Drums\",\"kind\":\"drum\"}.
 Use instrument for melody/harmony and drum for percussion. Do not wrap kind in an array.
 For set_instrument use sound_id with the exact returned ID, never a program number. Search results use library indices into the libraries array; instrument_diagnostics reads failures on demand.
@@ -2271,6 +2276,7 @@ mod tests {
         assert!(names.contains(&"add_notes"));
         assert!(names.contains(&"inspect_project"));
         assert!(names.contains(&"set_level"));
+        assert!(names.contains(&"normalize_mix"));
         assert!(!names.contains(&"edit_project"));
         assert!(!names.contains(&"spec_reference"));
         assert!(!names.contains(&"list_progressions"));
@@ -2278,7 +2284,7 @@ mod tests {
         assert!(names.contains(&"search_instruments"));
         assert!(names.contains(&"similar_instruments"));
         assert!(names.contains(&"instrument_diagnostics"));
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
         for expected in toolbox::live_agent::definitions() {
             let exposed = actual
                 .iter()

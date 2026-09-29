@@ -122,7 +122,7 @@ pub enum Command {
         /// Stable track ID.
         track: u64,
     },
-    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Native preset state is retained in the document. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh, library changes, bounded handle eviction, or restart.
+    /// Replace the sound of an instrument or drum track using an exact id from search_instruments or similar_instruments (legacy list IDs also work). Keeps notes, clips, mixer and effects. Remeasure with inspect_audio and normalize_mix because the new sound can be much louder or quieter. Replacing the instrument clears its old parameter automation. SoundFonts must already be loaded; search IDs expire on refresh, library changes, bounded handle eviction, or restart.
     SetInstrument {
         /// Stable track ID.
         track: u64,
@@ -140,6 +140,15 @@ pub enum Command {
         /// Pan, -1 through 1.
         #[schemars(range(min = -1, max = 1))]
         pan: f32,
+    },
+    /// Measure the whole mix, move every source fader by the same amount toward target_lufs under a true-peak ceiling, and measure again. Keeps relative balance and master gain; refuses automated source gain. The measured result may fall short at fader or peak limits. Edits remain unsaved.
+    NormalizeMix {
+        /// Desired integrated loudness, -60 to -6 LUFS.
+        #[schemars(range(min = -60, max = -6))]
+        target_lufs: f32,
+        /// Maximum reconstructed peak, -12 to 0 dBTP; defaults to -1.
+        #[schemars(range(min = -12, max = 0))]
+        ceiling_db: Option<f32>,
     },
     /// Set mute and solo for one track. Both booleans are required; use inspect_project to preserve the other state when changing only one.
     SetTrackState {
@@ -454,7 +463,24 @@ impl Session {
                 } else {
                     self.agent_set_instrument(TrackId(track), &instrument)?;
                 }
-                Ok("Changed instrument".into())
+                Ok("Changed instrument. Mixer settings stayed the same; inspect_audio again because the new sound may be much louder or quieter.".into())
+            }
+            Command::NormalizeMix {
+                target_lufs,
+                ceiling_db,
+            } => {
+                let ceiling_db = ceiling_db.unwrap_or(-1.0);
+                let report = self.normalize_mix(target_lufs, ceiling_db).map_err(error)?;
+                Ok(format!(
+                    "Moved source faders {:+.2} dB. Mix {:.1} -> {:.1} LUFS; true peak {:.1} -> {:.1} dBTP. Target {:.1} LUFS, ceiling {:.1} dBTP. Changes are unsaved; inspect_audio again before judging the sound.",
+                    report.offset_db,
+                    report.before.lufs.unwrap_or(f32::NEG_INFINITY),
+                    report.after.lufs.unwrap_or(f32::NEG_INFINITY),
+                    report.before.true_peak_db,
+                    report.after.true_peak_db,
+                    target_lufs,
+                    ceiling_db
+                ))
             }
             Command::SetLevel {
                 track,
