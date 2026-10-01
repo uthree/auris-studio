@@ -209,6 +209,72 @@ fn bowed_expression_and_pitch_bend_control_a_sounding_note() {
 }
 
 #[test]
+fn guitar_fundamental_decay_is_calibrated_across_fractional_delays() {
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        for pitch in [45, 57, 69, 81] {
+            let mut guitar = rig(Model::Guitar, rate);
+            guitar.set_param("decay", 2.0);
+            guitar.set_param("damping", 0.2);
+            let audio = guitar.render(rate as usize, &[on(pitch, 0.8)]);
+            let hz = f64::from(pitch_to_hz(f32::from(pitch)));
+            let early = goertzel(
+                &audio[(rate * 0.05) as usize..(rate * 0.25) as usize],
+                rate,
+                hz,
+            );
+            let late = goertzel(
+                &audio[(rate * 0.55) as usize..(rate * 0.75) as usize],
+                rate,
+                hz,
+            );
+            let loss_db = 20.0 * (early / late).log10();
+            let expected = 60.0 * 0.5 / (2.0 / 1.6);
+            assert!(
+                (loss_db - expected).abs() < 1.5,
+                "{pitch} at {rate}: {loss_db} dB"
+            );
+        }
+    }
+}
+
+#[test]
+fn guitar_contact_and_pickup_change_the_spectrum_without_changing_pitch() {
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    guitar.set_param("hardness", 0.0);
+    let soft = guitar.render(8000, &[on(69, 0.8)]);
+    guitar.instrument.reset();
+    guitar.set_param("hardness", 1.0);
+    let hard = guitar.render(8000, &[on(69, 0.8)]);
+    assert!(goertzel(&hard, 48_000.0, 4400.0) > goertzel(&soft, 48_000.0, 4400.0) * 1.8);
+    guitar.instrument.reset();
+    guitar.set_param("pickup", 1.0);
+    let electric = guitar.render(8000, &[on(69, 0.8)]);
+    let fundamental = goertzel(&electric, 48_000.0, 440.0);
+    assert!(fundamental > 0.005);
+    let acoustic_ratio = goertzel(&hard, 48_000.0, 880.0) / goertzel(&hard, 48_000.0, 440.0);
+    let electric_ratio = goertzel(&electric, 48_000.0, 880.0) / fundamental;
+    assert!((acoustic_ratio - electric_ratio).abs() > 0.1);
+}
+
+#[test]
+fn guitar_bend_reaches_its_target_and_stays_bounded() {
+    let mut guitar = rig(Model::Guitar, 48_000.0);
+    guitar.render(12_000, &[on(57, 0.8)]);
+    let bent = guitar.render(
+        24_000,
+        &[NoteEvent::PitchBend {
+            frame: 0,
+            semitones: 12.0,
+        }],
+    );
+    assert!(peak(&bent) < 1.0);
+    assert!(
+        goertzel(&bent[12_000..], 48_000.0, 440.0)
+            > goertzel(&bent[12_000..], 48_000.0, 220.0) * 5.0
+    );
+}
+
+#[test]
 fn every_model_stays_bounded_for_extreme_notes_and_parameters() {
     for model in Model::ALL {
         let mut rig = rig(model, 48_000.0);

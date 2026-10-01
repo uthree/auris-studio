@@ -2,6 +2,10 @@
 
 use super::{Model, Settings};
 
+#[path = "pluck.rs"]
+mod pluck;
+use pluck::Pluck;
+
 #[derive(Clone, Debug, Default)]
 struct Delay {
     samples: Vec<f32>,
@@ -56,6 +60,8 @@ pub(super) struct StringModel {
     bow_velocity: f32,
     velocity: f32,
     rate: f32,
+    guitar: bool,
+    pluck: Pluck,
 }
 
 impl StringModel {
@@ -79,7 +85,13 @@ impl StringModel {
         self.neck.clear();
         self.filtered = 0.0;
         self.bowed = model == Model::Violin;
+        self.guitar = model == Model::Guitar;
         self.velocity = velocity;
+        if self.guitar {
+            self.pluck
+                .excite(&mut self.bridge, frequency, velocity, rate, settings);
+            return;
+        }
         self.pole = (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * velocity)
             + settings.damping * 0.15)
             .clamp(0.05, 0.92);
@@ -109,10 +121,18 @@ impl StringModel {
     }
 
     pub(super) fn retune(&mut self, ratio: f32) {
+        if self.guitar {
+            self.pluck.retune(ratio);
+            return;
+        }
         self.period = (self.period / ratio).max(6.0);
     }
 
     pub(super) fn update_loss(&mut self, settings: Settings) {
+        if self.guitar {
+            self.pluck.update(settings);
+            return;
+        }
         let old_phase = self.pole / (1.0 - self.pole);
         self.pole = (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * self.velocity)
             + settings.damping * 0.15)
@@ -123,6 +143,9 @@ impl StringModel {
     }
 
     pub(super) fn next(&mut self, bow: f32, pressure: f32) -> f32 {
+        if self.guitar {
+            return self.pluck.next(&mut self.bridge);
+        }
         if !self.bowed {
             let incoming = self.bridge.read(self.period);
             self.filtered = (1.0 - self.pole) * incoming + self.pole * self.filtered;

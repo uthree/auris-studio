@@ -33,6 +33,7 @@ const P_RELEASE: u32 = 5;
 const P_LEVEL: u32 = 6;
 const P_STIFFNESS: u32 = 7;
 const P_PRESSURE: u32 = 7;
+const P_PICKUP: u32 = 7;
 
 /// Physical structure and excitation used by an instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +111,7 @@ struct Settings {
     decay: f32,
     damping: f32,
     stiffness: f32,
+    pickup: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +231,14 @@ impl Physical {
                 0.55,
             ));
         }
+        if model == Model::Guitar {
+            descriptors.push(ParamDescriptor::percent(
+                P_PICKUP,
+                "pickup",
+                "Pickup blend",
+                0.0,
+            ));
+        }
         let params = ParamBank::new(descriptors);
         Self {
             model,
@@ -254,6 +264,11 @@ impl Physical {
             damping: self.params.at(P_DAMPING),
             stiffness: if self.model == Model::Piano {
                 self.params.at(P_STIFFNESS)
+            } else {
+                0.0
+            },
+            pickup: if self.model == Model::Guitar {
+                self.params.at(P_PICKUP)
             } else {
                 0.0
             },
@@ -339,7 +354,10 @@ impl Parameterized for Physical {
                     1.0,
                     self.params.at(P_RELEASE),
                 );
-                if voice.envelope.is_active() && matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS) {
+                if voice.envelope.is_active()
+                    && (matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
+                        || self.model == Model::Guitar && id.0 == P_PICKUP)
+                {
                     if self.model.is_string() {
                         voice.string.update_loss(settings);
                     } else {
@@ -446,7 +464,12 @@ impl SegmentRenderer for Physical {
                 self.allocator.retire(index);
             }
         }
-        let body = self.params.at(P_BODY);
+        let body = self.params.at(P_BODY)
+            * if self.model == Model::Guitar {
+                1.0 - self.params.at(P_PICKUP)
+            } else {
+                1.0
+            };
         for sample in samples {
             *sample = self.body.next(*sample, body) * self.gain * self.volume * self.expression;
         }

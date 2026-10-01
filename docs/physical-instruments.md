@@ -10,7 +10,7 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Instrument | Model | Useful adjustments |
 | --- | --- | --- |
 | Piano | Velocity-excited stiff-string modal expansion | Contact hardness, strike position, stiffness, pedal |
-| Guitar | Fractional-delay string released from a triangular displacement | Pick hardness, pluck position, damping |
+| Guitar | Finite-width pluck, allpass-tuned string and bridge-motion output | Pick hardness, pluck position, damping, pickup blend |
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
@@ -29,7 +29,9 @@ manufactured bell. These choices keep the instruments small and their controls p
 upper modes; moving the contact suppresses different modes rather than applying a generic EQ.
 Velocity changes both excitation energy and attack hardness. **Resonance Decay** sets the nominal
 time to lose 60 dB at the fundamental; higher modes decay sooner, and **Damping** adds losses.
-The string loop's interpolation and bridge filter also contribute frequency-dependent losses.
+The guitar's allpass tuning separates interpolation from physical loss. Its decay is calibrated
+at the fundamental; damping shortens it by a factor of `1 + 3 × damping` and increases upper-mode
+loss. The bass and violin's linear interpolation also contributes frequency-dependent losses.
 The [refinement account](physical-model-refinement.md) explains the radiation profiles and
 their calibration limits.
 
@@ -37,6 +39,8 @@ their calibration limits.
 notes. **String Stiffness** is a piano-only control that spreads upper partials while keeping the
 fundamental tuned. **Bow Pressure** is violin-only and affects the sounding friction junction.
 Position and stiffness take effect at the next attack; changing them does not restart a note.
+Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
+position-dependent magnetic pickup approximation, progressively bypassing body coloration.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
 
 MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed; CC1 scales bow

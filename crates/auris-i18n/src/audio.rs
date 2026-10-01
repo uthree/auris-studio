@@ -230,6 +230,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Body Resonance", "胴の共鳴"),
     ("String Stiffness", "弦の剛性"),
     ("Bow Pressure", "弓圧"),
+    ("Pickup blend", "ピックアップ比率"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
     ("Breath", "ブレス"),

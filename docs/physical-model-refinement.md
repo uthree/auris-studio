@@ -45,3 +45,41 @@ the nine default-seed native compositions, mean Audiobox CE/PQ changes from 5.96
 5.85/7.73; orchestral and ambient drop by 0.36/0.41 CE respectively. Matching the spectral
 prior alone therefore does not resolve the reported quality problem. Subsequent excitation
 changes are assessed against this checkpoint as well as the original baseline.
+
+## Guitar
+
+A finite contact width smooths the initial triangular displacement. Velocity and pick hardness
+control this width; subsequent loop losses depend on decay and damping independently of pick
+hardness. A first-order allpass supplies the fractional tuning delay, avoiding the high-frequency
+attenuation of linear interpolation in a feedback loop. Its phase is calibrated at the fundamental,
+including the loss filter's exact phase. The fractional delay stays within 0.5–1.5 samples.
+
+The requested fundamental attenuation is divided between a scalar gain and a one-pole lowpass.
+Both remain passive. The fundamental T60 is `decay / (1 + 3 × damping)`, while damping also sets
+the share of loss assigned to the filter, so upper modes die sooner. Pitch bends approach the
+new period over about 5 ms; tuning coefficients update every eight frames during a bend.
+
+The acoustic output follows string-motion velocity rather than raw displacement. Pickup blend
+instead observes a displacement comb at the excitation position and bypasses the acoustic
+radiation profile. It is an editable approximation of pickup geometry, not an amplifier model.
+Output scaling matches the radiation-only listening probe's RMS approximately; this avoids a
+large default level change from differentiating the string signal.
+
+Tests measure fundamental decay within 1.5 dB of its requested loss over a half-second interval
+at four pitches and three rates, independent contact/pickup spectral changes, and bounded bends
+to the correct octave. The implementation uses preallocated string storage throughout.
+
+The allpass design follows Smith's
+[Extended Karplus–Strong algorithm](https://www.dsprelated.com/freebooks/pasp/Extended_Karplus_Strong_Algorithm.html).
+
+The guitar checkpoint passes synth, session and i18n tests and workspace clippy. The symbolic
+output remains identical. Full-preset mean CE/PQ is 5.89/7.74, versus 5.85/7.73 at the radiation
+checkpoint; rock CE rises by 0.18 and orchestral by 0.13. The other seven cases remain identical.
+These are a fixed single-seed regression cohort, not an estimate of general perceptual quality.
+On the development machine, the 24-voice guitar callback averages 0.077 ms for 256 frames at
+48 kHz in the optimised development profile; `physical_bench` makes this reproducible.
+
+`uv run tools/eval/physical_ab.py before.wav after.wav comparison.wav` produces a listening
+file with piano before/after, guitar before/after, then violin before/after. It matches each
+pair's RMS and keeps peaks below 0.9, with gains recorded beside the WAV. Inputs are the
+six-model `physical_demo` renders, in their standard order.
