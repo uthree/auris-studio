@@ -169,7 +169,7 @@ impl VisualizerState {
         !self.reference.is_empty() || !self.mean.is_empty() || !self.peak.is_empty()
     }
 
-    fn clear_live(&mut self) {
+    pub(crate) fn clear_live(&mut self) {
         self.frame = None;
         self.mean.clear();
         self.peak.clear();
@@ -249,7 +249,13 @@ impl VisualizerState {
 impl AurisApp {
     pub(crate) fn close_visualizer(&mut self) {
         self.visualizer.open = false;
-        self.session.stop_visualizer();
+        if !self
+            .settings
+            .toolbar
+            .contains(auris_session::ToolbarItem::Visualizer)
+        {
+            self.session.stop_visualizer();
+        }
     }
 
     pub(crate) fn visualizer_command(&mut self, command: VisualizerCommand) {
@@ -333,7 +339,11 @@ impl AurisApp {
     }
 
     pub(crate) fn poll_visualizer(&mut self) {
-        if !self.visualizer.open {
+        let in_toolbar = self
+            .settings
+            .toolbar
+            .contains(auris_session::ToolbarItem::Visualizer);
+        if !self.visualizer.open && !in_toolbar {
             return;
         }
         let source = if self.visualizer.selected {
@@ -355,10 +365,11 @@ impl AurisApp {
             self.visualizer.frozen = false;
         }
         self.session.watch_visualizer(source);
-        let spectrum_mode = matches!(
-            self.visualizer.view,
-            VisualizerView::Spectrum | VisualizerView::All
-        )
+        let spectrum_mode = (in_toolbar
+            || matches!(
+                self.visualizer.view,
+                VisualizerView::Spectrum | VisualizerView::All
+            ))
         .then_some(self.visualizer.spectrum_mode);
         if !self.visualizer.frozen
             && let Some(frame) = self
@@ -367,6 +378,70 @@ impl AurisApp {
         {
             self.visualizer.accept(frame);
         }
+    }
+
+    /// Compact master/selected-track spectrum, sharing the utility window's live tap.
+    pub(crate) fn render_toolbar_visualizer(
+        &self,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let theme = self.theme.clone();
+        let spectrum = if self.visualizer.average && !self.visualizer.mean.is_empty() {
+            self.visualizer.mean.clone()
+        } else {
+            self.visualizer
+                .frame
+                .as_ref()
+                .map(|frame| frame.spectrum.to_vec())
+                .unwrap_or_default()
+        };
+        button(
+            "toolbar-visualizer",
+            self.t(Key::ToolbarSpectrum),
+            ButtonStyle::Ghost,
+            self.visualizer.open,
+            theme.accent,
+            &theme,
+            cx.listener(|this, _, _, cx| {
+                this.visualizer_command(VisualizerCommand::Toggle);
+                cx.notify();
+            }),
+        )
+        .tooltip(self.tip(Key::VisualizerTitle, "view.visualizer"))
+        .flex_col()
+        .gap_1()
+        .w(px(124.))
+        .h(crate::theme::Metrics::TRANSPORT_HEIGHT - px(8.))
+        .flex_shrink_0()
+        .child(
+            canvas(
+                |_, _, _| (),
+                move |bounds, _, window, _| {
+                    paint::rect(window, bounds, theme.surface_sunken);
+                    if spectrum.is_empty() {
+                        return;
+                    }
+                    let width = bounds.size.width / spectrum.len() as f32;
+                    for (index, db) in spectrum.iter().enumerate() {
+                        let level = (1. - db / FLOOR_DB).clamp(0., 1.);
+                        let height = bounds.size.height * level;
+                        paint::rect(
+                            window,
+                            Bounds {
+                                origin: point(
+                                    bounds.left() + width * index as f32,
+                                    bounds.bottom() - height,
+                                ),
+                                size: size(width, height),
+                            },
+                            theme.accent,
+                        );
+                    }
+                },
+            )
+            .w_full()
+            .h(px(24.)),
+        )
     }
 
     pub(crate) fn render_visualizer(
@@ -1354,6 +1429,38 @@ fn paint_correlation(
 mod tests {
     use super::*;
     use crate::{actions, auxiliary_window::Surface, harness};
+
+    #[gpui::test]
+    fn toolbar_visualizer_stays_visible_when_utility_window_closes(cx: &mut gpui::TestAppContext) {
+        let (app, cx) = harness::open(cx);
+        app.update(cx, |app, cx| {
+            app.settings
+                .toolbar
+                .entries
+                .iter_mut()
+                .find(|entry| entry.item == auris_session::ToolbarItem::Visualizer)
+                .unwrap()
+                .visible = true;
+            app.visualizer.accept(frame(-12.));
+            cx.notify();
+        });
+        harness::resize(&app, cx, size(px(1360.), px(700.)));
+        let button = cx.debug_bounds("toolbar-visualizer").unwrap();
+        assert!(button.size.height < crate::theme::Metrics::TRANSPORT_HEIGHT);
+        harness::click("toolbar-visualizer", cx);
+        app.read_with(cx, |app, _| assert!(app.visualizer.open));
+        cx.dispatch_action(actions::ToggleVisualizer);
+        harness::paint(&app, cx);
+        app.read_with(cx, |app, _| {
+            assert!(!app.visualizer.open);
+            assert!(
+                app.settings
+                    .toolbar
+                    .contains(auris_session::ToolbarItem::Visualizer)
+            );
+        });
+        assert!(cx.debug_bounds("toolbar-visualizer").is_some());
+    }
 
     fn frame(db: f32) -> VisualizerFrame {
         let waveform: Vec<_> = (0..1024)

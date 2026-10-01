@@ -7,7 +7,7 @@
 use auris_i18n::{Key, Language, messages};
 use auris_session::prelude::*;
 use auris_session::session::AudioStatus;
-use auris_session::{AgentPreferences, ReasoningEffort};
+use auris_session::{AgentPreferences, ReasoningEffort, ToolbarItem, ToolbarPreferences};
 use gpui::{
     AnyElement, App, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
     WeakEntity, Window, div, prelude::*, px,
@@ -32,6 +32,7 @@ mod appearance_editor;
 mod appearance_tests;
 mod dropdown;
 mod search;
+mod toolbar;
 
 use crate::dock::PanelLayout;
 use search::Section;
@@ -90,6 +91,7 @@ pub struct SettingsWindow {
     autosave: bool,
     /// Whether dragging a note's right edge rounds its duration to the editing grid.
     snap_note_lengths: bool,
+    toolbar: ToolbarPreferences,
     /// The dictionary folder kanji lyrics are read through. `None` on most machines.
     japanese_dictionary: Option<std::path::PathBuf>,
     /// Where singer voices run their inference.
@@ -167,6 +169,7 @@ impl SettingsWindow {
         pointer: PointerGestures,
         autosave: bool,
         snap_note_lengths: bool,
+        toolbar: ToolbarPreferences,
         japanese_dictionary: Option<std::path::PathBuf>,
         singer_acceleration: Acceleration,
         voice_paths: Vec<std::path::PathBuf>,
@@ -215,6 +218,7 @@ impl SettingsWindow {
             language: Language::resolve(language_preference),
             autosave,
             snap_note_lengths,
+            toolbar,
             japanese_dictionary,
             singer_acceleration,
             voice_paths,
@@ -681,6 +685,10 @@ impl SettingsWindow {
             .when(self.matches_section(Section::Panels), |view| {
                 view.child(divider(&theme))
                     .child(self.render_panel_positions(cx))
+            })
+            .when(self.matches_section(Section::Toolbar), |view| {
+                view.child(divider(&theme))
+                    .child(self.render_toolbar_settings(cx))
             })
             .into_any_element()
     }

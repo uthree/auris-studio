@@ -14,6 +14,7 @@ pub(super) enum Section {
     Dictionary,
     Singer,
     Panels,
+    Toolbar,
     Host,
     Output,
     Input,
@@ -23,7 +24,7 @@ pub(super) enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Agent,
         Self::Appearance,
         Self::Language,
@@ -33,6 +34,7 @@ impl Section {
         Self::Dictionary,
         Self::Singer,
         Self::Panels,
+        Self::Toolbar,
         Self::Host,
         Self::Output,
         Self::Input,
@@ -120,6 +122,25 @@ impl Section {
                 Key::AgentPanel,
             ],
             Self::Host => &[Key::AudioHost, Key::RefreshAudioDevices],
+            Self::Toolbar => &[
+                Key::ToolbarHeading,
+                Key::ToolbarNote,
+                Key::ToolbarPlayback,
+                Key::ToolbarVisualizer,
+                Key::Grid,
+                Key::Zoom,
+                Key::Position,
+                Key::Tempo,
+                Key::Signature,
+                Key::CurrentChord,
+                Key::TakeClock,
+                Key::InputMeter,
+                Key::Master,
+                Key::CmdRecord,
+                Key::CmdTogglePunch,
+                Key::CmdToggleCycle,
+                Key::CmdToggleMetronome,
+            ],
             Self::Output => &[Key::OutputDevice],
             Self::Input => &[Key::InputDevice, Key::InputDeviceNote, Key::AsioInputNote],
             Self::Rate => &[Key::SampleRate, Key::DeviceDefaultRate],

@@ -279,6 +279,15 @@ pub mod architecture {
     //!
     //! # The two threads
     //!
+    //! A piano-roll phrase audition snapshots explicit note indices with
+    //! [`Session::note_selection_preview`](crate::Session::note_selection_preview).
+    //! Onsets, releases and velocities retain the selected phrase's rests and overlaps;
+    //! the tempo map at its current location converts them into relative sample frames.
+    //! [`Session::play_note_selection_preview`](crate::Session::play_note_selection_preview)
+    //! sends the immutable schedule to the audio thread, which splits blocks at each event
+    //! without advancing the transport. Releasing or cancelling the gesture stops its voices.
+    //! Replaced schedules return through the same retirement channel as replaced graphs.
+    //!
     //! Audio preferences select a host as well as a device. Windows builds include WASAPI
     //! (the default shared-mode host), with CPAL's realtime priority support enabled. The `asio`
     //! Cargo feature adds ASIO and is forwarded by every frontend through the session to the

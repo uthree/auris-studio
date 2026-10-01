@@ -83,7 +83,8 @@ pub type PlacedEffects = BTreeMap<EffectSlotId, Box<dyn Effect>>;
 pub type PlacedInstruments = BTreeMap<TrackId, Box<dyn Instrument>>;
 
 /// Room left in each track's per-block event buffer for notes played from the UI.
-const AUDITION_HEADROOM: usize = 16;
+/// A replaced selection can release all 128 pitches and strike its next chord at once.
+const AUDITION_HEADROOM: usize = 256;
 
 /// Room the note-chase needs on top of whatever it is re-issuing: the all-notes-off that clears
 /// the old position before the notes belonging to the new one go in.

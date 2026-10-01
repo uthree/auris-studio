@@ -21,6 +21,8 @@ pub enum Retired {
     Graph(Box<RenderGraph>),
     /// A buffer replaced by [`EngineCommand::PlayOneShot`].
     Buffer(Arc<auris_core::AudioBuffer>),
+    /// A selection's immutable schedule replaced by [`EngineCommand::PlayNotePreview`].
+    NotePreview(Arc<[crate::ScheduledEvent]>),
     /// Audition PCM and its status replaced by [`EngineCommand::PlayOutputPreview`].
     OutputPreview(OutputPreviewRequest),
     /// A solo-resolution array consumed by [`EngineCommand::SetSoloResolution`].
