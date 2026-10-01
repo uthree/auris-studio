@@ -16,7 +16,8 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
 | Violin | Two travelling-wave segments meeting at a nonlinear bow friction junction | Bow pressure, contact position, expression |
 
-Parallel body resonances colour each model. The piano is a reduced single-string model; it does
+Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
+the other models. The piano is a reduced single-string model; it does
 not simulate a complete grand piano's hammer mechanics or sympathetic string coupling. The
 violin models one bowed string, with a bounded friction approximation rather than a full bow,
 bridge and wooden-body simulation. The bell mode ratios describe a designed shell, not a specific
@@ -29,6 +30,8 @@ upper modes; moving the contact suppresses different modes rather than applying 
 Velocity changes both excitation energy and attack hardness. **Resonance Decay** sets the nominal
 time to lose 60 dB at the fundamental; higher modes decay sooner, and **Damping** adds losses.
 The string loop's interpolation and bridge filter also contribute frequency-dependent losses.
+The [refinement account](physical-model-refinement.md) explains the radiation profiles and
+their calibration limits.
 
 **Body Resonance**, **Level**, **Release**, **Damping** and **Resonance Decay** affect sounding
 notes. **String Stiffness** is a piano-only control that spreads upper partials while keeping the

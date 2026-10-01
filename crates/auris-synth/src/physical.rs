@@ -10,14 +10,16 @@ use auris_core::{
     AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, Parameterized,
     PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
-use auris_dsp::{Adsr, Biquad, BiquadCoefficients};
+use auris_dsp::Adsr;
 
 use crate::params::finite_or;
 use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments, spread_to_all_channels};
 
+mod body;
 mod modal;
 mod string;
 
+use body::Body;
 use modal::Modal;
 use string::StringModel;
 
@@ -159,7 +161,7 @@ pub struct Physical {
     params: ParamBank,
     voices: Vec<Voice>,
     allocator: VoiceAllocator,
-    body: [Biquad; 3],
+    body: Body,
     rate: f32,
     bend: f32,
     volume: f32,
@@ -194,7 +196,16 @@ impl Physical {
             ParamDescriptor::new(P_DECAY, "decay", "Resonance Decay", 0.1, 12.0, decay)
                 .with_unit(ParamUnit::Seconds),
             ParamDescriptor::percent(P_DAMPING, "damping", "Damping", 0.12),
-            ParamDescriptor::percent(P_BODY, "body", "Body Resonance", 0.35),
+            ParamDescriptor::percent(
+                P_BODY,
+                "body",
+                "Body Resonance",
+                if matches!(model, Model::Piano | Model::Guitar | Model::Violin) {
+                    0.65
+                } else {
+                    0.35
+                },
+            ),
             ParamDescriptor::new(P_RELEASE, "release", "Release", 0.01, 3.0, release)
                 .with_unit(ParamUnit::Seconds),
             ParamDescriptor::new(P_LEVEL, "level", "Level", -60.0, 6.0, -12.0)
@@ -224,7 +235,7 @@ impl Physical {
             params,
             voices: Vec::new(),
             allocator: VoiceAllocator::new(),
-            body: std::array::from_fn(|_| Biquad::new(BiquadCoefficients::identity())),
+            body: Body::default(),
             rate: 48_000.0,
             bend: 0.0,
             volume: 1.0,
@@ -437,12 +448,7 @@ impl SegmentRenderer for Physical {
         }
         let body = self.params.at(P_BODY);
         for sample in samples {
-            let resonance: f32 = self
-                .body
-                .iter_mut()
-                .map(|filter| filter.process_sample(*sample))
-                .sum();
-            *sample = (*sample + body * resonance) * self.gain * self.volume * self.expression;
+            *sample = self.body.next(*sample, body) * self.gain * self.volume * self.expression;
         }
     }
 }
@@ -462,16 +468,7 @@ impl Instrument for Physical {
             .map(|_| Voice::new(self.model, self.rate))
             .collect();
         self.allocator.prepare(VOICES);
-        let frequencies = match self.model {
-            Model::Piano => [110.0, 440.0, 1200.0],
-            Model::Guitar => [100.0, 220.0, 520.0],
-            Model::Bass => [70.0, 180.0, 430.0],
-            Model::Violin => [275.0, 460.0, 2800.0],
-            _ => [350.0, 900.0, 2400.0],
-        };
-        for (filter, hz) in self.body.iter_mut().zip(frequencies) {
-            filter.set_coefficients(BiquadCoefficients::bandpass(f64::from(self.rate), hz, 1.8));
-        }
+        self.body.prepare(self.model, self.rate);
         self.reset();
     }
     fn reset(&mut self) {
@@ -480,9 +477,7 @@ impl Instrument for Physical {
             voice.last = 0.0;
             voice.fade = 0.0;
         }
-        for filter in &mut self.body {
-            filter.reset();
-        }
+        self.body.reset();
         self.allocator.clear();
         self.bend = 0.0;
         self.volume = 1.0;
