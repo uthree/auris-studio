@@ -1510,8 +1510,11 @@ pub mod singing {
     //!
     //! A voice enters through one path. For the native backend that is a self-contained ONNX
     //! file carrying its phoneme table, audio parameters and voice card. For DiffSinger it is
-    //! the voicebank's `dsconfig.yaml`, which names its acoustic model, phoneme table and bundled
-    //! vocoder. For LeapSinger it is a `.leapsinger.json` entry naming exported acoustic and
+    //! the voicebank's `dsconfig.yaml`, which names its acoustic model, text or JSON phoneme table
+    //! and bundled vocoder. Language IDs and speaker embedding files belong to that deployment;
+    //! voicebanks needing acoustic variance curves also run their linguistic and variance graphs.
+    //! Auris supplies written pitch and timing, and applies dynamics to the resulting waveform.
+    //! For LeapSinger it is a `.leapsinger.json` entry naming exported acoustic and
     //! NHVSing vocoder graphs, their frame grid and a matching phoneme dictionary. Its full and
     //! DiffSinger export variants both consume manual phonemes and timing pins; inference stays
     //! in ONNX Runtime and needs no Python process. For VOICEVOX it is a `.voicevox.json`

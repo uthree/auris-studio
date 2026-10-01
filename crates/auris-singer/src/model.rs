@@ -13,6 +13,7 @@ use ort::execution_providers::{
     ExecutionProviderDispatch,
 };
 use ort::session::Session;
+use ort::session::builder::GraphOptimizationLevel;
 use ort::value::Tensor;
 
 use auris_core::rng::{Key, Rng};
@@ -96,6 +97,14 @@ pub(crate) fn open_session(
     path: &Path,
     acceleration: Acceleration,
 ) -> Result<(Session, bool), SingError> {
+    open_session_with_optimization(path, acceleration, false)
+}
+
+pub(crate) fn open_session_with_optimization(
+    path: &Path,
+    acceleration: Acceleration,
+    basic_optimization: bool,
+) -> Result<(Session, bool), SingError> {
     let threads = std::thread::available_parallelism()
         .map(|cores| cores.get().saturating_sub(2).max(1))
         .unwrap_or(1);
@@ -104,6 +113,13 @@ pub(crate) fn open_session(
     };
     let mut builder = Session::builder()
         .and_then(|builder| builder.with_intra_threads(threads))
+        .and_then(|builder| {
+            builder.with_optimization_level(if basic_optimization {
+                GraphOptimizationLevel::Level1
+            } else {
+                GraphOptimizationLevel::Level3
+            })
+        })
         .map_err(refused)?;
     let gpu = match acceleration {
         Acceleration::Cpu => None,
@@ -128,7 +144,7 @@ pub(crate) fn open_session(
         Ok(session) => Ok((session, engaged)),
         Err(error) if engaged && acceleration == Acceleration::Auto => {
             log::warn!("the GPU refused the voice model ({error}); loading it on the CPU instead");
-            open_session(path, Acceleration::Cpu)
+            open_session_with_optimization(path, Acceleration::Cpu, basic_optimization)
         }
         Err(error) => Err(refused(error)),
     }

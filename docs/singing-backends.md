@@ -24,15 +24,72 @@ by its `model` field, or be in a folder relative to the voicebank named by `voco
 vocoder sample rate, hop size, and mel-bin count must match. Base-10 and natural-log mel outputs are
 converted when necessary.
 
-This first backend covers acoustic voicebanks whose optional key-shift and speed inputs can use
-neutral values. Voicebanks requiring language IDs, speaker embeddings, or energy, breathiness,
-voicing, or tension predictors are rejected while loading. Those packages need their auxiliary
-models and embedding-file semantics implemented before they can be rendered faithfully.
+Phoneme dictionaries can be line-based text or JSON token-to-ID maps. JSON IDs are preserved,
+including the reserved padding ID and sparse tables. Japanese IPA is mapped to the voicebank's
+Japanese tokens, including `ja/` language prefixes. With `use_lang_id`, the `languages` JSON file
+supplies each token's language ID. `speakers` names little-endian float32 `.emb` files of
+`hidden_size` values; their order becomes Auris' speaker selection order.
+
+Voicebanks using energy, breathiness, voicing or tension embeddings run their linguistic encoder
+and variance predictor before the acoustic model. These are named by `linguistic` and `variance`
+in `dsvariance/dsconfig.yaml`, or in the main configuration when no separate variance configuration
+exists. The predictor has its own phoneme dictionary and speaker embeddings. Both phoneme-duration
+and word-duration linguistic encoders are supported, on the acoustic model's frame grid.
+Word grouping uses `dsdict.yaml` vowel types when supplied, and Japanese vowel aliases otherwise. Auxiliary
+paths such as `../shared/model.onnx` are resolved relative to their configuration; background
+loading requires their canonical targets to remain inside the selected voicebank folder.
+
+Auris supplies the written pitch and phoneme timings. Pitch is extended through silence in
+log-frequency space, and the frame dynamics scale the synthesized waveform. Optional key-shift
+and speed embeddings receive neutral values. Modern scalar `steps`/`depth` and legacy one-element
+`speedup`/`depth` inputs are accepted; depth respects the voicebank's `max_depth`. DiffSinger graphs
+use ONNX Runtime's basic optimization because the linked 1.20 runtime's extended optimizer can
+crash while loading trained diffusion graphs. Automatic acceleration retries on CPU if GPU
+inference refuses a graph.
+
+DiffSinger's exported graphs generate random noise internally and do not accept Auris' render
+seed. A saved audio take preserves the rendered performance.
 
 The library's **Set Up DiffSinger…** row opens the supported deployment fields, validates that
 the phoneme table, acoustic model, and vocoder configuration exist, and writes `dsconfig.yaml`
 into the chosen voicebank folder. The resulting voice appears on the shelf with a **DiffSinger**
-badge.
+badge. Saving the form preserves existing speaker, language, variance and other deployment fields.
+
+### Real-model verification
+
+The opt-in test runs a trained acoustic model, its variance predictor when required, and its
+vocoder, checking the exact waveform length, finite samples and a nonzero RMS/peak:
+
+```powershell
+$env:AURIS_DIFFSINGER_TEST_CONFIG = 'C:/Voices/OpenCpop/dsconfig.yaml'
+$env:AURIS_DIFFSINGER_TEST_WAV = 'C:/renders/diffsinger.wav'
+cargo test -p auris-singer --test diffsinger_real -- --ignored --nocapture
+```
+
+The output folder must already exist. The optional WAV setting also writes a parallel
+`.frames.json`, which can be rendered through the session and CLI:
+
+```powershell
+cargo run -p auris-cli -- sing-frames C:/renders/diffsinger.frames.json --voice C:/Voices/OpenCpop/dsconfig.yaml --acceleration cpu -o C:/renders/diffsinger-cli.wav
+```
+
+`AURIS_DIFFSINGER_TEST_ACCELERATION=auto` exercises the desktop's default processor selection;
+the test defaults to CPU. CI uses tiny arithmetic ONNX contracts for dictionaries, new and old
+controls, both linguistic encoders, variance curves, speakers, languages, dynamics and
+cancellation. Regenerate them with
+`uv run crates/auris-singer/tests/fixtures/diffsinger/generate.py`.
+
+The real-model probe uses three pitched `a` vowels, so it verifies synthesis rather than lyric
+pronunciation quality. On Windows, the public
+[OpenCpop deployment](https://huggingface.co/spaces/SJTU/diffsinger-webui/tree/main/models/OpenCpop)
+produced 87,040 finite samples at 44,100 Hz (1.974 seconds), through its trained linguistic,
+variance and acoustic graphs and NSF-HiFiGAN vocoder. In the automatic-acceleration run,
+autocorrelation estimates of the three notes were 261.65, 329.78 and 392.11 Hz, within 0.9 cents
+of their written pitches; RMS was 0.01249. The acoustic configuration was used unchanged.
+Deployment conventions follow the
+[DiffSinger acoustic exporter](https://github.com/openvpi/DiffSinger/blob/main/deployment/exporters/acoustic_exporter.py),
+[variance exporter](https://github.com/openvpi/DiffSinger/blob/main/deployment/exporters/variance_exporter.py)
+and [OpenUtau renderer](https://github.com/stakira/OpenUtau/blob/master/OpenUtau.Core/DiffSinger/DiffSingerRenderer.cs).
 
 ## LeapSinger voices
 

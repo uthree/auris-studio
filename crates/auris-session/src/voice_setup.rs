@@ -848,13 +848,32 @@ pub fn write_diffsinger_config(setup: &DiffSingerSetup) -> Result<PathBuf, Voice
         ));
     }
     let path = setup.folder.join("dsconfig.yaml");
-    let text = serde_yaml_ng::to_string(setup)
-        .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
     let original = match read_voice_config(&path) {
         Ok(bytes) => Some(bytes),
         Err(VoiceSetupError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error),
     };
+    let mut fields = match original.as_deref() {
+        Some(bytes) => {
+            serde_yaml_ng::from_slice::<serde_yaml_ng::Mapping>(bytes).map_err(|error| {
+                VoiceSetupError::Invalid(format!(
+                    "Invalid existing DiffSinger configuration: {error}"
+                ))
+            })?
+        }
+        None => serde_yaml_ng::Mapping::new(),
+    };
+    let supported = serde_yaml_ng::to_value(setup)
+        .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
+    let supported = supported.as_mapping().ok_or_else(|| {
+        VoiceSetupError::Encode("DiffSinger setup must encode as a mapping".into())
+    })?;
+    // The setup form edits only its own fields; the voicebank owns every auxiliary setting.
+    for (key, value) in supported {
+        fields.insert(key.clone(), value.clone());
+    }
+    let text = serde_yaml_ng::to_string(&fields)
+        .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
     replace_config_file(
         &path,
         text.as_bytes(),
@@ -1381,11 +1400,29 @@ mod tests {
 
         let path = write_diffsinger_config(&setup).unwrap();
         let value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(value["acoustic"], "acoustic.onnx");
         assert_eq!(value["vocoder"], "dsvocoder");
         assert_eq!(value["use_key_shift_embed"], true);
         assert!(value.get("folder").is_none());
+        std::fs::write(&path, "speakers: [singer]\nhidden_size: 256\nlanguages: languages.json\nuse_lang_id: true\nuse_breathiness_embed: true\nmax_depth: 0.6\naugmentation_args:\n  random_pitch_shifting:\n    range: [-5, 5]\n").unwrap();
+        write_diffsinger_config(&setup).unwrap();
+        let value: serde_yaml_ng::Value =
+            serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["speakers"][0], "singer");
+        assert_eq!(value["use_breathiness_embed"], true);
+        assert_eq!(value["use_lang_id"], true);
+        assert_eq!(value["max_depth"].as_f64(), Some(0.6));
+        assert_eq!(
+            value["augmentation_args"]["random_pitch_shifting"]["range"][0],
+            -5
+        );
+        assert_eq!(value["use_key_shift_embed"], true);
+        for corrupt in ["[broken", "[]", "null"] {
+            std::fs::write(&path, corrupt).unwrap();
+            assert!(write_diffsinger_config(&setup).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), corrupt);
+        }
         std::fs::remove_dir_all(folder).unwrap();
     }
 
