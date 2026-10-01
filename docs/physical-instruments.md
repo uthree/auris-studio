@@ -14,7 +14,7 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
-| Violin | Two travelling-wave segments meeting at a nonlinear bow friction junction | Bow pressure, contact position, expression |
+| Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, contact position, expression, legato |
 
 Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
 the other models. The piano uses one, two or three strings by register, up to 64 partials,
@@ -38,9 +38,14 @@ their calibration limits.
 **Body Resonance**, **Level**, **Release**, **Damping** and **Resonance Decay** affect sounding
 notes. **String Stiffness** is a piano-only control that spreads upper partials while keeping the
 fundamental tuned. **Bow Pressure** is violin-only and affects the sounding friction junction.
-Position and stiffness take effect at the next attack; changing them does not restart a note.
+Position takes effect at the next attack on struck/plucked instruments; on violin it moves
+the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano attack.
 Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
 position-dependent magnetic pickup approximation, progressively bypassing body coloration.
+Violin **Bow speed** controls motion independently of **Bow Pressure**. Speed ramps over about
+12 ms at attacks, releases and controller changes. **Legato** uses last-note priority: overlapping
+notes reuse the same vibrating string, and releasing the newest key returns to a previous held
+key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
 
 MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed; CC1 scales bow
@@ -74,7 +79,9 @@ patch emulation. Drum hints use the built-in Drum Kit.
 Accompaniment and lyric-song backing share the same choices. Native tracks require no SoundFont
 reference. An explicit SoundFont source or imported preset continues to choose that exact font.
 Unsupported musical families use the session's existing reported fallback or an optional installed
-GM library. Notes and their seeded recipes remain unchanged by instrument selection.
+GM library. Melody roles start native violin with legato; pad roles start with slower bow motion
+and polyphony. Explicit parameter choices take precedence. Notes and their seeded recipes remain
+unchanged by instrument selection.
 
 ## Development verification
 

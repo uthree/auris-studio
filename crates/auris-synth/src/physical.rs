@@ -16,10 +16,12 @@ use crate::params::finite_or;
 use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments, spread_to_all_channels};
 
 mod body;
+mod legato;
 mod modal;
 mod string;
 
 use body::Body;
+use legato::Legato;
 use modal::Modal;
 use string::StringModel;
 
@@ -34,6 +36,8 @@ const P_LEVEL: u32 = 6;
 const P_STIFFNESS: u32 = 7;
 const P_PRESSURE: u32 = 7;
 const P_PICKUP: u32 = 7;
+const P_BOW_SPEED: u32 = 8;
+const P_LEGATO: u32 = 9;
 
 /// Physical structure and excitation used by an instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,6 +116,7 @@ struct Settings {
     damping: f32,
     stiffness: f32,
     pickup: f32,
+    bow_speed: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +178,7 @@ pub struct Physical {
     pressure: f32,
     pedal: bool,
     gain: f32,
+    legato: Legato,
 }
 
 impl Physical {
@@ -232,6 +238,13 @@ impl Physical {
                 "Bow Pressure",
                 0.55,
             ));
+            descriptors.push(ParamDescriptor::percent(
+                P_BOW_SPEED,
+                "bow_speed",
+                "Bow speed",
+                0.65,
+            ));
+            descriptors.push(ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false));
         }
         if model == Model::Guitar {
             descriptors.push(ParamDescriptor::percent(
@@ -255,6 +268,7 @@ impl Physical {
             pressure: 1.0,
             pedal: false,
             gain: db_to_gain(-12.0),
+            legato: Legato::default(),
         }
     }
 
@@ -274,19 +288,56 @@ impl Physical {
             } else {
                 0.0
             },
+            bow_speed: if self.model == Model::Violin {
+                self.params.at(P_BOW_SPEED)
+            } else {
+                0.0
+            },
         }
     }
 
+    fn is_legato(&self) -> bool {
+        self.model == Model::Violin && self.params.at(P_LEGATO) >= 0.5
+    }
+
+    fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
+        let frequency = pitch_to_hz(f32::from(pitch) + self.bend);
+        let Some(voice) = self.voices.get_mut(index) else {
+            return false;
+        };
+        if !voice.held || !voice.envelope.is_active() {
+            return false;
+        }
+        if !self.allocator.retarget(index, pitch, velocity) {
+            return false;
+        }
+        voice.string.glide_to(frequency);
+        voice.string.set_velocity(velocity);
+        true
+    }
+
     fn note_on(&mut self, pitch: u8, velocity: f32) {
+        let pitch = pitch.min(127);
         let velocity = finite_or(velocity, 0.0).clamp(0.0, 1.0);
         if velocity == 0.0 {
             self.note_off(pitch);
             return;
         }
+        if self.is_legato() {
+            self.legato.note_on(pitch, velocity);
+            if let Some(index) = self.legato.voice
+                && self.retarget(index, pitch, velocity)
+            {
+                return;
+            }
+        }
         let Some(assignment) = self.allocator.note_on(pitch.min(127), velocity) else {
             return;
         };
         let settings = self.settings();
+        if self.is_legato() {
+            self.legato.voice = Some(assignment.index);
+        }
         let Some(voice) = self.voices.get_mut(assignment.index) else {
             return;
         };
@@ -321,6 +372,19 @@ impl Physical {
     }
 
     fn note_off(&mut self, pitch: u8) {
+        let pitch = pitch.min(127);
+        if self.is_legato() {
+            if !self.legato.note_off(pitch) {
+                return;
+            }
+            if let Some(index) = self.legato.voice
+                && let Some((target, velocity)) = self.legato.last()
+            {
+                self.retarget(index, target, velocity);
+                return;
+            }
+            self.legato.voice = None;
+        }
         for index in self.allocator.note_off(pitch) {
             if let Some(voice) = self.voices.get_mut(index) {
                 voice.held = false;
@@ -342,9 +406,22 @@ impl Parameterized for Physical {
         self.params.get(id)
     }
     fn set_param(&mut self, id: ParamId, value: f32) {
+        let was_legato = self.is_legato();
         if self.params.set(id, value) {
+            if was_legato != self.is_legato() {
+                self.legato.clear();
+                for index in self.allocator.release_all() {
+                    if let Some(voice) = self.voices.get_mut(index) {
+                        voice.held = false;
+                        voice.envelope.release();
+                    }
+                }
+            }
             self.gain = db_to_gain(self.params.at(P_LEVEL));
             let settings = self.settings();
+            let changes_resonance = matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
+                || self.model == Model::Guitar && id.0 == P_PICKUP
+                || self.model == Model::Violin && matches!(id.0, P_BOW_SPEED | P_POSITION);
             for voice in &mut self.voices {
                 voice.envelope.set_adsr(
                     if self.model == Model::Violin {
@@ -356,10 +433,7 @@ impl Parameterized for Physical {
                     1.0,
                     self.params.at(P_RELEASE),
                 );
-                if voice.envelope.is_active()
-                    && (matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
-                        || self.model == Model::Guitar && id.0 == P_PICKUP)
-                {
+                if voice.envelope.is_active() && changes_resonance {
                     if self.model.is_string() {
                         voice.string.update_loss(settings);
                     } else {
@@ -380,6 +454,7 @@ impl SegmentRenderer for Physical {
             } => self.note_on(pitch, velocity),
             NoteEvent::NoteOff { pitch, .. } => self.note_off(pitch),
             NoteEvent::AllNotesOff { .. } | NoteEvent::AllSoundOff { .. } => {
+                self.legato.clear();
                 self.pedal = false;
                 for index in self.allocator.release_all() {
                     if let Some(voice) = self.voices.get_mut(index) {
@@ -509,6 +584,7 @@ impl Instrument for Physical {
         self.expression = 1.0;
         self.pressure = 1.0;
         self.pedal = false;
+        self.legato.clear();
     }
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());

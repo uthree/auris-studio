@@ -57,7 +57,13 @@ def main():
     parser.add_argument("reference", type=Path)
     parser.add_argument("dry", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--prior", type=Path, help="also measure a previous fit against these probes")
     args = parser.parse_args()
+    prior = json.loads(args.prior.read_text(encoding="utf-8")) if args.prior else None
+    if prior is not None and (
+        not np.allclose(prior["centers_hz"], CENTERS) or prior["q"] != 0.9
+    ):
+        raise ValueError("prior fit uses a different filter bank")
     report = {"centers_hz": CENTERS.tolist(), "q": 0.9, "models": {}}
     for model in ("piano", "guitar", "violin"):
         reference = sorted(args.reference.glob(f"{model}-*.wav"))
@@ -84,6 +90,11 @@ def main():
                 for path in (*reference, *dry)
             },
         }
+        if prior is not None:
+            prior_response = response(prior["models"][model]["gains_db"])
+            previous = float(np.sqrt(np.mean((prior_response - target)**2)))
+            report["models"][model]["previous_filter_error_db"] = previous
+            print(f"{model}: previous filter error {previous:.2f} dB")
         print(f"{model}: envelope error {before:.2f} -> {after:.2f} dB")
         print(", ".join(f"{gain:.3f}" for gain in fit.x))
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

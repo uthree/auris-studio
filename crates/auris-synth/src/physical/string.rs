@@ -6,6 +6,10 @@ use super::{Model, Settings};
 mod pluck;
 use pluck::Pluck;
 
+#[path = "bow.rs"]
+mod bow;
+use bow::Bow;
+
 #[derive(Clone, Debug, Default)]
 struct Delay {
     samples: Vec<f32>,
@@ -53,11 +57,13 @@ pub(super) struct StringModel {
     neck: Delay,
     period: f32,
     position: f32,
+    position_target: f32,
+    period_target: f32,
     pole: f32,
     filtered: f32,
     loss: f32,
     bowed: bool,
-    bow_velocity: f32,
+    bow: Bow,
     velocity: f32,
     rate: f32,
     guitar: bool,
@@ -81,6 +87,7 @@ impl StringModel {
         rate: f32,
         settings: Settings,
     ) {
+        let frequency = frequency.clamp(8.0, rate * 0.2);
         self.bridge.clear();
         self.neck.clear();
         self.filtered = 0.0;
@@ -92,13 +99,18 @@ impl StringModel {
                 .excite(&mut self.bridge, frequency, velocity, rate, settings);
             return;
         }
-        self.pole = (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * velocity)
-            + settings.damping * 0.15)
-            .clamp(0.05, 0.92);
+        self.pole = if self.bowed {
+            (0.35 + 0.55 * settings.damping).powf(48_000.0 / rate)
+        } else {
+            (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * velocity) + settings.damping * 0.15)
+                .clamp(0.05, 0.92)
+        };
         self.position = settings.position;
-        self.bow_velocity = velocity * 0.08;
+        self.position_target = self.position;
+        self.bow.excite(velocity, rate, settings);
         // Compensate the low-frequency phase delay of the bridge's one-pole loss filter.
         self.period = (rate / frequency - self.pole / (1.0 - self.pole)).max(6.0);
+        self.period_target = self.period;
         self.loss = (-6.907_755 / (settings.decay * frequency)).exp();
         if !self.bowed {
             // A triangular initial displacement is a string pulled at one point and let go.
@@ -125,7 +137,13 @@ impl StringModel {
             self.pluck.retune(ratio);
             return;
         }
-        self.period = (self.period / ratio).max(6.0);
+        if self.bowed {
+            let phase = self.pole / (1.0 - self.pole);
+            self.period_target =
+                ((self.period_target + phase) / ratio - phase).clamp(6.0, self.rate / 8.0 - phase);
+        } else {
+            self.period = (self.period / ratio).max(6.0);
+        }
     }
 
     pub(super) fn update_loss(&mut self, settings: Settings) {
@@ -134,11 +152,17 @@ impl StringModel {
             return;
         }
         let old_phase = self.pole / (1.0 - self.pole);
-        self.pole = (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * self.velocity)
-            + settings.damping * 0.15)
-            .clamp(0.05, 0.92);
+        self.pole = if self.bowed {
+            (0.35 + 0.55 * settings.damping).powf(48_000.0 / self.rate)
+        } else {
+            (0.8 - 0.65 * settings.hardness * (0.4 + 0.6 * self.velocity) + settings.damping * 0.15)
+                .clamp(0.05, 0.92)
+        };
         let new_phase = self.pole / (1.0 - self.pole);
         self.period = (self.period + old_phase - new_phase).max(6.0);
+        self.period_target = (self.period_target + old_phase - new_phase).max(6.0);
+        self.position_target = settings.position;
+        self.bow.update(settings);
         self.loss = (-6.907_755 * (self.period + new_phase) / (settings.decay * self.rate)).exp();
     }
 
@@ -152,20 +176,25 @@ impl StringModel {
             self.bridge.write(self.loss * self.filtered);
             return incoming;
         }
+        self.period += (self.period_target - self.period) / (self.rate * 0.005);
+        self.position += (self.position_target - self.position) / (self.rate * 0.015);
         let bridge = self.bridge.read(self.period * self.position);
         let neck = -self.neck.read(self.period * (1.0 - self.position));
         self.filtered = self.pole * self.filtered - (1.0 - self.pole) * bridge;
         let incoming = self.filtered * self.loss + neck;
-        let difference = self.bow_velocity * bow - incoming;
-        // A bounded friction admittance: near zero relative velocity the bow sticks; as the
-        // string slips, friction falls. Bounding it by unity keeps scattering passive.
-        // Express slip in units of this note's bow speed. Without this normalisation a loud
-        // attack jumps straight past the friction peak and can sound quieter than a soft one.
-        let slope = (2.0 + 18.0 * pressure.clamp(0.0, 1.0)) * 0.04 / self.bow_velocity.max(0.001);
-        let friction = (difference.abs() * slope + 0.75).powi(-4).min(1.0);
-        let force = difference * friction;
+        let force = self.bow.next(incoming, bow, pressure);
         self.neck.write(self.filtered * self.loss + force);
         self.bridge.write(neck + force);
         bridge
+    }
+
+    pub(super) fn set_velocity(&mut self, velocity: f32) {
+        self.velocity = velocity;
+        self.bow.set_velocity(velocity);
+    }
+
+    pub(super) fn glide_to(&mut self, frequency: f32) {
+        let phase = self.pole / (1.0 - self.pole);
+        self.period_target = (self.rate / frequency.clamp(8.0, self.rate * 0.2) - phase).max(6.0);
     }
 }

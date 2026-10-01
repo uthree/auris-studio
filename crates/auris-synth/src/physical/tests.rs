@@ -275,6 +275,134 @@ fn guitar_bend_reaches_its_target_and_stays_bounded() {
 }
 
 #[test]
+fn violin_legato_keeps_the_existing_wave_and_counts_overlapping_keys() {
+    let mut control = rig(Model::Violin, 48_000.0);
+    let mut legato = rig(Model::Violin, 48_000.0);
+    for rig in [&mut control, &mut legato] {
+        rig.set_param("legato", 1.0);
+        rig.set_param("release", 0.05);
+        rig.render(24_000, &[on(69, 0.8)]);
+    }
+    let unchanged = control.render(8000, &[]);
+    let repeated = legato.render(8000, &[on(69, 0.8)]);
+    assert_eq!(
+        unchanged, repeated,
+        "overlapping same-pitch legato restarted the string"
+    );
+    assert_eq!(legato.instrument.active_voices(), 1);
+    let held = legato.render(
+        8000,
+        &[NoteEvent::NoteOff {
+            frame: 0,
+            pitch: 69,
+        }],
+    );
+    assert!(rms(&held) > 0.001, "one off released both overlapping ons");
+    let released = legato.render(
+        8000,
+        &[NoteEvent::NoteOff {
+            frame: 0,
+            pitch: 69,
+        }],
+    );
+    assert!(peak(&released[4000..]) < 1e-6);
+    assert_eq!(legato.instrument.active_voices(), 0);
+}
+
+#[test]
+fn violin_legato_returns_to_the_previous_key_and_ignores_stale_offs() {
+    let mut violin = rig(Model::Violin, 48_000.0);
+    violin.set_param("legato", 1.0);
+    violin.render(24_000, &[on(69, 0.8)]);
+    let upper = violin.render(16_000, &[on(76, 0.8)]);
+    assert_eq!(violin.instrument.active_voices(), 1);
+    let hz = f64::from(pitch_to_hz(76.0));
+    assert!(
+        goertzel(&upper[8000..], 48_000.0, hz) > goertzel(&upper[8000..], 48_000.0, 440.0) * 3.0
+    );
+    let returned = violin.render(
+        16_000,
+        &[NoteEvent::NoteOff {
+            frame: 0,
+            pitch: 76,
+        }],
+    );
+    assert!(
+        goertzel(&returned[8000..], 48_000.0, 440.0)
+            > goertzel(&returned[8000..], 48_000.0, hz) * 3.0
+    );
+    let held = violin.render(
+        8000,
+        &[NoteEvent::NoteOff {
+            frame: 0,
+            pitch: 76,
+        }],
+    );
+    assert!(rms(&held) > 0.001);
+    violin.render(12_000, &[NoteEvent::AllSoundOff { frame: 0 }]);
+    assert_eq!(violin.instrument.active_voices(), 0);
+    let fresh = violin.render(8000, &[on(72, 0.8)]);
+    assert!(rms(&fresh) > 0.001);
+}
+
+#[test]
+fn violin_defaults_to_polyphony_and_bow_controls_are_independent() {
+    let mut violin = rig(Model::Violin, 48_000.0);
+    violin.render(8000, &[on(69, 0.8), on(72, 0.8)]);
+    assert_eq!(violin.instrument.active_voices(), 2);
+    violin.instrument.reset();
+    violin.set_param("bow_speed", 0.0);
+    let stationary = violin.render(8000, &[on(69, 0.8)]);
+    assert_eq!(peak(&stationary), 0.0);
+    violin.set_param("bow_speed", 0.65);
+    let moving = violin.render(24_000, &[]);
+    assert!(rms(&moving[8000..]) > 0.001);
+    violin.set_param("position", 0.3);
+    let repositioned = violin.render(24_000, &[]);
+    assert!(repositioned.iter().all(|sample| sample.is_finite()));
+    let original_ratio =
+        goertzel(&moving[8000..], 48_000.0, 880.0) / goertzel(&moving[8000..], 48_000.0, 440.0);
+    let changed_ratio = goertzel(&repositioned[8000..], 48_000.0, 880.0)
+        / goertzel(&repositioned[8000..], 48_000.0, 440.0);
+    assert!((original_ratio - changed_ratio).abs() > 0.05);
+    violin.set_param("bow_speed", 0.0);
+    let stopped = violin.render(48_000, &[]);
+    assert!(rms(&stopped[40_000..]) < rms(&moving[8000..]) * 0.2);
+}
+
+#[test]
+fn violin_legato_events_and_live_bow_automation_allocate_nothing() {
+    let mut instrument = Physical::new(Model::Violin);
+    instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
+    instrument.set_param_by_key("legato", 1.0);
+    let mut buffer = AudioBuffer::stereo(256, 48_000.0);
+    let context = ProcessContext::realtime(48_000.0, 256, 0, 120.0, true);
+    let allocations = count_allocations(|| {
+        for pitch in 55..85 {
+            instrument.set_param(ParamId(P_BOW_SPEED), 0.6);
+            instrument.set_param(ParamId(P_POSITION), 0.2);
+            instrument.process(
+                &[
+                    on(pitch, 0.8),
+                    NoteEvent::NoteOff {
+                        frame: 64,
+                        pitch: pitch - 1,
+                    },
+                ],
+                &mut buffer,
+                &context,
+            );
+        }
+        instrument.process(
+            &[NoteEvent::AllSoundOff { frame: 64 }],
+            &mut buffer,
+            &context,
+        );
+    });
+    assert_eq!(allocations, 0);
+}
+
+#[test]
 fn every_model_stays_bounded_for_extreme_notes_and_parameters() {
     for model in Model::ALL {
         let mut rig = rig(model, 48_000.0);

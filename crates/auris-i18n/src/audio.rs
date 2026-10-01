@@ -231,6 +231,8 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("String Stiffness", "弦の剛性"),
     ("Bow Pressure", "弓圧"),
     ("Pickup blend", "ピックアップ比率"),
+    ("Bow speed", "運弓速度"),
+    ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
     ("Breath", "ブレス"),

@@ -116,3 +116,43 @@ CE drops by 0.17 in pop-band, 0.07 in city-pop and 0.33 in jazz-trio; the other 
 unchanged. A richer excitation model is therefore not being presented as a learned-score win.
 The fixed isolated-note demo's piano RMS changes only from 0.03651 to 0.03675; the A/B utility
 still level-matches it. The release-profile 24-voice benchmark averages 0.827 ms, p99 1.783 ms.
+
+## Violin
+
+The bow junction now distinguishes static and sliding friction with hysteresis. Bow pressure
+sets the static force limit; sliding friction is weaker and falls with slip velocity. Friction
+is bounded by the relative velocity, so it cannot reverse the direction of relative slip or
+inject energy independently of the moving bow. The force law is a bounded reduced approximation,
+not a full contact solver. Contact hardness adjusts sliding friction separately from string loss.
+
+Bow speed is a separate parameter, scaled by velocity and CC11, with a 12 ms motion ramp.
+The bow junction position moves over 15 ms without resetting the wave buffers; loss depends on
+damping at a sample-rate-scaled cutoff. Pitch transitions approach their target over 5 ms.
+
+Optional legato uses a fixed 128-key table with repeated-key counts and last-note priority.
+Overlapping notes retarget one voice without resetting string waves or the amplitude envelope.
+An off for the former key cannot stop the new note; releasing the newest key returns to a
+previous held key. All-notes/sound-off clears the table. Changing the legato toggle releases
+held notes so a polyphonic/monophonic transition cannot leave untracked held voices.
+The general voice allocator's retarget operation only changes bookkeeping and retains the
+voice's measured level. Default violin remains polyphonic; the session starts melody roles
+with legato and pads with slower bow motion and polyphony, preserving explicit controls.
+
+Tests assert friction passivity/hysteresis, exact waveform continuity for same-pitch legato,
+correct return pitch and stale-off handling, polyphonic defaults, independent motion/position
+controls, bow stopping, and zero allocations under legato and live bow automation.
+
+The junction follows the travelling-wave geometry in Smith's
+[bow/string scattering junction](https://www.dsprelated.com/freebooks/pasp/Bow_String_Scattering_Junction.html).
+
+The violin checkpoint passes 4,009 workspace tests, workspace clippy, six Python measurement
+tests and ruff. Symbolic output remains byte-identical. Mean CE/PQ is 5.94/7.74; relative to the
+piano checkpoint, ambient rises by 0.82 CE / 0.38 PQ, orchestral by 0.16 CE with a 0.07 PQ drop,
+and pop-band by 0.03 CE. The 24-voice violin callback averages 0.073 ms at 48 kHz/256 frames.
+
+`physical_phrases` saves fixed editable projects containing piano chords and a line, guitar
+picking and strumming, and an overlapping violin phrase with legato enabled. Render each
+project with frozen before/after CLI executables and use `physical_ab.py --phrases` on the two
+WAV directories. The projects and note events are identical across renderers; all saved controls
+are held fixed. An older instrument ignores the new bow/legato controls. The isolated-note
+`physical_demo` comparison separately captures the change in factory defaults.

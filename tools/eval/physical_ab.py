@@ -28,18 +28,29 @@ def main():
     parser.add_argument("before", type=Path)
     parser.add_argument("after", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--phrases", action="store_true", help="compare named piano/guitar/violin WAVs in two directories")
     args = parser.parse_args()
-    before, rate = sf.read(args.before)
-    after, after_rate = sf.read(args.after)
-    if rate != after_rate or before.shape != after.shape or before.ndim != 1:
-        raise ValueError("matching mono physical_demo renders are required")
+    if not args.phrases:
+        before, rate = sf.read(args.before)
+        after, after_rate = sf.read(args.after)
+        if rate != after_rate or before.shape != after.shape or before.ndim != 1:
+            raise ValueError("matching mono physical_demo renders are required")
     parts, report = [], {}
     for name, index in (("piano", 0), ("guitar", 1), ("violin", 5)):
-        region = slice(index * rate * 4, (index + 1) * rate * 4)
-        pair, gains = match_levels(before[region], after[region])
+        if args.phrases:
+            before, rate = sf.read(args.before / f"{name}.wav", always_2d=True)
+            after, after_rate = sf.read(args.after / f"{name}.wav", always_2d=True)
+            if rate != after_rate or before.shape != after.shape:
+                raise ValueError(f"incompatible {name} phrase renders")
+            if report and rate != report["piano"]["sample_rate"]:
+                raise ValueError("all phrase pairs must share a sample rate")
+            pair, gains = match_levels(before.mean(axis=1), after.mean(axis=1))
+        else:
+            region = slice(index * rate * 4, (index + 1) * rate * 4)
+            pair, gains = match_levels(before[region], after[region])
         for audio in pair:
             parts.extend((audio, np.zeros(int(rate * 0.3))))
-        report[name] = {"order": ["before", "after"], "gains": gains}
+        report[name] = {"order": ["before", "after"], "gains": gains, "sample_rate": rate}
     sf.write(args.output, np.concatenate(parts), rate, subtype="PCM_24")
     args.output.with_suffix(".json").write_text(json.dumps(report, indent=2) + "\n")
 

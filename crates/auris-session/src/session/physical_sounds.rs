@@ -80,6 +80,12 @@ pub(super) fn style_native(id: &str, role: Option<Role>, state: &mut PluginState
     if id == Model::Violin.id() && role == Some(Role::Pad) {
         state.params.entry("bow_pressure".into()).or_insert(0.35);
         state.params.entry("release".into()).or_insert(0.8);
+        state.params.entry("bow_speed".into()).or_insert(0.4);
+        state.params.entry("legato".into()).or_insert(0.0);
+    }
+    if id == Model::Violin.id() && role == Some(Role::Melody) {
+        state.params.entry("legato".into()).or_insert(1.0);
+        state.params.entry("bow_speed".into()).or_insert(0.65);
     }
     if id == Model::Guitar.id() && role == Some(Role::Arp) {
         state.params.entry("position".into()).or_insert(0.18);
@@ -147,6 +153,16 @@ mod tests {
         style_native(Model::Violin.id(), Some(Role::Pad), &mut state);
         assert_eq!(state.params["bow_pressure"], 0.75);
         assert_eq!(state.params["release"], 0.8);
+        assert_eq!(state.params["legato"], 0.0);
+        assert_eq!(state.params["bow_speed"], 0.4);
+        let mut melody = PluginState::empty();
+        style_native(Model::Violin.id(), Some(Role::Melody), &mut melody);
+        assert_eq!(melody.params["legato"], 1.0);
+        melody.params.insert("legato".into(), 0.0);
+        melody.params.insert("bow_speed".into(), 0.8);
+        style_native(Model::Violin.id(), Some(Role::Melody), &mut melody);
+        assert_eq!(melody.params["legato"], 0.0);
+        assert_eq!(melody.params["bow_speed"], 0.8);
     }
 
     #[test]

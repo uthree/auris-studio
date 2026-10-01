@@ -183,6 +183,7 @@ mod tests {
             damping: 0.12,
             stiffness: 0.0003,
             pickup: 0.0,
+            bow_speed: 0.0,
         }
     }
 
