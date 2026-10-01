@@ -22,10 +22,10 @@ gain magnitude and adjacent gain differences. The body control blends the dry si
 cascade output. Sections above 45% of the host rate are bypassed rather than folded down.
 Bass, bell and mallet retain their original three parallel resonances.
 
-The nominal fully wet filter reduces the fitted target-envelope error from 3.71 to 1.17 dB
+The initial nominal fully wet filter reduced the fitted target-envelope error from 3.71 to 1.17 dB
 for piano, 7.76 to 1.12 dB for guitar, and 6.18 to 1.73 dB for violin. These are fitting errors,
 not measurements of the default dry/wet output or perceptual quality. Excitation refinements
-are evaluated separately rather than repeatedly fitting a profile to obtain a favourable score.
+are evaluated separately before a final calibration against the same fixed reference cohort.
 
 Reproduce the fit with the development tools:
 
@@ -156,3 +156,68 @@ project with frozen before/after CLI executables and use `physical_ab.py --phras
 WAV directories. The projects and note events are identical across renderers; all saved controls
 are held fixed. An older instrument ignores the new bow/legato controls. The isolated-note
 `physical_demo` comparison separately captures the change in factory defaults.
+
+## Final radiation calibration
+
+The excitation changes alter the dry spectrum, especially the guitar's motion-velocity output.
+Re-running the identical matched-note calibration after `760e969` shows that the initial
+piano/guitar filters no longer match the fixed reference as closely. Only these two profiles
+are updated; the violin profile already has the same 1.59 dB fitting error as a fresh fit.
+
+| Model | Dry target difference | Initial filter on final excitation | Recalibrated filter |
+| --- | ---: | ---: | ---: |
+| Piano | 3.75 dB | 2.35 dB | 0.98 dB |
+| Guitar | 4.92 dB | 4.73 dB | 1.62 dB |
+| Violin | 6.11 dB | 1.59 dB | retained at 1.59 dB |
+
+These are regularised, nominal fully wet spectral-fitting errors. They do not measure the
+default mixed output or instrument realism. All pitches, velocities, font, normalisation,
+filter bank, gain bounds and penalties are unchanged. This recalibration uses reference spectra,
+independently of the Audiobox scores. Pass `--prior initial-fit.json` to the fitter to measure
+a prior filter against the new probes. The runtime retains twelve fixed gains per instrument.
+
+## Final comparison
+
+The original native baseline is `aaf5a0f`. The final renderer includes all four model refinements
+and the piano/guitar radiation recalibration. Both conditions use an empty `AURIS_SOUNDFONTS`
+directory and normal session balancing. All nine presets use their default seeds, 48 kHz,
+32-bit WAV and no render tail. No score writer or existing clip was changed.
+
+| Preset | Before CE | After CE | Before PQ | After PQ |
+| --- | ---: | ---: | ---: | ---: |
+| chiptune | 5.84 | 5.84 | 7.88 | 7.88 |
+| game-loop | 5.95 | 5.95 | 7.96 | 7.96 |
+| pop-band | 6.35 | 6.08 | 8.05 | 7.94 |
+| city-pop | 6.75 | 6.67 | 8.02 | 8.01 |
+| rock | 7.20 | 7.40 | 8.20 | 8.29 |
+| jazz-trio | 7.50 | 7.19 | 8.37 | 8.19 |
+| orchestral | 4.85 | 4.73 | 7.32 | 6.99 |
+| synthwave | 5.62 | 5.62 | 7.64 | 7.64 |
+| ambient | 3.53 | 3.94 | 6.67 | 6.82 |
+| Mean | 5.96 | 5.94 | 7.79 | 7.75 |
+
+Mean CU changes from 7.482 to 7.490 and PC from 4.377 to 4.506. PC describes predicted scene
+complexity, for which higher is not inherently better. Results are mixed: rock and ambient
+improve, while piano-led arrangements and orchestral production quality remain regression
+cases for listening. These model changes add performance control and more physical structure;
+the single-seed learned evaluation does not establish an overall improvement in realism.
+
+Final validation passes 4,009 workspace tests, workspace clippy, and documentation with warnings
+denied. Six Python measurement tests and ruff pass. Symbolic output is unchanged, SHA-256
+`68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496`.
+The frozen native before/after CLI hashes are respectively
+`f062b030d387bd131084f2302b9f24f4510a2238fa9fd09e2c5f2c7e1680764b` and
+`d81bc46a28685bcbb9ca13bd53c08c1be844bcf39c1d754b9e897cfad081b643`.
+
+Listening artifacts are development output, not release assets:
+
+* `target/refinement-ab.wav`: default isolated notes, piano A/B, guitar A/B, violin A/B.
+* `target/refinement-phrases-ab.wav`: identical saved chords/phrases through both renderers,
+  in the same instrument and A/B order, about 38 seconds total.
+* `target/refinement-phrase-projects/`: the three editable source projects.
+
+Each pair is RMS-matched with a shared peak constraint; gain manifests sit beside the WAVs.
+The six-second phrases hold saved controls fixed, including body amount 0.65 and violin legato.
+The before renderer ignores the new speed/legato controls. Listen to attacks, decaying partials,
+string beats, bow starts/stops and transitions independently of overall level. No human listening
+rating is inferred from the numeric tests or fitting errors.

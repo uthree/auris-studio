@@ -2,7 +2,9 @@
 
 Measured on Windows at 48 kHz on 2026-10-01. The comparison build is commit
 `64ca54ee60b4105df336e46b53512b5c7d07334d`; the candidate is the physical instrument
-implementation described in [physical instruments](physical-instruments.md).
+initial implementation at `aaf5a0f`, described in [physical instruments](physical-instruments.md).
+The subsequent body, guitar, piano and violin changes are measured separately in the
+[refinement account](physical-model-refinement.md).
 
 ## Conditions
 
