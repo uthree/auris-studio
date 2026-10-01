@@ -604,15 +604,25 @@ impl AurisApp {
             return div()
                 .flex()
                 .flex_1()
+                .min_w_0()
+                .w_full()
+                .p_4()
                 .items_center()
                 .justify_center()
                 .bg(theme.surface_sunken)
                 .text_color(theme.text_muted)
                 .text_xs()
-                .child(messages::piano_roll_empty(
-                    self.language(),
-                    self.t(self.pointer.create.label()),
-                ))
+                .child(
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .whitespace_normal()
+                        .text_center()
+                        .child(messages::piano_roll_empty(
+                            self.language(),
+                            self.t(self.pointer.create.label()),
+                        )),
+                )
                 .into_any_element();
         };
 
