@@ -49,7 +49,6 @@ jobs:
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: |
-            tools/fetch-soundfonts.sh
             tools/fetch-dictionary.sh
           sparse-checkout-cone-mode: false
 
@@ -75,9 +74,6 @@ jobs:
 
       # After the build, because the scripts ask the command line tool what to fetch — the
       # manifests live in `auris_session::library` and are not duplicated in the scripts.
-      - name: Fetch the shipped SoundFonts
-        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
-
       - name: Fetch the shipped Japanese dictionary
         run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
 
@@ -104,18 +100,10 @@ jobs:
           done
           mv "$stage/auris-studio" "$app/Contents/MacOS/auris-studio"
 
-          # Inside the bundle's resource directory, because that is what makes dragging
-          # `Auris Studio.app` to /Applications carry the sounds with it — a font left beside the
-          # bundle would be a fresh installation with no instruments in it.
-          #
-          # The `auris` binary sits *beside* the bundle rather than in it and only ever searches
-          # upwards, so it is given a link to the same directory rather than a second copy. Two
-          # copies would be four hundred megabytes to save a symlink.
+          # The dictionary travels inside the app. A symlink lets the CLI beside the bundle
+          # read the same resources without a second copy.
           mkdir -p "$app/Contents/Resources"
           cp crates/auris-gpui/assets/auris-studio.icns "$app/Contents/Resources/auris-studio.icns"
-          cp -R SoundFonts "$app/Contents/Resources/SoundFonts"
-          ln -s "Auris Studio.app/Contents/Resources/SoundFonts" "$stage/SoundFonts"
-          # The Japanese dictionary travels the same way, for the same two readers.
           cp -R Dictionary "$app/Contents/Resources/Dictionary"
           ln -s "Auris Studio.app/Contents/Resources/Dictionary" "$stage/Dictionary"
 
@@ -148,7 +136,6 @@ jobs:
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: |
-            tools/fetch-soundfonts.sh
             tools/fetch-dictionary.sh
             tools/fetch-dictionary.ps1
           sparse-checkout-cone-mode: false
@@ -187,10 +174,6 @@ jobs:
           cargo @buildArgs
           exit $LASTEXITCODE
 
-      - name: Fetch the shipped SoundFonts
-        shell: bash
-        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
-
       - name: Fetch the shipped Japanese dictionary
         shell: pwsh
         run: ./.release-tools/tools/fetch-dictionary.ps1 -Destination (Join-Path $PWD 'Dictionary') -AurisPath ./target/release/auris.exe
@@ -202,7 +185,6 @@ jobs:
           mkdir -p "$stage"
           cp target/release/auris-studio.exe target/release/auris.exe target/release/auris-mcp.exe "$stage/"
           # Beside the binaries, which is the first place `auris_session::library` looks.
-          cp -R SoundFonts "$stage/SoundFonts"
           cp -R Dictionary "$stage/Dictionary"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           # The README links into `docs/`, so an archive without it has dead links in the
@@ -236,7 +218,6 @@ jobs:
           ref: ${{ github.sha }}
           path: .release-tools
           sparse-checkout: |
-            tools/fetch-soundfonts.sh
             tools/fetch-dictionary.sh
           sparse-checkout-cone-mode: false
 
@@ -252,9 +233,6 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p auris-cli
 
-      - name: Fetch the shipped SoundFonts
-        run: bash .release-tools/tools/fetch-soundfonts.sh "$PWD/SoundFonts"
-
       - name: Fetch the shipped Japanese dictionary
         run: bash .release-tools/tools/fetch-dictionary.sh "$PWD/Dictionary"
 
@@ -263,12 +241,7 @@ jobs:
           stage="auris-${RELEASE_NAME}-linux-x86_64"
           mkdir -p "$stage"
           cp target/release/auris "$stage/"
-          # The command line tool composes too, and a piece written on Linux has to be the piece
-          # written on Windows. Skipping the fonts here would make `auris compose` quietly answer
-          # in three oscillators on one platform and an orchestra on the others. The dictionary
-          # rides along for the same reason: a lyric composed here has to follow its accent the
-          # way it would anywhere else.
-          cp -R SoundFonts "$stage/SoundFonts"
+          # Kanji lyrics use the same dictionary on every platform.
           cp -R Dictionary "$stage/Dictionary"
           cp README.md CHANGELOG.md LICENSE "$stage/"
           # The README links into `docs/`, so an archive without it has dead links in the
@@ -325,13 +298,9 @@ jobs:
           | `…-windows-x86_64.zip` | `auris-studio.exe`, `auris.exe`, and `auris-mcp.exe` |
           | `…-linux-x86_64.tar.gz` | the `auris` command line tool only |
 
-          Every archive carries **MuseScore General**, a General MIDI SoundFont under the MIT
-          licence, in a `SoundFonts` directory — which is most of the download size and all of the
-          instruments beyond the four built in. Beside it, a `Dictionary` directory holds the
-          **NAIST Japanese dictionary** (BSD-3-Clause, jpreprocess's build): what reads kanji
-          lyrics, and what gives a melody composed from lyrics the words' pitch accent to follow.
-          On macOS both live inside the bundle, so dragging `Auris Studio.app` to /Applications
-          takes them along.
+          Every archive includes a `Dictionary` directory with the **NAIST Japanese dictionary**
+          (BSD-3-Clause, jpreprocess's build), used to read kanji lyrics and their pitch accent.
+          On macOS it lives inside the application bundle.
 
           None of it is code-signed. macOS will refuse the first launch and say the developer
           cannot be verified: open it from the right-click menu once, or run

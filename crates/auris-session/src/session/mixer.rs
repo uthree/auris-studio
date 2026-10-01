@@ -1252,6 +1252,9 @@ mod tests {
         // all of them. Which curve a lane gets is decided where the descriptor is legible.
         let mut session = session();
         let track = session.add_default_instrument_track("Lead").unwrap();
+        session
+            .set_track_instrument(track, "auris.synth.chiptune")
+            .unwrap();
         let waveform = session
             .param_descriptors(
                 &session.project().tracks[0]

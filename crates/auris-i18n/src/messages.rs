@@ -7,6 +7,50 @@
 
 use crate::Language;
 
+/// Play or release one test note in the physical instrument editor.
+pub fn physical_preview(language: Language, note: &str, playing: bool) -> String {
+    match (language, playing) {
+        (Language::English, false) => format!("Play {note}"),
+        (Language::English, true) => format!("Release {note}"),
+        (Language::Japanese, false) => format!("{note}を試奏"),
+        (Language::Japanese, true) => format!("{note}を離す"),
+    }
+}
+
+/// Performance controls and voice count beside a live mechanical projection.
+pub fn physical_activity(
+    language: Language,
+    voices: usize,
+    expression: f32,
+    pressure: Option<f32>,
+    pedal: Option<bool>,
+) -> String {
+    let shown = voices.min(4);
+    match language {
+        Language::English => format!(
+            "{shown}/{voices} voices · Expression {:.0}%{}{}",
+            expression * 100.,
+            pressure.map_or_else(String::new, |value| format!(
+                " · Bow pressure {:.0}%",
+                value * 100.
+            )),
+            pedal.map_or_else(String::new, |on| format!(
+                " · Pedal {}",
+                if on { "on" } else { "off" }
+            ))
+        ),
+        Language::Japanese => format!(
+            "{voices}音中{shown}音を表示 · 強弱 {:.0}%{}{}",
+            expression * 100.,
+            pressure.map_or_else(String::new, |value| format!(" · 弓圧 {:.0}%", value * 100.)),
+            pedal.map_or_else(String::new, |on| format!(
+                " · ペダル{}",
+                if on { "あり" } else { "なし" }
+            ))
+        ),
+    }
+}
+
 macro_rules! messages {
     ($(
         $(#[$doc:meta])*

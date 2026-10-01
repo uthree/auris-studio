@@ -461,10 +461,12 @@ mod tests {
                 .unwrap()
                 .run(&TimbreMapControl::default())
                 .unwrap();
+            // Use the first alternate sound: the visible rows remain clickable as the built-in
+            // catalogue grows, without relying on FM2 staying above the scroll fold.
             let index = map
                 .sounds
                 .iter()
-                .position(|s| s.instrument_id == "auris.synth.fm2")
+                .position(|s| s.instrument_id != auris_session::DEFAULT_INSTRUMENT)
                 .unwrap();
             this.timbre_map.map = Some(Arc::new(map));
             this.timbre_map.open = true;

@@ -48,7 +48,8 @@ pub(crate) fn styled_performance(
     }
 
     let comp = matches!(role, Role::Chords | Role::Stab);
-    let guitar = program.is_some_and(|p| (24..=31).contains(&p));
+    let guitar = program.is_some_and(|p| (24..=31).contains(&p))
+        || part.instrument == "auris.physical.guitar";
     if comp && guitar {
         // Sparse sixteenth brushes preserve deliberate rests and the final release.
         stack.push(ghost(0.10, 0.10, GhostPattern::Sixteenths, 12.0));
@@ -63,13 +64,17 @@ pub(crate) fn styled_performance(
             },
         });
         stack.push(NoteTransform::Mute { amount: 0.18 });
-    } else if comp && program.is_some_and(|p| p <= 7) {
+    } else if comp && (program.is_some_and(|p| p <= 7) || part.instrument == "auris.physical.piano")
+    {
         stack.push(NoteTransform::Stroke {
             spread_ms: if style == JazzTrio { 9.0 } else { 5.0 },
             direction: StrokeDirection::Alternate,
         });
     }
-    if role == Role::Bass && program.is_some_and(|p| (32..=37).contains(&p)) {
+    if role == Role::Bass
+        && (program.is_some_and(|p| (32..=37).contains(&p))
+            || part.instrument == "auris.physical.bass")
+    {
         match style {
             CityPop => {
                 stack.push(ghost(0.18, 0.18, GhostPattern::Offbeats, 18.0));
@@ -148,7 +153,11 @@ pub(crate) fn styled_performance(
         || {
             matches!(
                 part.instrument.as_str(),
-                "auris.synth.chiptune" | "auris.synth.fm2"
+                "auris.synth.chiptune"
+                    | "auris.synth.fm2"
+                    | "auris.physical.guitar"
+                    | "auris.physical.bass"
+                    | "auris.physical.violin"
             )
         },
         |p| matches!(p, 24..=31 | 40..=43 | 56..=87),
@@ -193,6 +202,40 @@ pub(crate) fn styled_performance(
 mod tests {
     use super::*;
     use auris_core::{ClipId, MidiClip, SignatureMap, Ticks};
+
+    #[test]
+    fn direct_physical_choices_receive_their_instrument_specific_performance() {
+        let mut part = PartSpec::of_role("guitar", Role::Chords);
+        part.instrument = "auris.physical.guitar".into();
+        let stack = styled_performance(&part, PerformanceStyle::PopBand, 0.5, 1, 2);
+        assert!(
+            stack
+                .iter()
+                .any(|stage| matches!(stage, NoteTransform::Strum { .. }))
+        );
+        part.instrument = "auris.physical.piano".into();
+        let stack = styled_performance(&part, PerformanceStyle::JazzTrio, 0.5, 1, 2);
+        assert!(
+            stack
+                .iter()
+                .any(|stage| matches!(stage, NoteTransform::Stroke { .. }))
+        );
+        part.role = Role::Melody;
+        part.instrument = "auris.physical.violin".into();
+        let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
+        assert!(
+            stack
+                .iter()
+                .any(|stage| matches!(stage, NoteTransform::Pitch { .. }))
+        );
+        part.instrument = "auris.physical.mallet".into();
+        let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
+        assert!(
+            !stack
+                .iter()
+                .any(|stage| matches!(stage, NoteTransform::Pitch { .. }))
+        );
+    }
 
     #[test]
     fn preset_arrangement_changes_the_performance_but_never_the_score() {

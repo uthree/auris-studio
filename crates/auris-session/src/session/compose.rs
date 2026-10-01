@@ -253,14 +253,29 @@ impl Session {
         let general_midi = composition
             .tracks
             .iter()
-            .any(|track| track.source.is_none() && track.sound.is_some())
+            .any(|track| {
+                track.source.is_none()
+                    && track.sound.is_some_and(|sound| {
+                        super::physical_sounds::native_sound(
+                            i32::from(sound.bank),
+                            i32::from(sound.patch),
+                        )
+                        .is_none()
+                    })
+            })
             .then(|| self.adopt_general_midi(&mut project))
             .flatten();
         if general_midi.is_none()
-            && composition
-                .tracks
-                .iter()
-                .any(|track| track.source.is_none() && track.sound.is_some())
+            && composition.tracks.iter().any(|track| {
+                track.source.is_none()
+                    && track.sound.is_some_and(|sound| {
+                        super::physical_sounds::native_sound(
+                            i32::from(sound.bank),
+                            i32::from(sound.patch),
+                        )
+                        .is_none()
+                    })
+            })
         {
             // Named the way a missing plugin is, because it is the same thing happening: the
             // piece plays, on the instruments the parts also name, and the report is where
@@ -270,22 +285,33 @@ impl Session {
 
         let mut hosted_sources = Vec::new();
         for (track, source) in composition.tracks.iter().zip(sources) {
-            let sound = source
-                .is_none()
+            let native = if source.is_none() {
+                track.sound.and_then(|sound| {
+                    super::physical_sounds::native_sound(
+                        i32::from(sound.bank),
+                        i32::from(sound.patch),
+                    )
+                })
+            } else {
+                None
+            };
+            let sound = (source.is_none() && native.is_none())
                 .then_some(general_midi.and(track.sound))
                 .flatten();
             // A registered sampler without a preset is not a playable fallback.
-            let kept_instrument = source.is_none()
+            let kept_instrument = native.is_none()
+                && source.is_none()
                 && sound.is_none()
                 && track.instrument != SAMPLER_ID
                 && self.registry.has_instrument(&track.instrument);
-            let instrument = match (&source, &sound) {
-                (Some(source), _) => source.instrument_id(),
+            let instrument = match (&source, &sound, &native) {
+                (Some(source), _, _) => source.instrument_id(),
+                (None, _, Some((id, _))) => (*id).to_string(),
                 // Choosing a sound is choosing the instrument that makes it, exactly as it is in
                 // `set_track_preset`.
-                (None, Some(_)) => SAMPLER_ID.to_string(),
-                (None, None) if kept_instrument => track.instrument.clone(),
-                (None, None) => {
+                (None, Some(_), None) => SAMPLER_ID.to_string(),
+                (None, None, None) if kept_instrument => track.instrument.clone(),
+                (None, None, None) => {
                     report.substituted.push(track.instrument.clone());
                     fallback.clone()
                 }
@@ -312,6 +338,19 @@ impl Session {
                 if let Some(source) = self.install_composed_source(&mut project, track_id, source) {
                     hosted_sources.push((track_id, source));
                 }
+            } else if let Some((id, mut state)) = native {
+                let role = spec
+                    .parts
+                    .iter()
+                    .find(|part| part.name == track.name)
+                    .map(|part| part.role);
+                super::physical_sounds::style_native(id, role, &mut state);
+                if let Some(inner) = project
+                    .track_mut(track_id)
+                    .and_then(|entry| entry.kind.as_instrument_mut())
+                {
+                    inner.instrument_state = state;
+                }
             } else if let Some((sound, font)) = sound.zip(general_midi) {
                 if let Some(inner) = project
                     .track_mut(track_id)
@@ -327,7 +366,6 @@ impl Session {
                     );
                 }
             } else if kept_instrument
-                && !track.state.params.is_empty()
                 && let Some(inner) = project
                     .track_mut(track_id)
                     .and_then(|entry| entry.kind.as_instrument_mut())
@@ -335,6 +373,16 @@ impl Session {
                 // Only where the part stayed on the plugin it named: parameter keys belonging
                 // to a built-in synth must not become unrelated controls on the sampler.
                 inner.instrument_state = track.state.clone();
+                let role = spec
+                    .parts
+                    .iter()
+                    .find(|part| part.name == track.name)
+                    .map(|part| part.role);
+                super::physical_sounds::style_native(
+                    &track.instrument,
+                    role,
+                    &mut inner.instrument_state,
+                );
             }
             if !track.drum_parts.is_empty()
                 && let Some(inner) = project
@@ -1105,12 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn a_piece_asking_for_sounds_this_build_has_none_of_still_plays() {
-        // `session()` is headless, which means no shipped library — deliberately, so that this
-        // test says the same thing on a machine with the SoundFont installed and one without.
-        // What it pins is the fallback: a part naming a violin comes out on the oscillator it
-        // *also* names, and the report says why rather than leaving a piece that sounds wrong for
-        // no visible reason.
+    fn a_composed_violin_uses_the_native_model_without_assets() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(
             r#"
@@ -1125,11 +1168,7 @@ mod tests {
         .unwrap();
         let report = session.compose(&auris_compose::compose(&spec)).unwrap();
 
-        assert!(
-            report.substituted.iter().any(|name| name == "General MIDI"),
-            "the report should say the font was missing: {:?}",
-            report.substituted
-        );
+        assert!(report.substituted.is_empty(), "{:?}", report.substituted);
         assert!(
             session.project().soundfonts.is_empty(),
             "and the document should not name a font that is not there"
@@ -1142,8 +1181,8 @@ mod tests {
             .expect("the part became a track");
         assert_eq!(
             lead.kind.as_instrument().map(|inner| &inner.instrument_id),
-            Some(&auris_compose::Role::Melody.default_instrument().to_string()),
-            "the part keeps the plugin it named"
+            Some(&auris_synth::Model::Violin.id().to_string()),
+            "the musical hint resolves to the physical instrument"
         );
         assert_eq!(session.track_preset(lead.id), None);
     }
@@ -1155,7 +1194,7 @@ mod tests {
             "form = [\"verse\"]\n[section.verse]\nbars = 2\n[[part]]\nname = \"lead\"\ninstrument = \"auris.sampler.soundfont\"\nprogram = 48",
         ).unwrap();
         let report = session.compose(&auris_compose::compose(&spec)).unwrap();
-        assert!(report.substituted.iter().any(|id| id == SAMPLER_ID));
+        assert!(report.substituted.is_empty());
         let track = session
             .project()
             .tracks

@@ -61,7 +61,7 @@ pub fn load_soundfont(path: &Path) -> Result<Arc<SoundFont>> {
             path.display()
         ))
     };
-    check_chunks(&bytes).map_err(&refused)?;
+    check_chunks(&bytes).map_err(refused)?;
     let parsed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         SoundFont::new(&mut Cursor::new(bytes))
     }))

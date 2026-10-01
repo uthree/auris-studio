@@ -7,6 +7,7 @@ use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
+use crate::{Model, Physical};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -22,6 +23,9 @@ pub struct SynthPack;
 
 impl PluginPack for SynthPack {
     fn register(registry: &mut PluginRegistry) {
+        for model in Model::ALL {
+            registry.register_instrument(move || Box::new(Physical::new(model)));
+        }
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
@@ -101,6 +105,12 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "auris.physical.bass",
+                "auris.physical.bell",
+                "auris.physical.guitar",
+                "auris.physical.mallet",
+                "auris.physical.piano",
+                "auris.physical.violin",
                 "auris.synth.chiptune",
                 "auris.synth.drumkit",
                 "auris.synth.fm2",
@@ -108,7 +118,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 5);
+        assert_eq!(registry.len(), 11);
         assert_eq!(registry.effects().count(), 0);
     }
 

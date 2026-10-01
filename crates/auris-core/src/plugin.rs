@@ -482,6 +482,11 @@ pub trait Parameterized {
 ///
 /// Implement this to add a new software instrument. See `auris-synth` for worked examples.
 pub trait Instrument: Parameterized + Send {
+    /// Optional reader for internal mechanical state, obtained before audio rendering.
+    /// Returning `None` leaves instruments without physical models unchanged.
+    fn motion_monitor(&self) -> Option<std::sync::Arc<crate::motion::MotionMonitor>> {
+        None
+    }
     /// Identity and presentation metadata.
     fn descriptor(&self) -> PluginDescriptor;
 

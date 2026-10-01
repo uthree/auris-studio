@@ -239,6 +239,26 @@ impl VoiceAllocator {
         mask
     }
 
+    /// Retargets a sounding voice for legato, preserving its level and DSP ownership.
+    ///
+    /// The voice becomes held at the new pitch and velocity with a fresh note age. Returns
+    /// `false` for a free or out-of-range slot. Instruments keep the corresponding oscillator
+    /// or string state and handle envelope continuity themselves; this method allocates nothing.
+    pub fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
+        let Some(slot) = self.slots.get_mut(index) else {
+            return false;
+        };
+        if slot.state == VoiceState::Free {
+            return false;
+        }
+        slot.state = VoiceState::Held;
+        slot.pitch = pitch;
+        slot.velocity = velocity;
+        slot.age = self.next_age;
+        self.next_age = self.next_age.wrapping_add(1);
+        true
+    }
+
     /// Releases every held voice, returning every voice that is still sounding.
     ///
     /// The returned mask covers released voices too, so an all-sound-off can silence them all
@@ -317,6 +337,22 @@ fn steal_rank(state: VoiceState) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retarget_preserves_the_level_and_pairs_offs_with_the_new_pitch() {
+        let mut allocator = VoiceAllocator::new();
+        allocator.prepare(2);
+        let index = allocator.note_on(60, 0.5).unwrap().index;
+        allocator.set_level(index, 0.123);
+        assert!(allocator.retarget(index, 67, 0.8));
+        assert_eq!(allocator.slot(index).unwrap().level, 0.123);
+        assert_eq!(allocator.active_count(), 1);
+        assert!(allocator.note_off(60).is_empty());
+        assert!(allocator.note_off(67).contains(index));
+        allocator.retire(index);
+        assert!(!allocator.retarget(index, 60, 0.5));
+        assert!(!allocator.retarget(10, 60, 0.5));
+    }
 
     #[test]
     fn the_pool_is_sized_once_and_clamped() {

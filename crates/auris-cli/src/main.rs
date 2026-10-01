@@ -250,10 +250,8 @@ fn with_path(args: &[String], run: impl Fn(&Path) -> Result<(), String>) -> Resu
 
 /// A session with no audio device and no GPU, which is all a batch tool needs.
 ///
-/// With the shipped SoundFonts, which [`SessionOptions::headless`] leaves out because a *test*
-/// wants a session that is the same on every machine. This is not a test: `auris compose` here
-/// and **Compose a Song…** in the window have to write the same piece, and half the instruments
-/// a piece asks for are in that library.
+/// Enables optional GM discovery and the Japanese dictionary, so the CLI and window share
+/// their asset policy. Tests opt out to make their sessions independent of installed files.
 fn headless() -> Result<Session, String> {
     Session::new(
         SessionOptions::headless()
@@ -407,7 +405,7 @@ fn list_presets() -> Result<(), String> {
     printed(print)
 }
 
-/// Lists the SoundFonts this build ships with, and whether they are installed.
+/// Lists known optional SoundFonts and whether they are installed.
 ///
 /// With `--manifest`, prints the same list as tab-separated fields instead:
 /// `id`, `file`, `bytes`, `sha256`, `url`, `license_url`. That form is what `tools/fetch-soundfonts.sh`
@@ -420,7 +418,7 @@ fn list_soundfonts(args: &[String]) -> Result<(), String> {
     let mut out = stdout.lock();
     let print = (|| {
         if manifest {
-            for font in auris_session::library::SHIPPED {
+            for font in auris_session::library::KNOWN_FONTS {
                 writeln!(
                     out,
                     "{}\t{}\t{}\t{}\t{}\t{}",
@@ -430,7 +428,7 @@ fn list_soundfonts(args: &[String]) -> Result<(), String> {
             return Ok(());
         }
         writeln!(out, "{}", Key::CliSoundFonts.get(LANGUAGE))?;
-        for font in auris_session::library::SHIPPED {
+        for font in auris_session::library::KNOWN_FONTS {
             let state = match auris_session::library::installed(font) {
                 Some(path) => path.display().to_string(),
                 None => Key::CliSoundFontMissing.get(LANGUAGE).to_string(),

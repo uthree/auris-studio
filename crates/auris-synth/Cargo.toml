@@ -1,6 +1,6 @@
 [package]
 name = "auris-synth"
-description = "Built-in chiptune software instruments for Auris Studio"
+description = "Built-in synthesizers and physical instruments for Auris Studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,3 +11,6 @@ rust-version.workspace = true
 auris-core.workspace = true
 auris-dsp.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

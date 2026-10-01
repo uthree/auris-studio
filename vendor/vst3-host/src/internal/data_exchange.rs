@@ -252,6 +252,8 @@ impl DataExchangeState {
         (queue.id == id).then_some(queue)
     }
 
+    // `try_update` is newer than Auris' Rust 1.90 minimum.
+    #[allow(deprecated)]
     fn reserve_bytes(&self, bytes: usize) -> bool {
         self.allocated_bytes
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {

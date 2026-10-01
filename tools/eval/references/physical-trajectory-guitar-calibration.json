@@ -1,0 +1,5381 @@
+{
+  "reference_sha256": "fca4e250c0865613d4f20143cb5c277dc8b80067a5da789c34087c5f9900f370",
+  "seed": 20261001,
+  "iterations": 6,
+  "rate": 24000,
+  "renderer_sha256": "45241761e3ead8fba0fb976c3bf1d9e7c84a3945d5556f02772e0b138e64e220",
+  "before_renderer_sha256": null,
+  "versions": {
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "defaults": {
+    "guitar": {
+      "body": 0.65,
+      "damping": 0.006394,
+      "decay": 7.12,
+      "hardness": 0.2016,
+      "level": -12.0,
+      "pickup": 0.0,
+      "position": 0.294352,
+      "release": 0.12
+    },
+    "piano": {
+      "body": 0.65,
+      "damping": 0.000108,
+      "decay": 11.296,
+      "hardness": 0.701331,
+      "level": -12.0,
+      "position": 0.228641,
+      "release": 0.2,
+      "stiffness": 0.000769281
+    },
+    "violin": {
+      "body": 0.65,
+      "bow_pressure": 0.357058,
+      "bow_speed": 0.224231,
+      "damping": 0.154366,
+      "decay": 10.912,
+      "hardness": 0.347396,
+      "legato": 0.0,
+      "level": -12.0,
+      "position": 0.101898,
+      "release": 0.15
+    }
+  },
+  "performance": {
+    "expression_response_fraction": 0.0
+  },
+  "expression_guide": true,
+  "local_refinement": true,
+  "coloration_proposal": "phase-balanced L2",
+  "bounds": {
+    "piano": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        1,
+        12
+      ],
+      "damping": [
+        0,
+        0.5
+      ],
+      "stiffness": [
+        0,
+        0.0015
+      ]
+    },
+    "guitar": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        0.6,
+        10
+      ],
+      "damping": [
+        0,
+        0.5
+      ]
+    },
+    "violin": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        1,
+        12
+      ],
+      "damping": [
+        0,
+        0.5
+      ],
+      "bow_pressure": [
+        0.2,
+        0.85
+      ],
+      "bow_speed": [
+        0.2,
+        0.9
+      ],
+      "release": [
+        0.05,
+        1.5
+      ],
+      "bow_response": [
+        0.002,
+        0.06
+      ]
+    }
+  },
+  "models": {
+    "guitar": {
+      "params": {
+        "hardness": 0.24920139413831052,
+        "position": 0.29827950019916916,
+        "decay": 5.638204964757124,
+        "damping": 0.0
+      },
+      "gains_db": [
+        -1.4613121535296276,
+        5.897999853911296,
+        8.876076963934388,
+        7.225859152348621,
+        1.8665073250571935,
+        -0.26665348323097576,
+        -0.3515176389013189,
+        0.45810527552533625,
+        1.5295656512130977,
+        1.8815056019160847,
+        0.9618585279477386,
+        -0.2750763622980214
+      ],
+      "output_gain": 0.9811082595366145,
+      "search_calls": 138,
+      "surrogate_max_error": 2.2584170607381493e-06,
+      "before": {
+        "mel_by_dataset": {
+          "iowa": 0.10350287878094568,
+          "short": 0.11999432688683687
+        },
+        "weighted_mel": 0.10968717182065488,
+        "notes": [
+          {
+            "id": "iowa-guitar-41-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.65,
+            "mel": 0.1456985572549882,
+            "phases": {
+              "attack": 0.398569801189126,
+              "early": 0.18103101143963107,
+              "late": 0.03762217046044541
+            },
+            "envelope_db": 4.914412763475699
+          },
+          {
+            "id": "iowa-guitar-42-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.1164788612524842,
+            "phases": {
+              "attack": 0.2294290068710958,
+              "early": 0.13163525127299874,
+              "late": 0.06843891038781189
+            },
+            "envelope_db": 4.936755089641786
+          },
+          {
+            "id": "iowa-guitar-44-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.65,
+            "mel": 0.1345236454257687,
+            "phases": {
+              "attack": 0.2846954607924809,
+              "early": 0.19083518594900895,
+              "late": 0.05709238696703649
+            },
+            "envelope_db": 5.798128996906495
+          },
+          {
+            "id": "iowa-guitar-45-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 45,
+            "velocity": 0.65,
+            "mel": 0.12062991803320822,
+            "phases": {
+              "attack": 0.24510873288932022,
+              "early": 0.15708879669220374,
+              "late": 0.060278282965042854
+            },
+            "envelope_db": 9.796764417404908
+          },
+          {
+            "id": "iowa-guitar-47-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.0808912508611036,
+            "phases": {
+              "attack": 0.1366873154294641,
+              "early": 0.12375430256806991,
+              "late": 0.043894082257856036
+            },
+            "envelope_db": 4.618736084807802
+          },
+          {
+            "id": "iowa-guitar-50-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.1016946988541034,
+            "phases": {
+              "attack": 0.21633248927618454,
+              "early": 0.11179142322277003,
+              "late": 0.05491925580757296
+            },
+            "envelope_db": 5.519652170853311
+          },
+          {
+            "id": "iowa-guitar-51-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.09816690951172881,
+            "phases": {
+              "attack": 0.17890298871809013,
+              "early": 0.14100933277234365,
+              "late": 0.05182497108661274
+            },
+            "envelope_db": 6.5899359040124095
+          },
+          {
+            "id": "iowa-guitar-53-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.07754240337532047,
+            "phases": {
+              "attack": 0.1806646561148555,
+              "early": 0.08646257509270963,
+              "late": 0.03552649420397387
+            },
+            "envelope_db": 4.123588575990612
+          },
+          {
+            "id": "iowa-guitar-54-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.06483998064295517,
+            "phases": {
+              "attack": 0.14441412059132236,
+              "early": 0.052529523744796316,
+              "late": 0.039616099499127026
+            },
+            "envelope_db": 4.204123162071069
+          },
+          {
+            "id": "iowa-guitar-56-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 56,
+            "velocity": 0.65,
+            "mel": 0.09448399224803772,
+            "phases": {
+              "attack": 0.14948436756481348,
+              "early": 0.1189346969157208,
+              "late": 0.06468983725386562
+            },
+            "envelope_db": 4.938906958837765
+          },
+          {
+            "id": "iowa-guitar-57-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.11031306305760616,
+            "phases": {
+              "attack": 0.21333686642217253,
+              "early": 0.15439439883519032,
+              "late": 0.055148635879299676
+            },
+            "envelope_db": 5.079171239450326
+          },
+          {
+            "id": "iowa-guitar-59-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.65,
+            "mel": 0.08894781027264578,
+            "phases": {
+              "attack": 0.1287599901243672,
+              "early": 0.11676003448151244,
+              "late": 0.06358865874992524
+            },
+            "envelope_db": 5.3875818397492
+          },
+          {
+            "id": "iowa-guitar-65-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 65,
+            "velocity": 0.65,
+            "mel": 0.11875297759896844,
+            "phases": {
+              "attack": 0.2654717440302114,
+              "early": 0.16279689066822517,
+              "late": 0.04721697278628103
+            },
+            "envelope_db": 10.842032259180566
+          },
+          {
+            "id": "iowa-guitar-66-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.65,
+            "mel": 0.1105469397637501,
+            "phases": {
+              "attack": 0.24157359916963322,
+              "early": 0.11652297284482949,
+              "late": 0.05917093008113914
+            },
+            "envelope_db": 5.406664007434625
+          },
+          {
+            "id": "iowa-guitar-68-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.65,
+            "mel": 0.09932336067986139,
+            "phases": {
+              "attack": 0.2090994742633237,
+              "early": 0.09359426252359171,
+              "late": 0.06030572989466414
+            },
+            "envelope_db": 5.413694501717362
+          },
+          {
+            "id": "iowa-guitar-69-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.65,
+            "mel": 0.12462773579463998,
+            "phases": {
+              "attack": 0.24287603956274956,
+              "early": 0.15466438947346198,
+              "late": 0.06902087675204062
+            },
+            "envelope_db": 6.543404231590665
+          },
+          {
+            "id": "iowa-guitar-71-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 71,
+            "velocity": 0.65,
+            "mel": 0.11917936012937376,
+            "phases": {
+              "attack": 0.25542793610974085,
+              "early": 0.12566400526160493,
+              "late": 0.0656544022121494
+            },
+            "envelope_db": 6.3519536484037635
+          },
+          {
+            "id": "iowa-guitar-41-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.09272281398383467,
+            "phases": {
+              "attack": 0.18755865578761513,
+              "early": 0.11694938601429708,
+              "late": 0.04807440879599356
+            },
+            "envelope_db": 3.744881365797947
+          },
+          {
+            "id": "iowa-guitar-42-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.08419549304986453,
+            "phases": {
+              "attack": 0.1824499431559049,
+              "early": 0.10368494216848162,
+              "late": 0.04004153084061796
+            },
+            "envelope_db": 3.41533323250178
+          },
+          {
+            "id": "iowa-guitar-44-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.95,
+            "mel": 0.136442671282747,
+            "phases": {
+              "attack": 0.3166664044954062,
+              "early": 0.18267752246729793,
+              "late": 0.0515207021337932
+            },
+            "envelope_db": 3.5005807001592073
+          },
+          {
+            "id": "iowa-guitar-47-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.11428229946587047,
+            "phases": {
+              "attack": 0.26997153910737276,
+              "early": 0.15593991560981382,
+              "late": 0.04027722854632834
+            },
+            "envelope_db": 3.384072170422837
+          },
+          {
+            "id": "iowa-guitar-50-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.07569850867751389,
+            "phases": {
+              "attack": 0.15242298888335698,
+              "early": 0.08133429083163564,
+              "late": 0.044813410292527056
+            },
+            "envelope_db": 4.561069940161118
+          },
+          {
+            "id": "iowa-guitar-51-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.06758864107795876,
+            "phases": {
+              "attack": 0.1255092317353317,
+              "early": 0.07908922620056863,
+              "late": 0.04155570016046518
+            },
+            "envelope_db": 3.9940857713116005
+          },
+          {
+            "id": "iowa-guitar-53-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.07349392058949662,
+            "phases": {
+              "attack": 0.20169931448710857,
+              "early": 0.08184195055415815,
+              "late": 0.022286386641144074
+            },
+            "envelope_db": 4.112428237604224
+          },
+          {
+            "id": "iowa-guitar-54-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.04701408697422937,
+            "phases": {
+              "attack": 0.12099344073276104,
+              "early": 0.03658751626244807,
+              "late": 0.023181793331697974
+            },
+            "envelope_db": 3.3505102686362638
+          },
+          {
+            "id": "iowa-guitar-56-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 56,
+            "velocity": 0.95,
+            "mel": 0.1017114879039401,
+            "phases": {
+              "attack": 0.1619597295035864,
+              "early": 0.1367411554119072,
+              "late": 0.06598227198858508
+            },
+            "envelope_db": 6.327577621547609
+          },
+          {
+            "id": "iowa-guitar-57-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.1246727975773907,
+            "phases": {
+              "attack": 0.20456537623961707,
+              "early": 0.20478819443737686,
+              "late": 0.06466980675656099
+            },
+            "envelope_db": 8.265663721754231
+          },
+          {
+            "id": "iowa-guitar-59-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.95,
+            "mel": 0.1025646750526735,
+            "phases": {
+              "attack": 0.1879888301539932,
+              "early": 0.14367956234529639,
+              "late": 0.05511253415494502
+            },
+            "envelope_db": 6.565810975258842
+          },
+          {
+            "id": "iowa-guitar-65-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 65,
+            "velocity": 0.95,
+            "mel": 0.1122389283297256,
+            "phases": {
+              "attack": 0.2683367234976657,
+              "early": 0.09147009198767406,
+              "late": 0.06149056877001738
+            },
+            "envelope_db": 5.061659180400951
+          },
+          {
+            "id": "iowa-guitar-66-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.95,
+            "mel": 0.10530820289585482,
+            "phases": {
+              "attack": 0.2525863343547383,
+              "early": 0.08451429513459538,
+              "late": 0.05787661900924578
+            },
+            "envelope_db": 5.500909029045892
+          },
+          {
+            "id": "iowa-guitar-68-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.95,
+            "mel": 0.11128453842486201,
+            "phases": {
+              "attack": 0.2736698359218502,
+              "early": 0.08719935680187207,
+              "late": 0.059421994972112646
+            },
+            "envelope_db": 5.262371419239687
+          },
+          {
+            "id": "iowa-guitar-69-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.95,
+            "mel": 0.14775298030201045,
+            "phases": {
+              "attack": 0.33987845313660753,
+              "early": 0.16705902750360285,
+              "late": 0.06846616028843934
+            },
+            "envelope_db": 6.947694075211401
+          },
+          {
+            "id": "iowa-guitar-71-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 71,
+            "velocity": 0.95,
+            "mel": 0.1460075968731011,
+            "phases": {
+              "attack": 0.39121263985480786,
+              "early": 0.12752939037655447,
+              "late": 0.060985033191166015
+            },
+            "envelope_db": 5.538002445691836
+          },
+          {
+            "id": "iowa-guitar-42-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.12167875208759163,
+            "phases": {
+              "attack": 0.28087233434392056,
+              "early": 0.16627639209245032,
+              "late": 0.04525704373964626
+            },
+            "envelope_db": 11.39588873757294
+          },
+          {
+            "id": "iowa-guitar-47-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.08979133576515133,
+            "phases": {
+              "attack": 0.15893315340623093,
+              "early": 0.160412994453409,
+              "late": 0.03738003214164983
+            },
+            "envelope_db": 14.611430735282957
+          },
+          {
+            "id": "iowa-guitar-50-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.11764310949267093,
+            "phases": {
+              "attack": 0.2768158267955392,
+              "early": 0.15589638102903347,
+              "late": 0.04360836367795938
+            },
+            "envelope_db": 14.955371512031665
+          },
+          {
+            "id": "iowa-guitar-51-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.11399076265136093,
+            "phases": {
+              "attack": 0.23295482421771707,
+              "early": 0.18527779716137885,
+              "late": 0.04264660162272066
+            },
+            "envelope_db": 14.450023451877062
+          },
+          {
+            "id": "iowa-guitar-53-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.08487469700328129,
+            "phases": {
+              "attack": 0.2186879149195587,
+              "early": 0.10149626976920754,
+              "late": 0.02846165049745489
+            },
+            "envelope_db": 12.286555032916882
+          },
+          {
+            "id": "iowa-guitar-54-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.07179334804480748,
+            "phases": {
+              "attack": 0.18767505817095848,
+              "early": 0.0681481084398125,
+              "late": 0.02970467159937397
+            },
+            "envelope_db": 10.681164429732899
+          },
+          {
+            "id": "iowa-guitar-57-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.11798623391717056,
+            "phases": {
+              "attack": 0.2573885999446134,
+              "early": 0.19242394717617362,
+              "late": 0.037796204184753324
+            },
+            "envelope_db": 10.465397234365152
+          },
+          {
+            "id": "iowa-guitar-41-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.10430207409798899,
+            "phases": {
+              "attack": 0.23688473914939856,
+              "early": 0.14697897846932104,
+              "late": 0.03857973556446086
+            },
+            "envelope_db": 13.662260638776196
+          },
+          {
+            "id": "iowa-guitar-42-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.0979847088987286,
+            "phases": {
+              "attack": 0.23158807007779375,
+              "early": 0.13684663004811987,
+              "late": 0.03331022802555742
+            },
+            "envelope_db": 12.4516956240229
+          },
+          {
+            "id": "iowa-guitar-47-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.13540752061246558,
+            "phases": {
+              "attack": 0.3423652579029164,
+              "early": 0.20505925189210802,
+              "late": 0.031678969898680596
+            },
+            "envelope_db": 11.431311138893022
+          },
+          {
+            "id": "iowa-guitar-50-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.09204927156544152,
+            "phases": {
+              "attack": 0.20236710742864833,
+              "early": 0.11565335226915649,
+              "late": 0.041828552852845834
+            },
+            "envelope_db": 12.778412481001855
+          },
+          {
+            "id": "iowa-guitar-51-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.078814053177474,
+            "phases": {
+              "attack": 0.16507119822049268,
+              "early": 0.11094557748742788,
+              "late": 0.0344183021701093
+            },
+            "envelope_db": 11.89928459099707
+          },
+          {
+            "id": "iowa-guitar-53-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.09776480045113231,
+            "phases": {
+              "attack": 0.2667564053448529,
+              "early": 0.12124144722145763,
+              "late": 0.025589206077115075
+            },
+            "envelope_db": 12.98266531000696
+          },
+          {
+            "id": "iowa-guitar-54-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.05800786648197872,
+            "phases": {
+              "attack": 0.15972843236020207,
+              "early": 0.05384464187865935,
+              "late": 0.021423863503889723
+            },
+            "envelope_db": 9.752070997050271
+          },
+          {
+            "id": "iowa-guitar-57-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.13642854002053162,
+            "phases": {
+              "attack": 0.2582251240126155,
+              "early": 0.26392209588960736,
+              "late": 0.042944737572596745
+            },
+            "envelope_db": 10.842341534086502
+          },
+          {
+            "id": "notes/guitar-41-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.65,
+            "mel": 0.20390227754391516,
+            "phases": {
+              "attack": 0.28157747807555283,
+              "early": 0.1262270770122775
+            },
+            "envelope_db": 4.512828654134021
+          },
+          {
+            "id": "notes/guitar-42-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.13458965236376585,
+            "phases": {
+              "attack": 0.16918605450151816,
+              "early": 0.09999325022601357
+            },
+            "envelope_db": 1.7782537031772236
+          },
+          {
+            "id": "notes/guitar-44-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.65,
+            "mel": 0.16819043284709723,
+            "phases": {
+              "attack": 0.20642683787628163,
+              "early": 0.1299540278179128
+            },
+            "envelope_db": 2.5065852075310966
+          },
+          {
+            "id": "notes/guitar-45-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.65,
+            "mel": 0.14558779698660332,
+            "phases": {
+              "attack": 0.18266254236526744,
+              "early": 0.1085130516079392
+            },
+            "envelope_db": 8.099012948161704
+          },
+          {
+            "id": "notes/guitar-47-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.09908498372433243,
+            "phases": {
+              "attack": 0.1114357557515924,
+              "early": 0.08673421169707246
+            },
+            "envelope_db": 1.6758109272159813
+          },
+          {
+            "id": "notes/guitar-50-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.10900872587403299,
+            "phases": {
+              "attack": 0.14710141189061982,
+              "early": 0.07091603985744617
+            },
+            "envelope_db": 2.146607964856931
+          },
+          {
+            "id": "notes/guitar-51-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.09633433043584619,
+            "phases": {
+              "attack": 0.1124020064245325,
+              "early": 0.08026665444715989
+            },
+            "envelope_db": 2.414979226174448
+          },
+          {
+            "id": "notes/guitar-53-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.10062453694432164,
+            "phases": {
+              "attack": 0.1349413643125111,
+              "early": 0.06630770957613215
+            },
+            "envelope_db": 0.8797458875951719
+          },
+          {
+            "id": "notes/guitar-54-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.06327455264253753,
+            "phases": {
+              "attack": 0.09390917525490806,
+              "early": 0.03263993003016699
+            },
+            "envelope_db": 1.2350047863014826
+          },
+          {
+            "id": "notes/guitar-56-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.65,
+            "mel": 0.098408227308631,
+            "phases": {
+              "attack": 0.10981879100636183,
+              "early": 0.08699766361090017
+            },
+            "envelope_db": 4.381621442142389
+          },
+          {
+            "id": "notes/guitar-57-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.13445657700271696,
+            "phases": {
+              "attack": 0.15960275928355266,
+              "early": 0.10931039472188124
+            },
+            "envelope_db": 5.004594088541085
+          },
+          {
+            "id": "notes/guitar-59-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.65,
+            "mel": 0.08960814538880094,
+            "phases": {
+              "attack": 0.09555438007364644,
+              "early": 0.08366191070395543
+            },
+            "envelope_db": 4.168223756622768
+          },
+          {
+            "id": "notes/guitar-65-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.65,
+            "mel": 0.1588630868076451,
+            "phases": {
+              "attack": 0.18822134436571467,
+              "early": 0.12950482924957554
+            },
+            "envelope_db": 18.991017032617904
+          },
+          {
+            "id": "notes/guitar-66-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.65,
+            "mel": 0.12548559259283862,
+            "phases": {
+              "attack": 0.1688201603710739,
+              "early": 0.08215102481460336
+            },
+            "envelope_db": 3.4413429428300844
+          },
+          {
+            "id": "notes/guitar-68-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.65,
+            "mel": 0.10503498794673716,
+            "phases": {
+              "attack": 0.14719436136819197,
+              "early": 0.06287561452528234
+            },
+            "envelope_db": 3.1481844073098197
+          },
+          {
+            "id": "notes/guitar-69-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.65,
+            "mel": 0.15299730163087555,
+            "phases": {
+              "attack": 0.19914117768148837,
+              "early": 0.10685342558026276
+            },
+            "envelope_db": 3.2070841669256986
+          },
+          {
+            "id": "notes/guitar-71-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.65,
+            "mel": 0.12579701104802804,
+            "phases": {
+              "attack": 0.173182672675802,
+              "early": 0.07841134942025406
+            },
+            "envelope_db": 3.35958507805066
+          },
+          {
+            "id": "notes/guitar-41-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.10663683711269767,
+            "phases": {
+              "attack": 0.13430278570556176,
+              "early": 0.07897088851983358
+            },
+            "envelope_db": 0.8149629446506035
+          },
+          {
+            "id": "notes/guitar-42-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.09386900289788301,
+            "phases": {
+              "attack": 0.12205556677858262,
+              "early": 0.0656824390171834
+            },
+            "envelope_db": 0.8262535926084233
+          },
+          {
+            "id": "notes/guitar-44-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.95,
+            "mel": 0.1599646746206837,
+            "phases": {
+              "attack": 0.20167170463747702,
+              "early": 0.11825764460389039
+            },
+            "envelope_db": 2.1717252090163766
+          },
+          {
+            "id": "notes/guitar-45-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.95,
+            "mel": 0.11013512569754187,
+            "phases": {
+              "attack": 0.10783224055846141,
+              "early": 0.11243801083662233
+            },
+            "envelope_db": 8.005791380430923
+          },
+          {
+            "id": "notes/guitar-47-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.13977845117328594,
+            "phases": {
+              "attack": 0.18179127732329592,
+              "early": 0.09776562502327596
+            },
+            "envelope_db": 1.4754349582971797
+          },
+          {
+            "id": "notes/guitar-50-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.07009680292106966,
+            "phases": {
+              "attack": 0.0974302905288773,
+              "early": 0.04276331531326203
+            },
+            "envelope_db": 1.1574048287027712
+          },
+          {
+            "id": "notes/guitar-51-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.06479234277011209,
+            "phases": {
+              "attack": 0.08599947944744202,
+              "early": 0.04358520609278217
+            },
+            "envelope_db": 0.7800951317324781
+          },
+          {
+            "id": "notes/guitar-53-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.09913643348042285,
+            "phases": {
+              "attack": 0.14084308126179282,
+              "early": 0.057429785699052875
+            },
+            "envelope_db": 1.7561921804186909
+          },
+          {
+            "id": "notes/guitar-54-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.05227441427420838,
+            "phases": {
+              "attack": 0.0832217858796877,
+              "early": 0.02132704266872907
+            },
+            "envelope_db": 1.0162455261244645
+          },
+          {
+            "id": "notes/guitar-56-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.95,
+            "mel": 0.10362491389333851,
+            "phases": {
+              "attack": 0.11095011342369462,
+              "early": 0.0962997143629824
+            },
+            "envelope_db": 5.800151330160929
+          },
+          {
+            "id": "notes/guitar-57-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.1367183300699391,
+            "phases": {
+              "attack": 0.1364366897079411,
+              "early": 0.13699997043193715
+            },
+            "envelope_db": 9.934842278029647
+          },
+          {
+            "id": "notes/guitar-59-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.95,
+            "mel": 0.1162349770449849,
+            "phases": {
+              "attack": 0.13169203650135344,
+              "early": 0.10077791758861633
+            },
+            "envelope_db": 8.764694935067457
+          },
+          {
+            "id": "notes/guitar-65-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.95,
+            "mel": 0.11893154697370785,
+            "phases": {
+              "attack": 0.17394897063204678,
+              "early": 0.06391412331536891
+            },
+            "envelope_db": 3.3256884900029156
+          },
+          {
+            "id": "notes/guitar-66-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.95,
+            "mel": 0.12340339287591308,
+            "phases": {
+              "attack": 0.19011225276718896,
+              "early": 0.0566945329846372
+            },
+            "envelope_db": 3.5673899936320606
+          },
+          {
+            "id": "notes/guitar-68-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.95,
+            "mel": 0.11651951400842678,
+            "phases": {
+              "attack": 0.17762525179810598,
+              "early": 0.05541377621874756
+            },
+            "envelope_db": 2.319947254516853
+          },
+          {
+            "id": "notes/guitar-69-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.95,
+            "mel": 0.18470721972660392,
+            "phases": {
+              "attack": 0.25193578520456156,
+              "early": 0.11747865424864629
+            },
+            "envelope_db": 4.888749504972693
+          },
+          {
+            "id": "notes/guitar-71-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.95,
+            "mel": 0.17559254665021426,
+            "phases": {
+              "attack": 0.2664328460281621,
+              "early": 0.08475224727226645
+            },
+            "envelope_db": 3.6511707125137947
+          }
+        ]
+      },
+      "after": {
+        "mel_by_dataset": {
+          "iowa": 0.1013673945062397,
+          "short": 0.11952926428747483
+        },
+        "weighted_mel": 0.10817809567420286,
+        "notes": [
+          {
+            "id": "iowa-guitar-41-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.65,
+            "mel": 0.14650727435130775,
+            "phases": {
+              "attack": 0.4161487339580858,
+              "early": 0.17682140452060946,
+              "late": 0.03402392818527781
+            },
+            "envelope_db": 6.383580400859508
+          },
+          {
+            "id": "iowa-guitar-42-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.12367681799996613,
+            "phases": {
+              "attack": 0.2381097797521882,
+              "early": 0.1359862510008626,
+              "late": 0.07614841996754668
+            },
+            "envelope_db": 7.395213108247205
+          },
+          {
+            "id": "iowa-guitar-44-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.65,
+            "mel": 0.12426870902964245,
+            "phases": {
+              "attack": 0.2879610421616729,
+              "early": 0.1825354063207198,
+              "late": 0.041034072620977004
+            },
+            "envelope_db": 5.03908499702708
+          },
+          {
+            "id": "iowa-guitar-45-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 45,
+            "velocity": 0.65,
+            "mel": 0.1101756030809717,
+            "phases": {
+              "attack": 0.2529237402626291,
+              "early": 0.14588429940014486,
+              "late": 0.04325429051816022
+            },
+            "envelope_db": 8.49303072123637
+          },
+          {
+            "id": "iowa-guitar-47-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.0801672198042534,
+            "phases": {
+              "attack": 0.14197201199358608,
+              "early": 0.11792162851442922,
+              "late": 0.042832519466937675
+            },
+            "envelope_db": 6.504064814260174
+          },
+          {
+            "id": "iowa-guitar-50-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.10981105805918845,
+            "phases": {
+              "attack": 0.23219852972854105,
+              "early": 0.11096700912905463,
+              "late": 0.06348227453198137
+            },
+            "envelope_db": 7.56673514788185
+          },
+          {
+            "id": "iowa-guitar-51-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.10204692767757022,
+            "phases": {
+              "attack": 0.19375624159791166,
+              "early": 0.13355785479180393,
+              "late": 0.055839337289604524
+            },
+            "envelope_db": 8.651026302785372
+          },
+          {
+            "id": "iowa-guitar-53-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.08127151007193853,
+            "phases": {
+              "attack": 0.19153069146575127,
+              "early": 0.09416174255229408,
+              "late": 0.0350904798691254
+            },
+            "envelope_db": 6.039085386034811
+          },
+          {
+            "id": "iowa-guitar-54-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.06100899660505624,
+            "phases": {
+              "attack": 0.1537049046139975,
+              "early": 0.05372487437808206,
+              "late": 0.028979576936818584
+            },
+            "envelope_db": 5.854707576551268
+          },
+          {
+            "id": "iowa-guitar-56-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 56,
+            "velocity": 0.65,
+            "mel": 0.086826851523772,
+            "phases": {
+              "attack": 0.14675914081275698,
+              "early": 0.12266519492502714,
+              "late": 0.05091286426493193
+            },
+            "envelope_db": 4.989890652067399
+          },
+          {
+            "id": "iowa-guitar-57-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.09879549095698295,
+            "phases": {
+              "attack": 0.2124895963467241,
+              "early": 0.14621240392323204,
+              "late": 0.0383788590734866
+            },
+            "envelope_db": 5.61063628054558
+          },
+          {
+            "id": "iowa-guitar-59-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.65,
+            "mel": 0.0769409993325271,
+            "phases": {
+              "attack": 0.12239975088639718,
+              "early": 0.10953188707987827,
+              "late": 0.047672384594569114
+            },
+            "envelope_db": 5.650630640558776
+          },
+          {
+            "id": "iowa-guitar-65-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 65,
+            "velocity": 0.65,
+            "mel": 0.11384438234141388,
+            "phases": {
+              "attack": 0.2775056868615641,
+              "early": 0.16294975520574737,
+              "late": 0.03405687832223246
+            },
+            "envelope_db": 12.510021680653999
+          },
+          {
+            "id": "iowa-guitar-66-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.65,
+            "mel": 0.1033842189584586,
+            "phases": {
+              "attack": 0.25259179968422824,
+              "early": 0.11139617286700265,
+              "late": 0.04442689347059096
+            },
+            "envelope_db": 6.496268836156172
+          },
+          {
+            "id": "iowa-guitar-68-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.65,
+            "mel": 0.0923364503335799,
+            "phases": {
+              "attack": 0.22042265575684777,
+              "early": 0.08825880831025988,
+              "late": 0.04583323905859942
+            },
+            "envelope_db": 6.384704510778767
+          },
+          {
+            "id": "iowa-guitar-69-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.65,
+            "mel": 0.11687345288631854,
+            "phases": {
+              "attack": 0.2511781880394842,
+              "early": 0.149011779732725,
+              "late": 0.05445730463647897
+            },
+            "envelope_db": 8.00303030516304
+          },
+          {
+            "id": "iowa-guitar-71-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 71,
+            "velocity": 0.65,
+            "mel": 0.11263732429111929,
+            "phases": {
+              "attack": 0.26802718695539485,
+              "early": 0.1200090701831639,
+              "late": 0.05160172108249922
+            },
+            "envelope_db": 7.738254390797289
+          },
+          {
+            "id": "iowa-guitar-41-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.09902021340452881,
+            "phases": {
+              "attack": 0.20298447546958517,
+              "early": 0.11958152464277817,
+              "late": 0.052323123415789145
+            },
+            "envelope_db": 6.036175043451474
+          },
+          {
+            "id": "iowa-guitar-42-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.08730806143479143,
+            "phases": {
+              "attack": 0.18110262827106433,
+              "early": 0.10368401346575368,
+              "late": 0.04599411685957825
+            },
+            "envelope_db": 5.513009383962323
+          },
+          {
+            "id": "iowa-guitar-44-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.95,
+            "mel": 0.12329067536488966,
+            "phases": {
+              "attack": 0.30791824024108444,
+              "early": 0.17460213127854834,
+              "late": 0.03481354256869461
+            },
+            "envelope_db": 2.0856415849221404
+          },
+          {
+            "id": "iowa-guitar-47-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.11832511293148601,
+            "phases": {
+              "attack": 0.2784559237676185,
+              "early": 0.15524000686774003,
+              "late": 0.044432973641841025
+            },
+            "envelope_db": 5.456815490436051
+          },
+          {
+            "id": "iowa-guitar-50-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.08379205937877476,
+            "phases": {
+              "attack": 0.16322131854505306,
+              "early": 0.07324460057839564,
+              "late": 0.05796138424156255
+            },
+            "envelope_db": 6.611505223260393
+          },
+          {
+            "id": "iowa-guitar-51-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.07219421816114333,
+            "phases": {
+              "attack": 0.1352038390035926,
+              "early": 0.07388965131379685,
+              "late": 0.047929822912979765
+            },
+            "envelope_db": 6.095250978768817
+          },
+          {
+            "id": "iowa-guitar-53-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.08507605693356474,
+            "phases": {
+              "attack": 0.21242261239731142,
+              "early": 0.08780201969635945,
+              "late": 0.0362988625986117
+            },
+            "envelope_db": 6.243501294076314
+          },
+          {
+            "id": "iowa-guitar-54-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.04822831602009646,
+            "phases": {
+              "attack": 0.12949709679019303,
+              "early": 0.03924364862770719,
+              "late": 0.02112177350345622
+            },
+            "envelope_db": 5.2944180602436965
+          },
+          {
+            "id": "iowa-guitar-56-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 56,
+            "velocity": 0.95,
+            "mel": 0.08904480288344917,
+            "phases": {
+              "attack": 0.15692715809003885,
+              "early": 0.1279993311004642,
+              "late": 0.04898097159959739
+            },
+            "envelope_db": 5.908065906263989
+          },
+          {
+            "id": "iowa-guitar-57-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.11170014279080018,
+            "phases": {
+              "attack": 0.1964161496021551,
+              "early": 0.19719073245453367,
+              "late": 0.047872669112642
+            },
+            "envelope_db": 7.686669041167664
+          },
+          {
+            "id": "iowa-guitar-59-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.95,
+            "mel": 0.09050485107060628,
+            "phases": {
+              "attack": 0.18217400743676204,
+              "early": 0.13582830687029762,
+              "late": 0.039132621508413616
+            },
+            "envelope_db": 6.902870181207963
+          },
+          {
+            "id": "iowa-guitar-65-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 65,
+            "velocity": 0.95,
+            "mel": 0.10224546206234889,
+            "phases": {
+              "attack": 0.2671427012453963,
+              "early": 0.08611239228863925,
+              "late": 0.0464588985338472
+            },
+            "envelope_db": 6.101296889506626
+          },
+          {
+            "id": "iowa-guitar-66-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.95,
+            "mel": 0.09589664976601815,
+            "phases": {
+              "attack": 0.2516030899230012,
+              "early": 0.08098150728610348,
+              "late": 0.0430999131371175
+            },
+            "envelope_db": 6.468848298261406
+          },
+          {
+            "id": "iowa-guitar-68-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.95,
+            "mel": 0.10402418491646617,
+            "phases": {
+              "attack": 0.2835207447360208,
+              "early": 0.08207674034696534,
+              "late": 0.04494326669769598
+            },
+            "envelope_db": 6.137983213624805
+          },
+          {
+            "id": "iowa-guitar-69-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.95,
+            "mel": 0.14063535417008988,
+            "phases": {
+              "attack": 0.35092351672878563,
+              "early": 0.16174809742366433,
+              "late": 0.05386001449048852
+            },
+            "envelope_db": 8.393632502221474
+          },
+          {
+            "id": "iowa-guitar-71-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 71,
+            "velocity": 0.95,
+            "mel": 0.1393076020894785,
+            "phases": {
+              "attack": 0.40280177904813536,
+              "early": 0.12221814382293028,
+              "late": 0.04690583257993777
+            },
+            "envelope_db": 6.784813979883161
+          },
+          {
+            "id": "iowa-guitar-42-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.12740084709398722,
+            "phases": {
+              "attack": 0.29024237277667003,
+              "early": 0.17063509514713462,
+              "late": 0.05012243194305084
+            },
+            "envelope_db": 16.467016641452222
+          },
+          {
+            "id": "iowa-guitar-47-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.09049928531316186,
+            "phases": {
+              "attack": 0.17144706919099154,
+              "early": 0.15709873265874258,
+              "late": 0.03516907360438294
+            },
+            "envelope_db": 19.15466830114049
+          },
+          {
+            "id": "iowa-guitar-50-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.12121085160730416,
+            "phases": {
+              "attack": 0.2906982121204703,
+              "early": 0.14620710573296258,
+              "late": 0.04827949611774493
+            },
+            "envelope_db": 19.65934984916751
+          },
+          {
+            "id": "iowa-guitar-51-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.1162427708394458,
+            "phases": {
+              "attack": 0.2469261085940902,
+              "early": 0.17733253756086054,
+              "late": 0.0443278566609236
+            },
+            "envelope_db": 19.199299673249484
+          },
+          {
+            "id": "iowa-guitar-53-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.08902812860419551,
+            "phases": {
+              "attack": 0.2319625843618326,
+              "early": 0.1106436246041674,
+              "late": 0.02732189669509214
+            },
+            "envelope_db": 16.891539445381458
+          },
+          {
+            "id": "iowa-guitar-54-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.07003060857828869,
+            "phases": {
+              "attack": 0.19689619151413013,
+              "early": 0.06832773699414824,
+              "late": 0.023094591821400817
+            },
+            "envelope_db": 15.262991635782116
+          },
+          {
+            "id": "iowa-guitar-57-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.10942674847808914,
+            "phases": {
+              "attack": 0.25640659529097964,
+              "early": 0.18209948350574917,
+              "late": 0.02705703028788268
+            },
+            "envelope_db": 14.513728692445271
+          },
+          {
+            "id": "iowa-guitar-41-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.11001436594512157,
+            "phases": {
+              "attack": 0.25828694290417764,
+              "early": 0.14812011270936976,
+              "late": 0.04012249454888245
+            },
+            "envelope_db": 18.553618859138012
+          },
+          {
+            "id": "iowa-guitar-42-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.1007913613817334,
+            "phases": {
+              "attack": 0.23297868811356703,
+              "early": 0.13732676983916361,
+              "late": 0.03752033568575944
+            },
+            "envelope_db": 17.34681382940812
+          },
+          {
+            "id": "iowa-guitar-47-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.13930248633966538,
+            "phases": {
+              "attack": 0.35282990506692863,
+              "early": 0.20522799680324985,
+              "late": 0.03450763789309745
+            },
+            "envelope_db": 16.164468712960513
+          },
+          {
+            "id": "iowa-guitar-50-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.09746263065467815,
+            "phases": {
+              "attack": 0.2139309566849042,
+              "early": 0.10707542317577348,
+              "late": 0.05018221119793263
+            },
+            "envelope_db": 17.55382931351852
+          },
+          {
+            "id": "iowa-guitar-51-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.08199313426971308,
+            "phases": {
+              "attack": 0.17575370800949516,
+              "early": 0.10484322903275209,
+              "late": 0.03826413358115517
+            },
+            "envelope_db": 16.70824833428114
+          },
+          {
+            "id": "iowa-guitar-53-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.09849919596732996,
+            "phases": {
+              "attack": 0.27750108679812735,
+              "early": 0.11223656539167504,
+              "late": 0.026221973371651542
+            },
+            "envelope_db": 17.65175461570551
+          },
+          {
+            "id": "iowa-guitar-54-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.056051303610720395,
+            "phases": {
+              "attack": 0.1681290032127579,
+              "early": 0.05158802111131311,
+              "late": 0.015695897197234056
+            },
+            "envelope_db": 14.41266898927272
+          },
+          {
+            "id": "iowa-guitar-57-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.12651416693347092,
+            "phases": {
+              "attack": 0.2498360355387985,
+              "early": 0.2547583697249849,
+              "late": 0.032176890159655344
+            },
+            "envelope_db": 14.095428829518188
+          },
+          {
+            "id": "notes/guitar-41-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.65,
+            "mel": 0.2064412933836387,
+            "phases": {
+              "attack": 0.2922169972047874,
+              "early": 0.12066558956249002
+            },
+            "envelope_db": 4.090492632214158
+          },
+          {
+            "id": "notes/guitar-42-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.65,
+            "mel": 0.13942103048236965,
+            "phases": {
+              "attack": 0.17394408843820514,
+              "early": 0.10489797252653416
+            },
+            "envelope_db": 2.3248794292308217
+          },
+          {
+            "id": "notes/guitar-44-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.65,
+            "mel": 0.16509500076888173,
+            "phases": {
+              "attack": 0.20873136221847777,
+              "early": 0.12145863931928569
+            },
+            "envelope_db": 1.9117029138884916
+          },
+          {
+            "id": "notes/guitar-45-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.65,
+            "mel": 0.1423229405119127,
+            "phases": {
+              "attack": 0.1862815723307098,
+              "early": 0.0983643086931156
+            },
+            "envelope_db": 7.606557056165437
+          },
+          {
+            "id": "notes/guitar-47-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.65,
+            "mel": 0.09609230342963278,
+            "phases": {
+              "attack": 0.11252331037395,
+              "early": 0.07966129648531556
+            },
+            "envelope_db": 1.4633432307266476
+          },
+          {
+            "id": "notes/guitar-50-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.65,
+            "mel": 0.11529547371018539,
+            "phases": {
+              "attack": 0.15688954530432184,
+              "early": 0.07370140211604896
+            },
+            "envelope_db": 2.5219070998732946
+          },
+          {
+            "id": "notes/guitar-51-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.65,
+            "mel": 0.098187865538351,
+            "phases": {
+              "attack": 0.1214906157920088,
+              "early": 0.0748851152846932
+            },
+            "envelope_db": 2.7285114110652278
+          },
+          {
+            "id": "notes/guitar-53-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.65,
+            "mel": 0.10687975477942627,
+            "phases": {
+              "attack": 0.14301293207889476,
+              "early": 0.07074657747995779
+            },
+            "envelope_db": 1.3337215746061937
+          },
+          {
+            "id": "notes/guitar-54-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.65,
+            "mel": 0.06531468212320882,
+            "phases": {
+              "attack": 0.0977709716574903,
+              "early": 0.03285839258892734
+            },
+            "envelope_db": 1.1572892490245914
+          },
+          {
+            "id": "notes/guitar-56-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.65,
+            "mel": 0.0980349863356142,
+            "phases": {
+              "attack": 0.10839704796432695,
+              "early": 0.08767292470690145
+            },
+            "envelope_db": 3.8699915565335257
+          },
+          {
+            "id": "notes/guitar-57-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.65,
+            "mel": 0.12899692628797949,
+            "phases": {
+              "attack": 0.15724350326571548,
+              "early": 0.1007503493102435
+            },
+            "envelope_db": 4.919743754691681
+          },
+          {
+            "id": "notes/guitar-59-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.65,
+            "mel": 0.08295090140030714,
+            "phases": {
+              "attack": 0.09010444933767214,
+              "early": 0.07579735346294214
+            },
+            "envelope_db": 3.896995427946054
+          },
+          {
+            "id": "notes/guitar-65-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.65,
+            "mel": 0.16403937259388526,
+            "phases": {
+              "attack": 0.1944294202402605,
+              "early": 0.13364932494751003
+            },
+            "envelope_db": 19.48795711697085
+          },
+          {
+            "id": "notes/guitar-66-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.65,
+            "mel": 0.12631329567480343,
+            "phases": {
+              "attack": 0.17598655974038974,
+              "early": 0.0766400316092171
+            },
+            "envelope_db": 3.23881547755338
+          },
+          {
+            "id": "notes/guitar-68-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.65,
+            "mel": 0.10585734793761634,
+            "phases": {
+              "attack": 0.15451607036917653,
+              "early": 0.057198625506056144
+            },
+            "envelope_db": 2.7649284201144786
+          },
+          {
+            "id": "notes/guitar-69-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.65,
+            "mel": 0.15282640563571,
+            "phases": {
+              "attack": 0.20490715794799214,
+              "early": 0.1007456533234279
+            },
+            "envelope_db": 3.1614279797666756
+          },
+          {
+            "id": "notes/guitar-71-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.65,
+            "mel": 0.12602075157718512,
+            "phases": {
+              "attack": 0.18003181817894282,
+              "early": 0.0720096849754274
+            },
+            "envelope_db": 3.334284178523219
+          },
+          {
+            "id": "notes/guitar-41-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.95,
+            "mel": 0.11117449466144283,
+            "phases": {
+              "attack": 0.14133374094851553,
+              "early": 0.08101524837437012
+            },
+            "envelope_db": 1.0604140744335095
+          },
+          {
+            "id": "notes/guitar-42-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.95,
+            "mel": 0.09280377740294182,
+            "phases": {
+              "attack": 0.12020050063813774,
+              "early": 0.0654070541677459
+            },
+            "envelope_db": 0.494172349296058
+          },
+          {
+            "id": "notes/guitar-44-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.95,
+            "mel": 0.15321865448195712,
+            "phases": {
+              "attack": 0.19642605214189662,
+              "early": 0.11001125682201761
+            },
+            "envelope_db": 1.5700350320352003
+          },
+          {
+            "id": "notes/guitar-45-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.95,
+            "mel": 0.10436681848699386,
+            "phases": {
+              "attack": 0.10404132591666457,
+              "early": 0.10469231105732316
+            },
+            "envelope_db": 7.419782833328841
+          },
+          {
+            "id": "notes/guitar-47-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.95,
+            "mel": 0.14186696046324782,
+            "phases": {
+              "attack": 0.1877054038516538,
+              "early": 0.09602851707484186
+            },
+            "envelope_db": 1.47231421685578
+          },
+          {
+            "id": "notes/guitar-50-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.95,
+            "mel": 0.0706121723134823,
+            "phases": {
+              "attack": 0.10326343166050475,
+              "early": 0.03796091296645984
+            },
+            "envelope_db": 1.3099857440157516
+          },
+          {
+            "id": "notes/guitar-51-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.95,
+            "mel": 0.0663705675775626,
+            "phases": {
+              "attack": 0.09271441762365468,
+              "early": 0.04002671753147054
+            },
+            "envelope_db": 0.9625480123934871
+          },
+          {
+            "id": "notes/guitar-53-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.95,
+            "mel": 0.1045993384897347,
+            "phases": {
+              "attack": 0.14776123747317307,
+              "early": 0.061437439506296314
+            },
+            "envelope_db": 2.177769610288151
+          },
+          {
+            "id": "notes/guitar-54-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.95,
+            "mel": 0.059594659271772585,
+            "phases": {
+              "attack": 0.08959287190570345,
+              "early": 0.02959644663784173
+            },
+            "envelope_db": 1.5202260287509242
+          },
+          {
+            "id": "notes/guitar-56-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.95,
+            "mel": 0.09706100961950828,
+            "phases": {
+              "attack": 0.10692775554442975,
+              "early": 0.08719426369458681
+            },
+            "envelope_db": 5.335672235651918
+          },
+          {
+            "id": "notes/guitar-57-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.95,
+            "mel": 0.12928141825319514,
+            "phases": {
+              "attack": 0.1299042366359393,
+              "early": 0.12865859987045097
+            },
+            "envelope_db": 9.43755702306902
+          },
+          {
+            "id": "notes/guitar-59-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.95,
+            "mel": 0.10965360321240522,
+            "phases": {
+              "attack": 0.12672870704328798,
+              "early": 0.09257849938152247
+            },
+            "envelope_db": 8.254763755466247
+          },
+          {
+            "id": "notes/guitar-65-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.95,
+            "mel": 0.11408039740171072,
+            "phases": {
+              "attack": 0.17057918650501724,
+              "early": 0.05758160829840421
+            },
+            "envelope_db": 2.8905282277436526
+          },
+          {
+            "id": "notes/guitar-66-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.95,
+            "mel": 0.12043602657516192,
+            "phases": {
+              "attack": 0.18776875793863892,
+              "early": 0.05310329521168492
+            },
+            "envelope_db": 3.2082853889565235
+          },
+          {
+            "id": "notes/guitar-68-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.95,
+            "mel": 0.11339067052198483,
+            "phases": {
+              "attack": 0.17823821222056485,
+              "early": 0.048543128823404814
+            },
+            "envelope_db": 1.9113996719344497
+          },
+          {
+            "id": "notes/guitar-69-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.95,
+            "mel": 0.18471644914445795,
+            "phases": {
+              "attack": 0.2582374187403218,
+              "early": 0.11119547954859407
+            },
+            "envelope_db": 4.730602889314846
+          },
+          {
+            "id": "notes/guitar-71-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.95,
+            "mel": 0.17567087051215272,
+            "phases": {
+              "attack": 0.2728010906589982,
+              "early": 0.07854065036530723
+            },
+            "envelope_db": 3.3882773928113568
+          }
+        ]
+      },
+      "counts": {
+        "short": 34,
+        "iowa": 48,
+        "tu-note": 0
+      },
+      "dataset_weights": {
+        "short": 0.37499999999999994,
+        "iowa": 0.625
+      },
+      "validation_before": {
+        "mel_by_dataset": {
+          "iowa": 0.12709552820945047,
+          "short": 0.14823697791684726
+        },
+        "weighted_mel": 0.13502357184972424,
+        "notes": [
+          {
+            "id": "iowa-guitar-40-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.35,
+            "mel": 0.14290887637847083,
+            "phases": {
+              "attack": 0.28289053317247614,
+              "early": 0.17793793530370589,
+              "late": 0.07727985798375565
+            },
+            "envelope_db": 4.961211939485438
+          },
+          {
+            "id": "iowa-guitar-41-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.35,
+            "mel": 0.14781315894404676,
+            "phases": {
+              "attack": 0.3497852903669371,
+              "early": 0.20725309179393836,
+              "late": 0.0497836348417535
+            },
+            "envelope_db": 8.665554907119454
+          },
+          {
+            "id": "iowa-guitar-42-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.12640483558767196,
+            "phases": {
+              "attack": 0.3320956181189704,
+              "early": 0.13873157939722214,
+              "late": 0.044648263209853725
+            },
+            "envelope_db": 6.410068201959077
+          },
+          {
+            "id": "iowa-guitar-43-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.35,
+            "mel": 0.13473066594296348,
+            "phases": {
+              "attack": 0.2932689980028339,
+              "early": 0.19946836627666173,
+              "late": 0.05100215379537523
+            },
+            "envelope_db": 8.05496759716691
+          },
+          {
+            "id": "iowa-guitar-44-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.35,
+            "mel": 0.07836791816205083,
+            "phases": {
+              "attack": 0.1660560498293027,
+              "early": 0.10724421280935315,
+              "late": 0.03465625829409299
+            },
+            "envelope_db": 2.608340906405962
+          },
+          {
+            "id": "iowa-guitar-46-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.35,
+            "mel": 0.14687931692012493,
+            "phases": {
+              "attack": 0.3468625350104958,
+              "early": 0.1742070398558505,
+              "late": 0.06163771403533874
+            },
+            "envelope_db": 7.89854579812798
+          },
+          {
+            "id": "iowa-guitar-50-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.14977690737961172,
+            "phases": {
+              "attack": 0.3953186834012983,
+              "early": 0.16885299586593325,
+              "late": 0.05054520818910868
+            },
+            "envelope_db": 6.993616789022931
+          },
+          {
+            "id": "iowa-guitar-51-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.17687143815641188,
+            "phases": {
+              "attack": 0.3877953250926096,
+              "early": 0.24122880749561898,
+              "late": 0.07364096705313505
+            },
+            "envelope_db": 9.771873755679328
+          },
+          {
+            "id": "iowa-guitar-52-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.10210138668083421,
+            "phases": {
+              "attack": 0.21552815128068387,
+              "early": 0.13108642256327746,
+              "late": 0.04869696149997436
+            },
+            "envelope_db": 4.937455108476682
+          },
+          {
+            "id": "iowa-guitar-53-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.09379379091630703,
+            "phases": {
+              "attack": 0.19586232942915516,
+              "early": 0.10767029449649537,
+              "late": 0.050314400131418344
+            },
+            "envelope_db": 4.996242604483406
+          },
+          {
+            "id": "iowa-guitar-54-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.35,
+            "mel": 0.07577783332529771,
+            "phases": {
+              "attack": 0.13118964815974704,
+              "early": 0.07730155922351076,
+              "late": 0.0544270055505493
+            },
+            "envelope_db": 4.1238654433894295
+          },
+          {
+            "id": "iowa-guitar-55-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.35,
+            "mel": 0.1425335002615953,
+            "phases": {
+              "attack": 0.28214215550223837,
+              "early": 0.17192704128623196,
+              "late": 0.07915767666211539
+            },
+            "envelope_db": 9.762014668013027
+          },
+          {
+            "id": "iowa-guitar-57-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.11647935644586808,
+            "phases": {
+              "attack": 0.19071696993201845,
+              "early": 0.17042487390749123,
+              "late": 0.068410682340453
+            },
+            "envelope_db": 6.621470214103839
+          },
+          {
+            "id": "iowa-guitar-58-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.35,
+            "mel": 0.12966104861121527,
+            "phases": {
+              "attack": 0.23896545355720333,
+              "early": 0.1904718133500309,
+              "late": 0.06586785997941387
+            },
+            "envelope_db": 6.466898158047487
+          },
+          {
+            "id": "iowa-guitar-59-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.35,
+            "mel": 0.11175312570102586,
+            "phases": {
+              "attack": 0.1568188094856157,
+              "early": 0.18278590350832258,
+              "late": 0.06821620260406835
+            },
+            "envelope_db": 5.535297161777461
+          },
+          {
+            "id": "iowa-guitar-66-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.35,
+            "mel": 0.13872462195658877,
+            "phases": {
+              "attack": 0.2818519448581266,
+              "early": 0.17334689043146276,
+              "late": 0.07206852519043432
+            },
+            "envelope_db": 8.015584097487706
+          },
+          {
+            "id": "iowa-guitar-67-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.35,
+            "mel": 0.1473702993788245,
+            "phases": {
+              "attack": 0.2961431668984987,
+              "early": 0.19573500334670446,
+              "late": 0.07344371007099168
+            },
+            "envelope_db": 8.143215394114222
+          },
+          {
+            "id": "iowa-guitar-68-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.35,
+            "mel": 0.1188381346561995,
+            "phases": {
+              "attack": 0.24738809864604974,
+              "early": 0.1253232476018209,
+              "late": 0.0681999808053976
+            },
+            "envelope_db": 7.285415599472693
+          },
+          {
+            "id": "iowa-guitar-69-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.35,
+            "mel": 0.14607518604280365,
+            "phases": {
+              "attack": 0.29315549146428665,
+              "early": 0.19574079997433294,
+              "late": 0.07229546628542402
+            },
+            "envelope_db": 8.054910697056131
+          },
+          {
+            "id": "iowa-guitar-40-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.16473389243385905,
+            "phases": {
+              "attack": 0.3952233812711168,
+              "early": 0.2561122406005547,
+              "late": 0.0440334535573765
+            },
+            "envelope_db": 4.878435466274222
+          },
+          {
+            "id": "iowa-guitar-43-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.65,
+            "mel": 0.09321984786980193,
+            "phases": {
+              "attack": 0.20745600835668576,
+              "early": 0.11498077665827916,
+              "late": 0.04222093939154153
+            },
+            "envelope_db": 2.8193579887614106
+          },
+          {
+            "id": "iowa-guitar-46-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.65,
+            "mel": 0.14436005764931054,
+            "phases": {
+              "attack": 0.3830599200673359,
+              "early": 0.16219595299482636,
+              "late": 0.048159148487982584
+            },
+            "envelope_db": 3.4584360940510224
+          },
+          {
+            "id": "iowa-guitar-52-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.1354649192653905,
+            "phases": {
+              "attack": 0.3957659262509871,
+              "early": 0.1548732471922629,
+              "late": 0.03057391867321464
+            },
+            "envelope_db": 6.0701549181577406
+          },
+          {
+            "id": "iowa-guitar-55-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.05994362265538102,
+            "phases": {
+              "attack": 0.06547944146086766,
+              "early": 0.055784622426793,
+              "late": 0.059427315689044025
+            },
+            "envelope_db": 3.269760693721793
+          },
+          {
+            "id": "iowa-guitar-58-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.65,
+            "mel": 0.11161427802171282,
+            "phases": {
+              "attack": 0.16994485414446597,
+              "early": 0.16219466892546952,
+              "late": 0.07077266538677161
+            },
+            "envelope_db": 6.442684941007055
+          },
+          {
+            "id": "iowa-guitar-64-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 64,
+            "velocity": 0.65,
+            "mel": 0.10479740185257486,
+            "phases": {
+              "attack": 0.18649405588116658,
+              "early": 0.11868896212499615,
+              "late": 0.06895182148969496
+            },
+            "envelope_db": 6.410586187392525
+          },
+          {
+            "id": "iowa-guitar-67-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.65,
+            "mel": 0.1075799757326365,
+            "phases": {
+              "attack": 0.19990201511159772,
+              "early": 0.12167825008533628,
+              "late": 0.0676723580832636
+            },
+            "envelope_db": 6.680728421633016
+          },
+          {
+            "id": "iowa-guitar-70-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 70,
+            "velocity": 0.65,
+            "mel": 0.11447215051510928,
+            "phases": {
+              "attack": 0.24747794077048862,
+              "early": 0.12267183056629505,
+              "late": 0.06152009915014735
+            },
+            "envelope_db": 6.075065506224297
+          },
+          {
+            "id": "iowa-guitar-40-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.19914512184514246,
+            "phases": {
+              "attack": 0.42408093548875664,
+              "early": 0.26330750484738163,
+              "late": 0.09073329810294745
+            },
+            "envelope_db": 5.975124602798411
+          },
+          {
+            "id": "iowa-guitar-43-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.13132352947894446,
+            "phases": {
+              "attack": 0.3153671588351322,
+              "early": 0.15611252208052007,
+              "late": 0.05301129624478318
+            },
+            "envelope_db": 3.5872500931757023
+          },
+          {
+            "id": "iowa-guitar-46-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.09566811418505092,
+            "phases": {
+              "attack": 0.19135686228122178,
+              "early": 0.1251139371850048,
+              "late": 0.04874265002400412
+            },
+            "envelope_db": 4.861777663028979
+          },
+          {
+            "id": "iowa-guitar-52-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.08366411127162111,
+            "phases": {
+              "attack": 0.20783912004486063,
+              "early": 0.07778820672692774,
+              "late": 0.03930194718591629
+            },
+            "envelope_db": 3.88885449653392
+          },
+          {
+            "id": "iowa-guitar-55-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.95,
+            "mel": 0.06518629409839102,
+            "phases": {
+              "attack": 0.1425845402910519,
+              "early": 0.03691010874765881,
+              "late": 0.04676552128266777
+            },
+            "envelope_db": 3.4368166659671995
+          },
+          {
+            "id": "iowa-guitar-58-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.95,
+            "mel": 0.12012919384094026,
+            "phases": {
+              "attack": 0.20206321627810675,
+              "early": 0.18963858635283456,
+              "late": 0.06333791323504244
+            },
+            "envelope_db": 7.283462050119549
+          },
+          {
+            "id": "iowa-guitar-64-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 64,
+            "velocity": 0.95,
+            "mel": 0.12798158551168498,
+            "phases": {
+              "attack": 0.29189497123731784,
+              "early": 0.13799198692966072,
+              "late": 0.06276016533283174
+            },
+            "envelope_db": 5.51598644086838
+          },
+          {
+            "id": "iowa-guitar-67-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.95,
+            "mel": 0.1185347992721039,
+            "phases": {
+              "attack": 0.2775325300548768,
+              "early": 0.10915681720657176,
+              "late": 0.0624273935031386
+            },
+            "envelope_db": 5.815392390836691
+          },
+          {
+            "id": "iowa-guitar-70-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 70,
+            "velocity": 0.95,
+            "mel": 0.12409779428988843,
+            "phases": {
+              "attack": 0.27418462525588105,
+              "early": 0.1569961074853397,
+              "late": 0.055478365229346946
+            },
+            "envelope_db": 10.36973650692076
+          },
+          {
+            "id": "iowa-guitar-42-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.14704316997779376,
+            "phases": {
+              "attack": 0.40939364245723514,
+              "early": 0.17852156739487565,
+              "late": 0.036857343766597515
+            },
+            "envelope_db": 16.885151871950065
+          },
+          {
+            "id": "iowa-guitar-50-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.1762883373392615,
+            "phases": {
+              "attack": 0.4812344999034763,
+              "early": 0.22281842668494578,
+              "late": 0.04448474287304931
+            },
+            "envelope_db": 15.528336672610992
+          },
+          {
+            "id": "iowa-guitar-51-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.19438104554017363,
+            "phases": {
+              "attack": 0.4759507461570499,
+              "early": 0.2994665980298637,
+              "late": 0.04938532562521124
+            },
+            "envelope_db": 15.009970559567627
+          },
+          {
+            "id": "iowa-guitar-52-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.11207388626544112,
+            "phases": {
+              "attack": 0.2649040327964526,
+              "early": 0.16424003592464534,
+              "late": 0.035200275194110224
+            },
+            "envelope_db": 11.973974192144155
+          },
+          {
+            "id": "iowa-guitar-53-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.10085862320075381,
+            "phases": {
+              "attack": 0.2419278987333384,
+              "early": 0.13221910971290962,
+              "late": 0.036197462433976146
+            },
+            "envelope_db": 12.025626081792325
+          },
+          {
+            "id": "iowa-guitar-57-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.12426890503298002,
+            "phases": {
+              "attack": 0.23970963892802363,
+              "early": 0.21454784764734874,
+              "late": 0.04712402634195039
+            },
+            "envelope_db": 12.298478632300087
+          },
+          {
+            "id": "iowa-guitar-40-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.17953660635072505,
+            "phases": {
+              "attack": 0.45369147930040915,
+              "early": 0.29438697569909206,
+              "late": 0.03365964048895587
+            },
+            "envelope_db": 12.841949771559857
+          },
+          {
+            "id": "iowa-guitar-52-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.1607984731779714,
+            "phases": {
+              "attack": 0.4816118775920131,
+              "early": 0.18426804894623408,
+              "late": 0.03169235560960728
+            },
+            "envelope_db": 14.195638743582046
+          },
+          {
+            "id": "iowa-guitar-55-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.056131415931501165,
+            "phases": {
+              "attack": 0.08547228630051412,
+              "early": 0.06679330281045237,
+              "late": 0.041130381963514595
+            },
+            "envelope_db": 10.153170891832705
+          },
+          {
+            "id": "iowa-guitar-40-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.22027995664805436,
+            "phases": {
+              "attack": 0.5250767252705163,
+              "early": 0.31649529353952793,
+              "late": 0.0699004170803285
+            },
+            "envelope_db": 15.227856155416367
+          },
+          {
+            "id": "iowa-guitar-43-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.15364651833489662,
+            "phases": {
+              "attack": 0.4019655008590581,
+              "early": 0.20564680769258087,
+              "late": 0.041026791379204446
+            },
+            "envelope_db": 12.524457571514207
+          },
+          {
+            "id": "iowa-guitar-46-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.10250791623955856,
+            "phases": {
+              "attack": 0.23412435817578708,
+              "early": 0.1558045492447686,
+              "late": 0.03316551313651908
+            },
+            "envelope_db": 10.95199868219877
+          },
+          {
+            "id": "iowa-guitar-52-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.09818346519595622,
+            "phases": {
+              "attack": 0.25960952047449515,
+              "early": 0.10581254094455902,
+              "late": 0.03478779106077804
+            },
+            "envelope_db": 12.245248847264303
+          },
+          {
+            "id": "notes/guitar-40-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.35,
+            "mel": 0.17493690605985696,
+            "phases": {
+              "attack": 0.22245213401670216,
+              "early": 0.12742167810301175
+            },
+            "envelope_db": 0.9904021381631506
+          },
+          {
+            "id": "notes/guitar-41-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.35,
+            "mel": 0.2047932634821408,
+            "phases": {
+              "attack": 0.2656969285925078,
+              "early": 0.14388959837177379
+            },
+            "envelope_db": 1.9437717309753137
+          },
+          {
+            "id": "notes/guitar-42-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.16506616960746573,
+            "phases": {
+              "attack": 0.2369966688320642,
+              "early": 0.09313567038286728
+            },
+            "envelope_db": 3.3313811164189415
+          },
+          {
+            "id": "notes/guitar-43-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.35,
+            "mel": 0.18036907431726235,
+            "phases": {
+              "attack": 0.21635426047625372,
+              "early": 0.14438388815827094
+            },
+            "envelope_db": 6.6687582025060825
+          },
+          {
+            "id": "notes/guitar-44-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.35,
+            "mel": 0.09813426936060257,
+            "phases": {
+              "attack": 0.12219807137379092,
+              "early": 0.07407046734741424
+            },
+            "envelope_db": 0.9803084179968462
+          },
+          {
+            "id": "notes/guitar-45-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.35,
+            "mel": 0.11283122896510979,
+            "phases": {
+              "attack": 0.1069317527003392,
+              "early": 0.11873070522988038
+            },
+            "envelope_db": 12.507431812588875
+          },
+          {
+            "id": "notes/guitar-46-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.35,
+            "mel": 0.18768311112408978,
+            "phases": {
+              "attack": 0.25135139954941,
+              "early": 0.12401482269876958
+            },
+            "envelope_db": 4.941306090460868
+          },
+          {
+            "id": "notes/guitar-47-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.35,
+            "mel": 0.2695939851617953,
+            "phases": {
+              "attack": 0.32503233849105395,
+              "early": 0.2141556318325366
+            },
+            "envelope_db": 1.4025861742707157
+          },
+          {
+            "id": "notes/guitar-50-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.20659195352221543,
+            "phases": {
+              "attack": 0.2880291527207014,
+              "early": 0.12515475432372947
+            },
+            "envelope_db": 6.248241696381926
+          },
+          {
+            "id": "notes/guitar-51-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.21940439068246415,
+            "phases": {
+              "attack": 0.28863995163298467,
+              "early": 0.15016882973194362
+            },
+            "envelope_db": 4.644043552621299
+          },
+          {
+            "id": "notes/guitar-52-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.10689098054595282,
+            "phases": {
+              "attack": 0.13973479023841182,
+              "early": 0.07404717085349383
+            },
+            "envelope_db": 2.3749325155084566
+          },
+          {
+            "id": "notes/guitar-53-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.09827079494979069,
+            "phases": {
+              "attack": 0.13100370335476905,
+              "early": 0.06553788654481231
+            },
+            "envelope_db": 2.7926065907569266
+          },
+          {
+            "id": "notes/guitar-54-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.35,
+            "mel": 0.06830504492367394,
+            "phases": {
+              "attack": 0.08649856611605716,
+              "early": 0.05011152373129071
+            },
+            "envelope_db": 1.6796585710186238
+          },
+          {
+            "id": "notes/guitar-55-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.35,
+            "mel": 0.13230215537072718,
+            "phases": {
+              "attack": 0.1830034887378666,
+              "early": 0.08160082200358776
+            },
+            "envelope_db": 3.6013690298500105
+          },
+          {
+            "id": "notes/guitar-56-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.35,
+            "mel": 0.0892932880587665,
+            "phases": {
+              "attack": 0.08221363142447868,
+              "early": 0.09637294469305432
+            },
+            "envelope_db": 5.682414641576654
+          },
+          {
+            "id": "notes/guitar-57-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.12660282368289077,
+            "phases": {
+              "attack": 0.13428252304991653,
+              "early": 0.11892312431586502
+            },
+            "envelope_db": 5.159075495856895
+          },
+          {
+            "id": "notes/guitar-58-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.35,
+            "mel": 0.15197161986679494,
+            "phases": {
+              "attack": 0.17398389423642674,
+              "early": 0.12995934549716315
+            },
+            "envelope_db": 7.884293219217466
+          },
+          {
+            "id": "notes/guitar-59-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.35,
+            "mel": 0.11879779519314823,
+            "phases": {
+              "attack": 0.11151466255290236,
+              "early": 0.1260809278333941
+            },
+            "envelope_db": 4.82136093392996
+          },
+          {
+            "id": "notes/guitar-64-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.35,
+            "mel": 0.17456465242471286,
+            "phases": {
+              "attack": 0.20689700787149296,
+              "early": 0.14223229697793277
+            },
+            "envelope_db": 5.421567061274905
+          },
+          {
+            "id": "notes/guitar-65-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.35,
+            "mel": 0.17941840335780745,
+            "phases": {
+              "attack": 0.2149382072846195,
+              "early": 0.14389859943099542
+            },
+            "envelope_db": 5.5239175937728975
+          },
+          {
+            "id": "notes/guitar-66-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.35,
+            "mel": 0.15969088263962142,
+            "phases": {
+              "attack": 0.2035403825316782,
+              "early": 0.11584138274756464
+            },
+            "envelope_db": 4.674101701427528
+          },
+          {
+            "id": "notes/guitar-67-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.35,
+            "mel": 0.1784035060974919,
+            "phases": {
+              "attack": 0.21756794071285207,
+              "early": 0.13923907148213172
+            },
+            "envelope_db": 5.970600602686197
+          },
+          {
+            "id": "notes/guitar-68-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.35,
+            "mel": 0.13152002932041792,
+            "phases": {
+              "attack": 0.18161496309957462,
+              "early": 0.08142509554126122
+            },
+            "envelope_db": 4.70746645951848
+          },
+          {
+            "id": "notes/guitar-69-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.35,
+            "mel": 0.17788404959967735,
+            "phases": {
+              "attack": 0.21591890380141587,
+              "early": 0.13984919539793886
+            },
+            "envelope_db": 4.284803735968114
+          },
+          {
+            "id": "notes/guitar-70-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.35,
+            "mel": 0.17841325315846418,
+            "phases": {
+              "attack": 0.21463676516642607,
+              "early": 0.14218974115050229
+            },
+            "envelope_db": 5.046696399997854
+          },
+          {
+            "id": "notes/guitar-71-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.35,
+            "mel": 0.17863619065592637,
+            "phases": {
+              "attack": 0.2208447726379134,
+              "early": 0.13642760867393933
+            },
+            "envelope_db": 5.07801090462646
+          },
+          {
+            "id": "notes/guitar-40-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.23958710738322772,
+            "phases": {
+              "attack": 0.29686488688777285,
+              "early": 0.1823093278786826
+            },
+            "envelope_db": 3.3482661394283055
+          },
+          {
+            "id": "notes/guitar-43-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.65,
+            "mel": 0.11207318656237442,
+            "phases": {
+              "attack": 0.15067553827036284,
+              "early": 0.07347083485438599
+            },
+            "envelope_db": 2.1583638754216046
+          },
+          {
+            "id": "notes/guitar-46-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.65,
+            "mel": 0.18880544730126586,
+            "phases": {
+              "attack": 0.27221455217661344,
+              "early": 0.10539634242591828
+            },
+            "envelope_db": 4.732269483415021
+          },
+          {
+            "id": "notes/guitar-52-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.20287396289958448,
+            "phases": {
+              "attack": 0.2892149788158294,
+              "early": 0.11653294698333957
+            },
+            "envelope_db": 3.955975039025489
+          },
+          {
+            "id": "notes/guitar-55-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.04377299990374581,
+            "phases": {
+              "attack": 0.04579604717134324,
+              "early": 0.04174995263614838
+            },
+            "envelope_db": 1.185312023287527
+          },
+          {
+            "id": "notes/guitar-58-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.65,
+            "mel": 0.11969660568731777,
+            "phases": {
+              "attack": 0.12922264034906988,
+              "early": 0.11017057102556566
+            },
+            "envelope_db": 6.874460207444957
+          },
+          {
+            "id": "notes/guitar-64-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.65,
+            "mel": 0.09971268334723052,
+            "phases": {
+              "attack": 0.12499815371154943,
+              "early": 0.07442721298291162
+            },
+            "envelope_db": 2.8787936815019366
+          },
+          {
+            "id": "notes/guitar-67-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.65,
+            "mel": 0.10947989800008842,
+            "phases": {
+              "attack": 0.1438896792153855,
+              "early": 0.07507011678479134
+            },
+            "envelope_db": 3.1177866922302924
+          },
+          {
+            "id": "notes/guitar-70-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.65,
+            "mel": 0.12288963610070222,
+            "phases": {
+              "attack": 0.17025541987404208,
+              "early": 0.07552385232736235
+            },
+            "envelope_db": 2.5871476042940964
+          },
+          {
+            "id": "notes/guitar-40-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.24229816735159806,
+            "phases": {
+              "attack": 0.29639737295343416,
+              "early": 0.18819896174976197
+            },
+            "envelope_db": 4.806351122329156
+          },
+          {
+            "id": "notes/guitar-43-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.1542093339515214,
+            "phases": {
+              "attack": 0.21064117526982723,
+              "early": 0.09777749263321557
+            },
+            "envelope_db": 0.5487891432930267
+          },
+          {
+            "id": "notes/guitar-46-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.11212616745476256,
+            "phases": {
+              "attack": 0.1364227848152036,
+              "early": 0.08782955009432154
+            },
+            "envelope_db": 4.797990080088765
+          },
+          {
+            "id": "notes/guitar-52-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.09946641726580598,
+            "phases": {
+              "attack": 0.14829421706125107,
+              "early": 0.050638617470360886
+            },
+            "envelope_db": 1.3617362693689856
+          },
+          {
+            "id": "notes/guitar-55-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.95,
+            "mel": 0.06017592383324144,
+            "phases": {
+              "attack": 0.09402328414129037,
+              "early": 0.026328563525192514
+            },
+            "envelope_db": 1.5204344875698603
+          },
+          {
+            "id": "notes/guitar-58-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.95,
+            "mel": 0.13315616818444595,
+            "phases": {
+              "attack": 0.1367788707670506,
+              "early": 0.1295334656018413
+            },
+            "envelope_db": 9.107061339156804
+          },
+          {
+            "id": "notes/guitar-64-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.95,
+            "mel": 0.14030493783836814,
+            "phases": {
+              "attack": 0.18453036151867325,
+              "early": 0.09607951415806304
+            },
+            "envelope_db": 5.323479830529306
+          },
+          {
+            "id": "notes/guitar-67-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.95,
+            "mel": 0.13161241095614937,
+            "phases": {
+              "attack": 0.19363975709511577,
+              "early": 0.06958506481718298
+            },
+            "envelope_db": 2.6394621957289757
+          },
+          {
+            "id": "notes/guitar-70-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.95,
+            "mel": 0.15079276309288367,
+            "phases": {
+              "attack": 0.19145036659699036,
+              "early": 0.110135159588777
+            },
+            "envelope_db": 16.153146285410052
+          }
+        ]
+      },
+      "validation_after": {
+        "mel_by_dataset": {
+          "iowa": 0.12273494087006784,
+          "short": 0.1476703497132157
+        },
+        "weighted_mel": 0.13208571918624828,
+        "notes": [
+          {
+            "id": "iowa-guitar-40-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.35,
+            "mel": 0.14825744196141247,
+            "phases": {
+              "attack": 0.29382210451091983,
+              "early": 0.1816399472398461,
+              "late": 0.08115225402593457
+            },
+            "envelope_db": 7.431334735034222
+          },
+          {
+            "id": "iowa-guitar-41-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 41,
+            "velocity": 0.35,
+            "mel": 0.1424520149601171,
+            "phases": {
+              "attack": 0.36728849185958645,
+              "early": 0.19811392710161374,
+              "late": 0.03726511906975488
+            },
+            "envelope_db": 9.242281545344131
+          },
+          {
+            "id": "iowa-guitar-42-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.13269632525736397,
+            "phases": {
+              "attack": 0.3467166764958536,
+              "early": 0.1357271202648663,
+              "late": 0.05130214541511694
+            },
+            "envelope_db": 8.86641383822907
+          },
+          {
+            "id": "iowa-guitar-43-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.35,
+            "mel": 0.12649875496627952,
+            "phases": {
+              "attack": 0.3095518590500341,
+              "early": 0.18880233886926173,
+              "late": 0.03448999697125321
+            },
+            "envelope_db": 6.864058044002902
+          },
+          {
+            "id": "iowa-guitar-44-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 44,
+            "velocity": 0.35,
+            "mel": 0.06835341813159485,
+            "phases": {
+              "attack": 0.1635137352621148,
+              "early": 0.10191381539561081,
+              "late": 0.02008315023364388
+            },
+            "envelope_db": 1.448763656925434
+          },
+          {
+            "id": "iowa-guitar-46-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.35,
+            "mel": 0.14107575536660932,
+            "phases": {
+              "attack": 0.3623228903102962,
+              "early": 0.17032093930197906,
+              "late": 0.047141135786963065
+            },
+            "envelope_db": 8.169554003114484
+          },
+          {
+            "id": "iowa-guitar-50-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.16211570991328286,
+            "phases": {
+              "attack": 0.40726221693557246,
+              "early": 0.17206094416694,
+              "late": 0.06645630693480283
+            },
+            "envelope_db": 9.200454097904972
+          },
+          {
+            "id": "iowa-guitar-51-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.1661666138046481,
+            "phases": {
+              "attack": 0.40002144257847533,
+              "early": 0.23124724104016683,
+              "late": 0.054065817801143334
+            },
+            "envelope_db": 11.064074723838965
+          },
+          {
+            "id": "iowa-guitar-52-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.09411271866919632,
+            "phases": {
+              "attack": 0.22752584747545385,
+              "early": 0.12117932581501048,
+              "late": 0.033932817687169436
+            },
+            "envelope_db": 6.739788104156533
+          },
+          {
+            "id": "iowa-guitar-53-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.08452368514221639,
+            "phases": {
+              "attack": 0.20617960894508713,
+              "early": 0.09775266188747016,
+              "late": 0.033941847436669705
+            },
+            "envelope_db": 6.503054938500774
+          },
+          {
+            "id": "iowa-guitar-54-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 54,
+            "velocity": 0.35,
+            "mel": 0.06559228188000572,
+            "phases": {
+              "attack": 0.1400155334448504,
+              "early": 0.06767341544236993,
+              "late": 0.03690313745730239
+            },
+            "envelope_db": 5.392217134939572
+          },
+          {
+            "id": "iowa-guitar-55-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.35,
+            "mel": 0.13255668185499403,
+            "phases": {
+              "attack": 0.292831752426863,
+              "early": 0.16251238026605538,
+              "late": 0.06122014348639515
+            },
+            "envelope_db": 10.8715708747117
+          },
+          {
+            "id": "iowa-guitar-57-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.10570622612473035,
+            "phases": {
+              "attack": 0.19332180306819396,
+              "early": 0.16222004197749082,
+              "late": 0.051657703826146296
+            },
+            "envelope_db": 7.496064961234991
+          },
+          {
+            "id": "iowa-guitar-58-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.35,
+            "mel": 0.11849729243603316,
+            "phases": {
+              "attack": 0.23812486129155241,
+              "early": 0.18228889538834217,
+              "late": 0.04971510300809752
+            },
+            "envelope_db": 6.5334560889567275
+          },
+          {
+            "id": "iowa-guitar-59-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 59,
+            "velocity": 0.35,
+            "mel": 0.1014047135759901,
+            "phases": {
+              "attack": 0.15852555730685586,
+              "early": 0.1753395710951534,
+              "late": 0.052258825607229185
+            },
+            "envelope_db": 6.527649831418428
+          },
+          {
+            "id": "iowa-guitar-66-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 66,
+            "velocity": 0.35,
+            "mel": 0.1316504642829494,
+            "phases": {
+              "attack": 0.2941212915750534,
+              "early": 0.16742226368322483,
+              "late": 0.05730947927330711
+            },
+            "envelope_db": 9.584135940149947
+          },
+          {
+            "id": "iowa-guitar-67-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.35,
+            "mel": 0.14016796083561645,
+            "phases": {
+              "attack": 0.30823387702359106,
+              "early": 0.18987415729535848,
+              "late": 0.058503418592722706
+            },
+            "envelope_db": 9.636200396404718
+          },
+          {
+            "id": "iowa-guitar-68-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 68,
+            "velocity": 0.35,
+            "mel": 0.11210063448105867,
+            "phases": {
+              "attack": 0.2598500281358827,
+              "early": 0.11998470430879782,
+              "late": 0.05373808567509745
+            },
+            "envelope_db": 8.90067246232599
+          },
+          {
+            "id": "iowa-guitar-69-35-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 69,
+            "velocity": 0.35,
+            "mel": 0.13931022028281298,
+            "phases": {
+              "attack": 0.3061099981627556,
+              "early": 0.19008196648755757,
+              "late": 0.057720898751055245
+            },
+            "envelope_db": 9.454623801894684
+          },
+          {
+            "id": "iowa-guitar-40-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.16296639935251883,
+            "phases": {
+              "attack": 0.4097175795937139,
+              "early": 0.2544666649397995,
+              "late": 0.036122107166840375
+            },
+            "envelope_db": 6.189519363987867
+          },
+          {
+            "id": "iowa-guitar-43-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.65,
+            "mel": 0.08410020688175834,
+            "phases": {
+              "attack": 0.2032234013958346,
+              "early": 0.10701359085063325,
+              "late": 0.03083648995065163
+            },
+            "envelope_db": 2.7131894607094584
+          },
+          {
+            "id": "iowa-guitar-46-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.65,
+            "mel": 0.13775574281551384,
+            "phases": {
+              "attack": 0.39817476274751273,
+              "early": 0.1559791870704136,
+              "late": 0.03326481874542681
+            },
+            "envelope_db": 3.7291080829776213
+          },
+          {
+            "id": "iowa-guitar-52-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.14194735526118596,
+            "phases": {
+              "attack": 0.4083578903531293,
+              "early": 0.1610407684278043,
+              "late": 0.03488337466422531
+            },
+            "envelope_db": 8.037862694064072
+          },
+          {
+            "id": "iowa-guitar-55-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.05414251318385782,
+            "phases": {
+              "attack": 0.06374068476845893,
+              "early": 0.06041194598727738,
+              "late": 0.04819216153835006
+            },
+            "envelope_db": 4.193375740587118
+          },
+          {
+            "id": "iowa-guitar-58-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.65,
+            "mel": 0.10000320576297235,
+            "phases": {
+              "attack": 0.1662623940809439,
+              "early": 0.1548388270188392,
+              "late": 0.05459265217278293
+            },
+            "envelope_db": 7.5757641493888785
+          },
+          {
+            "id": "iowa-guitar-64-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 64,
+            "velocity": 0.65,
+            "mel": 0.09715746922401297,
+            "phases": {
+              "attack": 0.19588479756587776,
+              "early": 0.11351247010705452,
+              "late": 0.05400159576467309
+            },
+            "envelope_db": 7.987845501123526
+          },
+          {
+            "id": "iowa-guitar-67-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.65,
+            "mel": 0.10030052637495639,
+            "phases": {
+              "attack": 0.21096766982206216,
+              "early": 0.1164296307837481,
+              "late": 0.052751933428994806
+            },
+            "envelope_db": 8.228683065999364
+          },
+          {
+            "id": "iowa-guitar-70-65-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 70,
+            "velocity": 0.65,
+            "mel": 0.10799194909561963,
+            "phases": {
+              "attack": 0.2609947795426344,
+              "early": 0.1170226373070324,
+              "late": 0.04722937959870928
+            },
+            "envelope_db": 7.508195727960809
+          },
+          {
+            "id": "iowa-guitar-40-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.20683392769004785,
+            "phases": {
+              "attack": 0.44391381710349775,
+              "early": 0.266186615675994,
+              "late": 0.09567171116527429
+            },
+            "envelope_db": 8.577541883248175
+          },
+          {
+            "id": "iowa-guitar-43-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.1313784620355778,
+            "phases": {
+              "attack": 0.3158953506346789,
+              "early": 0.14915475364838127,
+              "late": 0.055518519456113566
+            },
+            "envelope_db": 5.8289184572325174
+          },
+          {
+            "id": "iowa-guitar-46-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.08286341049972032,
+            "phases": {
+              "attack": 0.18354338783142532,
+              "early": 0.1179959701400412,
+              "late": 0.03193370913521059
+            },
+            "envelope_db": 5.230165590000043
+          },
+          {
+            "id": "iowa-guitar-52-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.09094014880782741,
+            "phases": {
+              "attack": 0.2175330243651528,
+              "early": 0.08358015528713494,
+              "late": 0.04622781804409005
+            },
+            "envelope_db": 6.053734072379476
+          },
+          {
+            "id": "iowa-guitar-55-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 55,
+            "velocity": 0.95,
+            "mel": 0.059036308242209165,
+            "phases": {
+              "attack": 0.14341975480882976,
+              "early": 0.04051905605823457,
+              "late": 0.0343364853487169
+            },
+            "envelope_db": 3.402165280146531
+          },
+          {
+            "id": "iowa-guitar-58-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 58,
+            "velocity": 0.95,
+            "mel": 0.10800124373391282,
+            "phases": {
+              "attack": 0.1957796867927,
+              "early": 0.18247455815633748,
+              "late": 0.047156834678458354
+            },
+            "envelope_db": 7.256554650281438
+          },
+          {
+            "id": "iowa-guitar-64-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 64,
+            "velocity": 0.95,
+            "mel": 0.11942963029723563,
+            "phases": {
+              "attack": 0.29693373945339674,
+              "early": 0.13286621457678352,
+              "late": 0.04782687025884472
+            },
+            "envelope_db": 6.154174039830127
+          },
+          {
+            "id": "iowa-guitar-67-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 67,
+            "velocity": 0.95,
+            "mel": 0.11016864587633962,
+            "phases": {
+              "attack": 0.28352827158050853,
+              "early": 0.10390681766201684,
+              "late": 0.047506971817647306
+            },
+            "envelope_db": 7.067996001220769
+          },
+          {
+            "id": "iowa-guitar-70-95-3s",
+            "dataset": "iowa",
+            "seconds": 3.0,
+            "hold": 3.0,
+            "pitch": 70,
+            "velocity": 0.95,
+            "mel": 0.1179261551324888,
+            "phases": {
+              "attack": 0.288708930315171,
+              "early": 0.15189315218766056,
+              "late": 0.04114499054329358
+            },
+            "envelope_db": 12.019161587645947
+          },
+          {
+            "id": "iowa-guitar-42-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.15012294815336943,
+            "phases": {
+              "attack": 0.427082598553854,
+              "early": 0.17350405205405114,
+              "late": 0.037495165290432085
+            },
+            "envelope_db": 21.805995653796092
+          },
+          {
+            "id": "iowa-guitar-50-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.18069293078992035,
+            "phases": {
+              "attack": 0.49296555625599797,
+              "early": 0.21156677238227423,
+              "late": 0.0520130056430085
+            },
+            "envelope_db": 20.247112818894955
+          },
+          {
+            "id": "iowa-guitar-51-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.18795898247796694,
+            "phases": {
+              "attack": 0.4880675015125335,
+              "early": 0.2872620916538547,
+              "late": 0.03817962189904657
+            },
+            "envelope_db": 19.361606450083116
+          },
+          {
+            "id": "iowa-guitar-52-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.1075073333068442,
+            "phases": {
+              "attack": 0.27695034790366674,
+              "early": 0.15231621709619322,
+              "late": 0.027162871412029846
+            },
+            "envelope_db": 16.61569752533707
+          },
+          {
+            "id": "iowa-guitar-53-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.09435719344893963,
+            "phases": {
+              "attack": 0.25209341090892384,
+              "early": 0.1202737702329294,
+              "late": 0.025487395607449368
+            },
+            "envelope_db": 16.50436673813086
+          },
+          {
+            "id": "iowa-guitar-57-35-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.11660842587197463,
+            "phases": {
+              "attack": 0.24297213372912146,
+              "early": 0.20416245780231604,
+              "late": 0.03638927345166654
+            },
+            "envelope_db": 16.514004619112722
+          },
+          {
+            "id": "iowa-guitar-40-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.17968485487145497,
+            "phases": {
+              "attack": 0.47017563359538306,
+              "early": 0.2932108927266864,
+              "late": 0.028178548654270143
+            },
+            "envelope_db": 17.160792319637135
+          },
+          {
+            "id": "iowa-guitar-52-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.16265900867316732,
+            "phases": {
+              "attack": 0.4941973543415749,
+              "early": 0.19068031016906578,
+              "late": 0.02782414098655254
+            },
+            "envelope_db": 18.803530681439664
+          },
+          {
+            "id": "iowa-guitar-55-65-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.05386172612093403,
+            "phases": {
+              "attack": 0.08780743648934833,
+              "early": 0.07251031751535725,
+              "late": 0.03413886295986995
+            },
+            "envelope_db": 14.323362967196747
+          },
+          {
+            "id": "iowa-guitar-40-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.2272957625114171,
+            "phases": {
+              "attack": 0.546320584722534,
+              "early": 0.3199759110601972,
+              "late": 0.07290639847645565
+            },
+            "envelope_db": 20.416318432011444
+          },
+          {
+            "id": "iowa-guitar-43-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.1530479699309546,
+            "phases": {
+              "attack": 0.4019151520883994,
+              "early": 0.19778030562050375,
+              "late": 0.04294815073833185
+            },
+            "envelope_db": 17.4467705532169
+          },
+          {
+            "id": "iowa-guitar-46-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.09389513112244294,
+            "phases": {
+              "attack": 0.22619918067760256,
+              "early": 0.14950015891695317,
+              "late": 0.023429227116316724
+            },
+            "envelope_db": 14.854163062494582
+          },
+          {
+            "id": "iowa-guitar-52-95-6s",
+            "dataset": "iowa",
+            "seconds": 6.0,
+            "hold": 6.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.1028725620293388,
+            "phases": {
+              "attack": 0.2686011000426458,
+              "early": 0.1083890052952054,
+              "late": 0.03865569404964868
+            },
+            "envelope_db": 17.10272195663119
+          },
+          {
+            "id": "notes/guitar-40-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.35,
+            "mel": 0.18023097219285183,
+            "phases": {
+              "attack": 0.2300680877449633,
+              "early": 0.13039385664074035
+            },
+            "envelope_db": 1.3779379563569025
+          },
+          {
+            "id": "notes/guitar-41-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 41,
+            "velocity": 0.35,
+            "mel": 0.2093090493130672,
+            "phases": {
+              "attack": 0.2721605672323008,
+              "early": 0.1464575313938336
+            },
+            "envelope_db": 2.5126477524837316
+          },
+          {
+            "id": "notes/guitar-42-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 42,
+            "velocity": 0.35,
+            "mel": 0.1693213405757139,
+            "phases": {
+              "attack": 0.24591507896289883,
+              "early": 0.09272760218852898
+            },
+            "envelope_db": 3.8087108452549154
+          },
+          {
+            "id": "notes/guitar-43-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.35,
+            "mel": 0.18026824501819716,
+            "phases": {
+              "attack": 0.22582464997346122,
+              "early": 0.13471184006293307
+            },
+            "envelope_db": 6.990286169975473
+          },
+          {
+            "id": "notes/guitar-44-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 44,
+            "velocity": 0.35,
+            "mel": 0.0950079426992497,
+            "phases": {
+              "attack": 0.12034272918950607,
+              "early": 0.06967315620899334
+            },
+            "envelope_db": 0.6314076977816738
+          },
+          {
+            "id": "notes/guitar-45-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 45,
+            "velocity": 0.35,
+            "mel": 0.10414646866523652,
+            "phases": {
+              "attack": 0.10032935775036879,
+              "early": 0.10796357958010427
+            },
+            "envelope_db": 11.868425748993118
+          },
+          {
+            "id": "notes/guitar-46-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.35,
+            "mel": 0.1889145962440414,
+            "phases": {
+              "attack": 0.26057151534270545,
+              "early": 0.11725767714537735
+            },
+            "envelope_db": 4.705775547824843
+          },
+          {
+            "id": "notes/guitar-47-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 47,
+            "velocity": 0.35,
+            "mel": 0.27278724892580153,
+            "phases": {
+              "attack": 0.33646307121325414,
+              "early": 0.20911142663834892
+            },
+            "envelope_db": 1.6196344675659204
+          },
+          {
+            "id": "notes/guitar-50-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 50,
+            "velocity": 0.35,
+            "mel": 0.21151070554152396,
+            "phases": {
+              "attack": 0.29549611856709146,
+              "early": 0.12752529251595643
+            },
+            "envelope_db": 6.72900907136787
+          },
+          {
+            "id": "notes/guitar-51-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 51,
+            "velocity": 0.35,
+            "mel": 0.21778696475469803,
+            "phases": {
+              "attack": 0.2958753111074989,
+              "early": 0.13969861840189718
+            },
+            "envelope_db": 4.85444393292564
+          },
+          {
+            "id": "notes/guitar-52-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.35,
+            "mel": 0.10505809536223369,
+            "phases": {
+              "attack": 0.14628711686268728,
+              "early": 0.0638290738617801
+            },
+            "envelope_db": 2.3317670712095686
+          },
+          {
+            "id": "notes/guitar-53-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 53,
+            "velocity": 0.35,
+            "mel": 0.09634528375202922,
+            "phases": {
+              "attack": 0.13635804312145794,
+              "early": 0.05633252438260049
+            },
+            "envelope_db": 2.9706946968287427
+          },
+          {
+            "id": "notes/guitar-54-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 54,
+            "velocity": 0.35,
+            "mel": 0.0638668540897527,
+            "phases": {
+              "attack": 0.08716531937521362,
+              "early": 0.04056838880429179
+            },
+            "envelope_db": 1.6573194419201667
+          },
+          {
+            "id": "notes/guitar-55-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.35,
+            "mel": 0.1296083006633897,
+            "phases": {
+              "attack": 0.18727482433466008,
+              "early": 0.07194177699211929
+            },
+            "envelope_db": 3.5378564661654326
+          },
+          {
+            "id": "notes/guitar-56-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 56,
+            "velocity": 0.35,
+            "mel": 0.08358712989020761,
+            "phases": {
+              "attack": 0.07871874529215622,
+              "early": 0.08845551448825899
+            },
+            "envelope_db": 5.160306018705578
+          },
+          {
+            "id": "notes/guitar-57-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 57,
+            "velocity": 0.35,
+            "mel": 0.12211110871367468,
+            "phases": {
+              "attack": 0.13385996929466404,
+              "early": 0.11036224813268533
+            },
+            "envelope_db": 4.876793038113246
+          },
+          {
+            "id": "notes/guitar-58-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.35,
+            "mel": 0.14684581393731339,
+            "phases": {
+              "attack": 0.17215126317232793,
+              "early": 0.12154036470229884
+            },
+            "envelope_db": 7.59735729312451
+          },
+          {
+            "id": "notes/guitar-59-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 59,
+            "velocity": 0.35,
+            "mel": 0.11392669779352822,
+            "phases": {
+              "attack": 0.1096853928527916,
+              "early": 0.11816800273426485
+            },
+            "envelope_db": 4.629704130511005
+          },
+          {
+            "id": "notes/guitar-64-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.35,
+            "mel": 0.17418177862878526,
+            "phases": {
+              "attack": 0.21250689485432728,
+              "early": 0.1358566624032432
+            },
+            "envelope_db": 5.353130146167245
+          },
+          {
+            "id": "notes/guitar-65-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 65,
+            "velocity": 0.35,
+            "mel": 0.17923249697703583,
+            "phases": {
+              "attack": 0.2210802421079392,
+              "early": 0.13738475184613247
+            },
+            "envelope_db": 5.515374019662789
+          },
+          {
+            "id": "notes/guitar-66-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 66,
+            "velocity": 0.35,
+            "mel": 0.1596246793053181,
+            "phases": {
+              "attack": 0.20985420962228968,
+              "early": 0.10939514898834651
+            },
+            "envelope_db": 4.824527399778444
+          },
+          {
+            "id": "notes/guitar-67-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.35,
+            "mel": 0.1783396992864259,
+            "phases": {
+              "attack": 0.2239107762301401,
+              "early": 0.1327686223427117
+            },
+            "envelope_db": 5.929896094228524
+          },
+          {
+            "id": "notes/guitar-68-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 68,
+            "velocity": 0.35,
+            "mel": 0.13262549836084786,
+            "phases": {
+              "attack": 0.1888789883797608,
+              "early": 0.07637200834193489
+            },
+            "envelope_db": 4.853665447658037
+          },
+          {
+            "id": "notes/guitar-69-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 69,
+            "velocity": 0.35,
+            "mel": 0.1779799972278161,
+            "phases": {
+              "attack": 0.22260778281729054,
+              "early": 0.13335221163834168
+            },
+            "envelope_db": 4.33461009668204
+          },
+          {
+            "id": "notes/guitar-70-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.35,
+            "mel": 0.17880614327078959,
+            "phases": {
+              "attack": 0.22190014899724425,
+              "early": 0.13571213754433492
+            },
+            "envelope_db": 4.920633209140313
+          },
+          {
+            "id": "notes/guitar-71-35.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 71,
+            "velocity": 0.35,
+            "mel": 0.17928648526145596,
+            "phases": {
+              "attack": 0.22854504362256456,
+              "early": 0.13002792690034737
+            },
+            "envelope_db": 5.220703227462029
+          },
+          {
+            "id": "notes/guitar-40-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.65,
+            "mel": 0.24245764682961268,
+            "phases": {
+              "attack": 0.30700958409006734,
+              "early": 0.17790570956915802
+            },
+            "envelope_db": 3.1223705007277682
+          },
+          {
+            "id": "notes/guitar-43-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.65,
+            "mel": 0.10722150082063706,
+            "phases": {
+              "attack": 0.14780683321261306,
+              "early": 0.06663616842866106
+            },
+            "envelope_db": 1.6993395192837266
+          },
+          {
+            "id": "notes/guitar-46-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.65,
+            "mel": 0.18997579526707842,
+            "phases": {
+              "attack": 0.2817173000289392,
+              "early": 0.09823429050521763
+            },
+            "envelope_db": 4.246075323673009
+          },
+          {
+            "id": "notes/guitar-52-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.65,
+            "mel": 0.20855153329327764,
+            "phases": {
+              "attack": 0.2964398569602036,
+              "early": 0.12066320962635169
+            },
+            "envelope_db": 4.464224836530847
+          },
+          {
+            "id": "notes/guitar-55-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.65,
+            "mel": 0.04277427528877806,
+            "phases": {
+              "attack": 0.04239689909842112,
+              "early": 0.04315165147913499
+            },
+            "envelope_db": 0.8941121152143235
+          },
+          {
+            "id": "notes/guitar-58-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.65,
+            "mel": 0.11359953983559268,
+            "phases": {
+              "attack": 0.12511571076861383,
+              "early": 0.10208336890257154
+            },
+            "envelope_db": 6.428226064403407
+          },
+          {
+            "id": "notes/guitar-64-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.65,
+            "mel": 0.09913344147827331,
+            "phases": {
+              "attack": 0.12999544718211456,
+              "early": 0.06827143577443207
+            },
+            "envelope_db": 3.105491227956151
+          },
+          {
+            "id": "notes/guitar-67-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.65,
+            "mel": 0.10961297291018851,
+            "phases": {
+              "attack": 0.15050259340698188,
+              "early": 0.06872335241339514
+            },
+            "envelope_db": 3.100281281450334
+          },
+          {
+            "id": "notes/guitar-70-65.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.65,
+            "mel": 0.12329472318880122,
+            "phases": {
+              "attack": 0.17747665452545078,
+              "early": 0.06911279185215165
+            },
+            "envelope_db": 2.497434980885066
+          },
+          {
+            "id": "notes/guitar-40-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 40,
+            "velocity": 0.95,
+            "mel": 0.24912894138875205,
+            "phases": {
+              "attack": 0.30858143211269745,
+              "early": 0.18967645066480665
+            },
+            "envelope_db": 5.461677418811125
+          },
+          {
+            "id": "notes/guitar-43-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 43,
+            "velocity": 0.95,
+            "mel": 0.15119322974649824,
+            "phases": {
+              "attack": 0.2109317829129113,
+              "early": 0.09145467658008516
+            },
+            "envelope_db": 0.791357811602267
+          },
+          {
+            "id": "notes/guitar-46-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 46,
+            "velocity": 0.95,
+            "mel": 0.10526479146276714,
+            "phases": {
+              "attack": 0.1312032540628545,
+              "early": 0.07932632886267979
+            },
+            "envelope_db": 4.261790023802998
+          },
+          {
+            "id": "notes/guitar-52-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 52,
+            "velocity": 0.95,
+            "mel": 0.10735037984636582,
+            "phases": {
+              "attack": 0.15623312926657518,
+              "early": 0.05846763042615646
+            },
+            "envelope_db": 1.6512007347413564
+          },
+          {
+            "id": "notes/guitar-55-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 55,
+            "velocity": 0.95,
+            "mel": 0.06162146595519577,
+            "phases": {
+              "attack": 0.09584183270996258,
+              "early": 0.02740109920042897
+            },
+            "envelope_db": 1.1319243484028658
+          },
+          {
+            "id": "notes/guitar-58-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 58,
+            "velocity": 0.95,
+            "mel": 0.12645720927184795,
+            "phases": {
+              "attack": 0.13130693518251557,
+              "early": 0.12160748336118035
+            },
+            "envelope_db": 8.603944648857754
+          },
+          {
+            "id": "notes/guitar-64-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 64,
+            "velocity": 0.95,
+            "mel": 0.13801375765016893,
+            "phases": {
+              "attack": 0.18610194306892894,
+              "early": 0.08992557223140892
+            },
+            "envelope_db": 4.894513760878613
+          },
+          {
+            "id": "notes/guitar-67-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 67,
+            "velocity": 0.95,
+            "mel": 0.12830727784898252,
+            "phases": {
+              "attack": 0.1933733445152956,
+              "early": 0.06324121118266944
+            },
+            "envelope_db": 2.4078259173948107
+          },
+          {
+            "id": "notes/guitar-70-95.wav",
+            "dataset": "short",
+            "seconds": 1.0,
+            "hold": 1.0,
+            "pitch": 70,
+            "velocity": 0.95,
+            "mel": 0.15476557465876584,
+            "phases": {
+              "attack": 0.19899966040180347,
+              "early": 0.11053148891572817
+            },
+            "envelope_db": 16.55358453440544
+          }
+        ]
+      }
+    }
+  },
+  "temporal_metric": {
+    "phase_weights": {
+      "attack": 0.15,
+      "early": 0.15,
+      "late": 0.4,
+      "transition": 0.2,
+      "release": 0.1
+    },
+    "centers": "only feature centers strictly inside the excerpt",
+    "release": "requires note-off before excerpt end",
+    "short_regression": "original equal attack/sustain metric"
+  },
+  "initial_gains_db": {
+    "piano": [
+      -8.998,
+      -4.394,
+      9.0,
+      9.0,
+      0.001,
+      -0.445,
+      9.0,
+      9.0,
+      8.19,
+      5.707,
+      2.783,
+      0.311
+    ],
+    "guitar": [
+      -2.144,
+      5.119,
+      8.604,
+      6.972,
+      1.793,
+      -0.197,
+      -0.289,
+      0.482,
+      1.689,
+      2.139,
+      1.033,
+      -0.509
+    ],
+    "violin": [
+      -6.352,
+      -6.253,
+      -1.862,
+      6.249,
+      4.245,
+      -2.72,
+      -3.706,
+      0.414,
+      3.636,
+      4.732,
+      3.702,
+      3.117
+    ]
+  }
+}

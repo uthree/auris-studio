@@ -20,7 +20,7 @@ use auris_compose::vocal::{
 };
 use auris_core::theory::contour::Contour;
 use auris_core::time::{TICKS_PER_QUARTER, Ticks, TimeSignature};
-use auris_core::{ClipId, ClipPreset, Note, PresetRef, TrackId};
+use auris_core::{ClipId, ClipPreset, Note, TrackId};
 use auris_vocal::{SungMora, kana_accent_phrase};
 
 use crate::error::SessionError;
@@ -515,12 +515,9 @@ impl Session {
             }
         }
 
-        // The band, the accompany way: stock parts on their General MIDI sounds, each a
+        // The band, the accompany way: stock parts using native musical sound hints, each a
         // recipe that can be argued with and regenerated, seeded off the melody's own seed
         // so one number names the whole song.
-        let font = (!parts.is_empty())
-            .then(|| self.adopt_general_midi_here())
-            .flatten();
         let mut report = LyricSongReport {
             track,
             clip,
@@ -530,7 +527,7 @@ impl Session {
             bars,
             chords,
             parts: Vec::with_capacity(parts.len()),
-            substituted: font.is_none() && !parts.is_empty(),
+            substituted: false,
         };
         for (index, preset) in parts.iter().enumerate() {
             let added = if preset.is_drums() {
@@ -541,16 +538,12 @@ impl Session {
             let Ok(band) = added else {
                 continue;
             };
-            if let Some(font) = font {
-                let sound = auris_compose::analysis::sound_for(*preset);
-                let _ = self.set_track_preset(
-                    band,
-                    PresetRef {
-                        font,
-                        bank: i32::from(sound.bank),
-                        patch: i32::from(sound.patch),
-                    },
-                );
+            let sound = auris_compose::analysis::sound_for(*preset);
+            if self
+                .use_backing_sound(band, i32::from(sound.bank), i32::from(sound.patch))
+                .is_err()
+            {
+                report.substituted = true;
             }
             let recipe =
                 super::accompany::backing_part_recipe(*preset, seed.wrapping_add(1 + index as u64));

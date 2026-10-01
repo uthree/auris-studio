@@ -9,7 +9,7 @@ and render singing voices. CLI, MCP and agent frontends share the desktop's edit
 
 Download binaries from the [releases page](https://github.com/uthree/auris-studio/releases):
 the desktop application, `auris` and `auris-mcp` for macOS and Windows,
-and `auris` for Linux. Release archives include the standard SoundFont.
+and `auris` for Linux. Built-in physical instruments are ready to play.
 
 On macOS, drag `Auris Studio.app` to `/Applications`. The binaries are unsigned;
 if macOS blocks the downloaded app, remove its quarantine attribute with
@@ -25,7 +25,7 @@ cargo run --release
 Windows also requires Visual Studio C++ Build Tools and LLVM. Run
 `.\tools\setup-windows.ps1 -InstallLlvm` in a Visual Studio developer PowerShell terminal
 before building. See [Development](docs/development.md#building-on-each-platform) for
-platform setup. The desktop downloads the standard SoundFont on first launch if needed.
+platform setup. See [physical instruments](docs/physical-instruments.md) for the native sounds.
 
 ## Documentation
 

@@ -629,7 +629,7 @@ mod tests {
 
     /// A program with velocity layers gets louder as it is struck harder.
     ///
-    /// Ignored for the reason `calibration` above is — it needs the shipped SoundFont, and
+    /// Ignored for the reason `calibration` above is — it needs the optional SoundFont, and
     /// whether that is installed is a fact about the machine:
     ///
     /// ```text
@@ -655,10 +655,9 @@ mod tests {
                 .with_balance(false),
         )
         .expect("a session opens");
-        session.install_shipped_fonts();
-        let Some(font) = session.project().soundfonts.keys().next().copied() else {
-            panic!("this test needs the shipped library; see `tools/fetch-soundfonts.sh`");
-        };
+        let path = crate::library::installed(&crate::library::GENERAL_MIDI_FONT)
+            .expect("this test needs MuseScore General; see `tools/fetch-soundfonts.sh`");
+        let font = session.import_soundfont(&path).expect("a font imports");
         let track = session
             .add_default_instrument_track("piano")
             .expect("a track");

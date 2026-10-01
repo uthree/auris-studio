@@ -335,6 +335,8 @@ impl AcousticWorkerPermit {
         Self::acquire_from(&ACOUSTIC_WORKERS)
     }
 
+    // `try_update` is newer than the workspace's Rust 1.90 minimum.
+    #[allow(deprecated)]
     fn acquire_from(counter: &'static AtomicUsize) -> Option<Self> {
         counter
             .fetch_update(Ordering::AcqRel, Ordering::Relaxed, |active| {

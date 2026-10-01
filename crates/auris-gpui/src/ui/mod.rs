@@ -32,6 +32,7 @@ pub mod paint;
 pub mod palette;
 pub mod part;
 pub mod performance;
+pub(crate) mod physical_model;
 pub mod piano_roll;
 pub(crate) mod pitch_performance;
 pub mod plugin_editor;

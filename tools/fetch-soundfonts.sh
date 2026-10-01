@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Downloads the SoundFonts Auris Studio ships with.
+# Downloads optional SoundFonts for local development and sampler checks.
 #
 # The fonts are hundreds of megabytes, which is more than GitHub accepts in a single file and far
 # more than every clone of a source repository should have to carry. So they are fetched: this
 # script puts them in `SoundFonts/` at the top of the checkout, where a `cargo run` build finds
-# them, and the release workflow runs it before assembling each archive.
+# them. Releases use native instruments and do not run this script.
 #
 # The list is not written here. `auris soundfonts --manifest` prints it, straight out of
-# `auris_session::library::SHIPPED`, so there is exactly one place a URL or a digest is recorded
+# `auris_session::library::KNOWN_FONTS`, so there is exactly one place a URL or a digest is recorded
 # and no way for the two to drift apart.
 #
 #   tools/fetch-soundfonts.sh [directory]

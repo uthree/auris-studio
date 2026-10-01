@@ -28,6 +28,7 @@ pub mod automation;
 pub mod buffer;
 pub mod error;
 pub mod harmony;
+pub mod motion;
 pub mod param;
 pub mod plugin;
 pub mod project;

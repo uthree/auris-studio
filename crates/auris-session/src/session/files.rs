@@ -1400,14 +1400,13 @@ impl Session {
         }
     }
 
-    /// Puts the shipped General MIDI font into a project being built, and returns its new id.
+    /// Puts an optional General MIDI font into a project being built and returns its new id.
     ///
     /// Takes the project rather than working on [`Self::project`] because the only caller is
     /// [`Self::compose`], which assembles a whole document before it swaps one in — a font added
     /// to the open project would belong to the piece being replaced.
     ///
-    /// `None` when nothing is installed, which is what makes a part asking for a violin come out
-    /// as the oscillator it also names rather than as silence.
+    /// `None` when no library is installed; unsupported families keep their reported fallback.
     pub(super) fn adopt_general_midi(&mut self, project: &mut Project) -> Option<SoundFontId> {
         if !self.shipped_library {
             return None;

@@ -3906,7 +3906,12 @@ mod window_tests {
         ClipId,
     ) {
         let (app, cx, _, clip) = with_a_clip(cx);
-        app.update(cx, |this, _| this.open_clip_in_editor(clip));
+        app.update(cx, |this, _| {
+            // Another window test can save its preferences in this process's config directory.
+            // Length gestures start from the same snap preference regardless of test order.
+            this.settings.snap_note_lengths = true;
+            this.open_clip_in_editor(clip);
+        });
         paint(&app, cx);
         // The roll opens showing the top of the keyboard, and an empty clip gives
         // `center_roll_on_selection` nothing to centre on — so middle C is a couple of octaves

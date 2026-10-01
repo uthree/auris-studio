@@ -681,6 +681,11 @@ mod tests {
     fn instrument_static_values_round_trip_without_replacing_automation() {
         let fixture = Fixture::new("parameters");
         let mut session = opened(&fixture.path).unwrap();
+        // This probe needs a discrete choice as well as continuous controls.
+        session
+            .set_track_instrument(fixture.lead, "auris.synth.chiptune")
+            .unwrap();
+        session.save_in_place().unwrap();
         let descriptors = session.instrument_descriptors(fixture.lead);
         let catalog = automation::run(
             &serde_json::from_value(json!({
