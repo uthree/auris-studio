@@ -116,12 +116,12 @@ fn lookup<'a>(
 
 /// Japanese names for the built-in plugins.
 const PLUGIN_NAMES: &[(&str, &str)] = &[
-    ("Physical Piano", "ピアノ（物理モデル）"),
-    ("Physical Guitar", "ギター（物理モデル）"),
-    ("Physical Bass", "ベース（物理モデル）"),
-    ("Physical Bell", "ベル（物理モデル）"),
-    ("Physical Mallet", "マレット（物理モデル）"),
-    ("Physical Violin", "バイオリン（物理モデル）"),
+    ("Physical Piano", "ピアノ"),
+    ("Physical Guitar", "ギター"),
+    ("Physical Bass", "ベース"),
+    ("Physical Bell", "ベル"),
+    ("Physical Mallet", "マレット"),
+    ("Physical Violin", "バイオリン"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
