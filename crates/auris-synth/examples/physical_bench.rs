@@ -8,12 +8,17 @@ use auris_core::{
 use auris_synth::{Model, Physical};
 
 fn main() {
+    let observe = std::env::args().any(|arg| arg == "--motion");
     let rate = 48_000.0;
     let frames = 256;
     for model in Model::ALL {
         let mut instrument = Physical::new(model);
         instrument.set_param_by_key("decay", 12.0);
         instrument.prepare(&PrepareContext::new(rate, frames, 2));
+        let monitor = instrument.motion_monitor();
+        if let Some(monitor) = &monitor {
+            monitor.watch(observe);
+        }
         let mut buffer = AudioBuffer::stereo(frames, rate);
         let events: Vec<_> = (0..24)
             .map(|index| NoteEvent::NoteOn {

@@ -45,6 +45,43 @@ impl Default for Piano {
 }
 
 impl Piano {
+    pub(super) fn motion(&self, points: &mut [f32], modes: &mut [f32]) {
+        let last = points.len().saturating_sub(1).max(1) as f32;
+        for (index, point) in points.iter_mut().enumerate() {
+            let x = index as f32 / last;
+            *point = if index == 0 || x == 1.0 {
+                0.0
+            } else {
+                self.partials[..self.active.min(16)]
+                    .iter()
+                    .enumerate()
+                    .map(|(n, partial)| {
+                        partial.strings[..self.strings]
+                            .iter()
+                            .map(|s| s.real)
+                            .sum::<f32>()
+                            / self.strings as f32
+                            * (PI * (n + 1) as f32 * x).sin()
+                    })
+                    .sum()
+            };
+        }
+        for (partial, magnitude) in self.partials.iter().zip(modes) {
+            *magnitude = partial.strings[..self.strings]
+                .iter()
+                .map(|s| s.real.hypot(s.imag))
+                .sum::<f32>()
+                / self.strings as f32;
+        }
+    }
+
+    pub(super) fn contact(&self) -> f32 {
+        if self.age < self.contact_frames {
+            1.0 - self.age as f32 / self.contact_frames as f32
+        } else {
+            0.0
+        }
+    }
     pub(super) fn excite(&mut self, frequency: f32, velocity: f32, rate: f32, settings: Settings) {
         self.strings = if frequency < 65.0 {
             1

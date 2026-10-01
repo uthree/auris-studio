@@ -541,6 +541,8 @@ fn callback_and_parameter_changes_allocate_nothing_even_when_stealing() {
     for model in Model::ALL {
         let mut instrument = Physical::new(model);
         instrument.prepare(&PrepareContext::new(48_000.0, 256, 2));
+        let monitor = instrument.motion_monitor().unwrap();
+        monitor.watch(true);
         let mut buffer = AudioBuffer::stereo(256, 48_000.0);
         let ctx = ProcessContext::realtime(48_000.0, 256, 0, 120.0, true);
         let allocations = count_allocations(|| {
@@ -552,4 +554,50 @@ fn callback_and_parameter_changes_allocate_nothing_even_when_stealing() {
         });
         assert_eq!(allocations, 0, "{model:?} allocated on the audio thread");
     }
+}
+
+#[test]
+fn mechanical_observation_reads_actual_state_without_changing_audio() {
+    for model in Model::ALL {
+        let mut watched = rig(model, 48_000.0);
+        let mut plain = rig(model, 48_000.0);
+        let monitor = watched.instrument.motion_monitor().unwrap();
+        monitor.watch(true);
+        let events = [
+            on(60, 0.75),
+            NoteEvent::PitchBend {
+                frame: 150,
+                semitones: 0.25,
+            },
+        ];
+        assert_eq!(watched.render(4800, &events), plain.render(4800, &events));
+        let frame = monitor.read().unwrap();
+        assert_eq!(frame.active, 1);
+        assert_eq!(frame.voices[0].pitch, 60.25);
+        assert!(frame.voices[0].points.iter().all(|v| v.is_finite()));
+        assert!(
+            frame.voices[0].points.iter().any(|v| v.abs() > 1e-6),
+            "{model:?} has no observed motion"
+        );
+        if frame.geometry == MotionGeometry::String {
+            assert_eq!(frame.voices[0].points[0], 0.);
+            assert_eq!(frame.voices[0].points[63], 0.);
+        }
+        watched.instrument.reset();
+        assert_eq!(monitor.read().unwrap().active, 0);
+    }
+}
+
+#[test]
+fn pluck_contact_stays_with_the_excitation_until_the_next_note() {
+    let mut guitar = rig(Model::Guitar, 48000.);
+    let monitor = guitar.instrument.motion_monitor().unwrap();
+    monitor.watch(true);
+    guitar.set_param("position", 0.2);
+    guitar.render(2000, &[on(60, 0.75)]);
+    guitar.set_param("position", 0.4);
+    guitar.render(2000, &[]);
+    assert!((monitor.read().unwrap().voices[0].contact - 0.2).abs() < 1e-6);
+    guitar.render(2000, &[on(64, 0.75)]);
+    assert!((monitor.read().unwrap().voices[0].contact - 0.4).abs() < 1e-6);
 }

@@ -4,6 +4,7 @@
 //! travelling-wave string; violin drives two travelling waves through nonlinear bow friction.
 //! These are deliberately compact, expressive instruments rather than sampled replicas.
 
+use auris_core::motion::{MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry};
 use auris_core::param::db_to_gain;
 use auris_core::plugin::pitch_to_hz;
 use auris_core::{
@@ -144,6 +145,7 @@ struct Voice {
     last: f32,
     tail: f32,
     fade: f32,
+    contact: f32,
 }
 
 impl Voice {
@@ -167,6 +169,7 @@ impl Voice {
             last: 0.0,
             tail: 0.0,
             fade: 0.0,
+            contact: 0.25,
         }
     }
 }
@@ -193,6 +196,8 @@ pub struct Physical {
     pressure: f32,
     pedal: bool,
     gain: f32,
+    motion: MotionCapture,
+    motion_frames: usize,
     legato: Legato,
 }
 
@@ -306,6 +311,8 @@ impl Physical {
             pressure: 1.0,
             pedal: false,
             gain: db_to_gain(-12.0) * model.output_normalization(),
+            motion: MotionCapture::default(),
+            motion_frames: 0,
             legato: Legato::default(),
         }
     }
@@ -351,6 +358,69 @@ impl Physical {
         } else {
             1.0
         };
+    }
+
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: match self.model {
+                Model::Bell => MotionGeometry::Shell,
+                Model::Mallet => MotionGeometry::Bar,
+                _ => MotionGeometry::String,
+            },
+            active: self.allocator.active_count(),
+            expression: if self.model == Model::Violin {
+                self.expression_current
+            } else {
+                self.expression
+            },
+            pressure: if self.model == Model::Violin {
+                self.pressure * self.params.at(P_PRESSURE)
+            } else {
+                0.0
+            },
+            pedal: self.pedal,
+            ..Default::default()
+        };
+        let mut selected: [Option<usize>; MOTION_VOICES] = [None; MOTION_VOICES];
+        for (index, slot) in self.allocator.slots().iter().enumerate() {
+            if !self.voices[index].envelope.is_active() {
+                continue;
+            }
+            for rank in 0..MOTION_VOICES {
+                if selected[rank]
+                    .is_none_or(|previous| self.allocator.slots()[previous].age < slot.age)
+                {
+                    selected[rank..].rotate_right(1);
+                    selected[rank] = Some(index);
+                    break;
+                }
+            }
+        }
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let voice = &self.voices[index];
+            observed.pitch = f32::from(self.allocator.slots()[index].pitch) + self.bend;
+            observed.level = voice.envelope.level();
+            observed.held = voice.held || voice.deferred;
+            observed.contact = voice.contact;
+            if self.model.is_string() {
+                (observed.contact, observed.excitation) = voice.string.motion(&mut observed.points);
+            } else {
+                observed.excitation =
+                    voice
+                        .modal
+                        .motion(&mut observed.points, &mut observed.modes, self.model);
+            }
+            for point in &mut observed.points {
+                *point *= observed.level;
+            }
+            for mode in &mut observed.modes {
+                *mode *= observed.level;
+            }
+        }
+        self.motion.publish(&frame);
     }
 
     fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
@@ -411,6 +481,7 @@ impl Physical {
         voice.held = true;
         voice.deferred = false;
         voice.age = 0;
+        voice.contact = settings.position;
         voice.limit = (settings.decay * 2.0 * self.rate) as usize;
         let hz = pitch_to_hz(f32::from(pitch.min(127)) + self.bend).min(self.rate * 0.2);
         if self.model.is_string() {
@@ -623,6 +694,9 @@ impl SegmentRenderer for Physical {
 }
 
 impl Instrument for Physical {
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.motion.monitor())
+    }
     fn descriptor(&self) -> PluginDescriptor {
         PluginDescriptor::instrument(
             self.model.id(),
@@ -656,11 +730,20 @@ impl Instrument for Physical {
         self.pressure = 1.0;
         self.pedal = false;
         self.legato.clear();
+        self.motion_frames = 0;
+        self.publish_motion();
     }
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.motion.is_watched() {
+            self.motion_frames = self.motion_frames.saturating_add(frames);
+            if self.motion_frames >= (self.rate / 30.0) as usize {
+                self.motion_frames = 0;
+                self.publish_motion();
+            }
+        }
     }
     fn active_voices(&self) -> usize {
         self.allocator.active_count()

@@ -92,6 +92,8 @@ pub use auris_analysis::instruments::{InstrumentAnalysis, InstrumentCandidate, I
 pub use auris_analysis::{AnalysisControl, AnalysisError};
 /// Workspace-owned error variants exposed for frontend localisation.
 pub use auris_core::CoreError;
+/// Mechanical observations exposed through the session boundary.
+pub use auris_core::motion::{MotionFrame, MotionGeometry, MotionVoice};
 /// PCM-derived drum measurements, exposed without a frontend DSP dependency.
 pub use auris_dsp::drum_analysis::{AcousticCharacter, DrumAcoustics, DrumSpectrum};
 /// Workspace-owned engine error variants exposed for frontend localisation.

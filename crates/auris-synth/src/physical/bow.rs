@@ -14,6 +14,9 @@ pub(super) struct Bow {
 }
 
 impl Bow {
+    pub(super) fn motion(&self) -> f32 {
+        self.motion
+    }
     pub(super) fn excite(&mut self, velocity: f32, rate: f32, settings: Settings) {
         self.velocity = velocity;
         self.motion = 0.0;

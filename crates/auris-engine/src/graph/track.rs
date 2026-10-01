@@ -133,6 +133,16 @@ pub struct RenderTrack {
 }
 
 impl RenderTrack {
+    /// Reader for the live instrument's optional mechanical observation.
+    /// Call while the graph is owned by the building thread, before handing it to audio.
+    pub fn motion_monitor(&self) -> Option<Arc<auris_core::motion::MotionMonitor>> {
+        match &self.source {
+            RenderSource::Instrument { instrument, .. } | RenderSource::Sung { instrument, .. } => {
+                instrument.motion_monitor()
+            }
+            _ => None,
+        }
+    }
     /// The track's mixer strip.
     pub fn strip(&self) -> &RenderStrip {
         &self.strip

@@ -393,6 +393,7 @@ pub struct Session {
     /// scope that nothing writes to any more.
     scope: Arc<auris_engine::Scope>,
     visualizer_scope: Arc<auris_engine::Scope>,
+    motion_monitors: HashMap<TrackId, Arc<auris_core::motion::MotionMonitor>>,
     /// Turns the window the engine publishes into a spectrum.
     ///
     /// Here rather than in a frontend because a frontend may not name `auris-dsp` — and because
@@ -643,6 +644,7 @@ impl Session {
             disk_fingerprint: None,
             scope: Arc::new(auris_engine::Scope::new()),
             visualizer_scope: Arc::new(auris_engine::Scope::new()),
+            motion_monitors: HashMap::new(),
             analyzer: auris_dsp::SpectrumAnalyzer::new(auris_engine::SCOPE_WINDOW),
             param_cache: HashMap::new(),
             keyed_cache: HashMap::new(),
@@ -937,6 +939,24 @@ impl Session {
     /// Stops the analysis, for when nothing is looking at it.
     pub fn stop_watching(&self) {
         self.scope.watch(auris_engine::ScopeSource::Off);
+    }
+
+    /// Enables mechanical observation for one track and disables all other instrument readers.
+    /// Invalid or nonphysical tracks disable observation rather than retaining another source.
+    pub fn watch_instrument_motion(&self, track: Option<TrackId>) {
+        for (id, monitor) in &self.motion_monitors {
+            monitor.watch(Some(*id) == track);
+        }
+    }
+
+    /// Whether a live track instrument exposes mechanical state.
+    pub fn has_instrument_motion(&self, track: TrackId) -> bool {
+        self.motion_monitors.contains_key(&track)
+    }
+
+    /// Reads the audio-owned model's coherent frame without waiting for the producer.
+    pub fn instrument_motion(&self, track: TrackId) -> Option<crate::MotionFrame> {
+        self.motion_monitors.get(&track)?.read()
     }
 
     /// Lock-free level meters.
@@ -1290,6 +1310,14 @@ impl Session {
             rate,
         );
         self.graph_resource_error = graph.take_resource_error();
+        for monitor in self.motion_monitors.values() {
+            monitor.watch(false);
+        }
+        self.motion_monitors = graph
+            .tracks()
+            .iter()
+            .filter_map(|track| Some((track.id, track.motion_monitor()?)))
+            .collect();
         graph.set_scope(Arc::clone(&self.scope));
         graph.set_visualizer_scope(Arc::clone(&self.visualizer_scope));
         // Re-attached rather than remembered by the graph, for the same reason the scope is: this
@@ -1391,6 +1419,39 @@ mod tests {
     use crate::session::fixtures::session;
     use auris_core::param::ParamId;
     use auris_core::{ClipId, EffectSlotId, Note};
+
+    #[test]
+    fn mechanical_readers_follow_tracks_and_disable_retired_graphs() {
+        let mut session = session();
+        let violin = session
+            .add_instrument_track("Violin", "auris.physical.violin")
+            .unwrap();
+        let guitar = session
+            .add_instrument_track("Guitar", "auris.physical.guitar")
+            .unwrap();
+        let retired = Arc::clone(&session.motion_monitors[&violin]);
+        session.watch_instrument_motion(Some(violin));
+        assert!(retired.is_watched());
+        assert!(!session.motion_monitors[&guitar].is_watched());
+        session.rebuild_graph();
+        assert!(!retired.is_watched());
+        assert!(!Arc::ptr_eq(&retired, &session.motion_monitors[&violin]));
+        session.watch_instrument_motion(Some(guitar));
+        assert!(session.motion_monitors[&guitar].is_watched());
+        session.remove_track(guitar).unwrap();
+        assert!(session.instrument_motion(guitar).is_none());
+        session.watch_instrument_motion(Some(TrackId(u64::MAX)));
+        assert!(
+            session
+                .motion_monitors
+                .values()
+                .all(|monitor| !monitor.is_watched())
+        );
+        let chip = session
+            .add_instrument_track("Chip", "auris.synth.chiptune")
+            .unwrap();
+        assert!(!session.has_instrument_motion(chip));
+    }
 
     #[test]
     fn asio_preferences_share_the_output_device_and_reopen_the_engine() {

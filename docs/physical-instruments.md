@@ -84,17 +84,52 @@ GM library. Melody roles start native violin with legato; pad roles start with s
 and polyphony. Explicit parameter choices take precedence. Notes and their seeded recipes remain
 unchanged by instrument selection.
 
+## Mechanical editor
+
+Open a physical instrument's parameter editor from its track's instrument row. The **Model
+motion** region stays beside the ordinary parameter controls: strings for piano/guitar/bass/violin,
+bar bending for mallet, and a shell perimeter for bell. It follows the edited track during
+playback or musical typing, independently of the selected track. **Play C4** holds a test note;
+**Release C4** lets it decay. Octave buttons change that test note while retaining its held state.
+Closing or replacing the editor releases its test note.
+
+Up to four recent voices show note/bend, held/releasing state and relative spatial motion. A
+marker locates the excitation contact, a moving bow indicator follows actual bow motion, and
+modal instruments show the first eight resonance magnitudes. Piano/struck/plucked contact
+remains at that voice's excitation position until the next attack; violin contact follows its
+smoothed junction while sounding. The readout includes expression, violin bow pressure and
+piano pedal state.
+
+The diagram uses live wave histories or a low-mode spatial projection, before body coloration
+and output gain. It is a relative mechanical view, not measured displacement in metres. Delay
+loops expose a fixed-end spatial projection; bell/bar modal bases are illustrative geometric
+projections of their live mode coordinates. The display samples about 30 times per second, so
+it is not a slow-motion integration of the audio-rate model. Fixed 6/24/96× display magnification
+keeps dynamics and decay visible. **Freeze** retains a snapshot and stops observation;
+**Resume display** continues it. Audio keeps running in both states.
+
+Parameter controls keep their ordinary keyboard adjustment, typed values, reset, automation,
+save/load and one-gesture Undo behavior. The window scrolls at smaller sizes; Tab reaches the
+test-note/display buttons and sliders, Enter/Space activate a button, and Escape closes it.
+
 ## Development verification
 
 ```sh
 cargo test -p auris-synth -p auris-compose -p auris-session
 cargo run -p auris-synth --example physical_demo -- target/physical-demo.wav
+cargo run --release -p auris-synth --example physical_bench -- --motion
+cargo test -p auris-gpui --bins physical_model
 ```
 
 Tests measure pitch at multiple rates, velocity response, hardness-dependent upper modes,
 decay/sustain, pedal release, pitch bends, extreme settings and callback allocations. The pack's
 shared tests also cover event offsets, mono/multichannel buffers and deterministic rendering.
 The example writes a listening probe and reports each model's peak and RMS; it is dev tooling.
+Mechanical-observation tests compare watched/unwatched PCM bit for bit, assert fixed string
+endpoints and nonzero finite model motion, exercise concurrent coherent readers, retain an
+attacked pluck's contact, disable retired graph readers, and count callback allocations with
+observation enabled. Native-window harness tests cover preview, display magnification by
+keyboard, freeze/resume, scrolling to parameters, Undo, source replacement and Escape.
 
 The [long-note/trajectory calibration](physical-trajectories.md) measures sustained tone,
 played vibrato/glissando, expression following and release against real recordings.

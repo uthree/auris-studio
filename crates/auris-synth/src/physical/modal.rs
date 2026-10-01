@@ -37,6 +37,34 @@ impl Default for Modal {
 }
 
 impl Modal {
+    pub(super) fn motion(&self, points: &mut [f32], modes: &mut [f32], model: Model) -> f32 {
+        if let Some(piano) = &self.piano {
+            piano.motion(points, modes);
+            return piano.contact();
+        }
+        let last = points.len().saturating_sub(1).max(1) as f32;
+        for (index, point) in points.iter_mut().enumerate() {
+            let x = index as f32 / last;
+            *point = self
+                .modes
+                .iter()
+                .take(16)
+                .enumerate()
+                .map(|(n, mode)| {
+                    let basis = if model == Model::Bell {
+                        (TAU * (n + 1) as f32 * x).cos()
+                    } else {
+                        (PI * (n as f32 + 0.5) * x).cos()
+                    };
+                    mode.real * basis
+                })
+                .sum();
+        }
+        for (mode, magnitude) in self.modes.iter().zip(modes) {
+            *magnitude = mode.real.hypot(mode.imag);
+        }
+        0.0
+    }
     pub(super) fn prepare(&mut self, model: Model) {
         self.piano = (model == Model::Piano).then(|| Box::new(Piano::default()));
     }

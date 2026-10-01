@@ -135,12 +135,14 @@ fn close_after<T>(window: &mut Option<T>, stop_watching: impl FnOnce()) -> bool 
 impl AurisApp {
     /// Opens the editor for one plugin, replacing whatever was open.
     pub(crate) fn open_plugin_window(&mut self, subject: PluginSubject) {
+        self.close_physical_view();
         self.plugin_window = Some(PluginWindow { subject });
         self.raise_auxiliary = Some(crate::auxiliary_window::Surface::Plugin);
     }
 
     /// Closes the editor, reporting whether one was open.
     pub(crate) fn close_plugin_window(&mut self) -> bool {
+        self.close_physical_view();
         let session = &self.session;
         close_after(&mut self.plugin_window, || session.stop_watching())
     }
@@ -179,6 +181,7 @@ impl AurisApp {
             // The track, slot, or instrument disappeared while its EQ was open. The window is
             // gone now too, so the analysis it kept alive must end on the same transition.
             self.session.stop_watching();
+            self.close_physical_view();
             return None;
         };
         self.plugin_window = Some(window);
@@ -240,6 +243,7 @@ impl AurisApp {
             cx,
         );
 
+        let physical = self.physical_model_display(cx);
         Some(
             div()
                 .size_full()
@@ -344,6 +348,7 @@ impl AurisApp {
                 .child(
                     div()
                         .id("pw-body")
+                        .debug_selector(|| "pw-body".into())
                         .flex_1()
                         .min_h_0()
                         .overflow_y_scroll()
@@ -351,6 +356,7 @@ impl AurisApp {
                         .flex_col()
                         .gap_1()
                         .p_2()
+                        .children(physical)
                         .children(controls),
                 )
                 .into_any_element(),

@@ -71,6 +71,33 @@ pub(super) struct StringModel {
 }
 
 impl StringModel {
+    pub(super) fn motion(&self, points: &mut [f32]) -> (f32, f32) {
+        let period = if self.guitar {
+            self.pluck.period()
+        } else {
+            self.period
+        };
+        let position = self.position;
+        let last = points.len().saturating_sub(1).max(1) as f32;
+        for (index, point) in points.iter_mut().enumerate() {
+            let x = index as f32 / last;
+            // Reconstruct a fixed-end spatial projection from opposing travelling waves.
+            // Single-loop plucked models expose the odd projection of their wave history.
+            // A period is a round trip: travelling the string once takes half a period.
+            *point = if index == 0 || x == 1.0 {
+                0.0
+            } else if !self.bowed {
+                self.bridge.read(x * period * 0.5) - self.bridge.read((1.0 - x * 0.5) * period)
+            } else if x <= position {
+                self.bridge.read((position - x) * period * 0.5)
+                    - self.bridge.read((position + x) * period * 0.5)
+            } else {
+                self.neck.read((x - position) * period * 0.5)
+                    - self.neck.read((2.0 - position - x) * period * 0.5)
+            };
+        }
+        (position, if self.bowed { self.bow.motion() } else { 0.0 })
+    }
     pub(super) fn prepare(&mut self, rate: f32) {
         self.rate = rate;
         // MIDI 0 is 8.18 Hz. Bound the supported host rate before allocating the voice pool.
@@ -95,6 +122,7 @@ impl StringModel {
         self.guitar = model == Model::Guitar;
         self.velocity = velocity;
         if self.guitar {
+            self.position = settings.position;
             self.pluck
                 .excite(&mut self.bridge, frequency, velocity, rate, settings);
             return;
@@ -196,5 +224,31 @@ impl StringModel {
     pub(super) fn glide_to(&mut self, frequency: f32) {
         let phase = self.pole / (1.0 - self.pole);
         self.period_target = (self.rate / frequency.clamp(8.0, self.rate * 0.2) - phase).max(6.0);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fundamental_motion_has_a_center_antinode_and_fixed_endpoints() {
+        let mut string = StringModel {
+            period: 128.0,
+            ..Default::default()
+        };
+        string.bridge.prepare(256);
+        for index in 0..256 {
+            string
+                .bridge
+                .write((std::f32::consts::TAU * index as f32 / 128.).sin());
+        }
+        let mut points = [0.0; 65];
+        string.motion(&mut points);
+        assert_eq!(points[0], 0.0);
+        assert_eq!(points[64], 0.0);
+        assert!(points[32].abs() > 1.99);
+        assert!((points[16] / points[32] - std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-5);
+        assert!((points[16] - points[48]).abs() < 1e-5);
     }
 }

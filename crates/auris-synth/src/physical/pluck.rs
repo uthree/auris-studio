@@ -24,6 +24,9 @@ pub(super) struct Pluck {
 }
 
 impl Pluck {
+    pub(super) fn period(&self) -> f32 {
+        self.period
+    }
     pub(super) fn excite(
         &mut self,
         line: &mut Delay,

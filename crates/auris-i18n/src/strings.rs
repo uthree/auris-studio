@@ -40,6 +40,14 @@ macro_rules! strings {
 }
 
 strings! {
+    PhysicalMotion { en: "Model motion", ja: "物理モデルの動き" }
+    PhysicalResume { en: "Resume display", ja: "表示を再開" }
+    PhysicalWaiting { en: "Play a test note or start playback to see the model move", ja: "試奏または再生すると、モデルの動きを確認できます" }
+    PhysicalProjection { en: "Motion enlarged · Marker: contact · Bars: resonant modes", ja: "振動を拡大表示 · マーカー：接触位置 · 棒：共鳴モード" }
+    PhysicalHeld { en: "Held", ja: "持続中" }
+    PhysicalReleased { en: "Releasing", ja: "余韻" }
+    PhysicalLower { en: "Octave down", ja: "1オクターブ下" }
+    PhysicalHigher { en: "Octave up", ja: "1オクターブ上" }
     VisualizerWaiting { en: "Waiting for audio", ja: "音声を待っています" }
     VisualizerTitle { en: "Audio Visualizer…", ja: "オーディオビジュアライザー…" }
     VisualizerSelected { en: "Follow selected track", ja: "選択トラックを追従" }

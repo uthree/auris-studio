@@ -748,6 +748,22 @@ pub mod plugins {
     //! — the right widget, range, unit and scaling — rather than hand-written per plugin, so a new
     //! parameter is one line rather than one line and a control.
     //!
+    //! # Observing mechanical motion
+    //!
+    //! [`Instrument::motion_monitor`](auris_core::Instrument::motion_monitor) optionally exposes
+    //! fixed-size, coherent mechanical frames. The instrument remains the sole DSP-state owner;
+    //! a reader cannot advance it, lock it or modify its waves. The graph exposes reader handles
+    //! while being built, and the session rebinds them by track on every rebuild, disabling
+    //! retired readers first. Frontends use
+    //! [`Session::watch_instrument_motion`](crate::Session::watch_instrument_motion) and
+    //! [`Session::instrument_motion`](crate::Session::instrument_motion) through the session
+    //! boundary. Physical instruments publish
+    //! at most about 30 frames per second only while watched, reconstructing a spatial projection
+    //! from live delay histories or low modal coordinates. No output waveform is substituted for
+    //! the model state, and observer activation leaves rendered PCM unchanged.
+    //! Readers make three bounded attempts and skip an overlapping publication. Writers never
+    //! wait for readers. Freeze and window dismissal disable sampling without stopping playback.
+    //!
     //! # A note-off names a pitch, not a note
     //!
     //! [`NoteEvent::NoteOff`](auris_core::plugin::NoteEvent) carries a pitch and a frame, and that
