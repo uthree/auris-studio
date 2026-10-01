@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use auris_vocal::{SILENCE, SingerFrames, SingerScore};
 use ort::session::Session;
 use ort::value::Tensor;
+use ort::value::ValueType;
 use serde::Deserialize;
 
 use crate::backend::{BackendKind, SingingBackend};
@@ -15,12 +16,21 @@ use crate::limits::{
     try_zeroed_f32, validate_audio_dimensions,
 };
 use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
-use crate::model::{Acceleration, open_session};
+use crate::model::{Acceleration, open_session_with_optimization};
 use crate::score::{MAX_CHUNK_FRAMES, chunk_ranges};
 use crate::{SingError, validate_frames};
 
 const NAME: &str = "DiffSinger";
 const DEFAULT_STEPS: i64 = 20;
+
+fn open_session(path: &Path, acceleration: Acceleration) -> Result<(Session, bool), SingError> {
+    // ORT 1.20's extended optimizer crashes on the diffusion graphs' control flow.
+    // Basic optimization loads the original trained acoustic and variance exports safely.
+    open_session_with_optimization(path, acceleration, true)
+}
+
+mod variance;
+use variance::{Resources, VarianceBackend};
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -42,6 +52,11 @@ struct DsConfig {
     use_voicing_embed: bool,
     use_tension_embed: bool,
     use_lang_id: bool,
+    languages: String,
+    hidden_size: usize,
+    max_depth: Option<f32>,
+    linguistic: String,
+    variance: String,
     speakers: Option<Vec<String>>,
 }
 
@@ -64,9 +79,74 @@ impl Default for DsConfig {
             use_voicing_embed: false,
             use_tension_embed: false,
             use_lang_id: false,
+            languages: String::new(),
+            hidden_size: 256,
+            max_depth: None,
+            linguistic: String::new(),
+            variance: String::new(),
             speakers: None,
         }
     }
+}
+
+impl DsConfig {
+    fn variance_names(&self) -> Vec<&'static str> {
+        [
+            ("energy", self.use_energy_embed),
+            ("breathiness", self.use_breathiness_embed),
+            ("voicing", self.use_voicing_embed),
+            ("tension", self.use_tension_embed),
+        ]
+        .into_iter()
+        .filter_map(|(name, enabled)| enabled.then_some(name))
+        .collect()
+    }
+
+    fn depth(&self) -> f32 {
+        self.max_depth
+            .unwrap_or(if self.use_continuous_acceleration {
+                1.0
+            } else {
+                1000.0
+            })
+    }
+}
+
+fn control_shape(session: &Session, name: &str) -> Result<Vec<usize>, SingError> {
+    match session
+        .inputs
+        .iter()
+        .find(|input| input.name == name)
+        .map(|input| &input.input_type)
+    {
+        Some(ValueType::Tensor { dimensions, .. }) if dimensions.is_empty() => Ok(vec![]),
+        Some(ValueType::Tensor { dimensions, .. }) if dimensions == &[1] => Ok(vec![1]),
+        _ => Err(SingError::Metadata(format!(
+            "DiffSinger {name} input must be scalar or [1]"
+        ))),
+    }
+}
+
+// DiffSinger conditions silence on the neighbouring sung pitch, just as OpenUtau does.
+fn continuous_f0(raw: &[f32]) -> Vec<f32> {
+    let Some(first) = raw.iter().position(|f0| *f0 > 0.0) else {
+        return vec![1.0; raw.len()];
+    };
+    let mut out = vec![raw[first]; raw.len()];
+    let mut previous = first;
+    for next in first + 1..raw.len() {
+        if raw[next] <= 0.0 {
+            continue;
+        }
+        for (offset, value) in out[previous..=next].iter_mut().enumerate() {
+            let fraction = offset as f32 / (next - previous) as f32;
+            *value = (raw[previous].log2() + (raw[next].log2() - raw[previous].log2()) * fraction)
+                .exp2();
+        }
+        previous = next;
+    }
+    out[previous..].fill(raw[previous]);
+    out
 }
 
 #[derive(Debug, Deserialize)]
@@ -102,6 +182,8 @@ pub(crate) struct DiffSingerBackend {
     on_gpu: bool,
     mel_factor: f32,
     automatic_access_safe: bool,
+    resources: Resources,
+    variance: Option<VarianceBackend>,
 }
 
 impl DiffSingerBackend {
@@ -146,6 +228,20 @@ impl DiffSingerBackend {
             return Err(SingError::Metadata(
                 "DiffSinger phonemes.txt has no SP silence token".into(),
             ));
+        }
+        let mut resources = Resources::load(root, root, &config, automatic)?;
+        let variance = if config.variance_names().is_empty() {
+            None
+        } else {
+            Some(VarianceBackend::load(
+                root,
+                &config,
+                acceleration,
+                automatic,
+            )?)
+        };
+        if let Some(variance) = &variance {
+            resources.safe &= variance.safe();
         }
 
         let bundled_vocoder = Path::new("dsvocoder/vocoder.yaml");
@@ -200,13 +296,19 @@ impl DiffSingerBackend {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| NAME.into());
         let mut speaker_to_id = BTreeMap::new();
-        speaker_to_id.insert(display_name.clone(), 0);
+        if resources.speakers.is_empty() {
+            speaker_to_id.insert(display_name.clone(), 0);
+        } else {
+            for (id, name) in resources.speakers.iter().enumerate() {
+                speaker_to_id.insert(name.clone(), id as u32);
+            }
+        }
         let info = VoiceInfo {
             format_version: FORMAT_VERSION,
             sample_rate: config.sample_rate,
             hop_length: config.hop_size,
             inter_channels: 0,
-            n_speakers: 1,
+            n_speakers: speaker_to_id.len() as u32,
             symbols,
             speaker_to_id,
             phoneme_durations: None,
@@ -227,11 +329,16 @@ impl DiffSingerBackend {
             info,
             path: path.to_path_buf(),
             acceleration,
-            on_gpu: acoustic_gpu || vocoder_gpu,
+            on_gpu: acoustic_gpu
+                || vocoder_gpu
+                || variance.as_ref().is_some_and(VarianceBackend::on_gpu),
             mel_factor,
             automatic_access_safe: primary_access_safe
                 && checked_vocoder_config.is_some()
-                && checked_vocoder_model.is_some(),
+                && checked_vocoder_model.is_some()
+                && resources.safe,
+            resources,
+            variance,
         })
     }
 
@@ -239,30 +346,58 @@ impl DiffSingerBackend {
         &mut self,
         frames: &SingerFrames,
         range: std::ops::Range<usize>,
+        speaker: u32,
     ) -> Result<Vec<f32>, SingError> {
-        let score = arrange(frames, range, &self.info.symbols)?;
+        let score = arrange(frames, range.clone(), &self.info.symbols)?;
         let token_count = score.tokens.len();
         let frame_count = score.f0.len();
         let refused = |error: ort::Error| SingError::Inference(error.to_string());
         let mut inputs = ort::inputs![
-            "tokens" => Tensor::from_array(([1, token_count], score.tokens))?,
-            "durations" => Tensor::from_array(([1, token_count], score.durations))?,
+            "tokens" => Tensor::from_array(([1, token_count], score.tokens.clone()))?,
+            "durations" => Tensor::from_array(([1, token_count], score.durations.clone()))?,
             "f0" => Tensor::from_array(([1, frame_count], score.f0.clone()))?,
         ]
         .map_err(refused)?;
+        if let Some(variance) = &mut self.variance {
+            let speaker_name = self
+                .resources
+                .speakers
+                .get(speaker as usize)
+                .map(String::as_str);
+            let curves = variance.predict(frames, range.clone(), speaker_name)?;
+            for name in self.config.variance_names() {
+                let values = curves.get(name).ok_or_else(|| {
+                    SingError::Inference(format!(
+                        "DiffSinger variance predictor has no {name} output"
+                    ))
+                })?;
+                inputs.push((
+                    name.into(),
+                    Tensor::from_array(([1, frame_count], values.clone()))
+                        .map_err(refused)?
+                        .into(),
+                ));
+            }
+        }
+        self.resources
+            .add_languages(&mut inputs, &score, &self.info.symbols)?;
+        self.resources.add_inputs(&mut inputs, &score, speaker)?;
         if self.config.use_continuous_acceleration {
             inputs.push((
                 "steps".into(),
-                Tensor::from_array(([1], vec![DEFAULT_STEPS]))
+                Tensor::from_array((control_shape(&self.acoustic, "steps")?, vec![DEFAULT_STEPS]))
                     .map_err(refused)?
                     .into(),
             ));
             if self.config.use_variable_depth {
                 inputs.push((
                     "depth".into(),
-                    Tensor::from_array(([1], vec![1.0_f32]))
-                        .map_err(refused)?
-                        .into(),
+                    Tensor::from_array((
+                        control_shape(&self.acoustic, "depth")?,
+                        vec![self.config.depth()],
+                    ))
+                    .map_err(refused)?
+                    .into(),
                 ));
             }
         } else {
@@ -272,16 +407,19 @@ impl DiffSingerBackend {
             }
             inputs.push((
                 "speedup".into(),
-                Tensor::from_array(([1], vec![speedup]))
+                Tensor::from_array((control_shape(&self.acoustic, "speedup")?, vec![speedup]))
                     .map_err(refused)?
                     .into(),
             ));
             if self.config.use_variable_depth {
                 inputs.push((
                     "depth".into(),
-                    Tensor::from_array(([1], vec![1_000_i64]))
-                        .map_err(refused)?
-                        .into(),
+                    Tensor::from_array((
+                        control_shape(&self.acoustic, "depth")?,
+                        vec![self.config.depth() as i64],
+                    ))
+                    .map_err(refused)?
+                    .into(),
                 ));
             }
         }
@@ -319,12 +457,13 @@ impl DiffSingerBackend {
             frame_count,
             self.config.num_mel_bins,
             "DiffSinger mel output",
-            MAX_CHUNK_FRAMES * MAX_MEL_BINS,
+            (MAX_CHUNK_FRAMES + 2 * crate::score::CHUNK_PAD_FRAMES) * MAX_MEL_BINS,
         )?;
         let shape_count = mel_shape
             .iter()
             .try_fold(1usize, |product, dimension| product.checked_mul(*dimension));
-        if shape_count != Some(mel_count)
+        if mel_shape != [1, frame_count, self.config.num_mel_bins]
+            || shape_count != Some(mel_count)
             || raw_mel.len() != mel_count
             || raw_mel.iter().any(|value| !value.is_finite())
         {
@@ -357,7 +496,16 @@ impl DiffSingerBackend {
                 samples.len()
             )));
         }
-        try_copy_f32(samples, "DiffSinger chunk audio")
+        let mut samples = try_copy_f32(samples, "DiffSinger chunk audio")?;
+        let hop = self.config.hop_size as usize;
+        // Dynamics are musical controls; predicted acoustic energy keeps its own scale.
+        for (index, sample) in samples.iter_mut().enumerate() {
+            let at = range.start + index / hop;
+            let next = (at + 1).min(range.end - 1);
+            let fraction = (index % hop) as f32 / hop as f32;
+            *sample *= frames.energy[at] + (frames.energy[next] - frames.energy[at]) * fraction;
+        }
+        Ok(samples)
     }
 }
 
@@ -390,8 +538,16 @@ impl SingingBackend for DiffSingerBackend {
         progress: &mut dyn FnMut(usize, usize) -> bool,
     ) -> Result<Vec<f32>, SingError> {
         validate_frames(frames)?;
-        if speaker != 0 {
-            return Err(SingError::NoSuchSpeaker { speaker, count: 1 });
+        if speaker >= self.info.n_speakers {
+            return Err(SingError::NoSuchSpeaker {
+                speaker,
+                count: self.info.n_speakers,
+            });
+        }
+        if frames.inventory.first().map(String::as_str) != Some(SILENCE) {
+            return Err(SingError::Inference(
+                "DiffSinger frame inventory must start with silence".into(),
+            ));
         }
         let model_hop = self.info.hop_seconds();
         if (frames.hop_seconds - model_hop).abs() > model_hop * 1e-6 {
@@ -409,7 +565,18 @@ impl SingingBackend for DiffSingerBackend {
             if !progress(index, total) {
                 return Err(SingError::Cancelled);
             }
-            let samples = self.sing_chunk(frames, range.clone())?;
+            let samples = match self.sing_chunk(frames, range.clone(), speaker) {
+                Ok(samples) => samples,
+                Err(error) if self.on_gpu && self.acceleration == Acceleration::Auto => {
+                    log::warn!("the GPU refused DiffSinger ({error}); retrying on CPU");
+                    let mut cpu =
+                        Self::load(&self.path, Acceleration::Cpu, self.automatic_access_safe)?;
+                    cpu.acceleration = Acceleration::Auto;
+                    *self = cpu;
+                    self.sing_chunk(frames, range.clone(), speaker)?
+                }
+                Err(error) => return Err(error),
+            };
             let expected = checked_sample_count(range.len(), hop, "DiffSinger chunk audio")?;
             if samples.len() != expected {
                 return Err(SingError::Inference(format!(
@@ -482,7 +649,7 @@ fn arrange(
     Ok(DiffScore {
         tokens,
         durations,
-        f0,
+        f0: continuous_f0(&f0),
     })
 }
 
@@ -517,24 +684,55 @@ fn diffsinger_symbol(symbol: &str, symbols: &[String]) -> Option<usize> {
         .iter()
         .position(|known| known == symbol)
         .or_else(|| symbols.iter().position(|known| known == alias))
+        .or_else(|| {
+            symbols
+                .iter()
+                .position(|known| known.strip_prefix("ja/") == Some(alias))
+        })
 }
 
 fn read_lines(path: &Path) -> Result<Vec<String>, SingError> {
-    let text = read_text_file(path, "DiffSinger phonemes.txt")?;
-    let lines: Vec<String> = text
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let text = read_text_file(path, "DiffSinger phoneme dictionary")?;
+    let lines: Vec<String> = if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    {
+        let tokens: BTreeMap<String, usize> = serde_json::from_str(&text).map_err(|error| {
+            SingError::Metadata(format!("invalid DiffSinger phoneme JSON: {error}"))
+        })?;
+        let maximum = tokens.values().copied().max().unwrap_or(0);
+        if tokens.is_empty() || maximum >= MAX_COLLECTION_ITEMS {
+            return Err(SingError::Metadata(
+                "DiffSinger phoneme IDs must be in 0..4096".into(),
+            ));
+        }
+        // Zero is reserved padding in modern exports. Sparse IDs must never be renumbered.
+        let mut symbols = vec![String::new(); maximum + 1];
+        for (symbol, id) in tokens {
+            if symbol.is_empty() || !symbols[id].is_empty() {
+                return Err(SingError::Metadata(
+                    "DiffSinger phoneme IDs must be unique and tokens nonempty".into(),
+                ));
+            }
+            symbols[id] = symbol;
+        }
+        symbols
+    } else {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
     if lines.is_empty()
         || lines.len() > MAX_COLLECTION_ITEMS
-        || lines
-            .iter()
-            .any(|line| line.len() > MAX_TOKEN_BYTES || line.split_whitespace().count() != 1)
+        || lines.iter().any(|line| {
+            line.len() > MAX_TOKEN_BYTES
+                || (!line.is_empty() && line.split_whitespace().count() != 1)
+        })
     {
         Err(SingError::Metadata(
-            "DiffSinger phonemes.txt must contain 1..=4096 tokens of at most 256 UTF-8 bytes"
+            "DiffSinger phoneme dictionary must contain 1..=4096 tokens of at most 256 UTF-8 bytes"
                 .into(),
         ))
     } else {
@@ -573,20 +771,21 @@ fn validate_config(config: &DsConfig) -> Result<(), SingError> {
             "DiffSinger num_mel_bins must be 1..={MAX_MEL_BINS}"
         )));
     }
-    let unsupported = config.use_energy_embed
-        || config.use_breathiness_embed
-        || config.use_voicing_embed
-        || config.use_tension_embed
-        || config.use_lang_id
-        || config
-            .speakers
-            .as_ref()
-            .is_some_and(|speakers| !speakers.is_empty());
-    if unsupported {
-        return Err(SingError::Unsupported {
-            backend: NAME,
-            reason: "language, speaker, and variance embeddings require auxiliary models".into(),
-        });
+    if !(1..=MAX_COLLECTION_ITEMS).contains(&config.hidden_size)
+        || config.max_depth.is_some_and(|depth| {
+            !depth.is_finite()
+                || depth <= 0.0
+                || depth
+                    > if config.use_continuous_acceleration {
+                        1.0
+                    } else {
+                        1000.0
+                    }
+        })
+    {
+        return Err(SingError::Metadata(
+            "DiffSinger hidden_size or max_depth is outside its valid range".into(),
+        ));
     }
     Ok(())
 }
@@ -679,6 +878,19 @@ mod tests {
     }
 
     #[test]
+    fn json_phonemes_preserve_explicit_nonzero_ids() {
+        let root = temp_root();
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("phonemes.json");
+        std::fs::write(&path, r#"{"a":5,"SP":4,"k":35}"#).unwrap();
+        let symbols = read_lines(&path).unwrap();
+        assert_eq!(symbols[4], "SP");
+        assert_eq!(symbols[5], "a");
+        assert_eq!(symbols[35], "k");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn japanese_ipa_uses_openutau_diffsinger_aliases() {
         let symbols = vec![
             "SP".into(),
@@ -693,7 +905,41 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_model_voicebanks_are_refused_at_load_time() {
+    fn multilingual_japanese_tokens_preserve_exact_matches() {
+        let symbols = vec!["SP".into(), "ja/u".into(), "ja/sh".into(), "ɕ".into()];
+        assert_eq!(diffsinger_symbol("ɯ", &symbols), Some(1));
+        assert_eq!(diffsinger_symbol("ɕ", &symbols), Some(3));
+        assert_eq!(diffsinger_symbol("ja/sh", &symbols), Some(2));
+    }
+
+    #[test]
+    fn pitch_gaps_are_continuous_in_semitone_space() {
+        assert_eq!(
+            continuous_f0(&[0.0, 220.0, 0.0, 880.0, 0.0]),
+            [220.0, 220.0, 440.0, 880.0, 880.0]
+        );
+    }
+
+    #[test]
+    fn malformed_json_ids_and_diffusion_depth_are_rejected() {
+        let root = temp_root();
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("phonemes.json");
+        for text in [r#"{"a":4096}"#, r#"{"SP":4,"a":4}"#, r#"{"a":-1}"#, r#"{}"#] {
+            std::fs::write(&path, text).unwrap();
+            assert!(read_lines(&path).is_err(), "{text}");
+        }
+        for depth in [0.0, f32::NAN, 1.01] {
+            let mut config = valid_config();
+            config.use_continuous_acceleration = true;
+            config.max_depth = Some(depth);
+            assert!(validate_config(&config).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn variance_config_is_accepted_before_auxiliary_models_are_loaded() {
         let config = DsConfig {
             phonemes: "phonemes.txt".into(),
             acoustic: "acoustic.onnx".into(),
@@ -704,10 +950,7 @@ mod tests {
             use_energy_embed: true,
             ..DsConfig::default()
         };
-        assert!(matches!(
-            validate_config(&config),
-            Err(SingError::Unsupported { .. })
-        ));
+        validate_config(&config).unwrap();
     }
 
     #[test]
