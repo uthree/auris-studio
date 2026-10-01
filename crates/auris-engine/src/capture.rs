@@ -113,15 +113,17 @@ pub fn input_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
     let Ok(host) = audio_host(name) else {
         return Vec::new();
     };
-    let default_name = host.default_input_device().map(|device| device.to_string());
+    let default_name = host
+        .default_input_device()
+        .and_then(|device| crate::device::device_name(&device).ok());
 
     let Ok(devices) = host.input_devices() else {
         return Vec::new();
     };
 
     devices
-        .map(|device| {
-            let name = device.to_string();
+        .filter_map(|device| {
+            let name = crate::device::device_name(&device).ok()?;
             let mut sample_rates = Vec::new();
             let mut max_channels = 0;
             if let Ok(configs) = device.supported_input_configs() {
@@ -135,12 +137,12 @@ pub fn input_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
                 }
             }
             sample_rates.sort_unstable();
-            AudioDeviceInfo {
+            Some(AudioDeviceInfo {
                 is_default: default_name.as_deref() == Some(name.as_str()),
                 name,
                 sample_rates,
                 max_channels,
-            }
+            })
         })
         .collect()
 }
@@ -824,7 +826,7 @@ pub fn shared_input_device(output: &AudioDevice) -> Option<AudioDeviceInfo> {
     let device = output.hardware.as_ref()?;
     let config = device.default_input_config().ok()?;
     Some(AudioDeviceInfo {
-        name: device.to_string(),
+        name: crate::device::device_name(device).ok()?,
         is_default: true,
         sample_rates: vec![output.sample_rate() as u32],
         max_channels: config.channels(),
@@ -959,7 +961,7 @@ fn open_input(settings: &CaptureSettings) -> Result<InputSetup, EngineError> {
             let found = host
                 .input_devices()
                 .ok()?
-                .find(|device| device.to_string() == wanted);
+                .find(|device| crate::device::device_name(device).is_ok_and(|name| name == wanted));
             if found.is_none() {
                 log::warn!("input device `{wanted}` is not available; using the default");
             }
@@ -1002,7 +1004,7 @@ fn input_setup(
     }
 
     Ok(InputSetup {
-        name: device.to_string(),
+        name: crate::device::device_name(&device)?,
         device,
         config,
         sample_format,

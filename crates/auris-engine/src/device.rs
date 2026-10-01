@@ -125,24 +125,31 @@ pub(crate) fn audio_host(name: Option<&str>) -> Result<cpal::Host, EngineError> 
     Ok(cpal::host_from_id(id)?)
 }
 
+/// Reads the same name as CPAL's `Display`, without panicking when the device disappears.
+///
+/// `Device::fmt` turns a failed description query into `fmt::Error`, which makes
+/// `to_string` panic. Device discovery and opening must keep that failure fallible.
+pub(crate) fn device_name(device: &cpal::Device) -> Result<String, cpal::Error> {
+    Ok(device.description()?.name().to_owned())
+}
+
 /// Every output device visible to the selected backend.
 pub fn output_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
     let Ok(host) = audio_host(name) else {
         return Vec::new();
     };
-    // `Display` is what `open_output` already records as the device name and what the status
-    // bar shows, so matching on it keeps every place that names a device in agreement.
+    // Discovery and stream setup use the same fallible name query.
     let default_name = host
         .default_output_device()
-        .map(|device| device.to_string());
+        .and_then(|device| device_name(&device).ok());
 
     let Ok(devices) = host.output_devices() else {
         return Vec::new();
     };
 
     devices
-        .map(|device| {
-            let name = device.to_string();
+        .filter_map(|device| {
+            let name = device_name(&device).ok()?;
             let mut sample_rates = Vec::new();
             let mut max_channels = 0;
             if let Ok(configs) = device.supported_output_configs() {
@@ -156,12 +163,12 @@ pub fn output_devices_for_host(name: Option<&str>) -> Vec<AudioDeviceInfo> {
                 }
             }
             sample_rates.sort_unstable();
-            AudioDeviceInfo {
+            Some(AudioDeviceInfo {
                 is_default: default_name.as_deref() == Some(name.as_str()),
                 name,
                 sample_rates,
                 max_channels,
-            }
+            })
         })
         .collect()
 }
@@ -500,7 +507,7 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
             let found = host
                 .output_devices()
                 .ok()?
-                .find(|device| device.to_string() == wanted);
+                .find(|device| device_name(device).is_ok_and(|name| name == wanted));
             if found.is_none() {
                 log::warn!("output device `{wanted}` is not available; using the default");
             }
@@ -539,7 +546,7 @@ fn open_output(settings: &AudioSettings) -> Result<DeviceSetup, EngineError> {
     Ok(DeviceSetup {
         host: host.id().name().to_owned(),
         outputs,
-        name: device.to_string(),
+        name: device_name(&device)?,
         device,
         config,
         sample_format,

@@ -117,6 +117,7 @@ fn take_block(
     caption: &'static str,
     clock: String,
     trouble: Option<String>,
+    width: Pixels,
     theme: &crate::theme::Theme,
 ) -> impl IntoElement + use<> {
     let tint = match trouble.is_some() {
@@ -127,7 +128,8 @@ fn take_block(
         .flex()
         .flex_col()
         .justify_center()
-        .w(px(124.0))
+        .w(width)
+        .flex_shrink_0()
         .child(
             div()
                 .flex()
@@ -159,13 +161,15 @@ fn meter_block(
     value: String,
     db: f32,
     clipped: bool,
+    width: Pixels,
     theme: &crate::theme::Theme,
 ) -> impl IntoElement + use<> {
     div()
         .flex()
         .flex_col()
         .justify_center()
-        .w(px(124.0))
+        .w(width)
+        .flex_shrink_0()
         .child(
             div()
                 .flex()
@@ -401,10 +405,14 @@ impl AurisApp {
     /// Renders the transport readouts, timeline controls and meters.
     pub(crate) fn render_transport(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut gpui::Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = self.theme.clone();
+        // The LCD fields occupy 380 px, with another 24 px of bar padding. A single
+        // meter must still fit its side column at the main window's 640 px minimum.
+        let meter_width =
+            px(((f32::from(window.viewport_size().width) - 404.0) / 2.0).clamp(96.0, 124.0));
         let counting_in = self.session.count_in_beats_left();
         let playhead = self.playhead_ticks();
         let position = format_position(playhead, &self.project().signatures);
@@ -453,6 +461,9 @@ impl AurisApp {
             beats => Some((beats.to_string(), None)),
         };
 
+        // Side columns scroll independently when the window is narrow. Their contents must
+        // not shrink or overflow into the central readouts: on a MacBook-sized window the
+        // zoom slider otherwise paints over the position, and monitoring adds more meters.
         // Three columns of equal weight, so the middle one lands on the window's centre line
         // however wide the sides grow. Every hardware transport and every DAW puts the
         // controls and the position readout there; anchoring them left makes the eye hunt for
@@ -468,51 +479,60 @@ impl AurisApp {
             .child(
                 div()
                     .flex()
+                    .id("transport-edit-controls")
+                    .debug_selector(|| "transport-edit-controls".into())
                     .flex_1()
                     .min_w_0()
-                    .items_center()
-                    .gap_2()
-                    // Export lives in the File menu, with the other commands that write a file.
-                    // A transport bar is for the transport; a button that opens a save dialog was
-                    // the widest thing on it and the least often pressed.
+                    .overflow_x_scroll()
                     .child(
                         div()
                             .flex()
+                            .flex_shrink_0()
+                            .whitespace_nowrap()
                             .items_center()
-                            .gap_1()
+                            .gap_2()
+                            // Export lives in the File menu, with the other commands that write a file.
+                            // A transport bar is for the transport; a button that opens a save dialog was
+                            // the widest thing on it and the least often pressed.
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(theme.text_faint)
-                                    .child(self.t(Key::Grid)),
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text_faint)
+                                            .child(self.t(Key::Grid)),
+                                    )
+                                    .child(button(
+                                        "grid",
+                                        grid_label,
+                                        ButtonStyle::Normal,
+                                        false,
+                                        theme.accent,
+                                        &theme,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cycle_grid();
+                                            cx.notify();
+                                        }),
+                                    )),
                             )
-                            .child(button(
-                                "grid",
-                                grid_label,
-                                ButtonStyle::Normal,
-                                false,
-                                theme.accent,
-                                &theme,
-                                cx.listener(|this, _, _, cx| {
-                                    this.cycle_grid();
-                                    cx.notify();
-                                }),
-                            )),
-                    )
-                    .child(
-                        // The arrangement's own zoom, next to the grid because both are about
-                        // how finely the timeline reads rather than about what it contains.
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
                             .child(
+                                // The arrangement's own zoom, next to the grid because both are about
+                                // how finely the timeline reads rather than about what it contains.
                                 div()
-                                    .text_xs()
-                                    .text_color(theme.text_faint)
-                                    .child(self.t(Key::Zoom)),
-                            )
-                            .child(self.zoom_slider("timeline-zoom", cx)),
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.text_faint)
+                                            .child(self.t(Key::Zoom)),
+                                    )
+                                    .child(self.zoom_slider("timeline-zoom", cx)),
+                            ),
                     ),
             )
             .child(
@@ -536,6 +556,7 @@ impl AurisApp {
                                 // thing every other transport uses.
                                 div()
                                     .id("position")
+                                    .debug_selector(|| "position".into())
                                     .cursor_pointer()
                                     .on_mouse_down(
                                         gpui::MouseButton::Left,
@@ -569,63 +590,76 @@ impl AurisApp {
             .child(
                 div()
                     .flex()
+                    .id("transport-meters")
+                    .debug_selector(|| "transport-meters".into())
                     .flex_1()
                     .min_w_0()
-                    .items_center()
-                    .justify_end()
-                    .gap_3()
-                    // How long the take has been running, and only while one is. Left of the
-                    // input for the same reason the input is left of the master: it is the
-                    // earliest thing in the chain the bar reports on.
-                    .children(take.map(|(clock, trouble)| {
-                        let label = match counting_in {
-                            0 => self.t(Key::TakeClock),
-                            _ => self.t(Key::CountIn),
-                        };
-                        take_block(label, clock, trouble, &theme)
-                    }))
-                    //
-                    // What is coming in, and only while something is: a bar reading silence
-                    // whenever no device is open would be a bar that says the microphone is dead.
-                    // Left of the master, which is the order the signal travels in.
-                    .children(input_db.map(|db| {
-                        meter_block(
-                            self.t(Key::InputMeter),
-                            input_peak_text(db),
-                            db,
-                            self.input_clipped,
-                            &theme,
-                        )
-                    }))
-                    // Master level, always visible so clipping is never a surprise.
-                    //
-                    // Wrapped so the block can be pressed: a clip indicator is latched until
-                    // somebody puts it out, and this is where they do it. Clicking clears every
-                    // meter at once, including tracks scrolled out of sight, because a light
-                    // nobody can reach is a light that stays on for ever.
+                    .overflow_x_scroll()
                     .child(
                         div()
-                            .id("clear-clipping")
-                            .child(meter_block(
-                                self.t(Key::Master),
-                                format!("{master_gain_db:+.1} dB"),
-                                master_db,
-                                master_clipped,
-                                &theme,
-                            ))
-                            // Only while there is something to put out, and asked of the whole
-                            // bank rather than of this meter: a track scrolled out of sight has
-                            // clipped just as loudly as the master, and clearing has to be
-                            // offered while *any* of them is lit. A pointer and a tooltip over
-                            // a block that would do nothing is an invitation to press it.
-                            .when(anything_clipped, |this| {
-                                this.cursor_pointer()
-                                    .tooltip(self.tip(Key::ClearClipping, ""))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.clear_clipping();
-                                        cx.notify();
-                                    }))
-                            }),
+                            .flex()
+                            .flex_shrink_0()
+                            .min_w_full()
+                            .items_center()
+                            .justify_end()
+                            .gap_3()
+                            // How long the take has been running, and only while one is. Left of the
+                            // input for the same reason the input is left of the master: it is the
+                            // earliest thing in the chain the bar reports on.
+                            .children(take.map(|(clock, trouble)| {
+                                let label = match counting_in {
+                                    0 => self.t(Key::TakeClock),
+                                    _ => self.t(Key::CountIn),
+                                };
+                                take_block(label, clock, trouble, meter_width, &theme)
+                            }))
+                            //
+                            // What is coming in, and only while something is: a bar reading silence
+                            // whenever no device is open would be a bar that says the microphone is dead.
+                            // Left of the master, which is the order the signal travels in.
+                            .children(input_db.map(|db| {
+                                meter_block(
+                                    self.t(Key::InputMeter),
+                                    input_peak_text(db),
+                                    db,
+                                    self.input_clipped,
+                                    meter_width,
+                                    &theme,
+                                )
+                            }))
+                            // Master level, always visible so clipping is never a surprise.
+                            //
+                            // Wrapped so the block can be pressed: a clip indicator is latched until
+                            // somebody puts it out, and this is where they do it. Clicking clears every
+                            // meter at once, including tracks scrolled out of sight, because a light
+                            // nobody can reach is a light that stays on for ever.
+                            .child(
+                                div()
+                                    .id("clear-clipping")
+                                    .debug_selector(|| "clear-clipping".into())
+                                    .flex_shrink_0()
+                                    .child(meter_block(
+                                        self.t(Key::Master),
+                                        format!("{master_gain_db:+.1} dB"),
+                                        master_db,
+                                        master_clipped,
+                                        meter_width,
+                                        &theme,
+                                    ))
+                                    // Only while there is something to put out, and asked of the whole
+                                    // bank rather than of this meter: a track scrolled out of sight has
+                                    // clipped just as loudly as the master, and clearing has to be
+                                    // offered while *any* of them is lit. A pointer and a tooltip over
+                                    // a block that would do nothing is an invitation to press it.
+                                    .when(anything_clipped, |this| {
+                                        this.cursor_pointer()
+                                            .tooltip(self.tip(Key::ClearClipping, ""))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.clear_clipping();
+                                                cx.notify();
+                                            }))
+                                    }),
+                            ),
                     ),
             )
     }
@@ -1091,6 +1125,45 @@ fn grid_label_for(current: i64, free: &'static str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn narrow_transport_keeps_readouts_clear_and_zoom_reachable(cx: &mut gpui::TestAppContext) {
+        use crate::harness::{open, paint, press, resize};
+        use gpui::{ScrollDelta, ScrollWheelEvent, point, size};
+
+        let (app, cx) = open(cx);
+        for (width, language) in [
+            (640.0, Language::English),
+            (640.0, Language::Japanese),
+            (800.0, Language::Japanese),
+            (1360.0, Language::Japanese),
+        ] {
+            app.update(cx, |app, _| app.language = language);
+            resize(&app, cx, size(px(width), px(700.0)));
+            let editing = cx.debug_bounds("transport-edit-controls").unwrap();
+            let position = cx.debug_bounds("position").unwrap();
+            let meters = cx.debug_bounds("transport-meters").unwrap();
+            assert!(editing.right() <= position.left());
+            assert!(position.right() <= meters.left());
+            let master = cx.debug_bounds("clear-clipping").unwrap();
+            assert!(master.left() >= meters.left() && master.right() <= meters.right());
+
+            // A horizontal trackpad gesture reveals the zoom slider without moving the LCD.
+            cx.simulate_event(ScrollWheelEvent {
+                position: editing.center(),
+                delta: ScrollDelta::Pixels(point(px(-1000.0), px(0.0))),
+                ..Default::default()
+            });
+            paint(&app, cx);
+            let zoom = cx.debug_bounds("timeline-zoom").unwrap();
+            assert!(zoom.left() >= editing.left() && zoom.right() <= editing.right());
+            assert_eq!(cx.debug_bounds("position").unwrap(), position);
+            press(cx, zoom.center());
+            app.read_with(cx, |app, _| assert!(app.dragging()));
+            crate::harness::release(cx, zoom.center());
+            app.read_with(cx, |app, _| assert!(!app.dragging()));
+        }
+    }
 
     #[test]
     fn precise_signature_scroll_carries_fractional_notches_between_events() {
