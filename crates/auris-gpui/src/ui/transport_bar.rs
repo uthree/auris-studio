@@ -1,6 +1,7 @@
 //! The transport bar across the top of the window.
 
 use auris_i18n::{Key, Language, messages};
+use auris_session::ToolbarItem;
 use auris_session::prelude::*;
 use auris_session::session::MonitorStatus;
 
@@ -278,60 +279,60 @@ impl AurisApp {
         let punching = self.project().punch_enabled;
         let recording = self.session.is_recording();
         let clicking = self.session.metronome() || self.session.count_in_beats_left() > 0;
-        div()
-            .flex()
-            .gap_1()
-            .child(
-                icon_button(
-                    "rtz",
-                    Icon::ToStart,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.seek(Ticks::ZERO);
-                        cx.notify();
-                    }),
-                )
-                .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
-            )
-            .child(
-                icon_button(
-                    "stop",
-                    Icon::Stop,
-                    false,
-                    theme.accent,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.session.stop();
-                        this.seek(Ticks::ZERO);
-                        cx.notify();
-                    }),
-                )
-                // The one button up here that is not a bindable command, so the
-                // card carries a name and no chip. That it has no key is a thing
-                // to fix in the table rather than to hide by leaving it nameless.
-                .tooltip(self.tip(Key::CmdStop, "")),
-            )
-            .child(
-                icon_button(
-                    "play",
-                    if playing { Icon::Pause } else { Icon::Play },
-                    playing,
-                    theme.playing,
-                    &theme,
-                    cx.listener(|this, _, _, cx| {
-                        this.toggle_play();
-                        cx.notify();
-                    }),
-                )
-                .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
-            )
-            // Beside Play, where a hardware transport puts it, and lit while a
-            // take is running so that a microphone nobody remembers arming is
-            // never live without something on screen saying so.
-            .child(
-                icon_button(
+        let mut items = Vec::new();
+        for item in self.settings.toolbar.visible_in(0) {
+            let control = match item {
+                ToolbarItem::Playback => div()
+                    .flex()
+                    .gap_1()
+                    .child(
+                        icon_button(
+                            "rtz",
+                            Icon::ToStart,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.seek(Ticks::ZERO);
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.tip(Key::CmdReturnToZero, "transport.return")),
+                    )
+                    .child(
+                        icon_button(
+                            "stop",
+                            Icon::Stop,
+                            false,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.session.stop();
+                                this.seek(Ticks::ZERO);
+                                cx.notify();
+                            }),
+                        )
+                        // The one button up here that is not a bindable command, so the
+                        // card carries a name and no chip. That it has no key is a thing
+                        // to fix in the table rather than to hide by leaving it nameless.
+                        .tooltip(self.tip(Key::CmdStop, "")),
+                    )
+                    .child(
+                        icon_button(
+                            "play",
+                            if playing { Icon::Pause } else { Icon::Play },
+                            playing,
+                            theme.playing,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.toggle_play();
+                                cx.notify();
+                            }),
+                        )
+                        .tooltip(self.tip(Key::CmdPlayStop, "transport.play")),
+                    )
+                    .into_any_element(),
+                ToolbarItem::Record => (icon_button(
                     "record",
                     Icon::Record,
                     recording,
@@ -342,13 +343,9 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdRecord, "transport.record")),
-            )
-            // Beside Record rather than beside the cycle, though it looks like the
-            // cycle: this one decides what a take *keeps*, and everything to its
-            // left decides what the transport does.
-            .child(
-                icon_button(
+                .tooltip(self.tip(Key::CmdRecord, "transport.record")))
+                .into_any_element(),
+                ToolbarItem::Punch => (icon_button(
                     "punch",
                     Icon::Punch,
                     punching,
@@ -359,10 +356,9 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")),
-            )
-            .child(
-                icon_button(
+                .tooltip(self.tip(Key::CmdTogglePunch, "transport.punch")))
+                .into_any_element(),
+                ToolbarItem::Loop => (icon_button(
                     "loop",
                     Icon::Loop,
                     looping,
@@ -373,13 +369,9 @@ impl AurisApp {
                         cx.notify();
                     }),
                 )
-                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")),
-            )
-            // Beside the cycle button because the two are the same kind of
-            // switch: neither writes anything, both change how a pass sounds
-            // while somebody is listening to it.
-            .child(
-                icon_button(
+                .tooltip(self.tip(Key::CmdToggleCycle, "transport.loop")))
+                .into_any_element(),
+                ToolbarItem::Metronome => (icon_button(
                     "metronome",
                     Icon::Metronome,
                     clicking,
@@ -398,8 +390,13 @@ impl AurisApp {
                     gpui::MouseButton::Right,
                     Self::opens_menu(cx, |this, at| this.count_in_menu(at)),
                 )
-                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")),
-            )
+                .tooltip(self.tip(Key::CmdToggleMetronome, "transport.metronome")))
+                .into_any_element(),
+                _ => continue,
+            };
+            items.push(control);
+        }
+        div().flex().gap_1().children(items)
     }
 
     /// Renders the transport readouts, timeline controls and meters.
@@ -461,13 +458,154 @@ impl AurisApp {
             beats => Some((beats.to_string(), None)),
         };
 
-        // Side columns scroll independently when the window is narrow. Their contents must
-        // not shrink or overflow into the central readouts: on a MacBook-sized window the
-        // zoom slider otherwise paints over the position, and monitoring adds more meters.
-        // Three columns of equal weight, so the middle one lands on the window's centre line
-        // however wide the sides grow. Every hardware transport and every DAW puts the
-        // controls and the position readout there; anchoring them left makes the eye hunt for
-        // the playhead position on a wide window.
+        let mut editing = Vec::new();
+        for item in self.settings.toolbar.visible_in(1) {
+            editing.push(match item {
+                ToolbarItem::Grid => (div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.text_faint)
+                            .child(self.t(Key::Grid)),
+                    )
+                    .child(button(
+                        "grid",
+                        grid_label,
+                        ButtonStyle::Normal,
+                        false,
+                        theme.accent,
+                        &theme,
+                        cx.listener(|this, _, _, cx| {
+                            this.cycle_grid();
+                            cx.notify();
+                        }),
+                    )))
+                .into_any_element(),
+                ToolbarItem::Zoom => (
+                    // The arrangement's own zoom, next to the grid because both are about
+                    // how finely the timeline reads rather than about what it contains.
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.text_faint)
+                                .child(self.t(Key::Zoom)),
+                        )
+                        .child(self.zoom_slider("timeline-zoom", cx))
+                )
+                .into_any_element(),
+                _ => continue,
+            });
+        }
+        let mut readouts = Vec::new();
+        for item in self.settings.toolbar.visible_in(2) {
+            readouts.push(match item {
+                ToolbarItem::Position => (
+                    // The readout is a display; the double-click that turns it into
+                    // an input goes on a wrapper, so that `readout` stays the plain
+                    // thing every other transport uses.
+                    div()
+                        .id("position")
+                        .debug_selector(|| "position".into())
+                        .cursor_pointer()
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                                if event.click_count < 2 {
+                                    return;
+                                }
+                                this.prompt_for_position();
+                                cx.notify();
+                            }),
+                        )
+                        .child(readout(
+                            self.t(Key::Position),
+                            position.clone(),
+                            Some(seconds.format_clock().into()),
+                            px(118.0),
+                            &theme,
+                        ))
+                )
+                .into_any_element(),
+                ToolbarItem::Tempo => (self.render_tempo_control(bpm, cx)).into_any_element(),
+                ToolbarItem::Signature => {
+                    (self.render_signature_control(signature, cx)).into_any_element()
+                }
+                ToolbarItem::Chord => (self.lcd_field(
+                    "current-chord",
+                    self.t(Key::CurrentChord),
+                    chord.clone(),
+                    px(82.0),
+                    chord_color,
+                ))
+                .into_any_element(),
+                _ => continue,
+            });
+        }
+        let mut meters = Vec::new();
+        for item in self.settings.toolbar.visible_in(3) {
+            meters.push(match item {
+                ToolbarItem::Take => {
+                    let Some((clock, trouble)) = take.clone() else {
+                        continue;
+                    };
+                    let label = self.t(if counting_in == 0 {
+                        Key::TakeClock
+                    } else {
+                        Key::CountIn
+                    });
+                    take_block(label, clock, trouble, meter_width, &theme).into_any_element()
+                }
+                ToolbarItem::Input => {
+                    let Some(db) = input_db else {
+                        continue;
+                    };
+                    meter_block(
+                        self.t(Key::InputMeter),
+                        input_peak_text(db),
+                        db,
+                        self.input_clipped,
+                        meter_width,
+                        &theme,
+                    )
+                    .into_any_element()
+                }
+                ToolbarItem::Master => (div()
+                    .id("clear-clipping")
+                    .debug_selector(|| "clear-clipping".into())
+                    .flex_shrink_0()
+                    .child(meter_block(
+                        self.t(Key::Master),
+                        format!("{master_gain_db:+.1} dB"),
+                        master_db,
+                        master_clipped,
+                        meter_width,
+                        &theme,
+                    ))
+                    // Only while there is something to put out, and asked of the whole
+                    // bank rather than of this meter: a track scrolled out of sight has
+                    // clipped just as loudly as the master, and clearing has to be
+                    // offered while *any* of them is lit. A pointer and a tooltip over
+                    // a block that would do nothing is an invitation to press it.
+                    .when(anything_clipped, |this| {
+                        this.cursor_pointer()
+                            .tooltip(self.tip(Key::ClearClipping, ""))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear_clipping();
+                                cx.notify();
+                            }))
+                    }))
+                .into_any_element(),
+                ToolbarItem::Visualizer => self.render_toolbar_visualizer(cx).into_any_element(),
+                _ => continue,
+            });
+        }
         div()
             .flex()
             .items_center()
@@ -491,101 +629,16 @@ impl AurisApp {
                             .whitespace_nowrap()
                             .items_center()
                             .gap_2()
-                            // Export lives in the File menu, with the other commands that write a file.
-                            // A transport bar is for the transport; a button that opens a save dialog was
-                            // the widest thing on it and the least often pressed.
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.text_faint)
-                                            .child(self.t(Key::Grid)),
-                                    )
-                                    .child(button(
-                                        "grid",
-                                        grid_label,
-                                        ButtonStyle::Normal,
-                                        false,
-                                        theme.accent,
-                                        &theme,
-                                        cx.listener(|this, _, _, cx| {
-                                            this.cycle_grid();
-                                            cx.notify();
-                                        }),
-                                    )),
-                            )
-                            .child(
-                                // The arrangement's own zoom, next to the grid because both are about
-                                // how finely the timeline reads rather than about what it contains.
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(theme.text_faint)
-                                            .child(self.t(Key::Zoom)),
-                                    )
-                                    .child(self.zoom_slider("timeline-zoom", cx)),
-                            ),
+                            .children(editing),
                     ),
             )
             .child(
-                // The readouts sit below the title bar's playback controls on the same centre line.
                 div()
                     .flex()
-                    .flex_col()
                     .items_center()
-                    .gap(px(4.0))
                     .flex_shrink_0()
-                    // Musical position, wall-clock position and tempo: the readouts every DAW
-                    // shows, side by side under the buttons they describe.
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                // The readout is a display; the double-click that turns it into
-                                // an input goes on a wrapper, so that `readout` stays the plain
-                                // thing every other transport uses.
-                                div()
-                                    .id("position")
-                                    .debug_selector(|| "position".into())
-                                    .cursor_pointer()
-                                    .on_mouse_down(
-                                        gpui::MouseButton::Left,
-                                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                                            if event.click_count < 2 {
-                                                return;
-                                            }
-                                            this.prompt_for_position();
-                                            cx.notify();
-                                        }),
-                                    )
-                                    .child(readout(
-                                        self.t(Key::Position),
-                                        position,
-                                        Some(seconds.format_clock().into()),
-                                        px(118.0),
-                                        &theme,
-                                    )),
-                            )
-                            .child(self.render_tempo_control(bpm, cx))
-                            .child(self.render_signature_control(signature, cx))
-                            .child(self.lcd_field(
-                                "current-chord",
-                                self.t(Key::CurrentChord),
-                                chord,
-                                px(82.0),
-                                chord_color,
-                            )),
-                    ),
+                    .gap_1()
+                    .children(readouts),
             )
             .child(
                 div()
@@ -603,63 +656,7 @@ impl AurisApp {
                             .items_center()
                             .justify_end()
                             .gap_3()
-                            // How long the take has been running, and only while one is. Left of the
-                            // input for the same reason the input is left of the master: it is the
-                            // earliest thing in the chain the bar reports on.
-                            .children(take.map(|(clock, trouble)| {
-                                let label = match counting_in {
-                                    0 => self.t(Key::TakeClock),
-                                    _ => self.t(Key::CountIn),
-                                };
-                                take_block(label, clock, trouble, meter_width, &theme)
-                            }))
-                            //
-                            // What is coming in, and only while something is: a bar reading silence
-                            // whenever no device is open would be a bar that says the microphone is dead.
-                            // Left of the master, which is the order the signal travels in.
-                            .children(input_db.map(|db| {
-                                meter_block(
-                                    self.t(Key::InputMeter),
-                                    input_peak_text(db),
-                                    db,
-                                    self.input_clipped,
-                                    meter_width,
-                                    &theme,
-                                )
-                            }))
-                            // Master level, always visible so clipping is never a surprise.
-                            //
-                            // Wrapped so the block can be pressed: a clip indicator is latched until
-                            // somebody puts it out, and this is where they do it. Clicking clears every
-                            // meter at once, including tracks scrolled out of sight, because a light
-                            // nobody can reach is a light that stays on for ever.
-                            .child(
-                                div()
-                                    .id("clear-clipping")
-                                    .debug_selector(|| "clear-clipping".into())
-                                    .flex_shrink_0()
-                                    .child(meter_block(
-                                        self.t(Key::Master),
-                                        format!("{master_gain_db:+.1} dB"),
-                                        master_db,
-                                        master_clipped,
-                                        meter_width,
-                                        &theme,
-                                    ))
-                                    // Only while there is something to put out, and asked of the whole
-                                    // bank rather than of this meter: a track scrolled out of sight has
-                                    // clipped just as loudly as the master, and clearing has to be
-                                    // offered while *any* of them is lit. A pointer and a tooltip over
-                                    // a block that would do nothing is an invitation to press it.
-                                    .when(anything_clipped, |this| {
-                                        this.cursor_pointer()
-                                            .tooltip(self.tip(Key::ClearClipping, ""))
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.clear_clipping();
-                                                cx.notify();
-                                            }))
-                                    }),
-                            ),
+                            .children(meters),
                     ),
             )
     }
@@ -679,6 +676,7 @@ impl AurisApp {
         let theme = &self.theme;
         div()
             .id(id)
+            .debug_selector(move || id.into())
             .flex()
             .flex_col()
             .justify_center()
@@ -1125,6 +1123,66 @@ fn grid_label_for(current: i64, free: &'static str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn toolbar_visibility_and_order_preserve_narrow_window_alignment(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::harness::{open, resize};
+        use gpui::size;
+        let (app, cx) = open(cx);
+        let original_transport_width = cx.debug_bounds("titlebar-transport").unwrap().size.width;
+        let record_slot =
+            cx.debug_bounds("punch").unwrap().left() - cx.debug_bounds("record").unwrap().left();
+        let position_left = cx.debug_bounds("position").unwrap().left();
+        let chord_right = cx.debug_bounds("current-chord").unwrap().right();
+        let original_readout_width = chord_right - position_left;
+        let chord_slot = chord_right - cx.debug_bounds("signature").unwrap().right();
+        app.update(cx, |app, cx| {
+            app.settings.toolbar.move_item(ToolbarItem::Zoom, false);
+            app.settings
+                .toolbar
+                .move_item(ToolbarItem::Signature, false);
+            app.settings
+                .toolbar
+                .entries
+                .iter_mut()
+                .find(|entry| entry.item == ToolbarItem::Chord)
+                .unwrap()
+                .visible = false;
+            app.settings
+                .toolbar
+                .entries
+                .iter_mut()
+                .find(|entry| entry.item == ToolbarItem::Record)
+                .unwrap()
+                .visible = false;
+            cx.notify();
+        });
+        for width in [640., 1360.] {
+            resize(&app, cx, size(px(width), px(700.)));
+            // GPUI retains old debug selectors across frames; measure the current layout
+            // rather than treating a cached selector as evidence that a removed control exists.
+            assert_eq!(
+                cx.debug_bounds("titlebar-transport").unwrap().size.width,
+                original_transport_width - record_slot
+            );
+            let signature = cx.debug_bounds("signature").unwrap();
+            let tempo = cx.debug_bounds("tempo").unwrap();
+            assert!(signature.left() < tempo.left());
+            let center = cx.debug_bounds("titlebar-transport").unwrap().center().x;
+            let position = cx.debug_bounds("position").unwrap();
+            assert_eq!(
+                tempo.right() - position.left(),
+                original_readout_width - chord_slot
+            );
+            assert_eq!((position.left() + tempo.right()) / 2., center);
+            let editing = cx.debug_bounds("transport-edit-controls").unwrap();
+            let meters = cx.debug_bounds("transport-meters").unwrap();
+            assert!(position.left() >= editing.right());
+            assert!(tempo.right() <= meters.left());
+        }
+    }
 
     #[gpui::test]
     fn narrow_transport_keeps_readouts_clear_and_zoom_reachable(cx: &mut gpui::TestAppContext) {

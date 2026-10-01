@@ -59,6 +59,7 @@ mod mixer;
 mod mixture;
 mod monitor;
 mod musical_analysis;
+mod note_preview;
 mod notes;
 mod output_preview;
 mod perform;
@@ -115,6 +116,7 @@ pub use mixture::{
 };
 pub use monitor::MonitorStatus;
 pub use musical_analysis::MusicalClipAnalysis;
+pub use note_preview::NoteSelectionPreview;
 pub use notes::{Quantize, quantized};
 pub use output_preview::prepare_output_preview;
 pub use plugin_discovery::InstalledPluginFiles;

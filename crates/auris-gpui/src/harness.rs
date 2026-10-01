@@ -73,6 +73,7 @@ pub(crate) fn open(cx: &mut TestAppContext) -> (Entity<AurisApp>, &mut VisualTes
         let mut app = AurisApp::new(cx);
         // Gesture fixtures start docked even while a concurrent settings test saves a layout.
         app.panels = crate::dock::PanelLayout::default();
+        app.settings.toolbar = auris_session::ToolbarPreferences::default();
         app
     });
     // `main` focuses the arrangement before anything else, and a keystroke goes to whatever holds

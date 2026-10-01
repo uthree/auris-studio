@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SessionError;
 
+mod toolbar;
+pub use toolbar::{ToolbarEntry, ToolbarItem, ToolbarPreferences};
+
 /// Folder name used under the user's configuration directory.
 const APP_FOLDER: &str = "auris-studio";
 
@@ -401,6 +404,8 @@ pub struct Settings {
     /// shape the same notes with different pointer behaviour without changing the file merely by
     /// opening it.
     pub snap_note_lengths: bool,
+    /// Visibility and ordering of the desktop toolbar's controls.
+    pub toolbar: ToolbarPreferences,
     /// How a bounce is written.
     pub export: ExportPreferences,
     /// Where the window was when it was last put away. `None` on a first run.
@@ -455,6 +460,7 @@ impl Default for Settings {
             // this value.
             autosave: true,
             snap_note_lengths: true,
+            toolbar: ToolbarPreferences::default(),
             export: ExportPreferences::default(),
             window: None,
             recent: Vec::new(),
@@ -507,6 +513,7 @@ impl Settings {
         match serde_json::from_str::<Self>(&text) {
             Ok(mut settings) => {
                 settings.recent.truncate(Self::RECENT);
+                settings.toolbar.normalize();
                 settings.audio.sample_rate = settings.audio.sample_rate.map(|rate| rate.max(8_000));
                 settings.audio.block_frames = settings.audio.block_frames.max(1);
                 settings

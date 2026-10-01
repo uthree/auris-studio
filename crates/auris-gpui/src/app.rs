@@ -1712,6 +1712,8 @@ pub struct AurisApp {
     /// Notes currently sounding because the user is holding a key, dragging one, or pressing a
     /// chord on the harmony lane.
     pub(crate) auditioning: Option<(TrackId, Vec<u8>)>,
+    /// The last phrase requested by a multi-note drag, used to avoid restarting identical moves.
+    pub(crate) note_selection_preview: Option<auris_session::NoteSelectionPreview>,
     /// Keyboard focus target, so the action bindings reach this view.
     pub(crate) focus: FocusHandle,
     /// Stable, focus-trapped keyboard targets for the controls in modal overlays.
@@ -2137,6 +2139,7 @@ impl AurisApp {
             progressions: auris_session::progressions::ProgressionBook::load(),
             drum_maps: auris_session::DrumMapBook::load(),
             auditioning: None,
+            note_selection_preview: None,
             focus: cx.focus_handle(),
             modal_focus: ModalFocus::new(cx),
             panes: PaneFocus::new(cx),
@@ -2813,31 +2816,30 @@ impl AurisApp {
         self.sound(track, vec![pitch], velocity, Some(index));
     }
 
-    /// Auditions the actual pitches of a moved selection, including MIDI-limit clamps.
+    /// Plays a moved selection as a timed phrase; identical pointer updates do not restart it.
     pub(crate) fn audition_moved_notes(&mut self, clip: ClipId, origins: &[(usize, Ticks, u8)]) {
-        let Some((track, notes)) = self.project().midi_clip(clip) else {
+        if let [(index, _, _)] = origins {
+            if let Some((track, notes)) = self.project().midi_clip(clip)
+                && let Some(note) = notes.notes.get(*index)
+            {
+                let pitch = note.pitch;
+                if !self.is_auditioning(pitch) {
+                    self.sound(track, vec![pitch], NOTE_VELOCITY, Some(*index));
+                }
+            }
+            return;
+        }
+        let indices: Vec<_> = origins.iter().map(|(index, _, _)| *index).collect();
+        let Some(preview) = self.session.note_selection_preview(clip, &indices) else {
             self.stop_audition();
             return;
         };
-        let mut pitches: Vec<_> = origins
-            .iter()
-            .filter_map(|(index, _, _)| notes.notes.get(*index).map(|note| note.pitch))
-            .collect();
-        pitches.sort_unstable();
-        pitches.dedup();
-        let sounding = self
-            .auditioning
-            .as_ref()
-            .filter(|(playing_track, _)| *playing_track == track)
-            .map(|(_, pitches)| pitches.as_slice());
-        match audition_for(sounding, &pitches) {
-            Audition::Silence => self.stop_audition(),
-            Audition::Hold => {}
-            Audition::Strike => {
-                let index = origins.first().map(|(index, _, _)| *index);
-                self.sound(track, pitches, NOTE_VELOCITY, index);
-            }
+        if self.note_selection_preview.as_ref() == Some(&preview) {
+            return;
         }
+        self.stop_audition();
+        self.session.play_note_selection_preview(&preview);
+        self.note_selection_preview = Some(preview);
     }
 
     /// Sounds the chord in force at `tick`, and says so when nothing can play it.
@@ -2946,6 +2948,9 @@ impl AurisApp {
 
     /// Releases whatever is being auditioned.
     pub(crate) fn stop_audition(&mut self) {
+        if self.note_selection_preview.take().is_some() {
+            self.session.stop_note_selection_preview();
+        }
         // A wish nobody is holding a note for any more is withdrawn rather than played
         // late; the render still lands in the cache for the next pass over that pitch.
         self.sung_preview_wish = None;
@@ -3265,6 +3270,14 @@ impl AurisApp {
         }
     }
 
+    /// Installs and saves toolbar preferences without changing the document.
+    pub(crate) fn apply_toolbar(&mut self, toolbar: auris_session::ToolbarPreferences) {
+        self.settings.toolbar = toolbar;
+        if let Err(error) = self.settings.save() {
+            self.set_status(error.to_string());
+        }
+    }
+
     /// Chooses where singer voices run their inference, and remembers the choice.
     ///
     /// Cannot fail here: the session only drops its cached models, and whether the GPU
@@ -3385,6 +3398,7 @@ impl AurisApp {
         let pointer = self.pointer;
         let autosave = self.session.autosave_enabled();
         let snap_note_lengths = self.settings.snap_note_lengths;
+        let toolbar = self.settings.toolbar.clone();
         let dictionary = self.settings.japanese_dictionary.clone();
         let singer_acceleration = self.settings.singer_acceleration;
         let voice_paths = self.settings.voice_paths.clone();
@@ -3414,6 +3428,7 @@ impl AurisApp {
                         pointer,
                         autosave,
                         snap_note_lengths,
+                        toolbar,
                         dictionary,
                         singer_acceleration,
                         voice_paths,

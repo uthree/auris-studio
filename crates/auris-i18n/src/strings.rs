@@ -40,6 +40,19 @@ macro_rules! strings {
 }
 
 strings! {
+    ToolbarHeading { en: "Top toolbar", ja: "上部ツールバー" }
+    ToolbarNote { en: "Show or hide items and change their order within each group.", ja: "項目の表示を切り替え、グループ内の順序を変更できます。" }
+    ToolbarPlayback { en: "Playback controls", ja: "再生操作" }
+    ToolbarEditing { en: "Editing controls", ja: "編集操作" }
+    ToolbarReadouts { en: "Position and tempo", ja: "位置・テンポ表示" }
+    ToolbarMeters { en: "Meters and visualizer", ja: "メーター・ビジュアライザー" }
+    ToolbarShow { en: "Show", ja: "表示" }
+    ToolbarHide { en: "Hide", ja: "非表示" }
+    ToolbarEarlier { en: "Move earlier", ja: "前へ移動" }
+    ToolbarLater { en: "Move later", ja: "後へ移動" }
+    ToolbarReset { en: "Restore default toolbar", ja: "ツールバーを初期設定に戻す" }
+    ToolbarVisualizer { en: "Audio visualizer", ja: "オーディオビジュアライザー" }
+    ToolbarSpectrum { en: "Spectrum…", ja: "スペクトラム…" }
     PhysicalMotion { en: "Model motion", ja: "物理モデルの動き" }
     PhysicalResume { en: "Resume display", ja: "表示を再開" }
     PhysicalWaiting { en: "Play a test note or start playback to see the model move", ja: "試奏または再生すると、モデルの動きを確認できます" }

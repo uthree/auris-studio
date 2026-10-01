@@ -4034,7 +4034,13 @@ mod window_tests {
             assert_eq!(tag.start, BEAT * 3);
             assert_eq!(tag.length, BEAT);
             assert_eq!(
-                this.auditioning.as_ref().unwrap().1,
+                this.note_selection_preview
+                    .as_ref()
+                    .unwrap()
+                    .notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .collect::<Vec<_>>(),
                 vec![MIDDLE_C + 4, MIDDLE_C + 6]
             );
         });
@@ -4380,9 +4386,7 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn swept_notes_audition_the_whole_transposed_selection_and_stop_on_release(
-        cx: &mut TestAppContext,
-    ) {
+    fn swept_notes_preview_the_transposed_phrase_and_stop_on_release(cx: &mut TestAppContext) {
         let (app, cx, _) = with_a_swept_phrase(cx);
         let from = roll_point(&app, cx, BEAT + HALF_BEAT, MIDDLE_C);
         let to = roll_point(&app, cx, BEAT * 2 + HALF_BEAT, MIDDLE_C + 3);
@@ -4390,18 +4394,27 @@ mod window_tests {
         crate::harness::drag_to(cx, to);
         app.read_with(cx, |this, _| {
             assert_eq!(
-                this.auditioning.as_ref().unwrap().1,
+                this.note_selection_preview
+                    .as_ref()
+                    .unwrap()
+                    .notes
+                    .iter()
+                    .map(|note| note.pitch)
+                    .collect::<Vec<_>>(),
                 vec![MIDDLE_C + 3, MIDDLE_C + 5]
             );
+            let preview = this.note_selection_preview.as_ref().unwrap();
+            assert_eq!(preview.notes[1].start - preview.notes[0].start, BEAT);
+            assert!(this.auditioning.is_none());
         });
         release(cx, to);
-        app.read_with(cx, |this, _| assert!(this.auditioning.is_none()));
+        app.read_with(cx, |this, _| assert!(this.note_selection_preview.is_none()));
 
         paint(&app, cx);
         press(cx, to);
         crate::harness::drag_to(cx, from);
         cx.simulate_keystrokes("escape");
-        app.read_with(cx, |this, _| assert!(this.auditioning.is_none()));
+        app.read_with(cx, |this, _| assert!(this.note_selection_preview.is_none()));
         release(cx, from);
         assert_eq!(notes(&app, cx)[0].pitch, MIDDLE_C + 3);
     }

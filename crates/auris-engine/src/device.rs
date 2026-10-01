@@ -701,11 +701,21 @@ fn build_stream(
     Ok(stream)
 }
 
+/// An immutable selection schedule and its independent audio clock.
+struct NotePreview {
+    track: usize,
+    events: Arc<[crate::ScheduledEvent]>,
+    position: u64,
+    next: usize,
+    active: [u32; 128],
+}
+
 /// The audio-thread half of the engine.
 pub(crate) struct AudioEngine {
     graph: Option<Box<RenderGraph>>,
     preview: Option<(Arc<AudioBuffer>, usize)>,
     output_preview: Option<OutputPreview>,
+    note_preview: Option<NotePreview>,
     transport: Transport,
     commands: Receiver<EngineCommand>,
     returned_graphs: Sender<Retired>,
@@ -807,6 +817,7 @@ impl AudioEngine {
             graph: None,
             preview: None,
             output_preview: None,
+            note_preview: None,
             transport: Transport::new(),
             commands,
             returned_graphs,
@@ -844,7 +855,8 @@ impl AudioEngine {
         let frames = data.len() / self.channels;
         let mut written = 0;
         while written < frames {
-            let count = (frames - written).min(self.max_block);
+            let limit = (frames - written).min(self.max_block);
+            let count = self.note_preview_segment(limit);
             self.scratch.set_frame_count(count);
             let previewing = self
                 .output_preview
@@ -904,6 +916,9 @@ impl AudioEngine {
                 self.publish_meters(count);
             }
             written += count;
+            if let Some(preview) = &mut self.note_preview {
+                preview.position = preview.position.saturating_add(count as u64);
+            }
         }
         // Automation writes effect parameters while rendering, and those parameters may change
         // a plugin's declared latency. Re-check once per callback after every such write.
@@ -1014,7 +1029,24 @@ impl AudioEngine {
 
     fn apply(&mut self, command: EngineCommand) {
         match command {
+            EngineCommand::PlayNotePreview { track, events } => {
+                self.stop_note_preview();
+                self.stop_preview();
+                self.stop_output_preview();
+                let next = NotePreview {
+                    track,
+                    events,
+                    position: 0,
+                    next: 0,
+                    active: [0; 128],
+                };
+                if let Some(previous) = self.note_preview.replace(next) {
+                    self.retire(Retired::NotePreview(previous.events));
+                }
+            }
+            EngineCommand::StopNotePreview => self.stop_note_preview(),
             EngineCommand::SetGraph(graph) => {
+                self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
                 // Meters past the new track count would otherwise sit at the level a deleted
@@ -1028,12 +1060,14 @@ impl AudioEngine {
                 self.publish_latency();
             }
             EngineCommand::Play => {
+                self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
                 self.transport.playing = true;
             }
             EngineCommand::CountIn(count) => self.transport.set_count_in(count),
             EngineCommand::Stop => {
+                self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
                 self.transport.playing = false;
@@ -1046,6 +1080,7 @@ impl AudioEngine {
                 }
             }
             EngineCommand::Seek { frames } => {
+                self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
                 self.transport.seek(frames);
@@ -1166,6 +1201,7 @@ impl AudioEngine {
                 }
             }
             EngineCommand::PlayOutputPreview(request) => {
+                self.stop_note_preview();
                 let buffer = &request.buffer;
                 if !request.status.is_pending_or_playing()
                     || buffer.sample_rate() != self.sample_rate
@@ -1198,6 +1234,7 @@ impl AudioEngine {
                 }
             }
             EngineCommand::PlayPreview(buffer) => {
+                self.stop_note_preview();
                 if !buffer.sample_rate().is_finite()
                     || (buffer.sample_rate() - self.sample_rate).abs() > 0.1
                 {
@@ -1216,6 +1253,7 @@ impl AudioEngine {
             }
             EngineCommand::StopPreview => self.stop_preview(),
             EngineCommand::Panic => {
+                self.stop_note_preview();
                 self.stop_preview();
                 self.stop_output_preview();
                 if let Some(graph) = &mut self.graph {
@@ -1232,6 +1270,61 @@ impl AudioEngine {
         }
     }
 
+    /// Splits rendering at the next preview event, so the stopped transport has an audio clock.
+    fn note_preview_segment(&mut self, limit: usize) -> usize {
+        let Some(preview) = &mut self.note_preview else {
+            return limit;
+        };
+        while let Some(scheduled) = preview.events.get(preview.next) {
+            if scheduled.frame > preview.position {
+                break;
+            }
+            if let Some(graph) = &mut self.graph {
+                match scheduled.event {
+                    auris_core::NoteEvent::NoteOn {
+                        pitch, velocity, ..
+                    } => {
+                        graph.note_on(preview.track, pitch, velocity);
+                        let active = &mut preview.active[pitch.min(127) as usize];
+                        *active = active.saturating_add(1);
+                    }
+                    auris_core::NoteEvent::NoteOff { pitch, .. } => {
+                        graph.note_off(preview.track, pitch);
+                        let active = &mut preview.active[pitch.min(127) as usize];
+                        *active = active.saturating_sub(1);
+                    }
+                    _ => {}
+                }
+            }
+            preview.next += 1;
+        }
+        preview.events.get(preview.next).map_or(limit, |event| {
+            limit
+                .min(
+                    event
+                        .frame
+                        .saturating_sub(preview.position)
+                        .min(usize::MAX as u64) as usize,
+                )
+                .max(1)
+        })
+    }
+
+    fn stop_note_preview(&mut self) {
+        let Some(preview) = &mut self.note_preview else {
+            return;
+        };
+        if let Some(graph) = &mut self.graph {
+            for (pitch, active) in preview.active.iter().enumerate() {
+                for _ in 0..*active {
+                    graph.note_off(preview.track, pitch as u8);
+                }
+            }
+        }
+        preview.active.fill(0);
+        preview.next = preview.events.len();
+    }
+
     fn stop_output_preview(&mut self) {
         if let Some(preview) = &mut self.output_preview {
             preview.request.status.finish();
@@ -1245,6 +1338,7 @@ fn command_may_retire(command: &EngineCommand) -> bool {
         EngineCommand::SetGraph(_)
             | EngineCommand::SetSoloResolution(_)
             | EngineCommand::PlayOneShot { .. }
+            | EngineCommand::PlayNotePreview { .. }
             | EngineCommand::PlayPreview(_)
             | EngineCommand::PlayOutputPreview(_)
     )
@@ -1390,6 +1484,164 @@ mod tests {
             &testkit::registry(),
             256,
         ))
+    }
+
+    fn phrase_events() -> Arc<[crate::ScheduledEvent]> {
+        use auris_core::NoteEvent;
+        [
+            (
+                0,
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.8,
+                },
+            ),
+            (
+                31,
+                NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: 60,
+                },
+            ),
+            (
+                57,
+                NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 64,
+                    velocity: 0.5,
+                },
+            ),
+            (
+                101,
+                NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: 64,
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(frame, event)| crate::ScheduledEvent { frame, event })
+        .collect::<Vec<_>>()
+        .into()
+    }
+
+    #[test]
+    fn note_phrase_preserves_sample_timed_rests_without_advancing_transport_or_allocating() {
+        let (mut engine, commands, _, _, playhead) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands
+            .send(EngineCommand::PlayNotePreview {
+                track: 0,
+                events: phrase_events(),
+            })
+            .unwrap();
+        let mut data = [0.0f32; 256];
+        assert_eq!(
+            testkit::count_heap_operations(|| engine.fill(&mut data)),
+            (0, 0)
+        );
+        for (frame, pair) in data.as_chunks::<2>().0.iter().enumerate() {
+            let expected = if frame < 31 || (57..101).contains(&frame) {
+                TONE_AMPLITUDE
+            } else {
+                0.0
+            };
+            assert!(
+                (pair[0] - expected).abs() < 1e-6,
+                "frame {frame}: {} != {expected}",
+                pair[0]
+            );
+        }
+        assert_eq!(playhead.load(Ordering::Relaxed), 0);
+        engine.fill(&mut data);
+        assert!(
+            data.iter().all(|sample| *sample == 0.0),
+            "a phrase plays once"
+        );
+    }
+
+    #[test]
+    fn stopping_a_phrase_releases_notes_and_replacement_retires_the_schedule() {
+        let (mut engine, commands, retired, _, _) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        commands
+            .send(EngineCommand::PlayNotePreview {
+                track: 0,
+                events: phrase_events(),
+            })
+            .unwrap();
+        let mut data = [0.0f32; 32];
+        engine.fill(&mut data);
+        commands.send(EngineCommand::StopNotePreview).unwrap();
+        assert_eq!(
+            testkit::count_heap_operations(|| engine.fill(&mut data)),
+            (0, 0)
+        );
+        assert!(data.iter().all(|sample| *sample == 0.0));
+        assert!(retired.is_empty(), "stopping retains the allocation");
+        commands
+            .send(EngineCommand::PlayNotePreview {
+                track: 0,
+                events: phrase_events(),
+            })
+            .unwrap();
+        assert_eq!(
+            testkit::count_heap_operations(|| engine.fill(&mut data)),
+            (0, 0)
+        );
+        assert!(matches!(retired.try_recv(), Ok(Retired::NotePreview(_))));
+        commands.send(EngineCommand::Seek { frames: 0 }).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
+    }
+
+    #[test]
+    fn cancelling_overlapping_notes_of_the_same_pitch_releases_every_attack() {
+        use auris_core::NoteEvent;
+        let (mut engine, commands, _, _, _) = engine();
+        commands.send(EngineCommand::SetGraph(graph())).unwrap();
+        let events = [
+            crate::ScheduledEvent {
+                frame: 0,
+                event: NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.8,
+                },
+            },
+            crate::ScheduledEvent {
+                frame: 5,
+                event: NoteEvent::NoteOn {
+                    frame: 0,
+                    pitch: 60,
+                    velocity: 0.8,
+                },
+            },
+            crate::ScheduledEvent {
+                frame: 100,
+                event: NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: 60,
+                },
+            },
+            crate::ScheduledEvent {
+                frame: 200,
+                event: NoteEvent::NoteOff {
+                    frame: 0,
+                    pitch: 60,
+                },
+            },
+        ]
+        .into();
+        commands
+            .send(EngineCommand::PlayNotePreview { track: 0, events })
+            .unwrap();
+        let mut data = [0.0f32; 32];
+        engine.fill(&mut data);
+        commands.send(EngineCommand::StopNotePreview).unwrap();
+        engine.fill(&mut data);
+        assert!(data.iter().all(|sample| *sample == 0.0));
     }
 
     #[allow(clippy::type_complexity)]

@@ -155,6 +155,16 @@ pub enum EngineCommand {
         /// Track position in the project.
         track: usize,
     },
+    /// Plays selected notes once, in preview-relative sample frames, without seeking.
+    /// Events must be sorted by frame, with note releases before attacks at equal frames.
+    PlayNotePreview {
+        /// Track position in the current graph.
+        track: usize,
+        /// Prepared immutable schedule, retired off the audio thread on replacement.
+        events: std::sync::Arc<[crate::ScheduledEvent]>,
+    },
+    /// Releases preview voices and cancels all remaining selection events.
+    StopNotePreview,
     /// Auditions pre-rendered audio independently of project tracks and mixer settings.
     /// The buffer must use the device sample rate; replaced buffers are retired off-thread.
     PlayPreview(std::sync::Arc<auris_core::AudioBuffer>),
@@ -176,6 +186,12 @@ pub enum EngineCommand {
 impl std::fmt::Debug for EngineCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::PlayNotePreview { track, events } => f
+                .debug_struct("PlayNotePreview")
+                .field("track", track)
+                .field("events", &events.len())
+                .finish(),
+            Self::StopNotePreview => f.write_str("StopNotePreview"),
             // The graph holds trait objects that cannot be formatted, so name it and stop.
             Self::SetGraph(graph) => f
                 .debug_struct("SetGraph")

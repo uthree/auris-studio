@@ -113,6 +113,7 @@ pub use param::ParamTarget;
 pub use registry::{DEFAULT_INSTRUMENT, default_registry, plugin_catalogue};
 pub use render::{ExportSummary, RenderJob, StemRenderFailure, StemSummary, stem_tracks};
 pub use session::InstalledPluginFiles;
+pub use session::NoteSelectionPreview;
 pub use session::prepare_output_preview;
 pub use session::{
     AccompanyReport, Arm, AudioStatus, AutosaveJob, AutosaveResult, BalanceReport, CEILING_DB,
@@ -154,7 +155,7 @@ pub use session::{TimbreMap, TimbreMapControl, TimbreMapJob, TimbreSound};
 pub use session::{TrackConversion, TrackConversionJob};
 pub use settings::{
     AgentPreferences, AudioPreferences, CONFIG_DIR_VAR, ExportPreferences, ReasoningEffort,
-    Settings, WindowPlacement, config_dir,
+    Settings, ToolbarEntry, ToolbarItem, ToolbarPreferences, WindowPlacement, config_dir,
 };
 pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use voice_setup::{
