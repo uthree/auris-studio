@@ -240,6 +240,11 @@ fn guitar_fundamental_decay_is_calibrated_across_fractional_delays() {
 #[test]
 fn guitar_contact_and_pickup_change_the_spectrum_without_changing_pitch() {
     let mut guitar = rig(Model::Guitar, 48_000.0);
+    // Hold loss and position fixed: changing factory calibration must not move the
+    // measured tenth harmonic into a pluck-position notch or suppress it through loss.
+    guitar.set_param("position", 0.22);
+    guitar.set_param("decay", 2.8);
+    guitar.set_param("damping", 0.12);
     guitar.set_param("hardness", 0.0);
     let soft = guitar.render(8000, &[on(69, 0.8)]);
     guitar.instrument.reset();
@@ -254,6 +259,25 @@ fn guitar_contact_and_pickup_change_the_spectrum_without_changing_pitch() {
     let acoustic_ratio = goertzel(&hard, 48_000.0, 880.0) / goertzel(&hard, 48_000.0, 440.0);
     let electric_ratio = goertzel(&electric, 48_000.0, 880.0) / fundamental;
     assert!((acoustic_ratio - electric_ratio).abs() > 0.1);
+}
+
+#[test]
+fn level_automation_preserves_model_normalization_and_has_the_expected_gain() {
+    for model in [Model::Piano, Model::Guitar, Model::Violin] {
+        let mut instrument = Rig::new(Box::new(Physical::new(model)), 48_000.0, 256, 2);
+        let original = instrument.render(8000, &[on(60, 0.8)]);
+        instrument.instrument.reset();
+        instrument.set_param("level", -12.0);
+        let same_level = instrument.render(8000, &[on(60, 0.8)]);
+        assert_eq!(
+            original, same_level,
+            "{model:?} changed normalization on automation"
+        );
+        instrument.instrument.reset();
+        instrument.set_param("level", -18.0);
+        let quieter = instrument.render(8000, &[on(60, 0.8)]);
+        assert!((rms(&quieter) / rms(&original) - db_to_gain(-6.0)).abs() < 1e-5);
+    }
 }
 
 #[test]

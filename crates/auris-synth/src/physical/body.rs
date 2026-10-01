@@ -1,8 +1,8 @@
 //! Compact, reference-derived radiation coloration, designed at the host sample rate.
 //!
-//! These regularized spectral priors are fitted from matched isolated-note probes of the
-//! MIT-licensed MuseScore General font. They include recording and excitation coloration;
-//! they are not measured isolated bridge admittances. See docs/physical-model-refinement.md.
+//! These regularized spectral priors are fitted with temporal mel loss against real
+//! University of Iowa recordings. They include recording and excitation coloration;
+//! they are not measured isolated bridge admittances. See docs/physical-copy-synthesis.md.
 
 use auris_dsp::{Biquad, BiquadCoefficients};
 
@@ -21,16 +21,16 @@ impl Body {
     pub(super) fn prepare(&mut self, model: Model, rate: f32) {
         let gains = match model {
             Model::Piano => Some([
-                -2.100, -1.619, -1.797, -1.657, -1.213, 1.335, 2.195, 0.615, 0.920, 3.242, 2.135,
-                -3.988,
+                -8.998, -4.394, 9.000, 9.000, 0.001, -0.445, 9.000, 9.000, 8.190, 5.707, 2.783,
+                0.311,
             ]),
             Model::Guitar => Some([
-                -6.000, -3.266, 1.260, -0.089, 0.026, 0.317, -0.222, -0.489, 2.818, 5.253, 2.078,
-                -3.585,
+                -2.144, 5.119, 8.604, 6.972, 1.793, -0.197, -0.289, 0.482, 1.689, 2.139, 1.033,
+                -0.509,
             ]),
             Model::Violin => Some([
-                -1.581, -5.117, -6.000, -0.834, 2.878, 1.119, -0.257, 0.888, 3.797, 3.753, -0.346,
-                2.683,
+                -6.352, -6.253, -1.862, 6.249, 4.245, -2.720, -3.706, 0.414, 3.636, 4.732, 3.702,
+                3.117,
             ]),
             _ => None,
         };

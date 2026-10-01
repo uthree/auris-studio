@@ -1,5 +1,9 @@
 # Physical model refinement
 
+This records the refinement through commit `5a6ccac`. The subsequent
+[real-recording copy-synthesis calibration](physical-copy-synthesis.md) supplies the current
+piano, guitar and violin factory settings and radiation gains.
+
 The refinement order is radiation/body coloration, guitar, piano, then violin. Listening probes
 and numerical regressions complement the full composition measurements; a spectral fit or a
 learned score alone does not establish instrument realism.

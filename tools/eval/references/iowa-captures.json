@@ -1,0 +1,496 @@
+{
+  "source": "https://theremin.music.uiowa.edu/MIS.html",
+  "creator": "Lawrence Fritts / University of Iowa",
+  "terms": "May be downloaded and used for any projects, without restrictions.",
+  "captures": [
+    {
+      "model": "piano",
+      "path": "Piano.pp.C3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.C3.aiff",
+      "pitches": [
+        48
+      ],
+      "velocity": 0.35,
+      "sha256": "dedfacca6a9c244ff7c38d7b53c55b08e43fc8f4ce7d6c8c5a0f8b70fb03b58d"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.pp.E3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.E3.aiff",
+      "pitches": [
+        52
+      ],
+      "velocity": 0.35,
+      "sha256": "0ffda603c58580ffb4ff1245213a5b8a571c040f73c87fba40a99a493d93b9e7"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.pp.G3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.G3.aiff",
+      "pitches": [
+        55
+      ],
+      "velocity": 0.35,
+      "sha256": "0c7e525105fbf59dff53634331e87e1ff7a2e331e77e468e9a3f0dfe4bbaa21a"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.pp.C4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.C4.aiff",
+      "pitches": [
+        60
+      ],
+      "velocity": 0.35,
+      "sha256": "94540df460e6f4b1517d9ae0bb1a1cc5b4b28ffd61106eda3e89475544ee545d"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.pp.E4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.E4.aiff",
+      "pitches": [
+        64
+      ],
+      "velocity": 0.35,
+      "sha256": "3dfb2e26042b3c3352dd0d2911ac37ec9506dc42941cc7d9c89b345bc024e03c"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.pp.G4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.pp.G4.aiff",
+      "pitches": [
+        67
+      ],
+      "velocity": 0.35,
+      "sha256": "b791b4ee88662169f6b5b33e0fc278a7159a4aa9b3f25af3301af1687f10be90"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.pp.sulE.E2B2.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.pp.sulE.E2B2.mono.aif",
+      "pitches": [
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.35,
+      "sha256": "8523d89b6a8e6c29d1f3c81502343ff6fb5e13280c2c5d2ccbf5d1315add9350"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.pp.sulD.D3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.pp.sulD.D3B3.mono.aif",
+      "pitches": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.35,
+      "sha256": "9db09f85d4714eff0018061d3d7db5b0258206c8d5211e06ab6015de4a01f183"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.pp.sul_E.E4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.pp.sul_E.E4B4.mono.aif",
+      "pitches": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.35,
+      "sha256": "ea9093ad964d99874da5caf300ef6ba15ab85cddf0d644824a63c7e9c4911f09"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.pp.sulG.G3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.pp.sulG.G3B3.mono.aif",
+      "pitches": [
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.35,
+      "sha256": "1867daee220551c368e53ead7c5aa6f356ead7827c6f796012fde201dd3bf4bb"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.pp.sulD.D4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.pp.sulD.D4B4.mono.aif",
+      "pitches": [
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.35,
+      "sha256": "3c69ca7e2a3126ec237d3a9eadf40dde4b75fdef69ca3929d53b25e55a4363c4"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.pp.sulE.E5B5.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.pp.sulE.E5B5.mono.aif",
+      "pitches": [
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.35,
+      "sha256": "61ececedc2d69185b8ec0b3c99e2369cadf210f48af8f843780ba7648bca740f"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.C3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C3.aiff",
+      "pitches": [
+        48
+      ],
+      "velocity": 0.65,
+      "sha256": "b39ff5e129df5557996dbdbadd1f2622cf33425d33714d70af16fd4f209355b5"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.E3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E3.aiff",
+      "pitches": [
+        52
+      ],
+      "velocity": 0.65,
+      "sha256": "f2221cb8e022ff67da8924c33c66fd5b5736f9766d64f17814f5f637f073d167"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.G3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G3.aiff",
+      "pitches": [
+        55
+      ],
+      "velocity": 0.65,
+      "sha256": "6ad72b234d9a33a8e04ed41f80e07a95defda1430552db66026898223b7a938e"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.C4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.C4.aiff",
+      "pitches": [
+        60
+      ],
+      "velocity": 0.65,
+      "sha256": "1a7d8ddea94a3639fa58d79ebcc0b09b170b9c324811d2b705f97e278fdefac2"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.E4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.E4.aiff",
+      "pitches": [
+        64
+      ],
+      "velocity": 0.65,
+      "sha256": "3ee2ace7fd571c8868b3582b68417b1e456ef71169b136b732804d2f4eeabd9d"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.mf.G4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.mf.G4.aiff",
+      "pitches": [
+        67
+      ],
+      "velocity": 0.65,
+      "sha256": "0bf10e0279d77cec93fe3c6cc47c53c4bab6b650e342b7c4badfa9bc11b9c3e3"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.mf.sulE.E2B2.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.mf.sulE.E2B2.mono.aif",
+      "pitches": [
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.65,
+      "sha256": "faef0e44dff6fcf99b2bd1cb50ab1ed519980e6c70951069cdbce38597c58b23"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.mf.sulD.D3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.mf.sulD.D3B3.mono.aif",
+      "pitches": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.65,
+      "sha256": "464a66a5fbd4c8f835bcddfeb9c875ee2d75e81e156cfe80a362473681c9ffa7"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.mf.sul_E.E4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.mf.sul_E.E4B4.mono.aif",
+      "pitches": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.65,
+      "sha256": "3c04d367aa3cdf9fa4c9cd6ba3591704de6da5917a714057b307699d1ed6128b"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.mf.sulG.G3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.mf.sulG.G3B3.mono.aif",
+      "pitches": [
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.65,
+      "sha256": "87ad84228a6f8b6619586bc4378781ff743fd9786cffc25de943a60306670acc"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.mf.sulD.D4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.mf.sulD.D4B4.mono.aif",
+      "pitches": [
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.65,
+      "sha256": "67fa9c3e3c7b4b14cf94fe9eb5bb9d0be9a40a154f9a4aadb412beccaa7e8bd5"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.mf.sulE.E5B5.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.mf.sulE.E5B5.mono.aif",
+      "pitches": [
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.65,
+      "sha256": "45fffe125464476c22b818e006ddb4056ebbe92f34b36280b7b184051172f121"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.C3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.C3.aiff",
+      "pitches": [
+        48
+      ],
+      "velocity": 0.95,
+      "sha256": "98d381ee558d3ca77393d9596a7c88c580d2f75eed7b3e573108e815ab3afddf"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.E3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.E3.aiff",
+      "pitches": [
+        52
+      ],
+      "velocity": 0.95,
+      "sha256": "0672ed869091f483c798f483fb4bae896187f6d5be1d58272c2c20dd06c8fb69"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.G3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.G3.aiff",
+      "pitches": [
+        55
+      ],
+      "velocity": 0.95,
+      "sha256": "4807e125aaf8123b8c5ddfb562c8a3d21e3990046a4813639f4423e8af3a79db"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.C4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.C4.aiff",
+      "pitches": [
+        60
+      ],
+      "velocity": 0.95,
+      "sha256": "92f65bcbfb326257869017ea88da346bda98285183f13a78394f5d1c83218e0f"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.E4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.E4.aiff",
+      "pitches": [
+        64
+      ],
+      "velocity": 0.95,
+      "sha256": "5fb51bb40124569e440c29cad17ed404634e63de2cee9ef80c4ba8852d221f8b"
+    },
+    {
+      "model": "piano",
+      "path": "Piano.ff.G4.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/piano/Piano.ff.G4.aiff",
+      "pitches": [
+        67
+      ],
+      "velocity": 0.95,
+      "sha256": "069883bcdc5006b4eb80fee301ab3000f04cf2e64ec0e005bf68cf8130c38c54"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.ff.sulE.E2B2.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.ff.sulE.E2B2.mono.aif",
+      "pitches": [
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.95,
+      "sha256": "3c1af9a8162241461d3b17cb7b36e17c151a74ab15cc0af69e623a31e91e47ee"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.ff.sulD.D3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.ff.sulD.D3B3.mono.aif",
+      "pitches": [
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.95,
+      "sha256": "b4dad827de4dd7a10c40df709b3695c3b51b12a4cc8f8c05a6ce01d7f896362c"
+    },
+    {
+      "model": "guitar",
+      "path": "Guitar.ff.sul_E.E4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Piano_Other/guitar/Guitar.ff.sul_E.E4B4.mono.aif",
+      "pitches": [
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.95,
+      "sha256": "8e2acd05d89e3d9e784f4e2846de89af915b6daa566bf6e9302bab40aacb0b6b"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.ff.sulG.G3B3.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.ff.sulG.G3B3.mono.aif",
+      "pitches": [
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.95,
+      "sha256": "62bc88d88bbb449a611732732c776b4a7d2d66e0b5645fd2c48952b074413cae"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.ff.sulD.D4B4.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.ff.sulD.D4B4.mono.aif",
+      "pitches": [
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.95,
+      "sha256": "55a567ff71d94765aa7f82126dfca9eb240ae447ea23b63c9a44b1acea8059d1"
+    },
+    {
+      "model": "violin",
+      "path": "Violin.arco.ff.sulE.E5B5.mono.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/violin2012/Violin.arco.ff.sulE.E5B5.mono.aif",
+      "pitches": [
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.95,
+      "sha256": "4a2c98e671c50fbf68f46cadfd3cdf2604fcaa52abe714957d6e71d35f3f931b"
+    }
+  ]
+}

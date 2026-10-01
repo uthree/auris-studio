@@ -106,6 +106,17 @@ impl Model {
     fn is_string(self) -> bool {
         matches!(self, Self::Guitar | Self::Bass | Self::Violin)
     }
+
+    fn output_normalization(self) -> f32 {
+        // Keep the median factory-note RMS after real-recording mel calibration. The
+        // public level dial keeps its existing meaning for saved projects and automation.
+        match self {
+            Self::Piano => 0.164_845,
+            Self::Guitar => 0.181_803,
+            Self::Violin => 1.540_868,
+            _ => 1.0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -185,12 +196,12 @@ impl Physical {
     /// Builds an unprepared physical instrument. All voice storage is allocated in `prepare`.
     pub fn new(model: Model) -> Self {
         let (decay, release, position, hardness) = match model {
-            Model::Piano => (4.0, 0.20, 0.14, 0.55),
-            Model::Guitar => (2.8, 0.12, 0.22, 0.65),
+            Model::Piano => (11.296, 0.20, 0.228_641, 0.701_331),
+            Model::Guitar => (7.120, 0.12, 0.294_352, 0.201_600),
             Model::Bass => (3.5, 0.15, 0.30, 0.40),
             Model::Bell => (6.0, 1.8, 0.35, 0.65),
             Model::Mallet => (1.7, 0.35, 0.40, 0.40),
-            Model::Violin => (5.0, 0.15, 0.16, 0.70),
+            Model::Violin => (10.912, 0.15, 0.101_898, 0.347_396),
         };
         let mut descriptors = vec![
             ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
@@ -205,7 +216,17 @@ impl Physical {
             .with_unit(ParamUnit::Percent),
             ParamDescriptor::new(P_DECAY, "decay", "Resonance Decay", 0.1, 12.0, decay)
                 .with_unit(ParamUnit::Seconds),
-            ParamDescriptor::percent(P_DAMPING, "damping", "Damping", 0.12),
+            ParamDescriptor::percent(
+                P_DAMPING,
+                "damping",
+                "Damping",
+                match model {
+                    Model::Piano => 0.000_108,
+                    Model::Guitar => 0.006_394,
+                    Model::Violin => 0.154_366,
+                    _ => 0.12,
+                },
+            ),
             ParamDescriptor::percent(
                 P_BODY,
                 "body",
@@ -228,7 +249,7 @@ impl Physical {
                 "String Stiffness",
                 0.0,
                 0.008,
-                0.0003,
+                0.000_769_281,
             ));
         }
         if model == Model::Violin {
@@ -236,13 +257,13 @@ impl Physical {
                 P_PRESSURE,
                 "bow_pressure",
                 "Bow Pressure",
-                0.55,
+                0.357_058,
             ));
             descriptors.push(ParamDescriptor::percent(
                 P_BOW_SPEED,
                 "bow_speed",
                 "Bow speed",
-                0.65,
+                0.224_231,
             ));
             descriptors.push(ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false));
         }
@@ -267,7 +288,7 @@ impl Physical {
             expression: 1.0,
             pressure: 1.0,
             pedal: false,
-            gain: db_to_gain(-12.0),
+            gain: db_to_gain(-12.0) * model.output_normalization(),
             legato: Legato::default(),
         }
     }
@@ -417,7 +438,7 @@ impl Parameterized for Physical {
                     }
                 }
             }
-            self.gain = db_to_gain(self.params.at(P_LEVEL));
+            self.gain = db_to_gain(self.params.at(P_LEVEL)) * self.model.output_normalization();
             let settings = self.settings();
             let changes_resonance = matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
                 || self.model == Model::Guitar && id.0 == P_PICKUP

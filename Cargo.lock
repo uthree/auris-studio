@@ -1133,6 +1133,7 @@ dependencies = [
  "auris-core",
  "auris-dsp",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -94,6 +94,9 @@ Tests measure pitch at multiple rates, velocity response, hardness-dependent upp
 decay/sustain, pedal release, pitch bends, extreme settings and callback allocations. The pack's
 shared tests also cover event offsets, mono/multichannel buffers and deterministic rendering.
 The example writes a listening probe and reports each model's peak and RMS; it is dev tooling.
+Factory piano, guitar and violin settings and radiation gains are calibrated against real
+recordings with [temporal mel copy synthesis](physical-copy-synthesis.md). That document records
+the objective, fixed training/validation split, reproducible commands and remaining limits.
 The [before/after measurements](physical-instruments-evaluation.md) record the full-preset
 comparison, including the lower learned scores for sustained-string and ambient arrangements.
 
