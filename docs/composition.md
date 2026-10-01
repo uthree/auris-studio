@@ -263,12 +263,11 @@ role    = "pad"
 program = "String Ensemble 1"
 ```
 
-`instrument` names a plugin; **`program` names a General MIDI sound** out of whichever General
-MIDI SoundFont is installed — by name, as above, or by number for anybody working from a font's
-own listing. A part may carry both, and that is the point rather than a redundancy: the program
-is played when there is a font to play it from, and the plugin is what the part falls back to when
-there is not, so a specification asking for a string section on a build with no library comes out
-as an oscillator rather than as silence.
+`instrument` names a plugin; **`program` describes a General MIDI sound family**, by name or
+number. Supported families choose editable native physical instruments and the built-in drum
+kit. Other families use an optional installed GM font, then the part's `instrument` as a reported
+fallback. You can also name a physical plugin directly, such as `auris.physical.violin`.
+See [physical instruments](physical-instruments.md) for the models and their controls.
 
 An explicit `source` instead records the selected library asset. SoundFont banks and patches use
 the file's own identifiers (0–65535), including non-General-MIDI fonts:
@@ -543,8 +542,8 @@ stretch — exactly as it is for a clip written by hand. If a take is the keeper
 A composed piece also arrives **mixed**. The last thing composing does is render every part on its
 own, measure how loud it actually turned out, and move its fader until it sits where a part of that
 kind belongs — then lift the whole piece onto −14 LUFS. That takes a couple of seconds and it is
-why: the composer chooses the *part* and the session finds out which SoundFont, if any, is
-installed to play it, so a level decided without listening is a guess about an instrument nobody
+why: the composer chooses the *part* and the session resolves its instrument, so a level decided
+without listening is a guess about an instrument nobody
 had heard yet. It is **Balance the Mix** on the Compose menu when a piece needs it again — see
 [the feature notes](features.md#setting-the-levels-by-listening).
 
@@ -563,9 +562,8 @@ What happens is three things, in one undo step:
 
 The parts are ordinary generated clips: they carry recipes, so every dial in the table above
 applies to them, **Another Take** gives a different band, and **Write It Again** follows the chords
-when they move. If the shipped General MIDI font is installed each part gets a fitting sound —
-finger bass, piano, standard kit — and if it is not, they play the built-in oscillators and the
-status line says so.
+when they move. Each part gets a fitting native sound — physical bass, piano and the built-in
+drum kit — with editable instrument parameters.
 
 ### What it can and cannot know
 

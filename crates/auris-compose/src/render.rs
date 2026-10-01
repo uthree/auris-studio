@@ -70,8 +70,8 @@ pub struct TrackDraft {
     /// The General MIDI sound the part asked for, if it asked for one.
     ///
     /// A bank and a patch rather than a preset, because the composer has no font to name one in.
-    /// The session resolves it against whichever General MIDI font is installed — and falls back
-    /// to [`Self::instrument`] when there is none, which is why both are here.
+    /// The session interprets supported families as native physical instruments, then tries an
+    /// optional General MIDI font and finally [`Self::instrument`].
     pub sound: Option<crate::gm::Sound>,
     /// An exact SoundFont preset or external instrument, taking precedence over legacy choices.
     pub source: Option<PartSource>,

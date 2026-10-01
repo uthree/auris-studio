@@ -386,7 +386,7 @@ mod tests {
     #[test]
     fn existing_manual_font_is_reused_without_any_network() {
         let directory = tempfile::tempdir().unwrap();
-        let mut font = SHIPPED[0];
+        let mut font = super::super::GENERAL_MIDI_FONT;
         font.url = "not a URL";
         font.license_url = "not a URL";
         let path = directory.path().join(font.file);

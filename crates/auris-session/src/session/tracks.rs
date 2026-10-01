@@ -478,6 +478,7 @@ impl Session {
     /// Points a track at a General MIDI sound out of the shipped library, adopting the font
     /// into the project when it is not referenced yet.
     ///
+    /// Supported families choose editable native instruments; other hints use an optional font.
     /// One undo step for both: a font adopted for a choice that was then taken back is a
     /// reference nothing plays. `bank` and `patch` are the sound's address in the font — a
     /// kit lives in bank 128, a melodic program in bank 0 — and which reading a program
@@ -506,6 +507,17 @@ impl Session {
             });
         }
         self.begin_transaction(Edit::ChoosePreset);
+        match self.use_native_sound(id, bank, patch) {
+            Ok(true) => {
+                self.end_transaction();
+                return Ok(());
+            }
+            Err(error) => {
+                self.revert_transaction();
+                return Err(error);
+            }
+            Ok(false) => {}
+        }
         let Some(font) = self.adopt_general_midi_here() else {
             self.end_transaction();
             return Err(SessionError::LibraryMissing);

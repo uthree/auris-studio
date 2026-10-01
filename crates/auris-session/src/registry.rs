@@ -8,7 +8,7 @@ use auris_sampler::{SharedSoundFonts, SoundFontBank, register_sampler};
 use auris_synth::SynthPack;
 
 /// What a new track plays until somebody chooses otherwise.
-pub const DEFAULT_INSTRUMENT: &str = "auris.synth.chiptune";
+pub const DEFAULT_INSTRUMENT: &str = "auris.physical.piano";
 
 /// A registry holding every plugin that ships with Auris Studio.
 ///
@@ -24,8 +24,7 @@ pub fn default_registry(fonts: SharedSoundFonts) -> Arc<PluginRegistry> {
     registry.install::<SynthPack>();
     registry.install::<DspPack>();
     register_sampler(&mut registry, fonts);
-    // A new track has to make a sound. The sampler sorts first by id and would otherwise win by
-    // accident, and a sampler with no font imported yet is silence.
+    // New tracks start on the physical piano, independent of registry sort order.
     registry.set_default_instrument(DEFAULT_INSTRUMENT);
     Arc::new(registry)
 }
@@ -65,9 +64,8 @@ mod tests {
     }
 
     #[test]
-    fn the_default_instrument_is_the_chiptune_synth() {
-        // New tracks take this, so which one it is matters — and it must not be the sampler,
-        // which sorts first by id and makes no sound at all until a font has been imported.
+    fn the_default_instrument_is_the_physical_piano() {
+        // New tracks need a playable default even when no font has been imported.
         let registry = plugin_catalogue();
         assert_eq!(registry.default_instrument_id(), Some(DEFAULT_INSTRUMENT));
         assert_ne!(

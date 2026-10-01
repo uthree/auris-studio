@@ -380,13 +380,13 @@ mod tests {
         let mut session = Session::new(SessionOptions::headless()).unwrap();
         let track = session.add_default_instrument_track("Lead").unwrap();
         let descriptors = session.param_descriptors(crate::DEFAULT_INSTRUMENT);
-        let waveform = descriptors.iter().find(|d| d.key == "waveform").unwrap();
+        let waveform = descriptors.iter().find(|d| d.key == "hardness").unwrap();
         let target = ParamTarget::Instrument {
             track,
             param: waveform.id,
         };
-        session.set_param(target, 2.0);
-        assert!(session.set_automation_point(target, Ticks::ZERO, 2.0));
+        session.set_param(target, 0.9);
+        assert!(session.set_automation_point(target, Ticks::ZERO, 0.9));
         let gain = ParamTarget::TrackGain(track);
         assert!(session.set_automation_point(gain, Ticks::ZERO, -6.0));
         let before = session.project().clone();

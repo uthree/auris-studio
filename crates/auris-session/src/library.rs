@@ -1,33 +1,11 @@
-//! The sound library the application is packaged with.
+//! Optional sound libraries and language/voice assets.
 //!
-//! The built-in instruments are two oscillators, a noise drum, a drum kit and a preview voice. They are
-//! enough to hear a piece back and nowhere near enough to *write* one, so a build of Auris
-//! Studio ships with a General MIDI SoundFont beside it and every frontend finds it here.
-//!
-//! # Why the font is not in the repository
-//!
-//! [`GENERAL_MIDI`] is two hundred megabytes. GitHub refuses a single file over a hundred, and a
-//! repository that carried one would charge every clone for it forever — including the clones
-//! that only ever build the command line tool. So the bytes are fetched rather than committed:
-//! [`download_font`] verifies and installs missing fonts when the desktop first starts. The
-//! release workflow runs `tools/fetch-soundfonts.sh` before assembling each archive; that script
-//! also prepares the library for command line use. Both read this manifest and keep the bytes
-//! in a [`LIBRARY_FOLDER`] directory.
-//!
-//! What is committed is this manifest — the name, the size, the digest and the licence — which is
-//! the part that has to be reviewable.
-//!
-//! # Where the font is looked for
-//!
-//! [`library_roots`] answers that, and the answer is deliberately several places: beside the
-//! executable is where a release archive puts it, `Contents/Resources` is where a macOS bundle
-//! does, a few directories above the executable is where a `cargo run` build finds the one a
-//! developer fetched into the checkout, and the configuration directory is where somebody who
-//! installed a font by hand would have put it. [`LIBRARY_DIR_VAR`] overrides the lot.
-//!
-//! Nothing here reads a font — a loaded font belongs to a session's bank and a path does not.
-//! [`Session`](crate::Session) reads what it finds here whenever a document is created or opened,
-//! unless [`SessionOptions::shipped_fonts`](crate::SessionOptions::shipped_fonts) says otherwise.
+//! Native physical instruments and synthesizers are registered by the session and carry no
+//! sample assets. SoundFont imports belong to the session's bank. The optional General MIDI
+//! manifest supports discovering a manually installed library and resolving existing asset
+//! references. `library_roots` searches beside the executable, inside macOS Resources, above
+//! development binaries and in the configuration directory; `AURIS_SOUNDFONTS` overrides it.
+//! No font is automatically installed by this build.
 
 use std::path::{Path, PathBuf};
 
@@ -39,23 +17,23 @@ pub use download::{
     FETCH_SOUNDFONTS_VAR, FontDownload, FontDownloadError, download_font, font_downloads,
 };
 
-/// Environment variable naming the directory the shipped SoundFonts are installed in.
+/// Environment variable naming the directory optional SoundFonts are installed in.
 ///
 /// Set it and nothing else is searched, which is what makes a font kept on another volume — they
 /// are large enough for that to be a real arrangement — usable without moving it.
 pub const LIBRARY_DIR_VAR: &str = "AURIS_SOUNDFONTS";
 
-/// What the directory holding the shipped SoundFonts is called, wherever it turns up.
+/// What the directory holding optional SoundFonts is called, wherever it turns up.
 pub const LIBRARY_FOLDER: &str = "SoundFonts";
 
-/// The id of the General MIDI font the composer reaches for.
+/// The id of the optional General MIDI font used for unsupported sound hints.
 ///
 /// MuseScore's, which is the FluidR3 set of Frank Wen's that everything else quotes, remastered
 /// and still under the same MIT licence. Choosing between the two is choosing between an original
 /// and a curated version of itself, and the curated one is smaller and better recorded.
 pub const GENERAL_MIDI: &str = "musescore-general";
 
-/// A SoundFont the application is packaged with.
+/// A known SoundFont's download and discovery metadata.
 ///
 /// Everything needed to fetch one, verify it and say where it came from — which is the whole of
 /// what a manifest is for. The bytes themselves are never in the repository; see the module
@@ -88,8 +66,8 @@ pub struct ShippedFont {
     pub sha256: &'static str,
 }
 
-/// Every font the desktop and fetch script know how to install.
-pub const SHIPPED: &[ShippedFont] = &[ShippedFont {
+/// Optional General MIDI library discoverable when installed by the user.
+pub const GENERAL_MIDI_FONT: ShippedFont = ShippedFont {
     id: GENERAL_MIDI,
     file: "MuseScore_General.sf2",
     name: "MuseScore General",
@@ -98,11 +76,17 @@ pub const SHIPPED: &[ShippedFont] = &[ShippedFont {
     url: "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/MuseScore_General.sf2",
     bytes: 215_614_036,
     sha256: "ee51d2c4b1525e70f19a45909c4fd7a2e26d91d115fa89dbf5a6bc413d8b9bf3",
-}];
+};
 
-/// The manifest entry with this id.
+/// Fonts automatically installed by this build.
+pub const SHIPPED: &[ShippedFont] = &[];
+
+/// Optional fonts listed by the CLI's manual download manifest.
+pub const KNOWN_FONTS: &[ShippedFont] = &[GENERAL_MIDI_FONT];
+
+/// A known optional font's manifest entry with this id.
 pub fn shipped(id: &str) -> Option<&'static ShippedFont> {
-    SHIPPED.iter().find(|font| font.id == id)
+    KNOWN_FONTS.iter().find(|font| font.id == id)
 }
 
 /// Environment variable naming the directory the shipped Japanese dictionary is installed in.
@@ -424,34 +408,9 @@ mod tests {
     }
 
     #[test]
-    fn the_header_counts_the_instruments_the_registry_installs() {
-        // The first sentence of this module is the reason a font ships at all, so its count has
-        // to be the count `default_registry` actually installs — everything but the sampler,
-        // which is the instrument this font is *for* and makes no sound until one arrives.
-        let registry = crate::plugin_catalogue();
-        let without_a_font: Vec<&str> = registry
-            .instruments()
-            .map(|descriptor| descriptor.id.as_ref())
-            .filter(|id| *id != auris_sampler::SAMPLER_ID)
-            .collect();
-        assert_eq!(
-            without_a_font.len(),
-            5,
-            "three pitched voices and two percussion instruments: {without_a_font:?}"
-        );
-        // The header itself, which is the half of this that nothing else checks. Its own lines
-        // rather than the whole file, or the phrase written here would answer for it; joined as
-        // one line so that rewrapping the paragraph is not a failure.
-        let header: String = include_str!("library.rs")
-            .lines()
-            .filter_map(|line| line.strip_prefix("//!"))
-            .map(str::trim)
-            .collect::<Vec<&str>>()
-            .join(" ");
-        assert!(
-            header.contains("two oscillators, a noise drum, a drum kit and a preview voice"),
-            "the header counts them in prose, and the prose is what a reader gets"
-        );
+    fn native_instruments_need_no_automatic_font_installation() {
+        assert!(SHIPPED.is_empty());
+        assert!(font_downloads().is_empty());
     }
 
     #[test]

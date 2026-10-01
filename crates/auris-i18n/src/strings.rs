@@ -2016,7 +2016,7 @@ new のオプション
     AgentModelsEmpty { en: "No models were found. Check the provider settings, then refresh.", ja: "モデルが見つかりませんでした。プロバイダ設定を確認してから更新してください。" }
     AgentJumpLatest { en: "Latest", ja: "最新へ" }
     CliPresets { en: "SONG PRESETS", ja: "楽曲プリセット" }
-    CliSoundFonts { en: "SHIPPED SOUNDFONTS", ja: "同梱サウンドフォント" }
+    CliSoundFonts { en: "OPTIONAL SOUNDFONTS", ja: "追加サウンドフォント" }
     CliSoundFontMissing {
         en: "not installed — run tools/fetch-soundfonts.sh",
         ja: "未インストール — tools/fetch-soundfonts.sh を実行してください"

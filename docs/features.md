@@ -768,65 +768,12 @@ beside the mark, the mark is never the text, and the hues are placed as far apar
 their count allows and then walked outwards until each one clears 3:1 against the surface it is
 drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
-## The SoundFont that comes with it
+## Physical instruments
 
-Two oscillators and a noise drum are enough to hear the engine working and nowhere near enough to
-write anything, so a build ships with **MuseScore General** — a General MIDI set of 128
-instruments and a percussion bank, under the MIT licence. It is FluidR3, Frank Wen's set that half
-the free software world quotes, remastered by S. Christian Collins; choosing between the two is
-choosing between an original and a curated version of itself. Every release archive carries it,
-and it is in the library panel from the moment the window opens, with no import step.
-
-When a source build starts without it, the desktop downloads the font in the background,
-shows progress, and adds its sounds to the open project's library when ready. This works with
-both `cargo run` and `cargo run --release`, including on Windows without a Bash setup step.
-The download is cached in `~/.config/auris-studio/SoundFonts` (under `%USERPROFILE%` on Windows),
-or the configuration directory selected by `AURIS_CONFIG_DIR`, so other checkouts reuse it.
-Setting `AURIS_SOUNDFONTS` selects the download directory as well as the exclusive search root.
-An installed font is reused without a network request. Set `AURIS_FETCH_SOUNDFONTS=0` to disable
-automatic fetching. A failed download is reported in the window; the built-in instruments remain
-usable, and the next launch retries. A successful download verifies the byte count and SHA-256
-and installs the licence notice before making the font visible.
-
-The bytes are **not in this repository**. The file is two hundred megabytes, which is more than
-GitHub accepts in one piece and far more than every clone of a source tree should have to carry.
-What is version-controlled is the manifest — the URL, the size, the SHA-256 and the licence, in
-`auris_session::library` — and the file is fetched:
-
-```bash
-tools/fetch-soundfonts.sh
-```
-
-This is the manual preparation path for command line use and release packaging. It puts the font
-in `SoundFonts/` at the top of the checkout, where a `cargo run` build finds it; the release
-workflow runs the same script before assembling each archive. On Windows, run the script in
-Git Bash. `auris soundfonts` says whether it is installed and where. The script asks
-`auris soundfonts --manifest` what to fetch rather than carrying its own copy of the list, so a
-digest cannot be changed in one place and left stale in the other.
-
-Where the application looks, in order: `$AURIS_SOUNDFONTS`, a `SoundFonts` directory beside the
-executable, a macOS bundle's `Contents/Resources/SoundFonts`, up to five directories above the
-executable — which is what reaches the checkout from `target/debug` — and finally
-`~/.config/auris-studio/SoundFonts`. The built-in instruments remain available while a desktop
-download is running or when automatic fetching is disabled. Builds and tests do not fetch fonts.
-
-The shipped font is put into the document rather than left beside it, because a document is what
-holds a reference. It is not an edit: no undo step, no dirty flag, and a new project that has only
-been looked at is still unmodified. And because a project saved on one machine names the font at
-*that* machine's path, the search for a moved asset looks in the library directories too — the
-reference most likely to break when a project is sent to somebody else is also the one that always
-has an answer.
-
-**Its pianos work now.** A SoundFont says how a sound answers the way it is played partly in
-*modulators* — "this controller reaches that parameter" — and the synthesiser library this is built
-on read them and threw them away. MuseScore General's acoustic pianos set a filter low and open it
-with a modulator driven by velocity, so without them the piano played through a filter nothing ever
-opened: twenty decibels under everything else in the font, and *quieter* the harder it was struck,
-because a velocity-layer boundary sat in the middle of the range. The library is forked in
-`vendor/rustysynth` and reads them; the piano now gets louder and brighter as you lean on it, like
-the other hundred and twenty-seven programs always did. Of those, a hundred and one are unchanged
-to the sample and the rest move by less than 3 dB.
-
+The library includes **Physical Piano, Guitar, Bass, Bell, Mallet and Violin**, with no sample
+files to install. New melodic tracks start on Physical Piano. These are expressive reduced
+physical models with editable contact hardness, excitation position, damping and body resonance.
+See [physical instruments](physical-instruments.md) for the models, controls and composition use.
 ## Importing a SoundFont of your own
 
 **File → Import SoundFont…** — or dropping the file on the window — reads an `.sf2` and puts its
@@ -1332,7 +1279,7 @@ auris progressions                             # every chord progression known b
 auris plugins                                  # every registered instrument and effect
 auris presets                                  # the whole songs a piece can start from
 auris compose --preset city-pop                # …and one written without a file
-auris soundfonts                               # what this build ships with, and whether it is here
+auris soundfonts                               # optional libraries and whether they are installed
 auris new song.auris --bpm 128
 auris info song.auris                          # tracks, clips, duration
 auris render song.auris -o song.wav --bit-depth 24
@@ -1371,9 +1318,9 @@ decibels in one call instead of clawing tenths back through reseeding.
 
 The arrangement can be edited in place, so one more part is an edit rather than a
 recomposition: `add_track` puts a new track in an existing project — voiced by a built-in
-instrument id (`list_instruments` names them) or by any General MIDI sound, asked for by name
-("Electric Piano 1") or program number, with the shipped font adopted into the project as part
-of the same step — `add_part` writes a generated part (lead, chords, pad, arp, bass, or
+instrument id (`list_instruments` names them) or by a musical sound hint, asked for by name
+("Electric Piano 1") or program number. Supported families choose native models; other hints
+can use an optional installed GM library. `add_part` writes a generated part (lead, chords, pad, arp, bass, or
 the kit and its pieces) onto a track from the key and chords already under the song, keeping
 its recipe so `regenerate_clips` applies to it like any composed clip, and
 `set_instrument`, `rename_track` and `remove_track` do what they say.

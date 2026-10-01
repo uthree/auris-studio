@@ -62,6 +62,7 @@ mod musical_analysis;
 mod notes;
 mod output_preview;
 mod perform;
+mod physical_sounds;
 pub(crate) mod plugin_discovery;
 mod punch;
 mod readiness;
@@ -179,12 +180,11 @@ pub struct SessionOptions {
     pub audio_preferences: AudioPreferences,
     /// Sample rate for a new project.
     pub sample_rate: f64,
-    /// Read the SoundFonts the application ships with, so their sounds are in the library.
+    /// Discover automatically installed fonts and optional GM libraries for sound hints.
     ///
     /// `false` in a test, and for one reason: whether the library is installed is a fact about
     /// the machine, and a document that holds a font on a developer's laptop and none on a CI
-    /// runner is a document two test runs would disagree about. It also saves reading two hundred
-    /// megabytes per session in a suite that opens hundreds of them.
+    /// runner is a document two test runs would disagree about. Native instruments need no files.
     pub shipped_fonts: bool,
     /// Set a composed piece's levels by rendering it and measuring what came out.
     ///
@@ -228,8 +228,7 @@ impl SessionOptions {
     /// No audio device, no GPU and no shipped library — for tests and for anything that wants a
     /// session which behaves identically on every machine.
     ///
-    /// A headless tool that is making *music* rather than checking a document — `auris compose`
-    /// is the one — wants the library back, and asks for it with [`Self::with_shipped_fonts`].
+    /// Tools can opt into optional GM discovery with [`Self::with_shipped_fonts`].
     pub fn headless() -> Self {
         Self {
             audio: false,
@@ -241,7 +240,7 @@ impl SessionOptions {
         }
     }
 
-    /// Whether to read the SoundFonts the application ships with.
+    /// Whether to discover optional GM libraries for unsupported sound hints.
     pub fn with_shipped_fonts(mut self, shipped_fonts: bool) -> Self {
         self.shipped_fonts = shipped_fonts;
         self

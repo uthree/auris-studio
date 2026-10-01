@@ -16,6 +16,8 @@
 //! `process`, not another voice manager. [`DrumKit`] combines distinct percussion voices in one
 //! instrument with shared hat choking. [`SynthPack`] registers every instrument with a
 //! [`PluginRegistry`](auris_core::PluginRegistry).
+//! [`Physical`] adds six sample-free instruments using modal and travelling-wave models;
+//! [`Model`] selects the structure and excitation while keeping the same host contract.
 //!
 //! # Realtime behaviour
 //!
@@ -50,6 +52,7 @@ pub mod noisedrum;
 pub mod oscillator;
 pub mod pack;
 pub mod params;
+pub mod physical;
 pub mod render;
 pub mod vocal;
 pub mod voice;
@@ -64,6 +67,7 @@ pub use noisedrum::NoiseDrum;
 pub use oscillator::{Oscillator, Waveform};
 pub use pack::SynthPack;
 pub use params::ParamBank;
+pub use physical::{Model, Physical};
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};

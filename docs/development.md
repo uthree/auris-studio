@@ -81,10 +81,8 @@ Training itself wants a card; everything else here is content on the CPU.
 
 ## Building on each platform
 
-`cargo run` and `cargo run --release` start the desktop, which downloads a missing standard
-SoundFont in the background and displays progress. The cached copy is shared by checkouts.
-See [the sound library](features.md#the-soundfont-that-comes-with-it) for its location, manual
-installation and disabling automatic downloads.
+`cargo run` and `cargo run --release` start the desktop with the native physical instruments
+ready to play. See [physical instruments](physical-instruments.md) for their models and controls.
 
 Release archives include the NAIST Japanese dictionary; a source checkout or new Git worktree
 does not. Cargo builds code only. Fetch the dictionary once before trying kanji lyrics:

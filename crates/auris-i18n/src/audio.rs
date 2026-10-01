@@ -116,6 +116,12 @@ fn lookup<'a>(
 
 /// Japanese names for the built-in plugins.
 const PLUGIN_NAMES: &[(&str, &str)] = &[
+    ("Physical Piano", "ピアノ（物理モデル）"),
+    ("Physical Guitar", "ギター（物理モデル）"),
+    ("Physical Bass", "ベース（物理モデル）"),
+    ("Physical Bell", "ベル（物理モデル）"),
+    ("Physical Mallet", "マレット（物理モデル）"),
+    ("Physical Violin", "バイオリン（物理モデル）"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
@@ -134,6 +140,30 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "Hammer-excited stiff strings: hardness, strike position and soundboard",
+        "弦の剛性を考慮したピアノ音源。打撃の硬さ、位置、響板の共鳴を調整",
+    ),
+    (
+        "Plucked string: pick hardness, pluck position, damping and body",
+        "弦をはじくギター音源。ピックの硬さ、位置、減衰、胴の共鳴を調整",
+    ),
+    (
+        "Plucked bass string: finger/pick hardness, damping and body",
+        "弦をはじくベース音源。指やピックの硬さ、減衰、胴の共鳴を調整",
+    ),
+    (
+        "Struck bell: inharmonic shell modes, beater hardness and decay",
+        "非整数倍の倍音を持つベル音源。打撃の硬さと減衰を調整",
+    ),
+    (
+        "Mallet bar: bending modes, beater hardness and damping",
+        "音板の曲げ振動を再現するマレット音源。打撃の硬さと減衰を調整",
+    ),
+    (
+        "Bowed violin string: nonlinear friction, bow pressure, position and body",
+        "弓と弦の摩擦で鳴らすバイオリン音源。弓圧、位置、胴の共鳴を調整",
+    ),
     (
         "A complete synthesized percussion kit with shared hat choking",
         "キックやスネア、シンバルを合成し、ハイハット同士の音止めにも対応するドラムキット",
@@ -194,6 +224,12 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
 const PARAMETERS: &[(&str, &str)] = &[
+    ("Contact Hardness", "励振の硬さ"),
+    ("Excitation Position", "励振位置"),
+    ("Resonance Decay", "共鳴の減衰時間"),
+    ("Body Resonance", "胴の共鳴"),
+    ("String Stiffness", "弦の剛性"),
+    ("Bow Pressure", "弓圧"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
     ("Breath", "ブレス"),

@@ -23,7 +23,7 @@
 use auris_compose::analysis::{self, Reading};
 use auris_core::theory::key::Key as MusicalKey;
 use auris_core::time::Ticks;
-use auris_core::{ClipId, ClipPreset, ClipRecipe, Note, PresetRef, TrackId};
+use auris_core::{ClipId, ClipPreset, ClipRecipe, Note, TrackId};
 
 use crate::error::SessionError;
 use crate::history::Edit;
@@ -142,19 +142,13 @@ impl Session {
         self.set_key(start, reading.key);
         let chords = self.stamp_progression(&reading.chart, start, reading.bars);
 
-        // Once for the whole set rather than once per part, and only if a part is actually going
-        // to ask for a sound out of it.
-        let font = (!parts.is_empty())
-            .then(|| self.adopt_general_midi_here())
-            .flatten();
-
         let mut report = AccompanyReport {
             key: reading.key,
             chords,
             bars: reading.bars,
             parts: Vec::with_capacity(parts.len()),
             notes: 0,
-            substituted: font.is_none() && !parts.is_empty(),
+            substituted: false,
         };
 
         for (index, preset) in parts.iter().enumerate() {
@@ -168,16 +162,12 @@ impl Session {
                 // chords are still written and worth keeping.
                 continue;
             };
-            if let Some(font) = font {
-                let sound = analysis::sound_for(*preset);
-                let _ = self.set_track_preset(
-                    track,
-                    PresetRef {
-                        font,
-                        bank: i32::from(sound.bank),
-                        patch: i32::from(sound.patch),
-                    },
-                );
+            let sound = analysis::sound_for(*preset);
+            if self
+                .use_backing_sound(track, i32::from(sound.bank), i32::from(sound.patch))
+                .is_err()
+            {
+                report.substituted = true;
             }
             let recipe = backing_part_recipe(*preset, seed.wrapping_add(index as u64));
             match self.generate_clip(track, start, length, recipe) {
@@ -229,6 +219,7 @@ fn part_name(preset: ClipPreset) -> String {
 mod tests {
     use super::*;
     use crate::session::fixtures::{BAR, session};
+    use auris_core::PresetRef;
 
     #[test]
     fn scored_backing_drums_keep_their_addresses_after_selecting_a_gm_sampler() {

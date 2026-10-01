@@ -89,12 +89,12 @@ pub struct PartSpec {
     /// The General MIDI sound it asks for: a program on a pitched part, a kit on a drum one.
     ///
     /// `None` — the default — leaves the part on [`Self::instrument`], which is why the built-in
-    /// pieces are still built-in voices. Set, it puts the part on the sampler playing that sound
-    /// out of whichever General MIDI font is installed.
+    /// pieces are still built-in voices. Set, the session interprets supported families through
+    /// native physical instruments and drum kits, or an optional General MIDI library.
     ///
     /// The two coexist rather than replacing one another, and that is the point: a build with no
     /// SoundFont installed falls back to the plugin the part also names, so a specification asking
-    /// for a violin comes out as an oscillator rather than as silence.
+    /// for an unsupported family still comes out as an instrument rather than silence.
     pub program: Option<gm::Program>,
     /// An explicitly selected SoundFont preset or external instrument.
     ///

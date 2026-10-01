@@ -422,6 +422,11 @@ mod tests {
     fn conversion_preserves_a_final_notes_release_through_retained_effects() {
         let mut session = session();
         let track = session.add_default_instrument_track("Last note").unwrap();
+        // This probe needs a sustained oscillator followed by a known ADSR release, independent
+        // of the default instrument's physical resonance decay.
+        session
+            .set_track_instrument(track, "auris.synth.chiptune")
+            .unwrap();
         let clip = session
             .add_midi_clip(track, "Held to the end", Ticks::ZERO, Ticks::QUARTER)
             .unwrap();
