@@ -130,6 +130,8 @@ struct Voice {
 
 impl Voice {
     fn new(model: Model, rate: f32) -> Self {
+        let mut modal = Modal::default();
+        modal.prepare(model);
         let mut string = StringModel::default();
         if model.is_string() {
             string.prepare(rate);
@@ -137,7 +139,7 @@ impl Voice {
         let mut envelope = Adsr::new();
         envelope.set_sample_rate(rate);
         Self {
-            modal: Modal::default(),
+            modal,
             string,
             envelope,
             held: false,

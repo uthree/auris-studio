@@ -83,3 +83,36 @@ On the development machine, the 24-voice guitar callback averages 0.077 ms for 2
 file with piano before/after, guitar before/after, then violin before/after. It matches each
 pair's RMS and keeps peaks below 0.9, with gains recorded beside the WAV. Inputs are the
 six-model `physical_demo` renders, in their standard order.
+
+## Piano
+
+The hammer supplies a finite raised-cosine force pulse whose duration depends on velocity,
+contact hardness and register. Its unit-integral drive replaces the former initial modal
+amplitudes; contact duration filters upper partials through the excitation itself. The model
+is a reduced contact approximation with an explicit force pulse, rather than a solved felt
+collision. The mode frequencies retain editable stiffness, normalised at the fundamental.
+
+The string group has one member below 65 Hz, two below 180 Hz, and three above. The latter
+groups are detuned by ±0.9 and ±1.8 cents respectively. Each partial couples the unison
+members through a convex mixing of their complex modal states. It conserves the common
+component and damps differential motion, allowing evolving beats and decay without energy
+growth. Up to 64 partials are kept below 45% of the host rate. Each voice's storage is allocated
+in prepare. Modal strengths below 1e-12 retire before entering denormal arithmetic.
+
+Tests check register-dependent string count, shorter hard-strike contact, the additional bass
+partials, detuned rotations, energy contraction after hammer contact, and retirement of
+inaudible modes, alongside the shared pitch, pedal, velocity, stiffness and allocation checks.
+The initial 24-voice implementation consumed 2.254 ms per 256-frame callback in the development
+profile. Moving divisions out of the modal loop and retiring inaudible modes reduced its measured
+mean to 0.831 ms, p99 1.704 ms. The extended string group carries a higher cost than the former
+single-string model; this measurement describes one machine and profile, not a latency guarantee.
+
+The design follows the contact, unison and coupling principles described in Smith's
+[Piano synthesis](https://www.dsprelated.com/freebooks/pasp/Piano_Synthesis.html).
+
+The piano checkpoint passes synth and session tests and workspace clippy, with identical
+symbolic output. Its nine-preset mean CE/PQ is 5.82/7.71. Relative to the guitar checkpoint,
+CE drops by 0.17 in pop-band, 0.07 in city-pop and 0.33 in jazz-trio; the other six cases are
+unchanged. A richer excitation model is therefore not being presented as a learned-score win.
+The fixed isolated-note demo's piano RMS changes only from 0.03651 to 0.03675; the A/B utility
+still level-matches it. The release-profile 24-voice benchmark averages 0.827 ms, p99 1.783 ms.

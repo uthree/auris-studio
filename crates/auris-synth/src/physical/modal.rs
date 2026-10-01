@@ -4,6 +4,10 @@ use std::f32::consts::{PI, TAU};
 
 use super::{Model, Settings};
 
+#[path = "piano.rs"]
+mod piano;
+use piano::Piano;
+
 const MODES: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -20,17 +24,23 @@ struct Mode {
 #[derive(Clone, Debug)]
 pub(super) struct Modal {
     modes: [Mode; MODES],
+    piano: Option<Box<Piano>>,
 }
 
 impl Default for Modal {
     fn default() -> Self {
         Self {
             modes: [Mode::default(); MODES],
+            piano: None,
         }
     }
 }
 
 impl Modal {
+    pub(super) fn prepare(&mut self, model: Model) {
+        self.piano = (model == Model::Piano).then(|| Box::new(Piano::default()));
+    }
+
     pub(super) fn excite(
         &mut self,
         model: Model,
@@ -39,13 +49,13 @@ impl Modal {
         rate: f32,
         settings: Settings,
     ) {
+        if let Some(piano) = &mut self.piano {
+            piano.excite(frequency, velocity, rate, settings);
+            return;
+        }
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let n = (index + 1) as f32;
             let ratio = match model {
-                // Normalise stiffness at the fundamental, so the keyboard remains in tune.
-                Model::Piano => {
-                    n * ((1.0 + settings.stiffness * n * n) / (1.0 + settings.stiffness)).sqrt()
-                }
                 Model::Bell => {
                     const RATIOS: [f32; 8] = [1.0, 2.01, 2.74, 3.01, 4.07, 5.43, 6.79, 8.21];
                     RATIOS.get(index).copied().unwrap_or(0.0)
@@ -74,7 +84,6 @@ impl Modal {
             // progressively rejects short-wavelength modes as the beater becomes softer.
             mode.imag = amplitude * velocity;
             mode.pickup = match model {
-                Model::Piano => 0.55,
                 Model::Bell => 0.8,
                 _ => 0.8 / n.sqrt(),
             };
@@ -83,6 +92,10 @@ impl Modal {
     }
 
     pub(super) fn update_loss(&mut self, model: Model, rate: f32, settings: Settings) {
+        if let Some(piano) = &mut self.piano {
+            piano.update_loss(rate, settings);
+            return;
+        }
         for (index, mode) in self.modes.iter_mut().enumerate() {
             let n = (index + 1) as f32;
             let loss = match model {
@@ -97,6 +110,9 @@ impl Modal {
     }
 
     pub(super) fn next(&mut self) -> f32 {
+        if let Some(piano) = &mut self.piano {
+            return piano.next();
+        }
         let mut output = 0.0;
         for mode in &mut self.modes {
             let real = mode.radius * (mode.cosine * mode.real - mode.sine * mode.imag);
@@ -108,6 +124,9 @@ impl Modal {
     }
 
     pub(super) fn energy(&self) -> f32 {
+        if let Some(piano) = &self.piano {
+            return piano.energy();
+        }
         self.modes
             .iter()
             .map(|mode| mode.real.abs() + mode.imag.abs())
@@ -115,6 +134,10 @@ impl Modal {
     }
 
     pub(super) fn retune(&mut self, ratio: f32) {
+        if let Some(piano) = &mut self.piano {
+            piano.retune(ratio);
+            return;
+        }
         for mode in &mut self.modes {
             let angle = mode.sine.atan2(mode.cosine) * ratio;
             // Silence modes that a bend moved above the safe band instead of folding them.

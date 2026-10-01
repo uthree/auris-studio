@@ -9,7 +9,7 @@ playable, adjustable instruments rather than reproductions of particular recorde
 
 | Instrument | Model | Useful adjustments |
 | --- | --- | --- |
-| Piano | Velocity-excited stiff-string modal expansion | Contact hardness, strike position, stiffness, pedal |
+| Piano | Finite hammer pulse and coupled unison stiff-string modes | Contact hardness, strike position, stiffness, pedal |
 | Guitar | Finite-width pluck, allpass-tuned string and bridge-motion output | Pick hardness, pluck position, damping, pickup blend |
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
@@ -17,8 +17,8 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Violin | Two travelling-wave segments meeting at a nonlinear bow friction junction | Bow pressure, contact position, expression |
 
 Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
-the other models. The piano is a reduced single-string model; it does
-not simulate a complete grand piano's hammer mechanics or sympathetic string coupling. The
+the other models. The piano uses one, two or three strings by register, up to 64 partials,
+and a velocity-dependent finite hammer pulse with passive unison coupling. The
 violin models one bowed string, with a bounded friction approximation rather than a full bow,
 bridge and wooden-body simulation. The bell mode ratios describe a designed shell, not a specific
 manufactured bell. These choices keep the instruments small and their controls predictable.
