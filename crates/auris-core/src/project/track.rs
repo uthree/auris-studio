@@ -143,22 +143,12 @@ pub struct SingerVoice {
     /// Stored in the document the way a SoundFont's name is, so a track header can say 波音リツ
     /// without opening two hundred megabytes first.
     pub name: String,
-    /// The consonant widths the model measured from its own training data, where its export
-    /// carried them.
-    ///
-    /// Copied into the document when the voice is chosen, for the name's reason: the phoneme
-    /// timing has to lay out the same on a machine that has not loaded — or does not have —
-    /// the model file. `None` means the export predates the table, and the timing rule falls
-    /// back to its single fixed width.
+    /// Optional consonant widths stored with the voice so phoneme layout is independent
+    /// of model availability. `None` uses the fixed default width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consonants: Option<ConsonantWidths>,
-    /// How loud the model's training data sang each consonant against the vowel after it,
-    /// where its export carried the table.
-    ///
-    /// Copied in beside the widths for the same reason. `None` means the export predates the
-    /// table, and every consonant is given the note's full level — which is what the frames
-    /// always did, and is measurably wrong: a /k/ at the vowel's loudness is a /k/ the model
-    /// has never heard.
+    /// Optional consonant levels stored with the voice, relative to the following vowel.
+    /// `None` gives each consonant the note's full level.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub levels: Option<ConsonantLevels>,
     /// Which of the model's speakers sings, by the name its export gives the speaker.
@@ -170,16 +160,10 @@ pub struct SingerVoice {
     pub speaker: Option<String>,
 }
 
-/// Per-phoneme consonant levels, in decibels against the vowel that follows, measured by a
-/// voice model from its training data.
+/// Per-phoneme consonant levels stored in the document, in decibels against the vowel.
 ///
-/// A voiceless plosive or fricative sings twenty-odd decibels under the vowel after it, a
-/// voiced one six to nine, an approximant three. A frames writer that gives every phoneme
-/// the note's velocity asks the model for consonants it has never heard at that loudness and
-/// gets none; measured on JSUT-song, that plateau alone cost the phoneme error rate 0.25 →
-/// 0.56, and these medians recovered most of it. The application rule is
-/// [`ConsonantLevels::db`]: the table's entry, or `default` for a consonant it never
-/// measured — and no entry at all for a syllabic, which keeps the note's level.
+/// [`ConsonantLevels::db`] returns the table entry or its default. Syllabic phonemes
+/// keep the note's level.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConsonantLevels {
     /// Decibels for a consonant the table has no entry for.
@@ -201,14 +185,9 @@ impl ConsonantLevels {
     }
 }
 
-/// Per-phoneme consonant widths, in seconds, measured by a voice model from its training data.
+/// Per-phoneme consonant widths stored in the document, in seconds.
 ///
-/// Consonant length in sung Japanese spans a factor of three by phoneme class — an affricate
-/// like `ts` takes twice what a plain stop does — so a single fixed width mistimes half the
-/// inventory. A voice model's export can carry the widths it was actually trained on; this is
-/// that table as the document stores it. The application rule is one line:
-/// [`ConsonantWidths::width`] answers the table's entry, or `default` for a phoneme it never
-/// measured.
+/// [`ConsonantWidths::width`] returns the table entry or its default.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConsonantWidths {
     /// Seconds for a phoneme the table has no entry for.

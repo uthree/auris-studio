@@ -15,7 +15,7 @@ use crate::limits::{
     MAX_COLLECTION_ITEMS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TEXT_BYTES, bounded_bytes,
     checked_sample_count, read_text_file, try_copy_f64, validate_audio_dimensions,
 };
-use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
+use crate::metadata::{VoiceCard, VoiceInfo};
 use crate::{
     Acceleration, CurveGenerator, CurvePrediction, CurveSource, CurveSources, SingError,
     validate_frames,
@@ -490,15 +490,11 @@ impl VoicevoxBackend {
             ));
         }
         let info = VoiceInfo {
-            format_version: FORMAT_VERSION,
             sample_rate: config.sample_rate,
             hop_length,
-            inter_channels: 1,
             n_speakers: config.styles.len() as u32,
             symbols: vec!["<sil>".into(), "<unk>".into()],
             speaker_to_id,
-            phoneme_durations: None,
-            phoneme_levels: None,
             voice: Some(VoiceCard {
                 name: config.name.clone(),
                 description: "VOICEVOX Engine singing connection".into(),

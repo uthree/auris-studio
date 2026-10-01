@@ -5,10 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use auris_core::TrackId;
-use auris_singer::{
-    BackendKind, PORTRAIT_MAX_BYTES, VoicePortrait, automatic_voicevox_url_safe,
-    read_voice_portrait,
-};
+use auris_singer::{BackendKind, PORTRAIT_MAX_BYTES, VoicePortrait, automatic_voicevox_url_safe};
 use serde::Deserialize;
 
 use crate::VoiceSetupError;
@@ -27,7 +24,7 @@ const MAX_ENGINE_RESOURCE_URL_BYTES: usize = 4_096;
 pub struct SingerPortraitSource {
     pub(crate) track: TrackId,
     pub(crate) path: PathBuf,
-    pub(crate) backend: BackendKind,
+    pub(crate) backend: Option<BackendKind>,
     pub(crate) speaker: Option<String>,
     pub(crate) automatic: bool,
 }
@@ -52,7 +49,7 @@ impl SingerPortraitSource {
     }
 
     /// The singing backend whose artwork may be available.
-    pub fn backend(&self) -> BackendKind {
+    pub fn backend(&self) -> Option<BackendKind> {
         self.backend
     }
 
@@ -65,9 +62,6 @@ impl SingerPortraitSource {
 /// An optional artwork request failed; this never changes synthesis or the saved voice.
 #[derive(Debug, thiserror::Error)]
 pub enum SingerPortraitError {
-    /// The native voice metadata could not be read.
-    #[error("{0}")]
-    Voice(#[from] auris_singer::SingError),
     /// The VOICEVOX connection file could not be read.
     #[error("{0}")]
     Connection(#[from] VoiceSetupError),
@@ -81,7 +75,7 @@ pub enum SingerPortraitError {
 
 /// Loads a voice's optional portrait without loading a model or accessing a session.
 ///
-/// Native voices provide `voice.portrait` in their ONNX metadata. VOICEVOX resolves the saved
+/// VOICEVOX resolves the saved
 /// decoding style through `/singers`, then requests `/singer_info` in URL format to avoid
 /// downloading icons and voice samples. A style portrait takes precedence over the character
 /// portrait. HTTP requests have finite timeouts, bounded bodies and no redirects; resource
@@ -90,9 +84,8 @@ pub fn load_singer_portrait(
     source: &SingerPortraitSource,
 ) -> Result<Option<VoicePortrait>, SingerPortraitError> {
     match source.backend {
-        BackendKind::Auris => Ok(read_voice_portrait(&source.path)?),
-        BackendKind::DiffSinger | BackendKind::LeapSinger => Ok(None),
-        BackendKind::Voicevox => {
+        Some(BackendKind::DiffSinger | BackendKind::LeapSinger) | None => Ok(None),
+        Some(BackendKind::Voicevox) => {
             let connection =
                 read_voicevox_connection(&source.path, source.speaker.as_deref(), source.track)?;
             if source.automatic && !automatic_voicevox_url_safe(&connection.url) {
@@ -607,7 +600,7 @@ mod tests {
         assert_ne!(first, selected);
         assert_eq!(selected.speaker(), Some("Selected"));
         assert_eq!(selected.path(), file.0);
-        assert_eq!(selected.backend(), BackendKind::Voicevox);
+        assert_eq!(selected.backend(), Some(BackendKind::Voicevox));
     }
 
     #[test]

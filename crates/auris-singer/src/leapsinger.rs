@@ -16,8 +16,8 @@ use crate::limits::{
     automatic_descendant_path, checked_product, checked_sample_count, read_text_file, try_copy_f32,
     try_zeroed_f32, validate_audio_dimensions,
 };
-use crate::metadata::{FORMAT_VERSION, VoiceCard, VoiceInfo};
-use crate::model::{Acceleration, open_session};
+use crate::metadata::{VoiceCard, VoiceInfo};
+use crate::runtime::{Acceleration, open_session};
 use crate::score::{MAX_CHUNK_FRAMES, chunk_ranges};
 use crate::{SingError, validate_frames};
 
@@ -137,15 +137,11 @@ impl LeapSingerBackend {
                 .collect()
         };
         let info = VoiceInfo {
-            format_version: FORMAT_VERSION,
             sample_rate: config.sample_rate,
             hop_length: config.hop_size,
-            inter_channels: 0,
             n_speakers: speaker_to_id.len() as u32,
             symbols,
             speaker_to_id,
-            phoneme_durations: None,
-            phoneme_levels: None,
             voice: Some(VoiceCard {
                 name: config.name.clone(),
                 description: "LeapSinger acoustic model with NHVSing vocoder".into(),

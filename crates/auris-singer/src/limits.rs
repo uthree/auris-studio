@@ -8,7 +8,6 @@ pub(crate) const MIN_SAMPLE_RATE: u32 = 8_000;
 pub(crate) const MAX_SAMPLE_RATE: u32 = 192_000;
 pub(crate) const MIN_HOP_SECONDS: f64 = 0.001;
 pub(crate) const MAX_HOP_SECONDS: f64 = 0.100;
-pub(crate) const MAX_INTER_CHANNELS: u32 = 4_096;
 pub(crate) const MAX_COLLECTION_ITEMS: usize = 4_096;
 pub(crate) const MAX_FRAME_COUNT: usize = 4_000_000;
 pub(crate) const MAX_TOKEN_BYTES: usize = 256;
@@ -77,19 +76,6 @@ pub(crate) fn try_copy_f64(values: &[f64], resource: &'static str) -> Result<Vec
         .map_err(|_| SingError::Allocation { resource })?;
     copy.extend_from_slice(values);
     Ok(copy)
-}
-
-pub(crate) fn try_f32_with(
-    count: usize,
-    resource: &'static str,
-    mut value: impl FnMut() -> f32,
-) -> Result<Vec<f32>, SingError> {
-    let mut values = Vec::new();
-    values
-        .try_reserve_exact(count)
-        .map_err(|_| SingError::Allocation { resource })?;
-    values.extend((0..count).map(|_| value()));
-    Ok(values)
 }
 
 pub(crate) fn read_text_file(path: &Path, resource: &'static str) -> Result<String, SingError> {
@@ -504,8 +490,8 @@ mod tests {
             checked_product(
                 1,
                 u32::MAX as usize,
-                "latent noise",
-                MAX_INTER_CHANNELS as usize * crate::score::MAX_CHUNK_FRAMES
+                "mel features",
+                MAX_MEL_BINS * crate::score::MAX_CHUNK_FRAMES
             )
             .is_err()
         );

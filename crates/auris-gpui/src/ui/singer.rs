@@ -86,7 +86,6 @@ impl AurisApp {
                     .text_xs()
                     .text_color(theme.text_muted)
                     .child(self.t(match info.backend {
-                        BackendKind::Auris => Key::VoiceBackendAuris,
                         BackendKind::DiffSinger => Key::VoiceBackendDiffSinger,
                         BackendKind::Voicevox => Key::VoiceBackendVoicevox,
                         BackendKind::LeapSinger => Key::VoiceBackendLeapSinger,

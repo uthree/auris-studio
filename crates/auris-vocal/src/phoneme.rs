@@ -37,8 +37,7 @@ pub fn is_syllabic(phoneme: &str) -> bool {
 /// This is what decides a frame's *voiced* flag when frames are handed to a voice model: the
 /// renderer writes f0 as a contour — consonant frames carry the pitch of the vowel they lead
 /// into — so voicing can never be read off `f0 > 0`, which would hum through every /k/ and /s/.
-/// The list is the voiceless obstruents of the vocabulary plus the devoiced vowels, and it
-/// matches the `VOICELESS` table in auris-singer's training pipeline symbol for symbol.
+/// The list contains the vocabulary's voiceless obstruents and devoiced vowels.
 pub const VOICELESS: [&str; 26] = [
     // Devoiced vowels — a vowel whispered between voiceless neighbours, as in きし.
     "ḁ", "i̥", "ɯ̥", "e̥", "o̥", // Plosives, including the glottal stop the sokuon becomes.

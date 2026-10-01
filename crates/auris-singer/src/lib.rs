@@ -1,37 +1,8 @@
-//! Singing-voice synthesis: an auris-singer voice model, run offline over a track's frames.
+//! Offline singing synthesis through DiffSinger, LeapSinger and VOICEVOX.
 //!
-//! This crate is the far end of the pipeline `auris-vocal` begins. That crate turns lyrics
-//! into phonemes and notes into [`SingerFrames`](auris_vocal::SingerFrames) — one phoneme, one
-//! pitch, one energy per hop; this one hands those frames to a trained voice and gets a
-//! waveform back. [`SingingBackend`] is that boundary. [`VoiceModel`] selects the native Auris
-//! backend for a self-contained `.onnx` exported by this repository's trainer, or the DiffSinger
-//! backend for a voicebank's `dsconfig.yaml`, the LeapSinger backend for a `.leapsinger.json`
-//! model entry, or the VOICEVOX backend for a `.voicevox.json` connection; the session above it
-//! does not know which inference pipeline is running.
-//!
-//! The two halves being one repository is what lets them be *checked* against each other:
-//! `training/tests/test_host_contract.py` reads the constants below out of this crate's source
-//! and fails when the exporter and this reader drift apart on the metadata key, the format
-//! version or the phoneme table.
-//!
-//! Three facts shape the API:
-//!
-//! * **Inference is never realtime.** A render takes seconds and allocates freely, so it can
-//!   only ever run on a normal thread; what the audio thread plays is the *result*, cached
-//!   and handed over like any audio clip. Nothing here touches the realtime contract.
-//! * **A whole song is never one inference.** The model's attention buffers grow with the
-//!   square of the frame count — a three-minute piece asked for at once has taken a machine
-//!   down. [`VoiceModel::sing`] cuts the timeline in silence into chunks of at most
-//!   [`MAX_CHUNK_FRAMES`] frames and stitches the answers into one waveform, so memory is
-//!   bounded by the chunk, not the song.
-//! * **Native voices take randomness as an input.** The native model's stochastic draws — the
-//!   prior sample, the excitation noise — are graph inputs by its own design, and this crate
-//!   fills them from [`auris_core::rng`] streams named by a seed: the same document, seed and voice are fed
-//!   the same numbers on any machine, and on the CPU render the same take to the sample. A
-//!   GPU ([`Acceleration`]) rounds in its own way — which is one more reason a take is a
-//!   *thing a file keeps*, frozen, rather than a thing another machine re-derives. LeapSinger's
-//!   upstream acoustic and vocoder graphs draw their noise internally and do not accept a seed;
-//!   their repeated renders can differ, while the saved audio take preserves the performance.
+//! The session supplies frames and a lyric-bearing score through [`SingingBackend`].
+//! Inference runs off the realtime audio thread and returns audio for a saved take.
+//! ONNX backends split long songs into bounded chunks; saved takes preserve the performance.
 
 #![warn(missing_docs)]
 
@@ -41,18 +12,18 @@ mod diffsinger;
 mod leapsinger;
 mod limits;
 mod metadata;
-mod model;
 mod portrait;
+mod runtime;
 mod score;
 mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, SingingRender, VoiceCapabilities, VoiceModel};
 pub use curves::{CurveGenerator, CurvePrediction, CurveSource, CurveSources, PreparedCurves};
 pub use limits::validate_automatic_voice_entry;
-pub use metadata::{FORMAT_VERSION, METADATA_KEY, VoiceCard, VoiceInfo};
-pub use model::{Acceleration, NOISE_SCALE};
-pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait, read_voice_portrait};
-pub use score::{ENERGY_FULL_SCALE, MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
+pub use metadata::{VoiceCard, VoiceInfo};
+pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait};
+pub use runtime::Acceleration;
+pub use score::{MAX_CHUNK_FRAMES, MAX_REST_FRAMES};
 
 /// Whether a VOICEVOX base URL names a numeric loopback address suitable for background work.
 ///
@@ -100,8 +71,8 @@ pub enum SingError {
         /// What the runtime said.
         reason: String,
     },
-    /// The file is ONNX but carries no auris-singer metadata.
-    #[error("no auris-singer metadata inside the file — it is not an exported voice")]
+    /// The entry file does not name a supported singing backend.
+    #[error("unsupported voice entry — choose dsconfig.yaml, .voicevox.json or .leapsinger.json")]
     NotAVoice,
     /// The metadata was there but unreadable or unacceptable.
     #[error("the voice model's metadata was refused: {0}")]

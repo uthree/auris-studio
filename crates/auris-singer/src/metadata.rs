@@ -1,160 +1,36 @@
-//! What an exported voice model says about itself.
-//!
-//! An auris-singer `.onnx` file is self-contained: the phoneme table, the audio parameters and
-//! a presentational *voice card* ride inside the file's `metadata_props` as JSON under the
-//! `auris_singer` key (a `.json` sidecar carries the same object for tools that would rather
-//! not parse protobuf). [`VoiceInfo`] is that object read and checked, so everything after
-//! loading can trust the numbers.
+//! Voice information supplied by singing backends.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
-use crate::SingError;
-use crate::limits::{
-    MAX_COLLECTION_ITEMS, MAX_INTER_CHANNELS, MAX_NAME_BYTES, MAX_PATH_BYTES, MAX_TEXT_BYTES,
-    MAX_TOKEN_BYTES, validate_audio_dimensions,
-};
-
-/// Most speakers a single voice model may declare.
-///
-/// Speaker ids become choices in the interface and names in an allocated list. Thousands leave
-/// ample room for a multi-corpus model without letting corrupt metadata request billions of
-/// strings before the model has even opened.
-const MAX_SPEAKERS: u32 = 4_096;
-
-/// The `metadata_props` key an auris-singer export stores its JSON under.
-pub const METADATA_KEY: &str = "auris_singer";
-
-/// The one metadata format this build reads.
-///
-/// The exporter stamps the same number; any other is refused rather than half-understood — a
-/// bigger one was written by a newer auris-singer whose fields this build could misread, a
-/// smaller one by an older one whose voice wants re-exporting. What the number is, and why:
-///
-/// * **1** — the first export: audio parameters, the phoneme table, the speakers, the card,
-///   and later one consonant-width table and one consonant-level table for the whole model.
-/// * **2** — the two tables are measured **per speaker**: a model trained on several corpora
-///   has one width table and one level table for each, under `speakers`, and a host copies
-///   the chosen speaker's into the document. A version-1 table has no `speakers` and would
-///   be read as no table at all, which is why this is a bump and not a default.
-pub const FORMAT_VERSION: u32 = 2;
-
-/// A voice model's own account of itself: audio parameters, phoneme table, speakers, card.
+/// Audio parameters, phoneme vocabulary, speakers and presentation for a loaded voice.
 #[derive(Debug, Clone, Deserialize)]
 pub struct VoiceInfo {
-    /// Metadata format version — see [`FORMAT_VERSION`].
-    pub format_version: u32,
-    /// Samples per second the model sings at.
+    /// Samples per second.
     pub sample_rate: u32,
-    /// Samples per feature frame; `hop_length / sample_rate` is the frame hop in seconds.
+    /// Samples per feature frame.
     pub hop_length: u32,
-    /// Channels of the prior's latent — the shape of the noise the caller must supply.
-    pub inter_channels: u32,
-    /// How many speakers the model was trained on.
-    #[serde(default = "one")]
+    /// Number of available speakers.
     pub n_speakers: u32,
-    /// The phoneme table: index in this list is the id the model's `phonemes` input wants.
+    /// Backend phoneme vocabulary, indexed by id.
     pub symbols: Vec<String>,
-    /// Speaker names to ids, for models trained on more than one voice.
-    #[serde(default)]
+    /// Speaker names mapped to backend ids.
     pub speaker_to_id: BTreeMap<String, u32>,
-    /// The consonant widths this model measured from its own training data, where the export
-    /// carried the table. Newer exports do; older ones simply fall back to the host's fixed
-    /// width.
-    #[serde(default)]
-    pub phoneme_durations: Option<PhonemeDurations>,
-    /// How loud this model's training data sang each consonant against the vowel after it,
-    /// where the export carried the table. Newer exports do; older ones fall back to the
-    /// note's full level on every phoneme.
-    #[serde(default)]
-    pub phoneme_levels: Option<PhonemeLevels>,
-    /// The presentational voice card, where the export carried one.
-    #[serde(default)]
+    /// Optional presentation card.
     pub voice: Option<VoiceCard>,
 }
 
-/// The consonant-width table an export measures from its training labels.
-///
-/// One table per speaker, keyed by the speaker's name, since consonant length is a property
-/// of the singer and the corpus. The application rule is the exporter's own: a phoneme takes
-/// `seconds[phoneme]` where the speaker's table has it and `default` where it does not; a
-/// speaker with no table at all is one the corpus had no labels for. The export also records
-/// how many labels each number was measured from and what corpus they came from; that is
-/// provenance for a person, not an input, and is deliberately not read here.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PhonemeDurations {
-    /// What the numbers are measured in. This build reads `seconds` and refuses anything
-    /// else, because a table of frames read as seconds would be wrong by two orders.
-    #[serde(default = "seconds")]
-    pub unit: String,
-    /// Each speaker's table, by the name the model's speaker map gives the speaker.
-    #[serde(default)]
-    pub speakers: BTreeMap<String, SpeakerWidths>,
-}
-
-/// One speaker's consonant widths.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SpeakerWidths {
-    /// Seconds for a phoneme the table has no entry for.
-    pub default: f64,
-    /// Seconds per phoneme, keyed by the model's own symbols.
-    #[serde(default)]
-    pub seconds: BTreeMap<String, f64>,
-}
-
-fn seconds() -> String {
-    "seconds".to_string()
-}
-
-/// The consonant-level table an export measures from its training data, per speaker.
-///
-/// Decibels against the vowel that follows: a phoneme takes `db[phoneme]` where the
-/// speaker's table has it and `default` where it does not. Counts and provenance ride along
-/// for a person and are not read here, as with the widths.
-#[derive(Debug, Clone, Deserialize)]
-pub struct PhonemeLevels {
-    /// What the numbers are measured in. This build reads `db` and refuses anything else —
-    /// a table of linear gains read as decibels would be a whisper.
-    #[serde(default = "db")]
-    pub unit: String,
-    /// Each speaker's table, by the name the model's speaker map gives the speaker.
-    #[serde(default)]
-    pub speakers: BTreeMap<String, SpeakerLevels>,
-}
-
-/// One speaker's consonant levels.
-#[derive(Debug, Clone, Deserialize)]
-pub struct SpeakerLevels {
-    /// Decibels for a consonant the table has no entry for.
-    pub default: f64,
-    /// Decibels per phoneme, keyed by the model's own symbols.
-    #[serde(default)]
-    pub db: BTreeMap<String, f64>,
-}
-
-fn db() -> String {
-    "db".to_string()
-}
-
-fn one() -> u32 {
-    1
-}
-
-/// What a host shows a person browsing voices, as opposed to what it feeds the model.
-///
-/// Every field is free-form prose from whoever exported the model. Artwork is read separately
-/// by [`crate::read_voice_portrait`], so opening a voice for inference does not retain a second
-/// copy of the image and browsing artwork never has to load the inference runtime.
+/// Presentation information for a voice.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct VoiceCard {
-    /// The voice's display name — 波音リツ, not `auris_singer_ritsu_40k.onnx`.
+    /// The voice's display name — the name shown in the library.
     #[serde(default)]
     pub name: String,
     /// A sentence about the voice: range, character, training data.
     #[serde(default)]
     pub description: String,
-    /// Version label of this export.
+    /// Version label of this voice.
     #[serde(default)]
     pub version: String,
     /// The terms the voice is distributed under.
@@ -169,193 +45,6 @@ pub struct VoiceCard {
 }
 
 impl VoiceInfo {
-    /// Reads the metadata JSON and refuses anything a later `sing` would trip over.
-    pub(crate) fn parse(raw: &str) -> Result<VoiceInfo, SingError> {
-        if raw.len() > MAX_TEXT_BYTES {
-            return Err(SingError::TooLarge {
-                resource: "voice metadata",
-                observed: Some(raw.len()),
-                limit: MAX_TEXT_BYTES,
-            });
-        }
-        let info: VoiceInfo = serde_json::from_str(raw)
-            .map_err(|error| SingError::Metadata(format!("unreadable metadata: {error}")))?;
-        if info.format_version > FORMAT_VERSION {
-            return Err(SingError::Metadata(format!(
-                "metadata format {} is newer than the {} this build reads — update Auris Studio",
-                info.format_version, FORMAT_VERSION
-            )));
-        }
-        if info.format_version < FORMAT_VERSION {
-            return Err(SingError::Metadata(format!(
-                "metadata format {} is older than the {} this build reads — re-export the voice",
-                info.format_version, FORMAT_VERSION
-            )));
-        }
-        validate_audio_dimensions(info.sample_rate, info.hop_length, "voice metadata")?;
-        if !(1..=MAX_INTER_CHANNELS).contains(&info.inter_channels) {
-            return Err(SingError::Metadata(format!(
-                "inter_channels must be between 1 and {MAX_INTER_CHANNELS}, got {}",
-                info.inter_channels
-            )));
-        }
-        if info.n_speakers == 0 || info.n_speakers > MAX_SPEAKERS {
-            return Err(SingError::Metadata(format!(
-                "n_speakers must be between 1 and {MAX_SPEAKERS}, got {}",
-                info.n_speakers
-            )));
-        }
-        if info.symbols.is_empty()
-            || info.symbols.len() > MAX_COLLECTION_ITEMS
-            || info
-                .symbols
-                .iter()
-                .any(|symbol| symbol.is_empty() || symbol.len() > MAX_TOKEN_BYTES)
-        {
-            return Err(SingError::Metadata(format!(
-                "symbols must contain 1..={MAX_COLLECTION_ITEMS} nonempty tokens of at most {MAX_TOKEN_BYTES} UTF-8 bytes"
-            )));
-        }
-        if info.speaker_to_id.len() > info.n_speakers as usize
-            || info
-                .speaker_to_id
-                .keys()
-                .any(|name| name.trim().is_empty() || name.len() > MAX_NAME_BYTES)
-            || info.speaker_to_id.values().any(|id| *id >= info.n_speakers)
-            || info.speaker_to_id.values().collect::<BTreeSet<_>>().len()
-                != info.speaker_to_id.len()
-        {
-            return Err(SingError::Metadata(
-                "speaker names and ids must be unique, bounded, and inside n_speakers".into(),
-            ));
-        }
-        for required in [crate::score::MODEL_SILENCE, crate::score::MODEL_UNKNOWN] {
-            if !info.symbols.iter().any(|symbol| symbol == required) {
-                return Err(SingError::Metadata(format!(
-                    "the phoneme table is missing {required}"
-                )));
-            }
-        }
-        let known = info.speakers();
-        let stranger = |named: Vec<&String>| -> Option<String> {
-            named
-                .into_iter()
-                .find(|name| !known.contains(name))
-                .cloned()
-        };
-        if let Some(durations) = &info.phoneme_durations {
-            validate_table_strings(
-                &durations.unit,
-                durations
-                    .speakers
-                    .iter()
-                    .map(|(name, table)| (name.as_str(), table.seconds.keys().map(String::as_str))),
-                "phoneme durations",
-            )?;
-            if durations.unit != "seconds" {
-                return Err(SingError::Metadata(format!(
-                    "phoneme durations in `{}` — this build reads seconds",
-                    durations.unit
-                )));
-            }
-            if let Some(name) = stranger(durations.speakers.keys().collect()) {
-                return Err(SingError::Metadata(format!(
-                    "phoneme durations for a speaker the model has not: {name}"
-                )));
-            }
-            let broken = |seconds: &f64| !seconds.is_finite() || *seconds <= 0.0;
-            for table in durations.speakers.values() {
-                if broken(&table.default) || table.seconds.values().any(broken) {
-                    return Err(SingError::Metadata(
-                        "a phoneme duration that is not a positive number".into(),
-                    ));
-                }
-            }
-        }
-        if let Some(levels) = &info.phoneme_levels {
-            validate_table_strings(
-                &levels.unit,
-                levels
-                    .speakers
-                    .iter()
-                    .map(|(name, table)| (name.as_str(), table.db.keys().map(String::as_str))),
-                "phoneme levels",
-            )?;
-            if levels.unit != "db" {
-                return Err(SingError::Metadata(format!(
-                    "phoneme levels in `{}` — this build reads db",
-                    levels.unit
-                )));
-            }
-            if let Some(name) = stranger(levels.speakers.keys().collect()) {
-                return Err(SingError::Metadata(format!(
-                    "phoneme levels for a speaker the model has not: {name}"
-                )));
-            }
-            let broken = |db: &f64| !db.is_finite();
-            for table in levels.speakers.values() {
-                if broken(&table.default) || table.db.values().any(broken) {
-                    return Err(SingError::Metadata(
-                        "a phoneme level that is not a number".into(),
-                    ));
-                }
-            }
-        }
-        if let Some(card) = &info.voice
-            && ([
-                card.name.as_str(),
-                card.version.as_str(),
-                card.license.as_str(),
-            ]
-            .iter()
-            .any(|value| value.len() > MAX_NAME_BYTES)
-                || card.description.len() > MAX_TEXT_BYTES
-                || card.url.len() > MAX_PATH_BYTES
-                || card.credits.len() > MAX_COLLECTION_ITEMS
-                || card
-                    .credits
-                    .iter()
-                    .any(|credit| credit.len() > MAX_NAME_BYTES))
-        {
-            return Err(SingError::Metadata(
-                "voice card strings or credits exceed their practical limits".into(),
-            ));
-        }
-        Ok(info)
-    }
-
-    /// A speaker's consonant widths in the shape the document stores, where the export
-    /// measured any for that speaker.
-    ///
-    /// The conversion lives here so a host never touches the raw table: what travels into a
-    /// project is [`auris_core::ConsonantWidths`], the same struct the frame layout reads.
-    /// `None` for a speaker the model has no table for — or does not have at all.
-    pub fn consonant_widths(&self, speaker: u32) -> Option<auris_core::ConsonantWidths> {
-        let name = self.speakers().into_iter().nth(speaker as usize)?;
-        self.phoneme_durations
-            .as_ref()?
-            .speakers
-            .get(&name)
-            .map(|table| auris_core::ConsonantWidths {
-                default: table.default,
-                seconds: table.seconds.clone(),
-            })
-    }
-
-    /// A speaker's consonant levels in the shape the document stores, where the export
-    /// measured any for that speaker.
-    pub fn consonant_levels(&self, speaker: u32) -> Option<auris_core::ConsonantLevels> {
-        let name = self.speakers().into_iter().nth(speaker as usize)?;
-        self.phoneme_levels
-            .as_ref()?
-            .speakers
-            .get(&name)
-            .map(|table| auris_core::ConsonantLevels {
-                default: table.default,
-                db: table.db.clone(),
-            })
-    }
-
     /// Seconds per feature frame — what a track's `frame_hop` must equal to be sung.
     pub fn hop_seconds(&self) -> f64 {
         f64::from(self.hop_length) / f64::from(self.sample_rate)
@@ -363,8 +52,7 @@ impl VoiceInfo {
 
     /// The speakers the model can sing as, in id order — one name per id.
     ///
-    /// A single-speaker export carries one; a model trained on several corpora carries each
-    /// source's name. An id the table does not name — a `speaker_to_id` shorter than
+    /// An id the table does not name — a `speaker_to_id` shorter than
     /// `n_speakers` — is listed as its number, so every id has a name to be chosen by.
     pub fn speakers(&self) -> Vec<String> {
         (0..self.n_speakers)
@@ -378,7 +66,7 @@ impl VoiceInfo {
             .collect()
     }
 
-    /// The id behind a speaker's name, or `None` for a name the model never heard of.
+    /// The id behind a speaker's name, or `None` for an unknown name.
     pub fn speaker_id(&self, name: &str) -> Option<u32> {
         self.speakers()
             .iter()
@@ -386,265 +74,11 @@ impl VoiceInfo {
             .map(|at| at as u32)
     }
 
-    /// The voice's display name: the card's, or empty where no card was embedded.
+    /// The voice's display name, or empty when there is no card.
     pub fn display_name(&self) -> &str {
         self.voice
             .as_ref()
             .map(|card| card.name.as_str())
             .unwrap_or("")
-    }
-}
-
-fn validate_table_strings<'a, I, J>(unit: &str, speakers: I, context: &str) -> Result<(), SingError>
-where
-    I: IntoIterator<Item = (&'a str, J)>,
-    J: IntoIterator<Item = &'a str>,
-{
-    if unit.len() > MAX_NAME_BYTES {
-        return Err(SingError::Metadata(format!("{context} unit is too long")));
-    }
-    let mut speaker_count = 0usize;
-    for (speaker, tokens) in speakers {
-        speaker_count += 1;
-        if speaker.len() > MAX_NAME_BYTES {
-            return Err(SingError::Metadata(format!(
-                "{context} speaker name is too long"
-            )));
-        }
-        let mut token_count = 0usize;
-        for token in tokens {
-            token_count += 1;
-            if token.is_empty() || token.len() > MAX_TOKEN_BYTES {
-                return Err(SingError::Metadata(format!(
-                    "{context} contains an invalid phoneme token"
-                )));
-            }
-        }
-        if token_count > MAX_COLLECTION_ITEMS {
-            return Err(SingError::Metadata(format!(
-                "{context} has more than {MAX_COLLECTION_ITEMS} phoneme entries for one speaker"
-            )));
-        }
-    }
-    if speaker_count > MAX_COLLECTION_ITEMS {
-        return Err(SingError::Metadata(format!(
-            "{context} has more than {MAX_COLLECTION_ITEMS} speakers"
-        )));
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The shipped ritsu-40k sidecar, trimmed to the fields that matter and one of each list.
-    const RITSU: &str = r#"{
-        "format_version": 2,
-        "sample_rate": 48000,
-        "hop_length": 480,
-        "inter_channels": 192,
-        "n_speakers": 1,
-        "f0_min": 40.0,
-        "symbols": ["<pad>", "<unk>", "<sil>", "<pau>", "a", "k", "tɕ"],
-        "speaker_to_id": {"namine_ritsu": 0},
-        "audio": {"sample_rate": 48000, "n_fft": 2048},
-        "voice": {"name": "波音リツ", "description": "Strong low-range female voice.",
-                  "credits": ["波音リツ", "カノン"]}
-    }"#;
-
-    #[test]
-    fn the_shipped_metadata_parses_and_answers_its_hop() {
-        let info = VoiceInfo::parse(RITSU).unwrap();
-        assert_eq!(info.sample_rate, 48_000);
-        assert_eq!(info.hop_seconds(), 0.010);
-        assert_eq!(info.display_name(), "波音リツ");
-        assert_eq!(info.speaker_to_id.get("namine_ritsu"), Some(&0));
-        assert_eq!(info.speakers(), ["namine_ritsu"]);
-        assert_eq!(info.speaker_id("namine_ritsu"), Some(0));
-        assert_eq!(info.speaker_id("nobody"), None);
-        // Fields this build does not know — f0_min, audio — pass through without complaint.
-    }
-
-    #[test]
-    fn an_absurd_speaker_count_is_refused_before_names_are_allocated() {
-        let raw = RITSU.replacen("\"n_speakers\": 1", "\"n_speakers\": 4000000000", 1);
-        let error = VoiceInfo::parse(&raw).expect_err("the count is not a plausible voice");
-        assert!(error.to_string().contains("n_speakers"), "{error}");
-    }
-
-    #[test]
-    fn audio_dimensions_and_metadata_size_are_bounded_before_inference() {
-        for raw in [
-            RITSU.replace("\"sample_rate\": 48000", "\"sample_rate\": 7999"),
-            RITSU.replace("\"sample_rate\": 48000", "\"sample_rate\": 192001"),
-            RITSU.replace("\"hop_length\": 480", "\"hop_length\": 1"),
-            RITSU.replace("\"hop_length\": 480", "\"hop_length\": 4294967295"),
-            RITSU.replace("\"inter_channels\": 192", "\"inter_channels\": 4294967295"),
-        ] {
-            assert!(VoiceInfo::parse(&raw).is_err(), "{raw}");
-        }
-
-        let raw = RITSU
-            .replace("\"sample_rate\": 48000", "\"sample_rate\": 192000")
-            .replace("\"hop_length\": 480", "\"hop_length\": 19200")
-            .replace("\"inter_channels\": 192", "\"inter_channels\": 4096");
-        VoiceInfo::parse(&raw).expect("inclusive audio boundaries");
-
-        let oversized = " ".repeat(MAX_TEXT_BYTES + 1);
-        assert!(matches!(
-            VoiceInfo::parse(&oversized),
-            Err(SingError::TooLarge {
-                resource: "voice metadata",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn symbol_and_speaker_tables_have_count_string_and_id_limits() {
-        let mut value: serde_json::Value = serde_json::from_str(RITSU).unwrap();
-        value["symbols"] = serde_json::json!(["<sil>", "<unk>", "x".repeat(MAX_TOKEN_BYTES + 1)]);
-        assert!(VoiceInfo::parse(&value.to_string()).is_err());
-
-        let mut value: serde_json::Value = serde_json::from_str(RITSU).unwrap();
-        let mut symbols: Vec<String> = vec!["<sil>".into(), "<unk>".into()];
-        symbols.extend((2..MAX_COLLECTION_ITEMS).map(|index| format!("s{index}")));
-        value["symbols"] = serde_json::json!(symbols);
-        VoiceInfo::parse(&value.to_string()).expect("inclusive symbol-count boundary");
-        value["symbols"]
-            .as_array_mut()
-            .unwrap()
-            .push(serde_json::json!("one-too-many"));
-        assert!(VoiceInfo::parse(&value.to_string()).is_err());
-
-        let raw = RITSU.replace("\"namine_ritsu\": 0", "\"namine_ritsu\": 1");
-        assert!(VoiceInfo::parse(&raw).is_err());
-    }
-
-    /// The new-spec export: the same voice with its measured consonant table aboard.
-    const WITH_DURATIONS: &str = r#"{
-        "format_version": 2,
-        "sample_rate": 48000,
-        "hop_length": 480,
-        "inter_channels": 192,
-        "n_speakers": 2,
-        "symbols": ["<pad>", "<unk>", "<sil>", "a", "ts", "k"],
-        "speaker_to_id": {"ritsu": 0, "kanon": 1},
-        "phoneme_durations": {
-            "unit": "seconds",
-            "measured_from": "Namine Ritsu singing DB Ver2.0.2, mono labels, 110 songs",
-            "speakers": {
-                "ritsu": {
-                    "default": 0.060,
-                    "seconds": {"ts": 0.119, "k": 0.091},
-                    "counts": {"ts": 679, "k": 4859}
-                }
-            }
-        }
-    }"#;
-
-    #[test]
-    fn a_measured_consonant_table_rides_in_and_out_as_the_document_s_own_type() {
-        let info = VoiceInfo::parse(WITH_DURATIONS).unwrap();
-        let widths = info.consonant_widths(0).expect("the table was aboard");
-        assert_eq!(widths.default, 0.060);
-        assert_eq!(widths.width("ts"), 0.119, "measured");
-        assert_eq!(widths.width("m"), 0.060, "unmeasured takes the default");
-        // The provenance fields — counts, measured_from — pass through unread.
-        // The second speaker was never measured, and gets no table rather than the first's.
-        assert!(info.consonant_widths(1).is_none());
-        assert!(
-            info.consonant_widths(2).is_none(),
-            "nor does a speaker the model lacks"
-        );
-
-        // An export without a table says so rather than inventing one.
-        assert!(
-            VoiceInfo::parse(RITSU)
-                .unwrap()
-                .consonant_widths(0)
-                .is_none()
-        );
-
-        // A table for a speaker the model does not have is a table for somebody else.
-        let stranger = WITH_DURATIONS.replace("\"ritsu\": {", "\"teto\": {");
-        let error = VoiceInfo::parse(&stranger).unwrap_err();
-        assert!(error.to_string().contains("teto"), "{error}");
-    }
-
-    #[test]
-    fn a_duration_table_this_build_cannot_read_is_refused() {
-        // A unit of frames read as seconds would be wrong by two orders of magnitude.
-        let raw = WITH_DURATIONS.replace("\"unit\": \"seconds\"", "\"unit\": \"frames\"");
-        let error = VoiceInfo::parse(&raw).unwrap_err();
-        assert!(error.to_string().contains("frames"), "{error}");
-
-        // A zero-length consonant is a table nobody can mean.
-        let raw = WITH_DURATIONS.replace("0.119", "0.0");
-        assert!(VoiceInfo::parse(&raw).is_err());
-    }
-
-    #[test]
-    fn another_format_is_refused_rather_than_misread() {
-        let raw = RITSU.replace("\"format_version\": 2", "\"format_version\": 3");
-        let error = VoiceInfo::parse(&raw).unwrap_err();
-        assert!(error.to_string().contains("newer"), "{error}");
-        // Version 1 kept one table for the whole model; read as version 2 it would be a
-        // model with no tables, so it is refused and re-exported instead.
-        let raw = RITSU.replace("\"format_version\": 2", "\"format_version\": 1");
-        let error = VoiceInfo::parse(&raw).unwrap_err();
-        assert!(error.to_string().contains("re-export"), "{error}");
-    }
-
-    #[test]
-    fn a_table_without_the_specials_is_refused() {
-        let raw = RITSU.replace("\"<sil>\", ", "");
-        let error = VoiceInfo::parse(&raw).unwrap_err();
-        assert!(error.to_string().contains("<sil>"), "{error}");
-    }
-
-    #[test]
-    fn the_level_table_rides_in_beside_the_widths_and_is_refused_in_the_wrong_unit() {
-        let raw = r#"{"format_version": 2, "sample_rate": 48000, "hop_length": 480,
-            "inter_channels": 192, "symbols": ["<pad>", "<unk>", "<sil>", "k", "a"],
-            "speaker_to_id": {"one": 0},
-            "phoneme_levels": {"unit": "db", "speakers": {"one": {"default": -12.0, "db": {"k": -22.6}}}}}"#;
-        let info = VoiceInfo::parse(raw).expect("a level table in decibels loads");
-        let levels = info.consonant_levels(0).expect("the table was aboard");
-        assert_eq!(levels.db("k"), -22.6, "measured");
-        assert_eq!(levels.db("s"), -12.0, "unmeasured takes the default");
-        assert!(levels.measured("k") && !levels.measured("s"));
-
-        let linear = raw.replace("\"unit\": \"db\"", "\"unit\": \"gain\"");
-        let error = VoiceInfo::parse(&linear).expect_err("a table of gains is not decibels");
-        assert!(error.to_string().contains("gain"), "{error}");
-        let nan = raw.replace("-22.6", "null");
-        assert!(
-            VoiceInfo::parse(&nan).is_err(),
-            "a level that is not a number is refused"
-        );
-    }
-}
-
-#[cfg(test)]
-mod speaker_tests {
-    use super::*;
-
-    #[test]
-    fn every_id_gets_a_name_and_the_names_keep_id_order() {
-        let info: VoiceInfo = serde_json::from_value(serde_json::json!({
-            "format_version": 2, "sample_rate": 48000, "hop_length": 480, "inter_channels": 192,
-            "n_speakers": 3, "symbols": ["<pad>", "<unk>", "<sil>", "a"],
-            "speaker_to_id": {"zoe": 1, "abe": 0}
-        }))
-        .expect("a three-speaker model with one id unnamed");
-        assert_eq!(
-            info.speakers(),
-            ["abe", "zoe", "2"],
-            "id order, and a number for the unnamed"
-        );
-        assert_eq!(info.speaker_id("zoe"), Some(1));
-        assert_eq!(info.speaker_id("2"), Some(2));
     }
 }

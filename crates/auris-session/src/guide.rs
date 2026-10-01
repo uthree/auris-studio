@@ -1509,28 +1509,14 @@ pub mod singing {
     //! it sings back.
     //!
     //! A [`SingerTrack`](auris_core::SingerTrack) is the frontend for a singing-voice
-    //! synthesiser that renders offline. The notes carry lyrics, the lyrics become phonemes,
-    //! the frames become a waveform through a singing backend — including voices exported by
-    //! the trainer in the repository's Python `training/` project — and
-    //! what playback uses is the [`SingerTake`](auris_core::SingerTake) that render produced.
-    //! [`Session::export_singer_frames`](crate::Session::export_singer_frames) still writes
-    //! the raw frames, which is how a model is developed against real documents, and
-    //! [`Session::sing_frames`](crate::Session::sing_frames) is the door in the other
-    //! direction: frames off disk — a track's, or a corpus's own curves laid on the model's
-    //! clock — through the same cached model, chunking and recorder a take goes through, into
-    //! a WAV, with no document before or after. That is what lets the trainer measure a voice
-    //! *through this host* rather than through PyTorch (`training/doc/evaluation.md`), and
-    //! it answers with [`SungFrames`](crate::SungFrames), the render's own account of itself:
-    //! how many chunks, how long to open and to sing, which processor sang. Those chunks are
-    //! cut in silence — at the memory ceiling, and at every rest longer than a breath
-    //! ([`auris_singer::MAX_REST_FRAMES`]), because a voice trained on phrases has never sung
-    //! across two seconds of nothing, and measured through this door it loses the line after
-    //! such a rest when asked to.
+    //! synthesiser that renders offline. Notes carry lyrics; lyrics become phonemes and frames
+    //! become audio through DiffSinger, LeapSinger or VOICEVOX. Playback uses the saved
+    //! [`SingerTake`](auris_core::SingerTake). Frame import and export run through the same
+    //! cached models as the editor, with ONNX inference split into bounded phrases.
     //!
     //! # The voice, and the take
     //!
-    //! A voice enters through one path. For the native backend that is a self-contained ONNX
-    //! file carrying its phoneme table, audio parameters and voice card. For DiffSinger it is
+    //! A voice enters through one path. For DiffSinger it is
     //! the voicebank's `dsconfig.yaml`, which names its acoustic model, text or JSON phoneme table
     //! and bundled vocoder. Language IDs and speaker embedding files belong to that deployment;
     //! voicebanks needing acoustic variance curves also run their linguistic and variance graphs.
@@ -1561,8 +1547,7 @@ pub mod singing {
     //! [`SingerPortraitSource::for_voice`](crate::SingerPortraitSource::for_voice) before a
     //! track exists, and takes priority over the inspector while open. Both use the same
     //! bounded display and asynchronous cache. [`load_singer_portrait`](crate::load_singer_portrait)
-    //! reads its optional image on a worker. Native portraits come from `voice.portrait` in ONNX
-    //! metadata without loading the neural graph. VOICEVOX resolves the decoding style's singer
+    //! reads its optional image on a worker. VOICEVOX resolves the decoding style's singer
     //! UUID and requests `/singer_info` in URL format, downloading only the selected style's
     //! portrait or its character fallback. The frontend bounds decoded image dimensions, caches
     //! missing artwork and failures too, and only displays results for the current saved source
@@ -1628,8 +1613,7 @@ pub mod singing {
     //! # A take is kept, never silently rewritten
     //!
     //! The contract from "the score does not change; the performer does": Auris' own random
-    //! choices are pinned by a seed the document stores. The native voice also accepts its
-    //! stochastic inputs from that seed; LeapSinger's upstream acoustic and vocoder graphs draw
+    //! choices are pinned by a seed the document stores. DiffSinger and LeapSinger graphs draw
     //! noise internally, so repeating a seed does not reproduce their waveform. The saved audio
     //! take preserves the performance across backends. Regeneration is always a command
     //! aimed at the track, and an edit after a render leaves the take *playing* — a voice
@@ -1688,24 +1672,9 @@ pub mod singing {
     //! one energy per hop, with the bend curve moving the pitch and controller 11 scaling the
     //! energy. The timing rules (consonants take their width at a note's edges, syllabics
     //! stretch, one note sounds at a time, the pitch travels between two notes that touch)
-    //! live in [`auris_vocal::frames`] beside the tests that measure them. The consonant's width is the voice model's own: a newer
-    //! auris-singer export carries the per-phoneme durations it measured from its training
-    //! data, [`Session::set_singer_voice`](crate::Session::set_singer_voice) copies them
-    //! into the document as [`auris_core::ConsonantWidths`] beside the voice's name — same
-    //! reason: the layout must not change with whether the model file is present — and the
-    //! layout falls back to a fixed sixty milliseconds where no table rode in. The voice's
-    //! consonant *levels* ride in the same way, as [`auris_core::ConsonantLevels`]: how far
-    //! under its vowel the training data sang each consonant, which the frames' energy is
-    //! turned down by — a /k/ at the vowel's loudness being a /k/ no voice has heard — except
-    //! for its last twenty milliseconds, the release, which come back up to the vowel: a /k/
-    //! held at its closure's level to the end is a /k/ that never bursts. A voice trained on
-    //! several corpora has one *speaker* per source, each with widths and levels of their
-    //! own, and the track names the one that sings ([`auris_core::SingerVoice::speaker`],
-    //! `None` being the model's first) and carries that speaker's two tables;
-    //! [`Session::set_singer_speaker`](crate::Session::set_singer_speaker) checks the name
-    //! against the model before recording it, and every path that sings — the take, the
-    //! audition, a frames file — resolves it through one rule, so a stale name is refused
-    //! at the command and never mid-render.
+    //! live in [`auris_vocal::frames`] beside tests that measure them. Unpinned consonants
+    //! use sixty milliseconds; manual timing pins override that layout. Speaker selection is
+    //! checked against the loaded backend before editing the document.
     //!
     //! A VOICEVOX connection can also discover the running Engine's named singers through
     //! [`crate::fetch_voicevox_catalog`]. Fetching only reads; it never rewrites the connection

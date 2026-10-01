@@ -323,7 +323,7 @@ impl AurisMcp {
         blocking(move || toolbox::checkpoints::run(&args)).await
     }
 
-    /// Searches the Auris Studio documentation embedded in this build. Use it for questions about features, workflows, composition, development, evaluation, and singing-voice training. Returns the most relevant passages with their document paths and section headings.
+    /// Searches the Auris Studio documentation embedded in this build. Use it for questions about features, workflows, composition, development, evaluation, and singing backends. Returns the most relevant passages with their document paths and section headings.
     #[tool(input_schema = tool_schema("search_documentation"))]
     async fn search_documentation(
         &self,
@@ -619,7 +619,7 @@ impl AurisMcp {
         blocking(move || toolbox::write_lyrics::run(&args)).await
     }
 
-    /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to an Auris `.onnx` voice, DiffSinger `dsconfig.yaml`, VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, which the track keeps. Native Auris voices use `seed` to reproduce a take. LeapSinger generates noise internally, so repeated renders can differ even with the same seed. The rendered audio and the change are saved.
+    /// Renders a singer track through its voice model and keeps the audio as the track's take, which is what playback and `render` then play. Aims at the project's only singer track when `track` is left out. `voice` chooses a model the first time — an absolute path to DiffSinger `dsconfig.yaml`, VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, which the track keeps. DiffSinger and LeapSinger generate noise internally, so repeated renders can differ even with the same seed. The rendered audio and the change are saved.
     #[tool(input_schema = tool_schema("sing"))]
     async fn sing(
         &self,

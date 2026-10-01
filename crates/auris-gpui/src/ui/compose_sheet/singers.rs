@@ -55,7 +55,7 @@ impl AurisApp {
         let Some(path) = dials.singer.clone() else {
             return;
         };
-        if BackendKind::from_path(Path::new(&path)) != BackendKind::Voicevox {
+        if BackendKind::from_path(Path::new(&path)) != Some(BackendKind::Voicevox) {
             self.open_menu(fallback);
             cx.notify();
             return;

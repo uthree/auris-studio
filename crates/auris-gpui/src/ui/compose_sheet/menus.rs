@@ -162,10 +162,7 @@ impl AurisApp {
         cx.spawn(async move |this, cx| {
             let file = rfd::AsyncFileDialog::new()
                 .set_title(Key::DialogChooseVoice.get(language))
-                .add_filter(
-                    Key::FilterVoiceModel.get(language),
-                    &["onnx", "yaml", "json"],
-                )
+                .add_filter(Key::FilterVoiceModel.get(language), &["yaml", "json"])
                 .pick_file()
                 .await;
             if let Some(file) = file {

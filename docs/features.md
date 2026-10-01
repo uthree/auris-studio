@@ -294,7 +294,7 @@ section's own *Add Voice Folder…* row, remembered and never copied, the way pl
 are. **One click puts the voice on the selected singer track**, exactly as one click puts a
 sound on an instrument track, and the search box finds voices by name like everything else.
 **Track → Choose Voice…** remains as the file dialog for a one-off file somewhere unusual.
-Auris ONNX, DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf. A
+DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf. A
 LeapSinger voice enters through a `.leapsinger.json` file naming its exported acoustic model,
 NHVSing vocoder, and phoneme dictionary; [setup and export instructions](singing-backends.md#leapsinger-voices)
 cover the supported variants and speaker choices. The setup rows at
@@ -306,8 +306,7 @@ they stand in it; a single-speaker voice says so and stays. The choice is the tr
 with the document, and a take is pinned by the speaker the way it is by the seed. Either way
 the track is pointed at a voice entry, left where it lies, and from then on the track sings for
 real. The render is a **take**: an ordinary audio file in `Audio/` that plays, exports and reopens
-with everything else. Native Auris voices receive their random inputs from the document's seed;
-LeapSinger's graphs generate noise internally, so repeating the seed can produce a different
+with everything else. DiffSinger and LeapSinger graphs generate noise internally, so repeating the seed can produce a different
 waveform. The saved audio preserves the performance on every machine. **The window keeps the take abreast of
 the score by itself**: shortly after an edit settles, the voice re-renders in the background
 — the header badge reads *… ♪ voice* while it works, and an edit landing mid-render throws
@@ -330,13 +329,6 @@ leaving a gap in the line — so a drawn portamento or vibrato reads exactly as 
 a faint divider inside the note at each cut and the IPA symbol above the note where its
 frames begin, so the milliseconds a consonant takes are the same milliseconds on screen
 however long the note holds. Zoomed far out the symbols step aside and the dividers stay.
-
-How many milliseconds that is belongs to the voice: a newer auris-singer export carries the
-**consonant durations it measured from its own training data** (an affricate like つ's `ts`
-runs about twice a plain stop), choosing the voice copies that table into the document
-beside its name, and the segmentation, the boundary grab, the note preview and the render
-all lay phonemes out from it. A voice without the table — or a track without a voice — uses
-a fixed sixty milliseconds, the rule as it always was.
 
 Where the model computes is a preference in **Settings → General → Singing Synthesis**:
 *Auto* (the default) sings on the platform's own GPU provider — DirectML on Windows, Core ML

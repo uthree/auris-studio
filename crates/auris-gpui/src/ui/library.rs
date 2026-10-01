@@ -1260,7 +1260,7 @@ impl AurisApp {
     ///
     /// A voice is chosen the way a sound is: one row, one click, onto the selected singer
     /// track. Track → Choose Voice… keeps the file dialog for the one-off file somewhere
-    /// unusual; what this section holds is the shelf — Auris `.onnx` files, DiffSinger voicebanks,
+    /// unusual; what this section holds is the shelf — DiffSinger voicebanks,
     /// VOICEVOX connections, and LeapSinger manifests in a `Voices` folder or in a folder
     /// registered below.
     fn voice_rows(&mut self, cx: &mut gpui::Context<Self>) -> Vec<AnyElement> {
@@ -1315,11 +1315,10 @@ impl AurisApp {
         let tooltip =
             crate::ui::tooltip::keyed_tip(format!("{target_label} · {name} · {shown}"), "", &theme);
         let backend = match auris_session::voice_source_kind(&path) {
-            Some(auris_session::VoiceSourceKind::Auris) => Key::VoiceBackendAuris,
-            Some(auris_session::VoiceSourceKind::DiffSinger) => Key::VoiceBackendDiffSinger,
-            Some(auris_session::VoiceSourceKind::Voicevox) => Key::VoiceBackendVoicevox,
-            Some(auris_session::VoiceSourceKind::LeapSinger) => Key::VoiceBackendLeapSinger,
-            None => Key::VoiceBackendAuris,
+            Some(auris_session::VoiceSourceKind::DiffSinger) => Some(Key::VoiceBackendDiffSinger),
+            Some(auris_session::VoiceSourceKind::Voicevox) => Some(Key::VoiceBackendVoicevox),
+            Some(auris_session::VoiceSourceKind::LeapSinger) => Some(Key::VoiceBackendLeapSinger),
+            None => None,
         };
         div()
             .id(gpui::SharedString::from(format!("lib-voice-{shown}")))
@@ -1375,7 +1374,7 @@ impl AurisApp {
                 div()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child(self.t(backend)),
+                    .child(backend.map(|key| self.t(key)).unwrap_or("")),
             )
             .when(enabled, |this| {
                 this.on_mouse_down(

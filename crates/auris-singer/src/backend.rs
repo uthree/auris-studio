@@ -18,8 +18,6 @@ pub struct SingingRender {
 /// A singing engine understood by Auris Studio.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BackendKind {
-    /// Auris' self-contained ONNX voice format.
-    Auris,
     /// An OpenUtau-compatible DiffSinger voicebank.
     DiffSinger,
     /// A running VOICEVOX Engine reached through its HTTP API.
@@ -29,27 +27,27 @@ pub enum BackendKind {
 }
 
 impl BackendKind {
-    /// The backend selected by an entry file's name, without opening the file.
-    pub fn from_path(path: &Path) -> Self {
+    /// Identifies a supported entry file by name without opening it.
+    pub fn from_path(path: &Path) -> Option<Self> {
         if path
             .file_name()
             .is_some_and(|name| name.eq_ignore_ascii_case("dsconfig.yaml"))
         {
-            Self::DiffSinger
+            Some(Self::DiffSinger)
         } else if path
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.to_ascii_lowercase().ends_with(".voicevox.json"))
         {
-            Self::Voicevox
+            Some(Self::Voicevox)
         } else if path
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.to_ascii_lowercase().ends_with(".leapsinger.json"))
         {
-            Self::LeapSinger
+            Some(Self::LeapSinger)
         } else {
-            Self::Auris
+            None
         }
     }
 
@@ -61,7 +59,7 @@ impl BackendKind {
             phoneme_timing: direct_phonemes,
             curves: match self {
                 Self::Voicevox => crate::voicevox::VoicevoxBackend::SOURCES,
-                Self::Auris | Self::DiffSinger | Self::LeapSinger => CurveSources::default(),
+                Self::DiffSinger | Self::LeapSinger => CurveSources::default(),
             },
         }
     }
@@ -76,6 +74,16 @@ pub struct VoiceCapabilities {
     pub manual_phonemes: bool,
     /// Whether per-phoneme duration pins affect the voice's pronunciation timing.
     pub phoneme_timing: bool,
+}
+
+impl Default for VoiceCapabilities {
+    fn default() -> Self {
+        Self {
+            curves: CurveSources::default(),
+            manual_phonemes: true,
+            phoneme_timing: true,
+        }
+    }
 }
 
 /// The backend contract: metadata, frame curves and an optional note score in; mono waveform out.
@@ -105,7 +113,7 @@ pub trait SingingBackend: Send {
     fn kind(&self) -> BackendKind;
     /// Capabilities of this loaded model, overriding format defaults when needed.
     ///
-    /// A native model with an optional curve predictor can report its own sources here.
+    /// A model with an optional curve predictor can report its own sources here.
     /// Curve generators should use `CurveGenerator::curve_sources` in this result.
     fn capabilities(&self) -> VoiceCapabilities {
         self.kind().capabilities()
@@ -120,7 +128,7 @@ pub trait SingingBackend: Send {
     fn path(&self) -> &Path;
     /// Whether this already-loaded voice is safe to reuse for background synthesis.
     ///
-    /// Native voices have no subordinate resources. Manifest-backed implementations override
+    /// Implementations override
     /// this for child paths or service URLs that an explicit load was allowed to use.
     fn automatic_access_safe(&self) -> bool {
         true
@@ -170,7 +178,7 @@ impl VoiceModel {
         self.backend.capabilities()
     }
 
-    /// Opens an Auris `.onnx`, DiffSinger `dsconfig.yaml`, `.voicevox.json` connection,
+    /// Opens DiffSinger `dsconfig.yaml`, a `.voicevox.json` connection,
     /// or `.leapsinger.json` voicebank manifest.
     pub fn load(path: &Path, acceleration: Acceleration) -> Result<Self, SingError> {
         Self::load_with_access(path, acceleration, false)
@@ -195,24 +203,24 @@ impl VoiceModel {
         acceleration: Acceleration,
         automatic: bool,
     ) -> Result<Self, SingError> {
-        let backend: Box<dyn SingingBackend> = match BackendKind::from_path(path) {
-            BackendKind::DiffSinger => Box::new(crate::diffsinger::DiffSingerBackend::load(
-                path,
-                acceleration,
-                automatic,
-            )?),
-            BackendKind::Voicevox => Box::new(crate::voicevox::VoicevoxBackend::load(
-                path,
-                acceleration,
-                automatic,
-            )?),
-            BackendKind::Auris => Box::new(crate::model::AurisBackend::load(path, acceleration)?),
-            BackendKind::LeapSinger => Box::new(crate::leapsinger::LeapSingerBackend::load(
-                path,
-                acceleration,
-                automatic,
-            )?),
-        };
+        let backend: Box<dyn SingingBackend> =
+            match BackendKind::from_path(path).ok_or(SingError::NotAVoice)? {
+                BackendKind::DiffSinger => Box::new(crate::diffsinger::DiffSingerBackend::load(
+                    path,
+                    acceleration,
+                    automatic,
+                )?),
+                BackendKind::Voicevox => Box::new(crate::voicevox::VoicevoxBackend::load(
+                    path,
+                    acceleration,
+                    automatic,
+                )?),
+                BackendKind::LeapSinger => Box::new(crate::leapsinger::LeapSingerBackend::load(
+                    path,
+                    acceleration,
+                    automatic,
+                )?),
+            };
         Ok(Self { backend })
     }
 
@@ -306,7 +314,7 @@ mod tests {
 
     use super::*;
 
-    struct NativePredictor(VoiceInfo);
+    struct TestPredictor(VoiceInfo);
 
     fn temp_entry_root() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -345,9 +353,9 @@ mod tests {
         std::fs::remove_dir(link).unwrap();
     }
 
-    impl SingingBackend for NativePredictor {
+    impl SingingBackend for TestPredictor {
         fn kind(&self) -> BackendKind {
-            BackendKind::Auris
+            BackendKind::DiffSinger
         }
         fn capabilities(&self) -> VoiceCapabilities {
             let mut capabilities = self.kind().capabilities();
@@ -364,7 +372,7 @@ mod tests {
             false
         }
         fn path(&self) -> &Path {
-            Path::new("native-with-predictor.onnx")
+            Path::new("dsconfig.yaml")
         }
         fn sing_with(
             &mut self,
@@ -379,22 +387,21 @@ mod tests {
     }
 
     #[test]
-    fn a_native_model_can_report_a_predictor_without_changing_format_defaults() {
+    fn a_loaded_model_can_override_format_curve_defaults() {
         let info = serde_json::from_value(serde_json::json!({
-            "format_version": crate::FORMAT_VERSION,
-            "sample_rate": 24000, "hop_length": 256, "inter_channels": 1,
+            "sample_rate": 24000, "hop_length": 256, "n_speakers": 1, "speaker_to_id": {}, "voice": null,
             "symbols": ["<sil>", "<unk>"]
         }))
         .unwrap();
-        let model = VoiceModel::from_backend(NativePredictor(info));
-        assert_eq!(model.backend_kind(), BackendKind::Auris);
+        let model = VoiceModel::from_backend(TestPredictor(info));
+        assert_eq!(model.backend_kind(), BackendKind::DiffSinger);
         assert_eq!(
             model.capabilities().curves.pitch,
             crate::CurveSource::Backend
         );
         assert_eq!(model.capabilities().curves.energy, crate::CurveSource::Host);
         assert_eq!(
-            BackendKind::Auris.capabilities().curves,
+            BackendKind::DiffSinger.capabilities().curves,
             CurveSources::default()
         );
     }
@@ -402,21 +409,31 @@ mod tests {
     #[test]
     fn capabilities_follow_the_backend_that_consumes_the_score() {
         for (entry, kind, phonemes) in [
-            ("voice.onnx", BackendKind::Auris, true),
             ("bank/DSCONFIG.YAML", BackendKind::DiffSinger, true),
             ("voice.VOICEVOX.JSON", BackendKind::Voicevox, false),
             ("voice.LEAPSINGER.JSON", BackendKind::LeapSinger, true),
         ] {
             let backend = BackendKind::from_path(Path::new(entry));
-            assert_eq!(backend, kind);
-            assert_eq!(backend.capabilities().manual_phonemes, phonemes);
-            assert_eq!(backend.capabilities().phoneme_timing, phonemes);
+            assert_eq!(backend, Some(kind));
+            assert_eq!(backend.unwrap().capabilities().manual_phonemes, phonemes);
+            assert_eq!(backend.unwrap().capabilities().phoneme_timing, phonemes);
             let expected = if kind == BackendKind::Voicevox {
                 crate::voicevox::VoicevoxBackend::SOURCES
             } else {
                 CurveSources::default()
             };
-            assert_eq!(backend.capabilities().curves, expected);
+            assert_eq!(backend.unwrap().capabilities().curves, expected);
+        }
+    }
+
+    #[test]
+    fn unsupported_entries_are_refused_before_opening_a_model() {
+        for entry in ["voice.onnx", "voice.ONNX", "voice.json", "arbitrary.yaml"] {
+            assert_eq!(BackendKind::from_path(Path::new(entry)), None);
+            assert!(matches!(
+                VoiceModel::load(Path::new(entry), Acceleration::Cpu),
+                Err(SingError::NotAVoice)
+            ));
         }
     }
 

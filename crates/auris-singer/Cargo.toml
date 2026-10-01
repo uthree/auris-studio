@@ -1,8 +1,8 @@
-# Singing-voice synthesis: an auris-singer voice model, run offline over a singer track's
+# Singing-voice synthesis: external singing backends, run offline over a singer track's
 # frames. Frames in, a waveform out — never on the audio thread.
 [package]
 name = "auris-singer"
-description = "Singing-voice synthesis for Auris Studio: ONNX voice models, frames in, audio out"
+description = "Singing-voice synthesis for Auris Studio: DiffSinger, LeapSinger and VOICEVOX"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

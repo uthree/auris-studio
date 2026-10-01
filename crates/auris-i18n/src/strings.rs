@@ -1797,7 +1797,7 @@ RENDER OPTIONS
 SING OPTIONS
         --track <name>            Which singer track (default: the project's only one)
         --voice <voice-file>      Choose the voice first, and remember it
-                                  Auris .onnx, dsconfig.yaml, .voicevox.json, .leapsinger.json
+                                  dsconfig.yaml, .voicevox.json, .leapsinger.json
         --speaker <name>          Which of the voice's speakers sings, and remember it
         --seed <n>                Render seed, where supported (default: the current take's)
 
@@ -1878,7 +1878,7 @@ render のオプション
 sing のオプション
         --track <name>            歌わせるシンガートラック（既定: プロジェクト唯一の 1 本）
         --voice <voice-file>      先にボイスを選んで記憶させる
-                                  Auris .onnx、dsconfig.yaml、.voicevox.json、.leapsinger.json
+                                  dsconfig.yaml、.voicevox.json、.leapsinger.json
         --speaker <name>          声のどの話者が歌うかを選んで記憶させる
         --seed <n>                合成用シード（対応ボイスのみ。既定: 現在のテイクのシード）
 
@@ -2070,7 +2070,6 @@ new のオプション
     VoiceSetupKeyShift { en: "Key-shift input", ja: "キーシフト入力" }
     VoiceSetupSpeed { en: "Speed input", ja: "速度入力" }
     VoiceSetupWriteConfig { en: "Write dsconfig.yaml", ja: "dsconfig.yamlを書き出す" }
-    VoiceBackendAuris { en: "Auris ONNX", ja: "Auris形式" }
     VoiceBackendDiffSinger { en: "DiffSinger", ja: "DiffSinger形式" }
     VoiceBackendVoicevox { en: "VOICEVOX", ja: "VOICEVOX接続" }
     VoiceBackendLeapSinger { en: "LeapSinger", ja: "LeapSinger形式" }

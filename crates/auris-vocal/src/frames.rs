@@ -68,7 +68,7 @@ pub const CONSONANT_SECONDS: f64 = 0.060;
 
 /// Seconds the pitch takes to travel from one note to the next where they touch.
 ///
-/// The JSUT-song corpus was measured (`training/runs/exp/glide_shape.py`): across 1,568 note
+/// The JSUT-song corpus was measured : across 1,568 note
 /// changes of a semitone or more, the pitch spends a median 60 ms between a tenth and nine
 /// tenths of the way, and the travel straddles the boundary — it begins some 20 ms before the
 /// next note's first phoneme and ends 50 ms after it, inside the consonant where there is one.
@@ -80,7 +80,7 @@ pub const GLIDE_SECONDS: f64 = 0.080;
 
 /// Seconds at the end of a consonant that are sung at the vowel's level: its release.
 ///
-/// Measured on JSUT-song from the labels (`training/runs/exp/plosive_shape.py`), a voiceless
+/// Measured on JSUT-song from the labels , a voiceless
 /// plosive sits 25 dB under its vowel for its closure and 8 dB under it over its last 20 ms,
 /// and every consonant class rises the same way into the vowel. A level table carries the
 /// closure's number, and held to the last frame it is a stop that never bursts: sung through

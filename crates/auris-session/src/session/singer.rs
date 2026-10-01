@@ -199,14 +199,18 @@ impl Session {
     /// Reads model-specific capabilities from the immutable cache, with cold format defaults.
     fn capabilities_for_singer(&self, singer: &auris_core::SingerTrack) -> VoiceCapabilities {
         let Some(voice) = &singer.voice else {
-            return BackendKind::Auris.capabilities();
+            return VoiceCapabilities::default();
         };
         voice
             .path
             .resolve(self.project_folder())
             .and_then(|path| self.voices.get(&path))
             .map_or_else(
-                || BackendKind::from_path(voice.path.as_stored()).capabilities(),
+                || {
+                    BackendKind::from_path(voice.path.as_stored())
+                        .map(BackendKind::capabilities)
+                        .unwrap_or_default()
+                },
                 |loaded| loaded.capabilities,
             )
     }
@@ -945,8 +949,8 @@ impl Session {
             SingerVoice {
                 path,
                 name: voice_name(info, file),
-                consonants: info.consonant_widths(0),
-                levels: info.consonant_levels(0),
+                consonants: None,
+                levels: None,
                 speaker: None,
             },
             info.hop_seconds(),
@@ -982,22 +986,20 @@ impl Session {
         let loaded = self.loaded_voice_at(file)?;
         let info = &loaded.info;
         let offered = info.speakers();
-        let id = match speaker {
-            Some(name) => offered
-                .iter()
-                .position(|known| known == name)
-                .ok_or_else(|| SessionError::NoSuchSpeaker {
-                    name: name.into(),
-                    offered: offered.clone(),
-                })? as u32,
-            None => 0,
-        };
+        if let Some(name) = speaker
+            && !offered.iter().any(|known| known == name)
+        {
+            return Err(SessionError::NoSuchSpeaker {
+                name: name.to_string(),
+                offered,
+            });
+        }
         Ok((
             SingerVoice {
                 path: AssetPath::external(file),
                 name: voice_name(info, file),
-                consonants: info.consonant_widths(id),
-                levels: info.consonant_levels(id),
+                consonants: None,
+                levels: None,
                 speaker: speaker.map(str::to_string),
             },
             info.hop_seconds(),
@@ -1062,7 +1064,7 @@ impl Session {
         track: TrackId,
     ) -> Result<VoicevoxConnection, SessionError> {
         let path = self.singer_voice_path(track)?;
-        if BackendKind::from_path(&path) != BackendKind::Voicevox {
+        if BackendKind::from_path(&path) != Some(BackendKind::Voicevox) {
             return Err(auris_singer::SingError::Metadata(
                 "This singer does not use a VOICEVOX connection".into(),
             )
@@ -1150,7 +1152,12 @@ impl Session {
             .resolve(self.project_folder())
             .ok_or(SessionError::NoVoice(track.0))?;
         let loaded = self.voices.get(&path);
-        let backend = loaded.map_or_else(|| BackendKind::from_path(&path), |voice| voice.backend);
+        let backend = loaded
+            .map_or_else(
+                || BackendKind::from_path(&path),
+                |voice| Some(voice.backend),
+            )
+            .ok_or(auris_singer::SingError::NotAVoice)?;
         let speakers = loaded
             .map(|voice| voice.info.speakers())
             .unwrap_or_default();
@@ -1184,27 +1191,15 @@ impl Session {
         speaker: Option<&str>,
     ) -> Result<(), SessionError> {
         let info = self.singer_metadata(track)?;
-        let (chosen, consonants, levels) = {
-            let offered = info.speakers();
-            let id = match speaker {
-                Some(name) => offered
-                    .iter()
-                    .position(|known| known == name)
-                    .ok_or_else(|| SessionError::NoSuchSpeaker {
-                        name: name.to_string(),
-                        offered: offered.clone(),
-                    })? as u32,
-                None => 0,
-            };
-            // The tables are the speaker's, and ride into the document with the choice for
-            // the reason they ride in with the voice: the layout must not change with
-            // whether the model file is present.
-            (
-                speaker.map(str::to_string),
-                info.consonant_widths(id),
-                info.consonant_levels(id),
-            )
-        };
+        let offered = info.speakers();
+        if let Some(name) = speaker
+            && !offered.iter().any(|known| known == name)
+        {
+            return Err(SessionError::NoSuchSpeaker {
+                name: name.to_string(),
+                offered,
+            });
+        }
         self.record(Edit::SetSingerSpeaker);
         if let Some(voice) = self
             .project
@@ -1212,9 +1207,9 @@ impl Session {
             .and_then(|track| track.kind.as_singer_mut())
             .and_then(|singer| singer.voice.as_mut())
         {
-            voice.speaker = chosen;
-            voice.consonants = consonants;
-            voice.levels = levels;
+            voice.speaker = speaker.map(str::to_string);
+            voice.consonants = None;
+            voice.levels = None;
         }
         Ok(())
     }
@@ -1303,7 +1298,11 @@ impl Session {
             .voice
             .as_ref()
             .ok_or(SessionError::NoVoice(track.0))?;
-        self.singer_score_for_backend(track, BackendKind::from_path(voice.path.as_stored()))?;
+        self.singer_score_for_backend(
+            track,
+            BackendKind::from_path(voice.path.as_stored())
+                .ok_or(auris_singer::SingError::NotAVoice)?,
+        )?;
         Ok(())
     }
 
@@ -1372,13 +1371,16 @@ impl Session {
         let seed = seed
             .or(singer.take.as_ref().map(|take| take.seed))
             .unwrap_or(0);
-        let (score, _) =
-            self.singer_score_for_backend(track, BackendKind::from_path(voice.path.as_stored()))?;
+        let (score, _) = self.singer_score_for_backend(
+            track,
+            BackendKind::from_path(voice.path.as_stored())
+                .ok_or(auris_singer::SingError::NotAVoice)?,
+        )?;
         let resolved = self
             .resolve_singer_asset(&voice.path, access)
             .ok_or(SessionError::NoVoice(track.0))?;
         let loaded = self.loaded_voice_at_with_access(&resolved, access)?;
-        // Load before sampling: two native voices may have different optional predictors.
+        // Load before sampling to use the backend's curve sources.
         let frames = auris_vocal::render_frames_with_sources(
             self.require_singer(track)?,
             &self.project.tempo_map,
@@ -1857,7 +1859,9 @@ impl Session {
         let Some(voice) = &singer.voice else {
             return Ok(());
         };
-        let capabilities = BackendKind::from_path(voice.path.as_stored()).capabilities();
+        let capabilities = BackendKind::from_path(voice.path.as_stored())
+            .map(BackendKind::capabilities)
+            .unwrap_or_default();
         if if timing {
             capabilities.phoneme_timing
         } else {
@@ -3705,7 +3709,7 @@ mod tests {
             .and_then(|track| track.kind.as_singer_mut())
         {
             singer.voice = Some(SingerVoice {
-                path: AssetPath::external("/voices/test.onnx"),
+                path: AssetPath::external("/voices/Test/dsconfig.yaml"),
                 name: "Test Voice".into(),
                 consonants: None,
                 levels: None,
@@ -3744,59 +3748,6 @@ mod tests {
             Some(crate::history::Edit::SetSingerSpeaker),
             "a refusal costs no undo step"
         );
-    }
-
-    /// A real voice names its speakers, refuses a stranger by name — listing its own — and
-    /// treats a chosen speaker as part of the take.
-    #[test]
-    fn a_real_voice_s_speakers_are_named_checked_and_part_of_the_take() {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            return;
-        };
-        let (mut session, track, clip) = sung(0);
-        session
-            .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
-            .unwrap();
-        session
-            .set_singer_voice(track, Some(std::path::Path::new(&model)))
-            .unwrap();
-        let speakers = session.singer_speakers(track).unwrap();
-        assert!(!speakers.is_empty(), "every model has a first speaker");
-        let refused = session
-            .set_singer_speaker(track, Some("nobody-the-model-knows"))
-            .unwrap_err();
-        match refused {
-            SessionError::NoSuchSpeaker { name, offered } => {
-                assert_eq!(name, "nobody-the-model-knows");
-                assert_eq!(offered, speakers, "the refusal names what it does have");
-            }
-            other => panic!("{other}"),
-        }
-        assert_eq!(
-            session.undo(),
-            Some(crate::history::Edit::SetSingerVoice),
-            "the refusal cost no undo step"
-        );
-        session.redo();
-
-        session
-            .set_singer_speaker(track, Some(&speakers[0]))
-            .unwrap();
-        assert_eq!(
-            session
-                .singer_voice(track)
-                .unwrap()
-                .unwrap()
-                .speaker
-                .as_deref(),
-            Some(speakers[0].as_str())
-        );
-        assert_eq!(
-            session.singer_speaker(track).unwrap(),
-            0,
-            "the first name is id 0"
-        );
-        assert_eq!(session.undo(), Some(crate::history::Edit::SetSingerSpeaker));
     }
 
     #[test]
@@ -3926,7 +3877,7 @@ mod tests {
     #[test]
     fn the_fingerprint_pins_frames_score_voice_and_seed() {
         let (mut session, track, clip) = sung(1);
-        let voice = AssetPath::external("/voices/test.onnx");
+        let voice = AssetPath::external("/voices/Test/dsconfig.yaml");
         let frames = session.singer_frames(track).unwrap();
         let score = render_score(
             session.require_singer(track).unwrap(),
@@ -3947,7 +3898,7 @@ mod tests {
             take_fingerprint(
                 &frames,
                 &score,
-                &AssetPath::external("/voices/other.onnx"),
+                &AssetPath::external("/voices/Other/dsconfig.yaml"),
                 None,
                 3
             ),
@@ -3994,12 +3945,23 @@ mod tests {
         );
 
         put_voice(&mut session, track);
+        session
+            .project
+            .track_mut(track)
+            .unwrap()
+            .kind
+            .as_singer_mut()
+            .unwrap()
+            .voice
+            .as_mut()
+            .unwrap()
+            .path = AssetPath::external("/voices/legacy.onnx");
         let frames = session.singer_frames(track).unwrap();
         let score = render_score(
             session.require_singer(track).unwrap(),
             &session.project.tempo_map,
         );
-        let voice = AssetPath::external("/voices/test.onnx");
+        let voice = AssetPath::external("/voices/legacy.onnx");
         let fingerprint = take_fingerprint(&frames, &score, &voice, None, 0);
         if let Some(singer) = session
             .project
@@ -4018,6 +3980,22 @@ mod tests {
             SingerTakeState::Current
         );
 
+        assert!(matches!(
+            session.sing_plan(track, None),
+            Err(SessionError::Sing(auris_singer::SingError::NotAVoice))
+        ));
+        assert_eq!(
+            session
+                .require_singer(track)
+                .unwrap()
+                .take
+                .as_ref()
+                .unwrap()
+                .source,
+            auris_core::SourceId(999),
+            "refusing an unsupported voice preserves the saved take"
+        );
+
         session
             .add_note(clip, Note::new(72, Ticks::QUARTER, Ticks::QUARTER))
             .unwrap();
@@ -4025,185 +4003,6 @@ mod tests {
             session.singer_take_state(track).unwrap(),
             SingerTakeState::Behind,
             "the edit moved the score past the take"
-        );
-    }
-
-    /// A voice whose export measured its consonants times them by that measure, end to end:
-    /// the model's metadata, through the document, into the frames it is fed.
-    ///
-    /// Runs only where the test model actually carries the table — an old export skips
-    /// rather than fails, since predating a measurement is not a defect — so the day a
-    /// measuring export lands on the machine, the whole chain starts being held to its
-    /// numbers.
-    #[test]
-    fn a_measuring_voice_times_its_consonants_end_to_end() {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the consonant-width test");
-            return;
-        };
-        let (mut session, track, clip) = sung(1);
-        session
-            .set_singer_voice(track, Some(std::path::Path::new(&model)))
-            .unwrap();
-        let Some(widths) = session
-            .singer_voice(track)
-            .unwrap()
-            .unwrap()
-            .consonants
-            .clone()
-        else {
-            eprintln!("the test model predates phoneme_durations; skipping");
-            return;
-        };
-        assert!(
-            !widths.seconds.is_empty(),
-            "a model that carries the table measured at least one phoneme"
-        );
-
-        // つ — [ts ɯ] — the affricate whose measured width strays furthest from the old
-        // fixed sixty milliseconds. A quarter note leaves it room not to be scaled.
-        session
-            .set_note_phonemes(clip, 0, vec!["ts".into(), "ɯ".into()])
-            .unwrap();
-        let frames = session.singer_frames(track).unwrap();
-        let ts = frames
-            .inventory
-            .iter()
-            .position(|phoneme| phoneme == "ts")
-            .expect("the affricate reached the frames") as u32;
-        let held = frames.phonemes.iter().filter(|id| **id == ts).count() as f64;
-        let asked = widths.width("ts") / frames.hop_seconds;
-        assert!(
-            (held - asked).abs() <= 1.0,
-            "ts held {held} frames where its own measure asks {asked}"
-        );
-    }
-
-    /// The acceleration setting reaches the model a render is handed, and changing it does
-    /// not wait for a relaunch: the cache is emptied, so the same file comes back loaded the
-    /// new way.
-    #[test]
-    fn the_acceleration_setting_reaches_the_next_loaded_voice() {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the acceleration test");
-            return;
-        };
-        let path = std::path::PathBuf::from(&model);
-        let (mut session, _, _) = sung(1);
-
-        session.set_singer_acceleration(auris_singer::Acceleration::Cpu);
-        let on_cpu = session.voice_model_at(&path).unwrap();
-        assert_eq!(
-            on_cpu.lock().unwrap().acceleration(),
-            auris_singer::Acceleration::Cpu
-        );
-        // Asking again without changing anything answers from the cache, not a reload.
-        assert!(Arc::ptr_eq(
-            &on_cpu,
-            &session.voice_model_at(&path).unwrap()
-        ));
-
-        session.set_singer_acceleration(auris_singer::Acceleration::Auto);
-        let on_auto = session.voice_model_at(&path).unwrap();
-        assert!(
-            !Arc::ptr_eq(&on_cpu, &on_auto),
-            "changing the setting must reload the voice, not answer from the cache"
-        );
-        assert_eq!(
-            on_auto.lock().unwrap().acceleration(),
-            auris_singer::Acceleration::Auto
-        );
-    }
-
-    #[test]
-    fn the_real_voice_sings_a_take_into_the_project() {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the real-voice session test");
-            return;
-        };
-        let scratch = crate::session::fixtures::Scratch::new("sing-take");
-        let folder = scratch.join("Song");
-        std::fs::create_dir_all(&folder).unwrap();
-
-        let (mut session, track, clip) = sung(2);
-        session.write_lyrics(clip, &[0, 1], "らら").unwrap();
-        session.save(&folder.join("Song.auris")).unwrap();
-        session
-            .set_singer_voice(track, Some(std::path::Path::new(&model)))
-            .unwrap();
-        assert!(
-            !session
-                .singer_voice(track)
-                .unwrap()
-                .unwrap()
-                .name
-                .is_empty(),
-            "the card's name rides into the document"
-        );
-        // The consonant table rides in beside the name exactly when the export measured one
-        // — asserted against the model's own metadata, so this holds for old and new
-        // exports alike.
-        let measured = {
-            let model = session
-                .voice_model_at(std::path::Path::new(&model))
-                .unwrap();
-            let model = model.lock().unwrap();
-            model.info().consonant_widths(0)
-        };
-        assert_eq!(
-            session.singer_voice(track).unwrap().unwrap().consonants,
-            measured,
-            "the document carries what the model measured, no more and no less"
-        );
-        let levels = {
-            let model = session
-                .voice_model_at(std::path::Path::new(&model))
-                .unwrap();
-            let model = model.lock().unwrap();
-            model.info().consonant_levels(0)
-        };
-        assert_eq!(
-            session.singer_voice(track).unwrap().unwrap().levels,
-            levels,
-            "and the levels beside the widths"
-        );
-
-        let seconds = session.sing(track, None).unwrap();
-        assert!(
-            seconds > 0.5,
-            "two quarter notes are audible, got {seconds}"
-        );
-        assert_eq!(
-            session.singer_take_state(track).unwrap(),
-            SingerTakeState::Current
-        );
-        let take = session
-            .project()
-            .track(track)
-            .and_then(|track| track.kind.as_singer())
-            .and_then(|singer| singer.take.clone())
-            .expect("the take is in the document");
-        let source = &session.project().audio_sources[&take.source];
-        let file = source.path.resolve(session.project_folder()).unwrap();
-        assert!(file.is_file(), "the waveform is in Audio/");
-
-        // An edit leaves the take standing, but behind the score; singing again replaces it,
-        // and the replaced take's source entry goes with it.
-        session
-            .add_note(clip, Note::new(72, Ticks::from_beats(2.0), Ticks::QUARTER))
-            .unwrap();
-        assert_eq!(
-            session.singer_take_state(track).unwrap(),
-            SingerTakeState::Behind
-        );
-        session.sing(track, None).unwrap();
-        assert_eq!(
-            session.singer_take_state(track).unwrap(),
-            SingerTakeState::Current
-        );
-        assert!(
-            !session.project().audio_sources.contains_key(&take.source),
-            "the replaced take's source entry is gone"
         );
     }
 
@@ -4559,61 +4358,6 @@ mod tests {
         assert!(
             !output.exists(),
             "the file is only made once there is something to write"
-        );
-    }
-
-    /// Frames in, a file out, through the same model and recorder a take uses — asserted on
-    /// the numbers the measurement reads back. Skips without `AURIS_SINGER_TEST_MODEL`.
-    #[test]
-    fn the_real_voice_sings_frames_to_a_file() {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the frames-in test");
-            return;
-        };
-        let voice = std::path::PathBuf::from(model);
-        let (mut session, track, clip) = sung(2);
-        session.write_lyrics(clip, &[0, 1], "らら").unwrap();
-        let scratch = crate::session::fixtures::Scratch::new("frames-sung");
-        let frames_path = scratch.join("melody.frames.json");
-        session.export_singer_frames(track, &frames_path).unwrap();
-        let frames = crate::Session::read_singer_frames(&frames_path).unwrap();
-
-        let output = scratch.join("take.wav");
-        let sung = session
-            .sing_frames(&voice, &frames, None, 7, &output)
-            .unwrap();
-        assert!(output.is_file(), "the waveform is where it was asked for");
-        assert_eq!(sung.frames, frames.len());
-        assert!(
-            sung.chunks >= 1,
-            "two sung notes are at least one inference"
-        );
-        assert!(sung.load_seconds > 0.0, "the first call opened the model");
-        assert!(sung.render_seconds > 0.0);
-        assert!(!sung.voice.is_empty(), "a voice always has a name to go by");
-        let expected = frames.len() as f64 * frames.hop_seconds;
-        assert!(
-            (sung.seconds - expected).abs() < frames.hop_seconds,
-            "{} s of audio for {expected} s of frames",
-            sung.seconds
-        );
-        let imported = auris_io::import_audio_file(&output, f64::from(sung.sample_rate)).unwrap();
-        assert_eq!(imported.sample_rate() as u32, sung.sample_rate);
-        assert!(
-            (imported.frame_count() as f64 / f64::from(sung.sample_rate) - sung.seconds).abs()
-                < 1e-6
-        );
-
-        // The second call finds the voice open, and the same seed is the same take to the byte.
-        let again = scratch.join("again.wav");
-        let second = session
-            .sing_frames(&voice, &frames, None, 7, &again)
-            .unwrap();
-        assert_eq!(second.load_seconds, 0.0, "the voice was already open");
-        assert_eq!(
-            std::fs::read(&output).unwrap(),
-            std::fs::read(&again).unwrap(),
-            "a seed names a take"
         );
     }
 

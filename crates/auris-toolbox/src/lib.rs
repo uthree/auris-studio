@@ -171,7 +171,7 @@ pub mod search_documentation {
     /// The tool's model-facing description.
     pub const DESCRIPTION: &str = "Searches the Auris Studio documentation embedded in this \
         build. Use it for questions about features, workflows, composition, development, \
-        evaluation, and singing-voice training. Returns the most relevant passages with their \
+        evaluation, and singing backends. Returns the most relevant passages with their \
         document paths and section headings.";
 
     /// A documentation search.
@@ -211,38 +211,6 @@ pub mod search_documentation {
         (
             "docs/evaluation.md",
             include_str!("../../../docs/evaluation.md"),
-        ),
-        (
-            "training/README.md",
-            include_str!("../../../training/README.md"),
-        ),
-        (
-            "training/doc/architecture.md",
-            include_str!("../../../training/doc/architecture.md"),
-        ),
-        (
-            "training/doc/datasets.md",
-            include_str!("../../../training/doc/datasets.md"),
-        ),
-        (
-            "training/doc/development.md",
-            include_str!("../../../training/doc/development.md"),
-        ),
-        (
-            "training/doc/evaluation.md",
-            include_str!("../../../training/doc/evaluation.md"),
-        ),
-        (
-            "training/doc/inference.md",
-            include_str!("../../../training/doc/inference.md"),
-        ),
-        (
-            "training/doc/preprocessing.md",
-            include_str!("../../../training/doc/preprocessing.md"),
-        ),
-        (
-            "training/doc/training.md",
-            include_str!("../../../training/doc/training.md"),
         ),
     ];
 
@@ -2896,10 +2864,10 @@ pub mod sing {
     pub const DESCRIPTION: &str = "Renders a singer track through its voice model and keeps \
         the audio as the track's take, which is what playback and `render` then play. Aims at \
         the project's only singer track when `track` is left out. `voice` chooses a model the \
-        first time — an absolute path to an Auris `.onnx` voice, DiffSinger `dsconfig.yaml`, \
+        first time — an absolute path to DiffSinger `dsconfig.yaml`, \
         VOICEVOX `.voicevox.json` connection, or LeapSinger `.leapsinger.json` manifest, \
-        which the track keeps. Native Auris voices use `seed` to reproduce a take. LeapSinger \
-        generates noise internally, so repeated renders can differ even with the same seed. \
+        which the track keeps. DiffSinger and LeapSinger generate noise internally, so repeated \
+        renders can differ even with the same seed. \
         The rendered audio and the change are saved.";
 
     /// Arguments to `sing`.
@@ -4384,8 +4352,7 @@ mod tests {
     }
 
     /// The singer tools at the model door: a track that sings, words laid across its notes,
-    /// and a refusal naming the cure at every missing piece. With
-    /// `AURIS_SINGER_TEST_MODEL` set, the voice actually sings at the end.
+    /// and a refusal naming the cure at every missing piece.
     #[test]
     fn the_singer_tools_write_words_and_name_their_cures() {
         let root = std::env::temp_dir().join(format!("auris-toolbox-sing-{}", std::process::id()));
@@ -4491,13 +4458,6 @@ mod tests {
         // With a singer but no voice, the refusal names the missing piece.
         let unvoiced = sing_the(None, None).unwrap_err();
         assert!(unvoiced.contains("voice"), "{unvoiced}");
-
-        // Where a real voice model is around, the door sings for real.
-        if let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") {
-            let sung = sing_the(None, Some(model.to_string_lossy().into_owned())).unwrap();
-            assert!(sung.contains("sang"), "{sung}");
-            assert!(sung.contains("seed 0"), "{sung}");
-        }
 
         std::fs::remove_dir_all(&root).unwrap();
     }

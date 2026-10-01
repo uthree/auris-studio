@@ -613,36 +613,6 @@ mod tests {
         });
     }
 
-    /// One click on the shelf gives the singer its voice — the same interface a sound gets.
-    /// Runs only where `AURIS_SINGER_TEST_MODEL` points at a real exported voice.
-    #[gpui::test]
-    fn a_shelf_voice_lands_on_the_singer_track(cx: &mut TestAppContext) {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            return;
-        };
-        let (app, cx) = open(cx);
-        app.update(cx, |this, cx| {
-            let track = this.session.add_singer_track("Voice");
-            this.selected_track = Some(track);
-            this.set_track_voice(std::path::PathBuf::from(&model), cx);
-        });
-        cx.run_until_parked();
-        app.read_with(cx, |this, _| {
-            let track = this.selected_track.unwrap();
-            let voice = this
-                .session
-                .singer_voice(track)
-                .expect("a singer track answers")
-                .expect("the click chose a voice");
-            assert!(!voice.name.is_empty(), "the voice landed with its name");
-            assert!(
-                this.status.contains(&voice.name),
-                "and the status says so: {}",
-                this.status
-            );
-        });
-    }
-
     /// The whole words-first flow, made as a hand makes it: the palette's action opens the
     /// lyric field, the words are typed — Return breaking a phrase, since the field holds
     /// lines — and secondary-Return composes: a singer track carrying every mora, chords in
@@ -800,60 +770,6 @@ mod tests {
         });
     }
 
-    /// With a real voice on the track, an edited score sings itself again: the debounce
-    /// elapses, the poll starts a background render with no overlay, and the landed take
-    /// matches the notes. Skips silently without `AURIS_SINGER_TEST_MODEL`.
-    #[gpui::test]
-    fn an_edited_score_sings_itself_again(cx: &mut TestAppContext) {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the auto-sing test");
-            return;
-        };
-        let (app, cx) = open(cx);
-        let folder = std::env::temp_dir().join(format!("auris-auto-sing-{}", std::process::id()));
-        std::fs::create_dir_all(&folder).unwrap();
-
-        let track = app.update(cx, |this, cx| {
-            let track = this.session.add_singer_track("Voice");
-            let clip = this
-                .session
-                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
-                .unwrap();
-            this.session
-                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
-                .unwrap();
-            this.session.write_lyrics(clip, &[0], "ら").unwrap();
-            // A take lands in the project folder, so the project needs one.
-            this.session.save(&folder.join("Song.auris")).unwrap();
-            this.session
-                .set_singer_voice(track, Some(std::path::Path::new(&model)))
-                .unwrap();
-            this.auto_sing_seen = (
-                this.session.revision(),
-                std::time::Instant::now() - crate::ui::commands::AUTO_SING_DEBOUNCE,
-            );
-            this.poll_auto_sing(cx);
-            assert!(
-                this.auto_sing.is_some(),
-                "the stale take starts rendering unasked, status: {}",
-                this.status
-            );
-            assert!(this.export.is_none(), "and no overlay stands over it");
-            track
-        });
-        cx.run_until_parked();
-        app.read_with(cx, |this, _| {
-            assert!(this.auto_sing.is_none(), "the render finished");
-            assert_eq!(
-                this.session.singer_take_state(track).unwrap(),
-                auris_session::SingerTakeState::Current,
-                "the take matches the score, status: {}",
-                this.status
-            );
-        });
-        std::fs::remove_dir_all(&folder).ok();
-    }
-
     /// A singer track with no voice auditions through the formant instrument, exactly as
     /// before: the sung-preview path never files a wish for it.
     #[gpui::test]
@@ -867,63 +783,6 @@ mod tests {
             assert!(
                 this.auditioning.is_some(),
                 "the note still sounds somewhere"
-            );
-            this.stop_audition();
-            cx.notify();
-        });
-    }
-
-    /// With a real voice, a grabbed note is sung by the model: the audition files a wish,
-    /// the poll renders it in the background, and the render lands in the cache so the next
-    /// pass over the same pitch is instant. Skips without `AURIS_SINGER_TEST_MODEL`.
-    #[gpui::test]
-    fn a_dragged_note_previews_in_the_real_voice(cx: &mut TestAppContext) {
-        let Some(model) = std::env::var_os("AURIS_SINGER_TEST_MODEL") else {
-            eprintln!("AURIS_SINGER_TEST_MODEL not set; skipping the sung-preview test");
-            return;
-        };
-        let (app, cx) = open(cx);
-        app.update(cx, |this, cx| {
-            let track = this.session.add_singer_track("Voice");
-            let clip = this
-                .session
-                .add_midi_clip(track, "Verse", Ticks::ZERO, Ticks::from_beats(4.0))
-                .unwrap();
-            this.session
-                .add_note(clip, Note::new(60, Ticks::ZERO, Ticks::QUARTER))
-                .unwrap();
-            this.session.write_lyrics(clip, &[0], "か").unwrap();
-            this.session
-                .set_singer_voice(track, Some(std::path::Path::new(&model)))
-                .unwrap();
-            this.selected_track = Some(track);
-            this.selected_clip = Some(clip);
-            this.selected_notes.insert(0);
-
-            this.audition(60);
-            assert!(
-                this.sung_preview_wish.is_some(),
-                "a voiced note is wished for, not struck on the formant"
-            );
-            this.poll_sung_preview(cx);
-        });
-        cx.run_until_parked();
-        app.update(cx, |this, cx| {
-            assert_eq!(
-                this.sung_previews.len(),
-                1,
-                "the render landed in the cache"
-            );
-            assert!(
-                this.sung_preview_wish.is_none(),
-                "the wish was played and put down"
-            );
-            // The same pitch again plays straight from the cache, no new wish filed.
-            this.stop_audition();
-            this.audition(60);
-            assert!(
-                this.sung_preview_wish.is_none(),
-                "a cache hit files no wish"
             );
             this.stop_audition();
             cx.notify();

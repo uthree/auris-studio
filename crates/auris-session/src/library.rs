@@ -201,8 +201,8 @@ pub fn voices_with_settings(settings: &crate::Settings) -> Vec<(String, PathBuf)
 
 /// Every voice model found under `roots`, as `(name, path)`, sorted by name.
 ///
-/// No fixed catalog, unlike the fonts: voices are the user's own exports, so this is enumeration
-/// rather than verification — every `.onnx` in a root and every child folder containing a
+/// No fixed catalog, unlike the fonts: this is enumeration rather than verification — every
+/// child folder containing a
 /// DiffSinger `dsconfig.yaml`, every `*.voicevox.json` connection, and every
 /// `*.leapsinger.json` voicebank manifest in a root or its child folders, first root to name
 /// a voice winning the way the font search wins.
@@ -234,12 +234,7 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
             paths.push(path);
         }
         for path in paths {
-            let (voice, name_source) = if path
-                .extension()
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
-            {
-                (path.clone(), path.file_stem())
-            } else if let Some((name, suffix)) = path
+            let (voice, name_source) = if let Some((name, suffix)) = path
                 .file_name()
                 .and_then(|name| name.to_str())
                 .and_then(|name| {
@@ -247,8 +242,7 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
                         .into_iter()
                         .find(|suffix| name.to_ascii_lowercase().ends_with(*suffix))
                         .map(|suffix| (name, suffix))
-                })
-            {
+                }) {
                 let stem = &name[..name.len() - suffix.len()];
                 (path.clone(), Some(std::ffi::OsStr::new(stem)))
             } else if path.is_dir() && path.join("dsconfig.yaml").is_file() {
@@ -274,8 +268,6 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
 /// The backend implied by an installed voice entry's path.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum VoiceSourceKind {
-    /// A self-contained voice exported by the Auris trainer.
-    Auris,
     /// An OpenUtau-compatible DiffSinger deployment.
     DiffSinger,
     /// A connection to a running VOICEVOX Engine.
@@ -293,11 +285,6 @@ pub fn voice_source_kind(path: &Path) -> Option<VoiceSourceKind> {
         Some(VoiceSourceKind::Voicevox)
     } else if name.to_ascii_lowercase().ends_with(".leapsinger.json") {
         Some(VoiceSourceKind::LeapSinger)
-    } else if path
-        .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("onnx"))
-    {
-        Some(VoiceSourceKind::Auris)
     } else {
         None
     }
@@ -554,9 +541,9 @@ mod tests {
         let second = root.join("b");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
-        std::fs::write(first.join("Ritsu.onnx"), b"x").unwrap();
+        std::fs::write(first.join("ignored.onnx"), b"x").unwrap();
         std::fs::write(first.join("notes.txt"), b"x").unwrap();
-        std::fs::write(second.join("Ritsu.ONNX"), b"y").unwrap();
+        std::fs::write(second.join("Zundamon.VOICEVOX.JSON"), b"y").unwrap();
         std::fs::write(second.join("Alto.ONNX"), b"y").unwrap();
         std::fs::write(first.join("Zundamon.voicevox.json"), b"{}").unwrap();
         let diffsinger = first.join("Momo");
@@ -567,11 +554,14 @@ mod tests {
         let names: Vec<&str> = voices.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
-            ["Alto", "Momo", "Ritsu", "Zundamon"],
-            "sorted, case-blind, no .txt"
+            ["Momo", "Zundamon"],
+            "sorted, case-blind, only supported voice entries"
         );
-        let ritsu = voices.iter().find(|(name, _)| name == "Ritsu").unwrap();
-        assert!(ritsu.1.starts_with(&first), "the first root wins the name");
+        let zundamon = voices.iter().find(|(name, _)| name == "Zundamon").unwrap();
+        assert!(
+            zundamon.1.starts_with(&first),
+            "the first root wins the name"
+        );
         let momo = voices.iter().find(|(name, _)| name == "Momo").unwrap();
         assert_eq!(momo.1, diffsinger.join("dsconfig.yaml"));
         assert_eq!(
@@ -583,7 +573,7 @@ mod tests {
             voice_source_kind(&zundamon.1),
             Some(VoiceSourceKind::Voicevox)
         );
-        assert_eq!(voice_source_kind(&ritsu.1), Some(VoiceSourceKind::Auris));
+        assert_eq!(voice_source_kind(&first.join("ignored.onnx")), None);
 
         std::fs::remove_dir_all(&root).unwrap();
     }

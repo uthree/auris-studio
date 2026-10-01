@@ -6,12 +6,6 @@ depend on a concrete model layout. This keeps model
 discovery, caching, speaker selection, previewing, take rendering, and WAV output identical across
 backends.
 
-## Auris ONNX voices
-
-Choose the exported `.onnx` file. It contains the inference graph and `auris_singer` metadata,
-including the phoneme vocabulary, sample rate, hop size, speakers, voice card, and measured
-consonant timing and levels.
-
 ## DiffSinger voicebanks
 
 Choose the voicebank's `dsconfig.yaml`. The backend reads the OpenUtau deployment fields
@@ -272,5 +266,4 @@ of the project's audio output rate.
 The library's **Set Up VOICEVOX…** row opens a connection editor for the Engine URL and the query
 and frame-decode style IDs. The same screen can choose and start a local Engine executable, check
 `/version` and `/singers`, and save a `*.voicevox.json` entry into Auris Studio's managed Voices
-folder. The saved entry appears on the shelf with a **VOICEVOX** badge; self-contained voices are
-labelled **Auris ONNX**.
+folder. The saved entry appears on the shelf with a **VOICEVOX** badge.
