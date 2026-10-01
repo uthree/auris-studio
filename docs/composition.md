@@ -105,11 +105,11 @@ are writing* — so the shelf answers all of them at once:
 | `chiptune` | The built-in voices, four to the floor |
 | `game-loop` | A sixteen-bar chiptune loop for game background music |
 | `pop-band` | Drums, bass, keys and a lead — the 王道進行 |
-| `city-pop` | Electric piano and slap bass over 丸サ進行 |
-| `rock` | Overdriven guitar, organ and a hard kit |
-| `jazz-trio` | Piano, upright bass and brushes on a ii-V-I |
-| `orchestral` | Strings, horns and timpani in 3/4 |
-| `synthwave` | Saw lead, analogue bass and a TR-808 |
+| `city-pop` | Piano, bowed lead and plucked bass over 丸サ進行 |
+| `rock` | Plucked guitars, bowed strings and a hard kit |
+| `jazz-trio` | Piano and plucked bass on a swinging ii-V-I |
+| `orchestral` | Bowed strings, guitar and bass in 3/4 |
+| `synthwave` | Bowed lead, mallet arpeggios and a four-on-the-floor kit |
 | `ambient` | Pads and a slow bell, no kit at all |
 
 Choosing one replaces the whole sheet — tempo, key, groove, progression, form and roster — because
@@ -120,6 +120,11 @@ which is a much better place to start than an empty form. From the command line 
 Each is a `.asong` document embedded in the build rather than a structure assembled in code: a
 preset is meant to be *read*, the format was designed to be the readable one, and it means the
 presets are parser tests that fail loudly rather than silently.
+
+Melodic parts use the built-in physical piano, guitar, bass, bell, mallet and violin.
+The `chiptune` and `game-loop` styles use oscillator voices. Percussion keeps its kit
+and reverse-cymbal choices. Instrument IDs are stored directly in the specification,
+so opening it in the song sheet shows the selected physical instrument.
 
 A part's instrument name opens the library inside the song sheet. Its search and category tree
 are shared with the main Library panel: choose a built-in instrument, an exact SoundFont preset,

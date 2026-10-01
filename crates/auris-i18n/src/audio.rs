@@ -351,24 +351,24 @@ const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
         "ドラム・ベース・鍵盤・リード — 王道進行",
     ),
     (
-        "Electric piano and slap bass over 丸サ進行",
-        "エレピとスラップベース・丸サ進行",
+        "Piano, bowed lead and plucked bass over 丸サ進行",
+        "ピアノ・弦のリード・ベース・丸サ進行",
     ),
     (
-        "Overdriven guitar, organ and a hard kit",
-        "歪んだギターとオルガン・強めのドラム",
+        "Plucked guitars, bowed strings and a hard kit",
+        "ギターと弦・強めのドラム",
     ),
     (
-        "Piano, upright bass and brushes on a ii-V-I",
-        "ピアノ・ウッドベース・ブラシ・ツーファイブワン",
+        "Piano and plucked bass on a swinging ii-V-I",
+        "ピアノとベース・スウィング・ツーファイブワン",
     ),
     (
-        "Strings, horns and timpani in 3/4",
-        "弦・ホルン・ティンパニ・3拍子",
+        "Bowed strings, guitar and bass in 3/4",
+        "弦・ギター・ベース・3拍子",
     ),
     (
-        "Saw lead, analogue bass and a TR-808",
-        "ノコギリ波リード・アナログベース・TR-808",
+        "Bowed lead, mallet arpeggios and a four-on-the-floor kit",
+        "弦のリード・マレットのアルペジオ・四つ打ち",
     ),
     (
         "Pads and a slow bell, no kit at all",
