@@ -38,6 +38,7 @@ const P_PRESSURE: u32 = 7;
 const P_PICKUP: u32 = 7;
 const P_BOW_SPEED: u32 = 8;
 const P_LEGATO: u32 = 9;
+const P_BOW_RESPONSE: u32 = 10;
 
 /// Physical structure and excitation used by an instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,8 +113,8 @@ impl Model {
         // public level dial keeps its existing meaning for saved projects and automation.
         match self {
             Self::Piano => 0.164_845,
-            Self::Guitar => 0.181_803,
-            Self::Violin => 1.540_868,
+            Self::Guitar => 0.178_368,
+            Self::Violin => 1.787_516,
             _ => 1.0,
         }
     }
@@ -128,6 +129,7 @@ struct Settings {
     stiffness: f32,
     pickup: f32,
     bow_speed: f32,
+    bow_response: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -186,6 +188,8 @@ pub struct Physical {
     bend: f32,
     volume: f32,
     expression: f32,
+    expression_current: f32,
+    expression_step: f32,
     pressure: f32,
     pedal: bool,
     gain: f32,
@@ -197,11 +201,11 @@ impl Physical {
     pub fn new(model: Model) -> Self {
         let (decay, release, position, hardness) = match model {
             Model::Piano => (11.296, 0.20, 0.228_641, 0.701_331),
-            Model::Guitar => (7.120, 0.12, 0.294_352, 0.201_600),
+            Model::Guitar => (5.638_205, 0.12, 0.298_280, 0.249_201),
             Model::Bass => (3.5, 0.15, 0.30, 0.40),
             Model::Bell => (6.0, 1.8, 0.35, 0.65),
             Model::Mallet => (1.7, 0.35, 0.40, 0.40),
-            Model::Violin => (10.912, 0.15, 0.101_898, 0.347_396),
+            Model::Violin => (10.460_195, 1.5, 0.103_416, 0.319_371),
         };
         let mut descriptors = vec![
             ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
@@ -222,8 +226,8 @@ impl Physical {
                 "Damping",
                 match model {
                     Model::Piano => 0.000_108,
-                    Model::Guitar => 0.006_394,
-                    Model::Violin => 0.154_366,
+                    Model::Guitar => 0.0,
+                    Model::Violin => 0.359_287,
                     _ => 0.12,
                 },
             ),
@@ -257,15 +261,26 @@ impl Physical {
                 P_PRESSURE,
                 "bow_pressure",
                 "Bow Pressure",
-                0.357_058,
+                0.336_820,
             ));
             descriptors.push(ParamDescriptor::percent(
                 P_BOW_SPEED,
                 "bow_speed",
                 "Bow speed",
-                0.224_231,
+                0.203_998,
             ));
             descriptors.push(ParamDescriptor::toggle(P_LEGATO, "legato", "Legato", false));
+            descriptors.push(
+                ParamDescriptor::new(
+                    P_BOW_RESPONSE,
+                    "bow_response",
+                    "Bow response",
+                    0.002,
+                    0.12,
+                    0.057_120_9,
+                )
+                .with_unit(ParamUnit::Seconds),
+            );
         }
         if model == Model::Guitar {
             descriptors.push(ParamDescriptor::percent(
@@ -286,6 +301,8 @@ impl Physical {
             bend: 0.0,
             volume: 1.0,
             expression: 1.0,
+            expression_current: 1.0,
+            expression_step: 1.0,
             pressure: 1.0,
             pedal: false,
             gain: db_to_gain(-12.0) * model.output_normalization(),
@@ -314,11 +331,26 @@ impl Physical {
             } else {
                 0.0
             },
+            bow_response: if self.model == Model::Violin {
+                self.params.at(P_BOW_RESPONSE)
+            } else {
+                0.012
+            },
         }
     }
 
     fn is_legato(&self) -> bool {
         self.model == Model::Violin && self.params.at(P_LEGATO) >= 0.5
+    }
+
+    fn update_expression_step(&mut self) {
+        self.expression_step = if self.model == Model::Violin {
+            // Output gain responds twice as fast as bow motion. Computing this
+            // coefficient at control rate leaves only a multiply/add per sample.
+            1.0 - (-2.0 / (self.rate * self.params.at(P_BOW_RESPONSE))).exp()
+        } else {
+            1.0
+        };
     }
 
     fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
@@ -439,10 +471,14 @@ impl Parameterized for Physical {
                 }
             }
             self.gain = db_to_gain(self.params.at(P_LEVEL)) * self.model.output_normalization();
+            if id.0 == P_BOW_RESPONSE && self.model == Model::Violin {
+                self.update_expression_step();
+            }
             let settings = self.settings();
             let changes_resonance = matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
                 || self.model == Model::Guitar && id.0 == P_PICKUP
-                || self.model == Model::Violin && matches!(id.0, P_BOW_SPEED | P_POSITION);
+                || self.model == Model::Violin
+                    && matches!(id.0, P_BOW_SPEED | P_POSITION | P_BOW_RESPONSE);
             for voice in &mut self.voices {
                 voice.envelope.set_adsr(
                     if self.model == Model::Violin {
@@ -506,7 +542,12 @@ impl SegmentRenderer for Physical {
                 match number {
                     1 => self.pressure = 0.5 + value * 0.5,
                     7 => self.volume = value.powi(2),
-                    11 => self.expression = value,
+                    11 => {
+                        self.expression = value;
+                        if self.allocator.active_count() == 0 {
+                            self.expression_current = value;
+                        }
+                    }
                     64 if self.model == Model::Piano => {
                         self.pedal = value >= 0.5;
                         if !self.pedal {
@@ -569,7 +610,14 @@ impl SegmentRenderer for Physical {
                 1.0
             };
         for sample in samples {
-            *sample = self.body.next(*sample, body) * self.gain * self.volume * self.expression;
+            let expression = if self.model == Model::Violin {
+                self.expression_current +=
+                    (self.expression - self.expression_current) * self.expression_step;
+                self.expression_current
+            } else {
+                self.expression
+            };
+            *sample = self.body.next(*sample, body) * self.gain * self.volume * expression;
         }
     }
 }
@@ -590,6 +638,7 @@ impl Instrument for Physical {
             .collect();
         self.allocator.prepare(VOICES);
         self.body.prepare(self.model, self.rate);
+        self.update_expression_step();
         self.reset();
     }
     fn reset(&mut self) {
@@ -603,6 +652,7 @@ impl Instrument for Physical {
         self.bend = 0.0;
         self.volume = 1.0;
         self.expression = 1.0;
+        self.expression_current = 1.0;
         self.pressure = 1.0;
         self.pedal = false;
         self.legato.clear();

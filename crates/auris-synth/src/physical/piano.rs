@@ -184,6 +184,7 @@ mod tests {
             stiffness: 0.0003,
             pickup: 0.0,
             bow_speed: 0.0,
+            bow_response: 0.012,
         }
     }
 

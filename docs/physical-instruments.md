@@ -14,7 +14,7 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
-| Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, contact position, expression, legato |
+| Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
 
 Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
 the other models. The piano uses one, two or three strings by register, up to 64 partials,
@@ -42,8 +42,9 @@ Position takes effect at the next attack on struck/plucked instruments; on violi
 the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano attack.
 Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
 position-dependent magnetic pickup approximation, progressively bypassing body coloration.
-Violin **Bow speed** controls motion independently of **Bow Pressure**. Speed ramps over about
-12 ms at attacks, releases and controller changes. **Legato** uses last-note priority: overlapping
+Violin **Bow speed** controls motion independently of **Bow Pressure**. **Bow response** sets its
+2–120 ms response time (about 57 ms by default), including while a note sounds. Output expression
+changes smoothly with half that time constant. **Legato** uses last-note priority: overlapping
 notes reuse the same vibrating string, and releasing the newest key returns to a previous held
 key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
@@ -94,6 +95,9 @@ Tests measure pitch at multiple rates, velocity response, hardness-dependent upp
 decay/sustain, pedal release, pitch bends, extreme settings and callback allocations. The pack's
 shared tests also cover event offsets, mono/multichannel buffers and deterministic rendering.
 The example writes a listening probe and reports each model's peak and RMS; it is dev tooling.
+
+The [long-note/trajectory calibration](physical-trajectories.md) measures sustained tone,
+played vibrato/glissando, expression following and release against real recordings.
 Factory piano, guitar and violin settings and radiation gains are calibrated against real
 recordings with [temporal mel copy synthesis](physical-copy-synthesis.md). That document records
 the objective, fixed training/validation split, reproducible commands and remaining limits.

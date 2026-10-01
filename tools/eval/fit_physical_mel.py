@@ -73,6 +73,7 @@ def color(audio, gains, amount=0.65, rate=RATE):
 class Renderer:
     def __init__(self, executable):
         self.defaults = json.loads(subprocess.check_output([str(executable), "--describe"], text=True))
+        self.performance = self.defaults.pop("_performance", {"expression_response_fraction": 0.0})
         self.process = subprocess.Popen([str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def close(self):
@@ -86,7 +87,8 @@ class Renderer:
 
     def render(self, model, notes, params, seconds, hold, rate=RATE):
         request = {"model": model, "notes": [{key: note[key] for key in
-                    ("pitch", "velocity", "tuning_cents")} for note in notes],
+                    ("pitch", "velocity", "tuning_cents", "hold", "bends", "expression")
+                    if key in note} for note in notes],
                    "seconds": seconds, "hold": hold, "params": params}
         if rate != RATE:
             request["sample_rate"] = rate

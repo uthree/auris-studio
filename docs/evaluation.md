@@ -8,6 +8,8 @@ The [physical-instrument copy-synthesis loop](physical-copy-synthesis.md) measur
 mel-spectrogram distance against a frozen cohort of real piano, guitar and violin recordings.
 It fits only training notes and evaluates held-out pitches and dynamics with the actual Rust
 renderer. This acoustic distance complements the symbolic and learned song measurements below.
+The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
+violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
 
 ## The symbolic ruler
 

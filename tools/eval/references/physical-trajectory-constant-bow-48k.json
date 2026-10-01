@@ -1,0 +1,5070 @@
+{
+  "reference_sha256": "fca4e250c0865613d4f20143cb5c277dc8b80067a5da789c34087c5f9900f370",
+  "seed": 20261001,
+  "iterations": 6,
+  "rate": 48000,
+  "renderer_sha256": "816b0363eb9beba0d1f72ad628e3024052570fc22545587bc552f2ccf25b45dd",
+  "before_renderer_sha256": "45241761e3ead8fba0fb976c3bf1d9e7c84a3945d5556f02772e0b138e64e220",
+  "versions": {
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "defaults": {
+    "guitar": {
+      "body": 0.6499999761581421,
+      "damping": 0.0,
+      "decay": 5.638205051422119,
+      "hardness": 0.2492009997367859,
+      "level": -12.0,
+      "pickup": 0.0,
+      "position": 0.2982800006866455,
+      "release": 0.11999999731779099
+    },
+    "piano": {
+      "body": 0.6499999761581421,
+      "damping": 0.00010800000018207356,
+      "decay": 11.295999526977539,
+      "hardness": 0.7013310194015503,
+      "level": -12.0,
+      "position": 0.22864100337028503,
+      "release": 0.20000000298023224,
+      "stiffness": 0.0007692810031585395
+    },
+    "violin": {
+      "body": 0.6499999761581421,
+      "bow_pressure": 0.33682000637054443,
+      "bow_response": 0.057120900601148605,
+      "bow_speed": 0.20399799942970276,
+      "damping": 0.35928699374198914,
+      "decay": 10.46019458770752,
+      "hardness": 0.3193710148334503,
+      "legato": 0.0,
+      "level": -12.0,
+      "position": 0.10341600328683853,
+      "release": 1.5
+    }
+  },
+  "performance": {
+    "expression_response_fraction": 0.5
+  },
+  "expression_guide": false,
+  "local_refinement": true,
+  "coloration_proposal": "phase-balanced L2",
+  "bounds": {
+    "piano": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        1,
+        12
+      ],
+      "damping": [
+        0,
+        0.5
+      ],
+      "stiffness": [
+        0,
+        0.0015
+      ]
+    },
+    "guitar": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        0.6,
+        10
+      ],
+      "damping": [
+        0,
+        0.5
+      ]
+    },
+    "violin": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.06,
+        0.35
+      ],
+      "decay": [
+        1,
+        12
+      ],
+      "damping": [
+        0,
+        0.5
+      ],
+      "bow_pressure": [
+        0.2,
+        0.85
+      ],
+      "bow_speed": [
+        0.2,
+        0.9
+      ],
+      "release": [
+        0.05,
+        1.5
+      ],
+      "bow_response": [
+        0.002,
+        0.06
+      ]
+    }
+  },
+  "models": {
+    "violin": {
+      "train": {
+        "before": {
+          "mel_by_dataset": {
+            "iowa": 0.10609746553605576,
+            "tu-note": 0.10687051512469797,
+            "short": 0.08235770146624494
+          },
+          "weighted_mel": 0.09913014623284096,
+          "notes": [
+            {
+              "id": "iowa-violin-56-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 56,
+              "velocity": 0.65,
+              "mel": 0.15600528932005897,
+              "phases": {
+                "attack": 0.04015420263830948,
+                "early": 0.18974007780038668,
+                "late": 0.1867989011455921
+              },
+              "envelope_db": 4.563349715005705,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8696870775562193,
+              "pitch_penalty_cents": 0.8696870775562193
+            },
+            {
+              "id": "iowa-violin-57-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.65,
+              "mel": 0.13321480847573292,
+              "phases": {
+                "attack": 0.04745691226098301,
+                "early": 0.13272318479126596,
+                "late": 0.1655583784379392
+              },
+              "envelope_db": 1.576052887758428,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6734074380925399,
+              "pitch_penalty_cents": 0.6734074380925399
+            },
+            {
+              "id": "iowa-violin-59-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.65,
+              "mel": 0.12101078133785276,
+              "phases": {
+                "attack": 0.05939549879602066,
+                "early": 0.13788622039596227,
+                "late": 0.1377882226442487
+              },
+              "envelope_db": 1.712060271442839,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.5814986612457346,
+              "pitch_penalty_cents": 0.5814986612457346
+            },
+            {
+              "id": "iowa-violin-62-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.65,
+              "mel": 0.10693691164532687,
+              "phases": {
+                "attack": 0.0699179777448327,
+                "early": 0.11407050691957439,
+                "late": 0.11814391363016934
+              },
+              "envelope_db": 2.103014494086803,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.928684499518998,
+              "pitch_penalty_cents": 0.928684499518998
+            },
+            {
+              "id": "iowa-violin-63-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 63,
+              "velocity": 0.65,
+              "mel": 0.06827728794546728,
+              "phases": {
+                "attack": 0.06067987521364339,
+                "early": 0.08686750627227054,
+                "late": 0.06415498584735
+              },
+              "envelope_db": 0.8289987300542155,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.31368406445316227,
+              "pitch_penalty_cents": 0.31368406445316227
+            },
+            {
+              "id": "iowa-violin-65-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 65,
+              "velocity": 0.65,
+              "mel": 0.08201264980828399,
+              "phases": {
+                "attack": 0.04299479235568851,
+                "early": 0.09362615088676397,
+                "late": 0.09228928344857729
+              },
+              "envelope_db": 1.8547865626125346,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9345272077239403,
+              "pitch_penalty_cents": 0.9345272077239403
+            },
+            {
+              "id": "iowa-violin-66-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 66,
+              "velocity": 0.65,
+              "mel": 0.041172658062326194,
+              "phases": {
+                "attack": 0.03920446900739072,
+                "early": 0.053728370925899833,
+                "late": 0.037202336634086876
+              },
+              "envelope_db": 1.1926232671738237,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.12122654772904,
+              "pitch_penalty_cents": 1.12122654772904
+            },
+            {
+              "id": "iowa-violin-68-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 68,
+              "velocity": 0.65,
+              "mel": 0.05208867004717118,
+              "phases": {
+                "attack": 0.06074152882265163,
+                "early": 0.05132355529261931,
+                "late": 0.049130766039322954
+              },
+              "envelope_db": 0.7181070122669511,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.959169738288135,
+              "pitch_penalty_cents": 0.959169738288135
+            },
+            {
+              "id": "iowa-violin-69-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.65,
+              "mel": 0.07388628774832778,
+              "phases": {
+                "attack": 0.0416926746586367,
+                "early": 0.07692095689847295,
+                "late": 0.08482089172565749
+              },
+              "envelope_db": 1.7564228573837715,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2277903599961586,
+              "pitch_penalty_cents": 1.2277903599961586
+            },
+            {
+              "id": "iowa-violin-71-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 71,
+              "velocity": 0.65,
+              "mel": 0.07821164747436009,
+              "phases": {
+                "attack": 0.04266461879392451,
+                "early": 0.10165419290499715,
+                "late": 0.08275082869303452
+              },
+              "envelope_db": 1.6937768697028837,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8612459861143279,
+              "pitch_penalty_cents": 0.8612459861143279
+            },
+            {
+              "id": "iowa-violin-77-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 77,
+              "velocity": 0.65,
+              "mel": 0.10439737545272519,
+              "phases": {
+                "attack": 0.08694485427096323,
+                "early": 0.12025771851017933,
+                "late": 0.10499444224934061
+              },
+              "envelope_db": 1.9441425708471916,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.5895505647616808,
+              "pitch_penalty_cents": 1.5895505647616808
+            },
+            {
+              "id": "iowa-violin-78-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 78,
+              "velocity": 0.65,
+              "mel": 0.0687331169887612,
+              "phases": {
+                "attack": 0.049955959035886954,
+                "early": 0.0789789712870253,
+                "late": 0.07193235585923999
+              },
+              "envelope_db": 1.8264128298795292,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.8106938537475352,
+              "pitch_penalty_cents": 1.8106938537475352
+            },
+            {
+              "id": "iowa-violin-80-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 80,
+              "velocity": 0.65,
+              "mel": 0.07136467879073996,
+              "phases": {
+                "attack": 0.07589045701680941,
+                "early": 0.07259064828055933,
+                "late": 0.06920777339728164
+              },
+              "envelope_db": 1.5202776657460433,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.122319666035294,
+              "pitch_penalty_cents": 2.122319666035294
+            },
+            {
+              "id": "iowa-violin-81-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 81,
+              "velocity": 0.65,
+              "mel": 0.0907260851285706,
+              "phases": {
+                "attack": 0.07112634531819959,
+                "early": 0.09816312960294461,
+                "late": 0.09528709587956945
+              },
+              "envelope_db": 2.103462569703002,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9893493927737769,
+              "pitch_penalty_cents": 1.9893493927737769
+            },
+            {
+              "id": "iowa-violin-83-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 83,
+              "velocity": 0.65,
+              "mel": 0.08139847257723003,
+              "phases": {
+                "attack": 0.09113254509361163,
+                "early": 0.09178512367601464,
+                "late": 0.07385320122154268
+              },
+              "envelope_db": 2.2729997124002015,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.843255162609779,
+              "pitch_penalty_cents": 1.843255162609779
+            },
+            {
+              "id": "iowa-violin-57-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.2170255946531434,
+              "phases": {
+                "attack": 0.09728995501348886,
+                "early": 0.23631873563766925,
+                "late": 0.2546915316488166
+              },
+              "envelope_db": 11.145316970843586,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.5208849642761704,
+              "pitch_penalty_cents": 0.5208849642761704
+            },
+            {
+              "id": "iowa-violin-59-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.95,
+              "mel": 0.19355645710377284,
+              "phases": {
+                "attack": 0.07848673864679301,
+                "early": 0.1941615244155282,
+                "late": 0.236480701283232
+              },
+              "envelope_db": 10.010150651047748,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0630675632241624,
+              "pitch_penalty_cents": 1.0630675632241624
+            },
+            {
+              "id": "iowa-violin-62-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.13956091568425769,
+              "phases": {
+                "attack": 0.06781825569880506,
+                "early": 0.08459844177321862,
+                "late": 0.18707534089544203
+              },
+              "envelope_db": 9.379215410899265,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0880095802033893,
+              "pitch_penalty_cents": 1.0880095802033893
+            },
+            {
+              "id": "iowa-violin-69-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.13627215694095035,
+              "phases": {
+                "attack": 0.11463313027092178,
+                "early": 0.09820107360248703,
+                "late": 0.15866344819413478
+              },
+              "envelope_db": 8.599481429433794,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3515845064439427,
+              "pitch_penalty_cents": 1.3515845064439427
+            },
+            {
+              "id": "tu-glissando-17",
+              "dataset": "tu-note",
+              "seconds": 8.442375,
+              "hold": 7.66267,
+              "pitch": 62,
+              "velocity": 0.5,
+              "mel": 0.11101534558666472,
+              "phases": {
+                "attack": 0.07159357773940216,
+                "early": 0.10180229815794237,
+                "late": 0.10549925579713253,
+                "transition": 0.20122939730669698,
+                "release": 0.025603824218706293
+              },
+              "envelope_db": 6.916857169563451,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.0092137266226917,
+              "pitch_penalty_cents": 3.0092137266226917
+            },
+            {
+              "id": "tu-glissando-18",
+              "dataset": "tu-note",
+              "seconds": 7.898375,
+              "hold": 7.41833,
+              "pitch": 57,
+              "velocity": 0.5,
+              "mel": 0.12678942978501825,
+              "phases": {
+                "attack": 0.060682236292595074,
+                "early": 0.17175885463653268,
+                "late": 0.1303138582204278,
+                "transition": 0.1550776084039822,
+                "release": 0.08782201176681531
+              },
+              "envelope_db": 7.997793312327932,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.998553969513308,
+              "pitch_penalty_cents": 0.998553969513308
+            },
+            {
+              "id": "tu-glissando-19",
+              "dataset": "tu-note",
+              "seconds": 6.922833333333333,
+              "hold": 6.50679,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.1360116667646549,
+              "phases": {
+                "attack": 0.1476628085213322,
+                "early": 0.09056997802914632,
+                "late": 0.1647398415651256,
+                "transition": 0.16532279090994234,
+                "release": 0.013162539740444233
+              },
+              "envelope_db": 8.737804066743616,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.2139470200375544,
+              "pitch_penalty_cents": 2.2139470200375544
+            },
+            {
+              "id": "tu-glissando-20",
+              "dataset": "tu-note",
+              "seconds": 6.368791666666667,
+              "hold": 5.92625,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.10986762954180698,
+              "phases": {
+                "attack": 0.05234573358226322,
+                "early": 0.13878004097281252,
+                "late": 0.1242353260165984,
+                "transition": 0.1312063172857078,
+                "release": 0.05263369494764691
+              },
+              "envelope_db": 6.890824136778657,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.1387443335406597,
+              "pitch_penalty_cents": 1.1387443335406597
+            },
+            {
+              "id": "tu-glissando-21",
+              "dataset": "tu-note",
+              "seconds": 7.654541666666667,
+              "hold": 7.19325,
+              "pitch": 62,
+              "velocity": 0.5,
+              "mel": 0.12351945473029965,
+              "phases": {
+                "attack": 0.05455833479207614,
+                "early": 0.09876970621661872,
+                "late": 0.15458543205258893,
+                "transition": 0.1894484747797644,
+                "release": 0.00796380802006973
+              },
+              "envelope_db": 8.130891454691778,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.995367586001329,
+              "pitch_penalty_cents": 3.995367586001329
+            },
+            {
+              "id": "tu-glissando-22",
+              "dataset": "tu-note",
+              "seconds": 8.135041666666666,
+              "hold": 7.325,
+              "pitch": 57,
+              "velocity": 0.5,
+              "mel": 0.1106605924684274,
+              "phases": {
+                "attack": 0.037237994415965356,
+                "early": 0.17770884258074154,
+                "late": 0.11717276607494348,
+                "transition": 0.13734139818030688,
+                "release": 0.040811808528825905
+              },
+              "envelope_db": 7.240254634730122,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.3746350289942764,
+              "pitch_penalty_cents": 2.3746350289942764
+            },
+            {
+              "id": "tu-glissando-41",
+              "dataset": "tu-note",
+              "seconds": 8.277541666666666,
+              "hold": 7.6025,
+              "pitch": 69,
+              "velocity": 0.5,
+              "mel": 0.08831950479036543,
+              "phases": {
+                "attack": 0.03807460025643955,
+                "early": 0.08654903773739772,
+                "late": 0.09233304840866174,
+                "transition": 0.1533841026674127,
+                "release": 0.020159191943426025
+              },
+              "envelope_db": 5.293154982290439,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.5768926337867775,
+              "pitch_penalty_cents": 1.5768926337867775
+            },
+            {
+              "id": "tu-glissando-42",
+              "dataset": "tu-note",
+              "seconds": 9.560041666666667,
+              "hold": 7.2575,
+              "pitch": 64,
+              "velocity": 0.5,
+              "mel": 0.09621178492410314,
+              "phases": {
+                "attack": 0.06412137282446043,
+                "early": 0.10150339167553654,
+                "late": 0.10675432059185143,
+                "transition": 0.1397081359285642,
+                "release": 0.007247148266501746
+              },
+              "envelope_db": 11.468052630946902,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3628655286771614,
+              "pitch_penalty_cents": 1.3628655286771614
+            },
+            {
+              "id": "tu-glissando-43",
+              "dataset": "tu-note",
+              "seconds": 7.930375,
+              "hold": 6.67167,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.10578494249443343,
+              "phases": {
+                "attack": 0.1307325630345666,
+                "early": 0.12571699889760077,
+                "late": 0.09661592683461549,
+                "transition": 0.14080380935229136,
+                "release": 0.005103756003038487
+              },
+              "envelope_db": 6.579286247538844,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7924240821457782,
+              "pitch_penalty_cents": 1.7924240821457782
+            },
+            {
+              "id": "tu-glissando-44",
+              "dataset": "tu-note",
+              "seconds": 9.671708333333333,
+              "hold": 6.46367,
+              "pitch": 64,
+              "velocity": 0.95,
+              "mel": 0.09663005999277675,
+              "phases": {
+                "attack": 0.09871531429188106,
+                "early": 0.10226904007271642,
+                "late": 0.11548034130415757,
+                "transition": 0.09913061548213986,
+                "release": 0.004641472199961308
+              },
+              "envelope_db": 11.357003372668245,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2389617966577304,
+              "pitch_penalty_cents": 1.2389617966577304
+            },
+            {
+              "id": "tu-glissando-45",
+              "dataset": "tu-note",
+              "seconds": 8.217541666666667,
+              "hold": 7.0325,
+              "pitch": 69,
+              "velocity": 0.5,
+              "mel": 0.09872984980466105,
+              "phases": {
+                "attack": 0.05990025071257396,
+                "early": 0.11578895906498948,
+                "late": 0.09863754821432631,
+                "transition": 0.1534100210857829,
+                "release": 0.022394448351394314
+              },
+              "envelope_db": 7.806822895036156,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.2757292558491913,
+              "pitch_penalty_cents": 3.2757292558491913
+            },
+            {
+              "id": "tu-glissando-46",
+              "dataset": "tu-note",
+              "seconds": 10.145041666666666,
+              "hold": 8.045,
+              "pitch": 64,
+              "velocity": 0.5,
+              "mel": 0.0789059206131639,
+              "phases": {
+                "attack": 0.05094669612846681,
+                "early": 0.08042659217255384,
+                "late": 0.09695511515959265,
+                "transition": 0.09920480468426511,
+                "release": 0.00576920367320721
+              },
+              "envelope_db": 8.76519709178362,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.623983895296424,
+              "pitch_penalty_cents": 3.623983895296424
+            },
+            {
+              "id": "notes/violin-56-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.65,
+              "mel": 0.13413909994215825,
+              "phases": {
+                "attack": 0.049772882962091626,
+                "early": 0.21850531692222486
+              },
+              "envelope_db": 12.468339954031707
+            },
+            {
+              "id": "notes/violin-57-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.65,
+              "mel": 0.099943557316388,
+              "phases": {
+                "attack": 0.053075555827074655,
+                "early": 0.14681155880570135
+              },
+              "envelope_db": 1.760973063137522
+            },
+            {
+              "id": "notes/violin-59-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.65,
+              "mel": 0.10886904555924529,
+              "phases": {
+                "attack": 0.06840925010777005,
+                "early": 0.14932884101072053
+              },
+              "envelope_db": 1.5403784147835855
+            },
+            {
+              "id": "notes/violin-62-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.65,
+              "mel": 0.08218146946749341,
+              "phases": {
+                "attack": 0.05669061939838519,
+                "early": 0.10767231953660163
+              },
+              "envelope_db": 0.6630336054373764
+            },
+            {
+              "id": "notes/violin-63-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.65,
+              "mel": 0.07787408831820314,
+              "phases": {
+                "attack": 0.07056473815855101,
+                "early": 0.08518343847785526
+              },
+              "envelope_db": 1.076977514437577
+            },
+            {
+              "id": "notes/violin-65-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.65,
+              "mel": 0.07050793313997755,
+              "phases": {
+                "attack": 0.04199081072191373,
+                "early": 0.09902505555804136
+              },
+              "envelope_db": 1.8297701412792895
+            },
+            {
+              "id": "notes/violin-66-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.65,
+              "mel": 0.05504307621279775,
+              "phases": {
+                "attack": 0.05557498299195328,
+                "early": 0.05451116943364222
+              },
+              "envelope_db": 1.8473126374482618
+            },
+            {
+              "id": "notes/violin-68-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.65,
+              "mel": 0.0588996932981014,
+              "phases": {
+                "attack": 0.06395078471337368,
+                "early": 0.053848601882829125
+              },
+              "envelope_db": 1.1127555459607015
+            },
+            {
+              "id": "notes/violin-69-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.65,
+              "mel": 0.06302152577969605,
+              "phases": {
+                "attack": 0.046176243490914315,
+                "early": 0.07986680806847778
+              },
+              "envelope_db": 1.85004428387206
+            },
+            {
+              "id": "notes/violin-71-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.65,
+              "mel": 0.07289572974837222,
+              "phases": {
+                "attack": 0.04356021347356884,
+                "early": 0.10223124602317561
+              },
+              "envelope_db": 2.101699460961437
+            },
+            {
+              "id": "notes/violin-77-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.65,
+              "mel": 0.09997231804927915,
+              "phases": {
+                "attack": 0.07525177139953013,
+                "early": 0.12469286469902818
+              },
+              "envelope_db": 3.289766750746531
+            },
+            {
+              "id": "notes/violin-78-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.65,
+              "mel": 0.06210837191852574,
+              "phases": {
+                "attack": 0.05579454077867694,
+                "early": 0.06842220305837453
+              },
+              "envelope_db": 1.4347304811602695
+            },
+            {
+              "id": "notes/violin-80-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.65,
+              "mel": 0.07184517194349233,
+              "phases": {
+                "attack": 0.06866049826695476,
+                "early": 0.07502984562002987
+              },
+              "envelope_db": 1.5484511579989473
+            },
+            {
+              "id": "notes/violin-81-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.65,
+              "mel": 0.08681707212436734,
+              "phases": {
+                "attack": 0.07830383206712972,
+                "early": 0.09533031218160495
+              },
+              "envelope_db": 1.6805443214137745
+            },
+            {
+              "id": "notes/violin-83-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.65,
+              "mel": 0.10120271249073332,
+              "phases": {
+                "attack": 0.11151002447808173,
+                "early": 0.0908954005033849
+              },
+              "envelope_db": 2.378189192913277
+            },
+            {
+              "id": "notes/violin-56-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.95,
+              "mel": 0.12119017525842268,
+              "phases": {
+                "attack": 0.06480727085376832,
+                "early": 0.17757307966307706
+              },
+              "envelope_db": 1.268882249594294
+            },
+            {
+              "id": "notes/violin-57-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.10845950754580883,
+              "phases": {
+                "attack": 0.05951837711017579,
+                "early": 0.15740063798144185
+              },
+              "envelope_db": 1.1480723505753914
+            },
+            {
+              "id": "notes/violin-59-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.95,
+              "mel": 0.11422009444450291,
+              "phases": {
+                "attack": 0.051622794529758355,
+                "early": 0.17681739435924748
+              },
+              "envelope_db": 0.9562331500525627
+            },
+            {
+              "id": "notes/violin-62-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.07172965686404145,
+              "phases": {
+                "attack": 0.058386944609492925,
+                "early": 0.08507236911859
+              },
+              "envelope_db": 1.1332799306107972
+            },
+            {
+              "id": "notes/violin-63-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.95,
+              "mel": 0.06067474252915163,
+              "phases": {
+                "attack": 0.0455984202523648,
+                "early": 0.07575106480593846
+              },
+              "envelope_db": 0.9876940485844601
+            },
+            {
+              "id": "notes/violin-65-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.95,
+              "mel": 0.0696968914693967,
+              "phases": {
+                "attack": 0.05237005759666559,
+                "early": 0.08702372534212782
+              },
+              "envelope_db": 0.6384370545968674
+            },
+            {
+              "id": "notes/violin-66-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.95,
+              "mel": 0.03804093836893303,
+              "phases": {
+                "attack": 0.03608675947954607,
+                "early": 0.03999511725831999
+              },
+              "envelope_db": 0.6027953938341621
+            },
+            {
+              "id": "notes/violin-68-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.95,
+              "mel": 0.056356394722741496,
+              "phases": {
+                "attack": 0.06704901694467942,
+                "early": 0.045663772500803564
+              },
+              "envelope_db": 0.9409351516756947
+            },
+            {
+              "id": "notes/violin-69-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.09177622831191778,
+              "phases": {
+                "attack": 0.09504079069463972,
+                "early": 0.08851166592919586
+              },
+              "envelope_db": 3.040509284533334
+            },
+            {
+              "id": "notes/violin-71-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.95,
+              "mel": 0.07200410987017733,
+              "phases": {
+                "attack": 0.041210077292169245,
+                "early": 0.10279814244818541
+              },
+              "envelope_db": 1.473648569325526
+            },
+            {
+              "id": "notes/violin-77-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.95,
+              "mel": 0.07318426479724376,
+              "phases": {
+                "attack": 0.05067938772979208,
+                "early": 0.09568914186469543
+              },
+              "envelope_db": 1.4265214137159454
+            },
+            {
+              "id": "notes/violin-78-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.95,
+              "mel": 0.06848934961649578,
+              "phases": {
+                "attack": 0.06237532043439965,
+                "early": 0.07460337879859191
+              },
+              "envelope_db": 1.5524327602260868
+            },
+            {
+              "id": "notes/violin-80-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.95,
+              "mel": 0.08664140634388634,
+              "phases": {
+                "attack": 0.05365713399241433,
+                "early": 0.11962567869535834
+              },
+              "envelope_db": 6.63400362930442
+            },
+            {
+              "id": "notes/violin-81-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.95,
+              "mel": 0.10738791354010688,
+              "phases": {
+                "attack": 0.10454300712575001,
+                "early": 0.11023281995446373
+              },
+              "envelope_db": 6.401976098819415
+            },
+            {
+              "id": "notes/violin-83-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.95,
+              "mel": 0.08641539476680866,
+              "phases": {
+                "attack": 0.07036335101684661,
+                "early": 0.10246743851677072
+              },
+              "envelope_db": 6.549514540481905
+            }
+          ]
+        },
+        "after": {
+          "mel_by_dataset": {
+            "iowa": 0.10406179948695306,
+            "tu-note": 0.1029947960296227,
+            "short": 0.08134568042516523
+          },
+          "weighted_mel": 0.09703356307695063,
+          "notes": [
+            {
+              "id": "iowa-violin-56-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 56,
+              "velocity": 0.65,
+              "mel": 0.15475625269459503,
+              "phases": {
+                "attack": 0.055890564878597636,
+                "early": 0.18749881432796026,
+                "late": 0.17955242501308208
+              },
+              "envelope_db": 4.659992629328425,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.1840061299496853,
+              "pitch_penalty_cents": 1.1840061299496853
+            },
+            {
+              "id": "iowa-violin-57-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.65,
+              "mel": 0.13540593259406447,
+              "phases": {
+                "attack": 0.0506190787538936,
+                "early": 0.12857367512401852,
+                "late": 0.16976309933539574
+              },
+              "envelope_db": 1.461962997230571,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.7877125849312167,
+              "pitch_penalty_cents": 0.7877125849312167
+            },
+            {
+              "id": "iowa-violin-59-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.65,
+              "mel": 0.12794996341209977,
+              "phases": {
+                "attack": 0.07102460125879166,
+                "early": 0.13872784403314778,
+                "late": 0.14525526898669727
+              },
+              "envelope_db": 1.5818438153575225,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6448121899387306,
+              "pitch_penalty_cents": 0.6448121899387306
+            },
+            {
+              "id": "iowa-violin-62-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.65,
+              "mel": 0.10213841034942349,
+              "phases": {
+                "attack": 0.06193168437792111,
+                "early": 0.11027364225164936,
+                "late": 0.11416522062540216
+              },
+              "envelope_db": 2.2550888061771808,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3113172262656676,
+              "pitch_penalty_cents": 1.3113172262656676
+            },
+            {
+              "id": "iowa-violin-63-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 63,
+              "velocity": 0.65,
+              "mel": 0.059065859862422306,
+              "phases": {
+                "attack": 0.033279317047812014,
+                "early": 0.08519737943039922,
+                "late": 0.058936493579909814
+              },
+              "envelope_db": 0.8607976678008473,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.5158303736889713,
+              "pitch_penalty_cents": 0.5158303736889713
+            },
+            {
+              "id": "iowa-violin-65-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 65,
+              "velocity": 0.65,
+              "mel": 0.07715929509299017,
+              "phases": {
+                "attack": 0.03597073886901875,
+                "early": 0.08911168535557758,
+                "late": 0.08812285732850918
+              },
+              "envelope_db": 1.698018125333227,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.291892841850528,
+              "pitch_penalty_cents": 1.291892841850528
+            },
+            {
+              "id": "iowa-violin-66-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 66,
+              "velocity": 0.65,
+              "mel": 0.038554719809647746,
+              "phases": {
+                "attack": 0.042587758130148416,
+                "early": 0.04692585296859377,
+                "late": 0.03390315550485523
+              },
+              "envelope_db": 1.1299134235979538,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.5693594303781508,
+              "pitch_penalty_cents": 1.5693594303781508
+            },
+            {
+              "id": "iowa-violin-68-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 68,
+              "velocity": 0.65,
+              "mel": 0.04718099241039772,
+              "phases": {
+                "attack": 0.05015260914851114,
+                "early": 0.04789046108797529,
+                "late": 0.045800585379513585
+              },
+              "envelope_db": 0.7351213699213288,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.4454301859115049,
+              "pitch_penalty_cents": 1.4454301859115049
+            },
+            {
+              "id": "iowa-violin-69-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.65,
+              "mel": 0.07082908767946146,
+              "phases": {
+                "attack": 0.036777089096245046,
+                "early": 0.07349086392883539,
+                "late": 0.08260042105465237
+              },
+              "envelope_db": 1.756084946361506,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.5958960191554763,
+              "pitch_penalty_cents": 1.5958960191554763
+            },
+            {
+              "id": "iowa-violin-71-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 71,
+              "velocity": 0.65,
+              "mel": 0.07754542263960187,
+              "phases": {
+                "attack": 0.048863076522509645,
+                "early": 0.09981709198281682,
+                "late": 0.07994942642980585
+              },
+              "envelope_db": 1.676008227125804,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9229576126523789,
+              "pitch_penalty_cents": 1.9229576126523789
+            },
+            {
+              "id": "iowa-violin-77-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 77,
+              "velocity": 0.65,
+              "mel": 0.09886164512021636,
+              "phases": {
+                "attack": 0.08659823550819024,
+                "early": 0.11182128244838684,
+                "late": 0.0986005597266622
+              },
+              "envelope_db": 1.959885490611861,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.254072771501107,
+              "pitch_penalty_cents": 2.254072771501107
+            },
+            {
+              "id": "iowa-violin-78-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 78,
+              "velocity": 0.65,
+              "mel": 0.07092424521418232,
+              "phases": {
+                "attack": 0.0771495219398747,
+                "early": 0.0720296493672759,
+                "late": 0.06817523988463757
+              },
+              "envelope_db": 1.870590389221239,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.889756054506901,
+              "pitch_penalty_cents": 1.889756054506901
+            },
+            {
+              "id": "iowa-violin-80-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 80,
+              "velocity": 0.65,
+              "mel": 0.06276623910349269,
+              "phases": {
+                "attack": 0.06709024247309271,
+                "early": 0.062010458798581636,
+                "late": 0.0614281554542343
+              },
+              "envelope_db": 1.4790634290569753,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.486197623320401,
+              "pitch_penalty_cents": 2.486197623320401
+            },
+            {
+              "id": "iowa-violin-81-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 81,
+              "velocity": 0.65,
+              "mel": 0.09344755211973817,
+              "phases": {
+                "attack": 0.06323955345215418,
+                "early": 0.10066660131440278,
+                "late": 0.10206840817208292
+              },
+              "envelope_db": 2.1417573212751058,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.9113766132759937,
+              "pitch_penalty_cents": 2.9113766132759937
+            },
+            {
+              "id": "iowa-violin-83-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 83,
+              "velocity": 0.65,
+              "mel": 0.08310737538338599,
+              "phases": {
+                "attack": 0.10045723887594435,
+                "early": 0.09381604145432074,
+                "late": 0.07258542679707605
+              },
+              "envelope_db": 2.282147000154021,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.859789384156803,
+              "pitch_penalty_cents": 2.859789384156803
+            },
+            {
+              "id": "iowa-violin-57-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.21658523079495134,
+              "phases": {
+                "attack": 0.09879209699566069,
+                "early": 0.24340557391761908,
+                "late": 0.2507000272986849
+              },
+              "envelope_db": 11.08220845227336,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6000351018534974,
+              "pitch_penalty_cents": 0.6000351018534974
+            },
+            {
+              "id": "iowa-violin-59-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.95,
+              "mel": 0.1928678484069831,
+              "phases": {
+                "attack": 0.07949696028247229,
+                "early": 0.19452285086281082,
+                "late": 0.23476130553273922
+              },
+              "envelope_db": 9.9557461030016,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3324179418849718,
+              "pitch_penalty_cents": 1.3324179418849718
+            },
+            {
+              "id": "iowa-violin-62-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.13618192338670546,
+              "phases": {
+                "attack": 0.07106127853109173,
+                "early": 0.08044099709716329,
+                "late": 0.18150501256613888
+              },
+              "envelope_db": 9.380231676937377,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2442271770091775,
+              "pitch_penalty_cents": 1.2442271770091775
+            },
+            {
+              "id": "iowa-violin-69-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.131846194177749,
+              "phases": {
+                "attack": 0.10013067316861829,
+                "early": 0.0978228031447533,
+                "late": 0.15649828619354642
+              },
+              "envelope_db": 8.589425281140908,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7090643075712513,
+              "pitch_penalty_cents": 1.7090643075712513
+            },
+            {
+              "id": "tu-glissando-17",
+              "dataset": "tu-note",
+              "seconds": 8.442375,
+              "hold": 7.66267,
+              "pitch": 62,
+              "velocity": 0.5,
+              "mel": 0.10985097337653547,
+              "phases": {
+                "attack": 0.09520607843309167,
+                "early": 0.0964146312396919,
+                "late": 0.10015306753992868,
+                "transition": 0.19321211543279487,
+                "release": 0.02404216823087483
+              },
+              "envelope_db": 5.046963821938369,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.0275360119558847,
+              "pitch_penalty_cents": 3.0275360119558847
+            },
+            {
+              "id": "tu-glissando-18",
+              "dataset": "tu-note",
+              "seconds": 7.898375,
+              "hold": 7.41833,
+              "pitch": 57,
+              "velocity": 0.5,
+              "mel": 0.12050785150452195,
+              "phases": {
+                "attack": 0.05678816651529253,
+                "early": 0.1671277944965855,
+                "late": 0.12227734128006287,
+                "transition": 0.14959082624770081,
+                "release": 0.08091355591174935
+              },
+              "envelope_db": 6.292680596685684,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8815345401844031,
+              "pitch_penalty_cents": 0.8815345401844031
+            },
+            {
+              "id": "tu-glissando-19",
+              "dataset": "tu-note",
+              "seconds": 6.922833333333333,
+              "hold": 6.50679,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.13679247444724277,
+              "phases": {
+                "attack": 0.16203645248533688,
+                "early": 0.09398802889722802,
+                "late": 0.1602089043836619,
+                "transition": 0.1612125096105834,
+                "release": 0.02062738564276598
+              },
+              "envelope_db": 7.097101599731927,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.1982986859633424,
+              "pitch_penalty_cents": 2.1982986859633424
+            },
+            {
+              "id": "tu-glissando-20",
+              "dataset": "tu-note",
+              "seconds": 6.368791666666667,
+              "hold": 5.92625,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.100876680311953,
+              "phases": {
+                "attack": 0.04328963636201765,
+                "early": 0.11934715023959887,
+                "late": 0.11674743464709846,
+                "transition": 0.12657746640911827,
+                "release": 0.04466695181047486
+              },
+              "envelope_db": 4.7275402643862785,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2198390779880706,
+              "pitch_penalty_cents": 1.2198390779880706
+            },
+            {
+              "id": "tu-glissando-21",
+              "dataset": "tu-note",
+              "seconds": 7.654541666666667,
+              "hold": 7.19325,
+              "pitch": 62,
+              "velocity": 0.5,
+              "mel": 0.1199834127544342,
+              "phases": {
+                "attack": 0.05781775089875156,
+                "early": 0.09127185875352392,
+                "late": 0.14799111591255004,
+                "transition": 0.18433705476320134,
+                "release": 0.01556113988932576
+              },
+              "envelope_db": 6.685061982639466,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.987637717102169,
+              "pitch_penalty_cents": 3.987637717102169
+            },
+            {
+              "id": "tu-glissando-22",
+              "dataset": "tu-note",
+              "seconds": 8.135041666666666,
+              "hold": 7.325,
+              "pitch": 57,
+              "velocity": 0.5,
+              "mel": 0.10599577195354683,
+              "phases": {
+                "attack": 0.048337876153613284,
+                "early": 0.1709058990750288,
+                "late": 0.10909270983356092,
+                "transition": 0.12937233305655615,
+                "release": 0.03597655124514917
+              },
+              "envelope_db": 5.468260077602942,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.4287127862262303,
+              "pitch_penalty_cents": 2.4287127862262303
+            },
+            {
+              "id": "tu-glissando-41",
+              "dataset": "tu-note",
+              "seconds": 8.277541666666666,
+              "hold": 7.6025,
+              "pitch": 69,
+              "velocity": 0.5,
+              "mel": 0.08673378357060602,
+              "phases": {
+                "attack": 0.048146924386006235,
+                "early": 0.08455078574645103,
+                "late": 0.08826423661783965,
+                "transition": 0.1498140612422936,
+                "release": 0.015606201551428441
+              },
+              "envelope_db": 3.3503837035831756,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.8861531818223156,
+              "pitch_penalty_cents": 1.8861531818223156
+            },
+            {
+              "id": "tu-glissando-42",
+              "dataset": "tu-note",
+              "seconds": 9.560041666666667,
+              "hold": 7.2575,
+              "pitch": 64,
+              "velocity": 0.5,
+              "mel": 0.09175242294644173,
+              "phases": {
+                "attack": 0.05658417120287175,
+                "early": 0.09504768597547648,
+                "late": 0.10298178813123704,
+                "transition": 0.1351304920921211,
+                "release": 0.007888306987704563
+              },
+              "envelope_db": 10.010366208782436,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.5707466429792374,
+              "pitch_penalty_cents": 1.5707466429792374
+            },
+            {
+              "id": "tu-glissando-43",
+              "dataset": "tu-note",
+              "seconds": 7.930375,
+              "hold": 6.67167,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.09789874567468265,
+              "phases": {
+                "attack": 0.09542364113004834,
+                "early": 0.12015804936083975,
+                "late": 0.0939782781932236,
+                "transition": 0.13783578858096637,
+                "release": 0.004030231075667218
+              },
+              "envelope_db": 4.466237361781302,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.1160120949971373,
+              "pitch_penalty_cents": 2.1160120949971373
+            },
+            {
+              "id": "tu-glissando-44",
+              "dataset": "tu-note",
+              "seconds": 9.671708333333333,
+              "hold": 6.46367,
+              "pitch": 64,
+              "velocity": 0.95,
+              "mel": 0.09452260841033808,
+              "phases": {
+                "attack": 0.1043961600451345,
+                "early": 0.09844482943270906,
+                "late": 0.1121861450795986,
+                "transition": 0.09411816342898076,
+                "release": 0.0039836927102594915
+              },
+              "envelope_db": 9.721533492367557,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.6025064917489584,
+              "pitch_penalty_cents": 1.6025064917489584
+            },
+            {
+              "id": "tu-glissando-45",
+              "dataset": "tu-note",
+              "seconds": 8.217541666666667,
+              "hold": 7.0325,
+              "pitch": 69,
+              "velocity": 0.5,
+              "mel": 0.0938796136446444,
+              "phases": {
+                "attack": 0.045327115838552666,
+                "early": 0.1122979478646784,
+                "late": 0.09531761169680003,
+                "transition": 0.1509562781665074,
+                "release": 0.019175537771382336
+              },
+              "envelope_db": 5.825289013131231,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.3482388016512417,
+              "pitch_penalty_cents": 3.3482388016512417
+            },
+            {
+              "id": "tu-glissando-46",
+              "dataset": "tu-note",
+              "seconds": 10.145041666666666,
+              "hold": 8.045,
+              "pitch": 64,
+              "velocity": 0.5,
+              "mel": 0.07714321376052521,
+              "phases": {
+                "attack": 0.05724377444436968,
+                "early": 0.07770772863681645,
+                "late": 0.09328500382801946,
+                "transition": 0.09531820535408289,
+                "release": 0.005228456963229348
+              },
+              "envelope_db": 7.3181915804080875,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.73557951008332,
+              "pitch_penalty_cents": 3.73557951008332
+            },
+            {
+              "id": "notes/violin-56-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.65,
+              "mel": 0.136594684341531,
+              "phases": {
+                "attack": 0.06888296244561981,
+                "early": 0.20430640623744215
+              },
+              "envelope_db": 12.26396829960386
+            },
+            {
+              "id": "notes/violin-57-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.65,
+              "mel": 0.09799727534610128,
+              "phases": {
+                "attack": 0.04373826413193503,
+                "early": 0.15225628656026755
+              },
+              "envelope_db": 1.7454603026252695
+            },
+            {
+              "id": "notes/violin-59-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.65,
+              "mel": 0.1130320337252487,
+              "phases": {
+                "attack": 0.0756725674913478,
+                "early": 0.15039149995914958
+              },
+              "envelope_db": 1.2418134500980833
+            },
+            {
+              "id": "notes/violin-62-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.65,
+              "mel": 0.0824965499027329,
+              "phases": {
+                "attack": 0.061899998851927984,
+                "early": 0.10309310095353783
+              },
+              "envelope_db": 0.8900962515334163
+            },
+            {
+              "id": "notes/violin-63-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.65,
+              "mel": 0.07353615363077592,
+              "phases": {
+                "attack": 0.06368444752774433,
+                "early": 0.08338785973380754
+              },
+              "envelope_db": 1.1106070523448206
+            },
+            {
+              "id": "notes/violin-65-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.65,
+              "mel": 0.06870639179793672,
+              "phases": {
+                "attack": 0.04105555758588517,
+                "early": 0.09635722600998828
+              },
+              "envelope_db": 1.6610849163769656
+            },
+            {
+              "id": "notes/violin-66-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.65,
+              "mel": 0.04609933605136553,
+              "phases": {
+                "attack": 0.04428536054671768,
+                "early": 0.04791331155601338
+              },
+              "envelope_db": 1.800024051079057
+            },
+            {
+              "id": "notes/violin-68-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.65,
+              "mel": 0.04509972670601674,
+              "phases": {
+                "attack": 0.04103852892162719,
+                "early": 0.04916092449040628
+              },
+              "envelope_db": 1.0712421354249704
+            },
+            {
+              "id": "notes/violin-69-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.65,
+              "mel": 0.05944427415757113,
+              "phases": {
+                "attack": 0.04346632708853613,
+                "early": 0.07542222122660613
+              },
+              "envelope_db": 1.7991592458243995
+            },
+            {
+              "id": "notes/violin-71-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.65,
+              "mel": 0.07426712371452211,
+              "phases": {
+                "attack": 0.045296155403057516,
+                "early": 0.1032380920259867
+              },
+              "envelope_db": 1.98835748812484
+            },
+            {
+              "id": "notes/violin-77-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.65,
+              "mel": 0.1033387932452017,
+              "phases": {
+                "attack": 0.09213325203795886,
+                "early": 0.11454433445244455
+              },
+              "envelope_db": 3.399315486736216
+            },
+            {
+              "id": "notes/violin-78-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.65,
+              "mel": 0.06951844889460068,
+              "phases": {
+                "attack": 0.08209190291214111,
+                "early": 0.05694499487706026
+              },
+              "envelope_db": 1.6310225136680552
+            },
+            {
+              "id": "notes/violin-80-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.65,
+              "mel": 0.06846588742149573,
+              "phases": {
+                "attack": 0.07335211645010531,
+                "early": 0.06357965839288615
+              },
+              "envelope_db": 1.4199366957568
+            },
+            {
+              "id": "notes/violin-81-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.65,
+              "mel": 0.07391645007623887,
+              "phases": {
+                "attack": 0.051553060472453706,
+                "early": 0.09627983968002404
+              },
+              "envelope_db": 1.934053880015193
+            },
+            {
+              "id": "notes/violin-83-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.65,
+              "mel": 0.09891062076063273,
+              "phases": {
+                "attack": 0.11104635660071431,
+                "early": 0.08677488492055113
+              },
+              "envelope_db": 2.42575653017077
+            },
+            {
+              "id": "notes/violin-56-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.95,
+              "mel": 0.0966173510731853,
+              "phases": {
+                "attack": 0.0321136782043594,
+                "early": 0.1611210239420112
+              },
+              "envelope_db": 1.2314315587720126
+            },
+            {
+              "id": "notes/violin-57-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.95,
+              "mel": 0.10854935566887414,
+              "phases": {
+                "attack": 0.056866855297241906,
+                "early": 0.16023185604050635
+              },
+              "envelope_db": 1.4507406825247438
+            },
+            {
+              "id": "notes/violin-59-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.95,
+              "mel": 0.12312812242480718,
+              "phases": {
+                "attack": 0.06756609166666344,
+                "early": 0.17869015318295092
+              },
+              "envelope_db": 0.7538109374419569
+            },
+            {
+              "id": "notes/violin-62-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.95,
+              "mel": 0.07748052824520565,
+              "phases": {
+                "attack": 0.07152888469089973,
+                "early": 0.0834321717995116
+              },
+              "envelope_db": 1.170897147552081
+            },
+            {
+              "id": "notes/violin-63-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.95,
+              "mel": 0.09476694568402524,
+              "phases": {
+                "attack": 0.10067110478217062,
+                "early": 0.08886278658587986
+              },
+              "envelope_db": 1.1384691908120288
+            },
+            {
+              "id": "notes/violin-65-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.95,
+              "mel": 0.08201094213656353,
+              "phases": {
+                "attack": 0.0707472010252681,
+                "early": 0.09327468324785895
+              },
+              "envelope_db": 0.9780041435231301
+            },
+            {
+              "id": "notes/violin-66-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.95,
+              "mel": 0.031933509036390105,
+              "phases": {
+                "attack": 0.02979075888504138,
+                "early": 0.03407625918773883
+              },
+              "envelope_db": 0.6241531352658051
+            },
+            {
+              "id": "notes/violin-68-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.95,
+              "mel": 0.04165356085315407,
+              "phases": {
+                "attack": 0.041158633718819324,
+                "early": 0.042148487987488804
+              },
+              "envelope_db": 0.5984451605234198
+            },
+            {
+              "id": "notes/violin-69-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.95,
+              "mel": 0.08644255721169092,
+              "phases": {
+                "attack": 0.08596886040843682,
+                "early": 0.08691625401494502
+              },
+              "envelope_db": 3.0751518635857233
+            },
+            {
+              "id": "notes/violin-71-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.95,
+              "mel": 0.07129198002388232,
+              "phases": {
+                "attack": 0.040740511188540204,
+                "early": 0.10184344885922444
+              },
+              "envelope_db": 1.7158925774035578
+            },
+            {
+              "id": "notes/violin-77-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.95,
+              "mel": 0.07945837670793278,
+              "phases": {
+                "attack": 0.06385656550795826,
+                "early": 0.0950601879079073
+              },
+              "envelope_db": 1.4383794034573087
+            },
+            {
+              "id": "notes/violin-78-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.95,
+              "mel": 0.07091509851681108,
+              "phases": {
+                "attack": 0.06907343751091359,
+                "early": 0.07275675952270858
+              },
+              "envelope_db": 1.536057954788775
+            },
+            {
+              "id": "notes/violin-80-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.95,
+              "mel": 0.084142148453241,
+              "phases": {
+                "attack": 0.051245959576287144,
+                "early": 0.11703833733019486
+              },
+              "envelope_db": 6.565179987312787
+            },
+            {
+              "id": "notes/violin-81-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.95,
+              "mel": 0.09525288641160612,
+              "phases": {
+                "attack": 0.08035936279054695,
+                "early": 0.11014641003266529
+              },
+              "envelope_db": 6.323591032763385
+            },
+            {
+              "id": "notes/violin-83-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.95,
+              "mel": 0.08611618952077763,
+              "phases": {
+                "attack": 0.07255175397289981,
+                "early": 0.09968062506865542
+              },
+              "envelope_db": 6.560454119338723
+            }
+          ]
+        }
+      },
+      "validation": {
+        "before": {
+          "mel_by_dataset": {
+            "iowa": 0.11185608519566717,
+            "tu-note": 0.08371340560899737,
+            "short": 0.08801624569607129
+          },
+          "weighted_mel": 0.09907559742845445,
+          "notes": [
+            {
+              "id": "iowa-violin-55-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.1713290875265225,
+              "phases": {
+                "attack": 0.04160689240909124,
+                "early": 0.18830138079767977,
+                "late": 0.2136103007188752
+              },
+              "envelope_db": 1.8087625552270374,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6737320260809153,
+              "pitch_penalty_cents": 0.6737320260809153
+            },
+            {
+              "id": "iowa-violin-56-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 56,
+              "velocity": 0.35,
+              "mel": 0.15711602316982617,
+              "phases": {
+                "attack": 0.03956786094562417,
+                "early": 0.1668903113172499,
+                "late": 0.197531225948618
+              },
+              "envelope_db": 1.701736877854676,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.763107472466291,
+              "pitch_penalty_cents": 0.763107472466291
+            },
+            {
+              "id": "iowa-violin-57-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.35,
+              "mel": 0.13437277896248356,
+              "phases": {
+                "attack": 0.0509759402599953,
+                "early": 0.16741523899572666,
+                "late": 0.1532556709634505
+              },
+              "envelope_db": 2.2889219993731054,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6407456000121324,
+              "pitch_penalty_cents": 0.6407456000121324
+            },
+            {
+              "id": "iowa-violin-58-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 58,
+              "velocity": 0.35,
+              "mel": 0.12747937808103002,
+              "phases": {
+                "attack": 0.06029271047978758,
+                "early": 0.17572834232268097,
+                "late": 0.13458101684087678
+              },
+              "envelope_db": 2.692233746268563,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.3803136352198534,
+              "pitch_penalty_cents": 0.3803136352198534
+            },
+            {
+              "id": "iowa-violin-59-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.35,
+              "mel": 0.12076981403248457,
+              "phases": {
+                "attack": 0.04652698483522059,
+                "early": 0.16726110186443843,
+                "late": 0.13117664204447585
+              },
+              "envelope_db": 2.6336193098661043,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.1240189518251174,
+              "pitch_penalty_cents": 1.1240189518251174
+            },
+            {
+              "id": "iowa-violin-62-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.0835509646772978,
+              "phases": {
+                "attack": 0.05899242068888351,
+                "early": 0.0873599306287755,
+                "late": 0.091332056441149
+              },
+              "envelope_db": 1.0587802172022884,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0980409986743684,
+              "pitch_penalty_cents": 1.0980409986743684
+            },
+            {
+              "id": "iowa-violin-63-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 63,
+              "velocity": 0.35,
+              "mel": 0.07869333453449631,
+              "phases": {
+                "attack": 0.03911462719061751,
+                "early": 0.09725037043057541,
+                "late": 0.08657646132742117
+              },
+              "envelope_db": 1.962539814995395,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9099962490827725,
+              "pitch_penalty_cents": 0.9099962490827725
+            },
+            {
+              "id": "iowa-violin-64-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 64,
+              "velocity": 0.35,
+              "mel": 0.07241550153303519,
+              "phases": {
+                "attack": 0.053550552344331454,
+                "early": 0.10023820463824613,
+                "late": 0.06905634381434497
+              },
+              "envelope_db": 1.878969231266708,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0964704984908251,
+              "pitch_penalty_cents": 1.0964704984908251
+            },
+            {
+              "id": "iowa-violin-65-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 65,
+              "velocity": 0.35,
+              "mel": 0.09059569484433397,
+              "phases": {
+                "attack": 0.0590841016950856,
+                "early": 0.11269223507745726,
+                "late": 0.09412633968788087
+              },
+              "envelope_db": 1.6983675824611164,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.42561597007493956,
+              "pitch_penalty_cents": 0.42561597007493956
+            },
+            {
+              "id": "iowa-violin-66-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 66,
+              "velocity": 0.35,
+              "mel": 0.05233663092233572,
+              "phases": {
+                "attack": 0.040120472387799574,
+                "early": 0.05545048591926245,
+                "late": 0.055749994748939234
+              },
+              "envelope_db": 1.261959744874165,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0492621933420612,
+              "pitch_penalty_cents": 1.0492621933420612
+            },
+            {
+              "id": "iowa-violin-67-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.35,
+              "mel": 0.12331870200795164,
+              "phases": {
+                "attack": 0.04534324996776049,
+                "early": 0.14647997531140766,
+                "late": 0.1438740190342273
+              },
+              "envelope_db": 7.753901330098589,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9662587189746407,
+              "pitch_penalty_cents": 0.9662587189746407
+            },
+            {
+              "id": "iowa-violin-68-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 68,
+              "velocity": 0.35,
+              "mel": 0.05162362786704773,
+              "phases": {
+                "attack": 0.0341018817937223,
+                "early": 0.04793171606822036,
+                "late": 0.05957874956910503
+              },
+              "envelope_db": 1.4188042110849806,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9674939816421878,
+              "pitch_penalty_cents": 0.9674939816421878
+            },
+            {
+              "id": "iowa-violin-69-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.35,
+              "mel": 0.08706095395051941,
+              "phases": {
+                "attack": 0.04349248742884153,
+                "early": 0.08536015273296536,
+                "late": 0.10403692935273137
+              },
+              "envelope_db": 2.81793082195917,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.299579913397996,
+              "pitch_penalty_cents": 1.299579913397996
+            },
+            {
+              "id": "iowa-violin-70-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 70,
+              "velocity": 0.35,
+              "mel": 0.07080859553625549,
+              "phases": {
+                "attack": 0.06080243508047767,
+                "early": 0.07479605892959729,
+                "late": 0.07306560693466899
+              },
+              "envelope_db": 1.8361247981012714,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.48569053558749464,
+              "pitch_penalty_cents": 0.48569053558749464
+            },
+            {
+              "id": "iowa-violin-71-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 71,
+              "velocity": 0.35,
+              "mel": 0.10751993843227285,
+              "phases": {
+                "attack": 0.06284009498470944,
+                "early": 0.12149429686210578,
+                "late": 0.11903449531392177
+              },
+              "envelope_db": 3.1607294200404574,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8645281853234095,
+              "pitch_penalty_cents": 0.8645281853234095
+            },
+            {
+              "id": "iowa-violin-76-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 76,
+              "velocity": 0.35,
+              "mel": 0.13546712795031904,
+              "phases": {
+                "attack": 0.05976630347762704,
+                "early": 0.1445951705306262,
+                "late": 0.1604319211599633
+              },
+              "envelope_db": 8.410108596150128,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.1518898866440737,
+              "pitch_penalty_cents": 1.1518898866440737
+            },
+            {
+              "id": "iowa-violin-77-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 77,
+              "velocity": 0.35,
+              "mel": 0.11586457336727976,
+              "phases": {
+                "attack": 0.07097679319021043,
+                "early": 0.12858013943740362,
+                "late": 0.1279291536573843
+              },
+              "envelope_db": 3.044410859783298,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.6016761829670259,
+              "pitch_penalty_cents": 1.6016761829670259
+            },
+            {
+              "id": "iowa-violin-78-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 78,
+              "velocity": 0.35,
+              "mel": 0.0850920713417453,
+              "phases": {
+                "attack": 0.06627892096162193,
+                "early": 0.106438398742386,
+                "late": 0.08414212995905128
+              },
+              "envelope_db": 2.009473540180595,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7908943411068474,
+              "pitch_penalty_cents": 1.7908943411068474
+            },
+            {
+              "id": "iowa-violin-79-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 79,
+              "velocity": 0.35,
+              "mel": 0.10036493644959948,
+              "phases": {
+                "attack": 0.07604478081284298,
+                "early": 0.13131380219971672,
+                "late": 0.09787917015708919
+              },
+              "envelope_db": 2.89097998715464,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9194922460630222,
+              "pitch_penalty_cents": 1.9194922460630222
+            },
+            {
+              "id": "iowa-violin-80-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 80,
+              "velocity": 0.35,
+              "mel": 0.10029896714623553,
+              "phases": {
+                "attack": 0.08668780263832034,
+                "early": 0.1141967384005003,
+                "late": 0.1001914896163544
+              },
+              "envelope_db": 2.896550781555822,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.1019171711140965,
+              "pitch_penalty_cents": 2.1019171711140965
+            },
+            {
+              "id": "iowa-violin-81-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 81,
+              "velocity": 0.35,
+              "mel": 0.11351517830009908,
+              "phases": {
+                "attack": 0.06892039767767649,
+                "early": 0.12737360922839192,
+                "late": 0.12504130943539774
+              },
+              "envelope_db": 4.5625331074879325,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.0837895936537194,
+              "pitch_penalty_cents": 2.0837895936537194
+            },
+            {
+              "id": "iowa-violin-82-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 82,
+              "velocity": 0.35,
+              "mel": 0.12961995979858887,
+              "phases": {
+                "attack": 0.10313163952797644,
+                "early": 0.1185881738530336,
+                "late": 0.14368999962965176
+              },
+              "envelope_db": 4.034942709922353,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.8844930365764088,
+              "pitch_penalty_cents": 1.8844930365764088
+            },
+            {
+              "id": "iowa-violin-83-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 83,
+              "velocity": 0.35,
+              "mel": 0.11970184306425576,
+              "phases": {
+                "attack": 0.08896060321093008,
+                "early": 0.1361502286173342,
+                "late": 0.12506166342684844
+              },
+              "envelope_db": 4.274441450063878,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9250474149942265,
+              "pitch_penalty_cents": 1.9250474149942265
+            },
+            {
+              "id": "iowa-violin-55-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.65,
+              "mel": 0.16004318869338222,
+              "phases": {
+                "attack": 0.039184274408436824,
+                "early": 0.16429524680908036,
+                "late": 0.20377075975684988
+              },
+              "envelope_db": 1.4272065210906828,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8451255389866026,
+              "pitch_penalty_cents": 0.8451255389866026
+            },
+            {
+              "id": "iowa-violin-58-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 58,
+              "velocity": 0.65,
+              "mel": 0.12799245004791507,
+              "phases": {
+                "attack": 0.034134580855566914,
+                "early": 0.13066603257241913,
+                "late": 0.1621865575483566
+              },
+              "envelope_db": 2.0572261658118265,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0224572684868578,
+              "pitch_penalty_cents": 1.0224572684868578
+            },
+            {
+              "id": "iowa-violin-64-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 64,
+              "velocity": 0.65,
+              "mel": 0.08496951708881409,
+              "phases": {
+                "attack": 0.05585880335349746,
+                "early": 0.0982688416973824,
+                "late": 0.09089878801134468
+              },
+              "envelope_db": 1.418422417738385,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6107647491550511,
+              "pitch_penalty_cents": 0.6107647491550511
+            },
+            {
+              "id": "iowa-violin-67-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.65,
+              "mel": 0.08949565703426886,
+              "phases": {
+                "attack": 0.05306462325207416,
+                "early": 0.07780932952521577,
+                "late": 0.10753966751848676
+              },
+              "envelope_db": 1.4465136171032706,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.953526544866788,
+              "pitch_penalty_cents": 0.953526544866788
+            },
+            {
+              "id": "iowa-violin-70-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 70,
+              "velocity": 0.65,
+              "mel": 0.07496352539091622,
+              "phases": {
+                "attack": 0.0688541901747864,
+                "early": 0.1087322546599158,
+                "late": 0.06459125262109006
+              },
+              "envelope_db": 3.0277494136344796,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.063723791874843,
+              "pitch_penalty_cents": 1.063723791874843
+            },
+            {
+              "id": "iowa-violin-76-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 76,
+              "velocity": 0.65,
+              "mel": 0.07296562454936877,
+              "phases": {
+                "attack": 0.04224869558489059,
+                "early": 0.0702256226335497,
+                "late": 0.08551197362948021
+              },
+              "envelope_db": 2.8231015413467353,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.064988748717084,
+              "pitch_penalty_cents": 1.064988748717084
+            },
+            {
+              "id": "iowa-violin-79-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 79,
+              "velocity": 0.65,
+              "mel": 0.08979579932928666,
+              "phases": {
+                "attack": 0.05022418263977352,
+                "early": 0.08376612219533354,
+                "late": 0.1068962845130865
+              },
+              "envelope_db": 2.5953092473647597,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9432091519985988,
+              "pitch_penalty_cents": 1.9432091519985988
+            },
+            {
+              "id": "iowa-violin-82-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 82,
+              "velocity": 0.65,
+              "mel": 0.08982914544977291,
+              "phases": {
+                "attack": 0.0966860158228483,
+                "early": 0.08517130842073625,
+                "late": 0.08900450794575836
+              },
+              "envelope_db": 1.5823617736294586,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.8298569743171151,
+              "pitch_penalty_cents": 1.8298569743171151
+            },
+            {
+              "id": "iowa-violin-55-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.95,
+              "mel": 0.22667740511153991,
+              "phases": {
+                "attack": 0.07902261820189525,
+                "early": 0.25770127190644687,
+                "late": 0.2704140001545665
+              },
+              "envelope_db": 12.765006630985162,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9532917549249124,
+              "pitch_penalty_cents": 0.9532917549249124
+            },
+            {
+              "id": "iowa-violin-67-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.95,
+              "mel": 0.1278060918283085,
+              "phases": {
+                "attack": 0.04676165381187343,
+                "early": 0.0826448921940339,
+                "late": 0.17513320594732457
+              },
+              "envelope_db": 8.992068261071443,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.993918073420357,
+              "pitch_penalty_cents": 0.993918073420357
+            },
+            {
+              "id": "iowa-violin-55-35-6s",
+              "dataset": "iowa",
+              "seconds": 6.0,
+              "hold": 6.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.20900720423876232,
+              "phases": {
+                "attack": 0.044353728545709424,
+                "early": 0.22109557942229058,
+                "late": 0.266219116929834
+              },
+              "envelope_db": 6.1102815327487106,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8120428316438456,
+              "pitch_penalty_cents": 0.8120428316438456
+            },
+            {
+              "id": "iowa-violin-62-35-6s",
+              "dataset": "iowa",
+              "seconds": 6.0,
+              "hold": 6.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.1325016895899999,
+              "phases": {
+                "attack": 0.07441521044283733,
+                "early": 0.09248672976576354,
+                "late": 0.16928972920427443
+              },
+              "envelope_db": 7.206209571090739,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.0538722725831433,
+              "pitch_penalty_cents": 1.0538722725831433
+            },
+            {
+              "id": "tu-glissando-65",
+              "dataset": "tu-note",
+              "seconds": 8.315041666666668,
+              "hold": 7.385,
+              "pitch": 76,
+              "velocity": 0.5,
+              "mel": 0.09764963211385337,
+              "phases": {
+                "attack": 0.05214166733654346,
+                "early": 0.1389259703719935,
+                "late": 0.10259050160014932,
+                "transition": 0.1314559280068266,
+                "release": 0.016621002161477844
+              },
+              "envelope_db": 9.390526869620343,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.006995058758096,
+              "pitch_penalty_cents": 2.006995058758096
+            },
+            {
+              "id": "tu-glissando-66",
+              "dataset": "tu-note",
+              "seconds": 8.397541666666667,
+              "hold": 7.07,
+              "pitch": 71,
+              "velocity": 0.5,
+              "mel": 0.1043196810137624,
+              "phases": {
+                "attack": 0.08782572450351324,
+                "early": 0.10522389951076723,
+                "late": 0.1253301545836566,
+                "transition": 0.12523968366549912,
+                "release": 0.0018223884505787192
+              },
+              "envelope_db": 12.241683994912215,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7797757777525276,
+              "pitch_penalty_cents": 1.7797757777525276
+            },
+            {
+              "id": "tu-glissando-67",
+              "dataset": "tu-note",
+              "seconds": 7.279708333333334,
+              "hold": 6.773,
+              "pitch": 76,
+              "velocity": 0.95,
+              "mel": 0.08478112453504558,
+              "phases": {
+                "attack": 0.0412859004485662,
+                "early": 0.12260144726014341,
+                "late": 0.09938842257103583,
+                "transition": 0.09486309036279024,
+                "release": 0.014700352777667536
+              },
+              "envelope_db": 7.599117520072928,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.628169116112839,
+              "pitch_penalty_cents": 1.628169116112839
+            },
+            {
+              "id": "tu-glissando-68",
+              "dataset": "tu-note",
+              "seconds": 7.058375,
+              "hold": 6.40233,
+              "pitch": 71,
+              "velocity": 0.95,
+              "mel": 0.08405219547482691,
+              "phases": {
+                "attack": 0.0479702192515444,
+                "early": 0.08104801513604719,
+                "late": 0.1057500714325006,
+                "transition": 0.11097047131570098,
+                "release": 0.002053374805477279
+              },
+              "envelope_db": 7.469703055211784,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.050766489621882,
+              "pitch_penalty_cents": 2.050766489621882
+            },
+            {
+              "id": "tu-glissando-69",
+              "dataset": "tu-note",
+              "seconds": 7.932541666666666,
+              "hold": 6.7925,
+              "pitch": 76,
+              "velocity": 0.5,
+              "mel": 0.09908546110137696,
+              "phases": {
+                "attack": 0.04892869237159765,
+                "early": 0.1401030216763966,
+                "late": 0.10364983572999341,
+                "transition": 0.1354137857308071,
+                "release": 0.021880125560190436
+              },
+              "envelope_db": 10.145704595578463,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.372402636037816,
+              "pitch_penalty_cents": 2.372402636037816
+            },
+            {
+              "id": "tu-glissando-70",
+              "dataset": "tu-note",
+              "seconds": 8.956291666666667,
+              "hold": 7.4,
+              "pitch": 71,
+              "velocity": 0.5,
+              "mel": 0.0952835133331301,
+              "phases": {
+                "attack": 0.07078295965857878,
+                "early": 0.08691087231165823,
+                "late": 0.11586737361435706,
+                "transition": 0.12522528770438715,
+                "release": 0.002374315509742746
+              },
+              "envelope_db": 10.028817993070822,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.8977754545286007,
+              "pitch_penalty_cents": 2.8977754545286007
+            },
+            {
+              "id": "tu-glissando-89",
+              "dataset": "tu-note",
+              "seconds": 8.633791666666667,
+              "hold": 7.6475,
+              "pitch": 83,
+              "velocity": 0.5,
+              "mel": 0.082462584918319,
+              "phases": {
+                "attack": 0.09438212279584637,
+                "early": 0.100127980124522,
+                "late": 0.07032417115470528,
+                "transition": 0.11610995638004211,
+                "release": 0.019344097423732127
+              },
+              "envelope_db": 6.998502831437927,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.1911008631202797,
+              "pitch_penalty_cents": 2.1911008631202797
+            },
+            {
+              "id": "tu-glissando-90",
+              "dataset": "tu-note",
+              "seconds": 8.442541666666667,
+              "hold": 7.24625,
+              "pitch": 78,
+              "velocity": 0.5,
+              "mel": 0.08128839928833105,
+              "phases": {
+                "attack": 0.0817924798851858,
+                "early": 0.09426970356817539,
+                "late": 0.06939124772927435,
+                "transition": 0.12364901008107589,
+                "release": 0.023927706624019607
+              },
+              "envelope_db": 7.499343506288596,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.1898768970983626,
+              "pitch_penalty_cents": 2.1898768970983626
+            },
+            {
+              "id": "tu-glissando-91",
+              "dataset": "tu-note",
+              "seconds": 7.431708333333333,
+              "hold": 6.51967,
+              "pitch": 83,
+              "velocity": 0.95,
+              "mel": 0.06350192801559448,
+              "phases": {
+                "attack": 0.04434188670481545,
+                "early": 0.07536835916343092,
+                "late": 0.05830798258944767,
+                "transition": 0.10213823713192959,
+                "release": 0.017945506731925357
+              },
+              "envelope_db": 5.7062204682411455,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.0083833350642264,
+              "pitch_penalty_cents": 2.0083833350642264
+            },
+            {
+              "id": "tu-glissando-92",
+              "dataset": "tu-note",
+              "seconds": 6.393,
+              "hold": 6.09033,
+              "pitch": 78,
+              "velocity": 0.95,
+              "mel": 0.0632642194764676,
+              "phases": {
+                "attack": 0.05213641176378599,
+                "early": 0.06269654864040038,
+                "late": 0.06335406647920508,
+                "transition": 0.09386158735327005,
+                "release": 0.019253313535035933
+              },
+              "envelope_db": 3.5981238313696675,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.154805290803469,
+              "pitch_penalty_cents": 2.154805290803469
+            },
+            {
+              "id": "tu-glissando-93",
+              "dataset": "tu-note",
+              "seconds": 7.679708333333333,
+              "hold": 6.453,
+              "pitch": 83,
+              "velocity": 0.5,
+              "mel": 0.07520902243693349,
+              "phases": {
+                "attack": 0.07117841863593574,
+                "early": 0.08815180259061786,
+                "late": 0.07180122926798146,
+                "transition": 0.10168151731113496,
+                "release": 0.022526940835308748
+              },
+              "envelope_db": 8.359930313399856,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.9550604618858802,
+              "pitch_penalty_cents": 2.9550604618858802
+            },
+            {
+              "id": "tu-glissando-94",
+              "dataset": "tu-note",
+              "seconds": 8.611291666666666,
+              "hold": 7.61,
+              "pitch": 78,
+              "velocity": 0.5,
+              "mel": 0.07366310560032734,
+              "phases": {
+                "attack": 0.06863179813606027,
+                "early": 0.08046289553986129,
+                "late": 0.07954553299174705,
+                "transition": 0.09270466993361685,
+                "release": 0.009397543655169116
+              },
+              "envelope_db": 6.823534763050906,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.403227044400164,
+              "pitch_penalty_cents": 2.403227044400164
+            },
+            {
+              "id": "notes/violin-55-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.1286462103113299,
+              "phases": {
+                "attack": 0.053257113454068264,
+                "early": 0.20403530716859153
+              },
+              "envelope_db": 1.7907164990786688
+            },
+            {
+              "id": "notes/violin-56-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.35,
+              "mel": 0.11953669990005787,
+              "phases": {
+                "attack": 0.04275132412881724,
+                "early": 0.1963220756712985
+              },
+              "envelope_db": 1.0288021105162013
+            },
+            {
+              "id": "notes/violin-57-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.35,
+              "mel": 0.11374771330139014,
+              "phases": {
+                "attack": 0.058285690393656074,
+                "early": 0.1692097362091242
+              },
+              "envelope_db": 2.9650415449553837
+            },
+            {
+              "id": "notes/violin-58-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.35,
+              "mel": 0.12727700693323546,
+              "phases": {
+                "attack": 0.06546247471905607,
+                "early": 0.18909153914741486
+              },
+              "envelope_db": 4.341757580605407
+            },
+            {
+              "id": "notes/violin-59-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.35,
+              "mel": 0.10913711194621495,
+              "phases": {
+                "attack": 0.050974661892769564,
+                "early": 0.16729956199966034
+              },
+              "envelope_db": 3.6838566988608377
+            },
+            {
+              "id": "notes/violin-62-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.07909052379347706,
+              "phases": {
+                "attack": 0.06814956291411789,
+                "early": 0.09003148467283621
+              },
+              "envelope_db": 1.0308875088433551
+            },
+            {
+              "id": "notes/violin-63-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.35,
+              "mel": 0.06332209063726639,
+              "phases": {
+                "attack": 0.040090133635438195,
+                "early": 0.08655404763909458
+              },
+              "envelope_db": 1.0123731774020726
+            },
+            {
+              "id": "notes/violin-64-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.35,
+              "mel": 0.07982686680810233,
+              "phases": {
+                "attack": 0.06070433042160691,
+                "early": 0.09894940319459776
+              },
+              "envelope_db": 3.023448722735852
+            },
+            {
+              "id": "notes/violin-65-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.35,
+              "mel": 0.08699557742495484,
+              "phases": {
+                "attack": 0.06212779596540532,
+                "early": 0.11186335888450435
+              },
+              "envelope_db": 2.563063677320306
+            },
+            {
+              "id": "notes/violin-66-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.35,
+              "mel": 0.04699844206085681,
+              "phases": {
+                "attack": 0.040095334680877344,
+                "early": 0.05390154944083628
+              },
+              "envelope_db": 1.804666956511796
+            },
+            {
+              "id": "notes/violin-67-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.35,
+              "mel": 0.09905069515740633,
+              "phases": {
+                "attack": 0.07968581531157938,
+                "early": 0.1184155750032333
+              },
+              "envelope_db": 3.517494521150102
+            },
+            {
+              "id": "notes/violin-68-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.35,
+              "mel": 0.04438066530185254,
+              "phases": {
+                "attack": 0.03856286351688103,
+                "early": 0.05019846708682406
+              },
+              "envelope_db": 1.1343110163864998
+            },
+            {
+              "id": "notes/violin-69-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.35,
+              "mel": 0.06154003656780122,
+              "phases": {
+                "attack": 0.037628119535234025,
+                "early": 0.08545195360036842
+              },
+              "envelope_db": 2.519722407900848
+            },
+            {
+              "id": "notes/violin-70-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.35,
+              "mel": 0.06672549960939315,
+              "phases": {
+                "attack": 0.05967498134327706,
+                "early": 0.07377601787550925
+              },
+              "envelope_db": 2.601836448698251
+            },
+            {
+              "id": "notes/violin-71-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.35,
+              "mel": 0.09658785302504568,
+              "phases": {
+                "attack": 0.0697152802614224,
+                "early": 0.12346042578866895
+              },
+              "envelope_db": 3.1335909088167453
+            },
+            {
+              "id": "notes/violin-76-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.35,
+              "mel": 0.10560069492735102,
+              "phases": {
+                "attack": 0.08922951791754195,
+                "early": 0.12197187193716011
+              },
+              "envelope_db": 3.3866724865236044
+            },
+            {
+              "id": "notes/violin-77-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.35,
+              "mel": 0.09485211717699428,
+              "phases": {
+                "attack": 0.05710361415983911,
+                "early": 0.13260062019414945
+              },
+              "envelope_db": 3.2681712372906198
+            },
+            {
+              "id": "notes/violin-78-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.35,
+              "mel": 0.08374987013205182,
+              "phases": {
+                "attack": 0.06275821226361508,
+                "early": 0.10474152800048857
+              },
+              "envelope_db": 2.225275204875104
+            },
+            {
+              "id": "notes/violin-79-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.35,
+              "mel": 0.10315381159139714,
+              "phases": {
+                "attack": 0.0803911424254921,
+                "early": 0.12591648075730216
+              },
+              "envelope_db": 2.9536490229745294
+            },
+            {
+              "id": "notes/violin-80-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.35,
+              "mel": 0.09429163667922758,
+              "phases": {
+                "attack": 0.07134846728881461,
+                "early": 0.11723480606964054
+              },
+              "envelope_db": 3.9195166258001723
+            },
+            {
+              "id": "notes/violin-81-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.35,
+              "mel": 0.10943505555098657,
+              "phases": {
+                "attack": 0.0815322086054245,
+                "early": 0.13733790249654862
+              },
+              "envelope_db": 4.652290898078281
+            },
+            {
+              "id": "notes/violin-82-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.35,
+              "mel": 0.10849934209835249,
+              "phases": {
+                "attack": 0.0987258094114939,
+                "early": 0.11827287478521108
+              },
+              "envelope_db": 3.7236629797355416
+            },
+            {
+              "id": "notes/violin-83-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.35,
+              "mel": 0.10956774288504059,
+              "phases": {
+                "attack": 0.08020911950306771,
+                "early": 0.13892636626701346
+              },
+              "envelope_db": 4.584736395325574
+            },
+            {
+              "id": "notes/violin-55-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.65,
+              "mel": 0.11959206014554823,
+              "phases": {
+                "attack": 0.04964942778757065,
+                "early": 0.1895346925035258
+              },
+              "envelope_db": 1.2835931161441574
+            },
+            {
+              "id": "notes/violin-58-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.65,
+              "mel": 0.08919501218957994,
+              "phases": {
+                "attack": 0.03780378162512398,
+                "early": 0.1405862427540359
+              },
+              "envelope_db": 1.2496674546294455
+            },
+            {
+              "id": "notes/violin-64-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.65,
+              "mel": 0.08310768118836254,
+              "phases": {
+                "attack": 0.06210471058223588,
+                "early": 0.10411065179448918
+              },
+              "envelope_db": 1.2628717171462893
+            },
+            {
+              "id": "notes/violin-67-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.65,
+              "mel": 0.07410308229121051,
+              "phases": {
+                "attack": 0.0660825864876931,
+                "early": 0.08212357809472792
+              },
+              "envelope_db": 1.5918650374347856
+            },
+            {
+              "id": "notes/violin-70-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.65,
+              "mel": 0.08233509170380061,
+              "phases": {
+                "attack": 0.07242967264443079,
+                "early": 0.09224051076317044
+              },
+              "envelope_db": 3.3401604061177945
+            },
+            {
+              "id": "notes/violin-76-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.65,
+              "mel": 0.05983848257284295,
+              "phases": {
+                "attack": 0.047925538951063135,
+                "early": 0.07175142619462277
+              },
+              "envelope_db": 1.9367806585045049
+            },
+            {
+              "id": "notes/violin-79-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.65,
+              "mel": 0.06840894578523113,
+              "phases": {
+                "attack": 0.053260803960872745,
+                "early": 0.0835570876095895
+              },
+              "envelope_db": 1.662708750156027
+            },
+            {
+              "id": "notes/violin-82-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.65,
+              "mel": 0.08618945917801027,
+              "phases": {
+                "attack": 0.08848501957595707,
+                "early": 0.08389389878006347
+              },
+              "envelope_db": 1.5036563756336807
+            },
+            {
+              "id": "notes/violin-55-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.95,
+              "mel": 0.10987495031687873,
+              "phases": {
+                "attack": 0.04667234668667006,
+                "early": 0.1730775539470874
+              },
+              "envelope_db": 2.3069969033776427
+            },
+            {
+              "id": "notes/violin-58-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.95,
+              "mel": 0.10721802517749802,
+              "phases": {
+                "attack": 0.057796241234181596,
+                "early": 0.15663980912081446
+              },
+              "envelope_db": 0.8425215845933173
+            },
+            {
+              "id": "notes/violin-64-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.95,
+              "mel": 0.0654698563398087,
+              "phases": {
+                "attack": 0.06725444993101272,
+                "early": 0.06368526274860468
+              },
+              "envelope_db": 1.2540236789810892
+            },
+            {
+              "id": "notes/violin-67-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.95,
+              "mel": 0.0765322495408533,
+              "phases": {
+                "attack": 0.06336047605751381,
+                "early": 0.08970402302419278
+              },
+              "envelope_db": 1.4002487345551518
+            },
+            {
+              "id": "notes/violin-70-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.95,
+              "mel": 0.051097799211236014,
+              "phases": {
+                "attack": 0.03974731643258375,
+                "early": 0.06244828198988828
+              },
+              "envelope_db": 0.6551670179474933
+            },
+            {
+              "id": "notes/violin-76-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.95,
+              "mel": 0.07357263116587102,
+              "phases": {
+                "attack": 0.05242166798104074,
+                "early": 0.09472359435070131
+              },
+              "envelope_db": 3.963554726227741
+            },
+            {
+              "id": "notes/violin-79-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.95,
+              "mel": 0.06613826989881831,
+              "phases": {
+                "attack": 0.060847917897728525,
+                "early": 0.07142862189990809
+              },
+              "envelope_db": 1.9047717517867084
+            },
+            {
+              "id": "notes/violin-82-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.95,
+              "mel": 0.08913998260208778,
+              "phases": {
+                "attack": 0.0841146859008404,
+                "early": 0.09416527930333515
+              },
+              "envelope_db": 4.909269093344344
+            }
+          ]
+        },
+        "after": {
+          "mel_by_dataset": {
+            "iowa": 0.10963489214586984,
+            "tu-note": 0.08224917462964398,
+            "short": 0.08630113076674853
+          },
+          "weighted_mel": 0.09715762022888827,
+          "notes": [
+            {
+              "id": "iowa-violin-55-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.17001717359342236,
+              "phases": {
+                "attack": 0.059840795418784405,
+                "early": 0.18392416320940314,
+                "late": 0.20611819430291878
+              },
+              "envelope_db": 1.810887587432105,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9601372006816472,
+              "pitch_penalty_cents": 0.9601372006816472
+            },
+            {
+              "id": "iowa-violin-56-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 56,
+              "velocity": 0.35,
+              "mel": 0.15398088143859054,
+              "phases": {
+                "attack": 0.05612782243549936,
+                "early": 0.15058277315158383,
+                "late": 0.1919500691723772
+              },
+              "envelope_db": 1.77856860262761,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2334239438787753,
+              "pitch_penalty_cents": 1.2334239438787753
+            },
+            {
+              "id": "iowa-violin-57-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 57,
+              "velocity": 0.35,
+              "mel": 0.1336727648535786,
+              "phases": {
+                "attack": 0.06529458584051824,
+                "early": 0.16478912117529165,
+                "late": 0.1476459483628338
+              },
+              "envelope_db": 2.2638794957201585,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.5536404492784588,
+              "pitch_penalty_cents": 0.5536404492784588
+            },
+            {
+              "id": "iowa-violin-58-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 58,
+              "velocity": 0.35,
+              "mel": 0.12563643017468343,
+              "phases": {
+                "attack": 0.07652922869402012,
+                "early": 0.16339882375280612,
+                "late": 0.12989073313813612
+              },
+              "envelope_db": 2.719300599634687,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.6259855871371689,
+              "pitch_penalty_cents": 0.6259855871371689
+            },
+            {
+              "id": "iowa-violin-59-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 59,
+              "velocity": 0.35,
+              "mel": 0.11978365561026888,
+              "phases": {
+                "attack": 0.058192212554680475,
+                "early": 0.1635988523018153,
+                "late": 0.1264497479967846
+              },
+              "envelope_db": 2.562585208052296,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2371058445073604,
+              "pitch_penalty_cents": 1.2371058445073604
+            },
+            {
+              "id": "iowa-violin-62-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.08218714502075854,
+              "phases": {
+                "attack": 0.06558842674608126,
+                "early": 0.08472461206075801,
+                "late": 0.0874601142337627
+              },
+              "envelope_db": 1.037843460603174,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.238777929912369,
+              "pitch_penalty_cents": 1.238777929912369
+            },
+            {
+              "id": "iowa-violin-63-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 63,
+              "velocity": 0.35,
+              "mel": 0.07985036823514682,
+              "phases": {
+                "attack": 0.05360956070947726,
+                "early": 0.09455530353101517,
+                "late": 0.08417632032132226
+              },
+              "envelope_db": 1.8835323405739017,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.9819866139565221,
+              "pitch_penalty_cents": 0.9819866139565221
+            },
+            {
+              "id": "iowa-violin-64-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 64,
+              "velocity": 0.35,
+              "mel": 0.0730916882047909,
+              "phases": {
+                "attack": 0.06971376817619307,
+                "early": 0.09849390197714582,
+                "late": 0.06483257805088197
+              },
+              "envelope_db": 1.8729168678040655,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2983583192123211,
+              "pitch_penalty_cents": 1.2983583192123211
+            },
+            {
+              "id": "iowa-violin-65-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 65,
+              "velocity": 0.35,
+              "mel": 0.0856677225412358,
+              "phases": {
+                "attack": 0.04635751466621628,
+                "early": 0.108224458419546,
+                "late": 0.09195027454000178
+              },
+              "envelope_db": 1.7158951087746994,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.7656571776875688,
+              "pitch_penalty_cents": 0.7656571776875688
+            },
+            {
+              "id": "iowa-violin-66-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 66,
+              "velocity": 0.35,
+              "mel": 0.047610859928079965,
+              "phases": {
+                "attack": 0.033419311698427476,
+                "early": 0.04967754336649112,
+                "late": 0.052157684224795456
+              },
+              "envelope_db": 1.1385210608646865,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.4397793613408605,
+              "pitch_penalty_cents": 1.4397793613408605
+            },
+            {
+              "id": "iowa-violin-67-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.35,
+              "mel": 0.12234187534053208,
+              "phases": {
+                "attack": 0.047410529941308885,
+                "early": 0.14437220024002573,
+                "late": 0.14217975802793062
+              },
+              "envelope_db": 7.741891495107451,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3876108175904054,
+              "pitch_penalty_cents": 1.3876108175904054
+            },
+            {
+              "id": "iowa-violin-68-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 68,
+              "velocity": 0.35,
+              "mel": 0.04806092545653423,
+              "phases": {
+                "attack": 0.02611025669764827,
+                "early": 0.045591208624986425,
+                "late": 0.05721857005294688
+              },
+              "envelope_db": 1.3851467544857605,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.521412232713203,
+              "pitch_penalty_cents": 1.521412232713203
+            },
+            {
+              "id": "iowa-violin-69-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 69,
+              "velocity": 0.35,
+              "mel": 0.08224681068037214,
+              "phases": {
+                "attack": 0.03621717795357788,
+                "early": 0.07899224315370487,
+                "late": 0.10072838577542018
+              },
+              "envelope_db": 2.7093897886739167,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.6023634448140582,
+              "pitch_penalty_cents": 1.6023634448140582
+            },
+            {
+              "id": "iowa-violin-70-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 70,
+              "velocity": 0.35,
+              "mel": 0.07259430841534276,
+              "phases": {
+                "attack": 0.07412819708729988,
+                "early": 0.07441078598401907,
+                "late": 0.0713379210751052
+              },
+              "envelope_db": 1.8682455659954795,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2472870873421766,
+              "pitch_penalty_cents": 1.2472870873421766
+            },
+            {
+              "id": "iowa-violin-71-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 71,
+              "velocity": 0.35,
+              "mel": 0.10952767304100186,
+              "phases": {
+                "attack": 0.07796459911604874,
+                "early": 0.11967644066869772,
+                "late": 0.11755803790247331
+              },
+              "envelope_db": 3.2274172785745083,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9701599789044884,
+              "pitch_penalty_cents": 1.9701599789044884
+            },
+            {
+              "id": "iowa-violin-76-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 76,
+              "velocity": 0.35,
+              "mel": 0.13277294789757244,
+              "phases": {
+                "attack": 0.06082500012745101,
+                "early": 0.14797047894312346,
+                "late": 0.1540543541692863
+              },
+              "envelope_db": 8.492751697679507,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.8091402789673565,
+              "pitch_penalty_cents": 1.8091402789673565
+            },
+            {
+              "id": "iowa-violin-77-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 77,
+              "velocity": 0.35,
+              "mel": 0.11330968845857774,
+              "phases": {
+                "attack": 0.07981278660608902,
+                "early": 0.12240782781062887,
+                "late": 0.1224592243962418
+              },
+              "envelope_db": 3.029198308436872,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.3485051764335236,
+              "pitch_penalty_cents": 2.3485051764335236
+            },
+            {
+              "id": "iowa-violin-78-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 78,
+              "velocity": 0.35,
+              "mel": 0.07544111762668668,
+              "phases": {
+                "attack": 0.05259470245478771,
+                "early": 0.1008436655259987,
+                "late": 0.07448256785390678
+              },
+              "envelope_db": 1.99806127465898,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.871358767074216,
+              "pitch_penalty_cents": 1.871358767074216
+            },
+            {
+              "id": "iowa-violin-79-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 79,
+              "velocity": 0.35,
+              "mel": 0.09171581753535614,
+              "phases": {
+                "attack": 0.051213150041691795,
+                "early": 0.12988077624249408,
+                "late": 0.09259245833030351
+              },
+              "envelope_db": 2.9169864928378124,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9709611985433364,
+              "pitch_penalty_cents": 1.9709611985433364
+            },
+            {
+              "id": "iowa-violin-80-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 80,
+              "velocity": 0.35,
+              "mel": 0.09409978803744956,
+              "phases": {
+                "attack": 0.0682780802278765,
+                "early": 0.11067791527291365,
+                "late": 0.0975661307527404
+              },
+              "envelope_db": 2.948544890922519,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.394007368058097,
+              "pitch_penalty_cents": 2.394007368058097
+            },
+            {
+              "id": "iowa-violin-81-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 81,
+              "velocity": 0.35,
+              "mel": 0.11423002615596883,
+              "phases": {
+                "attack": 0.07942109986123069,
+                "early": 0.12600811672368056,
+                "late": 0.12286658955360372
+              },
+              "envelope_db": 4.541068448947143,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.9237466066985784,
+              "pitch_penalty_cents": 2.9237466066985784
+            },
+            {
+              "id": "iowa-violin-82-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 82,
+              "velocity": 0.35,
+              "mel": 0.12384579703397691,
+              "phases": {
+                "attack": 0.08305301890581887,
+                "early": 0.11591854793467055,
+                "late": 0.14211580724427603
+              },
+              "envelope_db": 4.101870202927135,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.3916376823806273,
+              "pitch_penalty_cents": 3.3916376823806273
+            },
+            {
+              "id": "iowa-violin-83-35-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 83,
+              "velocity": 0.35,
+              "mel": 0.11645048796376695,
+              "phases": {
+                "attack": 0.08798736199887353,
+                "early": 0.13304455034091994,
+                "late": 0.12090138680916958
+              },
+              "envelope_db": 4.242126749922507,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.8536327675173228,
+              "pitch_penalty_cents": 2.8536327675173228
+            },
+            {
+              "id": "iowa-violin-55-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.65,
+              "mel": 0.15314917002362766,
+              "phases": {
+                "attack": 0.038441731964934375,
+                "early": 0.153926450882684,
+                "late": 0.19587297897349149
+              },
+              "envelope_db": 1.4165850443111174,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.2374996935515832,
+              "pitch_penalty_cents": 1.2374996935515832
+            },
+            {
+              "id": "iowa-violin-58-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 58,
+              "velocity": 0.65,
+              "mel": 0.13425813804045075,
+              "phases": {
+                "attack": 0.050063342238836,
+                "early": 0.12860326022250307,
+                "late": 0.16795176564778663
+              },
+              "envelope_db": 2.0609918294084313,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3548656932244376,
+              "pitch_penalty_cents": 1.3548656932244376
+            },
+            {
+              "id": "iowa-violin-64-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 64,
+              "velocity": 0.65,
+              "mel": 0.08075317974629569,
+              "phases": {
+                "attack": 0.04261450528605229,
+                "early": 0.09681629327604344,
+                "late": 0.08903151509523154
+              },
+              "envelope_db": 1.47892263209413,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 0.8560162067409974,
+              "pitch_penalty_cents": 0.8560162067409974
+            },
+            {
+              "id": "iowa-violin-67-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.65,
+              "mel": 0.08967955183313067,
+              "phases": {
+                "attack": 0.055947966526578456,
+                "early": 0.07644902057646177,
+                "late": 0.10729034554433856
+              },
+              "envelope_db": 1.5042775083776145,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.4504431844829078,
+              "pitch_penalty_cents": 1.4504431844829078
+            },
+            {
+              "id": "iowa-violin-70-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 70,
+              "velocity": 0.65,
+              "mel": 0.07432371735851197,
+              "phases": {
+                "attack": 0.06909757629651289,
+                "early": 0.10781554875657073,
+                "late": 0.06372408348248956
+              },
+              "envelope_db": 3.036596804834155,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7274905802424785,
+              "pitch_penalty_cents": 1.7274905802424785
+            },
+            {
+              "id": "iowa-violin-76-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 76,
+              "velocity": 0.65,
+              "mel": 0.07582050171690491,
+              "phases": {
+                "attack": 0.05219782031889244,
+                "early": 0.07037682290153988,
+                "late": 0.08672038679692146
+              },
+              "envelope_db": 2.8250316838513174,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.7450225934670842,
+              "pitch_penalty_cents": 1.7450225934670842
+            },
+            {
+              "id": "iowa-violin-79-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 79,
+              "velocity": 0.65,
+              "mel": 0.08805690513519175,
+              "phases": {
+                "attack": 0.04633223840313928,
+                "early": 0.07880096679874275,
+                "late": 0.10717463203587979
+              },
+              "envelope_db": 2.5705471293645563,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.9390723685999527,
+              "pitch_penalty_cents": 1.9390723685999527
+            },
+            {
+              "id": "iowa-violin-82-65-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 82,
+              "velocity": 0.65,
+              "mel": 0.08296780684125707,
+              "phases": {
+                "attack": 0.06836836653177208,
+                "early": 0.077319989404566,
+                "late": 0.09056052849607307
+              },
+              "envelope_db": 1.5626999624140019,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.4630747393605636,
+              "pitch_penalty_cents": 3.4630747393605636
+            },
+            {
+              "id": "iowa-violin-55-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 55,
+              "velocity": 0.95,
+              "mel": 0.22338017324461443,
+              "phases": {
+                "attack": 0.07165542571102841,
+                "early": 0.2524989538314854,
+                "late": 0.2693574108496325
+              },
+              "envelope_db": 12.741680474045692,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.3895054517333267,
+              "pitch_penalty_cents": 1.3895054517333267
+            },
+            {
+              "id": "iowa-violin-67-95-3s",
+              "dataset": "iowa",
+              "seconds": 3.0,
+              "hold": 3.0,
+              "pitch": 67,
+              "velocity": 0.95,
+              "mel": 0.12741780310419018,
+              "phases": {
+                "attack": 0.04829381392158802,
+                "early": 0.08399139930424376,
+                "late": 0.17337420047264587
+              },
+              "envelope_db": 9.007143058474304,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.330662627539218,
+              "pitch_penalty_cents": 1.330662627539218
+            },
+            {
+              "id": "iowa-violin-55-35-6s",
+              "dataset": "iowa",
+              "seconds": 6.0,
+              "hold": 6.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.2086314484052306,
+              "phases": {
+                "attack": 0.0608901554202335,
+                "early": 0.21436979668068082,
+                "late": 0.2618825526713106
+              },
+              "envelope_db": 6.060962222927134,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.1140933243289322,
+              "pitch_penalty_cents": 1.1140933243289322
+            },
+            {
+              "id": "iowa-violin-62-35-6s",
+              "dataset": "iowa",
+              "seconds": 6.0,
+              "hold": 6.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.13064687641234454,
+              "phases": {
+                "attack": 0.0821481547872305,
+                "early": 0.0885514445262507,
+                "late": 0.16461968397904747
+              },
+              "envelope_db": 7.183064029138705,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 1.225991770302955,
+              "pitch_penalty_cents": 1.225991770302955
+            },
+            {
+              "id": "tu-glissando-65",
+              "dataset": "tu-note",
+              "seconds": 8.315041666666668,
+              "hold": 7.385,
+              "pitch": 76,
+              "velocity": 0.5,
+              "mel": 0.0957611742458707,
+              "phases": {
+                "attack": 0.06494465305567498,
+                "early": 0.12994705498287606,
+                "late": 0.09869541403572583,
+                "transition": 0.1283382591503333,
+                "release": 0.013816005957310522
+              },
+              "envelope_db": 7.209665881844295,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.7600817490444496,
+              "pitch_penalty_cents": 2.7600817490444496
+            },
+            {
+              "id": "tu-glissando-66",
+              "dataset": "tu-note",
+              "seconds": 8.397541666666667,
+              "hold": 7.07,
+              "pitch": 71,
+              "velocity": 0.5,
+              "mel": 0.10103259438062935,
+              "phases": {
+                "attack": 0.08389723515309772,
+                "early": 0.106587382398579,
+                "late": 0.11997896396098096,
+                "transition": 0.1202045263105154,
+                "release": 0.004274109013823809
+              },
+              "envelope_db": 10.504616616176124,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.44591435760403,
+              "pitch_penalty_cents": 2.44591435760403
+            },
+            {
+              "id": "tu-glissando-67",
+              "dataset": "tu-note",
+              "seconds": 7.279708333333334,
+              "hold": 6.773,
+              "pitch": 76,
+              "velocity": 0.95,
+              "mel": 0.08293518220085301,
+              "phases": {
+                "attack": 0.054586244397932825,
+                "early": 0.11384945618020681,
+                "late": 0.09613071855265357,
+                "transition": 0.09103597298359044,
+                "release": 0.010103450963525535
+              },
+              "envelope_db": 6.164306335669997,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.360750446038767,
+              "pitch_penalty_cents": 2.360750446038767
+            },
+            {
+              "id": "tu-glissando-68",
+              "dataset": "tu-note",
+              "seconds": 7.058375,
+              "hold": 6.40233,
+              "pitch": 71,
+              "velocity": 0.95,
+              "mel": 0.08232179301106186,
+              "phases": {
+                "attack": 0.05759564670460698,
+                "early": 0.08298962125293806,
+                "late": 0.09926618287215051,
+                "transition": 0.10483079070435344,
+                "release": 0.005613715276992162
+              },
+              "envelope_db": 6.012995876533622,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.622337007563234,
+              "pitch_penalty_cents": 2.622337007563234
+            },
+            {
+              "id": "tu-glissando-69",
+              "dataset": "tu-note",
+              "seconds": 7.932541666666666,
+              "hold": 6.7925,
+              "pitch": 76,
+              "velocity": 0.5,
+              "mel": 0.09381617624011902,
+              "phases": {
+                "attack": 0.03752533041359559,
+                "early": 0.13102498988608668,
+                "late": 0.0992570373433746,
+                "transition": 0.1346611435528247,
+                "release": 0.018985845472518924
+              },
+              "envelope_db": 8.04128717228497,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.7707300969649937,
+              "pitch_penalty_cents": 2.7707300969649937
+            },
+            {
+              "id": "tu-glissando-70",
+              "dataset": "tu-note",
+              "seconds": 8.956291666666667,
+              "hold": 7.4,
+              "pitch": 71,
+              "velocity": 0.5,
+              "mel": 0.0951491543704533,
+              "phases": {
+                "attack": 0.08431673507394126,
+                "early": 0.09898462911998715,
+                "late": 0.10897886892859673,
+                "transition": 0.11862919433378591,
+                "release": 0.0033656330316816693
+              },
+              "envelope_db": 8.446896664223548,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.1437496335695596,
+              "pitch_penalty_cents": 3.1437496335695596
+            },
+            {
+              "id": "tu-glissando-89",
+              "dataset": "tu-note",
+              "seconds": 8.633791666666667,
+              "hold": 7.6475,
+              "pitch": 83,
+              "velocity": 0.5,
+              "mel": 0.07820469050935062,
+              "phases": {
+                "attack": 0.07979697450892465,
+                "early": 0.09834019140996628,
+                "late": 0.06705232579583892,
+                "transition": 0.11509140176854049,
+                "release": 0.016449049494733185
+              },
+              "envelope_db": 5.197111618902717,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.71242729828841,
+              "pitch_penalty_cents": 2.71242729828841
+            },
+            {
+              "id": "tu-glissando-90",
+              "dataset": "tu-note",
+              "seconds": 8.442541666666667,
+              "hold": 7.24625,
+              "pitch": 78,
+              "velocity": 0.5,
+              "mel": 0.08221915092473082,
+              "phases": {
+                "attack": 0.10425602728884595,
+                "early": 0.09190887638197252,
+                "late": 0.06598253304626833,
+                "transition": 0.12100282019965629,
+                "release": 0.022008381156694557
+              },
+              "envelope_db": 5.512316880500947,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.0686437790873464,
+              "pitch_penalty_cents": 3.0686437790873464
+            },
+            {
+              "id": "tu-glissando-91",
+              "dataset": "tu-note",
+              "seconds": 7.431708333333333,
+              "hold": 6.51967,
+              "pitch": 83,
+              "velocity": 0.95,
+              "mel": 0.06390099894005336,
+              "phases": {
+                "attack": 0.05620076937167594,
+                "early": 0.0736578388371087,
+                "late": 0.057578142403518176,
+                "transition": 0.1000889710130202,
+                "release": 0.013731565447243523
+              },
+              "envelope_db": 3.247858002027409,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.033648540760108,
+              "pitch_penalty_cents": 3.033648540760108
+            },
+            {
+              "id": "tu-glissando-92",
+              "dataset": "tu-note",
+              "seconds": 6.393,
+              "hold": 6.09033,
+              "pitch": 78,
+              "velocity": 0.95,
+              "mel": 0.06375815126487354,
+              "phases": {
+                "attack": 0.07390507645899762,
+                "early": 0.05912249908609077,
+                "late": 0.06010076249201404,
+                "transition": 0.0918338088734962,
+                "release": 0.013969481616054137
+              },
+              "envelope_db": 2.1780102666239802,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.980319895678704,
+              "pitch_penalty_cents": 2.980319895678704
+            },
+            {
+              "id": "tu-glissando-93",
+              "dataset": "tu-note",
+              "seconds": 7.679708333333333,
+              "hold": 6.453,
+              "pitch": 83,
+              "velocity": 0.5,
+              "mel": 0.07460985111957515,
+              "phases": {
+                "attack": 0.08609776889332212,
+                "early": 0.08408230684386676,
+                "late": 0.0686651812518832,
+                "transition": 0.09798512722900665,
+                "release": 0.02019741812442204
+              },
+              "envelope_db": 5.933589743981267,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 3.3270316972575573,
+              "pitch_penalty_cents": 3.3270316972575573
+            },
+            {
+              "id": "tu-glissando-94",
+              "dataset": "tu-note",
+              "seconds": 8.611291666666666,
+              "hold": 7.61,
+              "pitch": 78,
+              "velocity": 0.5,
+              "mel": 0.07328117834815705,
+              "phases": {
+                "attack": 0.0853747288773333,
+                "early": 0.0768404070062815,
+                "late": 0.07499258685221254,
+                "transition": 0.09050319224174225,
+                "release": 0.008512347763813665
+              },
+              "envelope_db": 4.92871595133395,
+              "voiced_coverage": 1.0,
+              "pitch_cents": 2.8744386888800557,
+              "pitch_penalty_cents": 2.8744386888800557
+            },
+            {
+              "id": "notes/violin-55-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.35,
+              "mel": 0.13184210160077103,
+              "phases": {
+                "attack": 0.06781801030864525,
+                "early": 0.1958661928928968
+              },
+              "envelope_db": 1.6546691368667659
+            },
+            {
+              "id": "notes/violin-56-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 56,
+              "velocity": 0.35,
+              "mel": 0.12400597281225534,
+              "phases": {
+                "attack": 0.05957517032426758,
+                "early": 0.18843677530024308
+              },
+              "envelope_db": 1.1988235600621058
+            },
+            {
+              "id": "notes/violin-57-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 57,
+              "velocity": 0.35,
+              "mel": 0.11535601230456835,
+              "phases": {
+                "attack": 0.06874308386076719,
+                "early": 0.1619689407483695
+              },
+              "envelope_db": 2.7075424276400226
+            },
+            {
+              "id": "notes/violin-58-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.35,
+              "mel": 0.12657833520493594,
+              "phases": {
+                "attack": 0.07222110820329089,
+                "early": 0.18093556220658097
+              },
+              "envelope_db": 4.064388150970886
+            },
+            {
+              "id": "notes/violin-59-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 59,
+              "velocity": 0.35,
+              "mel": 0.11820418258089047,
+              "phases": {
+                "attack": 0.07300528854428535,
+                "early": 0.1634030766174956
+              },
+              "envelope_db": 3.508256340037042
+            },
+            {
+              "id": "notes/violin-62-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 62,
+              "velocity": 0.35,
+              "mel": 0.07470290602317724,
+              "phases": {
+                "attack": 0.06443280319655251,
+                "early": 0.08497300884980197
+              },
+              "envelope_db": 0.8981138181302358
+            },
+            {
+              "id": "notes/violin-63-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 63,
+              "velocity": 0.35,
+              "mel": 0.06651887724547535,
+              "phases": {
+                "attack": 0.04880569904042068,
+                "early": 0.08423205545053003
+              },
+              "envelope_db": 0.951663328636995
+            },
+            {
+              "id": "notes/violin-64-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.35,
+              "mel": 0.07945117407875718,
+              "phases": {
+                "attack": 0.06369189809265431,
+                "early": 0.09521045006486006
+              },
+              "envelope_db": 2.8364442961480796
+            },
+            {
+              "id": "notes/violin-65-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 65,
+              "velocity": 0.35,
+              "mel": 0.08027508995479697,
+              "phases": {
+                "attack": 0.05177945420695733,
+                "early": 0.10877072570263661
+              },
+              "envelope_db": 2.4989660956755078
+            },
+            {
+              "id": "notes/violin-66-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 66,
+              "velocity": 0.35,
+              "mel": 0.04315974018106306,
+              "phases": {
+                "attack": 0.037948724608199744,
+                "early": 0.04837075575392638
+              },
+              "envelope_db": 1.577771019017967
+            },
+            {
+              "id": "notes/violin-67-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.35,
+              "mel": 0.07960415805392834,
+              "phases": {
+                "attack": 0.05429767879742068,
+                "early": 0.10491063731043601
+              },
+              "envelope_db": 3.720391700372579
+            },
+            {
+              "id": "notes/violin-68-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 68,
+              "velocity": 0.35,
+              "mel": 0.04121724651775472,
+              "phases": {
+                "attack": 0.03467552739511991,
+                "early": 0.047758965640389534
+              },
+              "envelope_db": 1.1018282273014144
+            },
+            {
+              "id": "notes/violin-69-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 69,
+              "velocity": 0.35,
+              "mel": 0.05978798192913787,
+              "phases": {
+                "attack": 0.037907463129989806,
+                "early": 0.08166850072828594
+              },
+              "envelope_db": 2.489019118051312
+            },
+            {
+              "id": "notes/violin-70-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.35,
+              "mel": 0.07319262801871287,
+              "phases": {
+                "attack": 0.07417452862870831,
+                "early": 0.07221072740871742
+              },
+              "envelope_db": 2.728745195331431
+            },
+            {
+              "id": "notes/violin-71-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 71,
+              "velocity": 0.35,
+              "mel": 0.10007474290721571,
+              "phases": {
+                "attack": 0.07996079627124364,
+                "early": 0.1201886895431878
+              },
+              "envelope_db": 3.2538739141684374
+            },
+            {
+              "id": "notes/violin-76-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.35,
+              "mel": 0.08956099522286265,
+              "phases": {
+                "attack": 0.059741837880227286,
+                "early": 0.119380152565498
+              },
+              "envelope_db": 3.4086564851797214
+            },
+            {
+              "id": "notes/violin-77-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 77,
+              "velocity": 0.35,
+              "mel": 0.10196688193554426,
+              "phases": {
+                "attack": 0.0769622294624405,
+                "early": 0.12697153440864803
+              },
+              "envelope_db": 3.5113947325682777
+            },
+            {
+              "id": "notes/violin-78-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 78,
+              "velocity": 0.35,
+              "mel": 0.0860520560908948,
+              "phases": {
+                "attack": 0.0769771059605887,
+                "early": 0.09512700622120089
+              },
+              "envelope_db": 2.248843464534561
+            },
+            {
+              "id": "notes/violin-79-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.35,
+              "mel": 0.10740683831723105,
+              "phases": {
+                "attack": 0.09547477827124122,
+                "early": 0.11933889836322087
+              },
+              "envelope_db": 2.8933028879336296
+            },
+            {
+              "id": "notes/violin-80-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 80,
+              "velocity": 0.35,
+              "mel": 0.09402419038781315,
+              "phases": {
+                "attack": 0.07696278445319349,
+                "early": 0.11108559632243281
+              },
+              "envelope_db": 3.8980231355370325
+            },
+            {
+              "id": "notes/violin-81-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 81,
+              "velocity": 0.35,
+              "mel": 0.10887014633957234,
+              "phases": {
+                "attack": 0.0853361605853113,
+                "early": 0.1324041320938334
+              },
+              "envelope_db": 4.481100422613586
+            },
+            {
+              "id": "notes/violin-82-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.35,
+              "mel": 0.10232837816204113,
+              "phases": {
+                "attack": 0.0893842845464793,
+                "early": 0.11527247177760294
+              },
+              "envelope_db": 3.8527150697014423
+            },
+            {
+              "id": "notes/violin-83-35.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 83,
+              "velocity": 0.35,
+              "mel": 0.10914652519271664,
+              "phases": {
+                "attack": 0.08516201953560913,
+                "early": 0.13313103084982417
+              },
+              "envelope_db": 4.40383428673123
+            },
+            {
+              "id": "notes/violin-55-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.65,
+              "mel": 0.11361042615131703,
+              "phases": {
+                "attack": 0.04929784056458048,
+                "early": 0.17792301173805358
+              },
+              "envelope_db": 1.0413059217088259
+            },
+            {
+              "id": "notes/violin-58-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.65,
+              "mel": 0.09856415424814802,
+              "phases": {
+                "attack": 0.05252609022671487,
+                "early": 0.14460221826958117
+              },
+              "envelope_db": 1.254359819990102
+            },
+            {
+              "id": "notes/violin-64-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.65,
+              "mel": 0.07413395184062056,
+              "phases": {
+                "attack": 0.04655484687102232,
+                "early": 0.1017130568102188
+              },
+              "envelope_db": 1.4449020547854974
+            },
+            {
+              "id": "notes/violin-67-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.65,
+              "mel": 0.06943828345095654,
+              "phases": {
+                "attack": 0.05695837935141565,
+                "early": 0.08191818755049744
+              },
+              "envelope_db": 1.6662550000064629
+            },
+            {
+              "id": "notes/violin-70-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.65,
+              "mel": 0.08688170642221774,
+              "phases": {
+                "attack": 0.08359795051457698,
+                "early": 0.09016546232985849
+              },
+              "envelope_db": 3.399013744974832
+            },
+            {
+              "id": "notes/violin-76-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.65,
+              "mel": 0.06367290283351576,
+              "phases": {
+                "attack": 0.055497302139913676,
+                "early": 0.07184850352711786
+              },
+              "envelope_db": 1.9261261834912435
+            },
+            {
+              "id": "notes/violin-79-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.65,
+              "mel": 0.06357125488008905,
+              "phases": {
+                "attack": 0.049779803178196,
+                "early": 0.07736270658198209
+              },
+              "envelope_db": 1.5736141304265394
+            },
+            {
+              "id": "notes/violin-82-65.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.65,
+              "mel": 0.07423480726910636,
+              "phases": {
+                "attack": 0.06965309803369973,
+                "early": 0.07881651650451298
+              },
+              "envelope_db": 1.4856024339896825
+            },
+            {
+              "id": "notes/violin-55-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 55,
+              "velocity": 0.95,
+              "mel": 0.09562248545524293,
+              "phases": {
+                "attack": 0.03333478070753733,
+                "early": 0.15791019020294852
+              },
+              "envelope_db": 2.467411230887024
+            },
+            {
+              "id": "notes/violin-58-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 58,
+              "velocity": 0.95,
+              "mel": 0.09945816311947303,
+              "phases": {
+                "attack": 0.04193339841970312,
+                "early": 0.15698292781924295
+              },
+              "envelope_db": 1.0733589085782955
+            },
+            {
+              "id": "notes/violin-64-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 64,
+              "velocity": 0.95,
+              "mel": 0.056388617578661586,
+              "phases": {
+                "attack": 0.051458800059840895,
+                "early": 0.06131843509748228
+              },
+              "envelope_db": 1.0417783974246606
+            },
+            {
+              "id": "notes/violin-67-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 67,
+              "velocity": 0.95,
+              "mel": 0.0806616589730692,
+              "phases": {
+                "attack": 0.06894715467496113,
+                "early": 0.0923761632711773
+              },
+              "envelope_db": 1.4771258980286672
+            },
+            {
+              "id": "notes/violin-70-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 70,
+              "velocity": 0.95,
+              "mel": 0.0449797378725181,
+              "phases": {
+                "attack": 0.028127138473475914,
+                "early": 0.06183233727156028
+              },
+              "envelope_db": 0.8121901582614764
+            },
+            {
+              "id": "notes/violin-76-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 76,
+              "velocity": 0.95,
+              "mel": 0.0806182936580852,
+              "phases": {
+                "attack": 0.06599984855188151,
+                "early": 0.09523673876428888
+              },
+              "envelope_db": 4.263306895257134
+            },
+            {
+              "id": "notes/violin-79-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 79,
+              "velocity": 0.95,
+              "mel": 0.07269716033611273,
+              "phases": {
+                "attack": 0.07908732435405734,
+                "early": 0.06630699631816814
+              },
+              "envelope_db": 2.046234659117702
+            },
+            {
+              "id": "notes/violin-82-95.wav",
+              "dataset": "short",
+              "seconds": 1.0,
+              "hold": 1.0,
+              "pitch": 82,
+              "velocity": 0.95,
+              "mel": 0.07783649206683697,
+              "phases": {
+                "attack": 0.059533574731323965,
+                "early": 0.09613940940234998
+              },
+              "envelope_db": 4.778907157899205
+            }
+          ]
+        }
+      }
+    }
+  },
+  "temporal_metric": {
+    "phase_weights": {
+      "attack": 0.15,
+      "early": 0.15,
+      "late": 0.4,
+      "transition": 0.2,
+      "release": 0.1
+    },
+    "centers": "only feature centers strictly inside the excerpt",
+    "release": "requires note-off before excerpt end",
+    "short_regression": "original equal attack/sustain metric"
+  },
+  "initial_gains_db": {
+    "piano": [
+      -8.998,
+      -4.394,
+      9.0,
+      9.0,
+      0.001,
+      -0.445,
+      9.0,
+      9.0,
+      8.19,
+      5.707,
+      2.783,
+      0.311
+    ],
+    "guitar": [
+      -1.461,
+      5.898,
+      8.876,
+      7.226,
+      1.867,
+      -0.267,
+      -0.352,
+      0.458,
+      1.53,
+      1.882,
+      0.962,
+      -0.275
+    ],
+    "violin": [
+      -6.352,
+      -6.253,
+      -1.862,
+      6.249,
+      4.245,
+      -2.72,
+      -3.706,
+      0.414,
+      3.636,
+      4.732,
+      3.702,
+      3.117
+    ]
+  }
+}

@@ -117,9 +117,10 @@ At 48 kHz, 256 frames and 24 held voices, a release-build measurement gives pian
 Longer-lived piano modes increase mean CPU from the preceding calibration's roughly 0.82 ms.
 Callback allocation checks still pass. These timings describe this machine and workload.
 
-The first pass covers attack and early sustain/decay. Longer decays, note-off, pedal resonance,
-continuous bow gestures, unseen recording sessions and wider piano registers need additional
-reference cohorts. Some piano EQ gains reach the ±9 dB bounds, indicating that the compact
+The first pass covers attack and early sustain/decay. The subsequent
+[sustained/trajectory calibration](physical-trajectories.md) adds 3/6-second notes and real
+violin glissandi with pitch/expression guides and annotated releases. Some piano EQ gains reach
+the ±9 dB bounds, indicating that the compact
 excitation/radiation structure still limits reconstruction. Mel distance also discards phase
 and resolves harmonics only within its bands; listening and pitch/stability tests remain needed.
 

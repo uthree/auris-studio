@@ -7,6 +7,7 @@ pub(super) struct Bow {
     velocity: f32,
     motion: f32,
     ramp: f32,
+    rate: f32,
     speed: f32,
     hardness: f32,
     sticking: bool,
@@ -16,12 +17,13 @@ impl Bow {
     pub(super) fn excite(&mut self, velocity: f32, rate: f32, settings: Settings) {
         self.velocity = velocity;
         self.motion = 0.0;
-        self.ramp = (1.0 / (rate * 0.012)).min(1.0);
+        self.rate = rate;
         self.sticking = true;
         self.update(settings);
     }
 
     pub(super) fn update(&mut self, settings: Settings) {
+        self.ramp = (1.0 / (self.rate * settings.bow_response)).min(1.0);
         self.speed = settings.bow_speed;
         self.hardness = settings.hardness;
     }

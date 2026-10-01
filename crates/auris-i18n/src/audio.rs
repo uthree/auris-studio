@@ -232,6 +232,7 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Bow Pressure", "弓圧"),
     ("Pickup blend", "ピックアップ比率"),
     ("Bow speed", "運弓速度"),
+    ("Bow response", "運弓の応答時間"),
     ("Legato", "レガート"),
     ("Attack", "アタック"),
     ("Bit Depth", "ビット深度"),
@@ -531,6 +532,10 @@ mod tests {
     #[test]
     fn a_known_term_is_translated_and_an_unknown_one_is_not() {
         assert_eq!(parameter("Attack", Language::Japanese), "アタック");
+        assert_eq!(
+            parameter("Bow response", Language::Japanese),
+            "運弓の応答時間"
+        );
         assert_eq!(parameter("Attack", Language::English), "Attack");
         assert_eq!(
             parameter("Warp Factor", Language::Japanese),

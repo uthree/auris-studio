@@ -1,0 +1,259 @@
+{
+  "source": "https://depositonce.tu-berlin.de/handle/11303/7527",
+  "archive": "https://api-depositonce.tu-berlin.de/server/api/core/bitstreams/69330aa6-e073-4923-90d2-fece37dccb9d/content",
+  "directory_sha256": "0c969fe12abb862ed19c58f0442f372414fe898d7b90ab9328c4130f21294f9c",
+  "license": "https://creativecommons.org/licenses/by-nd/4.0/",
+  "creators": "Henrik von Coler, Jonas Margraf, Paul Schuladen; violin: Michiko Feuerlein",
+  "files": [
+    {
+      "member": "File_Lists/list_TwoNote.txt",
+      "path": "list_TwoNote.txt",
+      "sha256": "d8d5494f5dca4ecae67896d201ab8bc52bddd5f56c1c25a5d18a8c91059a655c"
+    },
+    {
+      "member": "File_Lists/list_Single.txt",
+      "path": "list_Single.txt",
+      "sha256": "d32e73d050b016d8031cb519d1e0fe0b1e4079b28509b7e0035b91309dbafbd8"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_17.txt",
+      "path": "TwoNote_DPA_17.txt",
+      "sha256": "97098c39964bcb5aaf09d101a11364f75e52f3cb63cb17a67c61147e382ae6ca"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_17.wav",
+      "path": "TwoNote_DPA_17.wav",
+      "sha256": "2df2d6ed5090c24c8f88133c5f0c28b2ea57898cfebf87595b84c9a1376ef576"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_18.txt",
+      "path": "TwoNote_DPA_18.txt",
+      "sha256": "cdf073ed854210d3372d980fb5bceab0f7c45b1dec6e77e9e67e23fe2f73df80"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_18.wav",
+      "path": "TwoNote_DPA_18.wav",
+      "sha256": "1800f13874dfaf5aeb858aed8b5092e36ff825b5a9d03978afbff09cf14aff66"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_19.txt",
+      "path": "TwoNote_DPA_19.txt",
+      "sha256": "f1f3e2c6681a6e5ed7e6467c777be4f13fdea914d15d2e3f86f993cf3c6f8603"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_19.wav",
+      "path": "TwoNote_DPA_19.wav",
+      "sha256": "4820d68c99a880dba2ef5cacf6e00f0b19322e3e12523f8c29103c1f847f71d2"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_20.txt",
+      "path": "TwoNote_DPA_20.txt",
+      "sha256": "3131460f83534bc0a3843fa4500d31128713ac83083559665d00b11e706c0a3c"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_20.wav",
+      "path": "TwoNote_DPA_20.wav",
+      "sha256": "3be24194d86bad71b5222469da8b6e5a6b7c0314a589210be8811c50dda3a5bc"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_21.txt",
+      "path": "TwoNote_DPA_21.txt",
+      "sha256": "be95b212dffb7eb8208b9674851977e4af05f7bc890043279044b3291290cf1e"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_21.wav",
+      "path": "TwoNote_DPA_21.wav",
+      "sha256": "0f7f8a635ec0a91b1efcc0ea474114a53758c97866b53439293a6aca1cb9f0c3"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_22.txt",
+      "path": "TwoNote_DPA_22.txt",
+      "sha256": "29f4fed2025f7b8639b9d4aaafd514e27eef37dcd1029fc0b2ff94ed1cb18085"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_22.wav",
+      "path": "TwoNote_DPA_22.wav",
+      "sha256": "c98cf9956d923569d18d3a7ccbda09f1e8e32ee4849c72d23a18d3bc0af24b39"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_41.txt",
+      "path": "TwoNote_DPA_41.txt",
+      "sha256": "8d33ef5772505179eabad913bbd77ab8632a5f327ba5bb6815ded0e85b216ee3"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_41.wav",
+      "path": "TwoNote_DPA_41.wav",
+      "sha256": "7b1331a937b6a01ddb328bbb252d3943226b7c1ec518e802f1f92686a643d0c1"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_42.txt",
+      "path": "TwoNote_DPA_42.txt",
+      "sha256": "a4705b51b460bcdaea17a71102190a5df98a655e38ef8bed637063c7d7df3615"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_42.wav",
+      "path": "TwoNote_DPA_42.wav",
+      "sha256": "074d38b25198b011959f9d8c34b95cb721ecfa1c430012cce4260c9755213a1c"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_43.txt",
+      "path": "TwoNote_DPA_43.txt",
+      "sha256": "bef482f51f15550e3be1c83207e0a2fc4c63925a7787b2992aa2e657cd3bdb50"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_43.wav",
+      "path": "TwoNote_DPA_43.wav",
+      "sha256": "8b6ab3375f1e9fec4ab09e6604f5b6ae1017907f001979f027fc8fa0a9c37639"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_44.txt",
+      "path": "TwoNote_DPA_44.txt",
+      "sha256": "c99cd35ab7330ac3b43a1ca6bc8de7d15e10c4aa55ff6e5077ac3f01a1d215d9"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_44.wav",
+      "path": "TwoNote_DPA_44.wav",
+      "sha256": "b88a09f82ea6f60f4604662d29ffd2402daf58b70c1daf9712a8528734d6cfee"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_45.txt",
+      "path": "TwoNote_DPA_45.txt",
+      "sha256": "6a7a3313b25c5bd6a2ad70e6e2275066235e12a4bfff51c904a0aba895f819e0"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_45.wav",
+      "path": "TwoNote_DPA_45.wav",
+      "sha256": "ace21b344162b79e181161039f4a955549eec5fd940a8bbe025524aa3ac1e915"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_46.txt",
+      "path": "TwoNote_DPA_46.txt",
+      "sha256": "b34c790d6fe45fedba5f9f078d1579435a8df8e62de607ad4822c05cdc1038b2"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_46.wav",
+      "path": "TwoNote_DPA_46.wav",
+      "sha256": "c5b792b19fb6cc5ea9119bacad3badf2cd39854e4cc1eedd3ee90461fe0f157c"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_65.txt",
+      "path": "TwoNote_DPA_65.txt",
+      "sha256": "1620519f4cd94843c839eb4b19694dbd489b5f656ef0a494fbfd0143b2caf222"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_65.wav",
+      "path": "TwoNote_DPA_65.wav",
+      "sha256": "51fb6ba806d5d60fe6044c6378fa5c314b021c2551a843cb2751bf4c80bef73f"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_66.txt",
+      "path": "TwoNote_DPA_66.txt",
+      "sha256": "ff4c63b889735298c029597cda67cab1f44345b1800ac98062fffe27b7e4f009"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_66.wav",
+      "path": "TwoNote_DPA_66.wav",
+      "sha256": "6d3b8d1a1003213a102c74f93c1c004108e4ba5b218994f3e59af9087c5f854a"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_67.txt",
+      "path": "TwoNote_DPA_67.txt",
+      "sha256": "ccce85ac53de96ee782898b77ac6e19228b081d25748e21d5c22517124abe8ae"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_67.wav",
+      "path": "TwoNote_DPA_67.wav",
+      "sha256": "233d32eb52c66cb6f4656b5d7d279de2cb4e55d29e873151e556e8e161265b61"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_68.txt",
+      "path": "TwoNote_DPA_68.txt",
+      "sha256": "a7e07500e69678bf943c43533aa8111b4f96ff8e90b7488c869ae451b9be102c"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_68.wav",
+      "path": "TwoNote_DPA_68.wav",
+      "sha256": "5452f5e0e39173cdb2c4afe819398db5c4448409da8f621937f50f6b9aed608d"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_69.txt",
+      "path": "TwoNote_DPA_69.txt",
+      "sha256": "98e2639389981204c92a2854ab9493a080b373986c406af1a7e7416908ae01e6"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_69.wav",
+      "path": "TwoNote_DPA_69.wav",
+      "sha256": "9f78c0d00dc048b2355a25a67a4832e8a1ea55c1108cdbf55a345a721c5cfa32"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_70.txt",
+      "path": "TwoNote_DPA_70.txt",
+      "sha256": "117006fc0d5dcf3580f1412a608a9908898e47239326d2967653a1e3d57ac030"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_70.wav",
+      "path": "TwoNote_DPA_70.wav",
+      "sha256": "a7e1d703d303544673dfd6b85f93e7a81f1eeb8ac448a2b894c907930287f022"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_89.txt",
+      "path": "TwoNote_DPA_89.txt",
+      "sha256": "6b03c98adc189ed0fde86926687221198c03a42691b71a04f50e52cd6eecfebf"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_89.wav",
+      "path": "TwoNote_DPA_89.wav",
+      "sha256": "0b9fa302a7ce55d7a19b694895c1632369503ddda438893374eece2f471a7726"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_90.txt",
+      "path": "TwoNote_DPA_90.txt",
+      "sha256": "3b38b13f1a3ee2d1843bb8a9a2b15c72ca7f77332ce14cd6f9adb664bbf16e4a"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_90.wav",
+      "path": "TwoNote_DPA_90.wav",
+      "sha256": "980d3081dd5d8e2d6b99ed7b770b071a2c4722324687f0bd2e4fb48c4273d0da"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_91.txt",
+      "path": "TwoNote_DPA_91.txt",
+      "sha256": "825b4483dd90a7bd41065d8999a9dbcc2655e79437536eb6ec30af0687e87394"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_91.wav",
+      "path": "TwoNote_DPA_91.wav",
+      "sha256": "3b3b4f8e131c8a70e6b1472ea96c4b8809cae82efc95dc644cf75cdb880cc123"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_92.txt",
+      "path": "TwoNote_DPA_92.txt",
+      "sha256": "63e5f16ef1f6c5b1c497e5d6a7d252b3be084aaa8d48082b7f8cf7d2e236705e"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_92.wav",
+      "path": "TwoNote_DPA_92.wav",
+      "sha256": "c1ce9da9b519a9333e4707cd1e025917be66a78a670248c3677360b09177a332"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_93.txt",
+      "path": "TwoNote_DPA_93.txt",
+      "sha256": "76874046e29f7fc297fcd0bc9a477e4c39b6d28dd1b495190ddfa3d5bd9fc7dc"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_93.wav",
+      "path": "TwoNote_DPA_93.wav",
+      "sha256": "3fddc95141f5925877b160196577ced27b37682188048143942f80038e0ba963"
+    },
+    {
+      "member": "Segments/TwoNote/TwoNote_DPA_94.txt",
+      "path": "TwoNote_DPA_94.txt",
+      "sha256": "ee0f4a900eccec505bf2bc61c0f08b2583c2158172f79149d24ddc0b028033fe"
+    },
+    {
+      "member": "WAV/TwoNote/DPA/TwoNote_DPA_94.wav",
+      "path": "TwoNote_DPA_94.wav",
+      "sha256": "d08eada92836a9e77d5b73fa67c2c73e761a21336e887044e7261818949cf55b"
+    }
+  ]
+}

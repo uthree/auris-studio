@@ -186,6 +186,7 @@ fn pedal_defers_piano_release_and_all_sound_off_overrides_it() {
 #[test]
 fn bowed_expression_and_pitch_bend_control_a_sounding_note() {
     let mut rig = rig(Model::Violin, 48_000.0);
+    rig.set_param("bow_response", 0.012);
     rig.render(24_000, &[on(69, 0.8)]);
     let bent = rig.render(
         24_000,
@@ -205,7 +206,83 @@ fn bowed_expression_and_pitch_bend_control_a_sounding_note() {
             value: 0.0,
         }],
     );
-    assert_eq!(peak(&silent), 0.0);
+    assert!(peak(&silent[3000..]) < 0.0002);
+}
+
+#[test]
+fn violin_expression_changes_preserve_the_wave_at_the_control_sample() {
+    let mut changed = rig(Model::Violin, 48_000.0);
+    let mut unchanged = rig(Model::Violin, 48_000.0);
+    changed.set_param("bow_response", 0.012);
+    unchanged.set_param("bow_response", 0.012);
+    changed.render(24_000, &[on(69, 0.8)]);
+    unchanged.render(24_000, &[on(69, 0.8)]);
+    let control = changed.render(
+        4000,
+        &[NoteEvent::Controller {
+            frame: 117,
+            number: 11,
+            value: 0.1,
+        }],
+    );
+    let baseline = unchanged.render(4000, &[]);
+    assert_eq!(&control[..117], &baseline[..117]);
+    assert!(
+        rms(&control[117..125]) > rms(&baseline[117..125]) * 0.95,
+        "expression introduced a gain discontinuity"
+    );
+    assert!(rms(&control[3000..]) < rms(&baseline[3000..]) * 0.1);
+}
+
+#[test]
+fn violin_sustains_for_twelve_seconds_at_multiple_rates_and_dynamics() {
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        for velocity in [0.25, 0.8] {
+            let mut violin = rig(Model::Violin, rate);
+            let audio = violin.render((rate * 12.0) as usize, &[on(62, velocity)]);
+            let early = &audio[rate as usize..(rate * 2.0) as usize];
+            let late = &audio[(rate * 10.0) as usize..(rate * 11.0) as usize];
+            assert!(audio.iter().all(|sample| sample.is_finite()));
+            assert!((20.0 * (rms(late) / rms(early)).log10()).abs() < 1.0);
+            let hz = f64::from(pitch_to_hz(62.0));
+            let cents =
+                (-15_i32..=15)
+                    .max_by(|a, b| {
+                        goertzel(late, rate, hz * (f64::from(*a) / 1200.0).exp2())
+                            .total_cmp(&goertzel(late, rate, hz * (f64::from(*b) / 1200.0).exp2()))
+                    })
+                    .unwrap();
+            assert!(
+                cents.abs() < 8,
+                "sustained pitch drift: {cents} cents at {rate}"
+            );
+        }
+    }
+}
+
+#[test]
+fn violin_bow_response_is_editable_during_a_held_note() {
+    let mut levels = Vec::new();
+    for response in [0.002, 0.12] {
+        let mut violin = rig(Model::Violin, 48_000.0);
+        violin.render(24_000, &[on(69, 0.8)]);
+        violin.set_param("bow_response", response);
+        let audio = violin.render(
+            8000,
+            &[NoteEvent::Controller {
+                frame: 0,
+                number: 11,
+                value: 0.2,
+            }],
+        );
+        assert!(audio.iter().all(|sample| sample.is_finite()));
+        assert_eq!(violin.instrument.active_voices(), 1);
+        levels.push(rms(&audio[100..500]));
+    }
+    assert!(
+        levels[1] > levels[0] * 2.0,
+        "live bow response did not change the held transition"
+    );
 }
 
 #[test]
@@ -405,6 +482,7 @@ fn violin_legato_events_and_live_bow_automation_allocate_nothing() {
         for pitch in 55..85 {
             instrument.set_param(ParamId(P_BOW_SPEED), 0.6);
             instrument.set_param(ParamId(P_POSITION), 0.2);
+            instrument.set_param(ParamId(P_BOW_RESPONSE), 0.02);
             instrument.process(
                 &[
                     on(pitch, 0.8),
