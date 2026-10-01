@@ -1451,6 +1451,14 @@ mod tests {
             .add_instrument_track("Chip", "auris.synth.chiptune")
             .unwrap();
         assert!(!session.has_instrument_motion(chip));
+        let drums = session.add_default_drum_track("Kit").unwrap();
+        assert!(session.has_instrument_motion(drums));
+        session.watch_instrument_motion(Some(drums));
+        assert!(session.motion_monitors[&drums].is_watched());
+        session
+            .set_track_instrument(drums, "auris.synth.noisedrum")
+            .unwrap();
+        assert!(!session.has_instrument_motion(drums));
     }
 
     #[test]
