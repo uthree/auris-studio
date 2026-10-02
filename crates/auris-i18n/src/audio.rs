@@ -165,8 +165,8 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "弓と弦の摩擦で鳴らすバイオリン音源。弓圧、位置、胴の共鳴を調整",
     ),
     (
-        "A complete synthesized percussion kit with shared hat choking",
-        "キックやスネア、シンバルを合成し、ハイハット同士の音止めにも対応するドラムキット",
+        "Struck membranes, snappy wires and metal plates with shared hat choking",
+        "膜、スナッピー、金属板の振動で鳴らすドラムキット。ハイハット同士の音止めにも対応",
     ),
     (
         "Band-limited pulse, saw, triangle and LFSR noise with unison and bit crushing",
@@ -225,6 +225,9 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
 const PARAMETERS: &[(&str, &str)] = &[
     ("Contact Hardness", "励振の硬さ"),
+    ("Beater hardness", "打撃の硬さ"),
+    ("Strike position", "打点"),
+    ("Resonance decay", "共鳴の減衰"),
     ("Excitation Position", "励振位置"),
     ("Resonance Decay", "共鳴の減衰時間"),
     ("Body Resonance", "胴の共鳴"),
@@ -351,24 +354,24 @@ const PRESET_DESCRIPTIONS: &[(&str, &str)] = &[
         "ドラム・ベース・鍵盤・リード — 王道進行",
     ),
     (
-        "Electric piano and slap bass over 丸サ進行",
-        "エレピとスラップベース・丸サ進行",
+        "Piano, bowed lead and plucked bass over 丸サ進行",
+        "ピアノ・弦のリード・ベース・丸サ進行",
     ),
     (
-        "Overdriven guitar, organ and a hard kit",
-        "歪んだギターとオルガン・強めのドラム",
+        "Plucked guitars, bowed strings and a hard kit",
+        "ギターと弦・強めのドラム",
     ),
     (
-        "Piano, upright bass and brushes on a ii-V-I",
-        "ピアノ・ウッドベース・ブラシ・ツーファイブワン",
+        "Piano and plucked bass on a swinging ii-V-I",
+        "ピアノとベース・スウィング・ツーファイブワン",
     ),
     (
-        "Strings, horns and timpani in 3/4",
-        "弦・ホルン・ティンパニ・3拍子",
+        "Bowed strings, guitar and bass in 3/4",
+        "弦・ギター・ベース・3拍子",
     ),
     (
-        "Saw lead, analogue bass and a TR-808",
-        "ノコギリ波リード・アナログベース・TR-808",
+        "Bowed lead, mallet arpeggios and a four-on-the-floor kit",
+        "弦のリード・マレットのアルペジオ・四つ打ち",
     ),
     (
         "Pads and a slow bell, no kit at all",

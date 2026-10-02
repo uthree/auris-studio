@@ -10,11 +10,11 @@ use std::sync::{
 
 /// Maximum simultaneous bodies displayed in a motion frame.
 pub const MOTION_VOICES: usize = 4;
-/// Spatial samples along a string, bar or shell perimeter.
+/// Spatial samples along a string, bar or shell perimeter, or an 8×8 surface grid.
 pub const MOTION_POINTS: usize = 64;
 /// Low modes exposed alongside the spatial projection.
 pub const MOTION_MODES: usize = 8;
-const STRIDE: usize = 5 + MOTION_POINTS + MOTION_MODES;
+const STRIDE: usize = 6 + MOTION_POINTS + MOTION_MODES;
 const WORDS: usize = 5 + MOTION_VOICES * STRIDE;
 
 /// Mechanical geometry of an observed instrument.
@@ -27,11 +27,17 @@ pub enum MotionGeometry {
     Bar,
     /// Closed shell perimeter.
     Shell,
+    /// Circular fixed-edge drum head, sampled on an 8×8 Cartesian grid.
+    Membrane,
+    /// Circular free-edge metal plate, sampled on an 8×8 Cartesian grid.
+    Plate,
 }
 
 /// One vibrating body, sampled from the live DSP state.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MotionVoice {
+    /// Per-body geometry for instruments mixing mechanical structures; otherwise use the frame.
+    pub geometry: Option<MotionGeometry>,
     /// MIDI pitch including the current bend.
     pub pitch: f32,
     /// Envelope level, zero when inactive.
@@ -51,6 +57,7 @@ pub struct MotionVoice {
 impl Default for MotionVoice {
     fn default() -> Self {
         Self {
+            geometry: None,
             pitch: 0.,
             level: 0.,
             contact: 0.25,
@@ -114,6 +121,8 @@ impl MotionMonitor {
                 geometry: match words[0] {
                     1 => MotionGeometry::Bar,
                     2 => MotionGeometry::Shell,
+                    3 => MotionGeometry::Membrane,
+                    4 => MotionGeometry::Plate,
                     _ => MotionGeometry::String,
                 },
                 active: words[1] as usize,
@@ -129,11 +138,19 @@ impl MotionMonitor {
                 voice.contact = value(start + 2);
                 voice.excitation = value(start + 3);
                 voice.held = words[start + 4] != 0;
+                voice.geometry = match words[start + 5] {
+                    1 => Some(MotionGeometry::String),
+                    2 => Some(MotionGeometry::Bar),
+                    3 => Some(MotionGeometry::Shell),
+                    4 => Some(MotionGeometry::Membrane),
+                    5 => Some(MotionGeometry::Plate),
+                    _ => None,
+                };
                 for (i, point) in voice.points.iter_mut().enumerate() {
-                    *point = value(start + 5 + i);
+                    *point = value(start + 6 + i);
                 }
                 for (i, mode) in voice.modes.iter_mut().enumerate() {
-                    *mode = value(start + 5 + MOTION_POINTS + i);
+                    *mode = value(start + 6 + MOTION_POINTS + i);
                 }
             }
             return Some(frame);
@@ -177,6 +194,8 @@ impl MotionCapture {
             MotionGeometry::String => 0,
             MotionGeometry::Bar => 1,
             MotionGeometry::Shell => 2,
+            MotionGeometry::Membrane => 3,
+            MotionGeometry::Plate => 4,
         };
         words[1] = frame.active as u32;
         words[2] = frame.expression.to_bits();
@@ -189,11 +208,19 @@ impl MotionCapture {
             words[start + 2] = voice.contact.to_bits();
             words[start + 3] = voice.excitation.to_bits();
             words[start + 4] = u32::from(voice.held);
+            words[start + 5] = match voice.geometry {
+                None => 0,
+                Some(MotionGeometry::String) => 1,
+                Some(MotionGeometry::Bar) => 2,
+                Some(MotionGeometry::Shell) => 3,
+                Some(MotionGeometry::Membrane) => 4,
+                Some(MotionGeometry::Plate) => 5,
+            };
             for (i, point) in voice.points.iter().enumerate() {
-                words[start + 5 + i] = point.to_bits();
+                words[start + 6 + i] = point.to_bits();
             }
             for (i, mode) in voice.modes.iter().enumerate() {
-                words[start + 5 + MOTION_POINTS + i] = mode.to_bits();
+                words[start + 6 + MOTION_POINTS + i] = mode.to_bits();
             }
         }
         // SeqCst on payload and version provides one total order for the bounded seqlock.
@@ -209,6 +236,33 @@ impl MotionCapture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn surface_geometry_and_mixed_voices_round_trip_without_changing_existing_frames() {
+        let mut writer = MotionCapture::default();
+        let monitor = writer.monitor();
+        for geometry in [
+            MotionGeometry::String,
+            MotionGeometry::Bar,
+            MotionGeometry::Shell,
+            MotionGeometry::Membrane,
+            MotionGeometry::Plate,
+        ] {
+            let mut frame = MotionFrame {
+                geometry,
+                active: 2,
+                ..Default::default()
+            };
+            frame.voices[0].geometry = Some(MotionGeometry::Membrane);
+            frame.voices[0].points[27] = 0.12;
+            frame.voices[1].geometry = Some(MotionGeometry::Plate);
+            frame.voices[1].modes[7] = 0.03;
+            writer.publish(&frame);
+            assert_eq!(monitor.read(), Some(frame));
+        }
+        writer.publish(&MotionFrame::default());
+        assert_eq!(monitor.read(), Some(MotionFrame::default()));
+    }
+
     #[test]
     fn readers_never_mix_frames_and_clones_never_share_writers() {
         let mut writer = MotionCapture::default();

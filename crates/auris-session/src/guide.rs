@@ -359,6 +359,10 @@ pub mod architecture {
     //! still perform the notes. Explicit SoundFont and hosted sources take precedence and are
     //! validated before editing. Accompaniment and lyric-song backing use the same mapping.
     //! Unknown families retain the ordinary reported fallback. Selection never rewrites notes.
+    //! Shipped song presets name native physical instruments directly for their melodic parts;
+    //! chiptune and game-loop retain their oscillator voices. Percussion keeps its existing
+    //! kit and reverse-cymbal choices. The preset's instrument IDs therefore remain explicit
+    //! when its specification is edited, saved or composed again.
     //!
     //! What the split buys costs one thing back: the document can move while a file is being read.
     //! The placing half is where that is caught — audio decoded against a sample rate the project
@@ -772,6 +776,14 @@ pub mod plugins {
     //! the model state, and observer activation leaves rendered PCM unchanged.
     //! Readers make three bounded attempts and skip an overlapping publication. Writers never
     //! wait for readers. Freeze and window dismissal disable sampling without stopping playback.
+    //! The built-in [`DrumKit`](auris_synth::DrumKit) uses reduced circular-membrane and
+    //! free-edge plate modes. Strike position and hardness redistribute excitation, while
+    //! a lossy cavity follows the moving head without an independent oscillator. Modal
+    //! damping and decay control loss. Snappy wires and metal collisions use a diffuse
+    //! noise-energy approximation. Each observed body carries its own geometry, so a drum kit
+    //! can display a membrane and a cymbal together on 8×8 spatial grids. Their projections
+    //! use the same prepared bases as strike and pickup weights. Drum preview is a repeatable
+    //! one-shot gesture, with pad selection instead of octave transposition.
     //!
     //! # A note-off names a pitch, not a note
     //!

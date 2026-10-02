@@ -6,6 +6,22 @@ Changing its sound preserves its drum identity. Composed percussion and imported
 10 parts use drum tracks. Older projects migrate explicit percussion metadata while preserving
 their stored notes and performance.
 
+## Physical kit and motion display
+
+The built-in kit models a struck circular membrane for kicks, snares and six tuned toms,
+and damped bending modes of metal plates for hats, crash and ride. A lossy cavity follows
+the moving drum head. Snappy wires and metal
+collisions use a diffuse noise-energy approximation. Beater hardness and strike position
+change the distribution of modal energy; damping and resonance decay change the tail.
+Resonance decay is relative to each pad's natural duration (100% is the default).
+The level parameter keeps its existing identity in saved projects.
+
+Open the kit's instrument editor to see the actual modal displacement on a tilted surface
+grid and the first eight modal magnitudes. Up to four recent hits are displayed together,
+with separate membrane and plate geometry. Use Previous drum / Next drum to choose a pad,
+then Play to strike it repeatedly. Display gain and Freeze affect only observation.
+Closing the editor disables spatial reconstruction; audio rendering is unchanged.
+
 ## Editing and generation
 
 Opening a drum clip shows the drum editor. Its rows use the track's authored assignments and
@@ -152,7 +168,12 @@ allocates no memory. Its numerical measurements can be reproduced with:
 
 ```sh
 cargo run -p auris-synth --example measure_drums
+cargo run --release -p auris-synth --example drum_demo -- target/drum-demo.wav
 ```
+
+The listening probe contains twelve isolated pads followed by an eight-bar groove, and reports
+callback timing for 24 overlapping crashes with motion sampling off and on. One common gain
+preserves pad balance; the example does not normalize each hit separately.
 
 The session guide describes the crate boundaries. DSP tests check levels and spectral behavior;
 session tests cover source isolation, map application, undo and regeneration. CLI integration

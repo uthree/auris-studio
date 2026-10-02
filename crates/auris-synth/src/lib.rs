@@ -14,7 +14,8 @@
 //! preview voice a singer track plays through, with [`Biquad`](auris_dsp::Biquad) sections from
 //! `auris-dsp` for its formants). The split is the point: adding an instrument means writing a
 //! `process`, not another voice manager. [`DrumKit`] combines distinct percussion voices in one
-//! instrument with shared hat choking. [`SynthPack`] registers every instrument with a
+//! instrument with struck membrane and metal-plate modes, shared hat choking and optional
+//! mechanical observation. [`SynthPack`] registers every instrument with a
 //! [`PluginRegistry`](auris_core::PluginRegistry).
 //! [`Physical`] adds six sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.

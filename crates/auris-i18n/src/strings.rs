@@ -61,6 +61,9 @@ strings! {
     PhysicalReleased { en: "Releasing", ja: "余韻" }
     PhysicalLower { en: "Octave down", ja: "1オクターブ下" }
     PhysicalHigher { en: "Octave up", ja: "1オクターブ上" }
+    PhysicalPreviousPad { en: "Previous drum", ja: "前の打楽器" }
+    PhysicalNextPad { en: "Next drum", ja: "次の打楽器" }
+    DrumRide { en: "Ride", ja: "ライド" }
     VisualizerWaiting { en: "Waiting for audio", ja: "音声を待っています" }
     VisualizerTitle { en: "Audio Visualizer…", ja: "オーディオビジュアライザー…" }
     VisualizerSelected { en: "Follow selected track", ja: "選択トラックを追従" }

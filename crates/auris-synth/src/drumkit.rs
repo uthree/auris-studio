@@ -1,19 +1,24 @@
 //! A complete synthesized kit in one instrument and one voice pool.
 
+use auris_core::motion::{MOTION_VOICES, MotionCapture, MotionFrame, MotionGeometry};
 use auris_core::param::db_to_gain;
 use auris_core::{
-    AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, Parameterized, PluginCategory,
-    PluginDescriptor, PrepareContext, ProcessContext,
+    AudioBuffer, Instrument, NoteEvent, ParamDescriptor, ParamId, ParamUnit, Parameterized,
+    PluginCategory, PluginDescriptor, PrepareContext, ProcessContext,
 };
 use auris_dsp::{Adsr, Biquad, BiquadCoefficients};
 
-use crate::oscillator::{Oscillator, Waveform};
 use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::VoiceAllocator;
 
+mod model;
+use model::{Projection, Resonators};
+
 const VOICE_COUNT: usize = 24;
 const PAD_COUNT: usize = 7;
+const TOM_KEYS: [u8; 6] = [41, 43, 45, 47, 48, 50];
+const PAD_KEYS: [u8; PAD_COUNT] = [36, 38, 42, 46, 49, 51, 47];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Pad {
@@ -54,81 +59,71 @@ impl Pad {
         matches!(self, Self::ClosedHat | Self::OpenHat)
     }
 
+    fn geometry(self) -> MotionGeometry {
+        if self.is_metal() {
+            MotionGeometry::Plate
+        } else {
+            MotionGeometry::Membrane
+        }
+    }
+
+    fn is_metal(self) -> bool {
+        matches!(
+            self,
+            Self::ClosedHat | Self::OpenHat | Self::Crash | Self::Ride
+        )
+    }
+
     fn profile(self) -> Profile {
-        // The head of a kick is tonal, the snare adds a noise wire, and cymbals have energy
-        // above both. These are different excitations, not transpositions of one noise patch.
         match self {
             Self::Kick => Profile {
                 tone: 55.0,
-                sweep: 130.0,
-                sweep_time: 0.025,
                 decay: 0.42,
                 body: 0.95,
-                noise: 0.035,
+                noise: 0.05,
                 highpass: 1_000.0,
                 lowpass: 4_000.0,
-                overtone: 0.0,
-                ratio: 1.0,
             },
             Self::Snare => Profile {
                 tone: 185.0,
-                sweep: 65.0,
-                sweep_time: 0.015,
                 decay: 0.32,
-                body: 0.35,
+                // Keep the resonating head under the diffuse wires after the initial strike.
+                body: 0.28,
                 noise: 1.0,
                 highpass: 650.0,
                 lowpass: 6_000.0,
-                overtone: 0.32,
-                ratio: 1.63,
             },
             Self::ClosedHat | Self::OpenHat => Profile {
-                tone: 8_200.0,
-                sweep: 0.0,
-                sweep_time: 0.01,
+                tone: 7_200.0,
                 decay: if self == Self::ClosedHat { 0.10 } else { 0.85 },
-                body: 0.0,
+                body: 0.2,
                 noise: 0.68,
                 highpass: 7_000.0,
                 lowpass: 18_000.0,
-                overtone: 0.0,
-                ratio: 1.0,
             },
             Self::Crash => Profile {
-                tone: 3_100.0,
-                sweep: 0.0,
-                sweep_time: 0.01,
+                tone: 900.0,
                 decay: 2.4,
-                body: 0.09,
+                body: 0.15,
                 noise: 0.85,
                 highpass: 2_500.0,
                 lowpass: 16_000.0,
-                overtone: 0.75,
-                ratio: 1.413,
             },
             Self::Ride => Profile {
                 tone: 2_650.0,
-                sweep: 0.0,
-                sweep_time: 0.01,
                 decay: 1.25,
-                body: 0.36,
-                noise: 0.38,
+                body: 0.65,
+                noise: 0.18,
                 highpass: 3_500.0,
                 lowpass: 15_000.0,
-                overtone: 0.6,
-                ratio: 1.731,
             },
             Self::Tom => Profile {
                 tone: 130.0,
-                sweep: 80.0,
-                sweep_time: 0.035,
                 decay: 0.55,
                 body: 0.85,
                 noise: 0.075,
                 highpass: 500.0,
                 lowpass: 3_000.0,
-                overtone: 0.18,
-                ratio: 1.59,
             },
         }
     }
@@ -137,70 +132,83 @@ impl Pad {
 #[derive(Clone, Copy, Debug)]
 struct Profile {
     tone: f32,
-    sweep: f32,
-    sweep_time: f32,
     decay: f32,
     body: f32,
     noise: f32,
     highpass: f32,
     lowpass: f32,
-    overtone: f32,
-    ratio: f32,
 }
 
 #[derive(Clone, Debug)]
 struct Hit {
     pad: Pad,
+    pitch: u8,
     profile: Profile,
     amplitude: Adsr,
-    oscillator: Oscillator,
-    overtone: Oscillator,
+    resonators: Resonators,
+    shell: Biquad,
     highpass: Biquad,
     lowpass: Biquad,
     noise_state: u32,
-    sweep: f32,
-    sweep_multiplier: f32,
-    body_level: f32,
-    body_multiplier: f32,
+    wire_energy: f32,
+    wire_loss: f32,
     velocity: f32,
+    contact: f32,
 }
 
 impl Hit {
-    fn prepared(pad: Pad, sample_rate: f32) -> Self {
-        let profile = pad.profile();
+    fn prepared(pad: Pad, pitch: u8, sample_rate: f32, projection: &Projection) -> Self {
+        let mut profile = pad.profile();
+        if pad == Pad::Tom {
+            profile.tone *= ((f32::from(pitch) - 47.0) / 12.0).exp2();
+        }
         let mut amplitude = Adsr::new();
         amplitude.set_sample_rate(sample_rate);
         amplitude.set_adsr(0.001, profile.decay, 0.0, profile.decay);
-        let mut oscillator = Oscillator::new();
-        oscillator.set_sample_rate(sample_rate);
         Self {
             pad,
+            pitch,
             profile,
             amplitude,
-            overtone: oscillator.clone(),
-            oscillator,
+            resonators: Resonators::prepared(
+                projection,
+                sample_rate,
+                profile.tone,
+                profile.decay,
+                pad == Pad::Snare,
+            ),
+            shell: Biquad::new(BiquadCoefficients::bandpass(
+                sample_rate as f64,
+                (profile.tone * 0.8).min(sample_rate * 0.4),
+                0.9,
+            )),
             highpass: Biquad::new(BiquadCoefficients::highpass(
                 sample_rate as f64,
-                profile.highpass,
+                profile.highpass.min(sample_rate * 0.4),
                 std::f32::consts::FRAC_1_SQRT_2,
             )),
             lowpass: Biquad::new(BiquadCoefficients::lowpass(
                 sample_rate as f64,
-                profile.lowpass,
+                profile.lowpass.min(sample_rate * 0.45),
                 std::f32::consts::FRAC_1_SQRT_2,
             )),
             noise_state: 1,
-            sweep: profile.sweep,
-            sweep_multiplier: (-1.0 / (sample_rate * profile.sweep_time)).exp(),
-            body_level: 1.0,
-            // The head loses its pitched ring before the snare wires stop buzzing. Giving
-            // both the same envelope would make a bass-heavy pitched drum with a little hiss.
-            body_multiplier: if pad == Pad::Snare {
-                (-1.0 / (sample_rate * 0.012)).exp()
-            } else {
-                1.0
-            },
+            wire_energy: 1.0,
+            // Snappy wires and colliding hat plates retain diffuse energy after the strike.
+            // Kicks and toms have only a short beater contact transient.
+            wire_loss: (-1.0
+                / (sample_rate
+                    * if pad == Pad::Crash {
+                        // The diffuse plate modes outlast the clearly resolved low modes.
+                        profile.decay * 2.0
+                    } else if pad == Pad::Snare || pad.is_metal() {
+                        profile.decay * 0.5
+                    } else {
+                        0.004
+                    }))
+            .exp(),
             velocity: 0.0,
+            contact: 0.6,
         }
     }
 
@@ -208,36 +216,34 @@ impl Hit {
         if !self.amplitude.is_active() {
             return 0.0;
         }
-        let frequency = self.profile.tone + self.sweep;
-        self.sweep *= self.sweep_multiplier;
-        self.oscillator.set_frequency(frequency);
-        self.overtone.set_frequency(frequency * self.profile.ratio);
-        let body = self.oscillator.next(Waveform::Sine)
-            + self.profile.overtone * self.overtone.next(Waveform::Sine);
-        self.body_level *= self.body_multiplier;
-        // One independent white-noise draw per sample. The clock is the sample rate, so a
-        // cymbal's high-pass receives broadband excitation even when its pitched body is low.
+        let body = self.resonators.next();
+        let body = if self.pad.is_metal() {
+            body
+        } else {
+            // A lossy cavity takes its excitation from the moving head, not a second oscillator.
+            body + self.shell.process_sample(body) * 0.18
+        };
         self.noise_state ^= self.noise_state << 13;
         self.noise_state ^= self.noise_state >> 17;
         self.noise_state ^= self.noise_state << 5;
         let noise = (self.noise_state >> 8) as f32 / 8_388_608.0 - 1.0;
+        self.wire_energy *= self.wire_loss;
         let noise = self
             .lowpass
-            .process_sample(self.highpass.process_sample(noise));
-        (body * self.profile.body * self.body_level + noise * self.profile.noise)
+            .process_sample(self.highpass.process_sample(noise * self.wire_energy));
+        (body * self.profile.body + noise * self.profile.noise)
             * self.amplitude.process()
             * self.velocity
     }
 }
-
 #[derive(Clone, Debug)]
 struct KitVoice {
     current: Hit,
-    // A stolen hit retains its oscillators and filters during the envelope's de-click ramp.
+    // A stolen hit retains its modal state and filters during the envelope's de-click ramp.
     retiring: Hit,
 }
 
-/// A synthesized drum kit with tonal kicks, noisy snares and bright cymbals.
+/// A sample-free physical kit with struck membranes, snappy wires and bending metal plates.
 ///
 /// General MIDI percussion keys select pads; unassigned keys are silent. Every pad shares the
 /// voice pool, and either hat closes previous hats without cutting kicks, snares or cymbals.
@@ -248,11 +254,15 @@ struct KitVoice {
 #[derive(Clone, Debug)]
 pub struct DrumKit {
     params: ParamBank,
-    templates: Option<[Hit; PAD_COUNT]>,
+    templates: Vec<Hit>,
+    projections: Vec<Projection>,
     voices: Vec<KitVoice>,
     allocator: VoiceAllocator,
     strike: u32,
     gain: f32,
+    rate: f32,
+    motion: MotionCapture,
+    motion_frames: usize,
 }
 
 impl Default for DrumKit {
@@ -267,17 +277,26 @@ impl DrumKit {
 
     /// A kit with its default pad balance and a six-decibel output attenuation.
     pub fn new() -> Self {
-        let params = ParamBank::new(vec![ParamDescriptor::decibels(
-            0u32, "level", "Level", -60.0, 6.0, -6.0,
-        )]);
+        let params = ParamBank::new(vec![
+            ParamDescriptor::decibels(0u32, "level", "Level", -60.0, 6.0, -6.0),
+            ParamDescriptor::percent(1u32, "hardness", "Beater hardness", 0.65),
+            ParamDescriptor::percent(2u32, "position", "Strike position", 0.6),
+            ParamDescriptor::percent(3u32, "damping", "Damping", 0.35),
+            ParamDescriptor::new(4u32, "decay", "Resonance decay", 0.5, 2.0, 1.0)
+                .with_unit(ParamUnit::Percent),
+        ]);
         let gain = db_to_gain(params.at(0));
         Self {
             params,
-            templates: None,
+            templates: Vec::new(),
+            projections: Vec::new(),
             voices: Vec::new(),
             allocator: VoiceAllocator::new(),
             strike: 0,
             gain,
+            rate: 48_000.0,
+            motion: MotionCapture::default(),
+            motion_frames: 0,
         }
     }
 
@@ -286,10 +305,15 @@ impl DrumKit {
             return;
         };
         let velocity = finite_or(velocity, 0.0).clamp(0.0, 1.0);
-        let Some(templates) = self.templates.as_ref().filter(|_| velocity > 0.0) else {
+        if velocity <= 0.0 {
             return;
+        }
+        let template_index = if pad == Pad::Tom {
+            PAD_COUNT + TOM_KEYS.iter().position(|key| *key == pitch).unwrap_or(3)
+        } else {
+            pad as usize
         };
-        let Some(template) = templates.get(pad as usize) else {
+        let Some(template) = self.templates.get(template_index) else {
             return;
         };
         if pad.is_hat() {
@@ -313,12 +337,63 @@ impl DrumKit {
         self.strike = self.strike.wrapping_add(1);
         voice.current.noise_state = self.strike.wrapping_mul(0x9e37_79b9) | 1;
         voice.current.velocity = velocity;
-        if pad == Pad::Tom {
-            let ratio = ((f32::from(pitch) - 47.0) / 12.0).exp2();
-            voice.current.profile.tone *= ratio;
-            voice.current.sweep *= ratio;
-        }
+        voice.current.pitch = pitch;
+        voice.current.contact = self.params.at(2);
+        let decay = self.params.at(4);
+        let duration = voice.current.profile.decay * decay;
+        voice
+            .current
+            .amplitude
+            .set_adsr(0.001, duration, 0.0, duration);
+        voice.current.wire_loss = voice.current.wire_loss.powf(1.0 / decay);
+        voice.current.resonators.strike(
+            self.params.at(1),
+            self.params.at(2),
+            self.params.at(3),
+            decay,
+        );
         voice.current.amplitude.trigger();
+    }
+
+    fn publish_motion(&mut self) {
+        let mut frame = MotionFrame {
+            geometry: MotionGeometry::Membrane,
+            expression: 1.0,
+            ..Default::default()
+        };
+        let mut selected: [Option<usize>; MOTION_VOICES] = [None; MOTION_VOICES];
+        for (index, voice) in self.voices.iter().enumerate() {
+            if !voice.current.amplitude.is_active() {
+                continue;
+            }
+            frame.active += 1;
+            for rank in 0..MOTION_VOICES {
+                if selected[rank].is_none_or(|previous| {
+                    self.allocator.slots()[previous].age < self.allocator.slots()[index].age
+                }) {
+                    selected[rank..].rotate_right(1);
+                    selected[rank] = Some(index);
+                    break;
+                }
+            }
+        }
+        for (observed, index) in frame.voices.iter_mut().zip(selected) {
+            let Some(index) = index else {
+                break;
+            };
+            let hit = &self.voices[index].current;
+            observed.geometry = Some(hit.pad.geometry());
+            observed.pitch = f32::from(hit.pitch);
+            observed.level = hit.amplitude.level() * hit.velocity;
+            observed.contact = hit.contact;
+            observed.excitation = hit.wire_energy * observed.level;
+            self.projections[usize::from(hit.pad.is_metal())].observe(
+                &hit.resonators,
+                observed.level,
+                observed,
+            );
+        }
+        self.motion.publish(&frame);
     }
 }
 
@@ -392,23 +467,39 @@ impl Instrument for DrumKit {
         PluginDescriptor::instrument(
             Self::ID,
             "Drum Kit",
-            "A complete synthesized percussion kit with shared hat choking",
+            "Struck membranes, snappy wires and metal plates with shared hat choking",
             PluginCategory::Drum,
         )
     }
 
     fn prepare(&mut self, ctx: &PrepareContext) {
-        let sample_rate = crate::sample_rate_f32(ctx.sample_rate);
-        let templates = Pad::ALL.map(|pad| Hit::prepared(pad, sample_rate));
+        let sample_rate = crate::sample_rate_f32(ctx.sample_rate).clamp(8_000.0, 192_000.0);
+        self.rate = sample_rate;
+        self.projections = vec![Projection::new(false), Projection::new(true)];
+        let templates: Vec<_> = Pad::ALL
+            .into_iter()
+            .zip(PAD_KEYS)
+            .chain(TOM_KEYS.into_iter().map(|key| (Pad::Tom, key)))
+            .map(|(pad, key)| {
+                Hit::prepared(
+                    pad,
+                    key,
+                    sample_rate,
+                    &self.projections[usize::from(pad.is_metal())],
+                )
+            })
+            .collect();
         self.voices = (0..VOICE_COUNT)
             .map(|_| KitVoice {
                 current: templates[0].clone(),
                 retiring: templates[0].clone(),
             })
             .collect();
-        self.templates = Some(templates);
+        self.templates = templates;
         self.allocator.prepare(VOICE_COUNT);
         self.strike = 0;
+        self.motion_frames = 0;
+        self.publish_motion();
     }
 
     fn reset(&mut self) {
@@ -418,16 +509,29 @@ impl Instrument for DrumKit {
         }
         self.allocator.clear();
         self.strike = 0;
+        self.motion_frames = 0;
+        self.publish_motion();
     }
 
     fn process(&mut self, events: &[NoteEvent], out: &mut AudioBuffer, ctx: &ProcessContext) {
         let frames = ctx.block_frames.min(out.frame_count());
         render_segments(self, events, out, frames);
         spread_to_all_channels(out, frames);
+        if self.motion.is_watched() {
+            self.motion_frames = self.motion_frames.saturating_add(frames);
+            if self.motion_frames >= (self.rate / 30.0) as usize {
+                self.motion_frames = 0;
+                self.publish_motion();
+            }
+        }
     }
 
     fn active_voices(&self) -> usize {
         self.allocator.active_count()
+    }
+
+    fn motion_monitor(&self) -> Option<std::sync::Arc<auris_core::motion::MotionMonitor>> {
+        Some(self.motion.monitor())
     }
 }
 
@@ -467,7 +571,9 @@ mod tests {
         let wire = &snare[1_200..9_600];
         assert!(
             band_amplitude(wire, 48_000.0, 2_000.0) > band_amplitude(wire, 48_000.0, 185.0) * 2.0,
-            "the snare's pitched head outlasted its noise wires"
+            "the snare's pitched head outlasted its noise wires: noise {}, head {}",
+            band_amplitude(wire, 48_000.0, 2_000.0),
+            band_amplitude(wire, 48_000.0, 185.0),
         );
     }
 
@@ -564,12 +670,16 @@ mod tests {
     fn dense_chokes_voice_steals_and_reset_allocate_nothing() {
         let mut kit = DrumKit::new();
         kit.prepare(&PrepareContext::new(48_000.0, 512, 2));
+        kit.motion_monitor().unwrap().watch(true);
         let mut output = AudioBuffer::stereo(512, 48_000.0);
         let context = ProcessContext::realtime(48_000.0, 512, 0, 120.0, true);
         let events: [NoteEvent; 80] =
             std::array::from_fn(|index| hit(index as u32 * 5, [36, 38, 46, 49, 42][index % 5]));
         let allocations = crate::test_support::count_allocations(|| {
             kit.process(&events, &mut output, &context);
+            for _ in 0..4 {
+                kit.process(&[], &mut output, &context);
+            }
             kit.process(
                 &[NoteEvent::AllSoundOff { frame: 0 }],
                 &mut output,
@@ -580,5 +690,126 @@ mod tests {
         assert_eq!(allocations, 0);
         assert!(output.channel(0).iter().all(|sample| sample.is_finite()));
         assert_eq!(kit.active_voices(), 0);
+    }
+
+    #[test]
+    fn mixed_mechanical_observation_matches_live_modes_and_never_changes_audio() {
+        let mut watched = rig(256);
+        let mut plain = rig(256);
+        let monitor = watched.instrument.motion_monitor().unwrap();
+        monitor.watch(true);
+        let events = [hit(0, 36), hit(100, 49), hit(200, 47)];
+        assert_eq!(watched.render(2_000, &events), plain.render(2_000, &events));
+        let frame = monitor.read().unwrap();
+        assert_eq!(frame.active, 3);
+        assert_eq!(frame.voices[0].pitch, 47.0);
+        assert_eq!(frame.voices[0].geometry, Some(MotionGeometry::Membrane));
+        assert_eq!(frame.voices[1].geometry, Some(MotionGeometry::Plate));
+        for voice in frame.voices.iter().take(3) {
+            assert!(voice.points.iter().any(|value| value.abs() > 1e-6));
+            assert!(voice.modes.iter().any(|value| *value > 1e-6));
+            assert!(voice.points.iter().all(|value| value.is_finite()));
+        }
+        monitor.watch(false);
+        watched.render(2_000, &[]);
+        assert_eq!(monitor.read(), Some(frame));
+        watched.instrument.reset();
+        let reset = monitor.read().unwrap();
+        assert_eq!(reset.active, 0);
+        assert!(reset.voices.iter().all(|voice| voice.points == [0.0; 64]));
+    }
+
+    #[test]
+    fn acoustic_analysis_recognizes_the_generated_kit_roles_without_note_labels() {
+        use auris_core::DrumRole;
+        use auris_dsp::drum_analysis::analyze_drum_audio;
+        for (pitch, role) in [
+            (36, DrumRole::Kick),
+            (38, DrumRole::Snare),
+            (42, DrumRole::ClosedHat),
+            (46, DrumRole::OpenHat),
+            (49, DrumRole::Crash),
+            (47, DrumRole::Tom),
+        ] {
+            let audio = rig(512).render(144_000, &[hit(0, pitch)]);
+            let mut buffer = AudioBuffer::new(1, audio.len(), 48_000.0);
+            buffer.channel_mut(0).copy_from_slice(&audio);
+            let measured = analyze_drum_audio(&buffer).unwrap();
+            let fitness = measured.fitness[&role];
+            assert!(fitness > 0.6, "{role:?}: {fitness}");
+            assert!(
+                measured
+                    .fitness
+                    .iter()
+                    .all(|(candidate, score)| *candidate == role || *score < fitness),
+                "ambiguous {role:?}: {:?}",
+                measured.fitness
+            );
+        }
+    }
+
+    #[test]
+    fn drum_controls_change_excitation_and_decay_and_toms_keep_their_tuning() {
+        let render = |key, parameter: &str, value| {
+            let mut instrument = rig(256);
+            instrument.set_param(parameter, value);
+            instrument.render(48_000, &[hit(0, key)])
+        };
+        for key in [36, 38, 42, 49, 47] {
+            for parameter in ["hardness", "position", "damping"] {
+                let first = render(key, parameter, 0.15);
+                let second = render(key, parameter, 0.85);
+                assert!(
+                    first.iter().zip(&second).any(|(a, b)| (a - b).abs() > 1e-4),
+                    "{key} ignored {parameter}"
+                );
+            }
+        }
+        let damped = render(36, "damping", 1.0);
+        let ringing = render(36, "damping", 0.0);
+        assert!(rms(&ringing[4_800..9_600]) > rms(&damped[4_800..9_600]) * 1.1);
+        let short = render(49, "decay", 0.5);
+        let long = render(49, "decay", 2.0);
+        assert!(rms(&long[24_000..]) > rms(&short[24_000..]) * 2.0);
+        for key in TOM_KEYS {
+            let audio = sound(key);
+            let fundamental = 130.0 * ((f64::from(key) - 47.0) / 12.0).exp2();
+            assert!(
+                band_amplitude(&audio, 48_000.0, fundamental)
+                    > band_amplitude(&audio, 48_000.0, fundamental * 1.15) * 2.0,
+                "tom {key} lost its fundamental"
+            );
+        }
+    }
+
+    #[test]
+    fn extreme_controls_rates_and_repeated_preparation_remain_finite() {
+        for rate in [8_000.0, 22_050.0, 44_100.0, 96_000.0, 192_000.0] {
+            let mut kit = DrumKit::new();
+            kit.prepare(&PrepareContext::new(rate, 256, 2));
+            let monitor = kit.motion_monitor().unwrap();
+            monitor.watch(true);
+            let mut out = AudioBuffer::stereo(256, rate);
+            let context = ProcessContext::realtime(rate, 256, 0, 120.0, true);
+            for value in [0.0, 1.0, f32::NAN, f32::INFINITY] {
+                kit.set_param_by_key("hardness", value);
+                kit.set_param_by_key("position", value);
+                kit.set_param_by_key("damping", value);
+                kit.set_param_by_key("decay", value);
+                for key in PAD_KEYS {
+                    kit.process(&[hit(0, key)], &mut out, &context);
+                    assert!(out.channel(0).iter().all(|value| value.is_finite()));
+                }
+                let frame = monitor.read().unwrap();
+                assert!(
+                    frame
+                        .voices
+                        .iter()
+                        .all(|voice| voice.points.iter().all(|value| value.is_finite()))
+                );
+            }
+            kit.prepare(&PrepareContext::new(rate, 256, 2));
+            assert_eq!(monitor.read().unwrap().active, 0);
+        }
     }
 }

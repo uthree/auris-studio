@@ -1153,6 +1153,54 @@ mod tests {
     }
 
     #[test]
+    fn melodic_song_presets_install_their_physical_sources_without_a_font() {
+        for preset in auris_compose::PRESETS {
+            if matches!(preset.name, "chiptune" | "game-loop") {
+                continue;
+            }
+            let mut spec = preset.spec();
+            spec.parts
+                .retain(|part| !part.role.is_drum() && part.role != auris_compose::Role::Riser);
+            for section in spec.sections.values_mut() {
+                section
+                    .parts
+                    .retain(|name| spec.parts.iter().any(|part| &part.name == name));
+            }
+            let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+            let report = session.compose(&auris_compose::compose(&spec)).unwrap();
+            assert!(report.substituted.is_empty(), "{}: {report:?}", preset.name);
+            assert!(session.project().soundfonts.is_empty(), "{}", preset.name);
+            for part in &spec.parts {
+                assert_eq!(part.sound(), None, "{} · {}", preset.name, part.name);
+                assert_eq!(part.source, None, "{} · {}", preset.name, part.name);
+                assert!(
+                    auris_synth::Model::ALL
+                        .iter()
+                        .any(|model| model.id() == part.instrument),
+                    "{} · {} is not a physical instrument",
+                    preset.name,
+                    part.name
+                );
+                let track = session
+                    .project()
+                    .tracks
+                    .iter()
+                    .find(|track| track.name == part.name)
+                    .unwrap();
+                assert_eq!(
+                    track.kind.as_instrument().unwrap().instrument_id,
+                    part.instrument
+                );
+                assert_eq!(session.track_preset(track.id), None);
+            }
+            let restored =
+                auris_compose::SongSpec::parse(session.project().song_spec.as_ref().unwrap())
+                    .unwrap();
+            assert_eq!(restored, spec);
+        }
+    }
+
+    #[test]
     fn a_composed_violin_uses_the_native_model_without_assets() {
         let mut session = session();
         let spec = auris_compose::SongSpec::parse(

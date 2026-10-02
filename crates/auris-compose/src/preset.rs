@@ -20,10 +20,9 @@
 //! the presets are parser tests that fail loudly — a field renamed without renaming it here breaks
 //! the build's tests rather than the user's first five minutes.
 //!
-//! Most of them name General MIDI sounds, so what they sound like depends on the shipped
-//! SoundFont being installed. Every part still names a plugin underneath, so a build without one
-//! plays the same arrangement on oscillators. `chiptune` names no programs at all and is what the
-//! composer has always done.
+//! Melodic parts name built-in physical instruments directly. `chiptune` and `game-loop` use
+//! oscillator voices; percussion keeps its kit and reverse-cymbal choices. Each instrument
+//! choice is part of the editable specification.
 
 use crate::spec::SongSpec;
 
@@ -62,8 +61,7 @@ pub fn preset(name: &str) -> Option<&'static SongPreset> {
 
 /// Every preset, in the order a menu should list them.
 ///
-/// The plain one first, because it is the one that needs no library and the one every existing
-/// piece was written with. The rest are roughly by how far they are from it.
+/// The chiptune arrangements first, followed by the band, ensemble and atmospheric styles.
 pub const PRESETS: &[SongPreset] = &[
     SongPreset {
         name: "chiptune",
@@ -82,27 +80,27 @@ pub const PRESETS: &[SongPreset] = &[
     },
     SongPreset {
         name: "city-pop",
-        description: "Electric piano and slap bass over 丸サ進行",
+        description: "Piano, bowed lead and plucked bass over 丸サ進行",
         source: CITY_POP,
     },
     SongPreset {
         name: "rock",
-        description: "Overdriven guitar, organ and a hard kit",
+        description: "Plucked guitars, bowed strings and a hard kit",
         source: ROCK,
     },
     SongPreset {
         name: "jazz-trio",
-        description: "Piano, upright bass and brushes on a ii-V-I",
+        description: "Piano and plucked bass on a swinging ii-V-I",
         source: JAZZ_TRIO,
     },
     SongPreset {
         name: "orchestral",
-        description: "Strings, horns and timpani in 3/4",
+        description: "Bowed strings, guitar and bass in 3/4",
         source: ORCHESTRAL,
     },
     SongPreset {
         name: "synthwave",
-        description: "Saw lead, analogue bass and a TR-808",
+        description: "Bowed lead, mallet arpeggios and a four-on-the-floor kit",
         source: SYNTHWAVE,
     },
     SongPreset {
@@ -224,23 +222,23 @@ intensity = 0.5
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Lead 2 (sawtooth)"
+instrument = "auris.physical.violin"
 
 [[part]]
 name    = "keys"
 role    = "chords"
-program = "Electric Piano 1"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "strings"
 role    = "pad"
-program = "String Ensemble 1"
+instrument = "auris.physical.violin"
 gain    = -19
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Electric Bass (finger)"
+instrument = "auris.physical.bass"
 gate    = 0.8
 
 [[part]]
@@ -288,7 +286,7 @@ intensity = 0.95
 melody_from = "chorus"
 "#;
 
-/// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
+/// Piano, bowed lead and plucked bass over a sixteen-beat 丸サ進行.
 ///
 /// The chorus plays 丸サ with its ii–V spelled out — `@marusa5` — which is how the genre itself
 /// intensifies the loop: the same four bars, one of them now moving twice. A chart with two
@@ -326,24 +324,24 @@ chords    = "sabi"
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Alto Sax"
+instrument = "auris.physical.violin"
 octave  = 5
 
 [[part]]
 name    = "rhodes"
 role    = "chords"
-program = "Electric Piano 1"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "stabs"
 role    = "stab"
-program = "Brass Section"
+instrument = "auris.physical.mallet"
 gain    = -17
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Slap Bass 1"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
@@ -380,7 +378,7 @@ chords    = "sabi"
 melody_from = "chorus"
 "#;
 
-/// Guitars, an organ pad and a kit that is allowed to be loud.
+/// Plucked guitars, a bowed string pad and a kit that is allowed to be loud.
 ///
 /// The verse and the chorus play the same four chords the other way round: `@axis-minor` broods
 /// from the minor tonic, and the chorus rotates the loop to open on the relative major — the
@@ -415,25 +413,25 @@ chords    = "lift"
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Overdriven Guitar"
+instrument = "auris.physical.guitar"
 
 [[part]]
 name    = "rhythm"
 role    = "chords"
-program = "Distortion Guitar"
+instrument = "auris.physical.guitar"
 octave  = 3
 gate    = 0.65
 
 [[part]]
 name    = "organ"
 role    = "pad"
-program = "Rock Organ"
+instrument = "auris.physical.violin"
 gain    = -20
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Electric Bass (pick)"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
@@ -465,7 +463,7 @@ chords    = "lift"
 melody_from = "chorus"
 "#;
 
-/// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
+/// Piano, plucked bass and a kit with space for a pronounced swing.
 const JAZZ_TRIO: &str = r#"
 performance = "jazz-trio"
 writing_style = "jazz-trio"
@@ -494,18 +492,18 @@ intensity = 0.8
 [[part]]
 name    = "piano"
 role    = "chords"
-program = "Acoustic Grand Piano"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "melody"
 role    = "melody"
-program = "Acoustic Grand Piano"
+instrument = "auris.physical.piano"
 octave  = 5
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Acoustic Bass"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
@@ -565,31 +563,31 @@ intensity = 0.4
 [[part]]
 name    = "flute"
 role    = "melody"
-program = "Flute"
+instrument = "auris.physical.violin"
 octave  = 6
 
 [[part]]
 name    = "horns"
 role    = "chords"
-program = "French Horn"
+instrument = "auris.physical.violin"
 octave  = 4
 
 [[part]]
 name    = "strings"
 role    = "pad"
-program = "String Ensemble 1"
+instrument = "auris.physical.violin"
 gain    = -13
 
 [[part]]
 name    = "harp"
 role    = "arp"
-program = "Orchestral Harp"
+instrument = "auris.physical.guitar"
 gain    = -15
 
 [[part]]
 name    = "cellos"
 role    = "bass"
-program = "Cello"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "timpani"
@@ -611,7 +609,7 @@ intensity = 1.0
 melody_from = "chorus"
 "#;
 
-/// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
+/// Bowed lead and pad over an eighth-note bass, mallet arpeggios and a four-on-the-floor kit.
 const SYNTHWAVE: &str = r#"
 performance = "synthwave"
 writing_style = "synthwave"
@@ -640,24 +638,24 @@ intensity = 0.95
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Lead 2 (sawtooth)"
+instrument = "auris.physical.violin"
 
 [[part]]
 name    = "pad"
 role    = "pad"
-program = "Pad 1 (new age)"
+instrument = "auris.physical.violin"
 gain    = -14
 
 [[part]]
 name    = "arp"
 role    = "arp"
-program = "Lead 5 (charang)"
+instrument = "auris.physical.mallet"
 gain    = -15
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Synth Bass 1"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
@@ -737,27 +735,27 @@ parts     = "pad"
 [[part]]
 name    = "pad"
 role    = "pad"
-program = "Pad 7 (halo)"
+instrument = "auris.physical.violin"
 gain    = -12
 
 [[part]]
 name    = "bells"
 role    = "melody"
-program = "Music Box"
+instrument = "auris.physical.bell"
 octave  = 6
 density = 0.2
 
 [[part]]
 name    = "glass"
 role    = "arp"
-program = "FX 3 (crystal)"
+instrument = "auris.physical.mallet"
 gain    = -18
 density = 0.25
 
 [[part]]
 name    = "cello"
 role    = "bass"
-program = "Cello"
+instrument = "auris.physical.bass"
 
 [section.verse2]
 bars      = 8
@@ -991,34 +989,12 @@ mod tests {
     }
 
     #[test]
-    fn the_plain_preset_asks_for_no_soundfont_at_all() {
-        // One preset has to work identically with and without the library, and be first in the
-        // list, because it is what somebody who has not run the fetch script will land on.
+    fn the_chiptune_presets_ask_for_no_soundfont_at_all() {
         assert_eq!(PRESETS[0].name, "chiptune");
-        for part in PRESETS[0].spec().parts {
-            assert_eq!(part.program, None, "{} asks for a font", part.name);
-        }
-        // Both chiptune arrangements work without a library; the other styles use GM sounds.
-        for preset in &PRESETS[1..] {
-            if preset.name == "game-loop" {
-                assert!(
-                    preset
-                        .spec()
-                        .parts
-                        .iter()
-                        .all(|part| part.program.is_none())
-                );
-                continue;
+        for name in ["chiptune", "game-loop"] {
+            for part in preset(name).unwrap().spec().parts {
+                assert_eq!(part.program, None, "{name} · {} asks for a font", part.name);
             }
-            assert!(
-                preset
-                    .spec()
-                    .parts
-                    .iter()
-                    .any(|part| part.program.is_some()),
-                "{} names no General MIDI sound",
-                preset.name
-            );
         }
     }
 

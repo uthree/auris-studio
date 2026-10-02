@@ -6,7 +6,7 @@ use super::{
     widgets::{ButtonState, ButtonStyle, button, button_enabled},
 };
 use crate::{app::AurisApp, theme::Theme};
-use auris_i18n::{Key, messages};
+use auris_i18n::{Key, Language, messages};
 use auris_session::{MotionFrame, MotionGeometry, MotionVoice, prelude::*};
 use gpui::{AnyElement, Bounds, Context, Pixels, Window, canvas, div, point, prelude::*, px, size};
 
@@ -17,6 +17,7 @@ pub(crate) struct PhysicalView {
     pub(crate) frozen: bool,
     pub(crate) playing: bool,
     pub(crate) pitch: u8,
+    drum_preview: bool,
     gain: f32,
 }
 impl Default for PhysicalView {
@@ -27,6 +28,7 @@ impl Default for PhysicalView {
             frozen: false,
             playing: false,
             pitch: 60,
+            drum_preview: false,
             gain: 24.0,
         }
     }
@@ -38,6 +40,7 @@ impl AurisApp {
         self.session.watch_instrument_motion(None);
         self.physical_view = PhysicalView {
             pitch: self.physical_view.pitch,
+            drum_preview: self.physical_view.drum_preview,
             gain: self.physical_view.gain,
             ..Default::default()
         };
@@ -62,6 +65,13 @@ impl AurisApp {
         });
         if source != self.physical_view.source {
             self.close_physical_view();
+            if let Some((_, id)) = &source {
+                let drums = is_drum_model(id);
+                if drums != self.physical_view.drum_preview {
+                    self.physical_view.pitch = if drums { 36 } else { 60 };
+                }
+                self.physical_view.drum_preview = drums;
+            }
             self.physical_view.source = source;
         }
         let track = self.physical_view.source.as_ref().map(|(track, _)| *track);
@@ -88,14 +98,22 @@ impl AurisApp {
             self.release_physical_preview();
         } else if let Some((track, _)) = &self.physical_view.source {
             self.session.note_on(*track, self.physical_view.pitch, 0.75);
-            self.physical_view.playing = true;
+            if self.physical_view.drum_preview {
+                // A drum preview is a strike, so the same button can immediately strike again.
+                self.session.note_off(*track, self.physical_view.pitch);
+            } else {
+                self.physical_view.playing = true;
+            }
         }
     }
     fn transpose_physical_preview(&mut self, delta: i16) {
         let playing = self.physical_view.playing;
         self.release_physical_preview();
-        self.physical_view.pitch =
-            (i16::from(self.physical_view.pitch) + delta).clamp(24, 96) as u8;
+        self.physical_view.pitch = if self.physical_view.drum_preview {
+            next_drum_preview(self.physical_view.pitch, delta > 0)
+        } else {
+            (i16::from(self.physical_view.pitch) + delta).clamp(24, 96) as u8
+        };
         if playing {
             self.toggle_physical_preview();
         }
@@ -105,14 +123,23 @@ impl AurisApp {
         let (track, id) = self.physical_view.source.as_ref()?;
         let bowed = id == "auris.physical.violin";
         let piano = id == "auris.physical.piano";
+        let drums = is_drum_model(id);
         let track = *track;
         let frame = self.physical_view.frame.unwrap_or_default();
         let theme = self.theme.clone();
         let frozen = self.physical_view.frozen;
         let playing = self.physical_view.playing;
-        let note = midi_name(i32::from(self.physical_view.pitch));
+        let language = self.language;
+        let note = if drums {
+            drum_name(self.physical_view.pitch, language).to_owned()
+        } else {
+            midi_name(i32::from(self.physical_view.pitch))
+        };
         let mut idle = frame;
         if frame.active == 0 {
+            if drums {
+                idle.geometry = drum_geometry(self.physical_view.pitch);
+            }
             for descriptor in self.session.instrument_descriptors(track).iter() {
                 if descriptor.key == "position" {
                     idle.voices[0].contact = self.session.param_value(
@@ -192,8 +219,17 @@ impl AurisApp {
                             ButtonState::available(frozen, frame.active > 0),
                             theme.accent,
                             &theme,
-                            cx.listener(|this, _, _, cx| {
+                            cx.listener(|this, _, window, cx| {
                                 this.toggle_physical_freeze();
+                                // Resuming an ended hit disables this button. Keep keyboard
+                                // input on the window instead of a removed focus target.
+                                if this
+                                    .physical_view
+                                    .frame
+                                    .is_none_or(|frame| frame.active == 0)
+                                {
+                                    window.focus(&this.focus);
+                                }
                                 cx.notify();
                             }),
                         )),
@@ -206,7 +242,11 @@ impl AurisApp {
                         .gap_2()
                         .child(button(
                             "physical-octave-down",
-                            self.t(Key::PhysicalLower),
+                            self.t(if drums {
+                                Key::PhysicalPreviousPad
+                            } else {
+                                Key::PhysicalLower
+                            }),
                             ButtonStyle::Ghost,
                             false,
                             theme.accent,
@@ -230,7 +270,11 @@ impl AurisApp {
                         ))
                         .child(button(
                             "physical-octave-up",
-                            self.t(Key::PhysicalHigher),
+                            self.t(if drums {
+                                Key::PhysicalNextPad
+                            } else {
+                                Key::PhysicalHigher
+                            }),
                             ButtonStyle::Ghost,
                             false,
                             theme.accent,
@@ -258,7 +302,7 @@ impl AurisApp {
                                         &idle,
                                         gain,
                                         &drawing_theme,
-                                        (held, released),
+                                        (held, released, language, drums),
                                         window,
                                         cx,
                                     )
@@ -277,6 +321,65 @@ impl AurisApp {
                 .into_any_element(),
         )
     }
+}
+
+fn is_drum_model(id: &str) -> bool {
+    id == "auris.synth.drumkit"
+}
+
+fn next_drum_preview(pitch: u8, forward: bool) -> u8 {
+    const KEYS: [u8; 12] = [36, 38, 42, 46, 49, 51, 41, 43, 45, 47, 48, 50];
+    let current = KEYS.iter().position(|key| *key == pitch).unwrap_or(0);
+    KEYS[(current + if forward { 1 } else { KEYS.len() - 1 }) % KEYS.len()]
+}
+
+fn drum_geometry(pitch: u8) -> MotionGeometry {
+    if matches!(pitch, 42 | 44 | 46 | 49 | 51 | 52 | 53 | 55 | 57 | 59) {
+        MotionGeometry::Plate
+    } else {
+        MotionGeometry::Membrane
+    }
+}
+
+fn drum_name(pitch: u8, language: Language) -> &'static str {
+    let key = match pitch {
+        35 | 36 => Key::RoleKick,
+        37..=40 => Key::RoleSnare,
+        42 | 44 => Key::DrumClosedHat,
+        46 => Key::DrumOpenHat,
+        49 | 52 | 55 | 57 => Key::RoleCrash,
+        51 | 53 | 59 => Key::DrumRide,
+        _ => Key::DrumTom,
+    };
+    key.get(language)
+}
+
+fn surface_lines(voice: &MotionVoice, gain: f32) -> Vec<Vec<(f32, f32)>> {
+    let mut lines = Vec::new();
+    for transpose in [false, true] {
+        for row in 0..8 {
+            let mut line = Vec::new();
+            for column in 0..8 {
+                let (x, y) = if transpose {
+                    (row, column)
+                } else {
+                    (column, row)
+                };
+                let horizontal = x as f32 / 3.5 - 1.0;
+                let vertical = y as f32 / 3.5 - 1.0;
+                if horizontal.hypot(vertical) < 1.0 {
+                    line.push((
+                        0.5 + horizontal * 0.42,
+                        vertical * 0.5 + displayed_motion(voice.points[y * 8 + x], gain) * 0.4,
+                    ));
+                }
+            }
+            if line.len() > 1 {
+                lines.push(line);
+            }
+        }
+    }
+    lines
 }
 
 fn displayed_motion(value: f32, gain: f32) -> f32 {
@@ -308,7 +411,7 @@ fn draw_motion(
     frame: &MotionFrame,
     gain: f32,
     theme: &Theme,
-    labels: (&str, &str),
+    labels: (&str, &str, Language, bool),
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
@@ -327,12 +430,22 @@ fn draw_motion(
             let left = bounds.left() + bounds.size.width * 0.22;
             let width = bounds.size.width * 0.60;
             let height = (lane * 0.35).min(rem * 2.0);
+            let geometry = voice.geometry.unwrap_or(frame.geometry);
+            let surface = matches!(geometry, MotionGeometry::Membrane | MotionGeometry::Plate);
             let label = if voice.level > 0. {
-                format!(
-                    "{} {:+.0}¢",
-                    midi_name(voice.pitch.round().clamp(0., 127.) as i32),
-                    (voice.pitch - voice.pitch.round()) * 100.
-                )
+                if labels.3 {
+                    format!(
+                        "{} {}",
+                        drum_name(voice.pitch.round() as u8, labels.2),
+                        voice.pitch.round() as u8
+                    )
+                } else {
+                    format!(
+                        "{} {:+.0}¢",
+                        midi_name(voice.pitch.round().clamp(0., 127.) as i32),
+                        (voice.pitch - voice.pitch.round()) * 100.
+                    )
+                }
             } else {
                 String::new()
             };
@@ -360,13 +473,39 @@ fn draw_motion(
                 px(1.),
                 theme.border,
             );
-            let points: Vec<_> = body_points(voice, frame.geometry, gain)
-                .into_iter()
-                .map(|(x, y)| point(left + width * x, center - height * y))
-                .collect();
+            let points: Vec<_> = if surface {
+                (0..=64)
+                    .map(|index| {
+                        let angle = index as f32 / 64.0 * std::f32::consts::TAU;
+                        (0.5 + angle.cos() * 0.42, angle.sin() * 0.5)
+                    })
+                    .collect()
+            } else {
+                body_points(voice, geometry, gain)
+            }
+            .into_iter()
+            .map(|(x, y)| point(left + width * x, center - height * y))
+            .collect();
             paint::polyline(window, &points, px(1.5), theme.accent);
-            if frame.geometry != MotionGeometry::Shell {
-                let x = left + width * voice.contact.clamp(0., 1.);
+            if surface {
+                // A tilted wire mesh exposes nodal lines without inventing motion between frames.
+                for line in surface_lines(voice, gain) {
+                    let points: Vec<_> = line
+                        .into_iter()
+                        .map(|(x, y)| point(left + width * x, center - height * y))
+                        .collect();
+                    paint::polyline(window, &points, px(1.), theme.accent);
+                }
+            }
+            if geometry != MotionGeometry::Shell {
+                let contact = voice.contact.clamp(0., 1.);
+                let x = left
+                    + width
+                        * if surface {
+                            0.5 + contact * 0.42
+                        } else {
+                            contact
+                        };
                 paint::rect(
                     window,
                     Bounds::new(
@@ -405,6 +544,87 @@ fn draw_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn drum_preview_covers_the_kit_and_surface_displacement_retains_its_scale() {
+        let mut pitch = 36;
+        let mut pitches = Vec::new();
+        for _ in 0..12 {
+            pitches.push(pitch);
+            pitch = next_drum_preview(pitch, true);
+        }
+        assert_eq!(pitch, 36);
+        assert_eq!(next_drum_preview(36, false), 50);
+        assert!(pitches.contains(&51) && pitches.contains(&46));
+        assert_eq!(drum_name(38, Language::Japanese), "スネア");
+        let mut voice = MotionVoice::default();
+        voice.points.fill(0.01);
+        let small = surface_lines(&voice, 6.0);
+        let large = surface_lines(&voice, 24.0);
+        let idle = surface_lines(&MotionVoice::default(), 6.0);
+        assert!((large[0][0].1 - idle[0][0].1 - 4.0 * (small[0][0].1 - idle[0][0].1)).abs() < 1e-6);
+        assert!(
+            small
+                .iter()
+                .flatten()
+                .all(|(x, y)| x.is_finite() && y.is_finite())
+        );
+    }
+
+    #[gpui::test]
+    fn drum_editor_exposes_repeatable_strikes_pad_selection_freeze_and_escape(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::{auxiliary_window::Surface, harness};
+        use gpui::VisualTestContext;
+        let (app, cx) = harness::open(cx);
+        let track = app.update(cx, |app, cx| {
+            let track = app.session.add_default_drum_track("Kit").unwrap();
+            app.open_plugin_window(PluginSubject::Instrument(track));
+            cx.notify();
+            track
+        });
+        harness::paint(&app, cx);
+        let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
+        let mut utility = VisualTestContext::from_window(handle.into(), cx);
+        utility.update(|window, cx| window.focus(&app.read(cx).focus));
+        assert!(utility.debug_bounds("physical-motion-canvas").is_some());
+        app.read_with(&utility, |app, _| assert_eq!(app.physical_view.pitch, 36));
+        harness::click("physical-play", &mut utility);
+        harness::click("physical-play", &mut utility);
+        app.read_with(&utility, |app, _| assert!(!app.physical_view.playing));
+        harness::click("physical-octave-up", &mut utility);
+        app.read_with(&utility, |app, _| assert_eq!(app.physical_view.pitch, 38));
+        harness::click("physical-octave-down", &mut utility);
+        app.read_with(&utility, |app, _| assert_eq!(app.physical_view.pitch, 36));
+        // Supply an observed state: the window harness deliberately has no audio callback.
+        app.update(&mut utility, |app, cx| {
+            let mut frame = MotionFrame {
+                geometry: MotionGeometry::Membrane,
+                active: 2,
+                ..Default::default()
+            };
+            frame.voices[0].geometry = Some(MotionGeometry::Membrane);
+            frame.voices[0].pitch = 36.0;
+            frame.voices[0].level = 0.5;
+            frame.voices[1].geometry = Some(MotionGeometry::Plate);
+            frame.voices[1].pitch = 49.0;
+            frame.voices[1].level = 0.3;
+            app.physical_view.frame = Some(frame);
+            app.toggle_physical_freeze();
+            cx.notify();
+        });
+        harness::paint(&app, &mut utility);
+        harness::click("physical-freeze", &mut utility);
+        app.read_with(&utility, |app, _| assert!(!app.physical_view.frozen));
+        utility.simulate_keystrokes("escape");
+        harness::paint(&app, cx);
+        app.read_with(cx, |app, _| {
+            assert!(app.plugin_window.is_none());
+            assert!(app.physical_view.source.is_none());
+            assert!(app.session.has_instrument_motion(track));
+        });
+    }
+
     #[test]
     fn projection_retains_fixed_ends_and_decay_without_frame_normalization() {
         let mut voice = MotionVoice::default();
