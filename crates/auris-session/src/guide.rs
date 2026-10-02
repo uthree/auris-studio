@@ -360,9 +360,9 @@ pub mod architecture {
     //! validated before editing. Accompaniment and lyric-song backing use the same mapping.
     //! Unknown families retain the ordinary reported fallback. Selection never rewrites notes.
     //! Shipped song presets name native physical instruments directly for their melodic parts;
-    //! chiptune and game-loop retain their oscillator voices. Percussion keeps its existing
-    //! kit and reverse-cymbal choices. The preset's instrument IDs therefore remain explicit
-    //! when its specification is edited, saved or composed again.
+    //! chiptune and game-loop retain their melodic oscillator voices. Drum parts use the native
+    //! physical kit directly; risers keep their reverse-cymbal choices. The preset's instrument
+    //! IDs remain explicit when its specification is edited, saved or composed again.
     //!
     //! What the split buys costs one thing back: the document can move while a file is being read.
     //! The placing half is where that is caught — audio decoded against a sample rate the project

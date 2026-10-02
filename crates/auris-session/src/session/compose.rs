@@ -1153,6 +1153,54 @@ mod tests {
     }
 
     #[test]
+    fn song_preset_drums_install_one_physical_kit_without_a_font() {
+        for preset in auris_compose::PRESETS {
+            let mut spec = preset.spec();
+            spec.parts.retain(|part| part.role.is_drum());
+            if spec.parts.is_empty() {
+                continue;
+            }
+            for section in spec.sections.values_mut() {
+                section
+                    .parts
+                    .retain(|name| spec.parts.iter().any(|part| &part.name == name));
+            }
+            let piece = auris_compose::compose(&spec);
+            let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
+            let report = session.compose(&piece).unwrap();
+            assert!(report.substituted.is_empty(), "{}: {report:?}", preset.name);
+            assert!(session.project().soundfonts.is_empty(), "{}", preset.name);
+            let tracks: Vec<_> = session
+                .project()
+                .tracks
+                .iter()
+                .filter_map(|track| {
+                    track
+                        .kind
+                        .as_instrument()
+                        .map(|instrument| (track, instrument))
+                })
+                .collect();
+            assert_eq!(tracks.len(), 1, "{} must share one kit", preset.name);
+            let (track, instrument) = tracks[0];
+            assert_eq!(instrument.instrument_id, auris_synth::DrumKit::ID);
+            assert_eq!(session.track_preset(track.id), None);
+            let map = DrumMap::load(&instrument.instrument_state).unwrap();
+            for part in &spec.parts {
+                assert_eq!(part.sound(), None, "{} · {}", preset.name, part.name);
+                assert_eq!(
+                    map.voices[&part.role.drum_role().unwrap()],
+                    part.drum_note().unwrap()
+                );
+            }
+            assert_eq!(
+                auris_compose::SongSpec::parse(session.project().song_spec.as_ref().unwrap()),
+                Ok(spec)
+            );
+        }
+    }
+
+    #[test]
     fn melodic_song_presets_install_their_physical_sources_without_a_font() {
         for preset in auris_compose::PRESETS {
             if matches!(preset.name, "chiptune" | "game-loop") {

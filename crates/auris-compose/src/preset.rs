@@ -21,8 +21,8 @@
 //! the build's tests rather than the user's first five minutes.
 //!
 //! Melodic parts name built-in physical instruments directly. `chiptune` and `game-loop` use
-//! oscillator voices; percussion keeps its kit and reverse-cymbal choices. Each instrument
-//! choice is part of the editable specification.
+//! oscillator voices for melody; drum parts use the physical kit and risers keep their
+//! reverse-cymbal choices. Each instrument choice is part of the editable specification.
 
 use crate::spec::SongSpec;
 
@@ -244,22 +244,22 @@ gate    = 0.8
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
@@ -346,22 +346,22 @@ instrument = "auris.physical.bass"
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
@@ -436,22 +436,22 @@ instrument = "auris.physical.bass"
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [section.verse2]
 intensity = 0.55
@@ -508,19 +508,19 @@ instrument = "auris.physical.bass"
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 gain    = -12
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 gain    = -11
 
 [[part]]
 name    = "ride"
 role    = "hat"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 
 [section.verse2]
 intensity = 0.55
@@ -592,13 +592,13 @@ instrument = "auris.physical.bass"
 [[part]]
 name    = "timpani"
 role    = "kick"
-program = "Orchestra Kit"
+instrument = "auris.synth.drumkit"
 gain    = -8
 
 [[part]]
 name    = "cymbal"
 role    = "crash"
-program = "Orchestra Kit"
+instrument = "auris.synth.drumkit"
 
 [section.verse2]
 intensity = 0.55
@@ -660,22 +660,22 @@ instrument = "auris.physical.bass"
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
