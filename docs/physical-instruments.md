@@ -16,8 +16,9 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
 | Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
 
-Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
-the other models. The piano uses one, two or three strings by register, up to 64 partials,
+Fitted filter cascades colour the piano, guitar and violin; guitar and violin add six causal
+radiation resonances. Parallel body resonances colour the other models. The piano uses one,
+two or three strings by register, up to 64 partials,
 and a velocity-dependent finite hammer pulse with passive unison coupling. The
 violin models one bowed string, with a bounded friction approximation rather than a full bow,
 bridge and wooden-body simulation. The bell mode ratios describe a designed shell, not a specific
@@ -31,7 +32,9 @@ Velocity changes both excitation energy and attack hardness. **Resonance Decay**
 time to lose 60 dB at the fundamental; higher modes decay sooner, and **Damping** adds losses.
 The guitar's allpass tuning separates interpolation from physical loss. Its decay is calibrated
 at the fundamental; damping shortens it by a factor of `1 + 3 × damping` and increases upper-mode
-loss. The bass and violin's linear interpolation also contributes frequency-dependent losses.
+loss. Guitar and violin additionally apply smooth register-dependent contact/loss curves,
+centered on G3 and A4 respectively, so the decay control is nominal at that center.
+The bass and violin's linear interpolation also contributes frequency-dependent losses.
 The [refinement account](physical-model-refinement.md) explains the radiation profiles and
 their calibration limits.
 
@@ -49,7 +52,8 @@ notes reuse the same vibrating string, and releasing the newest key returns to a
 key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
 
-MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed; CC1 scales bow
+MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed, with a
+`value^1.18` response on violin before smoothing; CC1 scales bow
 pressure. CC64 holds released piano strings until the pedal lifts. Note-off damps/releases a note,
 all-notes-off releases the whole pool, and all-sound-off uses the shared de-click envelope.
 Pitch bends act on sounding strings/modes, so the existing slide and pitch-performance stages
@@ -131,6 +135,8 @@ attacked pluck's contact, disable retired graph readers, and count callback allo
 observation enabled. Native-window harness tests cover preview, display magnification by
 keyboard, freeze/resume, scrolling to parameters, Undo, source replacement and Escape.
 
+The [radiation/register experiments](physical-extensions.md) compare causal resonances,
+register curves and bow response against real recordings with held-out temporal log-mel loss.
 The [long-note/trajectory calibration](physical-trajectories.md) measures sustained tone,
 played vibrato/glissando, expression following and release against real recordings.
 Factory piano, guitar and violin settings and radiation gains are calibrated against real

@@ -17,6 +17,7 @@ use crate::params::finite_or;
 use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments, spread_to_all_channels};
 
 mod body;
+mod calibration;
 mod legato;
 mod modal;
 mod string;
@@ -59,6 +60,19 @@ pub enum Model {
 }
 
 impl Model {
+    /// Factory radiation modes as `(frequency_hz, quality_factor, signed_gain)`.
+    ///
+    /// These fitted spectral resonances are not isolated measured bridge admittances.
+    /// They follow the broad coloration and scale with the body control, anchored at 0.65.
+    pub fn radiation_modes(self) -> [(f32, f32, f32); 6] {
+        body::radiation_modes(self)
+    }
+
+    /// Factory exponent mapping channel expression to bow motion and output expression.
+    pub fn expression_exponent(self) -> f64 {
+        if self == Self::Violin { 1.18 } else { 1.0 }
+    }
+
     /// Every physical instrument, ordered by excitation family.
     pub const ALL: [Self; 6] = [
         Self::Piano,
@@ -135,6 +149,7 @@ struct Settings {
 
 #[derive(Clone, Debug)]
 struct Voice {
+    pitch: u8,
     modal: Modal,
     string: StringModel,
     envelope: Adsr,
@@ -159,6 +174,7 @@ impl Voice {
         let mut envelope = Adsr::new();
         envelope.set_sample_rate(rate);
         Self {
+            pitch: 60,
             modal,
             string,
             envelope,
@@ -425,6 +441,7 @@ impl Physical {
 
     fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
         let frequency = pitch_to_hz(f32::from(pitch) + self.bend);
+        let settings = calibration::register(self.model, pitch, self.settings());
         let Some(voice) = self.voices.get_mut(index) else {
             return false;
         };
@@ -436,6 +453,8 @@ impl Physical {
         }
         voice.string.glide_to(frequency);
         voice.string.set_velocity(velocity);
+        voice.pitch = pitch;
+        voice.string.update_loss(settings);
         true
     }
 
@@ -457,7 +476,7 @@ impl Physical {
         let Some(assignment) = self.allocator.note_on(pitch.min(127), velocity) else {
             return;
         };
-        let settings = self.settings();
+        let settings = calibration::register(self.model, pitch, self.settings());
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
@@ -479,6 +498,7 @@ impl Physical {
         );
         voice.envelope.trigger();
         voice.held = true;
+        voice.pitch = pitch;
         voice.deferred = false;
         voice.age = 0;
         voice.contact = settings.position;
@@ -562,6 +582,7 @@ impl Parameterized for Physical {
                     self.params.at(P_RELEASE),
                 );
                 if voice.envelope.is_active() && changes_resonance {
+                    let settings = calibration::register(self.model, voice.pitch, settings);
                     if self.model.is_string() {
                         voice.string.update_loss(settings);
                     } else {
@@ -614,9 +635,9 @@ impl SegmentRenderer for Physical {
                     1 => self.pressure = 0.5 + value * 0.5,
                     7 => self.volume = value.powi(2),
                     11 => {
-                        self.expression = value;
+                        self.expression = calibration::expression(self.model, value);
                         if self.allocator.active_count() == 0 {
-                            self.expression_current = value;
+                            self.expression_current = self.expression;
                         }
                     }
                     64 if self.model == Model::Piano => {

@@ -305,7 +305,12 @@ fn guitar_fundamental_decay_is_calibrated_across_fractional_delays() {
                 hz,
             );
             let loss_db = 20.0 * (early / late).log10();
-            let expected = 60.0 * 0.5 / (2.0 / 1.6);
+            // The calibrated register curve scales nominal decay per two octaves.
+            // Measure its requested fundamental T60 independently of delay interpolation.
+            let register = (f64::from(pitch) - 55.0) / 24.0;
+            let decay = 2.0 * (-0.624 * register).exp();
+            let damping = 0.2 + 0.0624 * register;
+            let expected = 60.0 * 0.5 * (1.0 + 3.0 * damping) / decay;
             assert!(
                 (loss_db - expected).abs() < 1.5,
                 "{pitch} at {rate}: {loss_db} dB"

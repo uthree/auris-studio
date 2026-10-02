@@ -1,0 +1,232 @@
+{
+  "baseline_commit": "bb6b39502d502a38f85e7ab69ae5830ca2f0ef28",
+  "symbolic": {
+    "before_sha256": "33728ba7005456179dc97efee3e079a4766b0156d58add8b58c311cb08cb6572",
+    "after_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+    "byte_identical": false,
+    "command": "cargo run -p auris-compose --example measure",
+    "normalized_before_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+    "normalized_after_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+    "normalized_equal": true,
+    "normalization": "UTF-8 text with CRLF replaced by LF; raw files differ only in line endings"
+  },
+  "aesthetics": {
+    "model": "Meta Audiobox Aesthetics",
+    "command": "uv run tools/eval/aesthetics.py --preset all --cli <frozen-cli> --workdir <paired-render-directory> --json <scores>",
+    "seeds": "One original preset seed per preset; same written notes and no SoundFonts",
+    "interpretation": "Single-model, single-seed song diagnostics; not a listening panel or proof of perceptual improvement",
+    "before": {
+      "chiptune": {
+        "CE": 5.754,
+        "CU": 7.687,
+        "PC": 4.66,
+        "PQ": 7.858
+      },
+      "game-loop": {
+        "CE": 5.921,
+        "CU": 7.829,
+        "PC": 4.395,
+        "PQ": 7.958
+      },
+      "pop-band": {
+        "CE": 7.372,
+        "CU": 7.815,
+        "PC": 5.157,
+        "PQ": 8.062
+      },
+      "city-pop": {
+        "CE": 7.34,
+        "CU": 7.799,
+        "PC": 5.224,
+        "PQ": 8.023
+      },
+      "rock": {
+        "CE": 7.182,
+        "CU": 7.781,
+        "PC": 5.146,
+        "PQ": 7.919
+      },
+      "jazz-trio": {
+        "CE": 7.2,
+        "CU": 7.948,
+        "PC": 4.516,
+        "PQ": 8.118
+      },
+      "orchestral": {
+        "CE": 5.7,
+        "CU": 7.065,
+        "PC": 4.295,
+        "PQ": 7.423
+      },
+      "synthwave": {
+        "CE": 6.56,
+        "CU": 7.21,
+        "PC": 5.201,
+        "PQ": 7.593
+      },
+      "ambient": {
+        "CE": 4.529,
+        "CU": 6.525,
+        "PC": 2.795,
+        "PQ": 7.122
+      }
+    },
+    "after": {
+      "chiptune": {
+        "CE": 5.754,
+        "CU": 7.687,
+        "PC": 4.66,
+        "PQ": 7.858
+      },
+      "game-loop": {
+        "CE": 5.921,
+        "CU": 7.829,
+        "PC": 4.395,
+        "PQ": 7.958
+      },
+      "pop-band": {
+        "CE": 7.354,
+        "CU": 7.821,
+        "PC": 5.13,
+        "PQ": 8.06
+      },
+      "city-pop": {
+        "CE": 7.326,
+        "CU": 7.801,
+        "PC": 5.203,
+        "PQ": 8.021
+      },
+      "rock": {
+        "CE": 7.223,
+        "CU": 7.79,
+        "PC": 5.12,
+        "PQ": 7.916
+      },
+      "jazz-trio": {
+        "CE": 7.2,
+        "CU": 7.948,
+        "PC": 4.516,
+        "PQ": 8.118
+      },
+      "orchestral": {
+        "CE": 5.748,
+        "CU": 7.051,
+        "PC": 4.363,
+        "PQ": 7.4
+      },
+      "synthwave": {
+        "CE": 6.614,
+        "CU": 7.223,
+        "PC": 5.2,
+        "PQ": 7.598
+      },
+      "ambient": {
+        "CE": 4.581,
+        "CU": 6.572,
+        "PC": 2.786,
+        "PQ": 7.2
+      }
+    },
+    "means": {
+      "CE": {
+        "before": 6.395333333333334,
+        "after": 6.413444444444445,
+        "delta": 0.018111111111110745
+      },
+      "CU": {
+        "before": 7.517666666666667,
+        "after": 7.524666666666666,
+        "delta": 0.006999999999998785
+      },
+      "PC": {
+        "before": 4.598777777777778,
+        "after": 4.597,
+        "delta": -0.001777777777777878
+      },
+      "PQ": {
+        "before": 7.786222222222223,
+        "after": 7.792111111111112,
+        "delta": 0.005888888888888388
+      }
+    }
+  },
+  "callback": {
+    "sample_rate": 48000,
+    "block_frames": 256,
+    "voices": 24,
+    "motion": true,
+    "platform": "Windows x64 development host",
+    "command": "cargo run --release -p auris-synth --example physical_bench -- --motion",
+    "limitation": "One run per version; development host load is not controlled",
+    "results": {
+      "before": [
+        {
+          "model": "Piano",
+          "mean_ms": 0.982,
+          "p99_ms": 1.631
+        },
+        {
+          "model": "Guitar",
+          "mean_ms": 0.081,
+          "p99_ms": 0.086
+        },
+        {
+          "model": "Bass",
+          "mean_ms": 0.03,
+          "p99_ms": 0.032
+        },
+        {
+          "model": "Bell",
+          "mean_ms": 0.123,
+          "p99_ms": 0.154
+        },
+        {
+          "model": "Mallet",
+          "mean_ms": 0.15,
+          "p99_ms": 0.212
+        },
+        {
+          "model": "Violin",
+          "mean_ms": 0.074,
+          "p99_ms": 0.103
+        }
+      ],
+      "after": [
+        {
+          "model": "Piano",
+          "mean_ms": 0.99,
+          "p99_ms": 1.645
+        },
+        {
+          "model": "Guitar",
+          "mean_ms": 0.084,
+          "p99_ms": 0.104
+        },
+        {
+          "model": "Bass",
+          "mean_ms": 0.03,
+          "p99_ms": 0.045
+        },
+        {
+          "model": "Bell",
+          "mean_ms": 0.123,
+          "p99_ms": 0.141
+        },
+        {
+          "model": "Mallet",
+          "mean_ms": 0.149,
+          "p99_ms": 0.211
+        },
+        {
+          "model": "Violin",
+          "mean_ms": 0.077,
+          "p99_ms": 0.094
+        }
+      ]
+    }
+  },
+  "binaries_sha256": {
+    "before_cli": "82de2967395326ca10a5ff0820aab5d1391947827d6693b25734a33b9bd874ba",
+    "after_cli": "8df517d53ec4477b94fdadb7d3e230fb84d1c8771ab1da6f790e964f39b874c9"
+  }
+}

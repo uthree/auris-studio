@@ -349,6 +349,10 @@ pub mod architecture {
     //! and bowed strings use fractional-delay travelling waves, with nonlinear friction at the
     //! bow. Every voice is allocated in `prepare`, and the ordinary plugin parameter/state
     //! contract carries excitation controls through editing, automation, undo and persistence.
+    //! Guitar and violin add training-derived causal radiation resonances and smooth register
+    //! curves; violin expression maps to both bow motion and output through a fitted exponent.
+    //! Calibration recordings and copy-synthesis measurements remain development tooling,
+    //! while fixed coefficients and prepared filter state live in the instrument.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //!

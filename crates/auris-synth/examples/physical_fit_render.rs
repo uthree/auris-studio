@@ -194,8 +194,15 @@ fn main() -> Result<(), Box<dyn Error>> {
         } else {
             0.0
         };
-        description["_performance"] =
-            serde_json::json!({"expression_response_fraction": response_fraction});
+        description["_performance"] = serde_json::json!({
+            "expression_response_fraction": response_fraction,
+            "expression_exponent": Model::Violin.expression_exponent()
+        });
+        description["_radiation"] = serde_json::json!({
+            "piano": Model::Piano.radiation_modes(),
+            "guitar": Model::Guitar.radiation_modes(),
+            "violin": Model::Violin.radiation_modes()
+        });
         println!("{}", serde_json::to_string(&description)?);
         return Ok(());
     }

@@ -9,12 +9,25 @@ use auris_dsp::{Biquad, BiquadCoefficients};
 use super::Model;
 
 const BANDS: usize = 12;
+const MODES: usize = 6;
+const MODE_HZ: [f32; MODES] = [120.0, 240.0, 480.0, 960.0, 1920.0, 3840.0];
+
+pub(super) fn radiation_modes(model: Model) -> [(f32, f32, f32); MODES] {
+    let gains = match model {
+        Model::Guitar => [0.24, 0.45, -0.06, -0.69, 0.0, -0.06],
+        Model::Violin => [-0.24, -0.57, 0.12, -0.21, 0.33, 0.12],
+        _ => [0.0; MODES],
+    };
+    std::array::from_fn(|index| (MODE_HZ[index], 8.0, gains[index]))
+}
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Body {
     sections: [Biquad; BANDS],
     legacy: [Biquad; 3],
     fitted: bool,
+    modes: [Biquad; MODES],
+    mode_gains: [f32; MODES],
 }
 
 impl Body {
@@ -35,6 +48,16 @@ impl Body {
             _ => None,
         };
         self.fitted = gains.is_some();
+        self.mode_gains = radiation_modes(model).map(|(_, _, gain)| gain);
+        for (index, mode) in self.modes.iter_mut().enumerate() {
+            let hz = MODE_HZ[index];
+            if hz < rate * 0.45 {
+                mode.set_coefficients(BiquadCoefficients::bandpass(f64::from(rate), hz, 8.0));
+            } else {
+                self.mode_gains[index] = 0.0;
+                mode.set_coefficients(BiquadCoefficients::identity());
+            }
+        }
         if let Some(gains) = gains {
             for (index, (section, gain)) in self.sections.iter_mut().zip(gains).enumerate() {
                 let hz = 90.0_f32 * (10_000.0_f32 / 90.0).powf(index as f32 / 11.0);
@@ -66,7 +89,17 @@ impl Body {
                 .sections
                 .iter_mut()
                 .fold(input, |sample, section| section.process_sample(sample));
-            input + amount * (wet - input)
+            let colored = input + amount * (wet - input);
+            // Parallel modal radiation follows the broad coloration. Scale with the
+            // existing body control; factory amount 0.65 is the copy-synthesis anchor.
+            let modes: f32 = self
+                .modes
+                .iter_mut()
+                .zip(self.mode_gains)
+                .filter(|(_, gain)| *gain != 0.0)
+                .map(|(mode, gain)| gain * mode.process_sample(colored))
+                .sum();
+            colored + amount / 0.65 * modes
         } else {
             input
                 + amount
@@ -79,7 +112,12 @@ impl Body {
     }
 
     pub(super) fn reset(&mut self) {
-        for section in self.sections.iter_mut().chain(&mut self.legacy) {
+        for section in self
+            .sections
+            .iter_mut()
+            .chain(&mut self.legacy)
+            .chain(&mut self.modes)
+        {
             section.reset();
         }
     }

@@ -55,7 +55,7 @@ def body_profiles(path=REPO / "crates/auris-synth/src/physical/body.rs"):
     return profiles
 
 
-def color(audio, gains, amount=0.65, rate=RATE):
+def color(audio, gains, amount=0.65, rate=RATE, modes=()):
     """Exact causal peaking-bank surrogate; verified against the Rust renderer."""
     sections = []
     for center, gain in zip(CENTERS, gains, strict=True):
@@ -67,13 +67,23 @@ def color(audio, gains, amount=0.65, rate=RATE):
                                   1 - alpha * amplitude, a0, -2 * np.cos(omega),
                                   1 - alpha / amplitude]) / a0)
     wet = sosfilt(np.array(sections), audio, axis=-1)
-    return audio + amount * (wet - audio)
+    colored = audio + amount * (wet - audio)
+    modal = np.zeros_like(colored)
+    for hz, q, gain in modes:
+        if gain == 0 or hz >= rate * 0.45:
+            continue
+        omega = 2 * np.pi * hz / rate
+        alpha = np.sin(omega) / (2 * q)
+        section = np.array([alpha, 0, -alpha, 1 + alpha, -2 * np.cos(omega), 1 - alpha]) / (1 + alpha)
+        modal += gain * sosfilt(section.astype(np.float32).astype(float)[None, :], colored, axis=-1)
+    return colored + amount / 0.65 * modal
 
 
 class Renderer:
     def __init__(self, executable):
         self.defaults = json.loads(subprocess.check_output([str(executable), "--describe"], text=True))
         self.performance = self.defaults.pop("_performance", {"expression_response_fraction": 0.0})
+        self.radiation = self.defaults.pop("_radiation", {})
         self.process = subprocess.Popen([str(executable)], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
 
     def close(self):
@@ -138,13 +148,16 @@ def fit_model(renderer, root, manifest, model, gains, iterations, seed):
     history = []
     calls = 0
 
+    def coloration(audio, candidate):
+        return color(audio, candidate, modes=renderer.radiation.get(model, ()))
+
     def render(settings, dry=False, cohort=notes):
         return renderer.render(model, cohort, settings | ({"body": 0.0} if dry else {}),
                                manifest["seconds"], manifest["hold"])
 
     before_audio = render({})
     before = distances(target, features(before_audio))
-    surrogate = color(render({}, dry=True), gains)
+    surrogate = coloration(render({}, dry=True), gains)
     agreement = float(np.max(abs(before_audio - surrogate)))
     if agreement > 2e-4:
         raise ValueError(f"Python/Rust radiation mismatch: {agreement}")
@@ -154,7 +167,7 @@ def fit_model(renderer, root, manifest, model, gains, iterations, seed):
         nonlocal calls
         calls += 1
         settings = dict(zip(keys, map(float, vector), strict=True))
-        synth = color(render(settings, dry=True), gains)
+        synth = coloration(render(settings, dry=True), gains)
         try:
             value = float(np.mean(distances(target, features(synth))))
         except ValueError:
@@ -175,7 +188,7 @@ def fit_model(renderer, root, manifest, model, gains, iterations, seed):
         anchor = gains.copy()
 
         def residual(candidate, dry=dry, anchor=anchor):
-            synth_features = features(color(dry, candidate))
+            synth_features = features(coloration(dry, candidate))
             # Squared differences for the local fit; only keep it if primary L1 improves.
             rows = []
             for reference_features, candidate_features in zip(target, synth_features, strict=True):
@@ -186,15 +199,15 @@ def fit_model(renderer, root, manifest, model, gains, iterations, seed):
 
         fitted = least_squares(residual, gains, bounds=(-9, 9), max_nfev=16,
                                diff_step=0.002, ftol=0.005)
-        previous_error = np.mean(distances(target, features(color(dry, gains))))
-        candidate_error = np.mean(distances(target, features(color(dry, fitted.x))))
+        previous_error = np.mean(distances(target, features(coloration(dry, gains))))
+        candidate_error = np.mean(distances(target, features(coloration(dry, fitted.x))))
         if candidate_error < previous_error:
             gains = fitted.x
-        error = float(np.mean(distances(target, features(color(dry, gains)))))
+        error = float(np.mean(distances(target, features(coloration(dry, gains)))))
         history.append({"stage": stage, "loss": error, "params": params.copy(), "gains_db": gains.tolist()})
         print(f"{model}: stage {stage + 1} loss {error:.6f}", flush=True)
 
-    after_audio = color(render(params, dry=True), gains)
+    after_audio = coloration(render(params, dry=True), gains)
     train_after = distances(target, features(after_audio))
     ratios = np.sqrt(np.mean(before_audio**2, axis=1) / np.mean(after_audio**2, axis=1))
     output_gain = float(np.median(ratios))
@@ -203,7 +216,7 @@ def fit_model(renderer, root, manifest, model, gains, iterations, seed):
     validation_notes, validation_reference = load_notes(root, manifest, model, "validation")
     validation_target = features(validation_reference)
     validation_before_audio = render({}, cohort=validation_notes)
-    validation_after_audio = color(render(params, dry=True, cohort=validation_notes), gains) * output_gain
+    validation_after_audio = coloration(render(params, dry=True, cohort=validation_notes), gains) * output_gain
     validation_before = distances(validation_target, features(validation_before_audio))
     validation_after = distances(validation_target, features(validation_after_audio))
     output = root.parent / f"fit-{model}"
