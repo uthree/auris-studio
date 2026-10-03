@@ -1,6 +1,6 @@
 //! A compact guitar amplifier and analytic speaker-cabinet approximation.
 //!
-//! A tone stack precedes two asymmetric saturating stages. Eight-times oversampling
+//! A tone stack precedes one soft-clipping stage. Eight-times oversampling
 //! suppresses folded distortion harmonics; the optional cabinet follows decimation.
 //! This is a playable generic model, not a circuit or measured-IR replica of a named amp.
 
@@ -66,9 +66,10 @@ impl Default for Channel {
     }
 }
 
+// Use a single knee so the tone stack controls coloration independently of a
+// second clipping stage. Zero dB drive keeps unity small-signal gain.
 fn saturate(input: f32, drive: f32) -> f32 {
-    let preamp = (input * drive + 0.12).tanh() - 0.12_f32.tanh();
-    ((preamp * 1.6 + 0.05).tanh() - 0.05_f32.tanh()) / 1.6
+    (input * drive).tanh()
 }
 
 impl Channel {
@@ -142,7 +143,7 @@ impl GuitarAmp {
     pub fn new() -> Self {
         Self {
             params: ParamBank::new(vec![
-                ParamDescriptor::decibels(0u32, "drive_db", "Drive", 0.0, 42.0, 12.0),
+                ParamDescriptor::decibels(0u32, "drive_db", "Drive", 0.0, 48.0, 12.0),
                 ParamDescriptor::decibels(1u32, "bass_db", "Bass", -12.0, 12.0, 0.0),
                 ParamDescriptor::decibels(2u32, "mid_db", "Middle", -12.0, 12.0, 0.0),
                 ParamDescriptor::decibels(3u32, "treble_db", "Treble", -12.0, 12.0, 0.0),

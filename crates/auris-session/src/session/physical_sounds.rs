@@ -18,6 +18,9 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     if bank != 0 {
         return None;
     }
+    if patch == 71 {
+        return Some((auris_synth::Clarinet::ID, PluginState::empty()));
+    }
     let model = match patch {
         0..=7 => Model::Piano,
         8 | 11 | 14 => Model::Bell,
@@ -178,6 +181,7 @@ mod tests {
             ("bell", 14),
             ("mallet", 12),
             ("violin", 40),
+            ("clarinet", 71),
         ] {
             text.push_str(&format!(
                 "[[part]]\nname = \"{name}\"\nrole = \"melody\"\nprogram = {program}\n"
@@ -198,6 +202,30 @@ mod tests {
                     .is_some_and(|inner| inner.instrument_id == model.id())
             }));
         }
+        let clarinet = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "clarinet")
+            .unwrap();
+        assert_eq!(
+            clarinet.kind.as_instrument().unwrap().instrument_id,
+            auris_synth::Clarinet::ID
+        );
+        let clarinet_id = clarinet.id;
+        let pressure = session
+            .param_descriptors(auris_synth::Clarinet::ID)
+            .iter()
+            .find(|param| param.key == "pressure")
+            .unwrap()
+            .id;
+        session.set_param(
+            auris_core::ParamTarget::Instrument {
+                track: clarinet_id,
+                param: pressure,
+            },
+            0.64,
+        );
         let guitar = session
             .project()
             .tracks
@@ -286,5 +314,21 @@ mod tests {
                 assert!(session.undo().is_some());
             }
         }
+        let track = session.add_default_instrument_track("Clarinet").unwrap();
+        session.forget_history();
+        session.set_track_general_midi(track, 0, 71).unwrap();
+        assert_eq!(
+            session
+                .project()
+                .track(track)
+                .unwrap()
+                .kind
+                .as_instrument()
+                .unwrap()
+                .instrument_id,
+            auris_synth::Clarinet::ID
+        );
+        assert!(session.project().soundfonts.is_empty());
+        assert!(session.undo().is_some());
     }
 }

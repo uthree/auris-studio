@@ -71,7 +71,7 @@ fn drive_adds_harmonics_and_the_declared_fir_latency_is_32_frames() {
         amplitude(&audio[8000..12800], 750.0, 48000.0)
             / amplitude(&audio[8000..12800], 250.0, 48000.0)
     };
-    assert!(ratio(&lead) > ratio(&clean) * 5.0);
+    assert!(ratio(&lead) > ratio(&clean) * 4.0);
     assert_eq!(GuitarAmp::new().latency_frames(), 32);
     let mut amp = GuitarAmp::new();
     amp.set_param_by_key("drive_db", 0.0);
@@ -92,6 +92,18 @@ fn drive_adds_harmonics_and_the_declared_fir_latency_is_32_frames() {
         .unwrap()
         .0;
     assert_eq!(peak, amp.latency_frames());
+}
+
+#[test]
+fn zero_db_drive_has_unity_small_signal_gain() {
+    assert!((saturate(0.001, 1.0) / 0.001 - 1.0).abs() < 0.00001);
+    let amp = GuitarAmp::new();
+    let drive = amp
+        .parameters()
+        .iter()
+        .find(|param| param.key == "drive_db")
+        .unwrap();
+    assert_eq!(drive.max, 48.0);
 }
 
 #[test]

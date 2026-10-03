@@ -34,7 +34,8 @@ remain playable with bounded geometry and low-note voltage scaling.
 | Pickup Q | 1.883881 | Resonance sharpness |
 | Decay per Octave | 0.55 | Register-dependent decay ratio |
 
-Guitar Amp has Bass/Middle/Treble controls before two biased saturating stages. It uses
+Guitar Amp has Bass/Middle/Treble controls before a single symmetric soft-clipping stage.
+It uses
 8× oversampling with 257-tap Blackman-windowed sinc interpolation/decimation and an
 oversampled DC blocker. The fixed FIR latency is 32 host frames and is reported to the
 engine. Drive and Output smooth over 20 ms. The analytic open/closed cabinet follows
@@ -90,13 +91,14 @@ the octave decay control. The final search retained its supplied initial point; 
 bounded calibration rather than proof of a global optimum. Parameter bounds, seed and
 training IDs are retained in the fit JSON. Rounded fitted controls become factory defaults.
 
-The amp comparison fits Drive/Bass/Middle/Treble with a causal Python surrogate, six
-iterations and 112 evaluations. The existing one-stage `tanh` distortion receives its
-own training-only Drive optimization over 0–48 dB. Both receive the same RMS-normalized
-recorded clean DI, with cabinet bypass, and both are finally measured using actual
-48 kHz Rust output resampled to 24 kHz. The amp's surrogate/native relative RMS difference
-is about 0.36%; the reported scores use native PCM. Fitted pedal settings stay evaluation
-candidates and do not replace the generic amp's factory settings.
+The first amp comparison used a two-stage candidate and is retained as a historical
+diagnostic. The refined amp uses one `tanh` stage and the same 0–48 dB Drive range as the
+existing one-stage distortion baseline. Drive is fitted on all 48 training notes only;
+the final comparison renders all 48 training notes and 46 held-out validation notes in
+8-note chunks through the native 48 kHz worker, then resamples to 24 kHz. Both candidates
+receive the same RMS-normalized recorded clean DI with cabinet bypass. The full report and
+fit are `tools/eval/references/amp-refinement.json` and `amp-refinement-fit.json`;
+the chunked evaluator is `tools/eval/amp_refinement.py`.
 
 ## Measured results
 
@@ -107,11 +109,11 @@ Lower error is better. Validation includes 23 held-out pitches and both pickups.
 | DI log-mel L1 | 0.284290 | 0.123607 | 56.52% lower |
 | DI envelope L1 | 4.8095 dB | 2.2680 dB | 52.84% lower |
 | DI T90 absolute error | 0.2901 s | 0.1875 s | 35.35% lower mean |
-| Blues Driver log-mel L1 | 0.067339 | 0.079678 | 18.32% higher |
+| Blues Driver log-mel L1, validation | 0.067339 | 0.066224 | 1.66% lower |
 
 The DI baseline is the pre-change, already acoustic-calibrated Guitar with Pickup blend=1,
 not a newly fitted electric model. The pedal baseline is the separately optimized existing
-distortion, avoiding comparison against an arbitrary Drive default. DI training mel falls
+distortion, with the same Drive bounds and training-only fitting. DI training mel falls
 from 0.282219 to 0.128512. The earlier candidate without octave decay reduced validation
 mel by 49.70% but worsened envelope and T90; those diagnostic artifacts remain available.
 
@@ -119,8 +121,10 @@ Paired bootstrap uses 2,000 resamples of pitches, keeping both pickups together.
 DI mean mel delta has a descriptive 95% interval [−0.184786, −0.131593], and envelope delta
 [−3.0386, −1.9211] dB. T90 delta's interval [−0.2082, +0.0128] s crosses zero, so its
 lower mean does not establish an equally clear improvement. The pedal mel delta interval
-[+0.008795, +0.016097] favors the tuned simple distortion: the new amp is not a closer
-Blues Driver emulator. Cabinet frequency-response and anti-aliasing tests establish DSP
+[+0.008795, +0.016097] belongs to the historical two-stage candidate. The refined amp's
+validation mel falls from 0.067339 to 0.066224, with a paired delta interval
+[−0.001333, −0.000912]; its training mel falls from 0.0707509 to
+0.0693664. Cabinet frequency-response and anti-aliasing tests establish DSP
 behavior, not fidelity to a recorded amplifier/cabinet. These intervals are descriptive
 after model development rather than an untouched final test or a perceptual-quality score.
 
@@ -140,29 +144,21 @@ and equal-RMS audition provenance.
 
 ## Reproducing and auditioning
 
-Preserve a release `physical_fit_render` worker from commit `ba18d5e` as the baseline.
-The old worker builds in a separate checkout; keep it before building the new executable.
-Use `.exe` suffixes on Windows. To replay the frozen measurements:
+The original DI measurements used workers from `ba18d5e` and `f022ceb`.
+For the current amp comparison, preserve a release `physical_fit_render` worker
+from `f022ceb` as `<before-worker>` in a separate checkout. Use `.exe` suffixes
+on Windows. To replay the current full-cohort amp comparison:
 
 ```sh
 cargo build --release -p auris-synth --example physical_fit_render
 uv run tools/eval/fetch_electric_reference.py target/electric-guitar/reference
+uv run tools/eval/amp_refinement.py --renderer <new-worker> --baseline <before-worker> --fit tools/eval/references/amp-refinement-fit.json --out target/physical-next/amp-validation.json
 ```
 
-Copy `electric-di-fit.json`, `electric-amp-fit.json` and `electric-simple-fit.json` from
-`tools/eval/references/` to `target/electric-guitar/` as `di-fit.json`, `amp-fit.json` and
-`simple-fit.json`, then run:
+To repeat the current amp's training search instead of replaying retained controls:
 
 ```sh
-uv run tools/eval/electric_copy.py target/electric-guitar/reference --stage evaluate --renderer <new-worker> --baseline <before-worker> --out target/electric-guitar/validation.json
-```
-
-To repeat the searches instead of replaying retained controls:
-
-```sh
-uv run tools/eval/electric_copy.py target/electric-guitar/reference --stage di --prior tools/eval/references/electric-di-initial-fit.json --iterations 8 --out target/electric-guitar/di-fit.json
-uv run tools/eval/electric_copy.py target/electric-guitar/reference --stage amp --iterations 6 --out target/electric-guitar/amp-fit.json
-uv run tools/eval/electric_copy.py target/electric-guitar/reference --stage simple --out target/electric-guitar/simple-fit.json
+uv run tools/eval/amp_refinement.py --renderer <new-worker> --baseline <before-worker> --out target/physical-next/amp-validation.json
 ```
 
 Create three editable, sample-free projects and their native WAV exports:

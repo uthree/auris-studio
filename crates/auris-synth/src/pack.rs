@@ -3,6 +3,7 @@
 use auris_core::{PluginPack, PluginRegistry};
 
 use crate::chiptune::Chiptune;
+use crate::clarinet::Clarinet;
 use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
@@ -26,6 +27,7 @@ impl PluginPack for SynthPack {
         for model in Model::ALL {
             registry.register_instrument(move || Box::new(Physical::new(model)));
         }
+        registry.register_instrument(|| Box::new(Clarinet::new()));
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
@@ -107,6 +109,7 @@ mod tests {
             vec![
                 "auris.physical.bass",
                 "auris.physical.bell",
+                "auris.physical.clarinet",
                 "auris.physical.electric_guitar",
                 "auris.physical.guitar",
                 "auris.physical.mallet",
@@ -119,7 +122,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 12);
+        assert_eq!(registry.len(), 13);
         assert_eq!(registry.effects().count(), 0);
     }
 

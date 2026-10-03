@@ -1,6 +1,6 @@
 # Physical instruments
 
-Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet or Violin** in the sound library.
+Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin or Clarinet** in the sound library.
 Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
 New melodic tracks use Physical Piano. No sample files or network setup are needed.
 
@@ -16,9 +16,10 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
 | Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
+| Clarinet | Nonlinear single reed coupled to a cylindrical-bore waveguide | Breath pressure, reed stiffness, breath noise, attack and release |
 
 Fitted filter cascades colour the piano, guitar and violin; guitar and violin add six causal
-radiation resonances. Parallel body resonances colour the other models. The piano uses one,
+radiation resonances. Parallel body resonances colour bass, bell and mallet. The piano uses one,
 two or three strings by register, up to 64 partials,
 and a velocity-dependent finite hammer pulse with passive unison coupling. The
 violin models one bowed string, with a bounded friction approximation rather than a full bow,
@@ -60,12 +61,18 @@ notes reuse the same vibrating string, and releasing the newest key returns to a
 key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
 
+Clarinet **Breath Pressure**, **Reed Stiffness** and **Breath Noise** control its sounding
+reed/bore junction. CC11 smooths breath drive and output expression over 20 ms. It has
+16 voices, and its **Attack** and **Release** use the shared ADSR. The
+[clarinet calibration account](clarinet-calibration.md) gives real-recording comparisons
+and the model's supported measurement range.
+
 MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed, with a
 `value^1.18` response on violin before smoothing; CC1 scales bow
 pressure. CC64 holds released piano strings until the pedal lifts. Note-off damps/releases a note,
 all-notes-off releases the whole pool, and all-sound-off uses the shared de-click envelope.
 Pitch bends act on sounding strings/modes, so the existing slide and pitch-performance stages
-can play these instruments. The pool holds up to 24 voices and steals released/quiet voices first.
+can play these instruments. The string/modal pool holds up to 24 voices and steals released/quiet voices first.
 Excitation is deterministic and rendering is independent of block size.
 
 ## Composition
@@ -82,9 +89,9 @@ role = "chords"
 instrument = "auris.physical.guitar"
 ```
 
-The composer recognises native piano, guitar, bass and violin IDs when choosing editable stroke,
+The composer recognises native piano, guitar, bass, violin and clarinet IDs when choosing editable stroke,
 strum, mute, slide and pitch-performance stages. Existing GM family hints also resolve to these
-models: piano/electric piano, guitar, bass, bells, mallets and strings. A muted-guitar hint starts
+models: piano/electric piano, guitar, bass, bells, mallets, strings and clarinet (GM 71). A muted-guitar hint starts
 with more damping; picked/slap bass starts with harder contact; string pads start with gentler
 bow pressure and a longer release. These are starting parameters for Auris instruments, not GM
 patch emulation. Drum hints use the built-in Drum Kit.

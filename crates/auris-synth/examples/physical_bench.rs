@@ -8,6 +8,9 @@ use auris_core::{
 use auris_synth::{Model, Physical};
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--clarinet") {
+        measure_clarinet();
+    }
     if std::env::args().any(|arg| arg == "--amp") {
         measure_amp();
     }
@@ -47,6 +50,41 @@ fn main() {
             mean / (frames as f64 / rate * 1000.0) * 100.0
         );
     }
+}
+
+fn measure_clarinet() {
+    let rate = 48_000.0;
+    let frames = 256;
+    let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
+    let mut instrument = auris_synth::Clarinet::new();
+    instrument.prepare(&PrepareContext::new(rate, frames, 2));
+    let mut buffer = AudioBuffer::stereo(frames, rate);
+    let events: Vec<_> = (0..16)
+        .map(|index| NoteEvent::NoteOn {
+            frame: 0,
+            pitch: 50 + index,
+            velocity: 0.8,
+        })
+        .collect();
+    instrument.process(&events, &mut buffer, &context);
+    // Let all reed/bore feedback loops reach their sustained state before timing.
+    for _ in 0..96 {
+        instrument.process(&[], &mut buffer, &context);
+    }
+    let mut times = Vec::with_capacity(512);
+    for _ in 0..512 {
+        let started = Instant::now();
+        instrument.process(&[], &mut buffer, &context);
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+        std::hint::black_box(&buffer);
+    }
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    times.sort_by(f64::total_cmp);
+    println!(
+        "Clarinet (16 voices): mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget",
+        times[506],
+        mean / (frames as f64 / rate * 1000.0) * 100.0
+    );
 }
 
 fn measure_amp() {

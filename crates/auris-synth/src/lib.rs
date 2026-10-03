@@ -17,8 +17,9 @@
 //! instrument with struck membrane and metal-plate modes, shared hat choking and optional
 //! mechanical observation. [`SynthPack`] registers every instrument with a
 //! [`PluginRegistry`](auris_core::PluginRegistry).
-//! [`Physical`] adds six sample-free instruments using modal and travelling-wave models;
+//! [`Physical`] adds seven sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.
+//! [`Clarinet`] couples a nonlinear single reed to a cylindrical-bore waveguide.
 //!
 //! # Realtime behaviour
 //!
@@ -46,6 +47,7 @@
 #![warn(missing_docs)]
 
 pub mod chiptune;
+pub mod clarinet;
 pub mod drumkit;
 pub mod fm2;
 pub mod lfo;
@@ -62,6 +64,7 @@ pub mod voice;
 mod test_support;
 
 pub use chiptune::Chiptune;
+pub use clarinet::Clarinet;
 pub use drumkit::DrumKit;
 pub use fm2::Fm2;
 pub use noisedrum::NoiseDrum;

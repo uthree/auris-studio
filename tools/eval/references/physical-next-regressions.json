@@ -1,0 +1,3093 @@
+{
+  "baseline_commit": "f022ceb",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "cli_before_sha256": "e9b52c7178151b2a44f1396fd63e7905171061df6c213cbf95e988689bc9bb41",
+  "cli_after_sha256": "1fd628c008f302f2f853378ff66f7e5abfd547606293e16e6c5b5c7d00ab0098",
+  "renderer_sha256": "3f57019dd0c1cfac855275828c456dcb288458001b6cc36c9760c5beda4c59bd",
+  "symbolic_rows_unchanged": true,
+  "symbolic_before_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+  "symbolic_after_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+  "presets": {
+    "chiptune": {
+      "before": {
+        "CE": 5.726,
+        "CU": 7.66,
+        "PC": 4.542,
+        "PQ": 7.825
+      },
+      "after": {
+        "CE": 5.726,
+        "CU": 7.66,
+        "PC": 4.542,
+        "PQ": 7.825
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "88522ad7c6df4b07093b7f6408ce5ee51a8b3a8dd4fcc3fe15a540a3e3a58f85",
+      "wav_after_sha256": "88522ad7c6df4b07093b7f6408ce5ee51a8b3a8dd4fcc3fe15a540a3e3a58f85"
+    },
+    "game-loop": {
+      "before": {
+        "CE": 5.854,
+        "CU": 7.79,
+        "PC": 4.316,
+        "PQ": 7.931
+      },
+      "after": {
+        "CE": 5.854,
+        "CU": 7.79,
+        "PC": 4.316,
+        "PQ": 7.931
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "c2c1dca459e711dd8c639b9e5082e33e92568186a93c0c542916dacfb322cbfe",
+      "wav_after_sha256": "c2c1dca459e711dd8c639b9e5082e33e92568186a93c0c542916dacfb322cbfe"
+    },
+    "pop-band": {
+      "before": {
+        "CE": 7.375,
+        "CU": 7.855,
+        "PC": 5.106,
+        "PQ": 8.081
+      },
+      "after": {
+        "CE": 7.375,
+        "CU": 7.855,
+        "PC": 5.106,
+        "PQ": 8.081
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "c591f3161c797aaf5ff49b82ae04c06d0ba292371db97bec84c3f6c8112ad0a9",
+      "wav_after_sha256": "c591f3161c797aaf5ff49b82ae04c06d0ba292371db97bec84c3f6c8112ad0a9"
+    },
+    "city-pop": {
+      "before": {
+        "CE": 7.233,
+        "CU": 7.786,
+        "PC": 5.17,
+        "PQ": 8.009
+      },
+      "after": {
+        "CE": 7.233,
+        "CU": 7.786,
+        "PC": 5.17,
+        "PQ": 8.009
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ff21af4c947643f0c8ad46c43ebec92ca2576765e1cb07f8219f1a3d7deddca8",
+      "wav_after_sha256": "ff21af4c947643f0c8ad46c43ebec92ca2576765e1cb07f8219f1a3d7deddca8"
+    },
+    "rock": {
+      "before": {
+        "CE": 7.352,
+        "CU": 7.855,
+        "PC": 5.142,
+        "PQ": 7.968
+      },
+      "after": {
+        "CE": 7.352,
+        "CU": 7.855,
+        "PC": 5.142,
+        "PQ": 7.968
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "83d6cf67bcf86273eec447f3a57e7084517d93290e8c83398c55766d55ace92c",
+      "wav_after_sha256": "83d6cf67bcf86273eec447f3a57e7084517d93290e8c83398c55766d55ace92c"
+    },
+    "jazz-trio": {
+      "before": {
+        "CE": 7.151,
+        "CU": 7.959,
+        "PC": 4.435,
+        "PQ": 8.138
+      },
+      "after": {
+        "CE": 7.151,
+        "CU": 7.959,
+        "PC": 4.435,
+        "PQ": 8.138
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ab5b9d462254b0371ad7c1ee985157f17be5d6c717c5963d1c9ef091dfb7c8fc",
+      "wav_after_sha256": "ab5b9d462254b0371ad7c1ee985157f17be5d6c717c5963d1c9ef091dfb7c8fc"
+    },
+    "orchestral": {
+      "before": {
+        "CE": 5.483,
+        "CU": 7.003,
+        "PC": 4.148,
+        "PQ": 7.403
+      },
+      "after": {
+        "CE": 5.483,
+        "CU": 7.003,
+        "PC": 4.148,
+        "PQ": 7.403
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "f3b6d28956cddb7f5ed5344811929b0a04cbd8382d2229d6dbfdb0d3aa109f7f",
+      "wav_after_sha256": "f3b6d28956cddb7f5ed5344811929b0a04cbd8382d2229d6dbfdb0d3aa109f7f"
+    },
+    "synthwave": {
+      "before": {
+        "CE": 6.542,
+        "CU": 7.217,
+        "PC": 5.153,
+        "PQ": 7.588
+      },
+      "after": {
+        "CE": 6.542,
+        "CU": 7.217,
+        "PC": 5.153,
+        "PQ": 7.588
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "61e6c18d0030f3028bab711bf9bdf2f61cbcbd782db9823ed77e2851700bb5a5",
+      "wav_after_sha256": "61e6c18d0030f3028bab711bf9bdf2f61cbcbd782db9823ed77e2851700bb5a5"
+    },
+    "ambient": {
+      "before": {
+        "CE": 4.011,
+        "CU": 6.245,
+        "PC": 2.827,
+        "PQ": 6.838
+      },
+      "after": {
+        "CE": 4.011,
+        "CU": 6.245,
+        "PC": 2.827,
+        "PQ": 6.838
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ea5a0773ac20c2e92529af01c900d1164e313a16ab4637892cf9f27355a6fbf8",
+      "wav_after_sha256": "ea5a0773ac20c2e92529af01c900d1164e313a16ab4637892cf9f27355a6fbf8"
+    }
+  },
+  "interpretation": "Preset regression only: these nine presets do not exercise the new clarinet or amp. Copy-synthesis reports measure the changed plugins separately. Local timings do not guarantee realtime performance on every host.",
+  "runtime": {
+    "rate": 48000,
+    "channels": 2,
+    "frames": 256,
+    "blocks": 512,
+    "callback_budget_ms": 5.333333333333333,
+    "measurement": [
+      "Clarinet (16 voices): mean 0.016 ms, p99 0.017 ms, 0.3% of 5.333 ms callback budget",
+      "ElectricGuitar + GuitarAmp: mean 0.270 ms, p99 0.290 ms, 5.1% of 5.333 ms callback budget"
+    ],
+    "note": "Final run after builds/scoring completed; earlier concurrent-build run had scheduler outliers."
+  },
+  "clarinet_tuning": {
+    "conditions": 276,
+    "pitches": [
+      48,
+      93
+    ],
+    "velocities": [
+      0.35,
+      0.65,
+      0.95
+    ],
+    "native_rates": [
+      24000,
+      48000
+    ],
+    "protocol": "1.2-second notes, steady-state after 350 ms; DC-subtracted Hann FFT; maximum within 0.8-1.2 times expected fundamental, log-parabolic bin interpolation",
+    "maximum_absolute_cents": 19.377831860525863,
+    "maximum_dc_fraction": 0.0029575802827588793,
+    "minimum_fundamental_peak_fraction": 1.0,
+    "reference_range": {
+      "24000": {
+        "pitches": [
+          50,
+          83
+        ],
+        "maximum_absolute_cents": 8.88226632032957
+      },
+      "48000": {
+        "pitches": [
+          50,
+          83
+        ],
+        "maximum_absolute_cents": 4.925141142770119
+      }
+    },
+    "rows": [
+      {
+        "pitch": 48,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.10477022425394045,
+        "rms": 0.1354896849895377,
+        "dc_fraction": 0.0015520969372818712,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 48,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.2405133101842682,
+        "rms": 0.2530632218916367,
+        "dc_fraction": 0.0014809688866307925,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 48,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.3439080673211456,
+        "rms": 0.37175134101388874,
+        "dc_fraction": 0.0014244337907355056,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.1555176798050121,
+        "rms": 0.13518170126035053,
+        "dc_fraction": 0.0016710629281346226,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.2193392501902722,
+        "rms": 0.2525250509786715,
+        "dc_fraction": 0.0017051443595943066,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.29308397491247945,
+        "rms": 0.370961954550305,
+        "dc_fraction": 0.0017467065631540683,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.5816057328655525,
+        "rms": 0.1352721919749319,
+        "dc_fraction": 0.0017925796987207363,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.6668027682097565,
+        "rms": 0.2526961002798593,
+        "dc_fraction": 0.0018368806642902532,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.7194601890458144,
+        "rms": 0.37122956816364916,
+        "dc_fraction": 0.0018632127717358874,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.1879641351317882,
+        "rms": 0.13557493616118307,
+        "dc_fraction": 1.4912521896023074e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.409123303021171,
+        "rms": 0.25323479550742733,
+        "dc_fraction": 0.00019942667936696535,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.6653308282829002,
+        "rms": 0.37198002545603837,
+        "dc_fraction": 0.00043693328032773046,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.6275024030355335,
+        "rms": 0.13531628262000572,
+        "dc_fraction": 0.0002695959807101887,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.8232489781057508,
+        "rms": 0.2527813615819791,
+        "dc_fraction": 0.00016041351607479912,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.0257356598616927,
+        "rms": 0.37135699736426997,
+        "dc_fraction": 5.203073340807524e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.2910889440638122,
+        "rms": 0.13494493033097735,
+        "dc_fraction": 0.002278326250636442,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.39724493957117263,
+        "rms": 0.2520985092135492,
+        "dc_fraction": 0.002141609065234199,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.5139824058433318,
+        "rms": 0.3703278049510912,
+        "dc_fraction": 0.002008514509599703,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.8883197558337645,
+        "rms": 0.1353873007098251,
+        "dc_fraction": 0.0009915736257690442,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.186081136662642,
+        "rms": 0.2529138641121992,
+        "dc_fraction": 0.0008282302116763076,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.5206623916628315,
+        "rms": 0.3715482020379947,
+        "dc_fraction": 0.000659136202260291,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.688502900523968,
+        "rms": 0.13483189553145333,
+        "dc_fraction": 0.0019406922730175532,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.8796892935785523,
+        "rms": 0.251887197197655,
+        "dc_fraction": 0.0018008936446015076,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.0588105684069864,
+        "rms": 0.37004994799234353,
+        "dc_fraction": 0.0016479204212530405,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.6757178584394475,
+        "rms": 0.13479827920409507,
+        "dc_fraction": 0.0024466306985738606,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.8758267692667879,
+        "rms": 0.25183840789500694,
+        "dc_fraction": 0.002318659782369029,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.107401628971438,
+        "rms": 0.3699841118616151,
+        "dc_fraction": 0.002118576876987913,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.3346872569906061,
+        "rms": 0.1341086945351605,
+        "dc_fraction": 0.0001885689000522858,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.1965226603252108,
+        "rms": 0.2505804894798382,
+        "dc_fraction": 0.0001143197480981886,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.05020121053253734,
+        "rms": 0.3681663094379281,
+        "dc_fraction": 1.3762631901878682e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.49498942482423036,
+        "rms": 0.13404167869767247,
+        "dc_fraction": 0.00029514870293008335,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.4948648080903396,
+        "rms": 0.2505048887876525,
+        "dc_fraction": 0.000300555006832448,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.27640857542118513,
+        "rms": 0.3678950677123725,
+        "dc_fraction": 0.00034899988073212434,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.12127753649666159,
+        "rms": 0.13379971700004117,
+        "dc_fraction": 0.0005187053219797178,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.24138579423898035,
+        "rms": 0.2500151058752869,
+        "dc_fraction": 0.00059179254237864,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.3702423592327727,
+        "rms": 0.36735907074192253,
+        "dc_fraction": 0.0006534759485060688,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.3711478542506008,
+        "rms": 0.1347278866331435,
+        "dc_fraction": 0.0004660363015044961,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.7874847456968281,
+        "rms": 0.25173507485098895,
+        "dc_fraction": 0.0006487538385576429,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.2713685470858156,
+        "rms": 0.3698480509264594,
+        "dc_fraction": 0.000387546956379345,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.7468550834484624,
+        "rms": 0.13366903438545552,
+        "dc_fraction": 0.0011975321928873685,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.9270051008648316,
+        "rms": 0.24977519845831714,
+        "dc_fraction": 0.001092538337325977,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.1561381292697153,
+        "rms": 0.36700920209748245,
+        "dc_fraction": 0.0009588584201735282,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.5398260209986427,
+        "rms": 0.1344215345541744,
+        "dc_fraction": 0.0015451425434340731,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.9584687806460344,
+        "rms": 0.2511661749626211,
+        "dc_fraction": 0.001285844415659935,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.4389298583724517,
+        "rms": 0.36904462210013383,
+        "dc_fraction": 0.0010198729734988297,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.12264631775402286,
+        "rms": 0.13293736358522282,
+        "dc_fraction": 1.3572204293297827e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.0004083601202860977,
+        "rms": 0.24844980963338797,
+        "dc_fraction": 0.00017352249407821146,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.12787950848933194,
+        "rms": 0.3651109350147343,
+        "dc_fraction": 0.0003326835608279611,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.4209937996273693,
+        "rms": 0.13273415836666247,
+        "dc_fraction": 0.0008727219245506139,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.5711905717695296,
+        "rms": 0.24806810086184025,
+        "dc_fraction": 0.0008487194519290303,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.7212417442554353,
+        "rms": 0.36456538215601475,
+        "dc_fraction": 0.0007079437831396846,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.6270568979734774,
+        "rms": 0.13257049207345314,
+        "dc_fraction": 0.00015433878400786805,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.80951797872803,
+        "rms": 0.2477844173517639,
+        "dc_fraction": 5.233929530416696e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.010100654145834,
+        "rms": 0.36415729707557337,
+        "dc_fraction": 5.593461055455659e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.10470589454094653,
+        "rms": 0.13216602264147215,
+        "dc_fraction": 0.0008027747799141057,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.2321527676906297,
+        "rms": 0.24705205256361684,
+        "dc_fraction": 0.0009350579756398035,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.38118927371293176,
+        "rms": 0.3630949473910482,
+        "dc_fraction": 0.0011039746010024132,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.2382087353716298,
+        "rms": 0.13196786621838216,
+        "dc_fraction": 0.0004368143610454132,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.458383349798959,
+        "rms": 0.24669523004591815,
+        "dc_fraction": 0.0003099188066764178,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.6604873075480832,
+        "rms": 0.3626047068785789,
+        "dc_fraction": 0.00017969258398187822,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.774521475376788,
+        "rms": 0.1337812447377364,
+        "dc_fraction": 0.0012081257333099663,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -3.6041051439137073,
+        "rms": 0.24998917213409758,
+        "dc_fraction": 0.0003126445289601006,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -4.934188918332842,
+        "rms": 0.3673258269395388,
+        "dc_fraction": 6.68608797824311e-07,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.5167037761460291,
+        "rms": 0.1318809754066532,
+        "dc_fraction": 0.0006896057220666168,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.846153687965745,
+        "rms": 0.24645264268433348,
+        "dc_fraction": 0.001019219505160783,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 2.113554830788066,
+        "rms": 0.36228590564986995,
+        "dc_fraction": 0.00124787033514331,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.4432356788876197,
+        "rms": 0.13165516496168816,
+        "dc_fraction": 0.00022001431687676098,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.90490084511269,
+        "rms": 0.2461335295790442,
+        "dc_fraction": 0.0004708410649641078,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.28048911065754,
+        "rms": 0.3618154077758896,
+        "dc_fraction": 0.0006908318515434133,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.4665935921859723,
+        "rms": 0.13104191562767778,
+        "dc_fraction": 0.00034975067547535806,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.807811725278971,
+        "rms": 0.24499947637629702,
+        "dc_fraction": 8.561264928206066e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 2.1953125158948166,
+        "rms": 0.3601588434450869,
+        "dc_fraction": 0.0003110334896233821,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -4.996320787201983,
+        "rms": 0.1344638916410821,
+        "dc_fraction": 0.0010907667072536152,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -4.996340506549487,
+        "rms": 0.2516717843268822,
+        "dc_fraction": 0.001088445744666894,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -4.99635604596204,
+        "rms": 0.37017073947872137,
+        "dc_fraction": 0.001086870423553868,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.8512317264643856,
+        "rms": 0.1299969239371494,
+        "dc_fraction": 4.488138410785111e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.1760583176302062,
+        "rms": 0.24312379171648968,
+        "dc_fraction": 0.00022083432855394563,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.5135080668373884,
+        "rms": 0.3574913180463252,
+        "dc_fraction": 0.00040505400973852673,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.21428063007814693,
+        "rms": 0.12928990349208697,
+        "dc_fraction": 0.00030520522235502053,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.4612828921476839,
+        "rms": 0.24183309130587138,
+        "dc_fraction": 0.0005552288924305377,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.7183016632358487,
+        "rms": 0.35561430019643886,
+        "dc_fraction": 0.0008173087339198998,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 1.940082527075682,
+        "rms": 0.1295717108610654,
+        "dc_fraction": 0.0005001980505520224,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 2.30041263926261,
+        "rms": 0.24234197827786233,
+        "dc_fraction": 0.0007165369395434277,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.0868311045089794,
+        "rms": 0.356306984172488,
+        "dc_fraction": 0.00023539168808542335,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.0309950482687045,
+        "rms": 0.13003987988006732,
+        "dc_fraction": 0.0004709906346350939,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.5432556101981088,
+        "rms": 0.24323963438378413,
+        "dc_fraction": 0.000793720874977968,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 4.255545173339012,
+        "rms": 0.35766436263192636,
+        "dc_fraction": 4.919667822920558e-06,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.435320754641323,
+        "rms": 0.12995878704089012,
+        "dc_fraction": 0.00021491625991633403,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 4.298655202256523,
+        "rms": 0.24306096397225196,
+        "dc_fraction": 0.00020484156077193313,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 5.1142711043504265,
+        "rms": 0.357419873126323,
+        "dc_fraction": 0.0006418518426664912,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.119802316424635,
+        "rms": 0.12897125043665061,
+        "dc_fraction": 0.0001985663498008754,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.9198592988081407,
+        "rms": 0.2412457620657592,
+        "dc_fraction": 0.00030824102867260775,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 4.6462595126227395,
+        "rms": 0.35480238412266907,
+        "dc_fraction": 0.0004908851370203277,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 2.1160153150095575,
+        "rms": 0.12739256108253208,
+        "dc_fraction": 0.00030757943444416043,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 2.6358863126526044,
+        "rms": 0.2384015894841923,
+        "dc_fraction": 0.0005342381124185499,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 3.13675452430679,
+        "rms": 0.3507189240385924,
+        "dc_fraction": 7.245939487935429e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.22427160593830764,
+        "rms": 0.1260055448916942,
+        "dc_fraction": 5.047458129872782e-06,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.20213110455355182,
+        "rms": 0.23587945496607213,
+        "dc_fraction": 0.00013085257025197136,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.6416671014055323,
+        "rms": 0.3470774601494529,
+        "dc_fraction": 0.00038855025724539674,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.2150346794038132,
+        "rms": 0.1257143153684812,
+        "dc_fraction": 0.00030221213963373047,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.6465792920266415,
+        "rms": 0.23538943090645026,
+        "dc_fraction": 0.00037768500667376115,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.1753420434441755,
+        "rms": 0.34641791652488657,
+        "dc_fraction": 5.965667402652636e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -5.672708695488809,
+        "rms": 0.12897833805376696,
+        "dc_fraction": 0.00013928241338914384,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -7.082010564691792,
+        "rms": 0.24134085428515775,
+        "dc_fraction": 0.00012617168428542385,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -8.88226632032957,
+        "rms": 0.3550167138243312,
+        "dc_fraction": 0.00040343659226566394,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 5.663257713799419,
+        "rms": 0.12782122483664243,
+        "dc_fraction": 0.0004245398406137355,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 6.938263842705167,
+        "rms": 0.23921552546720917,
+        "dc_fraction": 2.7698711537980464e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 8.426633272111918,
+        "rms": 0.35191061489160674,
+        "dc_fraction": 1.0484112671797802e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.6649574687891773,
+        "rms": 0.12306859182444849,
+        "dc_fraction": 0.0003203074603985781,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.6744332655132178,
+        "rms": 0.23053433325162917,
+        "dc_fraction": 8.722404550945598e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 0.09238799352575144,
+        "rms": 0.33937453899945197,
+        "dc_fraction": 0.0002647762622579871,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -5.399432982854145,
+        "rms": 0.1259328515009307,
+        "dc_fraction": 5.9349888838282195e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -6.737946496870988,
+        "rms": 0.2358252430629597,
+        "dc_fraction": 0.00019732788239067132,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -8.100026972910268,
+        "rms": 0.34714034846776004,
+        "dc_fraction": 2.4117047711654743e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 5.0143163776457795,
+        "rms": 0.12413020607801131,
+        "dc_fraction": 0.0003798145585648685,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 6.218550063020411,
+        "rms": 0.2325109937607678,
+        "dc_fraction": 5.417812820044758e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 7.486251652619625,
+        "rms": 0.3422950185853624,
+        "dc_fraction": 0.00010519728513440139,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.9973011310410873,
+        "rms": 0.12092525419802959,
+        "dc_fraction": 0.0003686090109612939,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.605045825274891,
+        "rms": 0.22674587967750298,
+        "dc_fraction": 0.00011313082976202374,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -3.367539480744271,
+        "rms": 0.33411947674990916,
+        "dc_fraction": 0.00015135170078977903,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 9.772103162343827,
+        "rms": 0.12673163462515577,
+        "dc_fraction": 6.527176726423421e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 12.947945440278419,
+        "rms": 0.23710632783082813,
+        "dc_fraction": 0.00011813828063597778,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 19.377831860525863,
+        "rms": 0.3488289075240681,
+        "dc_fraction": 0.00026898971638181473,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -0.7937620823707564,
+        "rms": 0.11835334692122508,
+        "dc_fraction": 3.612224051635649e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -1.4256074562632153,
+        "rms": 0.22210887751779526,
+        "dc_fraction": 0.0002316168842460045,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -2.108269847944622,
+        "rms": 0.32745731904366665,
+        "dc_fraction": 6.654093582072335e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 10.442267875610215,
+        "rms": 0.12504950266291961,
+        "dc_fraction": 0.00019153959947377838,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 13.552948167271044,
+        "rms": 0.23413256306845834,
+        "dc_fraction": 9.620969448399765e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 18.10983495095875,
+        "rms": 0.3443542579772719,
+        "dc_fraction": 0.0001555416868069763,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -3.0432403497624714,
+        "rms": 0.116706635340414,
+        "dc_fraction": 2.4933695053742615e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -3.5566455105527486,
+        "rms": 0.2191440223329402,
+        "dc_fraction": 4.3392877041564374e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -4.624951083563532,
+        "rms": 0.32326834617911465,
+        "dc_fraction": 0.00012634323916022337,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 6.831391682100278,
+        "rms": 0.11825997538569735,
+        "dc_fraction": 0.0002790782208101503,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 8.529357752693102,
+        "rms": 0.22193332589881415,
+        "dc_fraction": 3.6763073004280626e-06,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": 10.130066939843337,
+        "rms": 0.3272425309048752,
+        "dc_fraction": 0.00018107913200773353,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -8.541645868263814,
+        "rms": 0.11894053545129432,
+        "dc_fraction": 0.00023375615876682627,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -10.5297445828982,
+        "rms": 0.22326620142021142,
+        "dc_fraction": 4.973224676622475e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 24000,
+        "cents": -12.549613220825576,
+        "rms": 0.3293311762561961,
+        "dc_fraction": 0.0001238386454217128,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 48,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.23785254405449502,
+        "rms": 0.13610351336995363,
+        "dc_fraction": 0.0017411770917567786,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 48,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.2654071545880858,
+        "rms": 0.25419923456031984,
+        "dc_fraction": 0.0017551060288849524,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 48,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.30011509402935876,
+        "rms": 0.3733669055309264,
+        "dc_fraction": 0.0017726684090078628,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.24584404899786402,
+        "rms": 0.1362652522904977,
+        "dc_fraction": 0.001420685140051616,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.3260286415524616,
+        "rms": 0.25448887666177195,
+        "dc_fraction": 0.0013815815513709582,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 49,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.4200832139246701,
+        "rms": 0.37378248091487093,
+        "dc_fraction": 0.0013243611518023032,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.10981562231388446,
+        "rms": 0.13599988399244475,
+        "dc_fraction": 0.0015123234778881911,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.0863566471450407,
+        "rms": 0.25400874529721584,
+        "dc_fraction": 0.0015008667711083638,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 50,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.05356594568752639,
+        "rms": 0.3730939696492156,
+        "dc_fraction": 0.0014800531226524098,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.5167159830891116,
+        "rms": 0.13604672668397055,
+        "dc_fraction": 2.079292354258539e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.5839288993803791,
+        "rms": 0.2540757554927967,
+        "dc_fraction": 3.949520960562508e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 51,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.6335237857349958,
+        "rms": 0.3731933409091837,
+        "dc_fraction": 5.7938292056895886e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.10231003168921839,
+        "rms": 0.1359169513736329,
+        "dc_fraction": 0.000667352245404531,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.05028844071210613,
+        "rms": 0.25386493932192306,
+        "dc_fraction": 0.0006385373103611709,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 52,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.009277167540535149,
+        "rms": 0.37289631652466365,
+        "dc_fraction": 0.0006149831125465536,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.1932803397643659,
+        "rms": 0.13583065139296738,
+        "dc_fraction": 0.002917582973125824,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.21868965679403576,
+        "rms": 0.2537002260532592,
+        "dc_fraction": 0.0029307625409216312,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 53,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.25140787484929356,
+        "rms": 0.3726440360510356,
+        "dc_fraction": 0.0029575802827588793,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.08081312423073443,
+        "rms": 0.1359151416748689,
+        "dc_fraction": 0.0014398226135479216,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.10523293391442648,
+        "rms": 0.25384158653313155,
+        "dc_fraction": 0.0014267670314141376,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 54,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.17201068080411833,
+        "rms": 0.37286756547796907,
+        "dc_fraction": 0.0013894616730199753,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.06670174607719126,
+        "rms": 0.1356938900341701,
+        "dc_fraction": 0.0023533698283971687,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.03451069694958365,
+        "rms": 0.2534502713363236,
+        "dc_fraction": 0.002354541442414674,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 55,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.004944110166636357,
+        "rms": 0.3722895721179074,
+        "dc_fraction": 0.0023421431728125513,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.06307027655401537,
+        "rms": 0.13562428723982695,
+        "dc_fraction": 0.0019016839474306187,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.019825043111023302,
+        "rms": 0.2533286065521423,
+        "dc_fraction": 0.001982907611149913,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 56,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.023694661353159598,
+        "rms": 0.37211895076433593,
+        "dc_fraction": 0.002051184582434714,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.022078632061012,
+        "rms": 0.13614124647773582,
+        "dc_fraction": 0.00025530140659796725,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.4454468288745355,
+        "rms": 0.25421531576357054,
+        "dc_fraction": 0.00020488308840949538,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 57,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.5507493011440903,
+        "rms": 0.37376901765657455,
+        "dc_fraction": 0.00023537109958013494,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.4949594260993357,
+        "rms": 0.13674482280985092,
+        "dc_fraction": 0.00028607064031672556,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.4949805415786357,
+        "rms": 0.2553829403762437,
+        "dc_fraction": 0.00028610244340524323,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 58,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.49499841365590613,
+        "rms": 0.37509530268351327,
+        "dc_fraction": 0.00028604010538118993,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.6392651820025411,
+        "rms": 0.13570585185797468,
+        "dc_fraction": 9.821151651250028e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.7829590777669958,
+        "rms": 0.2534698998150204,
+        "dc_fraction": 2.348104346926354e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 59,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.9256975956042854,
+        "rms": 0.3723214507640246,
+        "dc_fraction": 5.144463321515351e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.1807581877282911,
+        "rms": 0.13548775207166164,
+        "dc_fraction": 0.001004940684554218,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.30378108919016933,
+        "rms": 0.2530601285833615,
+        "dc_fraction": 0.0008627556488288329,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 60,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.40085686060364106,
+        "rms": 0.3717468383559261,
+        "dc_fraction": 0.0007545364733828545,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.0507001797740866,
+        "rms": 0.1351820990636702,
+        "dc_fraction": 0.0016638935756751383,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.10804305525449058,
+        "rms": 0.2525265647823804,
+        "dc_fraction": 0.0016814558716990778,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 61,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.1721983311369648,
+        "rms": 0.3709698260210764,
+        "dc_fraction": 0.0016219478923717816,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.4378768685862552,
+        "rms": 0.1352762134266831,
+        "dc_fraction": 0.00062175917118691,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.5113083847823121,
+        "rms": 0.25269657598158896,
+        "dc_fraction": 0.0007189694073510578,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 62,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.5548774409530787,
+        "rms": 0.3712326782293018,
+        "dc_fraction": 0.000793333175730161,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.8943300711272606,
+        "rms": 0.135580915560982,
+        "dc_fraction": 0.0009805421030742462,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.1108372279437422,
+        "rms": 0.2532442269722179,
+        "dc_fraction": 0.0011968296780985191,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 63,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.3564653948565981,
+        "rms": 0.3719871786121799,
+        "dc_fraction": 0.0012117369555597838,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.6274734041834414,
+        "rms": 0.1353151260295491,
+        "dc_fraction": 0.00027390620255338696,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.821279121566633,
+        "rms": 0.25277589067074746,
+        "dc_fraction": 0.0001668200194307006,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 64,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.0173581977622868,
+        "rms": 0.37134752555952866,
+        "dc_fraction": 6.147911984616999e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.5340565829708133,
+        "rms": 0.1349490185288608,
+        "dc_fraction": 0.0002708224022818007,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.6484365123618234,
+        "rms": 0.25210685346601036,
+        "dc_fraction": 0.0003952028591011264,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 65,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.7743806526842592,
+        "rms": 0.37034563807886467,
+        "dc_fraction": 0.0005224412704698523,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.9276165729704764,
+        "rms": 0.13538406685423984,
+        "dc_fraction": 0.00027307395793692307,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.211142645210385,
+        "rms": 0.25290393960916413,
+        "dc_fraction": 0.0005613441262341548,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 66,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.5337018666441873,
+        "rms": 0.37154425889494985,
+        "dc_fraction": 0.0006518241615155839,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.9277776240029292,
+        "rms": 0.13483757939743568,
+        "dc_fraction": 0.0010966295749510499,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.1044793913079523,
+        "rms": 0.25188731145111326,
+        "dc_fraction": 0.0009825487124015078,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 67,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.2748404781208273,
+        "rms": 0.3700430660365744,
+        "dc_fraction": 0.0007997634819772299,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.8280959479415569,
+        "rms": 0.13479188146933233,
+        "dc_fraction": 0.00043147550882979623,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.057547346099668,
+        "rms": 0.2518325767389376,
+        "dc_fraction": 0.00028766531739971615,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 68,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.3244612844879449,
+        "rms": 0.36998455966298455,
+        "dc_fraction": 3.089613900678289e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.33572438072402844,
+        "rms": 0.13411004658113762,
+        "dc_fraction": 0.00017717197436337167,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.19832726317266716,
+        "rms": 0.2505805486116396,
+        "dc_fraction": 0.00010862648357058135,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 69,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.04960596388627449,
+        "rms": 0.3681659899442194,
+        "dc_fraction": 2.8963722306731673e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.49654093217982653,
+        "rms": 0.1340382530186608,
+        "dc_fraction": 0.00021605680233105699,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.49653097501650484,
+        "rms": 0.25049451188662464,
+        "dc_fraction": 0.00021427181562769297,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 70,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.3815803997722562,
+        "rms": 0.3678681198120015,
+        "dc_fraction": 0.0002675983966236095,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.1119546512644194,
+        "rms": 0.13380070789351342,
+        "dc_fraction": 0.0005112589868239525,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.24853899956011385,
+        "rms": 0.2500224485480823,
+        "dc_fraction": 0.00043327989414536393,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 71,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.34934173415363273,
+        "rms": 0.36736992420807413,
+        "dc_fraction": 0.0003259382754731173,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.42689308554641,
+        "rms": 0.13473192012341628,
+        "dc_fraction": 0.00017304069297970296,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.8086217353240932,
+        "rms": 0.25172987433132693,
+        "dc_fraction": 0.00022703627088789313,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 72,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.2702745750748514,
+        "rms": 0.36985061109485695,
+        "dc_fraction": 0.00037748726481759073,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.893688349651102,
+        "rms": 0.13367082922484272,
+        "dc_fraction": 0.0008703722641906337,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.04710743085875,
+        "rms": 0.24977937219440594,
+        "dc_fraction": 0.0010435539863351219,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 73,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.2356708970309653,
+        "rms": 0.36701842117811057,
+        "dc_fraction": 0.0008930290256015451,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.6831471749746445,
+        "rms": 0.13441621387594363,
+        "dc_fraction": 0.0004923079449453653,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.118637428959583,
+        "rms": 0.25116108796843123,
+        "dc_fraction": 7.917309203677579e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 74,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.546204354385828,
+        "rms": 0.3690354070257127,
+        "dc_fraction": 0.00041182709040028424,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.0796335226299868,
+        "rms": 0.1329383147110467,
+        "dc_fraction": 0.00010467787711959377,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.07083855651920154,
+        "rms": 0.24845371131184624,
+        "dc_fraction": 0.00019119303444603862,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 75,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.23204269832279156,
+        "rms": 0.365130542303667,
+        "dc_fraction": 0.00022685176366468658,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.34028186320202547,
+        "rms": 0.13273044513399057,
+        "dc_fraction": 0.000465638474088936,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.4604759213635863,
+        "rms": 0.24806940798030025,
+        "dc_fraction": 0.00031895772651425954,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 76,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.5951659932247997,
+        "rms": 0.3645647043703824,
+        "dc_fraction": 0.00016330402927853505,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.6253412313347461,
+        "rms": 0.1325692091907497,
+        "dc_fraction": 0.00015642720008266964,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.8122591965839797,
+        "rms": 0.24777962779582524,
+        "dc_fraction": 5.513570814567983e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 77,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.0109041521521,
+        "rms": 0.3641515973870837,
+        "dc_fraction": 5.5080016558067486e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.12773275761820535,
+        "rms": 0.132166498962345,
+        "dc_fraction": 5.522908870813572e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.2907406281908673,
+        "rms": 0.247047044503448,
+        "dc_fraction": 0.00014459553552589635,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 78,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.473169550201011,
+        "rms": 0.36308160229951536,
+        "dc_fraction": 5.681639100817886e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.2526202632493121,
+        "rms": 0.1319666637230532,
+        "dc_fraction": 0.00042635026717626254,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.4595242793603483,
+        "rms": 0.24669621190323945,
+        "dc_fraction": 0.00031219158650802023,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 79,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.6584162158652888,
+        "rms": 0.3626102961391752,
+        "dc_fraction": 0.00020074092347994752,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.84801794283723,
+        "rms": 0.1337841470872351,
+        "dc_fraction": 0.0001626897375494356,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -3.6943345683678657,
+        "rms": 0.2499951335425736,
+        "dc_fraction": 0.0006945908550419511,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 80,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -4.925141142770119,
+        "rms": 0.3673260134198721,
+        "dc_fraction": 3.0562039956338376e-06,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.4116365746934578,
+        "rms": 0.1318821761835336,
+        "dc_fraction": 0.00025128312049864675,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.7545552518453535,
+        "rms": 0.24644879873768916,
+        "dc_fraction": 9.043875060478161e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 81,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.0563598748248197,
+        "rms": 0.36225543400027366,
+        "dc_fraction": 0.00014349999991673725,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.4436125871943533,
+        "rms": 0.1316570287512048,
+        "dc_fraction": 0.0002176633964440399,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.8714282536740297,
+        "rms": 0.24614089709235945,
+        "dc_fraction": 0.0004504095203076023,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 82,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.1992846891060265,
+        "rms": 0.36183239495630576,
+        "dc_fraction": 7.062044139465824e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.457084142065089,
+        "rms": 0.1310375655273451,
+        "dc_fraction": 3.277783320140307e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.76295079718998,
+        "rms": 0.24500752825183883,
+        "dc_fraction": 0.0002993581218441074,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 83,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.104831142492163,
+        "rms": 0.3601626357404514,
+        "dc_fraction": 0.0004467947682647233,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -5.016751770477698,
+        "rms": 0.13446105786754836,
+        "dc_fraction": 5.034561919462671e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -5.016742276922844,
+        "rms": 0.25166608214437447,
+        "dc_fraction": 5.043628263936462e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 84,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -5.016734532564519,
+        "rms": 0.37016173700645105,
+        "dc_fraction": 5.058043781421579e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.8520082155568324,
+        "rms": 0.1299974535971274,
+        "dc_fraction": 4.459266608394843e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.1719420261784814,
+        "rms": 0.24312974317750563,
+        "dc_fraction": 0.00015697428383525043,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 85,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.4858084771311828,
+        "rms": 0.3575004396434926,
+        "dc_fraction": 0.00017188168728755548,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.14659203797266748,
+        "rms": 0.12929525812153983,
+        "dc_fraction": 0.0004306297632990878,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.3782669210456488,
+        "rms": 0.24184685434388467,
+        "dc_fraction": 0.0001833490255959416,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 86,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.6608632853248919,
+        "rms": 0.3556381947501589,
+        "dc_fraction": 9.36708750618583e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 1.946773700123228,
+        "rms": 0.12957151311808052,
+        "dc_fraction": 2.0849569718736878e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.377915132203772,
+        "rms": 0.24234734105005112,
+        "dc_fraction": 0.000232938021813251,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 87,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.095029085880193,
+        "rms": 0.35631368657832,
+        "dc_fraction": 4.354454741415115e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.9607048990281206,
+        "rms": 0.13004433969287982,
+        "dc_fraction": 0.000144178446843744,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.5413708696642523,
+        "rms": 0.24324348809018748,
+        "dc_fraction": 2.2522220743398114e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 88,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 4.293732384299594,
+        "rms": 0.35764335818193704,
+        "dc_fraction": 0.0002997838162021221,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.443086226305402,
+        "rms": 0.12996190820756706,
+        "dc_fraction": 0.00013455014082826224,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 4.289521222558115,
+        "rms": 0.2430670340847888,
+        "dc_fraction": 9.237802284837784e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 89,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 5.073385301455928,
+        "rms": 0.35743122656926823,
+        "dc_fraction": 6.975285951239078e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.1305037871550967,
+        "rms": 0.12897020923141445,
+        "dc_fraction": 0.00020209298665543649,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.865560893817429,
+        "rms": 0.24125214167273148,
+        "dc_fraction": 0.00015917282158265733,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 90,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 4.69790692541987,
+        "rms": 0.35482173912339676,
+        "dc_fraction": 0.00025331100113617784,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.098789740893263,
+        "rms": 0.12739074393982108,
+        "dc_fraction": 4.013235523713562e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 2.57512244718428,
+        "rms": 0.23839924959772552,
+        "dc_fraction": 0.0001718520714864948,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 91,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 3.1915869334405134,
+        "rms": 0.3507070966510956,
+        "dc_fraction": 0.000182501894579481,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -0.21901534619815147,
+        "rms": 0.12599791865824267,
+        "dc_fraction": 0.00010078861248691046,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.2087822662844238,
+        "rms": 0.23587442155717311,
+        "dc_fraction": 0.00011606381690394094,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 92,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": 0.5952808393688968,
+        "rms": 0.34707478526768265,
+        "dc_fraction": 0.0003126280325736216,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.35,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.2312508538440246,
+        "rms": 0.12571620879242942,
+        "dc_fraction": 4.021799283496665e-05,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.65,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -1.7000459679491315,
+        "rms": 0.23538890019767972,
+        "dc_fraction": 0.00011206905569279586,
+        "fundamental_peak_fraction": 1.0
+      },
+      {
+        "pitch": 93,
+        "velocity": 0.95,
+        "tuning_cents": 0.0,
+        "rate": 48000,
+        "cents": -2.1700466434843437,
+        "rms": 0.34642846624657975,
+        "dc_fraction": 8.21093302315495e-05,
+        "fundamental_peak_fraction": 1.0
+      }
+    ]
+  },
+  "audition": {
+    "method": "whole-phrase or whole-note RMS matched to 0.1; no framewise normalization, limiter, or time warping",
+    "exports": {
+      "clean": {
+        "path": "target/physical-next/electric-demo-v2/clean.wav",
+        "sha256": "70bbcca2ded9d1e68dfd75c8792a11ad832a08e2d9359fd636d94ab0083047e9",
+        "rate": 48000,
+        "seconds": 8.200666666666667,
+        "rms": 0.08710297724121054,
+        "peak": 0.7937473058700562,
+        "clipped_samples": 0,
+        "audition_gain": 1.1480663826573263,
+        "matched_sha256": "b980428479a24fc4f218a58fc24ea21e63efc2020abff0e14a99654f9fc4991b"
+      },
+      "crunch": {
+        "path": "target/physical-next/electric-demo-v2/crunch.wav",
+        "sha256": "b98329be698169cab543d52d679efaf3ae740862fdbe185fc4045583848c90c1",
+        "rate": 48000,
+        "seconds": 8.200666666666667,
+        "rms": 0.13367771942003093,
+        "peak": 0.6039046049118042,
+        "clipped_samples": 0,
+        "audition_gain": 0.7480678188845247,
+        "matched_sha256": "e101085c11e0efcbeba80f0489889fed473e314786f9abd4dd85b4b609b72050"
+      },
+      "lead": {
+        "path": "target/physical-next/electric-demo-v2/lead.wav",
+        "sha256": "872c945a42810b0523712239448809a20a39d2de26b58f6eaa77b4311e501453",
+        "rate": 48000,
+        "seconds": 8.200666666666667,
+        "rms": 0.23152758878953045,
+        "peak": 0.8721059560775757,
+        "clipped_samples": 0,
+        "audition_gain": 0.43191396983322256,
+        "matched_sha256": "9ff641958635a86e8816b94492462ac48ad8c5259af0a48b4c81066f413c7604"
+      },
+      "clarinet": {
+        "path": "target/physical-next/clarinet-demo/clarinet.wav",
+        "sha256": "9846bef51f78c198cf76afb6f7a404b27d7d5495db2a564629ce9c2d4f8fee2e",
+        "rate": 48000,
+        "seconds": 12.0,
+        "rms": 0.24961613023496912,
+        "peak": 0.33918094635009766,
+        "clipped_samples": 0,
+        "audition_gain": 0.4006151361527311
+      }
+    },
+    "clarinet_comparison": {
+      "order": [
+        "Iowa mf C4 reference",
+        "initial clarinet",
+        "calibrated factory clarinet"
+      ],
+      "note_id": "mf-C4B4-60",
+      "tuning_cents": -5.975991726341471,
+      "hold_seconds": 1.9804988662131522,
+      "native_rate": 24000,
+      "rms": [
+        0.1,
+        0.1,
+        0.10000000000000002
+      ]
+    },
+    "auditions_sha256": {
+      "clarinet-phrase.wav": "ffa69db92308144315e419409408618416f37fccbebc6a49aef1188b2bfecfa9",
+      "clarinet-reference-before-after.wav": "806fb6ccce993b5b8adce30674920ce39738409cc5300af5b581d230fc4c4445",
+      "electric-clean-crunch-lead.wav": "cbd92e85ba158b959081a3b78cfa5475c66f917fe1901ba2704349d4e049b1da",
+      "electric-clean.wav": "b980428479a24fc4f218a58fc24ea21e63efc2020abff0e14a99654f9fc4991b",
+      "electric-crunch.wav": "e101085c11e0efcbeba80f0489889fed473e314786f9abd4dd85b4b609b72050",
+      "electric-lead.wav": "9ff641958635a86e8816b94492462ac48ad8c5259af0a48b4c81066f413c7604"
+    }
+  }
+}

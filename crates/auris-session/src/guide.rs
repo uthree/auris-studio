@@ -344,8 +344,9 @@ pub mod architecture {
     //! line has nothing else to be doing. The gpui frontend runs the first half on a worker and
     //! keeps painting.
     //!
-    //! Native melodic instruments live in [`auris_synth::Physical`]: piano, guitar, bass, bell,
-    //! mallet and violin. Struck strings and rigid bodies use damped modal expansions; plucked
+    //! Native melodic instruments include [`auris_synth::Physical`]: piano, acoustic/electric
+    //! guitar, bass, bell, mallet and violin, plus [`auris_synth::Clarinet`]. Struck strings and
+    //! rigid bodies use damped modal expansions; plucked
     //! and bowed strings use fractional-delay travelling waves, with nonlinear friction at the
     //! bow. Every voice is allocated in `prepare`, and the ordinary plugin parameter/state
     //! contract carries excitation controls through editing, automation, undo and persistence.
@@ -353,6 +354,8 @@ pub mod architecture {
     //! curves; violin expression maps to both bow motion and output through a fitted exponent.
     //! Calibration recordings and copy-synthesis measurements remain development tooling,
     //! while fixed coefficients and prepared filter state live in the instrument.
+    //! Clarinet couples a nonlinear single reed to a cylindrical-bore waveguide, with
+    //! breath pressure and reed controls carried through the same plugin boundary.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //!
@@ -771,6 +774,9 @@ pub mod plugins {
     //! [`GuitarAmp`](auris_dsp::GuitarAmp) effect owns oversampled saturation, tone controls
     //! and analytic speaker coloration. Registry discovery makes both available in every
     //! frontend; saved state and automation use the ordinary plugin parameter contract.
+    //! [`Clarinet`](auris_synth::Clarinet) adds the reed/bore excitation family and maps
+    //! GM hint 71 without a SoundFont. Real-recording calibration is offline tooling;
+    //! playing a note needs only prepared DSP state.
     //!
     //! # Observing mechanical motion
     //!

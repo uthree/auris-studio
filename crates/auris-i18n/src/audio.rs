@@ -123,6 +123,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Bell", "ベル"),
     ("Physical Mallet", "マレット"),
     ("Physical Violin", "バイオリン"),
+    ("Physical Clarinet", "クラリネット"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
@@ -169,6 +170,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "Bowed violin string: nonlinear friction, bow pressure, position and body",
         "弓と弦の摩擦で鳴らすバイオリン音源。弓圧、位置、胴の共鳴を調整",
+    ),
+    (
+        "Closed-open cylindrical bore with nonlinear reed and breath noise",
+        "リードと管の共鳴で鳴らすクラリネット音源。息の圧力、リードの硬さ、息の雑音を調整",
     ),
     (
         "Struck membranes, snappy wires and metal plates with shared hat choking",
@@ -243,6 +248,9 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Body Resonance", "胴の共鳴"),
     ("String Stiffness", "弦の剛性"),
     ("Bow Pressure", "弓圧"),
+    ("Breath Pressure", "息の圧力"),
+    ("Reed Stiffness", "リードの硬さ"),
+    ("Breath Noise", "息の雑音"),
     ("Pickup blend", "ピックアップ比率"),
     ("Pickup Position", "ピックアップ位置"),
     ("Pickup Resonance", "ピックアップ共振"),

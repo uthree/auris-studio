@@ -157,8 +157,7 @@ def amp_audio(audio, params, rate=24000):
     taps = (np.sinc(2 * 0.45 / 8 * x) * (2 * 0.45 / 8) * np.blackman(257)).astype(np.float32)
     taps /= taps.sum()
     up = upfirdn(taps * 8, filtered, up=8, axis=-1)[..., :audio.shape[-1] * 8]
-    preamp = np.tanh(up * 10**(params["drive_db"] / 20) + 0.12) - np.tanh(0.12)
-    shaped = (np.tanh(preamp * 1.6 + 0.05) - np.tanh(0.05)) / 1.6
+    shaped = np.tanh(up * 10**(params["drive_db"] / 20))
     shaped = sosfilt(coefficients("hp", 25, 0.707, rate=rate * 8)[None, :], shaped, axis=-1)
     return upfirdn(taps, shaped, down=8, axis=-1)[..., :audio.shape[-1]]
 
@@ -170,7 +169,7 @@ def fit_amp(root, manifest, iterations):
         raise ValueError("dry/wet pairing differs")
     clean = normalize(clean)
     target = pack_features(wet)
-    bounds = {"drive_db": (6, 36), "bass_db": (-12, 12), "mid_db": (-12, 12), "treble_db": (-12, 12)}
+    bounds = {"drive_db": (0, 48), "bass_db": (-12, 12), "mid_db": (-12, 12), "treble_db": (-12, 12)}
     keys = list(bounds)
     calls = 0
 

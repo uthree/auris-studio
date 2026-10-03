@@ -162,6 +162,7 @@ pub(crate) fn styled_performance(
                     | "auris.physical.electric_guitar"
                     | "auris.physical.bass"
                     | "auris.physical.violin"
+                    | "auris.physical.clarinet"
             )
         },
         |p| matches!(p, 24..=31 | 40..=43 | 56..=87),
@@ -227,13 +228,15 @@ mod tests {
                 .any(|stage| matches!(stage, NoteTransform::Stroke { .. }))
         );
         part.role = Role::Melody;
-        part.instrument = "auris.physical.violin".into();
-        let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
-        assert!(
-            stack
-                .iter()
-                .any(|stage| matches!(stage, NoteTransform::Pitch { .. }))
-        );
+        for id in ["auris.physical.violin", "auris.physical.clarinet"] {
+            part.instrument = id.into();
+            let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
+            assert!(
+                stack
+                    .iter()
+                    .any(|stage| matches!(stage, NoteTransform::Pitch { .. }))
+            );
+        }
         part.instrument = "auris.physical.mallet".into();
         let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
         assert!(

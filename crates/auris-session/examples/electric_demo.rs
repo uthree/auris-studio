@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     std::fs::create_dir_all(&directory)?;
     for (name, drive, output, cabinet) in [
         ("clean", 0.0, 0.0, 1.0),
-        ("crunch", 18.0, -4.0, 1.0),
+        ("crunch", 18.0, -10.0, 1.0),
         ("lead", 34.0, -9.0, 2.0),
     ] {
         let mut session = Session::new(SessionOptions::headless().with_balance(false))?;
