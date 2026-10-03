@@ -7,7 +7,7 @@ use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
-use crate::{Model, Physical};
+use crate::{Choir, Model, Physical};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -26,6 +26,7 @@ impl PluginPack for SynthPack {
         for model in Model::ALL {
             registry.register_instrument(move || Box::new(Physical::new(model)));
         }
+        registry.register_instrument(|| Box::new(Choir::new()));
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
@@ -107,6 +108,7 @@ mod tests {
             vec![
                 "auris.physical.bass",
                 "auris.physical.bell",
+                "auris.physical.choir",
                 "auris.physical.guitar",
                 "auris.physical.mallet",
                 "auris.physical.piano",
@@ -118,7 +120,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 11);
+        assert_eq!(registry.len(), 12);
         assert_eq!(registry.effects().count(), 0);
     }
 
@@ -162,7 +164,15 @@ mod tests {
                 buffer.channel(0).iter().all(|s| s.is_finite()),
                 "{id} produced a non-finite sample"
             );
-            assert_eq!(buffer.channel(0), buffer.channel(1), "{id} left a channel");
+            if id == Choir::ID {
+                assert!(buffer.channel(1).iter().all(|s| s.is_finite()));
+                assert!(
+                    peak(buffer.channel(1)) > 0.0,
+                    "{id} left its right channel silent"
+                );
+            } else {
+                assert_eq!(buffer.channel(0), buffer.channel(1), "{id} left a channel");
+            }
         }
     }
 

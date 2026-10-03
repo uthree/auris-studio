@@ -351,6 +351,11 @@ pub mod architecture {
     //! contract carries excitation controls through editing, automation, undo and persistence.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
+    //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each
+    //! note excites four independently varied eight-section vocal-tract waveguides with a
+    //! prescribed, band-limited glottal-flow pulse and breath noise. Its vowel, voice size,
+    //! ensemble variation and stereo width are ordinary automatable plugin parameters; it uses
+    //! instrument tracks and MIDI notes, with no lyric or offline voice-model setup.
     //!
     //! Composition interprets supported GM family hints as native instruments before looking
     //! for an optional installed font. The hint describes musical intent, not a promise to

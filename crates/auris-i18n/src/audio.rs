@@ -122,6 +122,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Bell", "ベル"),
     ("Physical Mallet", "マレット"),
     ("Physical Violin", "バイオリン"),
+    ("Physical Choir", "合唱"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
@@ -140,6 +141,10 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "Wordless ensemble vowels from glottal excitation and vocal-tract waveguides",
+        "声道の共鳴で鳴らす合唱音源。母音や声の揺らぎ、広がりを調整",
+    ),
     (
         "Hammer-excited stiff strings: hardness, strike position and soundboard",
         "弦の剛性を考慮したピアノ音源。打撃の硬さ、位置、響板の共鳴を調整",
@@ -224,6 +229,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
 
 /// Japanese names for parameters. Shared across plugins on purpose — see the module note.
 const PARAMETERS: &[(&str, &str)] = &[
+    ("Vowel (Oo / Ah / Ee)", "母音（ウ／ア／イ）"),
+    ("Voice Size", "声道サイズ"),
+    ("Ensemble Variation", "合唱の揺らぎ"),
+    ("Stereo Width", "ステレオ幅"),
     ("Contact Hardness", "励振の硬さ"),
     ("Beater hardness", "打撃の硬さ"),
     ("Strike position", "打点"),

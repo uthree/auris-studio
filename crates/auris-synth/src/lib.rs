@@ -19,6 +19,8 @@
 //! [`PluginRegistry`](auris_core::PluginRegistry).
 //! [`Physical`] adds six sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.
+//! [`Choir`] adds a stereo, wordless vocal ensemble using glottal-flow excitation and
+//! physical vocal-tract waveguides, played with ordinary polyphonic MIDI notes.
 //!
 //! # Realtime behaviour
 //!
@@ -46,6 +48,7 @@
 #![warn(missing_docs)]
 
 pub mod chiptune;
+pub mod choir;
 pub mod drumkit;
 pub mod fm2;
 pub mod lfo;
@@ -62,6 +65,7 @@ pub mod voice;
 mod test_support;
 
 pub use chiptune::Chiptune;
+pub use choir::Choir;
 pub use drumkit::DrumKit;
 pub use fm2::Fm2;
 pub use noisedrum::NoiseDrum;

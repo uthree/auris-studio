@@ -3,6 +3,8 @@
 Choose **Physical Piano, Guitar, Bass, Bell, Mallet or Violin** in the sound library.
 Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
 New melodic tracks use Physical Piano. No sample files or network setup are needed.
+**[Physical Choir](physical-choir.md)** adds wordless polyphonic ensemble vowels as another
+ordinary instrument, with its own vocal-tract and ensemble controls.
 
 These are compact, reduced physical models with a shared control vocabulary. They aim for
 playable, adjustable instruments rather than reproductions of particular recorded instruments.
