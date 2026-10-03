@@ -8,12 +8,14 @@ use std::process::Child;
 
 use auris_i18n::{Key, Language, messages};
 use auris_session::{
-    DiffSingerSetup, VoicevoxCatalog, VoicevoxSetup, VoicevoxStyle, fetch_voicevox_catalog,
-    start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
+    DiffSingerSetup, LeapSingerCheck, LeapSingerSetup, LeapSingerVariant, VoicevoxCatalog,
+    VoicevoxSetup, VoicevoxStyle, check_leapsinger_setup, fetch_voicevox_catalog,
+    read_leapsinger_setup, start_voicevox_engine, write_diffsinger_config,
+    write_leapsinger_manifest, write_voicevox_connection,
 };
 use gpui::{
     AnyElement, App, Bounds, Context, FocusHandle, Focusable, IntoElement, KeyDownEvent, Render,
-    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, size,
+    WeakEntity, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rems, size,
 };
 
 use crate::app::AurisApp;
@@ -21,7 +23,7 @@ use crate::theme::{Metrics, Theme};
 use crate::titlebar;
 use crate::ui::prompt::{editable_text, field_text};
 use crate::ui::text_field::{HasTextField, KeyEffect, TextField};
-use crate::ui::widgets::{ButtonStyle, button};
+use crate::ui::widgets::{ButtonState, ButtonStyle, button, button_enabled};
 
 /// Which external backend is being configured.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -30,6 +32,8 @@ pub enum VoiceSetupTab {
     Voicevox,
     /// An OpenUtau-compatible DiffSinger deployment.
     DiffSinger,
+    /// An exported LeapSinger acoustic model and NHVSing vocoder.
+    LeapSinger,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -50,6 +54,11 @@ enum Field {
     DiffHop,
     DiffMelBins,
     DiffMelBase,
+    LeapEntry,
+    LeapName,
+    LeapAcoustic,
+    LeapVocoder,
+    LeapPhonemes,
 }
 
 impl Field {
@@ -57,6 +66,7 @@ impl Field {
         match tab {
             VoiceSetupTab::Voicevox => Self::VoicevoxName,
             VoiceSetupTab::DiffSinger => Self::DiffFolder,
+            VoiceSetupTab::LeapSinger => Self::LeapEntry,
         }
     }
 }
@@ -81,6 +91,13 @@ const DIFFSINGER_FIELDS: &[Field] = &[
     Field::DiffHop,
     Field::DiffMelBins,
     Field::DiffMelBase,
+];
+const LEAPSINGER_FIELDS: &[Field] = &[
+    Field::LeapEntry,
+    Field::LeapName,
+    Field::LeapAcoustic,
+    Field::LeapVocoder,
+    Field::LeapPhonemes,
 ];
 
 struct VoicevoxFields {
@@ -145,6 +162,28 @@ impl Default for DiffSingerFields {
     }
 }
 
+struct LeapSingerFields {
+    setup: LeapSingerSetup,
+    entry: TextField,
+    name: TextField,
+    acoustic: TextField,
+    vocoder: TextField,
+    phonemes: TextField,
+}
+
+impl From<LeapSingerSetup> for LeapSingerFields {
+    fn from(setup: LeapSingerSetup) -> Self {
+        Self {
+            entry: TextField::new(setup.path.display().to_string()),
+            name: TextField::new(setup.manifest.name.clone()),
+            acoustic: TextField::new(setup.manifest.acoustic.display().to_string()),
+            vocoder: TextField::new(setup.manifest.vocoder.display().to_string()),
+            phonemes: TextField::new(setup.manifest.phonemes.display().to_string()),
+            setup,
+        }
+    }
+}
+
 /// A separate window for creating external-backend configuration files.
 pub struct VoiceSetupWindow {
     app: WeakEntity<AurisApp>,
@@ -157,8 +196,10 @@ pub struct VoiceSetupWindow {
     styles_selected: bool,
     advanced: bool,
     checking: bool,
+    saving: bool,
     request_generation: u64,
     diffsinger: DiffSingerFields,
+    leapsinger: LeapSingerFields,
     engine: Option<Child>,
     status: String,
     status_failed: bool,
@@ -196,8 +237,10 @@ impl VoiceSetupWindow {
             styles_selected: false,
             advanced: false,
             checking: false,
+            saving: false,
             request_generation: 0,
             diffsinger: DiffSingerFields::default(),
+            leapsinger: LeapSingerSetup::default().into(),
             engine: None,
             status: String::new(),
             status_failed: false,
@@ -213,6 +256,7 @@ impl VoiceSetupWindow {
             (VoiceSetupTab::Voicevox, false) => VOICEVOX_BASIC_FIELDS,
             (VoiceSetupTab::Voicevox, true) => VOICEVOX_ADVANCED_FIELDS,
             (VoiceSetupTab::DiffSinger, _) => DIFFSINGER_FIELDS,
+            (VoiceSetupTab::LeapSinger, _) => LEAPSINGER_FIELDS,
         }
     }
 
@@ -270,6 +314,11 @@ impl VoiceSetupWindow {
             DiffHop => &self.diffsinger.hop,
             DiffMelBins => &self.diffsinger.mel_bins,
             DiffMelBase => &self.diffsinger.mel_base,
+            LeapEntry => &self.leapsinger.entry,
+            LeapName => &self.leapsinger.name,
+            LeapAcoustic => &self.leapsinger.acoustic,
+            LeapVocoder => &self.leapsinger.vocoder,
+            LeapPhonemes => &self.leapsinger.phonemes,
         }
     }
 
@@ -292,6 +341,11 @@ impl VoiceSetupWindow {
             DiffHop => &mut self.diffsinger.hop,
             DiffMelBins => &mut self.diffsinger.mel_bins,
             DiffMelBase => &mut self.diffsinger.mel_base,
+            LeapEntry => &mut self.leapsinger.entry,
+            LeapName => &mut self.leapsinger.name,
+            LeapAcoustic => &mut self.leapsinger.acoustic,
+            LeapVocoder => &mut self.leapsinger.vocoder,
+            LeapPhonemes => &mut self.leapsinger.phonemes,
         }
     }
 
@@ -317,7 +371,7 @@ impl VoiceSetupWindow {
             .gap_2()
             .child(
                 div()
-                    .w(px(170.0))
+                    .w(rems(9.0))
                     .flex_shrink_0()
                     .text_xs()
                     .text_color(theme.text_muted)
@@ -327,7 +381,7 @@ impl VoiceSetupWindow {
                 div()
                     .id(("voice-setup-field", field as usize))
                     .debug_selector(move || format!("voice-setup-field-{}", field as usize))
-                    .h(px(28.0))
+                    .h_7()
                     .flex_1()
                     .min_w_0()
                     .rounded(Metrics::RADIUS_SM)
@@ -338,6 +392,9 @@ impl VoiceSetupWindow {
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
+                            if this.saving {
+                                return;
+                            }
                             this.active = field;
                             this.field_for_mut(field).select_all();
                             window.focus(&this.focus);
@@ -356,12 +413,15 @@ impl VoiceSetupWindow {
             .items_center()
             .flex_shrink_0()
             .gap_1()
-            .pr_2()
-            .child(button(
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(button_enabled(
                 "voice-tab-voicevox",
                 self.t(Key::VoiceSetupVoicevox),
                 ButtonStyle::Normal,
-                self.tab == VoiceSetupTab::Voicevox,
+                ButtonState::available(self.tab == VoiceSetupTab::Voicevox, !self.saving),
                 theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
@@ -371,16 +431,30 @@ impl VoiceSetupWindow {
                     cx.notify();
                 }),
             ))
-            .child(button(
+            .child(button_enabled(
                 "voice-tab-diffsinger",
                 self.t(Key::VoiceSetupDiffSinger),
                 ButtonStyle::Normal,
-                self.tab == VoiceSetupTab::DiffSinger,
+                ButtonState::available(self.tab == VoiceSetupTab::DiffSinger, !self.saving),
                 theme.accent,
                 &theme,
                 cx.listener(|this, _, _, cx| {
                     this.invalidate_request();
                     this.tab = VoiceSetupTab::DiffSinger;
+                    this.active = Field::first(this.tab);
+                    cx.notify();
+                }),
+            ))
+            .child(button_enabled(
+                "voice-tab-leapsinger",
+                self.t(Key::VoiceSetupLeapSinger),
+                ButtonStyle::Normal,
+                ButtonState::available(self.tab == VoiceSetupTab::LeapSinger, !self.saving),
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.invalidate_request();
+                    this.tab = VoiceSetupTab::LeapSinger;
                     this.active = Field::first(this.tab);
                     cx.notify();
                 }),
@@ -586,6 +660,44 @@ impl VoiceSetupWindow {
                     cx.listener(|this, _, _, cx| this.save_diffsinger(cx)),
                 ))
                 .into_any_element(),
+            VoiceSetupTab::LeapSinger => actions
+                .child(button_enabled(
+                    "leap-choose-folder",
+                    self.t(Key::VoiceSetupChooseFolder),
+                    ButtonStyle::Normal,
+                    ButtonState::available(false, !self.saving),
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.choose_leapsinger_folder(cx)),
+                ))
+                .child(button_enabled(
+                    "leap-open-entry",
+                    self.t(Key::VoiceSetupOpenEntry),
+                    ButtonStyle::Normal,
+                    ButtonState::available(false, !self.saving),
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.open_leapsinger_entry(cx)),
+                ))
+                .child(button_enabled(
+                    "leap-check",
+                    self.t(Key::VoiceSetupTestSynthesis),
+                    ButtonStyle::Normal,
+                    ButtonState::available(false, !self.checking && !self.saving),
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.check_leapsinger(cx)),
+                ))
+                .child(button_enabled(
+                    "leap-save",
+                    self.t(Key::VoiceSetupRegisterVoice),
+                    ButtonStyle::Primary,
+                    ButtonState::available(false, !self.checking && !self.saving),
+                    theme.accent,
+                    &theme,
+                    cx.listener(|this, _, _, cx| this.save_leapsinger(cx)),
+                ))
+                .into_any_element(),
         }
     }
 
@@ -648,6 +760,161 @@ impl VoiceSetupWindow {
                     })),
             )
             .into_any_element()
+    }
+
+    fn render_leapsinger(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = self.theme.clone();
+        let manifest = &self.leapsinger.setup.manifest;
+        let mut view = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::VoiceSetupLeapSingerNote)),
+            )
+            .child(self.render_field(Field::LeapEntry, Key::VoiceSetupEntry, cx))
+            .child(self.render_field(Field::LeapName, Key::VoiceSetupName, cx));
+        for (field, label) in [
+            (Field::LeapAcoustic, Key::VoiceSetupAcoustic),
+            (Field::LeapVocoder, Key::VoiceSetupVocoderFile),
+            (Field::LeapPhonemes, Key::VoiceSetupPhonemes),
+        ] {
+            view = view.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .child(self.render_field(field, label, cx)),
+                    )
+                    .child(button_enabled(
+                        ("leap-browse", field as usize),
+                        self.t(Key::VoiceSetupChooseFile),
+                        ButtonStyle::Normal,
+                        ButtonState::available(false, !self.saving),
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| this.choose_leapsinger_asset(field, cx)),
+                    )),
+            );
+        }
+        let variants = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(rems(9.0))
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::VoiceSetupModelFormat)),
+            )
+            .children(
+                [
+                    (LeapSingerVariant::Full, Key::VoiceSetupLeapFull),
+                    (LeapSingerVariant::Diffsinger, Key::VoiceSetupLeapDiffsinger),
+                ]
+                .into_iter()
+                .map(|(variant, label)| {
+                    button_enabled(
+                        ("leap-variant", variant as usize),
+                        self.t(label),
+                        ButtonStyle::Normal,
+                        ButtonState::available(manifest.variant == variant, !self.saving),
+                        theme.accent,
+                        &theme,
+                        cx.listener(move |this, _, _, cx| {
+                            this.invalidate_request();
+                            this.leapsinger.setup.manifest.variant = variant;
+                            if variant == LeapSingerVariant::Full {
+                                this.leapsinger.setup.manifest.hop_size = 256;
+                            }
+                            cx.notify();
+                        }),
+                    )
+                }),
+            );
+        let hops = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .w(rems(9.0))
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::VoiceSetupHopSize)),
+            )
+            .children([256, 512].into_iter().map(|hop| {
+                button_enabled(
+                    ("leap-hop", hop as usize),
+                    hop.to_string(),
+                    ButtonStyle::Normal,
+                    ButtonState::available(
+                        manifest.hop_size == hop,
+                        !self.saving
+                            && (hop == 256 || manifest.variant == LeapSingerVariant::Diffsinger),
+                    ),
+                    theme.accent,
+                    &theme,
+                    cx.listener(move |this, _, _, cx| {
+                        this.invalidate_request();
+                        this.leapsinger.setup.manifest.hop_size = hop;
+                        cx.notify();
+                    }),
+                )
+            }));
+        let speakers = if manifest.speakers.is_empty() {
+            self.t(Key::VoiceSetupBakedSpeaker).to_string()
+        } else {
+            manifest
+                .speakers
+                .iter()
+                .map(|speaker| speaker.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        };
+        view.child(variants)
+            .child(hops)
+            .child(
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .w(rems(9.0))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(self.t(Key::VoiceSetupSpeakers)),
+                    )
+                    .child(div().flex_1().min_w_0().child(speakers)),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .child(self.t(Key::VoiceSetupLeapSpeakerNote)),
+            )
+            .into_any_element()
+    }
+
+    fn leapsinger_setup(&self) -> LeapSingerSetup {
+        let mut setup = self.leapsinger.setup.clone();
+        setup.path = PathBuf::from(self.leapsinger.entry.content().trim());
+        setup.manifest.name = self.leapsinger.name.content().trim().into();
+        setup.manifest.acoustic = self.leapsinger.acoustic.content().trim().into();
+        setup.manifest.vocoder = self.leapsinger.vocoder.content().trim().into();
+        setup.manifest.phonemes = self.leapsinger.phonemes.content().trim().into();
+        setup
     }
 
     fn voicevox_setup(&self) -> Result<VoicevoxSetup, String> {
@@ -735,6 +1002,196 @@ impl VoiceSetupWindow {
                     cx.notify();
                 });
             }
+        })
+        .detach();
+    }
+
+    fn choose_leapsinger_folder(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_request();
+        let generation = self.request_generation;
+        cx.spawn(async move |this, cx| {
+            let Some(picked) = rfd::AsyncFileDialog::new().pick_folder().await else {
+                return;
+            };
+            let path = picked.path().join("singer.leapsinger.json");
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    if path.is_file() {
+                        read_leapsinger_setup(&path).map_err(|error| error.to_string())
+                    } else {
+                        let mut setup = LeapSingerSetup::default();
+                        setup.path = path;
+                        Ok(setup)
+                    }
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.saving || generation != this.request_generation {
+                    return;
+                }
+                this.finish_leapsinger_open(result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn open_leapsinger_entry(&mut self, cx: &mut Context<Self>) {
+        self.invalidate_request();
+        let generation = self.request_generation;
+        cx.spawn(async move |this, cx| {
+            let Some(picked) = rfd::AsyncFileDialog::new()
+                .add_filter("LeapSinger", &["json"])
+                .pick_file()
+                .await
+            else {
+                return;
+            };
+            let path = picked.path().to_path_buf();
+            let result = cx
+                .background_executor()
+                .spawn(
+                    async move { read_leapsinger_setup(&path).map_err(|error| error.to_string()) },
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.saving || generation != this.request_generation {
+                    return;
+                }
+                this.finish_leapsinger_open(result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn finish_leapsinger_open(&mut self, result: Result<LeapSingerSetup, String>) {
+        self.invalidate_request();
+        match result {
+            Ok(setup) => {
+                self.leapsinger = setup.into();
+                self.active = Field::LeapName;
+            }
+            Err(error) => {
+                self.status = error;
+                self.status_failed = true;
+            }
+        }
+    }
+
+    fn choose_leapsinger_asset(&mut self, field: Field, cx: &mut Context<Self>) {
+        self.invalidate_request();
+        let generation = self.request_generation;
+        let root = self.leapsinger_setup().path.parent().map(PathBuf::from);
+        cx.spawn(async move |this, cx| {
+            let mut picker = rfd::AsyncFileDialog::new();
+            picker = if field == Field::LeapPhonemes {
+                picker.add_filter("Phoneme dictionary", &["phonemes", "txt"])
+            } else {
+                picker.add_filter("ONNX", &["onnx"])
+            };
+            if let Some(root) = &root {
+                picker = picker.set_directory(root);
+            }
+            let Some(picked) = picker.pick_file().await else {
+                return;
+            };
+            let path = root
+                .as_ref()
+                .and_then(|root| picked.path().strip_prefix(root).ok())
+                .unwrap_or(picked.path())
+                .display()
+                .to_string();
+            let _ = this.update(cx, |this, cx| {
+                if this.saving || generation != this.request_generation {
+                    return;
+                }
+                this.invalidate_request();
+                *this.field_for_mut(field) = TextField::new(path);
+                this.active = field;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn check_leapsinger(&mut self, cx: &mut Context<Self>) {
+        if self.checking || self.saving {
+            return;
+        }
+        self.invalidate_request();
+        let generation = self.request_generation;
+        let setup = self.leapsinger_setup();
+        self.checking = true;
+        self.status = self.t(Key::VoiceSetupTestingSynthesis).into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result =
+                cx.background_executor()
+                    .spawn(async move {
+                        check_leapsinger_setup(&setup).map_err(|error| error.to_string())
+                    })
+                    .await;
+            let _ = this.update(cx, |this, cx| {
+                this.finish_leapsinger_check(generation, result);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn finish_leapsinger_check(
+        &mut self,
+        generation: u64,
+        result: Result<LeapSingerCheck, String>,
+    ) {
+        if generation != self.request_generation {
+            return;
+        }
+        self.checking = false;
+        self.status_failed = result.is_err();
+        self.status = match result {
+            Ok(checked) => messages::leapsinger_voice_checked(
+                self.language,
+                checked.speakers.len(),
+                checked.sample_rate,
+            ),
+            Err(error) => error,
+        };
+    }
+
+    fn save_leapsinger(&mut self, cx: &mut Context<Self>) {
+        if self.checking || self.saving {
+            return;
+        }
+        self.invalidate_request();
+        let setup = self.leapsinger_setup();
+        self.saving = true;
+        self.status = self.t(Key::VoiceSetupRegisteringVoice).into();
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let path =
+                        write_leapsinger_manifest(&setup).map_err(|error| error.to_string())?;
+                    read_leapsinger_setup(&path).map_err(|error| error.to_string())
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.saving = false;
+                let (result, root) = match result {
+                    Ok(setup) => {
+                        let path = setup.path.clone();
+                        let root = path.parent().map(PathBuf::from);
+                        this.leapsinger = setup.into();
+                        (Ok(path), root)
+                    }
+                    Err(error) => (Err(error), None),
+                };
+                this.finish_save(result, root, cx);
+            });
         })
         .detach();
     }
@@ -908,7 +1365,7 @@ impl VoiceSetupWindow {
                     {
                         app.settings.voice_paths.push(root);
                         if let Err(error) = app.settings.save() {
-                            log::warn!("could not save the DiffSinger voice folder: {error}");
+                            log::warn!("could not save the voice folder: {error}");
                         }
                     }
                     app.singer_configuration_changed(&path, cx);
@@ -928,7 +1385,22 @@ impl VoiceSetupWindow {
         cx: &mut Context<Self>,
     ) -> bool {
         let key = event.keystroke.key.as_str();
+        if key == "escape" {
+            window.remove_window();
+            return true;
+        }
+        if self.saving {
+            return true;
+        }
         let modifiers = event.keystroke.modifiers;
+        if key == "enter"
+            && !modifiers.modified()
+            && self.focus.is_focused(window)
+            && self.tab == VoiceSetupTab::LeapSinger
+        {
+            self.save_leapsinger(cx);
+            return true;
+        }
         let tab_navigation = key == "tab"
             && (!modifiers.modified() || (modifiers.shift && modifiers.number_of_modifiers() == 1));
         if tab_navigation && self.focus.contains_focused(window, cx) {
@@ -975,7 +1447,11 @@ impl VoiceSetupWindow {
 
 impl HasTextField for VoiceSetupWindow {
     fn field(&mut self) -> Option<&mut TextField> {
-        Some(self.field_for_mut(self.active))
+        if self.saving {
+            None
+        } else {
+            Some(self.field_for_mut(self.active))
+        }
     }
 
     fn readable_field(&self) -> Option<&TextField> {
@@ -1019,13 +1495,13 @@ impl Render for VoiceSetupWindow {
                             .child(self.t(Key::VoiceSetupTitle)),
                     ),
             )
-            .child(self.render_tabs(cx))
             .child(titlebar::controls(window, &theme, |_, window, _| {
                 window.remove_window();
             }));
         let body = match self.tab {
             VoiceSetupTab::Voicevox => self.render_voicevox(cx),
             VoiceSetupTab::DiffSinger => self.render_diffsinger(cx),
+            VoiceSetupTab::LeapSinger => self.render_leapsinger(cx),
         };
         div()
             .id("voice-setup-root")
@@ -1044,6 +1520,7 @@ impl Render for VoiceSetupWindow {
                 }
             }))
             .child(titlebar)
+            .child(self.render_tabs(cx))
             .child(
                 div()
                     .id("voice-setup-scroll")
@@ -1058,7 +1535,7 @@ impl Render for VoiceSetupWindow {
                 div()
                     .id("voice-setup-status")
                     .min_h(Metrics::STATUS_HEIGHT)
-                    .max_h(px(84.0))
+                    .max_h_24()
                     .flex_shrink_0()
                     .overflow_y_scroll()
                     .px_3()
@@ -1084,6 +1561,10 @@ impl AurisApp {
         if let Some(handle) = self.voice_setup_window
             && handle
                 .update(cx, |view, window, cx| {
+                    if view.saving {
+                        window.activate_window();
+                        return;
+                    }
                     view.invalidate_request();
                     view.tab = tab;
                     view.active = Field::first(tab);
@@ -1131,6 +1612,159 @@ fn parse<T: std::str::FromStr>(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+
+    fn leap_bank() -> (tempfile::TempDir, LeapSingerSetup) {
+        let folder = tempfile::tempdir().unwrap();
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../auris-singer/tests/fixtures/leapsinger");
+        for file in ["diffsinger_speaker.onnx", "vocoder.onnx", "ja.phonemes"] {
+            std::fs::copy(fixtures.join(file), folder.path().join(file)).unwrap();
+        }
+        let mut setup = LeapSingerSetup::default();
+        setup.path = folder.path().join("singer.leapsinger.json");
+        setup.manifest.acoustic = "diffsinger_speaker.onnx".into();
+        setup.manifest.vocoder = "vocoder.onnx".into();
+        setup.manifest.variant = LeapSingerVariant::Diffsinger;
+        setup.manifest.speakers = vec![
+            auris_session::LeapSingerSpeaker {
+                name: "First".into(),
+                embedding: vec![1.0, 2.0],
+            },
+            auris_session::LeapSingerSpeaker {
+                name: "Second".into(),
+                embedding: vec![4.0, 5.0],
+            },
+        ];
+        (folder, setup)
+    }
+
+    #[gpui::test]
+    fn a_leapsinger_voice_is_checked_registered_and_edited_with_its_speakers_intact(
+        cx: &mut TestAppContext,
+    ) {
+        let (folder, setup) = leap_bank();
+        let path = setup.path.clone();
+        let speakers = setup.manifest.speakers.clone();
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::LeapSinger, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        handle
+            .update(cx, |this, _, cx| {
+                this.finish_leapsinger_open(Ok(setup));
+                cx.notify();
+            })
+            .unwrap();
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        crate::harness::click("leap-check", cx);
+        cx.run_until_parked();
+        handle
+            .update(cx, |this, _, _| {
+                assert!(!this.checking);
+                assert!(!this.status_failed, "{}", this.status);
+                assert!(!this.status.is_empty());
+            })
+            .unwrap();
+        assert!(!path.exists());
+        crate::harness::click("voice-setup-field-17", cx);
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("My LeapSinger");
+        crate::harness::click("leap-save", cx);
+        cx.run_until_parked();
+        handle
+            .update(cx, |this, _, _| {
+                assert!(!this.saving);
+                assert!(!this.status_failed, "{}", this.status);
+            })
+            .unwrap();
+        let saved = read_leapsinger_setup(&path).unwrap();
+        assert_eq!(saved.manifest.name, "My LeapSinger");
+        assert_eq!(saved.manifest.speakers, speakers);
+        app.update(cx, |this, _| {
+            assert!(
+                this.settings
+                    .voice_paths
+                    .contains(&folder.path().to_path_buf())
+            );
+            assert!(
+                this.voice_list()
+                    .contains(&("My LeapSinger".into(), path.clone()))
+            );
+        });
+        // The saved source snapshot allows a second edit without reopening the dialog.
+        crate::harness::click("voice-setup-field-17", cx);
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("Renamed LeapSinger");
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        let saved = read_leapsinger_setup(&path).unwrap();
+        assert_eq!(saved.manifest.name, "Renamed LeapSinger");
+        assert_eq!(saved.manifest.speakers, speakers);
+    }
+
+    #[gpui::test]
+    fn leapsinger_formats_keys_and_pending_checks_follow_the_current_input(
+        cx: &mut TestAppContext,
+    ) {
+        let (app, cx) = crate::harness::open(cx);
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::LeapSinger, cx)
+        });
+        cx.run_until_parked();
+        let handle = app.read_with(cx, |this, _| this.voice_setup_window.unwrap());
+        let cx = &mut gpui::VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        crate::harness::click("leap-variant-1", cx);
+        crate::harness::click("leap-hop-512", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.leapsinger_setup().manifest.hop_size, 512)
+            })
+            .unwrap();
+        crate::harness::click("leap-variant-0", cx);
+        crate::harness::click("leap-hop-512", cx);
+        handle
+            .update(cx, |this, window, _| {
+                assert_eq!(this.leapsinger_setup().manifest.hop_size, 256);
+                this.active = Field::LeapEntry;
+                window.focus(&this.focus);
+            })
+            .unwrap();
+        cx.simulate_keystrokes("tab");
+        handle
+            .update(cx, |this, _, _| assert_eq!(this.active, Field::LeapName))
+            .unwrap();
+        let generation = handle
+            .update(cx, |this, _, _| {
+                this.checking = true;
+                this.request_generation
+            })
+            .unwrap();
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("New name");
+        handle
+            .update(cx, |this, _, cx| {
+                this.finish_leapsinger_check(generation, Err("obsolete check failed".into()));
+                assert!(!this.checking);
+                assert!(!this.status_failed);
+                assert!(this.status.is_empty());
+                this.saving = true;
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        cx.simulate_input("Cannot edit during save");
+        crate::harness::click("voice-tab-voicevox", cx);
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.tab, VoiceSetupTab::LeapSinger);
+                assert_eq!(this.leapsinger.name.content(), "New name");
+            })
+            .unwrap();
+    }
 
     fn catalog() -> VoicevoxCatalog {
         let style = |id, singer: &str, name: &str| VoicevoxStyle {
@@ -1352,7 +1986,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn advanced_fields_scroll_but_actions_stay_reachable_on_both_tabs(cx: &mut TestAppContext) {
+    fn advanced_fields_scroll_but_actions_stay_reachable_on_every_tab(cx: &mut TestAppContext) {
         let (app, cx) = crate::harness::open(cx);
         app.update(cx, |this, cx| {
             this.open_voice_setup(VoiceSetupTab::Voicevox, cx)
@@ -1363,10 +1997,14 @@ mod tests {
         cx.simulate_resize(size(px(480.0), px(320.0)));
         cx.run_until_parked();
         let title = cx.debug_bounds("voice-setup-title").unwrap();
-        for id in ["voice-tab-voicevox", "voice-tab-diffsinger"] {
+        for id in [
+            "voice-tab-voicevox",
+            "voice-tab-diffsinger",
+            "voice-tab-leapsinger",
+        ] {
             let tab = cx.debug_bounds(id).unwrap();
-            assert!(tab.top() >= title.top() && tab.bottom() <= title.bottom());
-            assert!(tab.left() >= title.right() && tab.right() <= px(480.0));
+            assert!(tab.top() >= title.bottom());
+            assert!(tab.left() >= px(0.0) && tab.right() <= px(480.0));
         }
         crate::harness::click("voicevox-advanced", cx);
         cx.run_until_parked();
@@ -1379,6 +2017,30 @@ mod tests {
         for action in ["diff-choose-folder", "diff-save"] {
             let bounds = cx.debug_bounds(action).unwrap();
             assert!(bounds.bottom() <= px(320.0) && bounds.right() <= px(480.0));
+        }
+        crate::harness::click("voice-tab-leapsinger", cx);
+        cx.run_until_parked();
+        for action in [
+            "leap-choose-folder",
+            "leap-open-entry",
+            "leap-check",
+            "leap-save",
+        ] {
+            let bounds = cx.debug_bounds(action).unwrap();
+            assert!(bounds.bottom() <= px(320.0) && bounds.right() <= px(480.0));
+        }
+        for language in [Language::English, Language::Japanese] {
+            handle
+                .update(cx, |this, _, cx| {
+                    this.language = language;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+            for action in ["voice-tab-leapsinger", "leap-check", "leap-save"] {
+                let bounds = cx.debug_bounds(action).unwrap();
+                assert!(bounds.bottom() <= px(320.0) && bounds.right() <= px(480.0));
+            }
         }
         crate::harness::click("voice-tab-voicevox", cx);
         cx.run_until_parked();
@@ -1587,6 +2249,15 @@ mod tests {
             .update(cx, |this, _, _| {
                 assert_eq!(this.tab, VoiceSetupTab::DiffSinger);
                 assert_eq!(this.active, Field::DiffFolder);
+            })
+            .unwrap();
+        app.update(cx, |this, cx| {
+            this.open_voice_setup(VoiceSetupTab::LeapSinger, cx)
+        });
+        handle
+            .update(cx, |this, _, _| {
+                assert_eq!(this.tab, VoiceSetupTab::LeapSinger);
+                assert_eq!(this.active, Field::LeapEntry);
             })
             .unwrap();
     }

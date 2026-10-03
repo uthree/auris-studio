@@ -44,7 +44,7 @@ inference refuses a graph.
 DiffSinger's exported graphs generate random noise internally and do not accept Auris' render
 seed. A saved audio take preserves the rendered performance.
 
-The library's **Set Up DiffSinger…** row opens the supported deployment fields, validates that
+The settings' **Set Up DiffSinger…** button opens the supported deployment fields, validates that
 the phoneme table, acoustic model, and vocoder configuration exist, and writes `dsconfig.yaml`
 into the chosen voicebank folder. The resulting voice appears on the shelf with a **DiffSinger**
 badge. Saving the form preserves existing speaker, language, variance and other deployment fields.
@@ -95,36 +95,46 @@ server. A voice folder containing the entry appears in the configured Voices lib
 ### Prepare the models
 
 Obtain a checkpoint from the [LeapSinger model release](https://github.com/wavtechyukky/LeapSinger/releases/tag/v0.1.0)
-and export it using the upstream repository. The following example uses the full model and bakes
-speaker 0 into one acoustic graph:
+and export it using the upstream repository. The procedure below was verified against upstream
+commit `6c99e2b4194def02888ada33c20198a16bca2eb5` and its bundled NHVSing V3.2.1 models.
+It exposes all three checkpoint speakers:
 
 ```sh
 git clone https://github.com/wavtechyukky/LeapSinger
 cd LeapSinger
+git checkout 6c99e2b4194def02888ada33c20198a16bca2eb5
 uv venv --python 3.11
 uv pip install -e ".[export]" --torch-backend=auto
 uv run python -m export.cli \
   --ckpt models/3singer_ritsu3style_uv_gan2d.pth \
-  --out auris-voice --model-name voice \
-  --variant full --speaker bake --spk-id 0 --spk-name singer --num-steps 1
+  --out auris-voice --model-name acoustic \
+  --variant full --speaker embed --num-steps 1
+uv run python /path/to/auris-studio/tools/leapsinger/prepare.py \
+  --upstream . --checkpoint models/3singer_ritsu3style_uv_gan2d.pth \
+  --output auris-voice --name "LeapSinger singers" \
+  --speaker-names "御丹宮くるみ" "夏目悠李" "波音リツ"
 ```
 
 `models/` above is where the downloaded checkpoint was extracted. This produces
-`auris-voice/voice.singer.onnx`. Copy `checkpoints/nhv_v3_1.onnx` and the checkpoint's matching
-phoneme dictionary into `auris-voice/`. The dictionary contains one phoneme per line; blank
+`auris-voice/acoustic.onnx`. The packaging helper copies `checkpoints/nhv_v3_2_1.onnx`,
+the acoustic release's text credits and terms, and the checkpoint's exact phoneme dictionary
+into `auris-voice/`. It writes `singer.leapsinger.json` with the projected speaker vectors.
+Native DFT is enabled by the latest upstream exporter by default; keep it enabled for portable
+ONNX Runtime inference. The dictionary contains one phoneme per line; blank
 lines and text after `#` are ignored, and the first phoneme must be `pau`. Its order defines the
 model's token IDs, so use the vocabulary from that checkpoint's `config["phonemes"]`, or the
 dictionary distributed with that model. A newer repository dictionary may have a different
 number or order of tokens.
 
-Save `auris-voice/singer.leapsinger.json` beside those files:
+For a baked single speaker, export with `--speaker bake --spk-id 0 --spk-name singer` and pass
+`--acoustic acoustic.singer.onnx --baked` to the helper. A minimal baked entry looks like this:
 
 ```json
 {
   "format_version": 1,
   "name": "LeapSinger singer",
-  "acoustic": "voice.singer.onnx",
-  "vocoder": "nhv_v3_1.onnx",
+  "acoustic": "acoustic.singer.onnx",
+  "vocoder": "nhv_v3_2_1.onnx",
   "phonemes": "ja.phonemes",
   "variant": "full",
   "sample_rate": 44100,
@@ -134,13 +144,21 @@ Save `auris-voice/singer.leapsinger.json` beside those files:
 ```
 
 File paths are relative to this entry. `variant`, `sample_rate`, `hop_size`, and `num_mel_bins`
-default to the values shown. Add `auris-voice/` to the Voices library, or select the JSON entry
-with **Track → Choose Voice…**. The same entry path works with the CLI and model tools.
+default to the values shown. In **Settings → General → Voice Setup → Set Up LeapSinger…**,
+open the generated entry or choose its folder. Edit the name and acoustic, vocoder and dictionary
+paths; choose the full or DiffSinger layout and its matching hop. The full layout fixes the hop
+to 256. Existing speaker names and projected embeddings are preserved when saving.
+**Test Synthesis** loads both models on a worker and checks a short vowel on CPU.
+**Register Voice** validates the ONNX input/output contracts, saves the entry atomically, adds
+its folder to the voice library and refreshes cached metadata. Conflicting edits require opening
+the entry again. Files must resolve inside the voice folder so automatic rendering remains portable.
+The shelf uses the manifest's voice name, allowing several banks to keep the same entry filename.
+The same entry can be selected with **Track → Choose Voice…**, the CLI or model tools.
 
 The code is MIT-licensed; the distributed acoustic checkpoints and NHVSing weights have their
 own terms. Keep the release's credits and accompanying terms with the voice and follow their
 restrictions on output and redistribution. See the
-[LeapSinger license notice](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/LICENSE)
+[LeapSinger license notice](https://github.com/wavtechyukky/LeapSinger/blob/6c99e2b4194def02888ada33c20198a16bca2eb5/LICENSE)
 and [NHVSing weight terms](https://github.com/wavtechyukky/NHVSing#weight-licensing).
 
 ### Export variants and speakers
@@ -148,7 +166,8 @@ and [NHVSing weight terms](https://github.com/wavtechyukky/NHVSing#weight-licens
 The `full` variant uses the native hop-256 grid and carries an explicit voiced/unvoiced curve.
 For the UV-free checkpoint `3speaker_gan2d.pth`, export with `--variant diffsinger --hop 256`
 and set `"variant": "diffsinger"` in the entry. A hop-512 export uses `--hop 512`,
-`"hop_size": 512`, and `nhv_v3_1x.onnx`. Both acoustic and vocoder must use the same grid.
+`"hop_size": 512`, and `nhv_v3_2_1x.onnx`. Pass `--variant diffsinger --hop 512` to the
+packaging helper too. Both acoustic and vocoder must use the same grid.
 
 A baked-speaker export, or a single-speaker export using `--speaker none`, appears as one speaker
 named by `name`. To expose several speakers from a graph exported with `--speaker embed`, add a
@@ -157,7 +176,35 @@ Generate each array with upstream `export.spk_embed.speaker_vector(model, speake
 after `infer.load_acoustic` loads the checkpoint. These are the projected vectors of size
 `model.hidden`, rather than the checkpoint's raw speaker-bank rows. The graph requires every
 entry to carry a complete vector; array order defines the speaker IDs in Auris. See the
-[upstream speaker helper](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/export/spk_embed.py).
+[upstream speaker helper](https://github.com/wavtechyukky/LeapSinger/blob/6c99e2b4194def02888ada33c20198a16bca2eb5/export/spk_embed.py).
+
+### Real-model verification
+
+The opt-in test renders three pitched `a` vowels for every speaker, asserting exact sample count,
+finite and audible audio, periodicity and pitch within 30 cents. Optional output writes each
+speaker's WAV and a shared `.frames.json` timeline:
+
+```powershell
+$env:AURIS_LEAPSINGER_TEST_MODEL = 'C:/Voices/LeapSinger/singer.leapsinger.json'
+$env:AURIS_LEAPSINGER_TEST_WAV = 'C:/renders/leapsinger.wav'
+cargo test -p auris-singer --test leapsinger_real -- --ignored --nocapture
+```
+
+The output folder must exist. `AURIS_LEAPSINGER_TEST_ACCELERATION=auto` exercises the desktop's
+default processor selection; the test defaults to CPU. The frames can also pass through the
+session and CLI:
+
+```powershell
+cargo run -p auris-cli -- sing-frames C:/renders/leapsinger.frames.json --voice C:/Voices/LeapSinger/singer.leapsinger.json --acceleration cpu -o C:/renders/leapsinger-cli.wav
+```
+
+On Windows, the v0.1.0 full/embed model with NHVSing V3.2.1 generated 62,208 samples per speaker
+at 44,100 Hz, on both CPU and automatic acceleration. Automatic selection also completed on CPU
+on this machine. The measured pitches were within one cent
+of 261.63, 329.63 and 392.00 Hz. The UV-free DiffSinger/baked export with hop 512 and V3.2.1x
+also passed, generating 62,976 samples. These vowel probes verify the inference pipeline and
+speaker inputs; they do not measure lyric pronunciation quality. Ordinary CI uses the small
+arithmetic ONNX graphs in `auris-singer/tests/fixtures/leapsinger` for tensor-contract coverage.
 
 ### Rendering and saved takes
 
@@ -170,8 +217,8 @@ The upstream acoustic and vocoder graphs generate noise internally and do not ac
 seed. Re-rendering the same score can therefore change the waveform. The rendered take remains
 an audio file in the project, preserving the performance that was saved. The tensor layouts and
 noise behavior follow the upstream
-[export wrappers](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/export/wrappers.py)
-and [excitation graph](https://github.com/wavtechyukky/LeapSinger/blob/003b32f1fb552e112ac6facb5b36d567520bf521/export/excitation_onnx.py).
+[export wrappers](https://github.com/wavtechyukky/LeapSinger/blob/6c99e2b4194def02888ada33c20198a16bca2eb5/export/wrappers.py)
+and [excitation graph](https://github.com/wavtechyukky/LeapSinger/blob/6c99e2b4194def02888ada33c20198a16bca2eb5/export/excitation_onnx.py).
 
 ## Adding a curve predictor
 
@@ -263,7 +310,7 @@ The connection's output sample rate must divide into whole samples per Engine fr
 and is rejected when loading the connection. This is the voice connection's rate, independent
 of the project's audio output rate.
 
-The library's **Set Up VOICEVOX…** row opens a connection editor for the Engine URL and the query
+The settings' **Set Up VOICEVOX…** button opens a connection editor for the Engine URL and the query
 and frame-decode style IDs. The same screen can choose and start a local Engine executable, check
 `/version` and `/singers`, and save a `*.voicevox.json` entry into Auris Studio's managed Voices
 folder. The saved entry appears on the shelf with a **VOICEVOX** badge.

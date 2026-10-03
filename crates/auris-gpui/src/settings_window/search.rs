@@ -110,6 +110,7 @@ impl Section {
                 Key::VoiceSetupTitle,
                 Key::VoiceSetupVoicevox,
                 Key::VoiceSetupDiffSinger,
+                Key::VoiceSetupLeapSinger,
             ],
             Self::Panels => &[
                 Key::PanelPositions,
@@ -400,6 +401,11 @@ mod tests {
         cx.simulate_input("DiffSinger");
         cx.run_until_parked();
         assert!(cx.debug_bounds("settings-setup-diffsinger").is_some());
+
+        cx.simulate_keystrokes("secondary-a");
+        cx.simulate_input("LeapSinger");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("settings-setup-leapsinger").is_some());
 
         cx.simulate_keystrokes("secondary-a");
         cx.simulate_input("ボイスフォルダ");

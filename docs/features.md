@@ -297,9 +297,11 @@ sound on an instrument track, and the search box finds voices by name like every
 DiffSinger, LeapSinger, and VOICEVOX entries carry backend badges on the shelf. A
 LeapSinger voice enters through a `.leapsinger.json` file naming its exported acoustic model,
 NHVSing vocoder, and phoneme dictionary; [setup and export instructions](singing-backends.md#leapsinger-voices)
-cover the supported variants and speaker choices. The setup rows at
-the bottom of the section create a DiffSinger `dsconfig.yaml`, or start and verify a VOICEVOX
-Engine and save its URL and singing style IDs without editing configuration files by hand.
+cover the supported variants and speaker choices. Settings' Voice Setup buttons create a
+DiffSinger `dsconfig.yaml`, configure and test LeapSinger model paths and frame grids, or start
+and verify a VOICEVOX Engine and save its URL and singing style IDs. LeapSinger registration
+preserves projected speaker embeddings, validates the model contracts on a worker thread and
+refreshes the voice library without editing configuration files by hand.
 A voice trained on several corpora carries one **speaker** per source, and **Track → Next
 Speaker** moves the track round that list, the status line saying who sings now and where
 they stand in it; a single-speaker voice says so and stays. The choice is the track's, saved

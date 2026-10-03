@@ -1586,6 +1586,18 @@ pub mod singing {
     //! graph or an acoustic-model/vocoder pair is behind it. A new backend belongs behind that
     //! boundary, not in a frontend or in the document model.
     //!
+    //! LeapSinger setup uses [`LeapSingerSetup`](crate::LeapSingerSetup), preserving the
+    //! manifest's projected speaker vectors while editing its paths and frame grid.
+    //! [`check_leapsinger_setup`](crate::check_leapsinger_setup) runs both models on CPU and
+    //! measures a short synthesized vowel without writing a file.
+    //! [`write_leapsinger_manifest`](crate::write_leapsinger_manifest) validates their contracts
+    //! before atomically registering the entry; an existing entry's source snapshot prevents
+    //! another writer's changes from being overwritten. Models and dictionaries must remain
+    //! inside the voice folder, matching the automatic-render policy. Both operations belong
+    //! on worker threads; the desktop adds the saved folder to its voice library and invalidates
+    //! any cached model. The upstream export and vocabulary packaging are developer tooling,
+    //! while the saved deployment needs only ONNX Runtime.
+    //!
     //! The entry path gets the policy a SoundFont gets — a library shared by every project,
     //! referenced where it lies — while its display name is written into the document, so a
     //! track header does not load models merely to draw. Loaded voices are kept for the session,
