@@ -220,6 +220,11 @@ mod tests {
             damping: 0.12,
             stiffness: 0.0003,
             pickup: 0.0,
+            electric: false,
+            pickup_position: 0.14,
+            tone: 12_000.0,
+            pickup_q: 0.707,
+            decay_ratio: 1.0,
             bow_speed: 0.0,
             bow_response: 0.012,
         }

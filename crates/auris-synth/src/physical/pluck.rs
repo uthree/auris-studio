@@ -4,6 +4,7 @@ use std::f32::consts::{PI, TAU};
 
 use super::super::Settings;
 use super::Delay;
+use auris_dsp::{Biquad, BiquadCoefficients};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct Pluck {
@@ -16,6 +17,10 @@ pub(super) struct Pluck {
     previous_input: f32,
     previous_output: f32,
     previous_motion: f32,
+    previous_pickup: f32,
+    pickup_filter: Biquad,
+    pickup_position: f32,
+    pickup_step: f32,
     filtered: f32,
     pole: f32,
     gain: f32,
@@ -40,6 +45,10 @@ impl Pluck {
         self.settings = Some(settings);
         self.target = rate / frequency;
         self.period = self.target;
+        self.pickup_filter.reset();
+        self.pickup_position = settings.pickup_position;
+        self.pickup_step = 1.0 - (-1.0 / (rate * 0.005)).exp();
+        self.previous_pickup = 0.0;
         self.configure();
         // A finite-width contact averages nearby triangular displacements. Hardness changes
         // the release spectrum, independently of the string's subsequent decay filter.
@@ -64,6 +73,14 @@ impl Pluck {
         self.previous_output = incoming;
         self.previous_motion = incoming;
         self.filtered = incoming;
+        if settings.electric {
+            // Seed the differentiated observation from the same initialized wave history.
+            // Starting it at zero would turn the initial displacement into a rate-scaled spike.
+            self.previous_pickup = (incoming
+                - line.read(self.period * settings.pickup_position - 1.0))
+                / (2.0 * (PI * settings.pickup_position).sin()).max(0.2)
+                * 0.7;
+        }
         self.tick = 0;
     }
 
@@ -71,6 +88,14 @@ impl Pluck {
         let Some(settings) = self.settings else {
             return;
         };
+        if settings.electric {
+            self.pickup_filter
+                .set_coefficients(BiquadCoefficients::lowpass(
+                    f64::from(self.rate),
+                    settings.tone.min(self.rate * 0.4),
+                    settings.pickup_q,
+                ));
+        }
         let frequency = self.rate / self.period;
         let omega = TAU * frequency / self.rate;
         // Split the requested fundamental loss between a scalar and a lowpass. The latter
@@ -123,6 +148,22 @@ impl Pluck {
         let Some(settings) = self.settings else {
             return acoustic;
         };
+        if settings.electric {
+            self.pickup_position +=
+                (settings.pickup_position - self.pickup_position) * self.pickup_step;
+            let displacement = (motion - line.read(self.period * self.pickup_position))
+                / (2.0 * (PI * self.pickup_position).sin()).max(0.2)
+                * 0.7;
+            // Induced voltage follows motion velocity. The LC approximation then limits
+            // upper partials without feeding pickup position or tone back into the string.
+            // Below the standard guitar range, keep the voltage reference at the open E2
+            // period rather than amplifying a differentiated transient by an unbounded period.
+            let voltage = (displacement - self.previous_pickup)
+                * self.period.min(self.rate / 82.406_89)
+                / TAU;
+            self.previous_pickup = displacement;
+            return self.pickup_filter.process_sample(voltage);
+        }
         let electric = (motion - line.read(self.period * settings.position))
             / (2.0 * (PI * settings.position).sin()).max(0.2)
             * 0.7;

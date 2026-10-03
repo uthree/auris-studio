@@ -118,6 +118,7 @@ fn lookup<'a>(
 const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Piano", "ピアノ"),
     ("Physical Guitar", "ギター"),
+    ("Electric Guitar", "エレキギター"),
     ("Physical Bass", "ベース"),
     ("Physical Bell", "ベル"),
     ("Physical Mallet", "マレット"),
@@ -131,6 +132,7 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Compressor", "コンプレッサー"),
     ("Delay", "ディレイ"),
     ("Distortion", "ディストーション"),
+    ("Guitar Amp", "ギターアンプ"),
     ("Equalizer", "イコライザー"),
     ("Gain & Pan", "ゲイン & パン"),
     ("Limiter", "リミッター"),
@@ -147,6 +149,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
     (
         "Plucked string: pick hardness, pluck position, damping and body",
         "弦をはじくギター音源。ピックの硬さ、位置、減衰、胴の共鳴を調整",
+    ),
+    (
+        "Steel string DI: independent pick/pickup position and pickup resonance",
+        "ピックとピックアップの位置、ピックアップの共振を調整できるエレキギター音源",
     ),
     (
         "Plucked bass string: finger/pick hardness, damping and body",
@@ -201,6 +207,10 @@ const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
         "サチュレーション、ハードクリップ、ウェーブフォールド、ビットクラッシュ",
     ),
     (
+        "Oversampled amplifier, tone stack and open/closed speaker cabinet",
+        "オーバーサンプリングで歪みを生成するギターアンプ。音域調整と開放型・密閉型キャビネット付き",
+    ),
+    (
         "Six band EQ: high-pass, low shelf, two bells, high shelf, low-pass",
         "6 バンド EQ。ハイパス、ローシェルフ、ベル 2 基、ハイシェルフ、ローパス",
     ),
@@ -234,6 +244,14 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("String Stiffness", "弦の剛性"),
     ("Bow Pressure", "弓圧"),
     ("Pickup blend", "ピックアップ比率"),
+    ("Pickup Position", "ピックアップ位置"),
+    ("Pickup Resonance", "ピックアップ共振"),
+    ("Pickup Q", "ピックアップQ"),
+    ("Decay per Octave", "オクターブごとの減衰"),
+    ("Bass", "低域"),
+    ("Middle", "中域"),
+    ("Treble", "高域"),
+    ("Cabinet", "キャビネット"),
     ("Bow speed", "運弓速度"),
     ("Bow response", "運弓の応答時間"),
     ("Legato", "レガート"),
@@ -511,6 +529,9 @@ const CHOICES: &[(&str, &str)] = &[
     ("Triangle", "三角波"),
     ("Noise", "ノイズ"),
     ("Soft (tanh)", "ソフト (tanh)"),
+    ("Bypass", "バイパス"),
+    ("Open", "開放型"),
+    ("Closed", "密閉型"),
     ("Hard clip", "ハードクリップ"),
     ("Fold", "フォールド"),
     ("Bitcrush", "ビットクラッシュ"),

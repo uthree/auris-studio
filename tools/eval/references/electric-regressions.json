@@ -1,0 +1,258 @@
+{
+  "symbolic_rows_unchanged": true,
+  "presets": {
+    "chiptune": {
+      "before": {
+        "CE": 5.726,
+        "CU": 7.66,
+        "PC": 4.542,
+        "PQ": 7.825
+      },
+      "after": {
+        "CE": 5.726,
+        "CU": 7.66,
+        "PC": 4.542,
+        "PQ": 7.825
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "88522ad7c6df4b07093b7f6408ce5ee51a8b3a8dd4fcc3fe15a540a3e3a58f85",
+      "wav_after_sha256": "88522ad7c6df4b07093b7f6408ce5ee51a8b3a8dd4fcc3fe15a540a3e3a58f85"
+    },
+    "game-loop": {
+      "before": {
+        "CE": 5.854,
+        "CU": 7.79,
+        "PC": 4.316,
+        "PQ": 7.931
+      },
+      "after": {
+        "CE": 5.854,
+        "CU": 7.79,
+        "PC": 4.316,
+        "PQ": 7.931
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "c2c1dca459e711dd8c639b9e5082e33e92568186a93c0c542916dacfb322cbfe",
+      "wav_after_sha256": "c2c1dca459e711dd8c639b9e5082e33e92568186a93c0c542916dacfb322cbfe"
+    },
+    "pop-band": {
+      "before": {
+        "CE": 7.375,
+        "CU": 7.855,
+        "PC": 5.106,
+        "PQ": 8.081
+      },
+      "after": {
+        "CE": 7.375,
+        "CU": 7.855,
+        "PC": 5.106,
+        "PQ": 8.081
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "c591f3161c797aaf5ff49b82ae04c06d0ba292371db97bec84c3f6c8112ad0a9",
+      "wav_after_sha256": "c591f3161c797aaf5ff49b82ae04c06d0ba292371db97bec84c3f6c8112ad0a9"
+    },
+    "city-pop": {
+      "before": {
+        "CE": 7.233,
+        "CU": 7.786,
+        "PC": 5.17,
+        "PQ": 8.009
+      },
+      "after": {
+        "CE": 7.233,
+        "CU": 7.786,
+        "PC": 5.17,
+        "PQ": 8.009
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ff21af4c947643f0c8ad46c43ebec92ca2576765e1cb07f8219f1a3d7deddca8",
+      "wav_after_sha256": "ff21af4c947643f0c8ad46c43ebec92ca2576765e1cb07f8219f1a3d7deddca8"
+    },
+    "rock": {
+      "before": {
+        "CE": 7.352,
+        "CU": 7.855,
+        "PC": 5.142,
+        "PQ": 7.968
+      },
+      "after": {
+        "CE": 7.352,
+        "CU": 7.855,
+        "PC": 5.142,
+        "PQ": 7.968
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "83d6cf67bcf86273eec447f3a57e7084517d93290e8c83398c55766d55ace92c",
+      "wav_after_sha256": "83d6cf67bcf86273eec447f3a57e7084517d93290e8c83398c55766d55ace92c"
+    },
+    "jazz-trio": {
+      "before": {
+        "CE": 7.151,
+        "CU": 7.959,
+        "PC": 4.435,
+        "PQ": 8.138
+      },
+      "after": {
+        "CE": 7.151,
+        "CU": 7.959,
+        "PC": 4.435,
+        "PQ": 8.138
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ab5b9d462254b0371ad7c1ee985157f17be5d6c717c5963d1c9ef091dfb7c8fc",
+      "wav_after_sha256": "ab5b9d462254b0371ad7c1ee985157f17be5d6c717c5963d1c9ef091dfb7c8fc"
+    },
+    "orchestral": {
+      "before": {
+        "CE": 5.483,
+        "CU": 7.003,
+        "PC": 4.148,
+        "PQ": 7.403
+      },
+      "after": {
+        "CE": 5.483,
+        "CU": 7.003,
+        "PC": 4.148,
+        "PQ": 7.403
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "f3b6d28956cddb7f5ed5344811929b0a04cbd8382d2229d6dbfdb0d3aa109f7f",
+      "wav_after_sha256": "f3b6d28956cddb7f5ed5344811929b0a04cbd8382d2229d6dbfdb0d3aa109f7f"
+    },
+    "synthwave": {
+      "before": {
+        "CE": 6.542,
+        "CU": 7.217,
+        "PC": 5.153,
+        "PQ": 7.588
+      },
+      "after": {
+        "CE": 6.542,
+        "CU": 7.217,
+        "PC": 5.153,
+        "PQ": 7.588
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "61e6c18d0030f3028bab711bf9bdf2f61cbcbd782db9823ed77e2851700bb5a5",
+      "wav_after_sha256": "61e6c18d0030f3028bab711bf9bdf2f61cbcbd782db9823ed77e2851700bb5a5"
+    },
+    "ambient": {
+      "before": {
+        "CE": 4.011,
+        "CU": 6.245,
+        "PC": 2.827,
+        "PQ": 6.838
+      },
+      "after": {
+        "CE": 4.011,
+        "CU": 6.245,
+        "PC": 2.827,
+        "PQ": 6.838
+      },
+      "delta": {
+        "CE": 0.0,
+        "CU": 0.0,
+        "PC": 0.0,
+        "PQ": 0.0
+      },
+      "wav_before_sha256": "ea5a0773ac20c2e92529af01c900d1164e313a16ab4637892cf9f27355a6fbf8",
+      "wav_after_sha256": "ea5a0773ac20c2e92529af01c900d1164e313a16ab4637892cf9f27355a6fbf8"
+    }
+  },
+  "interpretation": "These nine preset renders do not exercise the new electric instrument/amp; unchanged hashes establish regression behavior only.",
+  "runtime": {
+    "configuration": "48 kHz, stereo, 256 frames, 24 voices + amp, 512 blocks",
+    "mean_ms": 0.365,
+    "p99_ms": 0.523,
+    "callback_budget_ms": 5.333333333333333,
+    "raw_log": "ElectricGuitar + GuitarAmp: mean 0.365 ms, p99 0.523 ms, 6.8% of 5.333 ms callback budget\nPiano: mean 1.074 ms, p99 1.979 ms, 20.1% of 5.333 ms callback budget\nGuitar: mean 0.091 ms, p99 0.153 ms, 1.7% of 5.333 ms callback budget\nElectricGuitar: mean 0.118 ms, p99 0.248 ms, 2.2% of 5.333 ms callback budget\nBass: mean 0.038 ms, p99 0.085 ms, 0.7% of 5.333 ms callback budget\nBell: mean 0.137 ms, p99 0.259 ms, 2.6% of 5.333 ms callback budget\nMallet: mean 0.136 ms, p99 0.223 ms, 2.5% of 5.333 ms callback budget\nViolin: mean 0.080 ms, p99 0.153 ms, 1.5% of 5.333 ms callback budget\n"
+  },
+  "audition": {
+    "order": [
+      "clean",
+      "crunch",
+      "lead"
+    ],
+    "normalization": "linear whole-phrase RMS matching, no limiter",
+    "target_rms": 0.1,
+    "clips": {
+      "clean": {
+        "native_rms": 0.08179606584240218,
+        "native_peak": 0.5936920642852783,
+        "frames": 393632,
+        "sample_rate": 48000,
+        "native_sha256": "5955c2b4504ec67c1f17be943e10501e44ddda88501d09e5c3bdfa301c539a31",
+        "preview_gain": 1.2225526860016918,
+        "preview_sha256": "154599ef040b74a8bb174610bed6bcf035cacd90b51d1cc3e92a9ad82bb83585"
+      },
+      "crunch": {
+        "native_rms": 0.18405013232146786,
+        "native_peak": 0.7407263517379761,
+        "frames": 393632,
+        "sample_rate": 48000,
+        "native_sha256": "a9a3bec0af8d329f1fe3a3d3659c333474d5db992feeaa3574fb518a9159a3bf",
+        "preview_gain": 0.5433302260567615,
+        "preview_sha256": "56d98a49371f8b03e0162fe4cedc849bef678ae3d658f16f780357679ccbdbd8"
+      },
+      "lead": {
+        "native_rms": 0.1378972726509894,
+        "native_peak": 0.5214567184448242,
+        "frames": 393632,
+        "sample_rate": 48000,
+        "native_sha256": "43459edb1735ab98c8680ddab7b2f4a6e7c6040df166f37019a6846a34c36a49",
+        "preview_gain": 0.7251775040764922,
+        "preview_sha256": "33fd90fd149b3758e4470d6473ba7b9a591efbf68f5700a4d7b64c735d5004c4"
+      }
+    }
+  },
+  "tests": {
+    "rust_workspace_all_targets_passed": 4028,
+    "rust_ignored": 14,
+    "python_passed": 43,
+    "python_external_fixture_skips": 6,
+    "clippy_workspace_all_targets": "passed",
+    "ruff": "passed",
+    "changed_crates_rustdoc_warnings_denied": "passed"
+  }
+}

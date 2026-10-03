@@ -22,7 +22,8 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         0..=7 => Model::Piano,
         8 | 11 | 14 => Model::Bell,
         9 | 10 | 12 | 13 | 15 => Model::Mallet,
-        24..=31 | 46 => Model::Guitar,
+        24..=25 | 46 => Model::Guitar,
+        26..=31 => Model::ElectricGuitar,
         32..=39 => Model::Bass,
         40..=45 | 48..=51 => Model::Violin,
         _ => return None,
@@ -172,6 +173,7 @@ mod tests {
         for (name, program) in [
             ("piano", 0),
             ("guitar", 24),
+            ("electric", 27),
             ("bass", 34),
             ("bell", 14),
             ("mallet", 12),
@@ -216,6 +218,24 @@ mod tests {
             },
             0.77,
         );
+        let electric = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "electric")
+            .unwrap()
+            .id;
+        let slot = session
+            .add_effect(Some(electric), auris_dsp::GuitarAmp::ID)
+            .unwrap();
+        session.set_param(
+            auris_core::ParamTarget::Effect {
+                track: Some(electric),
+                slot,
+                param: auris_core::ParamId(0),
+            },
+            28.0,
+        );
         let before = session
             .render_job()
             .render(&Default::default(), &mut Default::default())
@@ -241,6 +261,7 @@ mod tests {
         for (patch, model) in [
             (0, Model::Piano),
             (25, Model::Guitar),
+            (27, Model::ElectricGuitar),
             (33, Model::Bass),
             (14, Model::Bell),
             (12, Model::Mallet),

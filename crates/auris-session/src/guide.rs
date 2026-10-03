@@ -765,6 +765,13 @@ pub mod plugins {
     //! — the right widget, range, unit and scaling — rather than hand-written per plugin, so a new
     //! parameter is one line rather than one line and a control.
     //!
+    //! [`Model::ElectricGuitar`](auris_synth::Model::ElectricGuitar) supplies a sample-free
+    //! pickup DI, sharing the plucked-string primitive with the acoustic guitar. Its
+    //! independent observation and electrical response stay in the instrument. The separate
+    //! [`GuitarAmp`](auris_dsp::GuitarAmp) effect owns oversampled saturation, tone controls
+    //! and analytic speaker coloration. Registry discovery makes both available in every
+    //! frontend; saved state and automation use the ordinary plugin parameter contract.
+    //!
     //! # Observing mechanical motion
     //!
     //! [`Instrument::motion_monitor`](auris_core::Instrument::motion_monitor) optionally exposes

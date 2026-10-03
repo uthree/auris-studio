@@ -1,6 +1,6 @@
 # Physical instruments
 
-Choose **Physical Piano, Guitar, Bass, Bell, Mallet or Violin** in the sound library.
+Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet or Violin** in the sound library.
 Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
 New melodic tracks use Physical Piano. No sample files or network setup are needed.
 
@@ -11,6 +11,7 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | --- | --- | --- |
 | Piano | Finite hammer pulse and coupled unison stiff-string modes | Contact hardness, strike position, stiffness, pedal |
 | Guitar | Finite-width pluck, allpass-tuned string and bridge-motion output | Pick hardness, pluck position, damping, pickup blend |
+| Electric Guitar | Steel-string pickup DI, without acoustic-body radiation | Independent pick/pickup positions, pickup resonance, decay per octave |
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
@@ -45,6 +46,13 @@ Position takes effect at the next attack on struck/plucked instruments; on violi
 the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano attack.
 Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
 position-dependent magnetic pickup approximation, progressively bypassing body coloration.
+**Electric Guitar** is a separate DI instrument: pickup position is independent of pick
+position, the pickup observes motion velocity, and a resonant lowpass approximates its
+electrical response. Positions refer to the open string; standard tuning and the highest
+playable string determine the estimated fret and effective positions. **Decay per Octave**
+multiplies the nominal E4 decay for each octave above E4 (and divides below it). Add the
+**Guitar Amp** effect for clean/crunch/lead saturation and an open or closed speaker cabinet.
+The [electric calibration account](electric-guitar.md) describes reference measurements.
 Violin **Bow speed** controls motion independently of **Bow Pressure**. **Bow response** sets its
 2–120 ms response time (about 57 ms by default), including while a note sounds. Output expression
 changes smoothly with half that time constant. **Legato** uses last-note priority: overlapping

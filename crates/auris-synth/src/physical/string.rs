@@ -119,7 +119,7 @@ impl StringModel {
         self.neck.clear();
         self.filtered = 0.0;
         self.bowed = model == Model::Violin;
-        self.guitar = model == Model::Guitar;
+        self.guitar = matches!(model, Model::Guitar | Model::ElectricGuitar);
         self.velocity = velocity;
         if self.guitar {
             self.position = settings.position;

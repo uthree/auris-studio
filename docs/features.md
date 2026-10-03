@@ -762,7 +762,7 @@ drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
 ## Physical instruments
 
-The library includes **Physical Piano, Guitar, Bass, Bell, Mallet and Violin**, with no sample
+The library includes **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet and Violin**, with no sample
 files to install. New melodic tracks start on Physical Piano. These are expressive reduced
 physical models with editable contact hardness, excitation position, damping and body resonance.
 See [physical instruments](physical-instruments.md) for the models, controls and composition use.
@@ -828,6 +828,7 @@ second, which is close to how a General MIDI patch already behaves.
 | `auris.fx.delay` | Delay | Ping-pong, damped feedback |
 | `auris.fx.reverb` | Reverb | Freeverb-style comb/all-pass network |
 | `auris.fx.distortion` | Distortion | Soft clip, hard clip, wavefolder, bitcrusher |
+| `auris.fx.guitar_amp` | Guitar Amp | Eight-times oversampled saturation, tone stack, open/closed speaker coloration |
 | `auris.fx.limiter` | Limiter | Lookahead, so the ceiling is actually a ceiling |
 
 Effects can be chained on any track and on the master bus. A chain that looks ahead — the limiter

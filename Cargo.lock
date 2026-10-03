@@ -1134,6 +1134,7 @@ dependencies = [
  "auris-dsp",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

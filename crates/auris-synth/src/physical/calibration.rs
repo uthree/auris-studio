@@ -3,6 +3,22 @@
 use super::{Model, Settings};
 
 pub(super) fn register(model: Model, pitch: u8, mut settings: Settings) -> Settings {
+    if model == Model::ElectricGuitar {
+        // Highest playable string, in standard tuning. Pick/pickup distances are specified
+        // relative to its open length; fretting shortens that length without moving either.
+        let open = [40, 45, 50, 55, 59, 64]
+            .into_iter()
+            .rev()
+            .find(|open| pitch >= *open)
+            .unwrap_or(40);
+        let ratio = 2.0_f32.powf(f32::from(pitch.saturating_sub(open)) / 12.0);
+        settings.position = (settings.position * ratio).clamp(0.02, 0.9);
+        settings.pickup_position = (settings.pickup_position * ratio).clamp(0.02, 0.9);
+        settings.decay = (f64::from(settings.decay)
+            * f64::from(settings.decay_ratio).powf((f64::from(pitch) - 64.0) / 12.0))
+        .clamp(0.1, 40.0) as f32;
+        return settings;
+    }
     let (center, slopes) = match model {
         Model::Guitar => (55.0, [-0.156, -0.624, 0.0624]),
         Model::Violin => (69.0, [0.0, 0.224, 0.0]),

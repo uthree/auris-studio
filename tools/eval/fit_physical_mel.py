@@ -95,13 +95,17 @@ class Renderer:
             self.process.wait()
         self.process.stdout.close()
 
-    def render(self, model, notes, params, seconds, hold, rate=RATE):
+    def render(self, model, notes, params, seconds, hold, rate=RATE, effects=(), inputs=()):
         request = {"model": model, "notes": [{key: note[key] for key in
                     ("pitch", "velocity", "tuning_cents", "hold", "bends", "expression")
                     if key in note} for note in notes],
                    "seconds": seconds, "hold": hold, "params": params}
         if rate != RATE:
             request["sample_rate"] = rate
+        if effects:
+            request["effects"] = effects
+        if inputs:
+            request["inputs"] = [str(path) for path in inputs]
         self.process.stdin.write((json.dumps(request, allow_nan=False) + "\n").encode())
         self.process.stdin.flush()
         header = self.process.stdout.read(4)

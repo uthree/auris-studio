@@ -107,6 +107,7 @@ mod tests {
             vec![
                 "auris.physical.bass",
                 "auris.physical.bell",
+                "auris.physical.electric_guitar",
                 "auris.physical.guitar",
                 "auris.physical.mallet",
                 "auris.physical.piano",
@@ -118,7 +119,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 11);
+        assert_eq!(registry.len(), 12);
         assert_eq!(registry.effects().count(), 0);
     }
 

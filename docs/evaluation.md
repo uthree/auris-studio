@@ -14,6 +14,8 @@ The [physical-model experiments](physical-extensions.md) add causal radiation mo
 register/gesture ablations, paired confidence intervals and synchronized piano-pedal references.
 The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerpts, separate
 attack/body/tail loss and acoustic-role guards for every snare/tom register.
+The [electric-guitar experiment](electric-guitar.md) adds independent pickup DI, an
+oversampled amplifier and a paired clean/pedal recording benchmark with pitch-grouped splits.
 
 ## The symbolic ruler
 

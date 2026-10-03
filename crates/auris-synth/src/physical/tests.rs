@@ -47,6 +47,7 @@ fn each_model_has_a_tuned_fundamental_at_multiple_rates() {
 fn strings_are_tuned_across_their_playing_registers() {
     for (model, pitches) in [
         (Model::Guitar, [45, 60, 81]),
+        (Model::ElectricGuitar, [40, 64, 86]),
         (Model::Bass, [28, 40, 55]),
         (Model::Violin, [55, 69, 88]),
     ] {
@@ -553,11 +554,70 @@ fn callback_and_parameter_changes_allocate_nothing_even_when_stealing() {
         let allocations = count_allocations(|| {
             for pitch in 36..96 {
                 instrument.set_param(ParamId(P_DAMPING), 0.5);
+                if model == Model::ElectricGuitar {
+                    instrument.set_param(ParamId(P_PICKUP_POSITION), 0.1);
+                    instrument.set_param(ParamId(P_TONE), 3200.0);
+                }
                 instrument.process(&[on(pitch, 0.8)], &mut buffer, &ctx);
             }
             instrument.process(&[NoteEvent::AllSoundOff { frame: 50 }], &mut buffer, &ctx);
         });
         assert_eq!(allocations, 0, "{model:?} allocated on the audio thread");
+    }
+}
+
+#[test]
+fn electric_pickup_changes_observation_independently_of_pick_contact() {
+    let mut guitar = rig(Model::ElectricGuitar, 48000.0);
+    guitar.set_param("position", 0.14);
+    guitar.set_param("pickup_position", 0.04);
+    let bridge = guitar.render(24000, &[on(64, 0.8)]);
+    let contact = guitar.instrument.param_by_key("position");
+    guitar.instrument.reset();
+    guitar.set_param("pickup_position", 0.18);
+    let neck = guitar.render(24000, &[on(64, 0.8)]);
+    assert_eq!(guitar.instrument.param_by_key("position"), contact);
+    assert_ne!(bridge, neck);
+    let hz = f64::from(pitch_to_hz(64.0));
+    for audio in [&bridge, &neck] {
+        let strongest = (-8_i32..=8)
+            .max_by(|a, b| {
+                goertzel(
+                    &audio[4800..],
+                    48000.0,
+                    hz * (f64::from(*a) / 1200.0).exp2(),
+                )
+                .total_cmp(&goertzel(
+                    &audio[4800..],
+                    48000.0,
+                    hz * (f64::from(*b) / 1200.0).exp2(),
+                ))
+            })
+            .unwrap();
+        assert!(
+            strongest.abs() <= 2,
+            "pickup moved the fundamental by {strongest} cents"
+        );
+    }
+    assert!(guitar.instrument.param_by_key("body").is_none());
+}
+
+#[test]
+fn electric_controls_have_contiguous_ids_and_narrow_pickup_settings_stay_bounded() {
+    let mut instrument = Physical::new(Model::ElectricGuitar);
+    for (index, descriptor) in instrument.parameters().iter().enumerate() {
+        assert_eq!(descriptor.id.index(), index);
+    }
+    instrument.set_param_by_key("position", 0.05);
+    instrument.set_param_by_key("pickup_position", 0.02);
+    instrument.set_param_by_key("hardness", 1.0);
+    instrument.set_param_by_key("pickup_q", 2.5);
+    instrument.set_param_by_key("tone", 12000.0);
+    let mut rig = Rig::new(Box::new(instrument), 48000.0, 256, 2);
+    for pitch in [0, 10, 28, 40, 64, 86, 127] {
+        rig.instrument.reset();
+        let audio = rig.render(48000, &[on(pitch, 1.0)]);
+        assert!(peak(&audio) < 32.0, "MIDI {pitch}: {}", peak(&audio));
     }
 }
 

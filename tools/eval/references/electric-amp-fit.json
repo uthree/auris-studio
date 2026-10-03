@@ -1,0 +1,79 @@
+{
+  "parameters": {
+    "drive_db": 34.650383990203444,
+    "bass_db": 2.5123120646501187,
+    "mid_db": -0.7538793281576917,
+    "treble_db": -1.6705102761568007
+  },
+  "objective": 0.08365051272979372,
+  "evaluations": 112,
+  "bounds": {
+    "drive_db": [
+      6,
+      36
+    ],
+    "bass_db": [
+      -12,
+      12
+    ],
+    "mid_db": [
+      -12,
+      12
+    ],
+    "treble_db": [
+      -12,
+      12
+    ]
+  },
+  "training_ids": [
+    "BluesDriver-Neck-1-0",
+    "BluesDriver-Neck-1-2",
+    "BluesDriver-Neck-1-4",
+    "BluesDriver-Neck-1-6",
+    "BluesDriver-Neck-1-8",
+    "BluesDriver-Neck-1-10",
+    "BluesDriver-Neck-1-12",
+    "BluesDriver-Neck-1-14",
+    "BluesDriver-Neck-1-16",
+    "BluesDriver-Neck-1-18",
+    "BluesDriver-Neck-1-20",
+    "BluesDriver-Neck-1-22",
+    "BluesDriver-Neck-2-1",
+    "BluesDriver-Neck-2-3",
+    "BluesDriver-Neck-3-1",
+    "BluesDriver-Neck-3-3",
+    "BluesDriver-Neck-4-0",
+    "BluesDriver-Neck-4-2",
+    "BluesDriver-Neck-4-4",
+    "BluesDriver-Neck-5-1",
+    "BluesDriver-Neck-5-3",
+    "BluesDriver-Neck-6-0",
+    "BluesDriver-Neck-6-2",
+    "BluesDriver-Neck-6-4",
+    "BluesDriver-Bridge-1-0",
+    "BluesDriver-Bridge-1-2",
+    "BluesDriver-Bridge-1-4",
+    "BluesDriver-Bridge-1-6",
+    "BluesDriver-Bridge-1-8",
+    "BluesDriver-Bridge-1-10",
+    "BluesDriver-Bridge-1-12",
+    "BluesDriver-Bridge-1-14",
+    "BluesDriver-Bridge-1-16",
+    "BluesDriver-Bridge-1-18",
+    "BluesDriver-Bridge-1-20",
+    "BluesDriver-Bridge-1-22",
+    "BluesDriver-Bridge-2-1",
+    "BluesDriver-Bridge-2-3",
+    "BluesDriver-Bridge-3-1",
+    "BluesDriver-Bridge-3-3",
+    "BluesDriver-Bridge-4-0",
+    "BluesDriver-Bridge-4-2",
+    "BluesDriver-Bridge-4-4",
+    "BluesDriver-Bridge-5-1",
+    "BluesDriver-Bridge-5-3",
+    "BluesDriver-Bridge-6-0",
+    "BluesDriver-Bridge-6-2",
+    "BluesDriver-Bridge-6-4"
+  ],
+  "seed": 20261003
+}
