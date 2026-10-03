@@ -157,6 +157,9 @@ its effective dial settings, editable projects, full renders, window positions,
 PCM hashes and scores under distinct filenames. Results save after each preset.
 An improvement on training alone is insufficient to update `preset.rs`.
 
+The [October 2026 calibration](learned-music-tuning.md) records the shipped dials,
+writer changes, fresh paired measurements and rejected candidates.
+
 For writer changes, archive the original renderer, run the symbolic ruler and
 `music.py` before editing, change one musical rule, then compare matching seeds
 through the same instruments and render settings. Retain failed candidates and
@@ -171,7 +174,7 @@ texture or a specific renderer artifact instead of better musical development.
 ## Verify the measuring tools
 
 ```sh
-uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile pytest tools/eval/test_music.py tools/eval/test_render_audio.py tools/eval/test_tune.py
+uv run --python 3.11 --with pytest --with numpy --with scipy --with soundfile --with optuna pytest tools/eval/test_music.py tools/eval/test_render_audio.py tools/eval/test_tune.py
 uv run --with ruff ruff check tools/eval/music.py tools/eval/learned_models.py tools/eval/render_audio.py tools/eval/tune.py
 ```
 

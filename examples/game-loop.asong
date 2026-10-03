@@ -10,6 +10,8 @@ groove = "four-on-the-floor"
 mood = "bright"
 seed = 53
 fill = 0.35
+humanize = 0.668
+dynamics = 0.407
 form = ["verse", "chorus"]
 
 [section.verse]

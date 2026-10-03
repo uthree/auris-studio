@@ -3710,7 +3710,7 @@ mod window_tests {
     }
 
     #[gpui::test]
-    fn composition_and_reference_sheets_trap_tab_and_close_with_escape(cx: &mut TestAppContext) {
+    fn composition_sheet_traps_tab_and_closes_with_escape(cx: &mut TestAppContext) {
         let (app, cx) = open(cx);
         resize(&app, cx, size(px(640.0), px(480.0)));
 
