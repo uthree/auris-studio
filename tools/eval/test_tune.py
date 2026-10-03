@@ -51,3 +51,23 @@ def test_trial_zero_keeps_the_complete_current_preset(monkeypatch):
         tune.VALIDATION_SEEDS,
         tune.VALIDATION_SEEDS,
     ]
+
+
+def test_focused_search_freezes_all_other_dials(monkeypatch):
+    base = {name: (low + high) / 2 for name, (low, high) in tune.SPACE.items()}
+    base.update(tempo=120.0, swing=58.0)
+    monkeypatch.setattr(tune, "current_dials", lambda _: base.copy())
+
+    class Scorer:
+        predictor = type("Model", (), {"provenance": {}})()
+        segments = 1
+
+        def objective(self, preset, dials, seeds):
+            assert {k: v for k, v in dials.items() if k != "humanize"} == {
+                k: v for k, v in base.items() if k != "humanize"
+            }
+            return {key: 1.0 + dials["humanize"] for key in tune.AXES}
+
+    result = tune.tune("rock", 3, Scorer(), ["humanize"])
+    assert result["active_dials"] == ["humanize"]
+    assert all(row["dials"]["swing"] == 58 for row in result["history"])

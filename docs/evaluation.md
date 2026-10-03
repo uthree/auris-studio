@@ -139,6 +139,7 @@ match the listening excerpts. Both reports use local audio players and upload no
 
 ```sh
 uv run tools/eval/tune.py --preset all --trials 18 --out tune-results.json --workdir target/tuning
+uv run tools/eval/tune.py --preset chiptune --dials humanize dynamics --trials 12 --out focused.json
 ```
 
 Optuna TPE maximizes two separate objectives: TuneJury reward and MuQ-MuLan positive
@@ -146,6 +147,8 @@ cosine. The continuous dials are humanize, dynamics, fill, variation, mood, temp
 within ±6%, and swing within ±6 points only for already swung presets. Key, groove,
 progression, form and instruments stay fixed. Trial zero uses the current preset;
 training seeds are 101/102 and independent validation seeds are 301/302.
+`--dials` confines an experiment to the named parameters; every other resolved
+value, including tempo and swing, remains fixed.
 
 Select a Pareto candidate whose two training objectives are no worse than trial
 zero; prioritize reward among those candidates. Acceptance requires both validation

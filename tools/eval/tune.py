@@ -172,30 +172,45 @@ class Scorer:
         return {axis: statistics.mean(row[axis] for row in rows) for axis in AXES}
 
 
-def tune(preset: str, trials: int, scorer: Scorer) -> dict:
+def tune(
+    preset: str, trials: int, scorer: Scorer, dials: list[str] | None = None
+) -> dict:
     import optuna
 
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     base = current_dials(preset)
     swings = base["swing"] > 50.0
+    active = set(dials if dials is not None else (*SPACE, "tempo", "swing"))
+    if not active or active - {*SPACE, "tempo", "swing"}:
+        raise ValueError("Select at least one known dial")
 
     def suggest(trial: optuna.Trial) -> dict[str, float]:
         dials = {
-            name: trial.suggest_float(name, min(low, base[name]), max(high, base[name]))
-            for name, (low, high) in SPACE.items()
+            **base,
+            **{
+                name: trial.suggest_float(
+                    name, min(low, base[name]), max(high, base[name])
+                )
+                for name, (low, high) in SPACE.items()
+                if name in active
+            },
         }
-        dials["tempo"] = trial.suggest_float(
-            "tempo", base["tempo"] * (1 - TEMPO_BAND), base["tempo"] * (1 + TEMPO_BAND)
-        )
-        dials["swing"] = (
-            trial.suggest_float(
-                "swing",
-                max(50.0, base["swing"] - SWING_BAND),
-                base["swing"] + SWING_BAND,
+        if "tempo" in active:
+            dials["tempo"] = trial.suggest_float(
+                "tempo",
+                base["tempo"] * (1 - TEMPO_BAND),
+                base["tempo"] * (1 + TEMPO_BAND),
             )
-            if swings
-            else 50.0
-        )
+        if "swing" in active:
+            dials["swing"] = (
+                trial.suggest_float(
+                    "swing",
+                    max(50.0, base["swing"] - SWING_BAND),
+                    base["swing"] + SWING_BAND,
+                )
+                if swings
+                else 50.0
+            )
         return dials
 
     study = optuna.create_study(
@@ -205,10 +220,7 @@ def tune(preset: str, trials: int, scorer: Scorer) -> dict:
     # The preset as it stands is trial zero: the search starts from the map's one known point,
     # and the printed history always shows how far anything actually moved from it.
     study.enqueue_trial(
-        {
-            name: base[name]
-            for name in (*SPACE, "tempo", *(("swing",) if swings else ()))
-        }
+        {name: base[name] for name in active if name != "swing" or swings}
     )
 
     history = []
@@ -237,7 +249,7 @@ def tune(preset: str, trials: int, scorer: Scorer) -> dict:
         if eligible
         else study.trials[0]
     )
-    best = effective_dials(suggest_to_dials(winner.params, swings))
+    best = next(row["dials"] for row in history if row["trial"] == winner.number)
     # Held-out validation: the number to trust. Both settings on seeds the search never saw.
     held_base = scorer.objective(preset, base, VALIDATION_SEEDS)
     held_best = scorer.objective(preset, best, VALIDATION_SEEDS)
@@ -245,6 +257,7 @@ def tune(preset: str, trials: int, scorer: Scorer) -> dict:
         "current": base,
         "best": best,
         "selected_trial": winner.number,
+        "active_dials": sorted(active),
         "model": scorer.predictor.provenance,
         "prompts_sha256": sha256(MANIFEST),
         "search_seeds": SEARCH_SEEDS,
@@ -270,13 +283,6 @@ def dominates(candidate: dict, baseline: dict) -> bool:
     )
 
 
-def suggest_to_dials(params: dict, swings: bool) -> dict[str, float]:
-    dials = dict(params)
-    if not swings:
-        dials["swing"] = 50.0
-    return dials
-
-
 def main() -> None:
     global CLI, RESOLVER
     parser = argparse.ArgumentParser(
@@ -286,6 +292,12 @@ def main() -> None:
         "--preset", action="append", default=[], help="'all' or a name; repeatable"
     )
     parser.add_argument("--trials", type=int, default=18)
+    parser.add_argument(
+        "--dials",
+        nargs="+",
+        choices=(*SPACE, "tempo", "swing"),
+        help="optimize only these dials and freeze all others",
+    )
     parser.add_argument("--out", type=Path, help="write full results to this JSON")
     parser.add_argument(
         "--workdir", type=Path, help="where renders go (default: temporary)"
@@ -321,7 +333,7 @@ def main() -> None:
         print(
             f"tuning {preset} ({args.trials} trials, renders in {workdir})", flush=True
         )
-        results[preset] = tune(preset, args.trials, scorer)
+        results[preset] = tune(preset, args.trials, scorer, args.dials)
         if args.out:
             args.out.write_text(
                 json.dumps(results, indent=2, allow_nan=False) + "\n", encoding="utf-8"
