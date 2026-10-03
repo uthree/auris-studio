@@ -12,6 +12,8 @@ The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second n
 violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
 The [physical-model experiments](physical-extensions.md) add causal radiation modes,
 register/gesture ablations, paired confidence intervals and synchronized piano-pedal references.
+The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerpts, separate
+attack/body/tail loss and acoustic-role guards for every snare/tom register.
 
 ## The symbolic ruler
 

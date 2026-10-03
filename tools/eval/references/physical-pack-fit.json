@@ -1,0 +1,636 @@
+{
+  "metric": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "whole-note RMS 0.1, no frame normalization or time warp",
+    "compression": 10000.0,
+    "loss": "0.3 attack + 0.3 body + 0.4 tail log-mel L1, mean of resolutions",
+    "attack_frames": 5,
+    "phases_seconds": {
+      "attack": [
+        0,
+        0.05
+      ],
+      "body": [
+        0.05,
+        0.25
+      ],
+      "tail": [
+        0.25,
+        3
+      ]
+    },
+    "preprocessing": "causal second-order 30 Hz highpass on both signals before whole-note RMS",
+    "secondary": "20 ms RMS-envelope L1 in dB; absolute 90%-energy-time error in seconds"
+  },
+  "reference_sha256": "47444edf3224d883caf7d20801b3e34a94ff33b31618b137d9b0b40ba892bc04",
+  "renderer_sha256": "731487ba72feeecbdec685f6d9c49b9cd78f1975ef110b5a8d83bf305c81bbf9",
+  "versions": {
+    "python": "3.14.6 (main, Jul 18 2026, 17:08:46) [MSC v.1944 64 bit (AMD64)]",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "defaults": {
+    "bass": {
+      "body": 0.3499999940395355,
+      "damping": 0.11999999731779099,
+      "decay": 3.5,
+      "hardness": 0.4000000059604645,
+      "level": -12.0,
+      "position": 0.30000001192092896,
+      "release": 0.15000000596046448
+    },
+    "bell": {
+      "body": 0.3499999940395355,
+      "damping": 0.11999999731779099,
+      "decay": 6.0,
+      "hardness": 0.6499999761581421,
+      "level": -12.0,
+      "position": 0.3499999940395355,
+      "release": 1.7999999523162842
+    },
+    "drums": {
+      "damping": 0.3499999940395355,
+      "decay": 1.0,
+      "hardness": 0.6499999761581421,
+      "level": -6.0,
+      "position": 0.6000000238418579
+    },
+    "guitar": {
+      "body": 0.6499999761581421,
+      "damping": 0.0,
+      "decay": 5.638205051422119,
+      "hardness": 0.2492009997367859,
+      "level": -12.0,
+      "pickup": 0.0,
+      "position": 0.2982800006866455,
+      "release": 0.11999999731779099
+    },
+    "mallet": {
+      "body": 0.3499999940395355,
+      "damping": 0.11999999731779099,
+      "decay": 1.7000000476837158,
+      "hardness": 0.4000000059604645,
+      "level": -12.0,
+      "position": 0.4000000059604645,
+      "release": 0.3499999940395355
+    },
+    "piano": {
+      "body": 0.6499999761581421,
+      "damping": 0.00010800000018207356,
+      "decay": 11.295999526977539,
+      "hardness": 0.7013310194015503,
+      "level": -12.0,
+      "position": 0.22864100337028503,
+      "release": 0.20000000298023224,
+      "stiffness": 0.0007692810031585395
+    },
+    "violin": {
+      "body": 0.6499999761581421,
+      "bow_pressure": 0.33682000637054443,
+      "bow_response": 0.057120900601148605,
+      "bow_speed": 0.20399799942970276,
+      "damping": 0.35928699374198914,
+      "decay": 10.46019458770752,
+      "hardness": 0.3193710148334503,
+      "legato": 0.0,
+      "level": -12.0,
+      "position": 0.10341600328683853,
+      "release": 1.5
+    }
+  },
+  "families": {
+    "bass": {
+      "model": "bass",
+      "params": {
+        "hardness": 0.319,
+        "position": 0.312,
+        "decay": 6.659,
+        "damping": 0.0
+      },
+      "gains_db": [
+        4.5,
+        4.5,
+        1.8,
+        -4.5,
+        -4.5,
+        -4.5,
+        -2.7,
+        -1.8,
+        -1.8,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "normalization": 0.43571187678346857,
+      "training_notes": 42,
+      "train_before": 0.17033443834798206,
+      "train_after": 0.15670533566487077,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.45
+        ],
+        "decay": [
+          0.3,
+          12
+        ],
+        "damping": [
+          0,
+          0.6
+        ]
+      }
+    },
+    "bell": {
+      "model": "bell",
+      "params": {
+        "hardness": 0.407,
+        "position": 0.45,
+        "decay": 9.159,
+        "damping": 0.0
+      },
+      "gains_db": [
+        2.7,
+        2.7,
+        2.7,
+        6.3,
+        6.3,
+        6.3,
+        4.5,
+        -2.7,
+        -6.3,
+        -6.3,
+        -4.5,
+        -2.7
+      ],
+      "normalization": 0.21063060641973586,
+      "training_notes": 32,
+      "train_before": 0.17842172409625978,
+      "train_after": 0.09006091427852474,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.45
+        ],
+        "decay": [
+          0.3,
+          12
+        ],
+        "damping": [
+          0,
+          0.6
+        ]
+      }
+    },
+    "mallet": {
+      "model": "mallet",
+      "params": {
+        "hardness": 0.157,
+        "position": 0.45,
+        "decay": 4.859,
+        "damping": 0.0
+      },
+      "gains_db": [
+        2.7,
+        6.3,
+        6.3,
+        4.5,
+        0.0,
+        -2.7,
+        -4.5,
+        -4.5,
+        -4.5,
+        -2.7,
+        0.0,
+        0.0
+      ],
+      "normalization": 0.11992108388841458,
+      "training_notes": 32,
+      "train_before": 0.21796487031451128,
+      "train_after": 0.12154186296465497,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.45
+        ],
+        "decay": [
+          0.3,
+          12
+        ],
+        "damping": [
+          0,
+          0.6
+        ]
+      }
+    },
+    "kick": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.407,
+        "position": 0.492,
+        "decay": 1.405,
+        "damping": 0.422
+      },
+      "gains_db": [
+        -4.5,
+        -2.7,
+        0.0,
+        0.0,
+        -1.8,
+        0.0,
+        4.5,
+        4.5,
+        1.8,
+        2.7,
+        1.8,
+        0.0
+      ],
+      "normalization": 1.3260792511045187,
+      "training_notes": 12,
+      "train_before": 0.11149026457677168,
+      "train_after": 0.08126440755456216,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      }
+    },
+    "snare": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.6499999761581421,
+        "position": 0.6000000238418579,
+        "decay": 1.0,
+        "damping": 0.3499999940395355
+      },
+      "gains_db": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        2.25,
+        1.26,
+        -0.0,
+        -0.0,
+        -0.0,
+        -0.0,
+        -0.0,
+        -0.36
+      ],
+      "normalization": 0.9481045459590608,
+      "training_notes": 12,
+      "train_before": 0.5820984698836671,
+      "train_after": 0.5706259229662257,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      },
+      "acceptance_guard": {
+        "candidate": "defaults",
+        "radiation_scale": 0,
+        "acoustic_contract": {
+          "snare_fitness_min": 0.65,
+          "wire_head_min_ratio": 2.05
+        },
+        "constrained_fractions": [
+          0.125,
+          0.05,
+          0.02
+        ],
+        "training_envelope_max_ratio": 1.05,
+        "grid": [
+          0,
+          0.125,
+          0.25,
+          0.375,
+          0.5,
+          0.625,
+          0.75,
+          1
+        ]
+      }
+    },
+    "closed_hat": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.677,
+        "position": 0.627,
+        "decay": 1.405,
+        "damping": 0.134
+      },
+      "gains_db": [
+        0.0,
+        1.8,
+        1.8,
+        6.3,
+        6.3,
+        6.3,
+        6.3,
+        4.5,
+        2.7,
+        2.7,
+        -6.3,
+        -6.3
+      ],
+      "normalization": 1.328914944671256,
+      "training_notes": 8,
+      "train_before": 0.38085969887695265,
+      "train_after": 0.32213095976493517,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      }
+    },
+    "open_hat": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.407,
+        "position": 0.546,
+        "decay": 1.405,
+        "damping": 0.518
+      },
+      "gains_db": [
+        0.0,
+        0.0,
+        1.8,
+        1.8,
+        6.3,
+        6.3,
+        6.3,
+        6.3,
+        1.8,
+        -2.7,
+        -6.3,
+        4.5
+      ],
+      "normalization": 0.7990533608104231,
+      "training_notes": 10,
+      "train_before": 0.4063577452232835,
+      "train_after": 0.3582548522520128,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      }
+    },
+    "crash": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.839,
+        "position": 0.411,
+        "decay": 1.405,
+        "damping": 0.134
+      },
+      "gains_db": [
+        0.0,
+        1.8,
+        1.8,
+        1.8,
+        1.8,
+        -2.7,
+        -2.7,
+        -2.7,
+        -4.5,
+        -6.3,
+        -6.3,
+        6.3
+      ],
+      "normalization": 1.0140318983449872,
+      "training_notes": 6,
+      "train_before": 0.49908245255435296,
+      "train_after": 0.37823769041878735,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      }
+    },
+    "ride": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.407,
+        "position": 0.465,
+        "decay": 1.405,
+        "damping": 0.566
+      },
+      "gains_db": [
+        0.0,
+        0.0,
+        -1.8,
+        -2.7,
+        -6.3,
+        -6.3,
+        -6.3,
+        -6.3,
+        -6.3,
+        -6.3,
+        -4.5,
+        6.3
+      ],
+      "normalization": 2.508769426793473,
+      "training_notes": 6,
+      "train_before": 0.3561303850330757,
+      "train_after": 0.261534853887198,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      }
+    },
+    "tom": {
+      "model": "drums",
+      "params": {
+        "hardness": 0.407,
+        "position": 0.465,
+        "decay": 1.405,
+        "damping": 0.518
+      },
+      "gains_db": [
+        5.1975,
+        7.4475,
+        -0.135,
+        -7.4475,
+        -2.6775,
+        -0.4275,
+        3.5775,
+        5.4225,
+        4.5225,
+        2.025,
+        0.54,
+        0.0
+      ],
+      "normalization": 0.4559187376560894,
+      "training_notes": 23,
+      "train_before": 0.2276050791226873,
+      "train_after": 0.1434128292889258,
+      "bounds": {
+        "hardness": [
+          0.05,
+          0.95
+        ],
+        "position": [
+          0.05,
+          0.95
+        ],
+        "decay": [
+          0.5,
+          2
+        ],
+        "damping": [
+          0,
+          0.8
+        ]
+      },
+      "acceptance_guard": {
+        "candidate": "fitted",
+        "radiation_scale": 0.625,
+        "acoustic_contract": {
+          "tom_minus_kick_min": 0.05,
+          "keys": [
+            41,
+            43,
+            45,
+            47,
+            48,
+            50
+          ]
+        },
+        "constrained_fractions": [
+          0.125,
+          0.05,
+          0.02
+        ],
+        "training_envelope_max_ratio": 1.05,
+        "grid": [
+          0,
+          0.125,
+          0.25,
+          0.375,
+          0.5,
+          0.625,
+          0.75,
+          1
+        ]
+      }
+    }
+  },
+  "search_schedule": {
+    "contact_loss": [
+      0.18,
+      0.06
+    ],
+    "radiation": [
+      0.25,
+      0.1
+    ],
+    "contact_refinement": [
+      0.03
+    ],
+    "radiation_bounds_db": [
+      -9,
+      9
+    ],
+    "gain_penalty": 0.0001
+  }
+}

@@ -20,6 +20,7 @@ mod body;
 mod calibration;
 mod legato;
 mod modal;
+mod pack;
 mod string;
 
 use body::Body;
@@ -130,7 +131,7 @@ impl Model {
             Self::Piano => 0.164_845,
             Self::Guitar => 0.178_368,
             Self::Violin => 1.787_516,
-            _ => 1.0,
+            _ => pack::profile(self).map_or(1.0, |profile| profile.normalization),
         }
     }
 }
@@ -220,7 +221,7 @@ pub struct Physical {
 impl Physical {
     /// Builds an unprepared physical instrument. All voice storage is allocated in `prepare`.
     pub fn new(model: Model) -> Self {
-        let (decay, release, position, hardness) = match model {
+        let (mut decay, release, mut position, mut hardness) = match model {
             Model::Piano => (11.296, 0.20, 0.228_641, 0.701_331),
             Model::Guitar => (5.638_205, 0.12, 0.298_280, 0.249_201),
             Model::Bass => (3.5, 0.15, 0.30, 0.40),
@@ -228,6 +229,11 @@ impl Physical {
             Model::Mallet => (1.7, 0.35, 0.40, 0.40),
             Model::Violin => (10.460_195, 1.5, 0.103_416, 0.319_371),
         };
+        if let Some(profile) = pack::profile(model) {
+            decay = profile.decay;
+            position = profile.position;
+            hardness = profile.hardness;
+        }
         let mut descriptors = vec![
             ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
             ParamDescriptor::new(
@@ -249,7 +255,7 @@ impl Physical {
                     Model::Piano => 0.000_108,
                     Model::Guitar => 0.0,
                     Model::Violin => 0.359_287,
-                    _ => 0.12,
+                    _ => pack::profile(model).map_or(0.12, |profile| profile.damping),
                 },
             ),
             ParamDescriptor::percent(

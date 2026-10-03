@@ -9,10 +9,8 @@ use std::{
     io::{self, BufRead, Write},
 };
 
-use auris_core::{
-    AudioBuffer, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
-};
-use auris_synth::{Model, Physical};
+use auris_core::{AudioBuffer, Instrument, NoteEvent, PrepareContext, ProcessContext};
+use auris_synth::{DrumKit, Model, Physical};
 use serde::Deserialize;
 
 const RATE: u32 = 24_000;
@@ -74,12 +72,7 @@ fn render(request: &Request) -> Result<Vec<f32>, Box<dyn Error>> {
 }
 
 fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Error>> {
-    let model = match request.model.as_str() {
-        "piano" => Model::Piano,
-        "guitar" => Model::Guitar,
-        "violin" => Model::Violin,
-        _ => return Err("unknown model".into()),
-    };
+    let mut instrument = instrument(&request.model)?;
     if !request.seconds.is_finite()
         || !(0.05..=20.0).contains(&request.seconds)
         || !request.hold.is_finite()
@@ -95,7 +88,6 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
     if frames * request.notes.len() > 32_000_000 {
         return Err("PCM request exceeds memory budget".into());
     }
-    let mut instrument = Physical::new(model);
     instrument.prepare(&PrepareContext::new(f64::from(rate), block, 2));
     for (key, value) in &request.params {
         let Some(descriptor) = instrument.parameters().iter().find(|p| p.key == *key) else {
@@ -170,24 +162,36 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
     Ok(samples)
 }
 
+fn instrument(name: &str) -> Result<Box<dyn Instrument>, Box<dyn Error>> {
+    let model = match name {
+        "piano" => Model::Piano,
+        "guitar" => Model::Guitar,
+        "violin" => Model::Violin,
+        "bass" => Model::Bass,
+        "bell" => Model::Bell,
+        "mallet" => Model::Mallet,
+        "drums" => return Ok(Box::new(DrumKit::new())),
+        _ => return Err("unknown model".into()),
+    };
+    Ok(Box::new(Physical::new(model)))
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::args().nth(1).as_deref() == Some("--describe") {
         let models: BTreeMap<_, _> = [
-            ("piano", Model::Piano),
-            ("guitar", Model::Guitar),
-            ("violin", Model::Violin),
+            "piano", "guitar", "violin", "bass", "bell", "mallet", "drums",
         ]
         .into_iter()
-        .map(|(name, model)| {
-            let instrument = Physical::new(model);
+        .map(|name| -> Result<_, Box<dyn Error>> {
+            let instrument = instrument(name)?;
             let parameters: BTreeMap<_, _> = instrument
                 .parameters()
                 .iter()
                 .map(|p| (p.key.clone(), instrument.param(p.id)))
                 .collect();
-            (name, parameters)
+            Ok((name, parameters))
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
         let mut description = serde_json::to_value(&models)?;
         let response_fraction = if description["violin"].get("bow_response").is_some() {
             0.5
@@ -282,7 +286,7 @@ mod tests {
 
     #[test]
     fn worker_resets_between_notes_and_preserves_exact_length() {
-        let request = Request {
+        let mut request = Request {
             model: "piano".into(),
             notes: vec![
                 Note {
@@ -307,10 +311,26 @@ mod tests {
             params: BTreeMap::new(),
             sample_rate: RATE,
         };
-        let samples = render(&request).unwrap();
-        assert_eq!(samples.len(), 4848);
-        assert_eq!(&samples[..2424], &samples[2424..]);
-        assert!(samples.iter().any(|sample| sample.abs() > 0.01));
+        for model in [
+            "piano", "guitar", "violin", "bass", "bell", "mallet", "drums",
+        ] {
+            request.model = model.into();
+            let pitch = if model == "drums" { 36 } else { 60 };
+            for note in &mut request.notes {
+                note.pitch = pitch;
+            }
+            let samples = render(&request).unwrap();
+            assert_eq!(samples.len(), 4848);
+            assert_eq!(
+                &samples[..2424],
+                &samples[2424..],
+                "{model} retained state between notes"
+            );
+            assert!(
+                samples.iter().any(|sample| sample.abs() > 0.01),
+                "silent {model}"
+            );
+        }
     }
 
     #[test]

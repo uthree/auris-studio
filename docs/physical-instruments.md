@@ -142,6 +142,8 @@ played vibrato/glissando, expression following and release against real recordin
 Factory piano, guitar and violin settings and radiation gains are calibrated against real
 recordings with [temporal mel copy synthesis](physical-copy-synthesis.md). That document records
 the objective, fixed training/validation split, reproducible commands and remaining limits.
+The [bass/bar/drum measurements](physical-pack.md) calibrate the remaining physical models and
+seven kit families against real recordings, with separate attack, body, tail and envelope errors.
 The [before/after measurements](physical-instruments-evaluation.md) record the full-preset
 comparison, including the lower learned scores for sustained-string and ambient arrangements.
 
