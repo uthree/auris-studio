@@ -15,6 +15,7 @@ pub(super) struct MotionDrawing<'a> {
     pub released: &'a str,
     pub language: Language,
     pub drums: bool,
+    pub piano: bool,
     pub layout: Option<StringLayout>,
     pub effects: bool,
 }

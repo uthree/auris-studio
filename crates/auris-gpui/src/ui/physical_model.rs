@@ -10,6 +10,10 @@ use auris_i18n::{Key, Language, messages};
 use auris_session::{MotionFrame, MotionGeometry, MotionVoice, prelude::*};
 use gpui::{AnyElement, Bounds, Context, Pixels, Window, canvas, div, point, prelude::*, px, size};
 
+#[path = "physical_drums.rs"]
+mod drums;
+#[path = "physical_piano.rs"]
+mod piano;
 #[path = "physical_scene.rs"]
 mod scene;
 use scene::{MotionDrawing, draw_string_motion, match_history, string_layout};
@@ -184,7 +188,11 @@ impl AurisApp {
         let gain = self.physical_view.gain;
         let held = self.t(Key::PhysicalHeld);
         let released = self.t(Key::PhysicalReleased);
-        let projection = if string_layout.is_some() {
+        let projection = if piano {
+            self.t(Key::PhysicalPianoProjection)
+        } else if drums {
+            self.t(Key::PhysicalDrumProjection)
+        } else if string_layout.is_some() {
             self.t(Key::PhysicalStringProjection)
         } else {
             self.t(Key::PhysicalProjection)
@@ -335,7 +343,7 @@ impl AurisApp {
                     div()
                         .id("physical-motion-canvas")
                         .debug_selector(|| "physical-motion-canvas".into())
-                        .h_48()
+                        .h(gpui::rems(if piano || drums { 18. } else { 12. }))
                         .flex_shrink_0()
                         .w_full()
                         .bg(theme.surface_sunken)
@@ -354,6 +362,7 @@ impl AurisApp {
                                             released,
                                             language,
                                             drums,
+                                            piano,
                                             layout: string_layout,
                                             effects: !effects_disabled,
                                         },
@@ -473,6 +482,14 @@ fn draw_motion(
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
+    if drawing.piano {
+        piano::draw_piano_motion(bounds, drawing, window, cx);
+        return;
+    }
+    if drawing.drums {
+        drums::draw_drum_motion(bounds, drawing, window, cx);
+        return;
+    }
     if drawing.layout.is_some() {
         draw_string_motion(bounds, drawing, window, cx);
         return;
@@ -831,6 +848,99 @@ mod tests {
         assert_eq!(loud[63], (1., 0.));
         assert!((quiet[32].1 / loud[32].1 - 0.1).abs() < 1e-5);
         assert_eq!(displayed_motion(f32::NAN, 6.0), 0.);
+    }
+
+    #[gpui::test]
+    fn piano_and_kit_keep_their_surface_through_silence_freeze_and_effects(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::{auxiliary_window::Surface, harness};
+        let (app, cx) = harness::open(cx);
+        for (id, pitches, language, scheme, font_size) in [
+            (
+                "auris.physical.piano",
+                [21., 60., 61., 108.],
+                Language::Japanese,
+                "daylight",
+                24.,
+            ),
+            (
+                "auris.synth.drumkit",
+                [36., 38., 46., 49.],
+                Language::English,
+                "midnight",
+                16.,
+            ),
+        ] {
+            app.update(cx, |app, cx| {
+                let track = app.session.add_instrument_track("Model", id).unwrap();
+                app.open_plugin_window(PluginSubject::Instrument(track));
+                app.poll_physical_view();
+                app.theme = Theme::named(scheme);
+                app.language = language;
+                app.physical_view.effects_disabled = false;
+                cx.notify();
+            });
+            harness::paint(&app, cx);
+            let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
+            let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+            utility.update(|window, _| window.set_rem_size(px(font_size)));
+            harness::resize(&app, &mut utility, size(px(520.), px(480.)));
+            assert_eq!(
+                utility
+                    .debug_bounds("physical-motion-canvas")
+                    .unwrap()
+                    .size
+                    .height,
+                px(font_size * 18.)
+            );
+            // The test platform has no audio callback, so supply coherent observed frames.
+            app.update(&mut utility, |app, cx| {
+                let mut frame = MotionFrame {
+                    active: 5,
+                    pedal: true,
+                    ..Default::default()
+                };
+                for (voice, pitch) in frame.voices.iter_mut().zip(pitches) {
+                    voice.pitch = pitch;
+                    voice.geometry = Some(if is_drum_model(id) {
+                        drum_geometry(pitch as u8)
+                    } else {
+                        MotionGeometry::String
+                    });
+                    voice.level = 0.5;
+                    voice.contact = 0.25;
+                    voice.held = true;
+                    voice.points[17] = 0.025;
+                    voice.points[38] = -0.02;
+                }
+                app.physical_view.accept_frame(frame);
+                frame.voices.reverse();
+                app.physical_view.accept_frame(frame);
+                app.physical_view.frozen = true;
+                cx.notify();
+            });
+            harness::paint(&app, &mut utility);
+            harness::click("physical-effects", &mut utility);
+            app.read_with(&utility, |app, _| {
+                assert!(app.physical_view.effects_disabled);
+                assert!(app.physical_view.frozen);
+                assert_eq!(app.physical_view.frame.unwrap().active, 5);
+                assert_eq!(app.physical_view.frame.unwrap().voices[0].pitch, pitches[3]);
+            });
+            app.update(&mut utility, |app, cx| {
+                assert!(!app.physical_view.accept_frame(MotionFrame::default()));
+                app.physical_view.frozen = false;
+                app.physical_view.accept_frame(MotionFrame::default());
+                cx.notify();
+            });
+            harness::paint(&app, &mut utility);
+            assert!(utility.debug_bounds("physical-motion-canvas").is_some());
+            app.read_with(&utility, |app, _| {
+                assert_eq!(app.physical_view.frame.unwrap().active, 0);
+                assert!(app.physical_view.effects_disabled);
+            });
+        }
     }
 
     #[gpui::test]

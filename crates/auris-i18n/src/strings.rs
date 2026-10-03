@@ -58,6 +58,9 @@ strings! {
     PhysicalWaiting { en: "Play a test note or start playback to see the model move", ja: "試奏または再生すると、モデルの動きを確認できます" }
     PhysicalProjection { en: "Motion enlarged · Marker: contact · Bars: resonant modes", ja: "振動を拡大表示 · マーカー：接触位置 · 棒：共鳴モード" }
     PhysicalStringProjection { en: "Strings: schematic fingering · Trails: recent motion", ja: "弦：推定運指 · 軌跡：直近の振動" }
+    PhysicalPianoProjection { en: "Strings: keyboard order · Trails: recent motion", ja: "弦：鍵盤の並び · 軌跡：直近の振動" }
+    PhysicalDrumProjection { en: "Kit stays visible · Mesh: membrane motion", ja: "膜・シンバルを常時表示 · 網目：振動" }
+    PhysicalPedal { en: "Sustain pedal", ja: "サステインペダル" }
     PhysicalHeld { en: "Held", ja: "持続中" }
     PhysicalReleased { en: "Releasing", ja: "余韻" }
     PhysicalLower { en: "Octave down", ja: "1オクターブ下" }
@@ -1576,6 +1579,9 @@ strings! {
     DrumClosedHat { en: "Closed hat", ja: "クローズドハット" }
     DrumOpenHat { en: "Open hat", ja: "オープンハット" }
     DrumTom { en: "Tom", ja: "タム" }
+    DrumHighTom { en: "High tom", ja: "ハイタム" }
+    DrumMidTom { en: "Mid tom", ja: "ミッドタム" }
+    DrumFloorTom { en: "Floor tom", ja: "フロアタム" }
     EditApplyDrumMap { en: "Apply Drum Mapping", ja: "ドラム割り当てを適用" }
     DrumAssignments { en: "Drum assignments", ja: "ドラムの割り当て" }
     DrumAssignmentsHint { en: "Choose the sounds for new generated clips. Existing clips keep their notes.", ja: "新しく生成するクリップで使う音を指定します。既存のクリップは変更されません。" }
