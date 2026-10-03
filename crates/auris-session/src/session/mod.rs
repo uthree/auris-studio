@@ -71,7 +71,6 @@ mod punch;
 mod readiness;
 mod recognition;
 mod record;
-mod reference_match;
 mod rhythm;
 mod singer;
 mod spectrogram;
@@ -127,10 +126,6 @@ pub use readiness::{PlaybackReadiness, PlaybackState};
 pub use recognition::{
     AudioAnalysisJob, ChordAnalysisJob, ChordAnalysisReport, ClipAudioAnalysis,
     ClipInstrumentAnalysis, ClipMixtureAnalysis, analyze_audio_file, analyze_instrument_file,
-};
-pub use reference_match::{
-    ReferenceMatchJob, ReferenceMatchProgress, ReferenceMatchReport, ReferenceMatchResult,
-    ReferenceMatchSettings, ReferenceMatchStep,
 };
 pub use rhythm::{RhythmGrid, RhythmRow};
 pub use singer::{

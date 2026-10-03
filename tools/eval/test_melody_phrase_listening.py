@@ -18,8 +18,7 @@ def score_files(manifest_path):
     for name, value in manifest["variants"].items():
         condition = ab.read(ab.verified(value))
         folder = Path(value["path"]).parent
-        aesthetics = {label: {"CE": 7, "PQ": 8} for label in condition["files"]}
-        clap = {
+        music = {
             "prompts_sha256": "same prompts",
             "prompts": {"one": "fixed"},
             "model": {"sha256": "same model"},
@@ -27,18 +26,15 @@ def score_files(manifest_path):
             "files": {
                 label: {
                     "sha256": row["excerpt"]["sha256"],
-                    "aggregate": {"positive_cosine": 0.3},
+                    "status": "ok",
+                    "aggregate": {"tunejury_reward": 7, "positive_cosine": 0.3},
                 }
                 for label, row in condition["files"].items()
             },
         }
-        a_path, c_path = (
-            write(folder / "aesthetics.json", aesthetics),
-            write(folder / "clap.json", clap),
-        )
+        c_path = write(folder / "music.json", music)
         spec["variants"][name] = {
-            "aesthetics": ab.artifact(a_path),
-            "clap": ab.artifact(c_path),
+            "music": ab.artifact(c_path),
             "excerpt_sha256": {
                 label: row["excerpt"]["sha256"]
                 for label, row in condition["files"].items()
@@ -58,7 +54,7 @@ def test_local_report_has_all_conditions_and_missing_scores_remain_blank(
         for case in group["cases"]:
             assert set(case["conditions"]) == set(listening.CONDITIONS)
             for row in case["conditions"].values():
-                assert row["scores"] == {"CE": None, "PQ": None, "CLAP": None}
+                assert row["scores"] == {"TuneJury": None, "MuQMuLan": None}
                 assert not row["excerpt"].startswith(("http", "file:", "/"))
                 assert row["project"].endswith(".auris")
     listening.generate(manifest, output)
@@ -78,9 +74,8 @@ def test_model_scores_must_match_exact_audio_and_frozen_conditions(
     scores = score_files(manifest)
     data = listening.listening_data(manifest, manifest.parent / "index.html", scores)
     assert data["groups"][0]["cases"][0]["conditions"]["pitch"]["scores"] == {
-        "CE": 7,
-        "PQ": 8,
-        "CLAP": 0.3,
+        "TuneJury": 7,
+        "MuQMuLan": 0.3,
     }
     spec = ab.read(scores)
     spec["variants"]["pitch"]["excerpt_sha256"]["rock-s201"] = "changed"
@@ -91,27 +86,29 @@ def test_model_scores_must_match_exact_audio_and_frozen_conditions(
 
 
 @pytest.mark.parametrize(
-    "change", ["prompts", "segments", "audio", "missing-label", "nan"]
+    "change", ["prompts", "segments", "audio", "missing-label", "partial", "nan"]
 )
 def test_inconsistent_model_measurements_are_rejected(tmp_path, monkeypatch, change):
     manifest = corpus(tmp_path, monkeypatch)
     scores = score_files(manifest)
     spec = ab.read(scores)
     entry = spec["variants"]["combined"]
-    path = Path(entry["clap"]["path"])
-    clap = ab.read(path)
+    path = Path(entry["music"]["path"])
+    music = ab.read(path)
     if change == "prompts":
-        clap["prompts_sha256"] = "new prompts"
+        music["prompts_sha256"] = "new prompts"
     elif change == "segments":
-        clap["preprocessing"]["requested_segments"] = 3
+        music["preprocessing"]["requested_segments"] = 3
     elif change == "audio":
-        clap["files"]["rock-s201"]["sha256"] = "different audio"
+        music["files"]["rock-s201"]["sha256"] = "different audio"
     elif change == "missing-label":
-        clap["files"].pop("rock-s201")
+        music["files"].pop("rock-s201")
+    elif change == "partial":
+        music["files"]["rock-s201"]["status"] = "partial"
     else:
-        clap["files"]["rock-s201"]["aggregate"]["positive_cosine"] = float("nan")
-    write(path, clap)
-    entry["clap"] = ab.artifact(path)
+        music["files"]["rock-s201"]["aggregate"]["positive_cosine"] = float("nan")
+    write(path, music)
+    entry["music"] = ab.artifact(path)
     write(scores, spec)
     with pytest.raises(ValueError):
         listening.generate(manifest, manifest.parent / "wrong.html", scores)

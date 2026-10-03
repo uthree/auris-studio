@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from aesthetics import score_labels
+from render_audio import score_labels
 
 
 def test_same_named_wavs_keep_distinct_score_keys(tmp_path: Path) -> None:

@@ -283,7 +283,6 @@ impl AurisApp {
             || self.prompt.is_some()
             || self.song_sheet.is_some()
             || self.song_library.is_some()
-            || self.reference_match.open
     }
 
     /// Transient editors stay in the window that opened them.
@@ -301,15 +300,9 @@ impl AurisApp {
         let export_overlay = self.render_export_overlay(cx);
         let export_dialog = self.render_export_dialog(cx);
         let song_sheet = self.render_song_sheet(window, cx);
-        let reference_match = self.render_reference_match(window, cx);
         let song_library = self.render_song_library_overlay(window, cx);
         let compose_progress = self.render_compose_progress(window);
         let prompt = self.render_prompt(cx);
-        let (prompt, match_prompt) = if self.reference_match.open {
-            (None, prompt)
-        } else {
-            (prompt, None)
-        };
         let palette = self.render_palette(cx);
         let menu = self.render_context_menu(window, cx);
         let mut overlays = Vec::new();
@@ -352,12 +345,6 @@ impl AurisApp {
             overlays.push(element.into_any_element());
         }
         if let Some(element) = menu {
-            overlays.push(element.into_any_element());
-        }
-        if let Some(element) = reference_match {
-            overlays.push(element.into_any_element());
-        }
-        if let Some(element) = match_prompt {
             overlays.push(element.into_any_element());
         }
         if let Some(element) = compose_progress {
@@ -406,12 +393,6 @@ impl AurisApp {
                     .on_action(Self::window_listener(cx, Self::on_accompany_melody))
                     .on_action(Self::window_listener(cx, Self::on_compose_from_lyrics))
                     .on_action(Self::window_listener(cx, Self::on_balance_levels))
-                    .on_action(Self::window_listener(
-                        cx,
-                        |this, _: &actions::MatchReference, _, cx| {
-                            this.open_reference_match(cx);
-                        },
-                    ))
                     .on_action(Self::window_listener(cx, Self::on_save_project))
                     .on_action(Self::window_listener(cx, Self::on_save_project_as))
                     .on_action(Self::window_listener(cx, Self::on_import_audio))
@@ -2013,22 +1994,6 @@ impl AurisApp {
             self.prompt_key(event, window, cx)
         } else if self.song_library.is_some() {
             self.song_library_key(event, cx)
-        } else if self.reference_match.open {
-            match event.keystroke.key.as_str() {
-                "escape" => self.close_reference_match(cx),
-                "tab" => {
-                    Self::cycle_modal_focus(
-                        self.modal_focus.reference_match(),
-                        self.modal_focus.reference_match_last(),
-                        event.keystroke.modifiers.shift,
-                        window,
-                        cx,
-                    );
-                    self.modal_focus.reveal_reference_match_focus(window, cx);
-                }
-                _ => {}
-            }
-            true
         } else if self.song_sheet.is_some() {
             self.reconcile_section_lyrics();
             if self.lyrics_edit.is_some() {
@@ -3794,55 +3759,6 @@ mod window_tests {
         );
         cx.simulate_keystrokes("escape");
         app.read_with(cx, |this, _| assert!(this.song_sheet.is_none()));
-
-        cx.dispatch_action(actions::MatchReference);
-        paint(&app, cx);
-        cx.update(|window, cx| {
-            app.read_with(cx, |this, _| {
-                assert!(this.modal_focus.reference_match().is_focused(window));
-            });
-        });
-        cx.simulate_keystrokes("tab tab shift-tab");
-        cx.update(|window, cx| {
-            app.read_with(cx, |this, cx| {
-                assert!(
-                    this.modal_focus
-                        .reference_match_contains_focused(window, cx)
-                );
-            });
-        });
-        let mut reference_target = None;
-        for _ in 0..64 {
-            cx.simulate_keystrokes("tab");
-            paint(&app, cx);
-            let target = cx.update(|window, cx| {
-                app.read_with(cx, |this, cx| {
-                    (
-                        this.modal_focus.reference_match_reveal_index(window, cx),
-                        this.modal_focus.reference_match_scroll().offset().y,
-                    )
-                })
-            });
-            if target.0.is_some() && target.1 < px(-80.0) {
-                reference_target = target.0;
-                break;
-            }
-        }
-        let reference_target =
-            reference_target.expect("Tab reaches a reference control below the viewport");
-        let reference_selector: &'static str =
-            Box::leak(format!("reference-focus-region-{reference_target}").into_boxed_str());
-        let reference_bounds = cx
-            .debug_bounds(reference_selector)
-            .expect("focused reference row is drawn");
-        let reference_viewport = cx.debug_bounds("reference-match-scroll").unwrap();
-        assert!(
-            reference_bounds.top() >= reference_viewport.top()
-                && reference_bounds.bottom() <= reference_viewport.bottom(),
-            "Tab reveals the focused reference row: {reference_bounds:?} in {reference_viewport:?}"
-        );
-        cx.simulate_keystrokes("escape");
-        app.read_with(cx, |this, _| assert!(!this.reference_match.open));
     }
 
     #[gpui::test]

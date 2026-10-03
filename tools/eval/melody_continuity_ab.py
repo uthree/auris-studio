@@ -12,7 +12,7 @@ read. All prespecified cases survive into the manifest, including regressions.
 
 The primary learned comparison uses the exact listening excerpts: first eight-bar
 4/4 chorus, five-millisecond edge fades, linear gain to -23 integrated LUFS, no limiter.
-Use aesthetics.py on before/excerpts and after/excerpts. Use clap.py on those same
+Use music.py on before/excerpts and after/excerpts, with both models on the same
 folders with unchanged prompts and --segments 1 (the center ten-second window).
 These measurements describe excerpts, not complete-song quality or hook recall.
 
@@ -52,8 +52,8 @@ CASES = (
 TARGET_LUFS = -23.0
 MODEL_CONDITIONS = {
     "input": "The exact normalized first-chorus listening excerpts",
-    "audiobox": "Existing evaluator over the complete excerpt",
-    "clap": "Existing frozen prompt manifest; --segments 1; centered ten-second window",
+    "tunejury": "Empty-prompt preference reward on centered ten-second excerpt",
+    "muq_mulan": "Existing frozen prompt manifest; --segments 1; centered ten-second window",
     "limitations": "Neither model directly measures groove, memorability, or whole-song quality",
 }
 

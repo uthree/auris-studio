@@ -1,50 +1,41 @@
 # /// script
-# requires-python = ">=3.11"
+# requires-python = ">=3.11,<3.12"
 # dependencies = [
-#   "laion-clap==1.1.7", "torch==2.6.0", "torchaudio==2.6.0",
-#   "torchvision==0.21.0", "transformers>=4.44,<5", "huggingface-hub<1",
-#   "soundfile>=0.12", "numpy<2", "scipy>=1.11",
+#   "torch==2.7.1", "torchaudio==2.7.1", "torchvision==0.22.1",
+#   "numpy==1.23.5", "scipy==1.13.1", "librosa==0.10.2.post1",
+#   "soundfile==0.13.1", "transformers==4.57.6", "huggingface-hub==0.36.2",
+#   "laion-clap==1.1.7", "muq==0.1.0",
 # ]
 # ///
-"""Local LAION CLAP text/audio similarity for final rendered WAVs.
+"""Development-only TuneJury preference and MuQ-MuLan music/text evaluation.
 
-Uses the official music + AudioSet HTSAT-base checkpoint, not the smaller general
-audio model. Scores are cosine similarities and positive-minus-contrast margins,
-not probabilities, aesthetic ratings, or evidence that a composition improved.
-The fixed prompt manifest describes preset identity and must be frozen before A/B.
+    uv run tools/eval/music.py target/before --json before.json
+    uv run tools/eval/music.py target/after --baseline before.json --json after.json
+    uv run tools/eval/music.py --preset all --seeds 3 --json before.json
 
-    python tools/eval/clap.py target/before --json before-clap.json
-    python tools/eval/clap.py target/after --baseline before-clap.json --json after-clap.json
-
-All audio inference is local. Only public model/tokenizer files are downloaded.
-Three deterministic ten-second windows span each file by default; this does not
-measure full-song development. Short audio is repeat-padded as in native CLAP.
+Frozen ten-second windows, empty-prompt TuneJury, and MuQ-MuLan positive/contrast
+cosines. Reports retain model/source revisions, hashes, prompts, and PCM hashes.
+No learned evaluator is shipped in the desktop application.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.metadata
 import json
 import math
-import os
-import platform
 import re
 import statistics
 from pathlib import Path
 
 import numpy as np
 
-RATE = 48_000
+RATE = 24_000
 WINDOW = 10 * RATE
-MODEL_REPO = "lukewys/laion_clap"
-MODEL_REVISION = "b3708341862f581175dba5c356a4ebf74a9b6651"
-MODEL_FILE = "music_audioset_epoch_15_esc_90.14.pt"
-MODEL_SHA256 = "fae3e9c087f2909c28a09dc31c8dfcdacbc42ba44c70e972b58c1bd1caf6dedd"
-TOKENIZER_REVISION = "e2da8e2f811d1448a5b465c236feacd80ffbac7b"
-MANIFEST = Path(__file__).with_name("clap_prompts.json")
-METRICS = ("positive_cosine", "contrast_cosine", "contrast_margin")
+MANIFEST = Path(__file__).with_name("music_prompts.json")
+METRICS = ("tunejury_reward", "positive_cosine", "contrast_cosine", "contrast_margin")
+import render_audio
+from learned_models import LearnedModels
 
 
 def sha256(path: Path) -> str:
@@ -64,7 +55,7 @@ def segment_starts(length: int, count: int = 3) -> list[int]:
 
 
 def repeat_pad(data: np.ndarray) -> np.ndarray:
-    """Repeat complete short clips, then zero-pad the remainder, like CLAP."""
+    """Repeat complete short clips, then zero-pad the remainder, for the fixed ten-second model input."""
     if not 0 < len(data) <= WINDOW:
         raise ValueError("expected a nonempty excerpt of at most ten seconds")
     repeated = np.tile(data, WINDOW // len(data))
@@ -72,7 +63,7 @@ def repeat_pad(data: np.ndarray) -> np.ndarray:
 
 
 def mono_resample(data: np.ndarray, rate: int) -> np.ndarray:
-    """Average channels, then bandlimited polyphase resample to 48 kHz."""
+    """Average channels, then bandlimited polyphase resample to 24 kHz."""
     from scipy.signal import resample_poly
 
     if data.ndim != 2 or not len(data) or data.shape[1] < 1 or rate < 1:
@@ -184,7 +175,7 @@ def score_file(path: Path, preset: str, profile: dict, backend, count: int) -> d
     for start in segment_starts(len(mono), count):
         excerpt = mono[start : start + WINDOW]
         rms = float(np.sqrt(np.mean(excerpt.astype(np.float64) ** 2)))
-        # Native CLAP truncates to signed int16. Very quiet nonzero float WAVs
+        # TuneJury's CLAP encoder truncates to signed int16. Very quiet nonzero float WAVs
         # may therefore become exact silence at the model's input.
         quantized_zero = not np.any(np.abs(excerpt) >= (1.0 / 32767.0))
         segment = {
@@ -197,14 +188,19 @@ def score_file(path: Path, preset: str, profile: dict, backend, count: int) -> d
             "status": "silent" if rms <= 1e-7 or quantized_zero else "ok",
         }
         if segment["status"] == "ok":
-            if text_embeddings is None:
-                text_embeddings = backend.text_embeddings(profile)
-            audio = backend.audio_embedding(repeat_pad(excerpt))
             try:
+                if text_embeddings is None:
+                    text_embeddings = backend.text_embeddings(profile)
+                padded = repeat_pad(excerpt)
+                audio = backend.audio_embedding(padded)
+                reward = backend.reward(padded)
+                if not math.isfinite(reward):
+                    raise ValueError("model returned nonfinite reward")
+                segment["tunejury_reward"] = reward
                 segment.update(
                     cosine_scores(audio, text_embeddings, len(profile["positive"]))
                 )
-            except ValueError as error:
+            except (ValueError, RuntimeError) as error:
                 segment.update(status="invalid_embedding", reason=str(error))
         segments.append(segment)
     valid = sum(row["status"] == "ok" for row in segments)
@@ -224,101 +220,18 @@ def score_file(path: Path, preset: str, profile: dict, backend, count: int) -> d
     return result
 
 
-class NativeClap:
-    """Official LAION Python implementation with the published music checkpoint."""
-
-    def __init__(self, cache: Path, device: str, threads: int):
-        # LAION's constructor also loads roberta-base; keep those public artifacts
-        # in this cache and record the actual files below, including tokenizer data.
-        os.environ["HF_HUB_CACHE"] = str(cache.resolve())
-        os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
-        import laion_clap
-        import torch
-        from huggingface_hub import hf_hub_download
-        from transformers import RobertaTokenizer
-
-        torch.set_num_threads(threads)
-        torch.manual_seed(0)
-        np.random.seed(0)
-        torch.use_deterministic_algorithms(True)
-        checkpoint = Path(
-            hf_hub_download(
-                MODEL_REPO, MODEL_FILE, revision=MODEL_REVISION, cache_dir=str(cache)
-            )
-        )
-        actual_hash = sha256(checkpoint)
-        if actual_hash != MODEL_SHA256:
-            raise ValueError("official checkpoint SHA-256 mismatch")
-        self.model = laion_clap.CLAP_Module(
-            enable_fusion=False, amodel="HTSAT-base", device=device
-        )
-        self.model.load_ckpt(str(checkpoint), verbose=False)
-        # The native constructor initializes RoBERTa before the complete CLAP
-        # checkpoint replaces its weights. Explicitly pin the tokenizer too.
-        self.model.tokenize = RobertaTokenizer.from_pretrained(
-            "roberta-base", revision=TOKENIZER_REVISION, cache_dir=str(cache)
-        )
-        self.model.eval()
-        self.torch = torch
-        self.text_cache = {}
-        tokenizer_files = {}
-        snapshot = cache / "models--roberta-base" / "snapshots" / TOKENIZER_REVISION
-        for file in snapshot.iterdir():
-            if file.is_file() and file.suffix in (".json", ".txt"):
-                tokenizer_files[file.name] = sha256(file)
-        self.provenance = {
-            "implementation": "native laion-clap",
-            "architecture": "HTSAT-base, non-fusion, RoBERTa",
-            "repository": MODEL_REPO,
-            "revision": MODEL_REVISION,
-            "checkpoint": MODEL_FILE,
-            "checkpoint_sha256": actual_hash,
-            "reference": "https://github.com/LAION-AI/CLAP",
-            "tokenizer_artifacts": tokenizer_files,
-            "tokenizer_repository": "roberta-base",
-            "tokenizer_revision": TOKENIZER_REVISION,
-            "device": device,
-            "threads": threads,
-            "python": platform.python_version(),
-            "platform": platform.platform(),
-            "packages": {
-                name: importlib.metadata.version(name)
-                for name in (
-                    "laion-clap",
-                    "torch",
-                    "torchaudio",
-                    "transformers",
-                    "soundfile",
-                    "numpy",
-                    "scipy",
-                )
-            },
-        }
-
-    def text_embeddings(self, profile: dict) -> np.ndarray:
-        """Cache the fixed text embeddings once per prompt profile."""
-        prompts = tuple(
-            row["text"] for row in profile["positive"] + profile["contrast"]
-        )
-        if prompts not in self.text_cache:
-            with self.torch.inference_mode():
-                self.text_cache[prompts] = self.model.get_text_embedding(list(prompts))
-        return self.text_cache[prompts]
-
-    def audio_embedding(self, excerpt: np.ndarray) -> np.ndarray:
-        """Exactly ten seconds avoids native CLAP's random long-audio cropping."""
-        with self.torch.inference_mode():
-            return self.model.get_audio_embedding_from_data(
-                excerpt[None, :], use_tensor=False
-            )[0]
-
-
 def compare(report: dict, baseline: dict) -> dict:
     """Reject changed measurement conditions and compare only matching labels."""
     for key in ("schema_version", "prompts_sha256", "preprocessing"):
         if report[key] != baseline.get(key):
             raise ValueError(f"baseline uses different {key}")
-    for key in ("checkpoint_sha256", "packages", "tokenizer_artifacts", "device"):
+    for key in (
+        "tunejury_source_revision",
+        "artifacts",
+        "packages",
+        "device",
+        "threads",
+    ):
         if report["model"][key] != baseline.get("model", {}).get(key):
             raise ValueError(f"baseline uses different model {key}")
     differences = {}
@@ -347,13 +260,23 @@ def compare(report: dict, baseline: dict) -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("wavs", nargs="+", type=Path, help="WAV files or folders")
+    parser.add_argument("wavs", nargs="*", type=Path, help="WAV files or folders")
+    parser.add_argument(
+        "--preset",
+        action="append",
+        default=[],
+        help="render these presets when no WAVs are supplied; otherwise select one prompt profile",
+    )
+    parser.add_argument("--seeds", type=int, default=1)
+    parser.add_argument("--cli", type=Path)
+    parser.add_argument(
+        "--workdir", type=Path, default=Path("target/composition-eval/renders")
+    )
     parser.add_argument(
         "--json", required=True, type=Path, help="save complete measurement report"
     )
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--prompts", type=Path, default=MANIFEST)
-    parser.add_argument("--preset", help="prompt profile for arbitrary input filenames")
     parser.add_argument("--segments", type=int, default=3)
     parser.add_argument("--threads", type=int, default=4)
     parser.add_argument("--device", default="cpu", choices=("cpu", "cuda"))
@@ -361,9 +284,14 @@ def main() -> None:
         "--cache", type=Path, default=Path("target/composition-eval/models")
     )
     args = parser.parse_args()
-    if args.segments < 1 or args.threads < 1:
+    if args.segments < 1 or args.threads < 1 or not 1 <= args.seeds <= 8:
         parser.error("--segments and --threads must be positive")
     wavs = []
+    if not args.wavs and args.preset:
+        render_audio.CLI = args.cli.resolve() if args.cli else None
+        presets = render_audio.preset_names() if "all" in args.preset else args.preset
+        args.workdir.mkdir(parents=True, exist_ok=True)
+        wavs = render_audio.render_presets(presets, args.seeds, args.workdir.resolve())
     for path in args.wavs:
         if path.is_dir():
             wavs.extend(sorted(path.rglob("*.wav")))
@@ -381,13 +309,20 @@ def main() -> None:
     try:
         manifest = load_manifest(args.prompts)
         profiles = manifest["presets"]
-        presets = [preset_for(path, profiles, args.preset) for path in wavs]
+        presets = [
+            preset_for(
+                path,
+                profiles,
+                args.preset[0] if args.wavs and len(args.preset) == 1 else None,
+            )
+            for path in wavs
+        ]
     except ValueError as error:
         parser.error(str(error))
-    backend = NativeClap(args.cache, args.device, args.threads)
+    backend = LearnedModels(args.cache, args.device, args.threads)
     report = {
-        "schema_version": 1,
-        "interpretation": "Cosine text/audio identity similarity; not probability or musical quality.",
+        "schema_version": 2,
+        "interpretation": "TuneJury uncalibrated preference reward (empty prompt); MuQ-MuLan identity cosines, not probability.",
         "prompts_sha256": sha256(args.prompts),
         "prompts": manifest,
         "model": backend.provenance,
@@ -395,13 +330,14 @@ def main() -> None:
             "sample_rate": RATE,
             "channels": "arithmetic mean before resampling",
             "resampler": "scipy.signal.resample_poly default Kaiser window",
-            "normalization": "none; native CLAP clips to [-1,1] and quantizes to int16",
+            "normalization": "none; TuneJury internal CLAP clips/quantizes; MuQ-MuLan uses float32",
+            "tunejury_prompt": "empty text branch (512 zeros), official waveform API",
             "window_samples": WINDOW,
             "window_selection": "equally spaced first-to-last complete window; one segment uses center",
             "requested_segments": args.segments,
             "short_audio": "repeat complete copies, zero-pad remainder",
             "silent_rms_threshold": 1e-7,
-            "aggregation": "unweighted mean of valid excerpt cosines",
+            "aggregation": "unweighted mean of valid excerpt rewards and cosines",
         },
         "files": {},
     }
@@ -411,7 +347,7 @@ def main() -> None:
         if row["aggregate"]:
             scores = row["aggregate"]
             print(
-                f"{path.stem:24} {row['status']:8} cosine={scores['positive_cosine']:.4f} margin={scores['contrast_margin']:+.4f}",
+                f"{path.stem:24} {row['status']:8} reward={scores['tunejury_reward']:.4f} cosine={scores['positive_cosine']:.4f} margin={scores['contrast_margin']:+.4f}",
                 flush=True,
             )
         else:

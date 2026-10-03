@@ -21,9 +21,9 @@ pub enum SessionError {
     /// A balance measurement no longer describes the document that is open.
     #[error("the project changed while its levels were being measured")]
     StaleBalance,
-    /// Reference matching could not render, evaluate, or safely adopt the captured project.
-    #[error("reference match: {0}")]
-    ReferenceMatch(String),
+    /// An offline analysis requires a source that is missing or invalid.
+    #[error("render source: {0}")]
+    RenderSource(String),
     /// A composed part explicitly selected an unavailable or incompatible instrument source.
     #[error("song instrument: {0}")]
     SongSource(String),
