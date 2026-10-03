@@ -8,6 +8,7 @@ use crate::delay::Delay;
 use crate::distortion::Distortion;
 use crate::eq::Equalizer;
 use crate::gain::GainPan;
+use crate::guitar_amp::GuitarAmp;
 use crate::limiter::Limiter;
 use crate::reverb::Reverb;
 
@@ -32,6 +33,7 @@ impl PluginPack for DspPack {
         registry.register_effect(|| Box::new(Chorus::new()));
         registry.register_effect(|| Box::new(Reverb::new()));
         registry.register_effect(|| Box::new(Distortion::new()));
+        registry.register_effect(|| Box::new(GuitarAmp::new()));
         registry.register_effect(|| Box::new(Limiter::new()));
     }
 }
@@ -45,13 +47,14 @@ mod tests {
     const SR: f64 = 48_000.0;
     const FRAMES: usize = 2_048;
 
-    const EXPECTED_IDS: [&str; 8] = [
+    const EXPECTED_IDS: [&str; 9] = [
         "auris.fx.chorus",
         "auris.fx.compressor",
         "auris.fx.delay",
         "auris.fx.distortion",
         "auris.fx.eq",
         "auris.fx.gain",
+        "auris.fx.guitar_amp",
         "auris.fx.limiter",
         "auris.fx.reverb",
     ];
@@ -75,9 +78,9 @@ mod tests {
     }
 
     #[test]
-    fn the_pack_registers_all_eight_effects() {
+    fn the_pack_registers_all_effects() {
         let registry = registry();
-        assert_eq!(registry.len(), 8);
+        assert_eq!(registry.len(), EXPECTED_IDS.len());
         let ids: Vec<&str> = registry.effects().map(|d| d.id.as_ref()).collect();
         assert_eq!(ids, EXPECTED_IDS);
         for descriptor in registry.effects() {

@@ -1,0 +1,12 @@
+{
+  "areas": [
+    [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 0.3],
+    [0.55, 0.6, 0.75, 1.0, 3.2, 4.8, 5.4, 4.0],
+    [4.5, 4.5, 4.5, 4.5, 0.5, 0.5, 0.5, 1.5]
+  ],
+  "radiation_hz": 80.0,
+  "output_gains": [1.0, 1.0, 1.0],
+  "params": {"tone": 0.6, "breath": 0.12, "attack": 0.12, "level": -10.0, "release": 0.7},
+  "source_commit": "7720287",
+  "purpose": "Frozen pre-calibration geometry and source controls for offline search replay"
+}

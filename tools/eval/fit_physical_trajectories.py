@@ -29,7 +29,7 @@ LONG_BOUNDS["violin"]["release"] = (0.05, 1.5)
 LONG_BOUNDS["violin"]["bow_response"] = (0.002, 0.06)
 
 
-def performance_color(audio, gains, notes, rate=RATE, response=0.0):
+def performance_color(audio, gains, notes, rate=RATE, response=0.0, modes=(), exponent=1.0):
     """Match Rust's body-before-output-expression order for moving CC11.
 
     Dynamic gain and a causal body filter do not commute. Undo only the dry
@@ -43,7 +43,7 @@ def performance_color(audio, gains, notes, rate=RATE, response=0.0):
             continue
         frames = np.floor(np.array([p["seconds"] for p in points], dtype=np.float32)
                           * np.float32(rate) + 0.5).astype(int)
-        values = np.r_[1.0, [point["value"] for point in points]]
+        values = np.r_[1.0, [point["value"] ** exponent for point in points]]
         expression[index] = values[np.searchsorted(frames, np.arange(audio.shape[1]), side="right")]
         if response > 0:
             # The first point arrives before note-on, when Rust sets the initial
@@ -54,7 +54,7 @@ def performance_color(audio, gains, notes, rate=RATE, response=0.0):
                                            zi=[expression[index, 0] * pole])
     if expression.min() < 0.001:
         raise ValueError("zero expression cannot be inverted for the body surrogate")
-    return color(audio / expression, gains, rate=rate) * expression
+    return color(audio / expression, gains, rate=rate, modes=modes) * expression
 
 
 def compact(manifest):
@@ -106,7 +106,7 @@ class Corpus:
                                     group["seconds"], group["seconds"], rate)
             if gains is not None:
                 audio = performance_color(audio, gains, group["notes"], rate=rate,
-                                          response=self.response(renderer, params))
+                                          **self.coloration(renderer, params))
             if rate == 48000:
                 audio = resample_poly(audio, 1, 2, axis=-1)[:, :group["reference"].shape[1]]
             result.append(audio * output_gain)
@@ -118,6 +118,12 @@ class Corpus:
             return 0.0
         return (renderer.performance["expression_response_fraction"]
                 * params.get("bow_response", renderer.defaults[model].get("bow_response", 0.012)))
+
+    def coloration(self, renderer, params):
+        model = self.groups[0]["notes"][0]["model"]
+        return {"response": self.response(renderer, params),
+                "modes": renderer.radiation.get(model, ()),
+                "exponent": renderer.performance.get("expression_exponent", 1.0) if model == "violin" else 1.0}
 
     def errors(self, audio):
         values = defaultdict(list)
@@ -216,7 +222,7 @@ def fit(corpus, renderer, model, gains, iterations, seed, start=None, local=True
         rows = []
         for group, samples in zip(corpus.groups, dry, strict=True):
             generated = features(performance_color(samples, candidate, group["notes"],
-                                                    response=corpus.response(renderer, params)))
+                                                    **corpus.coloration(renderer, params)))
             weight = np.sqrt(corpus.weights[group["dataset"]] / corpus.counts[group["dataset"]])
             for reference, synth in zip(group["target"], generated, strict=True):
                 delta = reference - synth
@@ -231,9 +237,9 @@ def fit(corpus, renderer, model, gains, iterations, seed, start=None, local=True
         return np.r_[*rows, (candidate - anchor) * 0.018, np.diff(candidate) * 0.008]
 
     fitted = least_squares(residual, gains, bounds=(-9, 9), max_nfev=10, diff_step=0.002, ftol=0.01)
-    after = [performance_color(samples, gains, group["notes"], response=corpus.response(renderer, params))
+    after = [performance_color(samples, gains, group["notes"], **corpus.coloration(renderer, params))
              for samples, group in zip(dry, corpus.groups, strict=True)]
-    proposal = [performance_color(samples, fitted.x, group["notes"], response=corpus.response(renderer, params))
+    proposal = [performance_color(samples, fitted.x, group["notes"], **corpus.coloration(renderer, params))
                 for samples, group in zip(dry, corpus.groups, strict=True)]
     if corpus.loss(proposal) < corpus.loss(after):
         gains, after = fitted.x, proposal

@@ -1,0 +1,103 @@
+{
+  "parameters": {
+    "drive_db": 47.99448810972713,
+    "bass_db": 0.0,
+    "mid_db": 0.0,
+    "treble_db": 0.0
+  },
+  "objective": 0.06953772023709288,
+  "flat_initial": [
+    47.99448810972713,
+    0,
+    0,
+    0
+  ],
+  "flat_objective": 0.06953772023709288,
+  "seed": 20261003,
+  "iterations": 4,
+  "bounds": {
+    "drive_db": [
+      0,
+      48
+    ],
+    "bass_db": [
+      -12,
+      12
+    ],
+    "mid_db": [
+      -12,
+      12
+    ],
+    "treble_db": [
+      -12,
+      12
+    ]
+  },
+  "evaluations": {
+    "simple": 19,
+    "amp": 99
+  },
+  "simple": {
+    "parameters": {
+      "drive_db": 47.99404869244179
+    },
+    "objective": 0.0728102989328341,
+    "bounds": {
+      "drive_db": [
+        0,
+        48
+      ]
+    }
+  },
+  "training_ids": [
+    "Clean-Neck-1-0",
+    "Clean-Neck-1-2",
+    "Clean-Neck-1-4",
+    "Clean-Neck-1-6",
+    "Clean-Neck-1-8",
+    "Clean-Neck-1-10",
+    "Clean-Neck-1-12",
+    "Clean-Neck-1-14",
+    "Clean-Neck-1-16",
+    "Clean-Neck-1-18",
+    "Clean-Neck-1-20",
+    "Clean-Neck-1-22",
+    "Clean-Neck-2-1",
+    "Clean-Neck-2-3",
+    "Clean-Neck-3-1",
+    "Clean-Neck-3-3",
+    "Clean-Neck-4-0",
+    "Clean-Neck-4-2",
+    "Clean-Neck-4-4",
+    "Clean-Neck-5-1",
+    "Clean-Neck-5-3",
+    "Clean-Neck-6-0",
+    "Clean-Neck-6-2",
+    "Clean-Neck-6-4",
+    "Clean-Bridge-1-0",
+    "Clean-Bridge-1-2",
+    "Clean-Bridge-1-4",
+    "Clean-Bridge-1-6",
+    "Clean-Bridge-1-8",
+    "Clean-Bridge-1-10",
+    "Clean-Bridge-1-12",
+    "Clean-Bridge-1-14",
+    "Clean-Bridge-1-16",
+    "Clean-Bridge-1-18",
+    "Clean-Bridge-1-20",
+    "Clean-Bridge-1-22",
+    "Clean-Bridge-2-1",
+    "Clean-Bridge-2-3",
+    "Clean-Bridge-3-1",
+    "Clean-Bridge-3-3",
+    "Clean-Bridge-4-0",
+    "Clean-Bridge-4-2",
+    "Clean-Bridge-4-4",
+    "Clean-Bridge-5-1",
+    "Clean-Bridge-5-3",
+    "Clean-Bridge-6-0",
+    "Clean-Bridge-6-2",
+    "Clean-Bridge-6-4"
+  ],
+  "objective_definition": "mean phase-weighted log-mel L1 on training pitches only"
+}

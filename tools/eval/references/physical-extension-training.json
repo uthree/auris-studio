@@ -1,0 +1,142 @@
+{
+  "reference_sha256": "fca4e250c0865613d4f20143cb5c277dc8b80067a5da789c34087c5f9900f370",
+  "short_reference_sha256": "9ce39655da1c9115ac96a79fb8a3b20038261439d2e41e80d7bea79a149493b0",
+  "renderer_sha256": "56769fa4cb178d283cf6e8abd5eb1da2a815072e52fad344699c0f9ac629138c",
+  "metric": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "whole-note RMS 0.1, no frame normalization or time warp",
+    "compression": 10000.0,
+    "loss": "0.5 attack L1 + 0.5 sustain L1, mean of resolutions",
+    "attack_frames": 15
+  },
+  "rate": 24000,
+  "mode_hz": [
+    120.0,
+    240.0,
+    480.0,
+    960.0,
+    1920.0,
+    3840.0
+  ],
+  "mode_q": 8.0,
+  "register_bounds": [
+    [
+      -0.2,
+      0.2
+    ],
+    [
+      -0.8,
+      0.8
+    ],
+    [
+      -0.08,
+      0.08
+    ]
+  ],
+  "versions": {
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "models": {
+    "piano": {
+      "profile": {
+        "modes": [
+          -0.69,
+          0.69,
+          -0.69,
+          0.33,
+          -0.69,
+          -0.51
+        ],
+        "register": [
+          0.156,
+          -0.624,
+          0.0624
+        ],
+        "bow_exponent": 1.0,
+        "gesture": 0.0
+      },
+      "training_loss": {
+        "before": 0.15120213249188358,
+        "body": 0.14362250370806856,
+        "register": 0.14911752133235143,
+        "combined": 0.14179852276891972
+      },
+      "counts": {
+        "short": 6,
+        "iowa": 12,
+        "tu-note": 0
+      }
+    },
+    "guitar": {
+      "profile": {
+        "modes": [
+          0.24,
+          0.45,
+          -0.06,
+          -0.69,
+          0.0,
+          -0.06
+        ],
+        "register": [
+          -0.156,
+          -0.624,
+          0.0624
+        ],
+        "bow_exponent": 1.0,
+        "gesture": 0.0
+      },
+      "training_loss": {
+        "before": 0.10817797933005069,
+        "body": 0.1072863702077021,
+        "register": 0.1053933697611629,
+        "combined": 0.10451932444623112
+      },
+      "counts": {
+        "short": 34,
+        "iowa": 48,
+        "tu-note": 0
+      }
+    },
+    "violin": {
+      "profile": {
+        "modes": [
+          -0.24,
+          -0.57,
+          0.12,
+          -0.21,
+          0.33,
+          0.12
+        ],
+        "register": [
+          0.0,
+          0.224,
+          0.0
+        ],
+        "bow_exponent": 1.18,
+        "gesture": 0.175
+      },
+      "training_loss": {
+        "before": 0.07424996626710186,
+        "body": 0.0734288754498877,
+        "register": 0.07419014842108049,
+        "combined": 0.07322907764496966
+      },
+      "counts": {
+        "short": 30,
+        "iowa": 19,
+        "tu-note": 12
+      }
+    }
+  }
+}

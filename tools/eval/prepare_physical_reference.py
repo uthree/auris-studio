@@ -37,8 +37,8 @@ def regions(mask):
     return list(zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=True))
 
 
-def pitch_regions(audio, pitches):
-    """Locate long stable runs; never silently assign a missing or repeated note."""
+def pitch_regions(audio, pitches, minimum_seconds=1.0):
+    """Locate stable runs of the requested duration; reject missing or repeated notes."""
     _, times, spectrum = stft(audio, RATE, nperseg=8192, noverlap=8192 - 240)
     power = abs(spectrum)
     frequencies = np.arange(power.shape[0]) * RATE / 8192
@@ -59,7 +59,7 @@ def pitch_regions(audio, pitches):
     found = []
     for index, pitch in enumerate(pitches):
         spans = [(start, end) for start, end in regions((winners == index) & active)
-                 if times[end - 1] - times[start] > 1.0]
+                 if times[end - 1] - times[start] > minimum_seconds]
         if not spans:
             raise ValueError(f"no stable region for MIDI {pitch}")
         # The decaying tail can fragment into shorter runs. Only the longest run is used.
@@ -70,9 +70,9 @@ def pitch_regions(audio, pitches):
     return found
 
 
-def onset(audio, start, end):
-    """Backtrack at most 200 ms from a stable pitch to the local 2% RMS onset."""
-    begin = max(0, round((start - 0.2) * RATE))
+def onset(audio, start, end, backtrack_seconds=0.2):
+    """Backtrack within the fixed limit from a stable pitch to its local 2% RMS onset."""
+    begin = max(0, round((start - backtrack_seconds) * RATE))
     stop = min(len(audio), round(min(end, start + 0.6) * RATE))
     hop = 120
     x = audio[begin:stop]

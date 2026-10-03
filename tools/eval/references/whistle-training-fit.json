@@ -1,0 +1,266 @@
+{
+  "model": "tin_whistle",
+  "source": "Wikimedia Commons Whistle.wav and Freesound Multi-sampled Hammered Dulcimer",
+  "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+  "renderer_sha256": "d12d235300ecb6684330bb11ccdbac4058dffeeafad15dd3a1642393b47e2fbd",
+  "baseline_renderer_sha256": "d12d235300ecb6684330bb11ccdbac4058dffeeafad15dd3a1642393b47e2fbd",
+  "native_rate": 24000,
+  "versions": {
+    "python": "3.14.6",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "evaluation_sources_sha256": {
+    "folk_copy.py": "8ad372c263c04a022eb574e10a4efad9f5c14c00f3a816a269a8814fd832027d",
+    "fetch_folk_reference.py": "d165bd909493c01c36082363fbb1fab1f7e0ef5d1e1ec1c3432c6b113045d7c8",
+    "physical_pack.py": "6f265d37da30aa490f1b1631667b7ab7d8e59d9681e17fd763743d28119a06cf",
+    "physical_mel.py": "737cbecd7acc309fe0ec2955c612bbf087e62abcb20b717f29509a468a379e6b",
+    "fit_physical_mel.py": "2edc1fb7a51532d18fbaeb1b500a24b393a96a7e76b3825fee507c06ac6e2168",
+    "electric_copy.py": "de736c5bc6a7fc0b4481f20159631d6562244a8ace8775d766cf41323b4a45d3"
+  },
+  "text_hash_encoding": "UTF-8 with CRLF normalized to LF",
+  "metrics": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "per settled excerpt RMS 0.1; no time warp",
+    "compression": 10000.0,
+    "loss": "steady log-mel L1, mean of resolutions",
+    "preprocessing": "causal second-order 30 Hz highpass on both signals before whole-note RMS",
+    "secondary": "20 ms RMS-envelope L1 in dB on the same settled excerpts",
+    "window": "reference 0..min(1 s, hold - 20 ms); candidate 200 ms plus the same duration",
+    "primary": "settled timbre; attack and release are excluded"
+  },
+  "fit": {
+    "model": "tin_whistle",
+    "initial_parameters": {
+      "attack": 0.012000000104308128,
+      "breath_noise": 0.03500000014901161,
+      "jet_shape": 0.5199999809265137,
+      "level": -9.0,
+      "pressure": 0.5799999833106995,
+      "release": 0.18000000715255737
+    },
+    "parameters": {
+      "attack": 0.012000000104308128,
+      "breath_noise": 0.10242896779606472,
+      "jet_shape": 0.11912851938520408,
+      "level": -9.0,
+      "pressure": 0.33529918563500016,
+      "release": 0.18000000715255737
+    },
+    "objective": 0.03987105338044578,
+    "evaluations": 60,
+    "seed": 20261003,
+    "bounds": {
+      "pressure": [
+        0.3,
+        0.85
+      ],
+      "jet_shape": [
+        0.1,
+        0.9
+      ],
+      "breath_noise": [
+        0.005,
+        0.18
+      ]
+    },
+    "training_ids": [
+      "tin_whistle-74-d_major_74",
+      "tin_whistle-76-d_major_76",
+      "tin_whistle-78-d_major_78",
+      "tin_whistle-86-d_major_86"
+    ],
+    "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+    "renderer_sha256": "d12d235300ecb6684330bb11ccdbac4058dffeeafad15dd3a1642393b47e2fbd"
+  },
+  "factory_parameters": {
+    "attack": 0.012000000104308128,
+    "breath_noise": 0.03500000014901161,
+    "jet_shape": 0.5199999809265137,
+    "level": -9.0,
+    "pressure": 0.5799999833106995,
+    "release": 0.18000000715255737
+  },
+  "current_factory_parameters": {
+    "attack": 0.012000000104308128,
+    "breath_noise": 0.03500000014901161,
+    "jet_shape": 0.5199999809265137,
+    "level": -9.0,
+    "pressure": 0.5799999833106995,
+    "release": 0.18000000715255737
+  },
+  "calibration_sha256": null,
+  "calibration": null,
+  "factory": [
+    {
+      "id": "tin_whistle-74-d_major_74",
+      "pitch": 74,
+      "split": "train",
+      "mel": 0.06311884796208383,
+      "envelope_db": 0.9789717706149224
+    },
+    {
+      "id": "tin_whistle-76-d_major_76",
+      "pitch": 76,
+      "split": "train",
+      "mel": 0.03215196787154767,
+      "envelope_db": 0.20494475333811762
+    },
+    {
+      "id": "tin_whistle-78-d_major_78",
+      "pitch": 78,
+      "split": "train",
+      "mel": 0.031875976910963506,
+      "envelope_db": 0.443510104731016
+    },
+    {
+      "id": "tin_whistle-79-d_major_79",
+      "pitch": 79,
+      "split": "validation",
+      "mel": 0.016283836740955227,
+      "envelope_db": 0.1488281097143854
+    },
+    {
+      "id": "tin_whistle-81-d_major_81",
+      "pitch": 81,
+      "split": "validation",
+      "mel": 0.012345622207583666,
+      "envelope_db": 0.6382351561514275
+    },
+    {
+      "id": "tin_whistle-83-d_major_83",
+      "pitch": 83,
+      "split": "validation",
+      "mel": 0.02422772209292909,
+      "envelope_db": 2.167309658395379
+    },
+    {
+      "id": "tin_whistle-85-d_major_85",
+      "pitch": 85,
+      "split": "validation",
+      "mel": 0.020257765432202042,
+      "envelope_db": 2.2335120399250834
+    },
+    {
+      "id": "tin_whistle-86-d_major_86",
+      "pitch": 86,
+      "split": "train",
+      "mel": 0.013543525644946873,
+      "envelope_db": 1.581317909292936
+    }
+  ],
+  "candidate": [
+    {
+      "id": "tin_whistle-74-d_major_74",
+      "pitch": 74,
+      "split": "train",
+      "mel": 0.06297692995850304,
+      "envelope_db": 0.9784448586447049
+    },
+    {
+      "id": "tin_whistle-76-d_major_76",
+      "pitch": 76,
+      "split": "train",
+      "mel": 0.032098361769039914,
+      "envelope_db": 0.20867420089661054
+    },
+    {
+      "id": "tin_whistle-78-d_major_78",
+      "pitch": 78,
+      "split": "train",
+      "mel": 0.03181475775073095,
+      "envelope_db": 0.4431684478246769
+    },
+    {
+      "id": "tin_whistle-79-d_major_79",
+      "pitch": 79,
+      "split": "validation",
+      "mel": 0.01568853501142905,
+      "envelope_db": 0.15021025719948136
+    },
+    {
+      "id": "tin_whistle-81-d_major_81",
+      "pitch": 81,
+      "split": "validation",
+      "mel": 0.011932928089307595,
+      "envelope_db": 0.643298036718452
+    },
+    {
+      "id": "tin_whistle-83-d_major_83",
+      "pitch": 83,
+      "split": "validation",
+      "mel": 0.02401327764362151,
+      "envelope_db": 2.1669354986886105
+    },
+    {
+      "id": "tin_whistle-85-d_major_85",
+      "pitch": 85,
+      "split": "validation",
+      "mel": 0.019767262995396162,
+      "envelope_db": 2.2316852053340663
+    },
+    {
+      "id": "tin_whistle-86-d_major_86",
+      "pitch": 86,
+      "split": "train",
+      "mel": 0.013339148991315651,
+      "envelope_db": 1.5788816679996005
+    }
+  ],
+  "factory_mean_mel": 0.02672565810790149,
+  "factory_train_mean_mel": 0.03517257959738547,
+  "factory_validation_mean_mel": 0.01827873661841751,
+  "candidate_mean_mel": 0.026453900276167983,
+  "candidate_train_mean_mel": 0.03505729961739739,
+  "candidate_validation_mean_mel": 0.01785050093493858,
+  "paired_train": {
+    "mel": {
+      "before": 0.03517257959738547,
+      "after": 0.03505729961739739,
+      "reduction_percent": 0.32775526079596995,
+      "paired_delta_ci95": [
+        -0.00017314732860600722,
+        -5.7412631370157285e-05
+      ]
+    },
+    "envelope_db": {
+      "before": 0.802186134494248,
+      "after": 0.8022922938413982,
+      "reduction_percent": -0.013233754933583697,
+      "paired_delta_ci95": [
+        -0.0019125951965863336,
+        0.0026653576763153164
+      ]
+    }
+  },
+  "paired_validation": {
+    "mel": {
+      "before": 0.01827873661841751,
+      "after": 0.01785050093493858,
+      "reduction_percent": 2.3428078888528936,
+      "paired_delta_ci95": [
+        -0.0005496498267136517,
+        -0.0002834589461821564
+      ]
+    },
+    "envelope_db": {
+      "before": 1.2969712410465688,
+      "after": 1.2980322494851526,
+      "reduction_percent": -0.08180662801187122,
+      "paired_delta_ci95": [
+        -0.0011004971488928206,
+        0.0037036204985762544
+      ]
+    }
+  }
+}

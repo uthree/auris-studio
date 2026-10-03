@@ -1,0 +1,100 @@
+{
+  "parameters": {
+    "hardness": 0.18660575015313213,
+    "position": 0.06955925862521287,
+    "decay": 7.493397574054254,
+    "damping": 0.021632670733373105,
+    "tone": 2717.6883777463518,
+    "pickup_q": 1.8838811725969928,
+    "neck_position": 0.23599672268289518,
+    "bridge_position": 0.06414605188065275
+  },
+  "objective": 0.16300487256373786,
+  "evaluations": 288,
+  "seed": 20261003,
+  "bounds": {
+    "hardness": [
+      0.1,
+      1
+    ],
+    "position": [
+      0.05,
+      0.35
+    ],
+    "decay": [
+      1,
+      12
+    ],
+    "damping": [
+      0,
+      0.4
+    ],
+    "tone": [
+      1500,
+      9000
+    ],
+    "pickup_q": [
+      0.5,
+      2
+    ],
+    "neck_position": [
+      0.12,
+      0.25
+    ],
+    "bridge_position": [
+      0.025,
+      0.08
+    ]
+  },
+  "training_ids": [
+    "Clean-Neck-1-0",
+    "Clean-Neck-1-2",
+    "Clean-Neck-1-4",
+    "Clean-Neck-1-6",
+    "Clean-Neck-1-8",
+    "Clean-Neck-1-10",
+    "Clean-Neck-1-12",
+    "Clean-Neck-1-14",
+    "Clean-Neck-1-16",
+    "Clean-Neck-1-18",
+    "Clean-Neck-1-20",
+    "Clean-Neck-1-22",
+    "Clean-Neck-2-1",
+    "Clean-Neck-2-3",
+    "Clean-Neck-3-1",
+    "Clean-Neck-3-3",
+    "Clean-Neck-4-0",
+    "Clean-Neck-4-2",
+    "Clean-Neck-4-4",
+    "Clean-Neck-5-1",
+    "Clean-Neck-5-3",
+    "Clean-Neck-6-0",
+    "Clean-Neck-6-2",
+    "Clean-Neck-6-4",
+    "Clean-Bridge-1-0",
+    "Clean-Bridge-1-2",
+    "Clean-Bridge-1-4",
+    "Clean-Bridge-1-6",
+    "Clean-Bridge-1-8",
+    "Clean-Bridge-1-10",
+    "Clean-Bridge-1-12",
+    "Clean-Bridge-1-14",
+    "Clean-Bridge-1-16",
+    "Clean-Bridge-1-18",
+    "Clean-Bridge-1-20",
+    "Clean-Bridge-1-22",
+    "Clean-Bridge-2-1",
+    "Clean-Bridge-2-3",
+    "Clean-Bridge-3-1",
+    "Clean-Bridge-3-3",
+    "Clean-Bridge-4-0",
+    "Clean-Bridge-4-2",
+    "Clean-Bridge-4-4",
+    "Clean-Bridge-5-1",
+    "Clean-Bridge-5-3",
+    "Clean-Bridge-6-0",
+    "Clean-Bridge-6-2",
+    "Clean-Bridge-6-4"
+  ],
+  "objective_definition": "phase mel L1 + 0.002 * 20-ms envelope L1 in dB"
+}

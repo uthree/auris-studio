@@ -1,0 +1,125 @@
+{
+  "source": "https://www.audiolabs-erlangen.de/resources/MIR/SMD/midi",
+  "captures_sha256": "a72512de562a3f7a39eb04a45ce03d4efb0449b44bf1f231abb0dd8761a56373",
+  "renderer_sha256": "6541ad13a2f2ec0412ded7aef780f4a3115c15c9841bcb4ac3e30bb9862a98e0",
+  "seconds": 12,
+  "production_rate": 48000,
+  "metric": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "whole-note RMS 0.1, no frame normalization or time warp",
+    "compression": 10000.0,
+    "loss": "0.5 attack L1 + 0.5 sustain L1, mean of resolutions",
+    "attack_frames": 15
+  },
+  "loss": "unweighted whole-excerpt mean L1 across both log-mel resolutions",
+  "training_trials": [
+    {
+      "gain": 0,
+      "mel": 0.13593328473500882
+    },
+    {
+      "gain": 1,
+      "mel": 0.1358883032424985
+    },
+    {
+      "gain": 2,
+      "mel": 0.1358448866583321
+    },
+    {
+      "gain": 4,
+      "mel": 0.1357627018731795
+    },
+    {
+      "gain": 8,
+      "mel": 0.1356059769765777
+    },
+    {
+      "gain": 16,
+      "mel": 0.13529718783738023
+    }
+  ],
+  "selected_gain": 16,
+  "cases": [
+    {
+      "id": "Chopin_Op028-04_003_20100611-SMD",
+      "split": "train",
+      "events": 257,
+      "pedal_events": 137,
+      "variants": {
+        "before": {
+          "mel": 0.13593328473500882,
+          "envelope_db": 4.126733419546587
+        },
+        "sympathetic": {
+          "mel": 0.13529718783738023,
+          "envelope_db": 4.2904638471509084
+        },
+        "half_pedal": {
+          "mel": 0.13593694285781022,
+          "envelope_db": 4.12653588115645
+        },
+        "combined": {
+          "mel": 0.13530290830462632,
+          "envelope_db": 4.2905100255002955
+        }
+      }
+    },
+    {
+      "id": "Chopin_Op028-15_006_20100611-SMD",
+      "split": "validation",
+      "events": 412,
+      "pedal_events": 328,
+      "variants": {
+        "before": {
+          "mel": 0.1273585215534893,
+          "envelope_db": 4.674260510807494
+        },
+        "sympathetic": {
+          "mel": 0.12624301300112298,
+          "envelope_db": 4.76252285880846
+        },
+        "half_pedal": {
+          "mel": 0.12734299142475783,
+          "envelope_db": 4.673421517134951
+        },
+        "combined": {
+          "mel": 0.12623010319995576,
+          "envelope_db": 4.761433882812218
+        }
+      }
+    },
+    {
+      "id": "Beethoven_Op027No1-03_003_20090916-SMD",
+      "split": "validation",
+      "events": 513,
+      "pedal_events": 192,
+      "variants": {
+        "before": {
+          "mel": 0.1286680439662192,
+          "envelope_db": 4.1806601259507765
+        },
+        "sympathetic": {
+          "mel": 0.1279642909959264,
+          "envelope_db": 4.18577938729504
+        },
+        "half_pedal": {
+          "mel": 0.1297149092411186,
+          "envelope_db": 5.9291047663198535
+        },
+        "combined": {
+          "mel": 0.12892109519238942,
+          "envelope_db": 5.811722011016037
+        }
+      }
+    }
+  ]
+}

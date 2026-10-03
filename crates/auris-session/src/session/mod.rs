@@ -41,6 +41,8 @@ mod assets;
 mod audition;
 mod autosave;
 mod checkpoints;
+#[cfg(test)]
+mod choir_tests;
 mod chord_preview;
 mod clipboard;
 mod clips;

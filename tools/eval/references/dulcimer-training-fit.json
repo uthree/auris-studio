@@ -1,0 +1,371 @@
+{
+  "model": "hammered_dulcimer",
+  "source": "Wikimedia Commons Whistle.wav and Freesound Multi-sampled Hammered Dulcimer",
+  "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+  "renderer_sha256": "ed77c6d97a8222783a2a5d54e661c5b73f9ada8c1e4a4494b68f634d54c00a55",
+  "baseline_renderer_sha256": "ed77c6d97a8222783a2a5d54e661c5b73f9ada8c1e4a4494b68f634d54c00a55",
+  "native_rate": 24000,
+  "versions": {
+    "python": "3.14.6",
+    "numpy": "2.5.3",
+    "scipy": "1.18.1",
+    "soundfile": "0.14.0"
+  },
+  "evaluation_sources_sha256": {
+    "folk_copy.py": "8ad372c263c04a022eb574e10a4efad9f5c14c00f3a816a269a8814fd832027d",
+    "fetch_folk_reference.py": "d165bd909493c01c36082363fbb1fab1f7e0ef5d1e1ec1c3432c6b113045d7c8",
+    "physical_pack.py": "6f265d37da30aa490f1b1631667b7ab7d8e59d9681e17fd763743d28119a06cf",
+    "physical_mel.py": "737cbecd7acc309fe0ec2955c612bbf087e62abcb20b717f29509a468a379e6b",
+    "fit_physical_mel.py": "2edc1fb7a51532d18fbaeb1b500a24b393a96a7e76b3825fee507c06ac6e2168",
+    "electric_copy.py": "de736c5bc6a7fc0b4481f20159631d6562244a8ace8775d766cf41323b4a45d3"
+  },
+  "text_hash_encoding": "UTF-8 with CRLF normalized to LF",
+  "metrics": {
+    "rate": 24000,
+    "windows": [
+      512,
+      2048
+    ],
+    "hop": 240,
+    "bands": 64,
+    "fmin": 30,
+    "fmax": 10000,
+    "mel_scale": "HTK, area normalized",
+    "normalization": "whole-note RMS 0.1, no frame normalization or time warp",
+    "compression": 10000.0,
+    "loss": "0.3 attack + 0.3 body + 0.4 tail log-mel L1, mean of resolutions",
+    "attack_frames": 5,
+    "phases_seconds": {
+      "attack": [
+        0,
+        0.05
+      ],
+      "body": [
+        0.05,
+        0.25
+      ],
+      "tail": [
+        0.25,
+        3
+      ]
+    },
+    "preprocessing": "causal second-order 30 Hz highpass on both signals before whole-note RMS",
+    "secondary": "20 ms RMS-envelope L1 in dB; absolute 90%-energy-time error in seconds"
+  },
+  "fit": {
+    "model": "hammered_dulcimer",
+    "initial_parameters": {
+      "damping": 0.10000000149011612,
+      "decay": 5.0,
+      "detune": 2.4000000953674316,
+      "hardness": 0.5799999833106995,
+      "level": -10.0,
+      "position": 0.14000000059604645,
+      "release": 0.3199999928474426,
+      "stiffness": 0.0003499999875202775
+    },
+    "parameters": {
+      "damping": 0.1597888585834602,
+      "decay": 4.985689844340873,
+      "detune": 0.7820791576063151,
+      "hardness": 0.28930374091894484,
+      "level": -10.0,
+      "position": 0.12626603595881933,
+      "release": 0.08443278286121209,
+      "stiffness": 0.00048121266869873285
+    },
+    "objective": 0.3363272894094933,
+    "evaluations": 140,
+    "seed": 20261003,
+    "bounds": {
+      "hardness": [
+        0.1,
+        0.9
+      ],
+      "position": [
+        0.04,
+        0.3
+      ],
+      "decay": [
+        0.25,
+        8.0
+      ],
+      "damping": [
+        0.0,
+        0.8
+      ],
+      "stiffness": [
+        0.0,
+        0.002
+      ],
+      "detune": [
+        0.0,
+        6.0
+      ],
+      "release": [
+        0.03,
+        0.6
+      ]
+    },
+    "training_ids": [
+      "hammered_dulcimer-60-c4",
+      "hammered_dulcimer-66-fsharp4",
+      "hammered_dulcimer-64-e4",
+      "hammered_dulcimer-62-d4",
+      "hammered_dulcimer-72-highc5",
+      "hammered_dulcimer-74-highd5"
+    ],
+    "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+    "renderer_sha256": "ed77c6d97a8222783a2a5d54e661c5b73f9ada8c1e4a4494b68f634d54c00a55"
+  },
+  "factory_parameters": {
+    "damping": 0.10000000149011612,
+    "decay": 5.0,
+    "detune": 2.4000000953674316,
+    "hardness": 0.5799999833106995,
+    "level": -10.0,
+    "position": 0.14000000059604645,
+    "release": 0.3199999928474426,
+    "stiffness": 0.0003499999875202775
+  },
+  "current_factory_parameters": {
+    "damping": 0.10000000149011612,
+    "decay": 5.0,
+    "detune": 2.4000000953674316,
+    "hardness": 0.5799999833106995,
+    "level": -10.0,
+    "position": 0.14000000059604645,
+    "release": 0.3199999928474426,
+    "stiffness": 0.0003499999875202775
+  },
+  "calibration_sha256": null,
+  "calibration": null,
+  "factory": [
+    {
+      "id": "hammered_dulcimer-73-csharp5",
+      "pitch": 73,
+      "split": "validation",
+      "mel": 0.29651541830350536,
+      "envelope_db": 5.37198785983062,
+      "t90_seconds": 0.29720833333333335
+    },
+    {
+      "id": "hammered_dulcimer-60-c4",
+      "pitch": 60,
+      "split": "train",
+      "mel": 0.3582966098696837,
+      "envelope_db": 2.1185908745358915,
+      "t90_seconds": 0.10345833333333332
+    },
+    {
+      "id": "hammered_dulcimer-71-b4",
+      "pitch": 71,
+      "split": "validation",
+      "mel": 0.3097460126652823,
+      "envelope_db": 2.4295026791132046,
+      "t90_seconds": 0.040666666666666684
+    },
+    {
+      "id": "hammered_dulcimer-69-a4",
+      "pitch": 69,
+      "split": "validation",
+      "mel": 0.24159684835391984,
+      "envelope_db": 2.568719901239229,
+      "t90_seconds": 0.14420833333333333
+    },
+    {
+      "id": "hammered_dulcimer-66-fsharp4",
+      "pitch": 66,
+      "split": "train",
+      "mel": 0.22465034560037878,
+      "envelope_db": 9.173200626459948,
+      "t90_seconds": 0.41812499999999997
+    },
+    {
+      "id": "hammered_dulcimer-64-e4",
+      "pitch": 64,
+      "split": "train",
+      "mel": 0.2980637365519108,
+      "envelope_db": 5.0772964863920516,
+      "t90_seconds": 0.13387500000000002
+    },
+    {
+      "id": "hammered_dulcimer-62-d4",
+      "pitch": 62,
+      "split": "train",
+      "mel": 0.4193705295610947,
+      "envelope_db": 3.4327156914509747,
+      "t90_seconds": 0.09325
+    },
+    {
+      "id": "hammered_dulcimer-72-highc5",
+      "pitch": 72,
+      "split": "train",
+      "mel": 0.22944054817238696,
+      "envelope_db": 3.941523212376344,
+      "t90_seconds": 0.021041666666666653
+    },
+    {
+      "id": "hammered_dulcimer-74-highd5",
+      "pitch": 74,
+      "split": "train",
+      "mel": 0.3832129908399271,
+      "envelope_db": 5.76219300645152,
+      "t90_seconds": 0.3567083333333334
+    },
+    {
+      "id": "hammered_dulcimer-67-g4",
+      "pitch": 67,
+      "split": "validation",
+      "mel": 0.19891631959049352,
+      "envelope_db": 16.70997003282971,
+      "t90_seconds": 0.5428333333333333
+    }
+  ],
+  "candidate": [
+    {
+      "id": "hammered_dulcimer-73-csharp5",
+      "pitch": 73,
+      "split": "validation",
+      "mel": 0.23162435167679568,
+      "envelope_db": 1.2715566780074263,
+      "t90_seconds": 0.10483333333333333
+    },
+    {
+      "id": "hammered_dulcimer-60-c4",
+      "pitch": 60,
+      "split": "train",
+      "mel": 0.35961220145248246,
+      "envelope_db": 2.5794804814828964,
+      "t90_seconds": 0.1957916666666667
+    },
+    {
+      "id": "hammered_dulcimer-71-b4",
+      "pitch": 71,
+      "split": "validation",
+      "mel": 0.3285011064564595,
+      "envelope_db": 2.1718072598226015,
+      "t90_seconds": 0.14100000000000001
+    },
+    {
+      "id": "hammered_dulcimer-69-a4",
+      "pitch": 69,
+      "split": "validation",
+      "mel": 0.24856520525976378,
+      "envelope_db": 1.5178328847380878,
+      "t90_seconds": 0.03354166666666669
+    },
+    {
+      "id": "hammered_dulcimer-66-fsharp4",
+      "pitch": 66,
+      "split": "train",
+      "mel": 0.18495499225603626,
+      "envelope_db": 3.7074565118882212,
+      "t90_seconds": 0.2574583333333333
+    },
+    {
+      "id": "hammered_dulcimer-64-e4",
+      "pitch": 64,
+      "split": "train",
+      "mel": 0.3030518459072711,
+      "envelope_db": 5.412971360240954,
+      "t90_seconds": 0.010666666666666658
+    },
+    {
+      "id": "hammered_dulcimer-62-d4",
+      "pitch": 62,
+      "split": "train",
+      "mel": 0.40377671660710535,
+      "envelope_db": 1.681192797623635,
+      "t90_seconds": 0.03220833333333334
+    },
+    {
+      "id": "hammered_dulcimer-72-highc5",
+      "pitch": 72,
+      "split": "train",
+      "mel": 0.17639045953191218,
+      "envelope_db": 3.3214281789262072,
+      "t90_seconds": 0.17033333333333336
+    },
+    {
+      "id": "hammered_dulcimer-74-highd5",
+      "pitch": 74,
+      "split": "train",
+      "mel": 0.3270368243838317,
+      "envelope_db": 6.364670056224885,
+      "t90_seconds": 0.16512500000000002
+    },
+    {
+      "id": "hammered_dulcimer-67-g4",
+      "pitch": 67,
+      "split": "validation",
+      "mel": 0.1565549964758492,
+      "envelope_db": 13.871023783515186,
+      "t90_seconds": 0.37474999999999997
+    }
+  ],
+  "factory_mean_mel": 0.29598093595085834,
+  "factory_train_mean_mel": 0.31883912676589704,
+  "factory_validation_mean_mel": 0.2616936497283003,
+  "candidate_mean_mel": 0.2720068700007507,
+  "candidate_train_mean_mel": 0.29247050668977315,
+  "candidate_validation_mean_mel": 0.24131141496721703,
+  "paired_train": {
+    "mel": {
+      "before": 0.31883912676589704,
+      "after": 0.29247050668977315,
+      "reduction_percent": 8.270195801748216,
+      "paired_delta_ci95": [
+        -0.045463384351403284,
+        -0.006501541108242058
+      ]
+    },
+    "envelope_db": {
+      "before": 4.917586649611121,
+      "after": 3.844533231064467,
+      "reduction_percent": 21.820732302327826,
+      "paired_delta_ci95": [
+        -2.892031792791103,
+        0.3070521923065841
+      ]
+    },
+    "t90_seconds": {
+      "before": 0.18774305555555557,
+      "after": 0.13859722222222223,
+      "reduction_percent": 26.17717773256889,
+      "paired_delta_ci95": [
+        -0.14812500000000003,
+        0.053083333333333364
+      ]
+    }
+  },
+  "paired_validation": {
+    "mel": {
+      "before": 0.2616936497283003,
+      "after": 0.24131141496721703,
+      "reduction_percent": 7.788585921838309,
+      "paired_delta_ci95": [
+        -0.053626194870677005,
+        0.012861725348510586
+      ]
+    },
+    "envelope_db": {
+      "before": 6.77004511825319,
+      "after": 4.708055151520825,
+      "reduction_percent": 30.457551326694855,
+      "paired_delta_ci95": [
+        -3.469688715568858,
+        -0.6542912178958723
+      ]
+    },
+    "t90_seconds": {
+      "before": 0.2562291666666667,
+      "after": 0.16353125000000002,
+      "reduction_percent": 36.17773802748191,
+      "paired_delta_ci95": [
+        -0.18022916666666666,
+        0.03322916666666667
+      ]
+    }
+  }
+}

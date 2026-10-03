@@ -3,11 +3,12 @@
 use auris_core::{PluginPack, PluginRegistry};
 
 use crate::chiptune::Chiptune;
+use crate::clarinet::Clarinet;
 use crate::drumkit::DrumKit;
 use crate::fm2::Fm2;
 use crate::noisedrum::NoiseDrum;
 use crate::vocal::Vocal;
-use crate::{Model, Physical};
+use crate::{Choir, HammeredDulcimer, Model, Physical, TinWhistle};
 
 /// Installs the built-in instruments into a registry.
 ///
@@ -26,6 +27,10 @@ impl PluginPack for SynthPack {
         for model in Model::ALL {
             registry.register_instrument(move || Box::new(Physical::new(model)));
         }
+        registry.register_instrument(|| Box::new(Clarinet::new()));
+        registry.register_instrument(|| Box::new(HammeredDulcimer::new()));
+        registry.register_instrument(|| Box::new(TinWhistle::new()));
+        registry.register_instrument(|| Box::new(Choir::new()));
         registry.register_instrument(|| Box::new(Chiptune::new()));
         registry.register_instrument(|| Box::new(Fm2::new()));
         registry.register_instrument(|| Box::new(NoiseDrum::new()));
@@ -107,9 +112,14 @@ mod tests {
             vec![
                 "auris.physical.bass",
                 "auris.physical.bell",
+                "auris.physical.choir",
+                "auris.physical.clarinet",
+                "auris.physical.electric_guitar",
                 "auris.physical.guitar",
+                "auris.physical.hammered_dulcimer",
                 "auris.physical.mallet",
                 "auris.physical.piano",
+                "auris.physical.tin_whistle",
                 "auris.physical.violin",
                 "auris.synth.chiptune",
                 "auris.synth.drumkit",
@@ -118,7 +128,7 @@ mod tests {
                 "auris.synth.vocal"
             ]
         );
-        assert_eq!(registry.len(), 11);
+        assert_eq!(registry.len(), 16);
         assert_eq!(registry.effects().count(), 0);
     }
 
@@ -162,7 +172,15 @@ mod tests {
                 buffer.channel(0).iter().all(|s| s.is_finite()),
                 "{id} produced a non-finite sample"
             );
-            assert_eq!(buffer.channel(0), buffer.channel(1), "{id} left a channel");
+            if id == Choir::ID {
+                assert!(buffer.channel(1).iter().all(|s| s.is_finite()));
+                assert!(
+                    peak(buffer.channel(1)) > 0.0,
+                    "{id} left its right channel silent"
+                );
+            } else {
+                assert_eq!(buffer.channel(0), buffer.channel(1), "{id} left a channel");
+            }
         }
     }
 

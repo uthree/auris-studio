@@ -1,8 +1,11 @@
 # Physical instruments
 
-Choose **Physical Piano, Guitar, Bass, Bell, Mallet or Violin** in the sound library.
+Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin, Clarinet,
+Hammered Dulcimer or Tin Whistle** in the sound library.
 Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
 New melodic tracks use Physical Piano. No sample files or network setup are needed.
+**[Physical Choir](physical-choir.md)** adds wordless polyphonic ensemble vowels as another
+ordinary instrument, with its own vocal-tract and ensemble controls.
 
 These are compact, reduced physical models with a shared control vocabulary. They aim for
 playable, adjustable instruments rather than reproductions of particular recorded instruments.
@@ -11,13 +14,18 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | --- | --- | --- |
 | Piano | Finite hammer pulse and coupled unison stiff-string modes | Contact hardness, strike position, stiffness, pedal |
 | Guitar | Finite-width pluck, allpass-tuned string and bridge-motion output | Pick hardness, pluck position, damping, pickup blend |
+| Electric Guitar | Steel-string pickup DI, without acoustic-body radiation | Independent pick/pickup positions, pickup resonance, decay per octave |
 | Bass | Plucked string with lower body resonances | Finger/pick hardness, pluck position, resonance decay |
 | Bell | Damped, inharmonic shell modes | Beater hardness, excitation position, decay |
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
 | Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
+| Clarinet | Nonlinear single reed coupled to a cylindrical-bore waveguide | Breath pressure, reed stiffness, breath noise, attack and release |
+| Hammered Dulcimer | Finite hammer pulse, stiff-string courses and passive bridge coupling | Hammer hardness, strike position, string decay, damping, stiffness and course detune |
+| Tin Whistle | Nonlinear fipple jet coupled to an open-pipe resonator | Breath pressure, jet shape, breath noise, attack and release |
 
-Fitted filter cascades colour the piano, guitar and violin; parallel body resonances colour
-the other models. The piano uses one, two or three strings by register, up to 64 partials,
+Fitted filter cascades colour the piano, guitar and violin; guitar and violin add six causal
+radiation resonances. Parallel body resonances colour bass, bell and mallet. The piano uses one,
+two or three strings by register, up to 64 partials,
 and a velocity-dependent finite hammer pulse with passive unison coupling. The
 violin models one bowed string, with a bounded friction approximation rather than a full bow,
 bridge and wooden-body simulation. The bell mode ratios describe a designed shell, not a specific
@@ -31,17 +39,26 @@ Velocity changes both excitation energy and attack hardness. **Resonance Decay**
 time to lose 60 dB at the fundamental; higher modes decay sooner, and **Damping** adds losses.
 The guitar's allpass tuning separates interpolation from physical loss. Its decay is calibrated
 at the fundamental; damping shortens it by a factor of `1 + 3 × damping` and increases upper-mode
-loss. The bass and violin's linear interpolation also contributes frequency-dependent losses.
+loss. Guitar and violin additionally apply smooth register-dependent contact/loss curves,
+centered on G3 and A4 respectively, so the decay control is nominal at that center.
+The bass and violin's linear interpolation also contributes frequency-dependent losses.
 The [refinement account](physical-model-refinement.md) explains the radiation profiles and
 their calibration limits.
 
 **Body Resonance**, **Level**, **Release**, **Damping** and **Resonance Decay** affect sounding
-notes. **String Stiffness** is a piano-only control that spreads upper partials while keeping the
+notes. **String Stiffness** on piano and dulcimer spreads upper partials while keeping the
 fundamental tuned. **Bow Pressure** is violin-only and affects the sounding friction junction.
 Position takes effect at the next attack on struck/plucked instruments; on violin it moves
-the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano attack.
+the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano or dulcimer attack.
 Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
 position-dependent magnetic pickup approximation, progressively bypassing body coloration.
+**Electric Guitar** is a separate DI instrument: pickup position is independent of pick
+position, the pickup observes motion velocity, and a resonant lowpass approximates its
+electrical response. Positions refer to the open string; standard tuning and the highest
+playable string determine the estimated fret and effective positions. **Decay per Octave**
+multiplies the nominal E4 decay for each octave above E4 (and divides below it). Add the
+**Guitar Amp** effect for clean/crunch/lead saturation and an open or closed speaker cabinet.
+The [electric calibration account](electric-guitar.md) describes reference measurements.
 Violin **Bow speed** controls motion independently of **Bow Pressure**. **Bow response** sets its
 2–120 ms response time (about 57 ms by default), including while a note sounds. Output expression
 changes smoothly with half that time constant. **Legato** uses last-note priority: overlapping
@@ -49,11 +66,25 @@ notes reuse the same vibrating string, and releasing the newest key returns to a
 key. It is off by default for polyphonic playing. Changing legato mode releases held notes.
 As on other instruments, the parameter editor and automation lanes save ordinary plugin state.
 
-MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed; CC1 scales bow
+Clarinet **Breath Pressure**, **Reed Stiffness** and **Breath Noise** control its sounding
+reed/bore junction. CC11 smooths breath drive and output expression over 20 ms. It has
+16 voices, and its **Attack** and **Release** use the shared ADSR. The
+[clarinet calibration account](clarinet-calibration.md) gives real-recording comparisons
+and the model's supported measurement range.
+
+Hammered Dulcimer has 24 voices, with up to 24 partials on each of three strings per course.
+**Course Detune** is measured in cents. Hardness, position, stiffness and detune apply at the
+next strike; string decay and bridge damping also affect sounding courses. Tin Whistle has
+16 voices and 20-ms CC11 smoothing. Both instruments honour live pitch bend and use the shared
+de-click envelope. The [folk-instrument measurements](folk-physical-instruments.md) describe
+their real-recording references and calibration limits.
+
+MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed, with a
+`value^1.18` response on violin before smoothing; CC1 scales bow
 pressure. CC64 holds released piano strings until the pedal lifts. Note-off damps/releases a note,
 all-notes-off releases the whole pool, and all-sound-off uses the shared de-click envelope.
 Pitch bends act on sounding strings/modes, so the existing slide and pitch-performance stages
-can play these instruments. The pool holds up to 24 voices and steals released/quiet voices first.
+can play these instruments. The string/modal pool holds up to 24 voices and steals released/quiet voices first.
 Excitation is deterministic and rendering is independent of block size.
 
 ## Composition
@@ -70,9 +101,10 @@ role = "chords"
 instrument = "auris.physical.guitar"
 ```
 
-The composer recognises native piano, guitar, bass and violin IDs when choosing editable stroke,
+The composer recognises native piano, dulcimer, guitar, bass, violin, clarinet and whistle IDs when choosing editable stroke,
 strum, mute, slide and pitch-performance stages. Existing GM family hints also resolve to these
-models: piano/electric piano, guitar, bass, bells, mallets and strings. A muted-guitar hint starts
+models: piano/electric piano, guitar, bass, bells, mallets, strings, clarinet (GM 71),
+dulcimer (GM 15) and whistle (GM 78). A muted-guitar hint starts
 with more damping; picked/slap bass starts with harder contact; string pads start with gentler
 bow pressure and a longer release. These are starting parameters for Auris instruments, not GM
 patch emulation. Drum hints use the built-in Drum Kit.
@@ -131,11 +163,15 @@ attacked pluck's contact, disable retired graph readers, and count callback allo
 observation enabled. Native-window harness tests cover preview, display magnification by
 keyboard, freeze/resume, scrolling to parameters, Undo, source replacement and Escape.
 
+The [radiation/register experiments](physical-extensions.md) compare causal resonances,
+register curves and bow response against real recordings with held-out temporal log-mel loss.
 The [long-note/trajectory calibration](physical-trajectories.md) measures sustained tone,
 played vibrato/glissando, expression following and release against real recordings.
 Factory piano, guitar and violin settings and radiation gains are calibrated against real
 recordings with [temporal mel copy synthesis](physical-copy-synthesis.md). That document records
 the objective, fixed training/validation split, reproducible commands and remaining limits.
+The [bass/bar/drum measurements](physical-pack.md) calibrate the remaining physical models and
+seven kit families against real recordings, with separate attack, body, tail and envelope errors.
 The [before/after measurements](physical-instruments-evaluation.md) record the full-preset
 comparison, including the lower learned scores for sustained-string and ambient arrangements.
 

@@ -1,0 +1,101 @@
+{
+  "parameters": {
+    "attack": 0.07919169111963809,
+    "breath_noise": 0.15028741708068372,
+    "level": -8.0,
+    "pressure": 0.41535938285326746,
+    "reed_stiffness": 0.4818097140884573,
+    "release": 0.23999999463558197
+  },
+  "objective": 0.1269160749588064,
+  "evaluations": 80,
+  "seed": 20261003,
+  "bounds": {
+    "pressure": [
+      0.3,
+      1.0
+    ],
+    "breath_noise": [
+      0.0,
+      0.18
+    ],
+    "reed_stiffness": [
+      0.15,
+      0.85
+    ],
+    "attack": [
+      0.005,
+      0.08
+    ]
+  },
+  "training_ids": [
+    "pp-D3B3-50",
+    "pp-D3B3-52",
+    "pp-D3B3-54",
+    "pp-D3B3-56",
+    "pp-D3B3-58",
+    "pp-C4B4-60",
+    "pp-C4B4-62",
+    "pp-C4B4-64",
+    "pp-C4B4-66",
+    "pp-C4B4-68",
+    "pp-C4B4-70",
+    "pp-C5B5-72",
+    "pp-C5B5-74",
+    "pp-C5B5-76",
+    "pp-C5B5-78",
+    "pp-C5B5-80",
+    "pp-C5B5-82",
+    "mf-D3B3-50",
+    "mf-D3B3-52",
+    "mf-D3B3-54",
+    "mf-D3B3-56",
+    "mf-D3B3-58",
+    "mf-C4B4-60",
+    "mf-C4B4-62",
+    "mf-C4B4-64",
+    "mf-C4B4-66",
+    "mf-C4B4-68",
+    "mf-C4B4-70",
+    "mf-C5B5-72",
+    "mf-C5B5-74",
+    "mf-C5B5-76",
+    "mf-C5B5-78",
+    "mf-C5B5-80",
+    "mf-C5B5-82",
+    "ff-D3B3-50",
+    "ff-D3B3-52",
+    "ff-D3B3-54",
+    "ff-D3B3-56",
+    "ff-D3B3-58",
+    "ff-C4B4-60",
+    "ff-C4B4-62",
+    "ff-C4B4-64",
+    "ff-C4B4-66",
+    "ff-C4B4-68",
+    "ff-C4B4-70",
+    "ff-C5B5-72",
+    "ff-C5B5-74",
+    "ff-C5B5-76",
+    "ff-C5B5-78",
+    "ff-C5B5-80",
+    "ff-C5B5-82"
+  ],
+  "reference_sha256": "1eb2b19857e674eb6eb6aab0162c59d1756256600127f3a94712607a02728466",
+  "search_renderer_sha256": "490f2aa5c9cf038d393863d91bd87ebb6e402dae4b158781a7971d7b8901407d",
+  "initial_parameters": {
+    "attack": 0.017999999225139618,
+    "breath_noise": 0.05999999865889549,
+    "level": -8.0,
+    "pressure": 0.6200000047683716,
+    "reed_stiffness": 0.47999998927116394,
+    "release": 0.23999999463558197
+  },
+  "native_rate": 24000,
+  "iterations": 4,
+  "population_multiplier": 4,
+  "polish": false,
+  "objective_definition": "mean phase-weighted log-mel L1 + 0.006 * mean envelope error (dB) + 0.15 * mean T90 error (seconds), training pitches only",
+  "interpretation": "Calibration of a newly introduced, phenomenological clarinet; initial controls are a pre-calibration development baseline. Prepared audio was retained when provenance metadata and portable paths were normalized.",
+  "reference_hash_encoding": "UTF-8 with CRLF normalized to LF"
+}

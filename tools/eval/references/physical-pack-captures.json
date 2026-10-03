@@ -1,0 +1,469 @@
+{
+  "iowa": {
+    "source": "https://theremin.music.uiowa.edu/MIS.html",
+    "creator": "Lawrence Fritts / University of Iowa",
+    "terms": "Any projects, without restrictions"
+  },
+  "salamander": {
+    "source": "https://github.com/endolith/Salamander-Drumkit",
+    "creator": "Alexander Holm",
+    "url": "https://archive.org/download/SalamanderDrumkit/salamanderDrumkit.tar.bz2",
+    "path": "salamanderDrumkit.tar.bz2",
+    "sha256": "34e746ec1721bb530b1caf5b17443ae3cde45a2cce1a80e2637e4c11d6f1e3f5",
+    "bytes": 387611727,
+    "terms": "Original CC BY-SA 3.0; author dedicated sampled instruments to public domain in 2022",
+    "author_statement": "https://rytmenpinne.wordpress.com/2022/03/04/good-news-everyone/"
+  },
+  "captures": [
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.pp.sulE.E1B1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.pp.sulE.E1B1.aiff",
+      "pitches": [
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "velocity": 0.35,
+      "sha256": "282b509a6cf212280f2cda51e1ba0f0ce24284f14cd5d14932a4a01d15195928"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.pp.sulA.C2B2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.pp.sulA.C2B2.aiff",
+      "pitches": [
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.35,
+      "sha256": "0f48ce3b6bd1ec42cad7d215055069aa54bf66f83c831db07c67e9fb8614bcfb"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.pp.sulD.C3B3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.pp.sulD.C3B3.aiff",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.35,
+      "sha256": "9c328075239d397fcff6318c549adc66b00fc22096235490c934a03d53d81fdc"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.pp.C3B3.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.pp.C3B3.aif",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.35,
+      "sha256": "7128c31e097c7769aedb63f3b74219f12a7eb4ca5e3b7f7647940d3478c0b7fe"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.pp.C4B4.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.pp.C4B4.aif",
+      "pitches": [
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.35,
+      "sha256": "2caa1718fed89bccc68c2cc0c01cb93c6a56178ac32dff85d1061c3de3f606c1"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.pp.C5B5.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C5B5.aif",
+      "pitches": [
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.35,
+      "sha256": "ac09e4c28c16c87b33aa79956f3ca6f2000f241107ac7158e399fb56d197cfdc"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.pp.C6B6.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.pp.C6B6.aif",
+      "pitches": [
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95
+      ],
+      "velocity": 0.35,
+      "sha256": "8d92ca4f581b47404103e1510bb4b23ae732f65793773f851ac413acf43835b7"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.mf.sulE.E1B1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.mf.sulE.E1B1.aiff",
+      "pitches": [
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "velocity": 0.65,
+      "sha256": "bf162074774e538a570db12a6c8094b19c1b594acc51a3e9d756fe5877207c32"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.mf.sulA.C2B2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.mf.sulA.C2B2.aiff",
+      "pitches": [
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.65,
+      "sha256": "3a4ad0919995d7aaf0f50ceeaa3e5da8c33ad145336afb769871f8fb2e77b8e8"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.mf.sulD.C3B3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.mf.sulD.C3B3.aiff",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.65,
+      "sha256": "ad8164c50ca9fc674ba75fc096b37e68be7826ba3cd49c62b9486cf1842bbaa7"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.mf.C3B3.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.mf.C3B3.aif",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.65,
+      "sha256": "9c721a1cfea0dd3db82cca962efe050bbfa1b0bc217032db4922ea9a155dde5e"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.mf.C4B4.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.mf.C4B4.aif",
+      "pitches": [
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.65,
+      "sha256": "2e3be30d4a08948347ed4b0b563240306d61292e0cbfa86085852405f08eda94"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.mf.C5B5.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C5B5.aif",
+      "pitches": [
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.65,
+      "sha256": "3b10291445f639fadcb6f4bb0eedbc69f92152557996538977d056c46dddeeff"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.mf.C6B6.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.mf.C6B6.aif",
+      "pitches": [
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95
+      ],
+      "velocity": 0.65,
+      "sha256": "d14f1a0e0e4178d32338b44404ba0b99700523eaecee00cded7feef10a4722c2"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.ff.sulE.E1B1.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.ff.sulE.E1B1.aiff",
+      "pitches": [
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "velocity": 0.95,
+      "sha256": "571a77ee0de34d5e25a149450d87403c71473d8a25912688e98c61e5a1dcf9fe"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.ff.sulA.C2B2.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.ff.sulA.C2B2.aiff",
+      "pitches": [
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47
+      ],
+      "velocity": 0.95,
+      "sha256": "0474629eb74622fd45385458dc5165e53d0794f0670221a46ce0527655ed0d14"
+    },
+    {
+      "model": "bass",
+      "page": "https://theremin.music.uiowa.edu/MISdoublebass.html",
+      "path": "Bass.pizz.ff.sulD.C3B3.aiff",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Strings/doublebass/Bass.pizz.ff.sulD.C3B3.aiff",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.95,
+      "sha256": "9c623cc13843bb01e4a33c4885d91aa18c1601e0b22833c905add32c5f3b31a1"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.ff.C3B3.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.ff.C3B3.aif",
+      "pitches": [
+        48,
+        49,
+        50,
+        51,
+        52,
+        53,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59
+      ],
+      "velocity": 0.95,
+      "sha256": "4756f9420c1758ef71b7d4671939b66318d93c0c7c3148afda9fa11e8cc2d30a"
+    },
+    {
+      "model": "mallet",
+      "page": "https://theremin.music.uiowa.edu/Mismarimba.html",
+      "path": "Marimba.yarn.ff.C4B4.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Marimba/Marimba.yarn.ff.C4B4.aif",
+      "pitches": [
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66,
+        67,
+        68,
+        69,
+        70,
+        71
+      ],
+      "velocity": 0.95,
+      "sha256": "4b504d157b02614a7975a115a367dfb01413fad0fb40faeeaa6cd09f4227298c"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.ff.C5B5.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C5B5.aif",
+      "pitches": [
+        72,
+        73,
+        74,
+        75,
+        76,
+        77,
+        78,
+        79,
+        80,
+        81,
+        82,
+        83
+      ],
+      "velocity": 0.95,
+      "sha256": "2a61eec29e0bc6bbaa96b8bd6d13d0899d35f82f6a683f7e6503f306ed1d5451"
+    },
+    {
+      "model": "bell",
+      "page": "https://theremin.music.uiowa.edu/MISbells.html",
+      "path": "bells.plastic.ff.C6B6.aif",
+      "url": "https://theremin.music.uiowa.edu/sound%20files/MIS/Percussion/Bells/bells.plastic.ff.C6B6.aif",
+      "pitches": [
+        84,
+        85,
+        86,
+        87,
+        88,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95
+      ],
+      "velocity": 0.95,
+      "sha256": "b1f1d701e3151f7c03620041cadfdcfbcdf830aad1b25f52e1f7225819091d79"
+    }
+  ]
+}

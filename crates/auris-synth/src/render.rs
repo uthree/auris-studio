@@ -64,7 +64,7 @@ pub fn render_segments<R>(
 
 /// Copies channel 0 of `out` over every other channel, for the frames that were rendered.
 ///
-/// The built-in instruments are mono generators; this is how they honour the requirement to
+/// Mono instruments use this to honour the requirement to
 /// write every channel of the output buffer without paying for a channel branch per sample.
 pub fn spread_to_all_channels(out: &mut AudioBuffer, frames: usize) {
     let frames = frames.min(out.frame_count());

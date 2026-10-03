@@ -1,0 +1,66 @@
+{
+  "model": "hammered_dulcimer",
+  "initial_parameters": {
+    "damping": 0.10000000149011612,
+    "decay": 5.0,
+    "detune": 2.4000000953674316,
+    "hardness": 0.5799999833106995,
+    "level": -10.0,
+    "position": 0.14000000059604645,
+    "release": 0.3199999928474426,
+    "stiffness": 0.0003499999875202775
+  },
+  "parameters": {
+    "damping": 0.1597888585834602,
+    "decay": 4.985689844340873,
+    "detune": 0.7820791576063151,
+    "hardness": 0.28930374091894484,
+    "level": -10.0,
+    "position": 0.12626603595881933,
+    "release": 0.08443278286121209,
+    "stiffness": 0.00048121266869873285
+  },
+  "objective": 0.3363272894094933,
+  "evaluations": 140,
+  "seed": 20261003,
+  "bounds": {
+    "hardness": [
+      0.1,
+      0.9
+    ],
+    "position": [
+      0.04,
+      0.3
+    ],
+    "decay": [
+      0.25,
+      8.0
+    ],
+    "damping": [
+      0.0,
+      0.8
+    ],
+    "stiffness": [
+      0.0,
+      0.002
+    ],
+    "detune": [
+      0.0,
+      6.0
+    ],
+    "release": [
+      0.03,
+      0.6
+    ]
+  },
+  "training_ids": [
+    "hammered_dulcimer-60-c4",
+    "hammered_dulcimer-66-fsharp4",
+    "hammered_dulcimer-64-e4",
+    "hammered_dulcimer-62-d4",
+    "hammered_dulcimer-72-highc5",
+    "hammered_dulcimer-74-highd5"
+  ],
+  "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+  "renderer_sha256": "ed77c6d97a8222783a2a5d54e661c5b73f9ada8c1e4a4494b68f634d54c00a55"
+}

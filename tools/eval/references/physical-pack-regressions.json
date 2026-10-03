@@ -1,0 +1,195 @@
+{
+  "symbolic": {
+    "equal_rows": true,
+    "canonical_sha256": "fe07a54fc8e8702b7208a69e25e4ec0542c518501ffe57f40106d2831e2434ba"
+  },
+  "aesthetics_before": {
+    "chiptune": {
+      "CE": 5.754,
+      "CU": 7.687,
+      "PC": 4.66,
+      "PQ": 7.858
+    },
+    "game-loop": {
+      "CE": 5.921,
+      "CU": 7.829,
+      "PC": 4.395,
+      "PQ": 7.958
+    },
+    "pop-band": {
+      "CE": 7.354,
+      "CU": 7.821,
+      "PC": 5.13,
+      "PQ": 8.06
+    },
+    "city-pop": {
+      "CE": 7.326,
+      "CU": 7.801,
+      "PC": 5.203,
+      "PQ": 8.021
+    },
+    "rock": {
+      "CE": 7.223,
+      "CU": 7.79,
+      "PC": 5.12,
+      "PQ": 7.916
+    },
+    "jazz-trio": {
+      "CE": 7.2,
+      "CU": 7.948,
+      "PC": 4.516,
+      "PQ": 8.118
+    },
+    "orchestral": {
+      "CE": 5.748,
+      "CU": 7.051,
+      "PC": 4.363,
+      "PQ": 7.4
+    },
+    "synthwave": {
+      "CE": 6.614,
+      "CU": 7.223,
+      "PC": 5.2,
+      "PQ": 7.598
+    },
+    "ambient": {
+      "CE": 4.581,
+      "CU": 6.572,
+      "PC": 2.786,
+      "PQ": 7.2
+    }
+  },
+  "physical_callback_before": "Piano: mean 0.988 ms, p99 1.686 ms, 18.5% of 5.333 ms callback budget\nGuitar: mean 0.084 ms, p99 0.089 ms, 1.6% of 5.333 ms callback budget\nBass: mean 0.030 ms, p99 0.036 ms, 0.6% of 5.333 ms callback budget\nBell: mean 0.123 ms, p99 0.137 ms, 2.3% of 5.333 ms callback budget\nMallet: mean 0.149 ms, p99 0.211 ms, 2.8% of 5.333 ms callback budget\nViolin: mean 0.078 ms, p99 0.092 ms, 1.5% of 5.333 ms callback budget\n",
+  "physical_callback_after": "Piano: mean 0.984 ms, p99 1.622 ms, 18.5% of 5.333 ms callback budget\nGuitar: mean 0.084 ms, p99 0.097 ms, 1.6% of 5.333 ms callback budget\nBass: mean 0.035 ms, p99 0.040 ms, 0.7% of 5.333 ms callback budget\nBell: mean 0.128 ms, p99 0.141 ms, 2.4% of 5.333 ms callback budget\nMallet: mean 0.129 ms, p99 0.155 ms, 2.4% of 5.333 ms callback budget\nViolin: mean 0.077 ms, p99 0.092 ms, 1.4% of 5.333 ms callback budget\n",
+  "drum_callback_before": "key 36: peak 0.47308\nkey 38: peak 0.37863\nkey 42: peak 0.20312\nkey 46: peak 0.28103\nkey 49: peak 0.46732\nkey 51: peak 0.32584\nkey 41: peak 0.43445\nkey 43: peak 0.43545\nkey 45: peak 0.43053\nkey 47: peak 0.42607\nkey 48: peak 0.42251\nkey 50: peak 0.41452\n24 crashes, watched=false: median 0.180, p99 0.201, worst 0.216 ms / 5.333 ms budget\n24 crashes, watched=true: median 0.180, p99 0.197, worst 0.228 ms / 5.333 ms budget\ntarget/physical-pack/drum-before.wav (common gain 1.000, raw peak 0.730)\n",
+  "drum_callback_after": "key 36: peak 0.40683\nkey 38: peak 0.37106\nkey 42: peak 0.21498\nkey 46: peak 0.26690\nkey 49: peak 0.42238\nkey 51: peak 0.36271\nkey 41: peak 0.37649\nkey 43: peak 0.37897\nkey 45: peak 0.36794\nkey 47: peak 0.33826\nkey 48: peak 0.31438\nkey 50: peak 0.25494\n24 crashes, watched=false: median 0.222, p99 0.228, worst 0.233 ms / 5.333 ms budget\n24 crashes, watched=true: median 0.222, p99 0.234, worst 0.250 ms / 5.333 ms budget\ntarget/physical-pack/drum-after.wav (common gain 1.000, raw peak 0.706)\n",
+  "audition": {
+    "groove_range_seconds": [
+      24,
+      40
+    ],
+    "paired_common_gain": 1.1645120829500795
+  },
+  "aesthetics_after": {
+    "chiptune": {
+      "CE": 5.754,
+      "CU": 7.687,
+      "PC": 4.66,
+      "PQ": 7.858
+    },
+    "game-loop": {
+      "CE": 5.921,
+      "CU": 7.829,
+      "PC": 4.395,
+      "PQ": 7.958
+    },
+    "pop-band": {
+      "CE": 7.354,
+      "CU": 7.821,
+      "PC": 5.13,
+      "PQ": 8.06
+    },
+    "city-pop": {
+      "CE": 7.326,
+      "CU": 7.801,
+      "PC": 5.203,
+      "PQ": 8.021
+    },
+    "rock": {
+      "CE": 7.223,
+      "CU": 7.79,
+      "PC": 5.12,
+      "PQ": 7.916
+    },
+    "jazz-trio": {
+      "CE": 7.2,
+      "CU": 7.948,
+      "PC": 4.516,
+      "PQ": 8.118
+    },
+    "orchestral": {
+      "CE": 5.748,
+      "CU": 7.051,
+      "PC": 4.363,
+      "PQ": 7.4
+    },
+    "synthwave": {
+      "CE": 6.614,
+      "CU": 7.223,
+      "PC": 5.2,
+      "PQ": 7.598
+    },
+    "ambient": {
+      "CE": 4.581,
+      "CU": 6.572,
+      "PC": 2.786,
+      "PQ": 7.2
+    }
+  },
+  "aesthetics_equal": true,
+  "kit_groove_aesthetics": {
+    "groove-before": {
+      "CE": 5.798,
+      "CU": 7.715,
+      "PC": 3.224,
+      "PQ": 7.541
+    },
+    "groove-after": {
+      "CE": 6.035,
+      "CU": 7.735,
+      "PC": 3.424,
+      "PQ": 7.674
+    }
+  },
+  "preset_wav_hashes": {
+    "chiptune": {
+      "before": "8fb1eceaa7d086dacf8f67e184b92318f64d62035662f6999d9bc8d3803e1a82",
+      "after": "8fb1eceaa7d086dacf8f67e184b92318f64d62035662f6999d9bc8d3803e1a82"
+    },
+    "game-loop": {
+      "before": "de11ad5ddd79037f50b076dfc3daf1ca3f379c3114bd57d078d7e9af35f8588d",
+      "after": "de11ad5ddd79037f50b076dfc3daf1ca3f379c3114bd57d078d7e9af35f8588d"
+    },
+    "pop-band": {
+      "before": "27079bc8ef3b9c52b9463032330737b263f3c6e64460daeab6a969294bdbde93",
+      "after": "27079bc8ef3b9c52b9463032330737b263f3c6e64460daeab6a969294bdbde93"
+    },
+    "city-pop": {
+      "before": "96a4eb171f7ce2da957860c747895f57475e870ae48dabec1b0b6dfb5d9e1cd4",
+      "after": "96a4eb171f7ce2da957860c747895f57475e870ae48dabec1b0b6dfb5d9e1cd4"
+    },
+    "rock": {
+      "before": "f0fbc221b34a18fff5deee4d9cda52be8b4dd9d50852172ebb22377934b181a1",
+      "after": "f0fbc221b34a18fff5deee4d9cda52be8b4dd9d50852172ebb22377934b181a1"
+    },
+    "jazz-trio": {
+      "before": "a076fb99f09830f3e7775802599a0af156506c8475afc219d452d9673d3c1ef8",
+      "after": "a076fb99f09830f3e7775802599a0af156506c8475afc219d452d9673d3c1ef8"
+    },
+    "orchestral": {
+      "before": "a3ef532e3cab7552827026098ae165bd7c3d51e76e9c83c0323ed9a90c22588f",
+      "after": "a3ef532e3cab7552827026098ae165bd7c3d51e76e9c83c0323ed9a90c22588f"
+    },
+    "synthwave": {
+      "before": "3bbcd5c85fad77be8cf7fd1051affd52db9a7e836dafc4a148d664037cc6384f",
+      "after": "3bbcd5c85fad77be8cf7fd1051affd52db9a7e836dafc4a148d664037cc6384f"
+    },
+    "ambient": {
+      "before": "6cc1c59b3ddeaa90f721310edf41888c27eea63e8a087c1e1110c16c12a3710c",
+      "after": "6cc1c59b3ddeaa90f721310edf41888c27eea63e8a087c1e1110c16c12a3710c"
+    }
+  },
+  "cli_sha256": {
+    "before": "8df517d53ec4477b94fdadb7d3e230fb84d1c8771ab1da6f790e964f39b874c9",
+    "after": "8df517d53ec4477b94fdadb7d3e230fb84d1c8771ab1da6f790e964f39b874c9"
+  },
+  "verification": {
+    "workspace_passed": 4024,
+    "workspace_ignored": 15,
+    "workspace_failed": 0,
+    "python_passed": 44,
+    "clippy": "workspace, all targets; no project warnings",
+    "fit_manifest_consistent": true,
+    "candidate_worker_hash_consistent": true
+  }
+}

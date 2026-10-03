@@ -344,13 +344,32 @@ pub mod architecture {
     //! line has nothing else to be doing. The gpui frontend runs the first half on a worker and
     //! keeps painting.
     //!
-    //! Native melodic instruments live in [`auris_synth::Physical`]: piano, guitar, bass, bell,
-    //! mallet and violin. Struck strings and rigid bodies use damped modal expansions; plucked
+    //! Native melodic instruments include [`auris_synth::Physical`]: piano, acoustic/electric
+    //! guitar, bass, bell, mallet and violin, plus [`auris_synth::Clarinet`],
+    //! [`auris_synth::HammeredDulcimer`] and [`auris_synth::TinWhistle`]. Struck strings and
+    //! rigid bodies use damped modal expansions; plucked
     //! and bowed strings use fractional-delay travelling waves, with nonlinear friction at the
     //! bow. Every voice is allocated in `prepare`, and the ordinary plugin parameter/state
     //! contract carries excitation controls through editing, automation, undo and persistence.
+    //! Guitar and violin add training-derived causal radiation resonances and smooth register
+    //! curves; violin expression maps to both bow motion and output through a fitted exponent.
+    //! Calibration recordings and copy-synthesis measurements remain development tooling,
+    //! while fixed coefficients and prepared filter state live in the instrument.
+    //! Clarinet couples a nonlinear single reed to a cylindrical-bore waveguide, with
+    //! breath pressure and reed controls carried through the same plugin boundary.
+    //! Hammered dulcimer adds finite hammer contact and passively coupled, detuned string
+    //! courses. Tin whistle uses a nonlinear fipple jet and an open-pipe resonator.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
+    //! [`auris_synth::Choir`] is a polyphonic instrument for wordless ensemble vowels. Each
+    //! note excites four independently varied eight-section vocal-tract waveguides with a
+    //! prescribed, band-limited glottal-flow pulse and breath noise. Its vowel, voice size,
+    //! ensemble variation and stereo width are ordinary automatable plugin parameters; it uses
+    //! instrument tracks and MIDI notes, with no lyric or offline voice-model setup.
+    //! Its factory tract profiles, source controls and lip radiation are fitted offline to
+    //! real sustained vowels, using the production DSP at 48 kHz and a frozen log-mel loss.
+    //! Training and held-out singers are disjoint. Only calibrated constants enter the
+    //! application; the fitting overrides require the development `choir-calibration` feature.
     //!
     //! Composition interprets supported GM family hints as native instruments before looking
     //! for an optional installed font. The hint describes musical intent, not a promise to
@@ -760,6 +779,19 @@ pub mod plugins {
     //! **The parameters you declare become the editor.** The UI is generated from the descriptors
     //! — the right widget, range, unit and scaling — rather than hand-written per plugin, so a new
     //! parameter is one line rather than one line and a control.
+    //!
+    //! [`Model::ElectricGuitar`](auris_synth::Model::ElectricGuitar) supplies a sample-free
+    //! pickup DI, sharing the plucked-string primitive with the acoustic guitar. Its
+    //! independent observation and electrical response stay in the instrument. The separate
+    //! [`GuitarAmp`](auris_dsp::GuitarAmp) effect owns oversampled saturation, tone controls
+    //! and analytic speaker coloration. Registry discovery makes both available in every
+    //! frontend; saved state and automation use the ordinary plugin parameter contract.
+    //! [`Clarinet`](auris_synth::Clarinet) adds the reed/bore excitation family and maps
+    //! GM hint 71 without a SoundFont. Real-recording calibration is offline tooling;
+    //! playing a note needs only prepared DSP state.
+    //! [`HammeredDulcimer`](auris_synth::HammeredDulcimer) and
+    //! [`TinWhistle`](auris_synth::TinWhistle) map GM hints 15 and 78 respectively. Their
+    //! parameters, composition choices and saved projects use the same registry/session path.
     //!
     //! # Observing mechanical motion
     //!

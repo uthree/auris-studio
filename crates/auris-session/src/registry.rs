@@ -57,6 +57,7 @@ mod tests {
             "auris.fx.chorus",
             "auris.fx.reverb",
             "auris.fx.distortion",
+            "auris.fx.guitar_amp",
             "auris.fx.limiter",
         ] {
             assert!(registry.has_effect(id), "{id} is not registered");

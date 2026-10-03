@@ -10,6 +10,16 @@ It fits only training notes and evaluates held-out pitches and dynamics with the
 renderer. This acoustic distance complements the symbolic and learned song measurements below.
 The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
 violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
+The [physical-model experiments](physical-extensions.md) add causal radiation modes,
+register/gesture ablations, paired confidence intervals and synchronized piano-pedal references.
+The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerpts, separate
+attack/body/tail loss and acoustic-role guards for every snare/tom register.
+The [electric-guitar experiment](electric-guitar.md) adds independent pickup DI, an
+oversampled amplifier and a paired clean/pedal recording benchmark with pitch-grouped splits.
+The [folk-instrument experiment](folk-physical-instruments.md) adds hammered dulcimer strikes
+and settled tin-whistle scale excerpts, with distinct-pitch validation and frozen source hashes.
+The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
+real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
 
 ## The symbolic ruler
 

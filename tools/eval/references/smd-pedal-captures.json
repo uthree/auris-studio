@@ -1,0 +1,52 @@
+{
+  "source": "https://www.audiolabs-erlangen.de/resources/MIR/SMD/midi",
+  "archive": "https://zenodo.org/records/13753319/files/SMD-piano_v2.zip",
+  "directory_sha256": "6410db5453ace2210d2be13959fd15d9cc71dc2b33393e328dab7deb4ac3ac94",
+  "citation": "M\u00fcller, Konz, Bogler, Arifi-M\u00fcller: Saarland Music Data, ISMIR 2011",
+  "terms": "CC BY-NC-SA 3.0; recordings remain local research inputs",
+  "policy": "first 12 seconds; one training work, two prespecified validation works; no time warp",
+  "files": [
+    {
+      "path": "Chopin_Op028-04_003_20100611-SMD.wav",
+      "member": "wav_22050_mono/Chopin_Op028-04_003_20100611-SMD.wav",
+      "split": "train",
+      "sha256": "c58d9fade3370c2424ecb9b6b7ba8bd62cac6af738b60ba40e618d80bcfa0b65",
+      "bytes": 5247944
+    },
+    {
+      "path": "Chopin_Op028-04_003_20100611-SMD.mid",
+      "member": "midi/Chopin_Op028-04_003_20100611-SMD.mid",
+      "split": "train",
+      "sha256": "4c1d0b3cd15eb576e1c0506f69725bf61edf8ec5f998bef02c4a8fbd8c88401f",
+      "bytes": 11824
+    },
+    {
+      "path": "Chopin_Op028-15_006_20100611-SMD.wav",
+      "member": "wav_22050_mono/Chopin_Op028-15_006_20100611-SMD.wav",
+      "split": "validation",
+      "sha256": "143deb12c3b50eb76a2847e79e88a4cfd4c88302e524aface34d51d8151579d6",
+      "bytes": 14067944
+    },
+    {
+      "path": "Chopin_Op028-15_006_20100611-SMD.mid",
+      "member": "midi/Chopin_Op028-15_006_20100611-SMD.mid",
+      "split": "validation",
+      "sha256": "aab28a34b89b2418906abf03bcb33432070316c69f9f6450bf246b58f18e658c",
+      "bytes": 35750
+    },
+    {
+      "path": "Beethoven_Op027No1-03_003_20090916-SMD.wav",
+      "member": "wav_22050_mono/Beethoven_Op027No1-03_003_20090916-SMD.wav",
+      "split": "validation",
+      "sha256": "824ba19069825f754ced2412e979815e15111fac42e981e3bb0d68dc60ab8ab6",
+      "bytes": 14949944
+    },
+    {
+      "path": "Beethoven_Op027No1-03_003_20090916-SMD.mid",
+      "member": "midi/Beethoven_Op027No1-03_003_20090916-SMD.mid",
+      "split": "validation",
+      "sha256": "cf30b86da3f4a2c86bd3e2979310bbf3743cc2f7a22179f95b33a9896018fbd6",
+      "bytes": 46704
+    }
+  ]
+}

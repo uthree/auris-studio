@@ -12,6 +12,7 @@ use crate::params::{ParamBank, finite_or};
 use crate::render::{SegmentRenderer, render_segments, spread_to_all_channels};
 use crate::voice::VoiceAllocator;
 
+mod calibration;
 mod model;
 use model::{Projection, Resonators};
 
@@ -263,6 +264,9 @@ pub struct DrumKit {
     rate: f32,
     motion: MotionCapture,
     motion_frames: usize,
+    pad_audio: [Vec<f32>; PAD_COUNT],
+    radiation: [[Biquad; 12]; PAD_COUNT],
+    radiation_kill: [usize; PAD_COUNT],
 }
 
 impl Default for DrumKit {
@@ -297,6 +301,9 @@ impl DrumKit {
             rate: 48_000.0,
             motion: MotionCapture::default(),
             motion_frames: 0,
+            pad_audio: std::array::from_fn(|_| Vec::new()),
+            radiation: std::array::from_fn(|_| std::array::from_fn(|_| Biquad::default())),
+            radiation_kill: [0; PAD_COUNT],
         }
     }
 
@@ -308,6 +315,7 @@ impl DrumKit {
         if velocity <= 0.0 {
             return;
         }
+        self.radiation_kill[pad as usize] = 0;
         let template_index = if pad == Pad::Tom {
             PAD_COUNT + TOM_KEYS.iter().position(|key| *key == pitch).unwrap_or(3)
         } else {
@@ -338,20 +346,22 @@ impl DrumKit {
         voice.current.noise_state = self.strike.wrapping_mul(0x9e37_79b9) | 1;
         voice.current.velocity = velocity;
         voice.current.pitch = pitch;
-        voice.current.contact = self.params.at(2);
-        let decay = self.params.at(4);
+        let calibrated = calibration::profile(pad);
+        let hardness = (self.params.at(1) - 0.65 + calibrated.hardness).clamp(0.0, 1.0);
+        let position = (self.params.at(2) - 0.6 + calibrated.position).clamp(0.0, 1.0);
+        let damping = (self.params.at(3) - 0.35 + calibrated.damping).clamp(0.0, 1.0);
+        voice.current.contact = position;
+        let decay = self.params.at(4) * calibrated.decay;
         let duration = voice.current.profile.decay * decay;
         voice
             .current
             .amplitude
             .set_adsr(0.001, duration, 0.0, duration);
         voice.current.wire_loss = voice.current.wire_loss.powf(1.0 / decay);
-        voice.current.resonators.strike(
-            self.params.at(1),
-            self.params.at(2),
-            self.params.at(3),
-            decay,
-        );
+        voice
+            .current
+            .resonators
+            .strike(hardness, position, damping, decay);
         voice.current.amplitude.trigger();
     }
 
@@ -427,6 +437,8 @@ impl SegmentRenderer for DrumKit {
             }
             NoteEvent::AllSoundOff { .. } => {
                 self.allocator.release_all();
+                self.radiation_kill
+                    .fill((self.rate * 0.002).ceil() as usize);
                 for voice in &mut self.voices {
                     voice.current.amplitude.kill();
                     voice.retiring.amplitude.kill();
@@ -444,12 +456,19 @@ impl SegmentRenderer for DrumKit {
             return;
         };
         dst.fill(0.0);
+        if self.pad_audio.iter().any(|audio| audio.len() < end) {
+            return;
+        }
+        for audio in &mut self.pad_audio {
+            audio[start..end].fill(0.0);
+        }
         for (index, voice) in self.voices.iter_mut().enumerate() {
             if !voice.current.amplitude.is_active() && !voice.retiring.amplitude.is_active() {
                 continue;
             }
-            for sample in dst.iter_mut() {
-                *sample += (voice.current.next() + voice.retiring.next()) * self.gain;
+            for frame in start..end {
+                self.pad_audio[voice.current.pad as usize][frame] += voice.current.next();
+                self.pad_audio[voice.retiring.pad as usize][frame] += voice.retiring.next();
             }
             self.allocator.set_level(
                 index,
@@ -457,6 +476,36 @@ impl SegmentRenderer for DrumKit {
             );
             if voice.current.amplitude.is_finished() && voice.retiring.amplitude.is_finished() {
                 self.allocator.retire(index);
+            }
+        }
+        // Sum each family before its linear radiation bank, including stolen/choked
+        // hits. Storage and coefficients are prepared; these loops never allocate.
+        for pad in Pad::ALL {
+            let sections = &mut self.radiation[pad as usize];
+            let remaining = &mut self.radiation_kill[pad as usize];
+            let gain = self.gain * calibration::profile(pad).normalization;
+            for (sample, input) in dst
+                .iter_mut()
+                .zip(&self.pad_audio[pad as usize][start..end])
+            {
+                let fade = if *remaining == 0 {
+                    1.0
+                } else {
+                    *remaining as f32 / (self.rate * 0.002).ceil()
+                };
+                *sample += gain
+                    * fade
+                    * sections
+                        .iter_mut()
+                        .fold(*input, |value, section| section.process_sample(value));
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        for section in sections.iter_mut() {
+                            section.reset();
+                        }
+                    }
+                }
             }
         }
     }
@@ -496,9 +545,26 @@ impl Instrument for DrumKit {
             })
             .collect();
         self.templates = templates;
+        self.pad_audio = std::array::from_fn(|_| vec![0.0; ctx.max_block_frames]);
+        for pad in Pad::ALL {
+            for (index, (section, gain)) in self.radiation[pad as usize]
+                .iter_mut()
+                .zip(calibration::profile(pad).gains)
+                .enumerate()
+            {
+                let hz = 90.0_f32 * (10_000.0_f32 / 90.0).powf(index as f32 / 11.0);
+                section.set_coefficients(if hz < sample_rate * 0.45 {
+                    BiquadCoefficients::peaking(f64::from(sample_rate), hz, 0.9, gain)
+                } else {
+                    BiquadCoefficients::identity()
+                });
+                section.reset();
+            }
+        }
         self.allocator.prepare(VOICE_COUNT);
         self.strike = 0;
         self.motion_frames = 0;
+        self.radiation_kill.fill(0);
         self.publish_motion();
     }
 
@@ -508,6 +574,10 @@ impl Instrument for DrumKit {
             voice.retiring.amplitude.silence();
         }
         self.allocator.clear();
+        self.radiation_kill.fill(0);
+        for section in self.radiation.iter_mut().flatten() {
+            section.reset();
+        }
         self.strike = 0;
         self.motion_frames = 0;
         self.publish_motion();
@@ -566,7 +636,15 @@ mod tests {
         let high = |samples: &[f32]| band_amplitude(samples, 48_000.0, 10_000.0);
         assert!(low(&kick) > high(&kick) * 100.0);
         assert!(mid(&snare) > high(&snare) * 2.0);
-        assert!(high(&hat) > mid(&hat) * 8.0);
+        // A bright plate may concentrate above 10 kHz. Measure the whole high band
+        // rather than requiring energy around one arbitrarily selected frequency.
+        let hat_spectrum = auris_dsp::drum_analysis::analyze_drum_audio(
+            &AudioBuffer::from_planar(vec![hat], 48_000.0).unwrap(),
+        )
+        .unwrap()
+        .spectrum;
+        assert!(hat_spectrum.high > 0.8);
+        assert!(hat_spectrum.high > hat_spectrum.body * 8.0);
         assert!(mid(&snare) / low(&snare) > mid(&kick) / low(&kick) * 20.0);
         let wire = &snare[1_200..9_600];
         assert!(
@@ -581,10 +659,10 @@ mod tests {
     fn each_pad_has_an_audible_attack_and_a_finite_one_shot_tail() {
         for key in [36, 38, 42, 46, 49, 51, 47] {
             let mut rig = rig(512);
-            let audio = rig.render(144_000, &[hit(0, key)]);
+            let audio = rig.render(288_000, &[hit(0, key)]);
             assert!(peak(&audio[..4_800]) > 0.08, "key {key} is too quiet");
             assert!(audio.iter().all(|sample| sample.is_finite()));
-            assert_eq!(peak(&audio[132_000..]), 0.0, "key {key} did not decay");
+            assert!(peak(&audio[264_000..]) < 1e-7, "key {key} did not decay");
             assert_eq!(rig.instrument.active_voices(), 0);
         }
         assert!(rms(&sound(46)[9_600..14_400]) > rms(&sound(42)[9_600..14_400]) + 0.001);
@@ -596,7 +674,8 @@ mod tests {
         let open = rig(512).render(24_000, &[hit(0, 46)]);
         let closed = rig(512).render(24_000, &[hit(0, 46), hit(4_800, 42)]);
         assert!(rms(&open[9_600..]) > 0.001);
-        assert_eq!(peak(&closed[10_000..]), 0.0);
+        assert!(rms(&closed[9_600..]) < rms(&open[9_600..]) * 0.05);
+        assert!(peak(&closed[16_800..]) < 1e-6);
         let cymbal = rig(512).render(24_000, &[hit(0, 49), hit(4_800, 42)]);
         assert!(rms(&cymbal[9_600..]) > 0.01);
     }
@@ -730,6 +809,11 @@ mod tests {
             (46, DrumRole::OpenHat),
             (49, DrumRole::Crash),
             (47, DrumRole::Tom),
+            (41, DrumRole::Tom),
+            (43, DrumRole::Tom),
+            (45, DrumRole::Tom),
+            (48, DrumRole::Tom),
+            (50, DrumRole::Tom),
         ] {
             let audio = rig(512).render(144_000, &[hit(0, pitch)]);
             let mut buffer = AudioBuffer::new(1, audio.len(), 48_000.0);

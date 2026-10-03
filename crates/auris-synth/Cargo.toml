@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+# Offline fitting overrides for the production choir DSP; absent from application builds.
+choir-calibration = []
+
 [dependencies]
 auris-core.workspace = true
 auris-dsp.workspace = true
@@ -14,3 +18,4 @@ serde.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+tempfile.workspace = true

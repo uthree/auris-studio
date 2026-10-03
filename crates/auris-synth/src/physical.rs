@@ -17,8 +17,10 @@ use crate::params::finite_or;
 use crate::{ParamBank, SegmentRenderer, VoiceAllocator, render_segments, spread_to_all_channels};
 
 mod body;
+mod calibration;
 mod legato;
 mod modal;
+mod pack;
 mod string;
 
 use body::Body;
@@ -40,6 +42,10 @@ const P_PICKUP: u32 = 7;
 const P_BOW_SPEED: u32 = 8;
 const P_LEGATO: u32 = 9;
 const P_BOW_RESPONSE: u32 = 10;
+const P_PICKUP_POSITION: u32 = 4;
+const P_TONE: u32 = 7;
+const P_PICKUP_Q: u32 = 8;
+const P_DECAY_RATIO: u32 = 9;
 
 /// Physical structure and excitation used by an instrument.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +54,8 @@ pub enum Model {
     Piano,
     /// Plucked string with a pick-controlled initial displacement.
     Guitar,
+    /// Plucked steel string observed through a magnetic pickup and its electrical resonance.
+    ElectricGuitar,
     /// Long plucked string with a lower body resonance.
     Bass,
     /// Struck shell with inharmonic modes.
@@ -59,10 +67,24 @@ pub enum Model {
 }
 
 impl Model {
+    /// Factory radiation modes as `(frequency_hz, quality_factor, signed_gain)`.
+    ///
+    /// These fitted spectral resonances are not isolated measured bridge admittances.
+    /// They follow the broad coloration and scale with the body control, anchored at 0.65.
+    pub fn radiation_modes(self) -> [(f32, f32, f32); 6] {
+        body::radiation_modes(self)
+    }
+
+    /// Factory exponent mapping channel expression to bow motion and output expression.
+    pub fn expression_exponent(self) -> f64 {
+        if self == Self::Violin { 1.18 } else { 1.0 }
+    }
+
     /// Every physical instrument, ordered by excitation family.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Piano,
         Self::Guitar,
+        Self::ElectricGuitar,
         Self::Bass,
         Self::Bell,
         Self::Mallet,
@@ -74,6 +96,7 @@ impl Model {
         match self {
             Self::Piano => "auris.physical.piano",
             Self::Guitar => "auris.physical.guitar",
+            Self::ElectricGuitar => "auris.physical.electric_guitar",
             Self::Bass => "auris.physical.bass",
             Self::Bell => "auris.physical.bell",
             Self::Mallet => "auris.physical.mallet",
@@ -85,6 +108,7 @@ impl Model {
         match self {
             Self::Piano => "Physical Piano",
             Self::Guitar => "Physical Guitar",
+            Self::ElectricGuitar => "Electric Guitar",
             Self::Bass => "Physical Bass",
             Self::Bell => "Physical Bell",
             Self::Mallet => "Physical Mallet",
@@ -96,6 +120,9 @@ impl Model {
         match self {
             Self::Piano => "Hammer-excited stiff strings: hardness, strike position and soundboard",
             Self::Guitar => "Plucked string: pick hardness, pluck position, damping and body",
+            Self::ElectricGuitar => {
+                "Steel string DI: independent pick/pickup position and pickup resonance"
+            }
             Self::Bass => "Plucked bass string: finger/pick hardness, damping and body",
             Self::Bell => "Struck bell: inharmonic shell modes, beater hardness and decay",
             Self::Mallet => "Mallet bar: bending modes, beater hardness and damping",
@@ -106,7 +133,10 @@ impl Model {
     }
 
     fn is_string(self) -> bool {
-        matches!(self, Self::Guitar | Self::Bass | Self::Violin)
+        matches!(
+            self,
+            Self::Guitar | Self::ElectricGuitar | Self::Bass | Self::Violin
+        )
     }
 
     fn output_normalization(self) -> f32 {
@@ -115,8 +145,9 @@ impl Model {
         match self {
             Self::Piano => 0.164_845,
             Self::Guitar => 0.178_368,
+            Self::ElectricGuitar => 0.8,
             Self::Violin => 1.787_516,
-            _ => 1.0,
+            _ => pack::profile(self).map_or(1.0, |profile| profile.normalization),
         }
     }
 }
@@ -129,12 +160,18 @@ struct Settings {
     damping: f32,
     stiffness: f32,
     pickup: f32,
+    electric: bool,
+    pickup_position: f32,
+    tone: f32,
+    pickup_q: f32,
+    decay_ratio: f32,
     bow_speed: f32,
     bow_response: f32,
 }
 
 #[derive(Clone, Debug)]
 struct Voice {
+    pitch: u8,
     modal: Modal,
     string: StringModel,
     envelope: Adsr,
@@ -159,6 +196,7 @@ impl Voice {
         let mut envelope = Adsr::new();
         envelope.set_sample_rate(rate);
         Self {
+            pitch: 60,
             modal,
             string,
             envelope,
@@ -204,14 +242,20 @@ pub struct Physical {
 impl Physical {
     /// Builds an unprepared physical instrument. All voice storage is allocated in `prepare`.
     pub fn new(model: Model) -> Self {
-        let (decay, release, position, hardness) = match model {
+        let (mut decay, release, mut position, mut hardness) = match model {
             Model::Piano => (11.296, 0.20, 0.228_641, 0.701_331),
             Model::Guitar => (5.638_205, 0.12, 0.298_280, 0.249_201),
+            Model::ElectricGuitar => (7.493_398, 0.12, 0.069_559, 0.186_606),
             Model::Bass => (3.5, 0.15, 0.30, 0.40),
             Model::Bell => (6.0, 1.8, 0.35, 0.65),
             Model::Mallet => (1.7, 0.35, 0.40, 0.40),
             Model::Violin => (10.460_195, 1.5, 0.103_416, 0.319_371),
         };
+        if let Some(profile) = pack::profile(model) {
+            decay = profile.decay;
+            position = profile.position;
+            hardness = profile.hardness;
+        }
         let mut descriptors = vec![
             ParamDescriptor::percent(P_HARDNESS, "hardness", "Contact Hardness", hardness),
             ParamDescriptor::new(
@@ -223,8 +267,19 @@ impl Physical {
                 position,
             )
             .with_unit(ParamUnit::Percent),
-            ParamDescriptor::new(P_DECAY, "decay", "Resonance Decay", 0.1, 12.0, decay)
-                .with_unit(ParamUnit::Seconds),
+            ParamDescriptor::new(
+                P_DECAY,
+                "decay",
+                "Resonance Decay",
+                0.1,
+                if model == Model::ElectricGuitar {
+                    40.0
+                } else {
+                    12.0
+                },
+                decay,
+            )
+            .with_unit(ParamUnit::Seconds),
             ParamDescriptor::percent(
                 P_DAMPING,
                 "damping",
@@ -232,8 +287,9 @@ impl Physical {
                 match model {
                     Model::Piano => 0.000_108,
                     Model::Guitar => 0.0,
+                    Model::ElectricGuitar => 0.021_633,
                     Model::Violin => 0.359_287,
-                    _ => 0.12,
+                    _ => pack::profile(model).map_or(0.12, |profile| profile.damping),
                 },
             ),
             ParamDescriptor::percent(
@@ -251,6 +307,42 @@ impl Physical {
             ParamDescriptor::new(P_LEVEL, "level", "Level", -60.0, 6.0, -12.0)
                 .with_unit(ParamUnit::Decibels),
         ];
+        if model == Model::ElectricGuitar {
+            descriptors[P_BODY as usize] = ParamDescriptor::new(
+                P_PICKUP_POSITION,
+                "pickup_position",
+                "Pickup Position",
+                0.02,
+                0.3,
+                0.235_997,
+            )
+            .with_unit(ParamUnit::Percent);
+            descriptors.push(
+                ParamDescriptor::new(
+                    P_TONE,
+                    "tone",
+                    "Pickup Resonance",
+                    800.0,
+                    12_000.0,
+                    2717.688,
+                )
+                .with_unit(ParamUnit::Hertz),
+            );
+            descriptors.push(ParamDescriptor::new(
+                P_PICKUP_Q, "pickup_q", "Pickup Q", 0.5, 2.5, 1.883_881,
+            ));
+            descriptors.push(
+                ParamDescriptor::new(
+                    P_DECAY_RATIO,
+                    "decay_ratio",
+                    "Decay per Octave",
+                    0.2,
+                    1.5,
+                    0.55,
+                )
+                .with_unit(ParamUnit::Ratio),
+            );
+        }
         if model == Model::Piano {
             descriptors.push(ParamDescriptor::new(
                 P_STIFFNESS,
@@ -332,6 +424,27 @@ impl Physical {
                 self.params.at(P_PICKUP)
             } else {
                 0.0
+            },
+            electric: self.model == Model::ElectricGuitar,
+            pickup_position: if self.model == Model::ElectricGuitar {
+                self.params.at(P_PICKUP_POSITION)
+            } else {
+                self.params.at(P_POSITION)
+            },
+            tone: if self.model == Model::ElectricGuitar {
+                self.params.at(P_TONE)
+            } else {
+                12_000.0
+            },
+            pickup_q: if self.model == Model::ElectricGuitar {
+                self.params.at(P_PICKUP_Q)
+            } else {
+                0.707
+            },
+            decay_ratio: if self.model == Model::ElectricGuitar {
+                self.params.at(P_DECAY_RATIO)
+            } else {
+                1.0
             },
             bow_speed: if self.model == Model::Violin {
                 self.params.at(P_BOW_SPEED)
@@ -425,6 +538,7 @@ impl Physical {
 
     fn retarget(&mut self, index: usize, pitch: u8, velocity: f32) -> bool {
         let frequency = pitch_to_hz(f32::from(pitch) + self.bend);
+        let settings = calibration::register(self.model, pitch, self.settings());
         let Some(voice) = self.voices.get_mut(index) else {
             return false;
         };
@@ -436,6 +550,8 @@ impl Physical {
         }
         voice.string.glide_to(frequency);
         voice.string.set_velocity(velocity);
+        voice.pitch = pitch;
+        voice.string.update_loss(settings);
         true
     }
 
@@ -457,7 +573,7 @@ impl Physical {
         let Some(assignment) = self.allocator.note_on(pitch.min(127), velocity) else {
             return;
         };
-        let settings = self.settings();
+        let settings = calibration::register(self.model, pitch, self.settings());
         if self.is_legato() {
             self.legato.voice = Some(assignment.index);
         }
@@ -479,6 +595,7 @@ impl Physical {
         );
         voice.envelope.trigger();
         voice.held = true;
+        voice.pitch = pitch;
         voice.deferred = false;
         voice.age = 0;
         voice.contact = settings.position;
@@ -548,6 +665,11 @@ impl Parameterized for Physical {
             let settings = self.settings();
             let changes_resonance = matches!(id.0, P_DECAY | P_DAMPING | P_HARDNESS)
                 || self.model == Model::Guitar && id.0 == P_PICKUP
+                || self.model == Model::ElectricGuitar
+                    && matches!(
+                        id.0,
+                        P_PICKUP_POSITION | P_TONE | P_PICKUP_Q | P_DECAY_RATIO
+                    )
                 || self.model == Model::Violin
                     && matches!(id.0, P_BOW_SPEED | P_POSITION | P_BOW_RESPONSE);
             for voice in &mut self.voices {
@@ -562,6 +684,7 @@ impl Parameterized for Physical {
                     self.params.at(P_RELEASE),
                 );
                 if voice.envelope.is_active() && changes_resonance {
+                    let settings = calibration::register(self.model, voice.pitch, settings);
                     if self.model.is_string() {
                         voice.string.update_loss(settings);
                     } else {
@@ -614,9 +737,9 @@ impl SegmentRenderer for Physical {
                     1 => self.pressure = 0.5 + value * 0.5,
                     7 => self.volume = value.powi(2),
                     11 => {
-                        self.expression = value;
+                        self.expression = calibration::expression(self.model, value);
                         if self.allocator.active_count() == 0 {
-                            self.expression_current = value;
+                            self.expression_current = self.expression;
                         }
                     }
                     64 if self.model == Model::Piano => {
@@ -688,7 +811,12 @@ impl SegmentRenderer for Physical {
             } else {
                 self.expression
             };
-            *sample = self.body.next(*sample, body) * self.gain * self.volume * expression;
+            let signal = if self.model == Model::ElectricGuitar {
+                *sample
+            } else {
+                self.body.next(*sample, body)
+            };
+            *sample = signal * self.gain * self.volume * expression;
         }
     }
 }

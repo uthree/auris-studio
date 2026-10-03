@@ -62,6 +62,7 @@ pub mod drum_analysis;
 pub mod envelope;
 pub mod eq;
 pub mod gain;
+pub mod guitar_amp;
 pub mod limiter;
 pub mod loudness;
 pub mod mel;
@@ -87,6 +88,7 @@ pub use eq::{
     ID as EQUALIZER_ID, LAYOUT as EQ_LAYOUT, response_db as eq_response_db,
 };
 pub use gain::GainPan;
+pub use guitar_amp::GuitarAmp;
 pub use limiter::Limiter;
 pub use loudness::{integrated_lufs, k_weighting, loudness_quantile};
 pub use pack::DspPack;

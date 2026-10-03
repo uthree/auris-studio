@@ -18,11 +18,21 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     if bank != 0 {
         return None;
     }
+    if patch == 71 {
+        return Some((auris_synth::Clarinet::ID, PluginState::empty()));
+    }
+    if patch == 15 {
+        return Some((auris_synth::HammeredDulcimer::ID, PluginState::empty()));
+    }
+    if patch == 78 {
+        return Some((auris_synth::TinWhistle::ID, PluginState::empty()));
+    }
     let model = match patch {
         0..=7 => Model::Piano,
         8 | 11 | 14 => Model::Bell,
-        9 | 10 | 12 | 13 | 15 => Model::Mallet,
-        24..=31 | 46 => Model::Guitar,
+        9 | 10 | 12 | 13 => Model::Mallet,
+        24..=25 | 46 => Model::Guitar,
+        26..=31 => Model::ElectricGuitar,
         32..=39 => Model::Bass,
         40..=45 | 48..=51 => Model::Violin,
         _ => return None,
@@ -172,10 +182,14 @@ mod tests {
         for (name, program) in [
             ("piano", 0),
             ("guitar", 24),
+            ("electric", 27),
             ("bass", 34),
             ("bell", 14),
             ("mallet", 12),
             ("violin", 40),
+            ("clarinet", 71),
+            ("dulcimer", 15),
+            ("whistle", 78),
         ] {
             text.push_str(&format!(
                 "[[part]]\nname = \"{name}\"\nrole = \"melody\"\nprogram = {program}\n"
@@ -196,6 +210,50 @@ mod tests {
                     .is_some_and(|inner| inner.instrument_id == model.id())
             }));
         }
+        let clarinet = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "clarinet")
+            .unwrap();
+        assert_eq!(
+            clarinet.kind.as_instrument().unwrap().instrument_id,
+            auris_synth::Clarinet::ID
+        );
+        let clarinet_id = clarinet.id;
+        let pressure = session
+            .param_descriptors(auris_synth::Clarinet::ID)
+            .iter()
+            .find(|param| param.key == "pressure")
+            .unwrap()
+            .id;
+        session.set_param(
+            auris_core::ParamTarget::Instrument {
+                track: clarinet_id,
+                param: pressure,
+            },
+            0.64,
+        );
+        for (name, id, key, value) in [
+            ("dulcimer", auris_synth::HammeredDulcimer::ID, "detune", 3.0),
+            ("whistle", auris_synth::TinWhistle::ID, "pressure", 0.6),
+        ] {
+            let track = session
+                .project()
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap();
+            assert_eq!(track.kind.as_instrument().unwrap().instrument_id, id);
+            let track = track.id;
+            let param = session
+                .param_descriptors(id)
+                .iter()
+                .find(|param| param.key == key)
+                .unwrap()
+                .id;
+            session.set_param(auris_core::ParamTarget::Instrument { track, param }, value);
+        }
         let guitar = session
             .project()
             .tracks
@@ -215,6 +273,24 @@ mod tests {
                 param: hardness,
             },
             0.77,
+        );
+        let electric = session
+            .project()
+            .tracks
+            .iter()
+            .find(|track| track.name == "electric")
+            .unwrap()
+            .id;
+        let slot = session
+            .add_effect(Some(electric), auris_dsp::GuitarAmp::ID)
+            .unwrap();
+        session.set_param(
+            auris_core::ParamTarget::Effect {
+                track: Some(electric),
+                slot,
+                param: auris_core::ParamId(0),
+            },
+            28.0,
         );
         let before = session
             .render_job()
@@ -241,6 +317,7 @@ mod tests {
         for (patch, model) in [
             (0, Model::Piano),
             (25, Model::Guitar),
+            (27, Model::ElectricGuitar),
             (33, Model::Bass),
             (14, Model::Bell),
             (12, Model::Mallet),
@@ -264,6 +341,28 @@ mod tests {
             if model != Model::Piano {
                 assert!(session.undo().is_some());
             }
+        }
+        for (patch, id) in [
+            (71, auris_synth::Clarinet::ID),
+            (15, auris_synth::HammeredDulcimer::ID),
+            (78, auris_synth::TinWhistle::ID),
+        ] {
+            let track = session.add_default_instrument_track("Part").unwrap();
+            session.forget_history();
+            session.set_track_general_midi(track, 0, patch).unwrap();
+            assert_eq!(
+                session
+                    .project()
+                    .track(track)
+                    .unwrap()
+                    .kind
+                    .as_instrument()
+                    .unwrap()
+                    .instrument_id,
+                id
+            );
+            assert!(session.project().soundfonts.is_empty());
+            assert!(session.undo().is_some());
         }
     }
 }
