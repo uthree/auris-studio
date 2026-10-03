@@ -67,7 +67,12 @@ pub(crate) fn styled_performance(
             },
         });
         stack.push(NoteTransform::Mute { amount: 0.18 });
-    } else if comp && (program.is_some_and(|p| p <= 7) || part.instrument == "auris.physical.piano")
+    } else if comp
+        && (program.is_some_and(|p| p <= 7 || p == 15)
+            || matches!(
+                part.instrument.as_str(),
+                "auris.physical.piano" | "auris.physical.hammered_dulcimer"
+            ))
     {
         stack.push(NoteTransform::Stroke {
             spread_ms: if style == JazzTrio { 9.0 } else { 5.0 },
@@ -163,6 +168,7 @@ pub(crate) fn styled_performance(
                     | "auris.physical.bass"
                     | "auris.physical.violin"
                     | "auris.physical.clarinet"
+                    | "auris.physical.tin_whistle"
             )
         },
         |p| matches!(p, 24..=31 | 40..=43 | 56..=87),
@@ -220,15 +226,21 @@ mod tests {
                     .any(|stage| matches!(stage, NoteTransform::Strum { .. }))
             );
         }
-        part.instrument = "auris.physical.piano".into();
-        let stack = styled_performance(&part, PerformanceStyle::JazzTrio, 0.5, 1, 2);
-        assert!(
-            stack
-                .iter()
-                .any(|stage| matches!(stage, NoteTransform::Stroke { .. }))
-        );
+        for id in ["auris.physical.piano", "auris.physical.hammered_dulcimer"] {
+            part.instrument = id.into();
+            let stack = styled_performance(&part, PerformanceStyle::JazzTrio, 0.5, 1, 2);
+            assert!(
+                stack
+                    .iter()
+                    .any(|stage| matches!(stage, NoteTransform::Stroke { .. }))
+            );
+        }
         part.role = Role::Melody;
-        for id in ["auris.physical.violin", "auris.physical.clarinet"] {
+        for id in [
+            "auris.physical.violin",
+            "auris.physical.clarinet",
+            "auris.physical.tin_whistle",
+        ] {
             part.instrument = id.into();
             let stack = styled_performance(&part, PerformanceStyle::Orchestral, 0.5, 1, 2);
             assert!(

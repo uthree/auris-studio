@@ -20,6 +20,8 @@
 //! [`Physical`] adds seven sample-free instruments using modal and travelling-wave models;
 //! [`Model`] selects the structure and excitation while keeping the same host contract.
 //! [`Clarinet`] couples a nonlinear single reed to a cylindrical-bore waveguide.
+//! [`HammeredDulcimer`] strikes coupled, slightly detuned courses of stiff strings;
+//! [`TinWhistle`] excites an open-open bore with a nonlinear fipple jet.
 //!
 //! # Realtime behaviour
 //!
@@ -50,6 +52,7 @@ pub mod chiptune;
 pub mod clarinet;
 pub mod drumkit;
 pub mod fm2;
+pub mod hammered_dulcimer;
 pub mod lfo;
 pub mod noisedrum;
 pub mod oscillator;
@@ -57,6 +60,7 @@ pub mod pack;
 pub mod params;
 pub mod physical;
 pub mod render;
+pub mod tin_whistle;
 pub mod vocal;
 pub mod voice;
 
@@ -67,12 +71,14 @@ pub use chiptune::Chiptune;
 pub use clarinet::Clarinet;
 pub use drumkit::DrumKit;
 pub use fm2::Fm2;
+pub use hammered_dulcimer::HammeredDulcimer;
 pub use noisedrum::NoiseDrum;
 pub use oscillator::{Oscillator, Waveform};
 pub use pack::SynthPack;
 pub use params::ParamBank;
 pub use physical::{Model, Physical};
 pub use render::{SegmentRenderer, render_segments, spread_to_all_channels};
+pub use tin_whistle::TinWhistle;
 pub use vocal::Vocal;
 pub use voice::{MAX_VOICES, VoiceAllocator, VoiceAssignment, VoiceMask, VoiceSlot, VoiceState};
 

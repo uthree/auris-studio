@@ -21,10 +21,16 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     if patch == 71 {
         return Some((auris_synth::Clarinet::ID, PluginState::empty()));
     }
+    if patch == 15 {
+        return Some((auris_synth::HammeredDulcimer::ID, PluginState::empty()));
+    }
+    if patch == 78 {
+        return Some((auris_synth::TinWhistle::ID, PluginState::empty()));
+    }
     let model = match patch {
         0..=7 => Model::Piano,
         8 | 11 | 14 => Model::Bell,
-        9 | 10 | 12 | 13 | 15 => Model::Mallet,
+        9 | 10 | 12 | 13 => Model::Mallet,
         24..=25 | 46 => Model::Guitar,
         26..=31 => Model::ElectricGuitar,
         32..=39 => Model::Bass,
@@ -182,6 +188,8 @@ mod tests {
             ("mallet", 12),
             ("violin", 40),
             ("clarinet", 71),
+            ("dulcimer", 15),
+            ("whistle", 78),
         ] {
             text.push_str(&format!(
                 "[[part]]\nname = \"{name}\"\nrole = \"melody\"\nprogram = {program}\n"
@@ -226,6 +234,26 @@ mod tests {
             },
             0.64,
         );
+        for (name, id, key, value) in [
+            ("dulcimer", auris_synth::HammeredDulcimer::ID, "detune", 3.0),
+            ("whistle", auris_synth::TinWhistle::ID, "pressure", 0.6),
+        ] {
+            let track = session
+                .project()
+                .tracks
+                .iter()
+                .find(|track| track.name == name)
+                .unwrap();
+            assert_eq!(track.kind.as_instrument().unwrap().instrument_id, id);
+            let track = track.id;
+            let param = session
+                .param_descriptors(id)
+                .iter()
+                .find(|param| param.key == key)
+                .unwrap()
+                .id;
+            session.set_param(auris_core::ParamTarget::Instrument { track, param }, value);
+        }
         let guitar = session
             .project()
             .tracks
@@ -314,21 +342,27 @@ mod tests {
                 assert!(session.undo().is_some());
             }
         }
-        let track = session.add_default_instrument_track("Clarinet").unwrap();
-        session.forget_history();
-        session.set_track_general_midi(track, 0, 71).unwrap();
-        assert_eq!(
-            session
-                .project()
-                .track(track)
-                .unwrap()
-                .kind
-                .as_instrument()
-                .unwrap()
-                .instrument_id,
-            auris_synth::Clarinet::ID
-        );
-        assert!(session.project().soundfonts.is_empty());
-        assert!(session.undo().is_some());
+        for (patch, id) in [
+            (71, auris_synth::Clarinet::ID),
+            (15, auris_synth::HammeredDulcimer::ID),
+            (78, auris_synth::TinWhistle::ID),
+        ] {
+            let track = session.add_default_instrument_track("Part").unwrap();
+            session.forget_history();
+            session.set_track_general_midi(track, 0, patch).unwrap();
+            assert_eq!(
+                session
+                    .project()
+                    .track(track)
+                    .unwrap()
+                    .kind
+                    .as_instrument()
+                    .unwrap()
+                    .instrument_id,
+                id
+            );
+            assert!(session.project().soundfonts.is_empty());
+            assert!(session.undo().is_some());
+        }
     }
 }

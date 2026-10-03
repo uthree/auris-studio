@@ -124,6 +124,8 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
     ("Physical Mallet", "マレット"),
     ("Physical Violin", "バイオリン"),
     ("Physical Clarinet", "クラリネット"),
+    ("Physical Hammered Dulcimer", "ハンマー・ダルシマー"),
+    ("Physical Tin Whistle", "ティンホイッスル"),
     ("Chiptune", "チップチューン"),
     ("FM 2-Op", "FM 2 オペレーター"),
     ("Noise Drum", "ノイズドラム"),
@@ -143,6 +145,14 @@ const PLUGIN_NAMES: &[(&str, &str)] = &[
 
 /// Japanese versions of the one-line descriptions shown in the plugin browser.
 const PLUGIN_DESCRIPTIONS: &[(&str, &str)] = &[
+    (
+        "Hammer-excited coupled string courses with passive bridge coupling",
+        "ハンマーで複数の弦を叩くダルシマー音源。弦同士の共鳴と調律差を再現",
+    ),
+    (
+        "Fipple jet driving an open-open metal bore",
+        "空気ジェットと管の共鳴で鳴らすティンホイッスル音源。息の圧力と雑音を調整",
+    ),
     (
         "Hammer-excited stiff strings: hardness, strike position and soundboard",
         "弦の剛性を考慮したピアノ音源。打撃の硬さ、位置、響板の共鳴を調整",
@@ -251,6 +261,12 @@ const PARAMETERS: &[(&str, &str)] = &[
     ("Breath Pressure", "息の圧力"),
     ("Reed Stiffness", "リードの硬さ"),
     ("Breath Noise", "息の雑音"),
+    ("Hammer Hardness", "ハンマーの硬さ"),
+    ("Strike Position", "打撃位置"),
+    ("String Decay", "弦の減衰時間"),
+    ("Bridge Damping", "ブリッジの減衰"),
+    ("Course Detune", "弦の調律差"),
+    ("Jet Shape", "ジェット形状"),
     ("Pickup blend", "ピックアップ比率"),
     ("Pickup Position", "ピックアップ位置"),
     ("Pickup Resonance", "ピックアップ共振"),

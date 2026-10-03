@@ -10,7 +10,7 @@ use std::{
 };
 
 use auris_core::{AudioBuffer, Effect, Instrument, NoteEvent, PrepareContext, ProcessContext};
-use auris_synth::{Clarinet, DrumKit, Model, Physical};
+use auris_synth::{Clarinet, DrumKit, HammeredDulcimer, Model, Physical, TinWhistle};
 use serde::Deserialize;
 
 const RATE: u32 = 24_000;
@@ -229,6 +229,8 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
 fn instrument(name: &str) -> Result<Box<dyn Instrument>, Box<dyn Error>> {
     let model = match name {
         "clarinet" => return Ok(Box::new(Clarinet::new())),
+        "hammered_dulcimer" => return Ok(Box::new(HammeredDulcimer::new())),
+        "tin_whistle" => return Ok(Box::new(TinWhistle::new())),
         "piano" => Model::Piano,
         "guitar" => Model::Guitar,
         "electric_guitar" => Model::ElectricGuitar,
@@ -253,6 +255,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "bell",
             "mallet",
             "clarinet",
+            "hammered_dulcimer",
+            "tin_whistle",
             "drums",
         ]
         .into_iter()

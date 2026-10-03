@@ -1,0 +1,44 @@
+{
+  "model": "tin_whistle",
+  "initial_parameters": {
+    "attack": 0.012000000104308128,
+    "breath_noise": 0.03500000014901161,
+    "jet_shape": 0.5199999809265137,
+    "level": -9.0,
+    "pressure": 0.5799999833106995,
+    "release": 0.18000000715255737
+  },
+  "parameters": {
+    "attack": 0.012000000104308128,
+    "breath_noise": 0.10242896779606472,
+    "jet_shape": 0.11912851938520408,
+    "level": -9.0,
+    "pressure": 0.33529918563500016,
+    "release": 0.18000000715255737
+  },
+  "objective": 0.03987105338044578,
+  "evaluations": 60,
+  "seed": 20261003,
+  "bounds": {
+    "pressure": [
+      0.3,
+      0.85
+    ],
+    "jet_shape": [
+      0.1,
+      0.9
+    ],
+    "breath_noise": [
+      0.005,
+      0.18
+    ]
+  },
+  "training_ids": [
+    "tin_whistle-74-d_major_74",
+    "tin_whistle-76-d_major_76",
+    "tin_whistle-78-d_major_78",
+    "tin_whistle-86-d_major_86"
+  ],
+  "reference_sha256": "bcf55f3f56d867ec5f3e88aaf7813b9963df7009e891520ded691f182be19016",
+  "renderer_sha256": "d12d235300ecb6684330bb11ccdbac4058dffeeafad15dd3a1642393b47e2fbd"
+}

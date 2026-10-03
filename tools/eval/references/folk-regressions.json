@@ -1,0 +1,147 @@
+{
+  "preset_baseline_commit": "27f59642061bb61a0385ab2367bea87a99767a33",
+  "symbolic_unchanged_sha256": "68a1be1d19d62d88d822022a67f7dd549e3875dd8f5cf6eb66800f18d6006496",
+  "presets": {
+    "ambient": {
+      "wav_sha256": "ea5a0773ac20c2e92529af01c900d1164e313a16ab4637892cf9f27355a6fbf8",
+      "scores": {
+        "CE": 4.011,
+        "CU": 6.245,
+        "PC": 2.827,
+        "PQ": 6.838
+      },
+      "unchanged": true
+    },
+    "chiptune": {
+      "wav_sha256": "88522ad7c6df4b07093b7f6408ce5ee51a8b3a8dd4fcc3fe15a540a3e3a58f85",
+      "scores": {
+        "CE": 5.726,
+        "CU": 7.66,
+        "PC": 4.542,
+        "PQ": 7.825
+      },
+      "unchanged": true
+    },
+    "city-pop": {
+      "wav_sha256": "ff21af4c947643f0c8ad46c43ebec92ca2576765e1cb07f8219f1a3d7deddca8",
+      "scores": {
+        "CE": 7.233,
+        "CU": 7.786,
+        "PC": 5.17,
+        "PQ": 8.009
+      },
+      "unchanged": true
+    },
+    "game-loop": {
+      "wav_sha256": "c2c1dca459e711dd8c639b9e5082e33e92568186a93c0c542916dacfb322cbfe",
+      "scores": {
+        "CE": 5.854,
+        "CU": 7.79,
+        "PC": 4.316,
+        "PQ": 7.931
+      },
+      "unchanged": true
+    },
+    "jazz-trio": {
+      "wav_sha256": "ab5b9d462254b0371ad7c1ee985157f17be5d6c717c5963d1c9ef091dfb7c8fc",
+      "scores": {
+        "CE": 7.151,
+        "CU": 7.959,
+        "PC": 4.435,
+        "PQ": 8.138
+      },
+      "unchanged": true
+    },
+    "orchestral": {
+      "wav_sha256": "f3b6d28956cddb7f5ed5344811929b0a04cbd8382d2229d6dbfdb0d3aa109f7f",
+      "scores": {
+        "CE": 5.483,
+        "CU": 7.003,
+        "PC": 4.148,
+        "PQ": 7.403
+      },
+      "unchanged": true
+    },
+    "pop-band": {
+      "wav_sha256": "c591f3161c797aaf5ff49b82ae04c06d0ba292371db97bec84c3f6c8112ad0a9",
+      "scores": {
+        "CE": 7.375,
+        "CU": 7.855,
+        "PC": 5.106,
+        "PQ": 8.081
+      },
+      "unchanged": true
+    },
+    "rock": {
+      "wav_sha256": "83d6cf67bcf86273eec447f3a57e7084517d93290e8c83398c55766d55ace92c",
+      "scores": {
+        "CE": 7.352,
+        "CU": 7.855,
+        "PC": 5.142,
+        "PQ": 7.968
+      },
+      "unchanged": true
+    },
+    "synthwave": {
+      "wav_sha256": "61e6c18d0030f3028bab711bf9bdf2f61cbcbd782db9823ed77e2851700bb5a5",
+      "scores": {
+        "CE": 6.542,
+        "CU": 7.217,
+        "PC": 5.153,
+        "PQ": 7.588
+      },
+      "unchanged": true
+    }
+  },
+  "demos": {
+    "folk-combined": {
+      "rate": 48000,
+      "channels": 2,
+      "seconds": 12.0,
+      "peak": 0.4170045852661133,
+      "rms": 0.10757950903041938,
+      "wav_sha256": "68777a6a0b4116ce3626ed2d0f01f18d360974ca149e5d1c9d6db98b9fe4fa1d",
+      "project_sha256": "b98da8a932518f2cdddc1fddffa81d72ec229663b1e5650d72eac03c54484f7c",
+      "normalization": "none; session render with automatic balance disabled"
+    },
+    "hammered-dulcimer": {
+      "rate": 48000,
+      "channels": 2,
+      "seconds": 12.0,
+      "peak": 0.27507007122039795,
+      "rms": 0.03674874336689934,
+      "wav_sha256": "017d254d0d04dea4d2ece6995ed32cf513a092dcfdeabbf1064b638baac204a6",
+      "project_sha256": "ec2380c2aa65ed2af66fe15351e8e7ec91994df894a2696430ea562b9de17ab0",
+      "normalization": "none; session render with automatic balance disabled"
+    },
+    "tin-whistle": {
+      "rate": 48000,
+      "channels": 2,
+      "seconds": 12.0,
+      "peak": 0.19056057929992676,
+      "rms": 0.10108171547991933,
+      "wav_sha256": "bcbf7f975032d1fd9ae92007e63dbfd6d777139c0dcd023c90c537200f41b170",
+      "project_sha256": "dbf0bab79331c56a3529452f2163b95023667102e361d3db05b45ad8e81fd9d0",
+      "normalization": "none; session render with automatic balance disabled"
+    }
+  },
+  "verification": {
+    "rust_passed": 4056,
+    "rust_ignored": 15,
+    "command": "cargo test --workspace -- --test-threads=1",
+    "exit_code": 0,
+    "python_passed": 43,
+    "ruff": "passed",
+    "clippy_workspace_all_targets": "passed",
+    "rustdoc_warnings_denied": "passed"
+  },
+  "callback_benchmark": {
+    "rate": 48000,
+    "channels": 2,
+    "frames": 256,
+    "warmup_blocks": 96,
+    "measured_blocks": 512,
+    "scope": "steady held voices on the development machine; not an event-burst worst-case bound",
+    "output": "Hammered Dulcimer (24 voices): mean 1.030 ms, p99 1.115 ms, 19.3% of 5.333 ms callback budget\nTin Whistle (16 voices): mean 0.043 ms, p99 0.046 ms, 0.8% of 5.333 ms callback budget"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "method": "Hann FFT partial amplitudes and normalized time-domain autocorrelation at lower and upper octave hypotheses",
+  "notes": [
+    {"source_id": 342911, "label": "C#5", "selected_midi": 73, "lower_hz": 277.18, "upper_hz": 554.37, "acf_lower": 0.9041, "acf_upper": 0.9554, "partials_lower_relative": [1.0, 507.711, 0.451, 112.617, 1.132, 21.816], "partials_upper_relative": [1.0, 0.222, 0.043, 0.134, 0.063, 0.015]},
+    {"source_id": 342912, "label": "C4", "selected_midi": 60, "lower_hz": 261.63, "upper_hz": 523.25, "acf_lower": 0.8178, "acf_upper": 0.4133, "partials_lower_relative": [1.0, 2.108, 1.246, 1.193, 0.42, 0.406], "partials_upper_relative": [1.0, 0.566, 0.193, 0.174, 0.02, 0.046]},
+    {"source_id": 342913, "label": "B4", "selected_midi": 71, "lower_hz": 246.94, "upper_hz": 493.88, "acf_lower": 0.926, "acf_upper": 0.962, "partials_lower_relative": [0.01, 1.0, 0.01, 0.79, 0.0, 0.4], "partials_upper_relative": [1.0, 0.79, 0.4, 0.21, 0.15, 0.09]},
+    {"source_id": 342914, "label": "A4", "selected_midi": 69, "lower_hz": 220.0, "upper_hz": 440.0, "acf_lower": 0.9257, "acf_upper": 0.972, "partials_lower_relative": [0.0, 1.0, 0.0, 0.19, 0.0, 0.0], "partials_upper_relative": [1.0, 0.19, 0.47, 0.05, 0.1, 0.0]},
+    {"source_id": 342915, "label": "F#4", "selected_midi": 66, "lower_hz": 185.0, "upper_hz": 369.99, "acf_lower": 0.948, "acf_upper": 0.9653, "partials_lower_relative": [0.0, 1.0, 0.0, 0.3, 0.0, 0.0], "partials_upper_relative": [1.0, 0.3, 0.17, 0.03, 0.01, 0.0]},
+    {"source_id": 342916, "label": "F4 excluded ghost", "selected_midi": 65, "lower_hz": 174.61, "upper_hz": 349.23, "acf_lower": null, "acf_upper": null, "partials_lower_relative": [0.02, 1.0, 0.03, 0.07, 0.0, 0.0], "partials_upper_relative": [1.0, 0.07, 0.05, 0.07, 0.03, 0.0]},
+    {"source_id": 342917, "label": "E4", "selected_midi": 64, "lower_hz": 329.63, "upper_hz": 659.26, "acf_lower": 0.9775, "acf_upper": 0.9386, "partials_lower_relative": [1.0, 6.02, 0.562, 1.604, 0.188, 0.336], "partials_upper_relative": [1.0, 0.266, 0.056, 0.027, 0.028, 0.012]},
+    {"source_id": 342918, "label": "D4", "selected_midi": 62, "lower_hz": 293.66, "upper_hz": 587.33, "acf_lower": 0.9377, "acf_upper": 0.6581, "partials_lower_relative": [1.0, 4.222, 0.461, 4.321, 1.03, 0.38], "partials_upper_relative": [1.0, 1.023, 0.09, 0.02, 0.018, 0.004]},
+    {"source_id": 342919, "label": "High C5", "selected_midi": 72, "lower_hz": 261.63, "upper_hz": 523.25, "acf_lower": 0.9586, "acf_upper": 0.9746, "partials_lower_relative": [1.0, 328.541, 2.152, 188.614, 1.375, 16.746], "partials_upper_relative": [1.0, 0.574, 0.077, 0.218, 0.046, 0.105]},
+    {"source_id": 342920, "label": "G4", "selected_midi": 67, "lower_hz": 196.0, "upper_hz": 392.0, "acf_lower": 0.9668, "acf_upper": 0.9913, "partials_lower_relative": [0.0, 1.0, 0.0, 0.31, 0.0, 0.0], "partials_upper_relative": [1.0, 0.31, 0.02, 0.02, 0.0, 0.0]},
+    {"source_id": 342921, "label": "High D5", "selected_midi": 74, "lower_hz": 293.66, "upper_hz": 587.33, "acf_lower": 0.9498, "acf_upper": 0.9583, "partials_lower_relative": [1.0, 2583.276, 2.176, 701.633, 1.374, 41.071], "partials_upper_relative": [1.0, 0.272, 0.016, 0.026, 0.004, 0.002]}
+  ]
+}

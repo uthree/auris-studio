@@ -762,7 +762,8 @@ drawn on — in all four colour schemes, which is checked rather than eyeballed.
 
 ## Physical instruments
 
-The library includes **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin and Clarinet**, with no sample
+The library includes **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin,
+Clarinet, Hammered Dulcimer and Tin Whistle**, with no sample
 files to install. New melodic tracks start on Physical Piano. These are expressive reduced
 physical models with editable contact hardness, excitation position, damping and body resonance.
 See [physical instruments](physical-instruments.md) for the models, controls and composition use.

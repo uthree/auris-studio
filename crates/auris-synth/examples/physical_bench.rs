@@ -8,6 +8,9 @@ use auris_core::{
 use auris_synth::{Model, Physical};
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--folk") {
+        measure_folk();
+    }
     if std::env::args().any(|arg| arg == "--clarinet") {
         measure_clarinet();
     }
@@ -50,6 +53,59 @@ fn main() {
             mean / (frames as f64 / rate * 1000.0) * 100.0
         );
     }
+}
+
+fn measure_folk() {
+    measure_folk_instrument(
+        "Hammered Dulcimer",
+        Box::new(auris_synth::HammeredDulcimer::new()),
+        24,
+        48,
+    );
+    measure_folk_instrument(
+        "Tin Whistle",
+        Box::new(auris_synth::TinWhistle::new()),
+        16,
+        74,
+    );
+}
+
+fn measure_folk_instrument(
+    name: &str,
+    mut instrument: Box<dyn Instrument>,
+    voices: u8,
+    first_pitch: u8,
+) {
+    let rate = 48_000.0;
+    let frames = 256;
+    let context = ProcessContext::realtime(rate, frames, 0, 120.0, true);
+    instrument.prepare(&PrepareContext::new(rate, frames, 2));
+    let mut buffer = AudioBuffer::stereo(frames, rate);
+    let events: Vec<_> = (0..voices)
+        .map(|index| NoteEvent::NoteOn {
+            frame: 0,
+            pitch: first_pitch.saturating_add(index % 12),
+            velocity: 0.8,
+        })
+        .collect();
+    instrument.process(&events, &mut buffer, &context);
+    for _ in 0..96 {
+        instrument.process(&[], &mut buffer, &context);
+    }
+    let mut times = Vec::with_capacity(512);
+    for _ in 0..512 {
+        let started = Instant::now();
+        instrument.process(&[], &mut buffer, &context);
+        times.push(started.elapsed().as_secs_f64() * 1000.0);
+        std::hint::black_box(&buffer);
+    }
+    let mean = times.iter().sum::<f64>() / times.len() as f64;
+    times.sort_by(f64::total_cmp);
+    println!(
+        "{name} ({voices} voices): mean {mean:.3} ms, p99 {:.3} ms, {:.1}% of 5.333 ms callback budget",
+        times[506],
+        mean / (frames as f64 / rate * 1000.0) * 100.0
+    );
 }
 
 fn measure_clarinet() {

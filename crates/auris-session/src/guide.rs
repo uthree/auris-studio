@@ -345,7 +345,8 @@ pub mod architecture {
     //! keeps painting.
     //!
     //! Native melodic instruments include [`auris_synth::Physical`]: piano, acoustic/electric
-    //! guitar, bass, bell, mallet and violin, plus [`auris_synth::Clarinet`]. Struck strings and
+    //! guitar, bass, bell, mallet and violin, plus [`auris_synth::Clarinet`],
+    //! [`auris_synth::HammeredDulcimer`] and [`auris_synth::TinWhistle`]. Struck strings and
     //! rigid bodies use damped modal expansions; plucked
     //! and bowed strings use fractional-delay travelling waves, with nonlinear friction at the
     //! bow. Every voice is allocated in `prepare`, and the ordinary plugin parameter/state
@@ -356,6 +357,8 @@ pub mod architecture {
     //! while fixed coefficients and prepared filter state live in the instrument.
     //! Clarinet couples a nonlinear single reed to a cylindrical-bore waveguide, with
     //! breath pressure and reed controls carried through the same plugin boundary.
+    //! Hammered dulcimer adds finite hammer contact and passively coupled, detuned string
+    //! courses. Tin whistle uses a nonlinear fipple jet and an open-pipe resonator.
     //! There is no sample asset behind these instruments. [`crate::DEFAULT_INSTRUMENT`] names
     //! the physical piano. SoundFont import uses the same worker/session boundary as before.
     //!
@@ -777,6 +780,9 @@ pub mod plugins {
     //! [`Clarinet`](auris_synth::Clarinet) adds the reed/bore excitation family and maps
     //! GM hint 71 without a SoundFont. Real-recording calibration is offline tooling;
     //! playing a note needs only prepared DSP state.
+    //! [`HammeredDulcimer`](auris_synth::HammeredDulcimer) and
+    //! [`TinWhistle`](auris_synth::TinWhistle) map GM hints 15 and 78 respectively. Their
+    //! parameters, composition choices and saved projects use the same registry/session path.
     //!
     //! # Observing mechanical motion
     //!

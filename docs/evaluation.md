@@ -16,6 +16,8 @@ The [bass/bar/drum calibration](physical-pack.md) adds 391 real-recording excerp
 attack/body/tail loss and acoustic-role guards for every snare/tom register.
 The [electric-guitar experiment](electric-guitar.md) adds independent pickup DI, an
 oversampled amplifier and a paired clean/pedal recording benchmark with pitch-grouped splits.
+The [folk-instrument experiment](folk-physical-instruments.md) adds hammered dulcimer strikes
+and settled tin-whistle scale excerpts, with distinct-pitch validation and frozen source hashes.
 
 ## The symbolic ruler
 

@@ -1,6 +1,7 @@
 # Physical instruments
 
-Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin or Clarinet** in the sound library.
+Choose **Physical Piano, Guitar, Electric Guitar, Bass, Bell, Mallet, Violin, Clarinet,
+Hammered Dulcimer or Tin Whistle** in the sound library.
 Each is a separate built-in plugin with its own stable ID, such as `auris.physical.guitar`.
 New melodic tracks use Physical Piano. No sample files or network setup are needed.
 
@@ -17,6 +18,8 @@ playable, adjustable instruments rather than reproductions of particular recorde
 | Mallet | Damped free-bar bending modes | Soft/hard beater, damping, short/long resonance |
 | Violin | Travelling-wave string with static/sliding bow friction | Bow speed, pressure, response time, contact position, expression, legato |
 | Clarinet | Nonlinear single reed coupled to a cylindrical-bore waveguide | Breath pressure, reed stiffness, breath noise, attack and release |
+| Hammered Dulcimer | Finite hammer pulse, stiff-string courses and passive bridge coupling | Hammer hardness, strike position, string decay, damping, stiffness and course detune |
+| Tin Whistle | Nonlinear fipple jet coupled to an open-pipe resonator | Breath pressure, jet shape, breath noise, attack and release |
 
 Fitted filter cascades colour the piano, guitar and violin; guitar and violin add six causal
 radiation resonances. Parallel body resonances colour bass, bell and mallet. The piano uses one,
@@ -41,10 +44,10 @@ The [refinement account](physical-model-refinement.md) explains the radiation pr
 their calibration limits.
 
 **Body Resonance**, **Level**, **Release**, **Damping** and **Resonance Decay** affect sounding
-notes. **String Stiffness** is a piano-only control that spreads upper partials while keeping the
+notes. **String Stiffness** on piano and dulcimer spreads upper partials while keeping the
 fundamental tuned. **Bow Pressure** is violin-only and affects the sounding friction junction.
 Position takes effect at the next attack on struck/plucked instruments; on violin it moves
-the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano attack.
+the sounding bow junction over about 15 ms. Stiffness takes effect at the next piano or dulcimer attack.
 Guitar **Pickup blend** moves from bridge-motion radiation through the acoustic body to a
 position-dependent magnetic pickup approximation, progressively bypassing body coloration.
 **Electric Guitar** is a separate DI instrument: pickup position is independent of pick
@@ -66,6 +69,13 @@ reed/bore junction. CC11 smooths breath drive and output expression over 20 ms. 
 16 voices, and its **Attack** and **Release** use the shared ADSR. The
 [clarinet calibration account](clarinet-calibration.md) gives real-recording comparisons
 and the model's supported measurement range.
+
+Hammered Dulcimer has 24 voices, with up to 24 partials on each of three strings per course.
+**Course Detune** is measured in cents. Hardness, position, stiffness and detune apply at the
+next strike; string decay and bridge damping also affect sounding courses. Tin Whistle has
+16 voices and 20-ms CC11 smoothing. Both instruments honour live pitch bend and use the shared
+de-click envelope. The [folk-instrument measurements](folk-physical-instruments.md) describe
+their real-recording references and calibration limits.
 
 MIDI CC7 controls channel volume. CC11 controls expression and violin bow speed, with a
 `value^1.18` response on violin before smoothing; CC1 scales bow
@@ -89,9 +99,10 @@ role = "chords"
 instrument = "auris.physical.guitar"
 ```
 
-The composer recognises native piano, guitar, bass, violin and clarinet IDs when choosing editable stroke,
+The composer recognises native piano, dulcimer, guitar, bass, violin, clarinet and whistle IDs when choosing editable stroke,
 strum, mute, slide and pitch-performance stages. Existing GM family hints also resolve to these
-models: piano/electric piano, guitar, bass, bells, mallets, strings and clarinet (GM 71). A muted-guitar hint starts
+models: piano/electric piano, guitar, bass, bells, mallets, strings, clarinet (GM 71),
+dulcimer (GM 15) and whistle (GM 78). A muted-guitar hint starts
 with more damping; picked/slap bass starts with harder contact; string pads start with gentler
 bow pressure and a longer release. These are starting parameters for Auris instruments, not GM
 patch emulation. Drum hints use the built-in Drum Kit.
