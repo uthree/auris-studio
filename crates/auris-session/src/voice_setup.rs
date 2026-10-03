@@ -261,6 +261,149 @@ impl Default for DiffSingerSetup {
     }
 }
 
+/// An editable LeapSinger deployment and the entry file it will occupy.
+///
+/// Read an existing entry with [`read_leapsinger_setup`] before editing it. Its source snapshot
+/// prevents a setup window from replacing a file that changed while validation was running.
+#[derive(Clone, Debug, Default)]
+pub struct LeapSingerSetup {
+    /// Destination `.leapsinger.json` entry, beside the exported models and dictionary.
+    pub path: PathBuf,
+    /// Deployment metadata, including any projected speaker embeddings.
+    pub manifest: auris_singer::LeapSingerManifest,
+    source: Option<(PathBuf, Vec<u8>)>,
+}
+
+/// Results of synthesizing a short vowel through a LeapSinger deployment on the CPU.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeapSingerCheck {
+    /// Named speakers in the order used by the exported model.
+    pub speakers: Vec<String>,
+    /// Audio samples per second.
+    pub sample_rate: u32,
+    /// Number of generated samples, including short leading and trailing rests.
+    pub sample_count: usize,
+    /// Root mean square level of the generated waveform.
+    pub rms: f32,
+}
+
+/// Reads an existing LeapSinger entry for editing without loading either ONNX model.
+pub fn read_leapsinger_setup(path: &Path) -> Result<LeapSingerSetup, VoiceSetupError> {
+    let raw = read_voice_config(path)?;
+    let manifest: auris_singer::LeapSingerManifest = serde_json::from_slice(&raw)
+        .map_err(|error| VoiceSetupError::Invalid(format!("Invalid LeapSinger entry: {error}")))?;
+    manifest.validate().map_err(singing_setup_error)?;
+    Ok(LeapSingerSetup {
+        path: path.to_path_buf(),
+        manifest,
+        source: Some((path.to_path_buf(), raw)),
+    })
+}
+
+fn singing_setup_error(error: auris_singer::SingError) -> VoiceSetupError {
+    VoiceSetupError::Invalid(error.to_string())
+}
+
+fn leapsinger_model(setup: &LeapSingerSetup) -> Result<auris_singer::VoiceModel, VoiceSetupError> {
+    if auris_singer::BackendKind::from_path(&setup.path)
+        != Some(auris_singer::BackendKind::LeapSinger)
+        || !setup.path.parent().is_some_and(Path::is_dir)
+    {
+        return Err(VoiceSetupError::Invalid(
+            "Choose a .leapsinger.json entry in an existing voicebank folder".into(),
+        ));
+    }
+    setup
+        .manifest
+        .load(&setup.path, auris_singer::Acceleration::Cpu)
+        .map_err(singing_setup_error)
+}
+
+/// Loads both models and synthesizes a short あ to verify an unsaved LeapSinger deployment.
+///
+/// This performs inference and belongs on a worker thread. It does not modify the entry or song.
+pub fn check_leapsinger_setup(setup: &LeapSingerSetup) -> Result<LeapSingerCheck, VoiceSetupError> {
+    let mut voice = leapsinger_model(setup)?;
+    let hop = voice.info().hop_seconds();
+    let pad = (0.1 / hop).ceil() as usize;
+    let vowel = (0.5 / hop).ceil() as usize;
+    let count = pad * 2 + vowel;
+    let mut frames = auris_vocal::SingerFrames {
+        hop_seconds: hop,
+        inventory: vec![auris_vocal::SILENCE.into(), "a".into()],
+        phonemes: vec![0; count],
+        f0_hz: vec![0.0; count],
+        energy: vec![0.0; count],
+    };
+    frames.phonemes[pad..pad + vowel].fill(1);
+    frames.f0_hz[pad..pad + vowel].fill(261.625_55);
+    frames.energy[pad..pad + vowel].fill(0.8);
+    let samples = voice.sing(&frames, 0, 0).map_err(singing_setup_error)?;
+    let rms =
+        (samples.iter().map(|value| value * value).sum::<f32>() / samples.len() as f32).sqrt();
+    if !rms.is_finite() || rms <= 1e-4 {
+        return Err(VoiceSetupError::Invalid(
+            "LeapSinger generated silent or invalid audio; check the acoustic model and vocoder"
+                .into(),
+        ));
+    }
+    let mut speakers = vec![String::new(); voice.info().n_speakers as usize];
+    for (name, id) in &voice.info().speaker_to_id {
+        speakers[*id as usize] = name.clone();
+    }
+    Ok(LeapSingerCheck {
+        speakers,
+        sample_rate: voice.info().sample_rate,
+        sample_count: samples.len(),
+        rms,
+    })
+}
+
+/// Validates both ONNX contracts and atomically saves a portable LeapSinger entry.
+///
+/// This loads models and belongs on a worker thread. An existing entry must first be read with
+/// [`read_leapsinger_setup`]; changed entries are refused, preserving the other writer's work.
+pub fn write_leapsinger_manifest(setup: &LeapSingerSetup) -> Result<PathBuf, VoiceSetupError> {
+    let expected = setup
+        .source
+        .as_ref()
+        .and_then(|(path, raw)| (path == &setup.path).then_some(raw.as_slice()));
+    // Avoid loading potentially expensive models when the destination already needs a refresh.
+    match expected {
+        Some(raw) if read_voice_config(&setup.path)? != raw => {
+            return Err(VoiceSetupError::Invalid(
+                "The LeapSinger entry changed; open it again before saving".into(),
+            ));
+        }
+        None if setup.path.try_exists()? => {
+            return Err(VoiceSetupError::Invalid(
+                "Open the existing LeapSinger entry before editing it".into(),
+            ));
+        }
+        _ => {}
+    }
+    leapsinger_model(setup)?;
+    let mut manifest = setup.manifest.clone();
+    if cfg!(target_os = "windows") {
+        for path in [
+            &mut manifest.acoustic,
+            &mut manifest.vocoder,
+            &mut manifest.phonemes,
+        ] {
+            *path = PathBuf::from(path.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    let text = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| VoiceSetupError::Encode(error.to_string()))?;
+    replace_config_file(
+        &setup.path,
+        &text,
+        expected,
+        "The LeapSinger entry changed while it was being saved; open it again",
+    )?;
+    Ok(setup.path.clone())
+}
+
 /// A problem preparing or contacting an external singing backend.
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceSetupError {
@@ -975,6 +1118,86 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::io::{Read, Write};
+
+    fn leap_bank() -> (tempfile::TempDir, LeapSingerSetup) {
+        let folder = tempfile::tempdir().unwrap();
+        let fixtures =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../auris-singer/tests/fixtures/leapsinger");
+        for file in ["diffsinger_speaker.onnx", "vocoder.onnx", "ja.phonemes"] {
+            std::fs::copy(fixtures.join(file), folder.path().join(file)).unwrap();
+        }
+        let mut setup = LeapSingerSetup {
+            path: folder.path().join("singer.leapsinger.json"),
+            ..Default::default()
+        };
+        setup.manifest.acoustic = "diffsinger_speaker.onnx".into();
+        setup.manifest.vocoder = "vocoder.onnx".into();
+        setup.manifest.variant = auris_singer::LeapSingerVariant::Diffsinger;
+        setup.manifest.speakers = vec![
+            auris_singer::LeapSingerSpeaker {
+                name: "First".into(),
+                embedding: vec![1.0, 2.0],
+            },
+            auris_singer::LeapSingerSpeaker {
+                name: "Second".into(),
+                embedding: vec![4.0, 5.0],
+            },
+        ];
+        (folder, setup)
+    }
+
+    #[test]
+    fn an_unsaved_leapsinger_voice_can_be_checked_and_registered_without_losing_speakers() {
+        let (_folder, setup) = leap_bank();
+        let check = check_leapsinger_setup(&setup).unwrap();
+        assert_eq!(check.speakers, ["First", "Second"]);
+        assert_eq!(check.sample_rate, 44_100);
+        assert_eq!(check.sample_count, 123 * 256);
+        assert!(check.rms > 0.001);
+        assert!(!setup.path.exists(), "a check must not write a manifest");
+        let path = write_leapsinger_manifest(&setup).unwrap();
+        let mut reopened = read_leapsinger_setup(&path).unwrap();
+        assert_eq!(reopened.manifest, setup.manifest);
+        reopened.manifest.name = "Renamed voice".into();
+        write_leapsinger_manifest(&reopened).unwrap();
+        let saved = read_leapsinger_setup(&path).unwrap();
+        assert_eq!(saved.manifest.name, "Renamed voice");
+        assert_eq!(saved.manifest.speakers, setup.manifest.speakers);
+    }
+
+    #[test]
+    fn leapsinger_setup_refuses_changed_entries_and_invalid_model_contracts() {
+        let (_folder, mut setup) = leap_bank();
+        setup.manifest.speakers[0].embedding.pop();
+        assert!(write_leapsinger_manifest(&setup).is_err());
+        assert!(!setup.path.exists());
+        setup.manifest.speakers[0].embedding.push(2.0);
+        let path = write_leapsinger_manifest(&setup).unwrap();
+        assert!(
+            write_leapsinger_manifest(&setup).is_err(),
+            "existing entries must be opened first"
+        );
+        let mut opened = read_leapsinger_setup(&path).unwrap();
+        opened.manifest.name = "My change".into();
+        let mut other = setup.manifest;
+        other.name = "Another window's change".into();
+        let bytes = serde_json::to_vec_pretty(&other).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(write_leapsinger_manifest(&opened).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn leapsinger_setup_requires_models_inside_the_portable_voice_folder() {
+        let (_folder, mut setup) = leap_bank();
+        setup.manifest.acoustic = setup.path.parent().unwrap().join("diffsinger_speaker.onnx");
+        assert!(write_leapsinger_manifest(&setup).is_err());
+        assert!(!setup.path.exists());
+        setup.manifest.acoustic = "diffsinger_speaker.onnx".into();
+        setup.manifest.variant = auris_singer::LeapSingerVariant::Full;
+        setup.manifest.hop_size = 512;
+        assert!(check_leapsinger_setup(&setup).is_err());
+    }
 
     #[test]
     fn singer_choices_keep_a_valid_teacher_and_resolve_legacy_names_by_ids() {

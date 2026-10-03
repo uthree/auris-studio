@@ -159,9 +159,11 @@ pub use settings::{
 };
 pub use singer_portrait::{SingerPortraitError, SingerPortraitSource, load_singer_portrait};
 pub use voice_setup::{
-    DiffSingerSetup, VoiceSetupError, VoicevoxCatalog, VoicevoxConnection, VoicevoxSetup,
-    VoicevoxSpeakerChoice, VoicevoxStyle, check_voicevox_connection, fetch_voicevox_catalog,
-    start_voicevox_engine, write_diffsinger_config, write_voicevox_connection,
+    DiffSingerSetup, LeapSingerCheck, LeapSingerSetup, VoiceSetupError, VoicevoxCatalog,
+    VoicevoxConnection, VoicevoxSetup, VoicevoxSpeakerChoice, VoicevoxStyle,
+    check_leapsinger_setup, check_voicevox_connection, fetch_voicevox_catalog,
+    read_leapsinger_setup, start_voicevox_engine, write_diffsinger_config,
+    write_leapsinger_manifest, write_voicevox_connection,
 };
 
 /// What a `.clap` file says is inside it, for a frontend listing one.
@@ -172,8 +174,9 @@ pub use voice_setup::{
 /// [`Session::voice_model_at`](session::Session::voice_model_at) — without depending on
 /// `auris-singer` itself, the same door `ClapPluginInfo` walks through below.
 pub use auris_singer::{
-    Acceleration, BackendKind, CurveSource, CurveSources, LyricIssue, SingError, SingingBackend,
-    SingingRender, VoiceCapabilities, VoiceModel, VoicePortrait,
+    Acceleration, BackendKind, CurveSource, CurveSources, LeapSingerManifest, LeapSingerSpeaker,
+    LeapSingerVariant, LyricIssue, SingError, SingingBackend, SingingRender, VoiceCapabilities,
+    VoiceModel, VoicePortrait,
 };
 
 pub use auris_clap::ClapPluginInfo;

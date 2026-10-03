@@ -206,8 +206,9 @@ pub fn voices_with_settings(settings: &crate::Settings) -> Vec<(String, PathBuf)
 /// DiffSinger `dsconfig.yaml`, every `*.voicevox.json` connection, and every
 /// `*.leapsinger.json` voicebank manifest in a root or its child folders, first root to name
 /// a voice winning the way the font search wins.
-/// Nothing is opened here; whether a file really is a voice is found out by the one deliberate
-/// click that loads it.
+/// LeapSinger's bounded manifest metadata supplies its display name, so portable banks sharing
+/// an entry filename remain distinct. No ONNX model is loaded; whether the models are usable
+/// is found out by the deliberate click that loads the voice.
 pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
     let mut voices: Vec<(String, PathBuf)> = Vec::new();
     let mut seen: Vec<String> = Vec::new();
@@ -250,9 +251,16 @@ pub fn installed_voices_in(roots: &[PathBuf]) -> Vec<(String, PathBuf)> {
             } else {
                 continue;
             };
-            let name = name_source
+            let fallback = name_source
                 .map(|stem| stem.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Voice".to_string());
+            let name = if voice_source_kind(&voice) == Some(VoiceSourceKind::LeapSinger) {
+                auris_singer::LeapSingerManifest::read(&voice)
+                    .map(|manifest| manifest.name)
+                    .unwrap_or(fallback)
+            } else {
+                fallback
+            };
             let identity = name.to_lowercase();
             if seen.contains(&identity) {
                 continue;
@@ -378,6 +386,25 @@ pub fn installed_fonts() -> Vec<(&'static ShippedFont, PathBuf)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_leapsinger_banks_share_an_entry_filename_without_hiding_each_other() {
+        let root = tempfile::tempdir().unwrap();
+        let mut expected = Vec::new();
+        for name in ["First voice", "Second voice"] {
+            let folder = root.path().join(name);
+            std::fs::create_dir(&folder).unwrap();
+            let path = folder.join("singer.leapsinger.json");
+            let manifest = auris_singer::LeapSingerManifest {
+                name: name.into(),
+                ..Default::default()
+            };
+            std::fs::write(&path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            expected.push((name.to_string(), path));
+        }
+        // There are no acoustic or vocoder files: discovery must only read metadata.
+        assert_eq!(installed_voices_in(&[root.path().to_path_buf()]), expected);
+    }
 
     #[test]
     fn the_manifest_describes_a_font_that_could_be_fetched() {

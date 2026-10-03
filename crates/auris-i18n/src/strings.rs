@@ -2057,9 +2057,26 @@ new のオプション
     }
     BrowserSetupVoicevox { en: "Set Up VOICEVOX…", ja: "VOICEVOXを設定…" }
     BrowserSetupDiffSinger { en: "Set Up DiffSinger…", ja: "DiffSingerを設定…" }
+    BrowserSetupLeapSinger { en: "Set Up LeapSinger…", ja: "LeapSingerを設定…" }
     VoiceSetupTitle { en: "Singing Backend Setup", ja: "歌声合成バックエンド設定" }
     VoiceSetupVoicevox { en: "VOICEVOX Engine", ja: "VOICEVOX Engine設定" }
     VoiceSetupDiffSinger { en: "DiffSinger", ja: "DiffSinger設定" }
+    VoiceSetupLeapSinger { en: "LeapSinger", ja: "LeapSinger設定" }
+    VoiceSetupEntry { en: "Voice entry", ja: "ボイス設定ファイル" }
+    VoiceSetupOpenEntry { en: "Open entry…", ja: "設定を開く…" }
+    VoiceSetupChooseFile { en: "Choose…", ja: "選択…" }
+    VoiceSetupVocoderFile { en: "Vocoder model", ja: "ボコーダーモデル" }
+    VoiceSetupModelFormat { en: "Model format", ja: "モデル形式" }
+    VoiceSetupLeapFull { en: "Full", ja: "Full形式" }
+    VoiceSetupLeapDiffsinger { en: "DiffSinger layout", ja: "DiffSinger形式" }
+    VoiceSetupSpeakers { en: "Speakers", ja: "話者" }
+    VoiceSetupBakedSpeaker { en: "Single or baked speaker", ja: "単一話者・固定話者" }
+    VoiceSetupLeapSpeakerNote { en: "Opening an exported entry keeps its speaker names and embeddings.", ja: "書き出した設定を開くと、話者名と埋め込み情報を引き継ぎます。" }
+    VoiceSetupLeapSingerNote { en: "Choose exported ONNX models and their matching phoneme dictionary in one folder. Test synthesis renders a short vowel on the CPU.", ja: "ONNXモデルと対応する音素辞書を同じフォルダーに置いて選択してください。合成の検証では、CPUで短い「あ」を生成します。" }
+    VoiceSetupTestSynthesis { en: "Test synthesis", ja: "合成を検証" }
+    VoiceSetupTestingSynthesis { en: "Testing LeapSinger synthesis…", ja: "LeapSingerの合成を検証しています…" }
+    VoiceSetupRegisterVoice { en: "Register voice", ja: "ボイスを登録" }
+    VoiceSetupRegisteringVoice { en: "Validating and registering the voice…", ja: "モデルを確認してボイスを登録しています…" }
     VoiceSetupName { en: "Voice name", ja: "ボイス名" }
     VoiceSetupUrl { en: "Engine URL", ja: "Engine接続先URL" }
     VoiceSetupStyleName { en: "Style name", ja: "スタイル名" }

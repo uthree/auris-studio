@@ -19,6 +19,7 @@ mod voicevox;
 
 pub use backend::{BackendKind, SingingBackend, SingingRender, VoiceCapabilities, VoiceModel};
 pub use curves::{CurveGenerator, CurvePrediction, CurveSource, CurveSources, PreparedCurves};
+pub use leapsinger::{LeapSingerManifest, LeapSingerSpeaker, LeapSingerVariant};
 pub use limits::validate_automatic_voice_entry;
 pub use metadata::{VoiceCard, VoiceInfo};
 pub use portrait::{PORTRAIT_MAX_BYTES, VoicePortrait};

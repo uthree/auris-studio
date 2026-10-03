@@ -48,3 +48,4 @@ embed-resource = "3.0"
 # no-op into the hook `VisualTestContext::debug_bounds` reads.
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["runtime_shaders", "test-support"] }
+tempfile.workspace = true

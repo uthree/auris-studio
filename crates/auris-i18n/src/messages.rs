@@ -1101,6 +1101,12 @@ messages! {
         ja: "{path} に保存しました"
     }
 
+    /// Confirmation that LeapSinger's acoustic graph and vocoder generated audible audio.
+    fn leapsinger_voice_checked(speakers: usize, sample_rate: u32) {
+        en: "Synthesis verified on CPU · {speakers} speakers · {sample_rate} Hz",
+        ja: "CPUでの音声合成を確認しました・{speakers}話者・{sample_rate}Hz"
+    }
+
     /// A numeric setup field could not be parsed.
     fn voice_setup_invalid_field(field: &str) {
         en: "Invalid {field}",

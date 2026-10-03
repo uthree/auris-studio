@@ -8,7 +8,7 @@ use auris_vocal::{SILENCE, SingerFrames, SingerScore, is_voiceless};
 use ort::session::Session;
 use ort::tensor::TensorElementType;
 use ort::value::{Tensor, ValueType};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{BackendKind, SingingBackend};
 use crate::limits::{
@@ -23,39 +23,105 @@ use crate::{SingError, validate_frames};
 
 const NAME: &str = "LeapSinger";
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+/// Layout of a LeapSinger acoustic graph exported by the upstream tools.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-enum Variant {
+pub enum LeapSingerVariant {
+    /// Native hop-256 graph with a voiced/unvoiced input.
     #[default]
     Full,
+    /// UV-free graph with time-major mel output, on a hop-256 or hop-512 grid.
     Diffsinger,
 }
 
-#[derive(Debug, Deserialize)]
+/// Portable deployment entry for an exported LeapSinger acoustic model and NHVSing vocoder.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct Config {
-    format_version: u32,
-    name: String,
-    acoustic: PathBuf,
-    vocoder: PathBuf,
-    phonemes: PathBuf,
+pub struct LeapSingerManifest {
+    /// Manifest schema version; currently one.
+    pub format_version: u32,
+    /// Voice name shown in Auris.
+    pub name: String,
+    /// Acoustic ONNX file, relative to the entry's folder.
+    pub acoustic: PathBuf,
+    /// NHVSing ONNX file, relative to the entry's folder.
+    pub vocoder: PathBuf,
+    /// Checkpoint-matched, silence-first phoneme dictionary.
+    pub phonemes: PathBuf,
+    /// Acoustic input and mel layout.
     #[serde(default)]
-    variant: Variant,
+    pub variant: LeapSingerVariant,
+    /// Audio samples per second; LeapSinger uses 44,100 Hz.
     #[serde(default = "sample_rate")]
-    sample_rate: u32,
+    pub sample_rate: u32,
+    /// Samples per frame; acoustic and vocoder grids must agree.
     #[serde(default = "hop_size")]
-    hop_size: u32,
+    pub hop_size: u32,
+    /// Mel bins produced by the acoustic model and consumed by the vocoder.
     #[serde(default = "mel_bins")]
-    num_mel_bins: usize,
+    pub num_mel_bins: usize,
+    /// Projected speaker vectors for an `embed` export; empty for a baked or single voice.
     #[serde(default)]
-    speakers: Vec<Speaker>,
+    pub speakers: Vec<LeapSingerSpeaker>,
 }
 
-#[derive(Debug, Deserialize)]
+/// A named, projected speaker vector accepted by an exported LeapSinger graph.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-struct Speaker {
-    name: String,
-    embedding: Vec<f32>,
+pub struct LeapSingerSpeaker {
+    /// Speaker label shown in the track's voice selector.
+    pub name: String,
+    /// Vector from upstream `speaker_vector`, with one value per hidden channel.
+    pub embedding: Vec<f32>,
+}
+
+type Config = LeapSingerManifest;
+type Variant = LeapSingerVariant;
+
+impl Default for LeapSingerManifest {
+    fn default() -> Self {
+        Self {
+            format_version: 1,
+            name: "LeapSinger singer".into(),
+            acoustic: "acoustic.onnx".into(),
+            vocoder: "nhv_v3_2_1.onnx".into(),
+            phonemes: "ja.phonemes".into(),
+            variant: LeapSingerVariant::Full,
+            sample_rate: sample_rate(),
+            hop_size: hop_size(),
+            num_mel_bins: mel_bins(),
+            speakers: Vec::new(),
+        }
+    }
+}
+
+impl LeapSingerManifest {
+    /// Reads and validates bounded manifest metadata without loading ONNX models.
+    pub fn read(path: &Path) -> Result<Self, SingError> {
+        let raw = read_text_file(path, "LeapSinger manifest")?;
+        let config: Self = serde_json::from_str(&raw)
+            .map_err(|error| metadata(format!("invalid manifest: {error}")))?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Checks manifest fields without accessing the filesystem or loading models.
+    pub fn validate(&self) -> Result<(), SingError> {
+        validate_config(self)
+    }
+
+    /// Loads an unsaved, portable entry for setup validation.
+    ///
+    /// `path` names the intended entry; it need not exist. All model and dictionary paths
+    /// must resolve inside its existing folder, so a registered voice can render automatically.
+    pub fn load(
+        &self,
+        path: &Path,
+        acceleration: Acceleration,
+    ) -> Result<crate::VoiceModel, SingError> {
+        let backend = LeapSingerBackend::load_manifest(path, self.clone(), acceleration, true)?;
+        Ok(crate::VoiceModel::from_backend(backend))
+    }
 }
 
 fn sample_rate() -> u32 {
@@ -89,9 +155,16 @@ impl LeapSingerBackend {
         acceleration: Acceleration,
         automatic: bool,
     ) -> Result<Self, SingError> {
-        let raw = read_text_file(path, "LeapSinger manifest")?;
-        let config: Config = serde_json::from_str(&raw)
-            .map_err(|error| metadata(format!("invalid manifest: {error}")))?;
+        let config = LeapSingerManifest::read(path)?;
+        Self::load_manifest(path, config, acceleration, automatic)
+    }
+
+    fn load_manifest(
+        path: &Path,
+        config: LeapSingerManifest,
+        acceleration: Acceleration,
+        automatic: bool,
+    ) -> Result<Self, SingError> {
         validate_config(&config)?;
         let root = path.parent().unwrap_or_else(|| Path::new("."));
         let checked_acoustic = automatic_descendant_path(root, &config.acoustic);

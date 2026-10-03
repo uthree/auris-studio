@@ -679,6 +679,17 @@ impl SettingsWindow {
                                 cx.listener(|this, _, _, cx| {
                                     this.open_voice_setup(VoiceSetupTab::DiffSinger, cx);
                                 }),
+                            ))
+                            .child(button(
+                                "settings-setup-leapsinger",
+                                self.t(Key::BrowserSetupLeapSinger),
+                                ButtonStyle::Normal,
+                                false,
+                                theme.accent,
+                                &theme,
+                                cx.listener(|this, _, _, cx| {
+                                    this.open_voice_setup(VoiceSetupTab::LeapSinger, cx);
+                                }),
                             )),
                     )
             })
@@ -2151,11 +2162,12 @@ mod tests {
         assert!(cx.debug_bounds("settings-add-voice-path").is_some());
         assert!(cx.debug_bounds("settings-setup-voicevox").is_some());
         assert!(cx.debug_bounds("settings-setup-diffsinger").is_some());
+        assert!(cx.debug_bounds("settings-setup-leapsinger").is_some());
 
         crate::harness::click("settings-search", cx);
-        cx.simulate_input("VOICEVOX");
+        cx.simulate_input("LeapSinger");
         cx.run_until_parked();
-        crate::harness::click("settings-setup-voicevox", cx);
+        crate::harness::click("settings-setup-leapsinger", cx);
         cx.run_until_parked();
         app.read_with(cx, |this, _| {
             assert!(
