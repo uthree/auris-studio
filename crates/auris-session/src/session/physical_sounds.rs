@@ -7,13 +7,13 @@ use auris_synth::Model;
 use super::Session;
 use crate::SessionError;
 
-/// A deliberately small family mapping, not an implementation of the GM sound set.
+/// Corresponding native models only; unsupported timbres and specialty kits need GM.
 pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, PluginState)> {
     if !(0..=127).contains(&patch) {
         return None;
     }
     if bank == 128 {
-        return Some((auris_synth::DrumKit::ID, PluginState::empty()));
+        return (patch == 0).then(|| (auris_synth::DrumKit::ID, PluginState::empty()));
     }
     if bank != 0 {
         return None;
@@ -28,13 +28,13 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         return Some((auris_synth::TinWhistle::ID, PluginState::empty()));
     }
     let model = match patch {
-        0..=7 => Model::Piano,
+        0..=3 | 6..=7 => Model::Piano,
         8 | 11 | 14 => Model::Bell,
         9 | 10 | 12 | 13 => Model::Mallet,
-        24..=25 | 46 => Model::Guitar,
-        26..=31 => Model::ElectricGuitar,
-        32..=39 => Model::Bass,
-        40..=45 | 48..=51 => Model::Violin,
+        24..=25 => Model::Guitar,
+        26..=28 | 31 => Model::ElectricGuitar,
+        32..=35 => Model::Bass,
+        40..=45 | 48..=49 => Model::Violin,
         _ => return None,
     };
     let mut state = PluginState::empty();
@@ -43,7 +43,7 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
     };
     match patch {
         // These hints are starting points for our models, not claims to reproduce the patch.
-        4..=7 => {
+        6..=7 => {
             set("hardness", 0.8);
             set("stiffness", 0.002);
             set("decay", 2.4);
@@ -65,7 +65,7 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
             set("hardness", 0.35);
             set("position", 0.3);
         }
-        34 | 36 | 37 => {
+        34 => {
             set("hardness", 0.85);
             set("position", 0.13);
         }
@@ -76,7 +76,7 @@ pub(super) fn native_sound(bank: i32, patch: i32) -> Option<(&'static str, Plugi
         44 => {
             return Some((Model::Guitar.id(), state));
         }
-        48..=51 => {
+        48..=49 => {
             set("bow_pressure", 0.4);
             set("release", 0.5);
         }
@@ -155,6 +155,25 @@ impl Session {
 mod tests {
     use super::*;
     use crate::SessionOptions;
+
+    #[test]
+    fn distinct_gm_timbres_are_not_replaced_by_unrelated_physical_models() {
+        for patch in [
+            4, 5, 29, 30, 36, 37, 38, 39, 46, 47, 50, 51, 56, 61, 65, 73, 81, 84, 88, 94, 98,
+        ] {
+            assert!(
+                native_sound(0, patch).is_none(),
+                "{} needs its GM sound",
+                auris_compose::gm::Program(patch as u8).name()
+            );
+        }
+        for patch in [8, 16, 25, 40, 48] {
+            assert!(
+                native_sound(128, patch).is_none(),
+                "a specialty kit is not the standard physical kit"
+            );
+        }
+    }
 
     #[test]
     fn role_starting_points_preserve_explicit_physical_controls() {

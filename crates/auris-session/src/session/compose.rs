@@ -1153,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn song_preset_drums_install_one_physical_kit_without_a_font() {
+    fn song_preset_drums_keep_one_kit_and_report_unavailable_specialty_sounds() {
         for preset in auris_compose::PRESETS {
             let mut spec = preset.spec();
             spec.parts.retain(|part| part.role.is_drum());
@@ -1168,7 +1168,25 @@ mod tests {
             let piece = auris_compose::compose(&spec);
             let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
             let report = session.compose(&piece).unwrap();
-            assert!(report.substituted.is_empty(), "{}: {report:?}", preset.name);
+            let needs_font = spec.parts.iter().any(|part| {
+                part.sound().is_some_and(|sound| {
+                    super::super::physical_sounds::native_sound(
+                        i32::from(sound.bank),
+                        i32::from(sound.patch),
+                    )
+                    .is_none()
+                })
+            });
+            assert_eq!(
+                report.substituted,
+                if needs_font {
+                    vec!["General MIDI"]
+                } else {
+                    vec![]
+                },
+                "{}",
+                preset.name
+            );
             assert!(session.project().soundfonts.is_empty(), "{}", preset.name);
             let tracks: Vec<_> = session
                 .project()
@@ -1187,7 +1205,6 @@ mod tests {
             assert_eq!(session.track_preset(track.id), None);
             let map = DrumMap::load(&instrument.instrument_state).unwrap();
             for part in &spec.parts {
-                assert_eq!(part.sound(), None, "{} · {}", preset.name, part.name);
                 assert_eq!(
                     map.voices[&part.role.drum_role().unwrap()],
                     part.drum_note().unwrap()
@@ -1201,7 +1218,7 @@ mod tests {
     }
 
     #[test]
-    fn melodic_song_presets_install_their_physical_sources_without_a_font() {
+    fn melodic_song_presets_resolve_native_sounds_and_report_font_fallbacks() {
         for preset in auris_compose::PRESETS {
             if matches!(preset.name, "chiptune" | "game-loop") {
                 continue;
@@ -1216,19 +1233,18 @@ mod tests {
             }
             let mut session = Session::new(SessionOptions::headless().with_balance(false)).unwrap();
             let report = session.compose(&auris_compose::compose(&spec)).unwrap();
-            assert!(report.substituted.is_empty(), "{}: {report:?}", preset.name);
+            let mut needs_font = false;
             assert!(session.project().soundfonts.is_empty(), "{}", preset.name);
             for part in &spec.parts {
-                assert_eq!(part.sound(), None, "{} · {}", preset.name, part.name);
                 assert_eq!(part.source, None, "{} · {}", preset.name, part.name);
-                assert!(
-                    auris_synth::Model::ALL
-                        .iter()
-                        .any(|model| model.id() == part.instrument),
-                    "{} · {} is not a physical instrument",
-                    preset.name,
-                    part.name
-                );
+                let native = part.sound().and_then(|sound| {
+                    super::super::physical_sounds::native_sound(
+                        i32::from(sound.bank),
+                        i32::from(sound.patch),
+                    )
+                });
+                needs_font |= part.sound().is_some() && native.is_none();
+                let expected = native.map_or(part.instrument.as_str(), |(id, _)| id);
                 let track = session
                     .project()
                     .tracks
@@ -1237,10 +1253,23 @@ mod tests {
                     .unwrap();
                 assert_eq!(
                     track.kind.as_instrument().unwrap().instrument_id,
-                    part.instrument
+                    expected,
+                    "{} · {}",
+                    preset.name,
+                    part.name
                 );
                 assert_eq!(session.track_preset(track.id), None);
             }
+            assert_eq!(
+                report.substituted,
+                if needs_font {
+                    vec!["General MIDI"]
+                } else {
+                    vec![]
+                },
+                "{}",
+                preset.name
+            );
             let restored =
                 auris_compose::SongSpec::parse(session.project().song_spec.as_ref().unwrap())
                     .unwrap();

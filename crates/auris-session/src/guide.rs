@@ -1111,6 +1111,14 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
+    //! Genre presets request their musical timbres through General MIDI: saw leads for pop
+    //! and synthwave, saxophone and electric piano for city pop, distorted guitars and organ
+    //! for rock, and winds, bowed strings, harp and pitched timpani for orchestral music.
+    //! Acoustic families with a corresponding native model use it; distinct timbres such as
+    //! electric piano, slap/synthesizer bass, harp, distorted guitar and specialty drum kits use
+    //! the optional General MIDI library. Without that library, composition reports the missing
+    //! sound set and uses each part's built-in fallback. Chiptune presets need no sound library.
+    //!
     //! Section lengths belong to the preset or song specification. Vocal rhythms distribute
     //! the lyrics across those fixed bars, weighting phrases by mora count and leaving time
     //! for held endings and breaths. Dense phrases use shorter notes, down to sixteenths;
