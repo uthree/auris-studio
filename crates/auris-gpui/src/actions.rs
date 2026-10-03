@@ -219,6 +219,7 @@ actions!(
         ToggleVisualizer,
         VisualizerSource,
         VisualizerFreeze,
+        VisualizerEffects,
         VisualizerAverage,
         VisualizerPeaks,
         VisualizerSave,
@@ -573,6 +574,7 @@ bindable! {
         "visualizer.toggle", GroupAnalysis, VisualizerTitle, "" => ToggleVisualizer;
         "visualizer.source", GroupAnalysis, VisualizerSelected, "" => VisualizerSource;
         "visualizer.freeze", GroupAnalysis, VisualizerFreeze, "" => VisualizerFreeze;
+        "visualizer.effects", GroupAnalysis, VisualizerEffects, "" => VisualizerEffects;
         "visualizer.average", GroupAnalysis, VisualizerAverage, "" => VisualizerAverage;
         "visualizer.peaks", GroupAnalysis, VisualizerPeaks, "" => VisualizerPeaks;
         "visualizer.save", GroupAnalysis, VisualizerSave, "" => VisualizerSave;

@@ -132,6 +132,18 @@ remains at that voice's excitation position until the next attack; violin contac
 smoothed junction while sounding. The readout includes expression, violin bow pressure and
 piano pedal state.
 
+Guitar and electric guitar use six parallel strings in standard E–A–D–G–B–E tuning;
+bass and violin use four strings in their respective E–A–D–G and G–D–A–E tuning.
+High strings appear above low strings, and guitar/bass frets shorten towards the bridge.
+The body, sound hole or pickups provide a reference for contact and stopping positions.
+String assignment is schematic fingering inferred from pitch: the monitor does not report
+physical string identities. Notes outside the tuning range remain visible on the lowest string.
+
+Colours follow the active theme's track palette. Short trails retain captured shapes, and
+motion-driven sparks and excitation halos emphasize energy without changing the spatial data.
+**Effects** disables the trails, halos and sparks for a calmer display. This choice survives
+editor changes. **Freeze** holds both the shape and its effects.
+
 The diagram uses live wave histories or a low-mode spatial projection, before body coloration
 and output gain. It is a relative mechanical view, not measured displacement in metres. Delay
 loops expose a fixed-end spatial projection; bell/bar modal bases are illustrative geometric

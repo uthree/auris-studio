@@ -34,6 +34,7 @@ pub(crate) enum VisualizerCommand {
     CorrelationReset,
     OscilloscopeGain,
     StereoAutoGain,
+    Effects,
     View(VisualizerView),
 }
 
@@ -128,6 +129,7 @@ pub(crate) struct VisualizerState {
     frozen: bool,
     average: bool,
     peaks: bool,
+    effects_disabled: bool,
     view: VisualizerView,
     spectrum_mode: VisualizerSpectrum,
     oscilloscope_span: OscilloscopeSpan,
@@ -281,6 +283,9 @@ impl AurisApp {
             VisualizerCommand::Freeze => self.visualizer.frozen = false,
             VisualizerCommand::Average => self.visualizer.average = !self.visualizer.average,
             VisualizerCommand::Peaks => self.visualizer.peaks = !self.visualizer.peaks,
+            VisualizerCommand::Effects => {
+                self.visualizer.effects_disabled = !self.visualizer.effects_disabled;
+            }
             VisualizerCommand::Save if self.visualizer.can_save() => {
                 let displayed = if self.visualizer.average {
                     (!self.visualizer.mean.is_empty()).then(|| self.visualizer.mean.clone())
@@ -485,6 +490,21 @@ impl AurisApp {
                 .cursor_default(),
             );
         }
+        controls = controls.child(
+            button_enabled(
+                "visualizer-effects",
+                self.t(Key::VisualizerEffects),
+                ButtonStyle::Normal,
+                ButtonState::available(!self.visualizer.effects_disabled, true),
+                theme.accent,
+                &theme,
+                cx.listener(|this, _, _, cx| {
+                    this.visualizer_command(VisualizerCommand::Effects);
+                    cx.notify();
+                }),
+            )
+            .cursor_default(),
+        );
         let mut view_controls = div().flex().flex_wrap().gap_1();
         for (id, view, key) in [
             (
@@ -737,6 +757,7 @@ impl AurisApp {
                 theme.clone(),
                 Rc::clone(&self.visualizer.oscilloscope_bounds),
                 true,
+                !self.visualizer.effects_disabled,
             ),
             VisualizerView::Spectrum => spectrum_section(
                 spectrum,
@@ -748,6 +769,7 @@ impl AurisApp {
                 theme.clone(),
                 Rc::clone(&self.visualizer.spectrum_bounds),
                 true,
+                !self.visualizer.effects_disabled,
             ),
             VisualizerView::Stereo => stereo_section(
                 trail,
@@ -758,6 +780,7 @@ impl AurisApp {
                 theme.clone(),
                 Rc::clone(&self.visualizer.stereo_bounds),
                 true,
+                !self.visualizer.effects_disabled,
             ),
             VisualizerView::All => div()
                 .id("visualizer-all")
@@ -777,6 +800,7 @@ impl AurisApp {
                     theme.clone(),
                     Rc::clone(&self.visualizer.oscilloscope_bounds),
                     false,
+                    !self.visualizer.effects_disabled,
                 ))
                 .child(spectrum_section(
                     spectrum,
@@ -788,6 +812,7 @@ impl AurisApp {
                     theme.clone(),
                     Rc::clone(&self.visualizer.spectrum_bounds),
                     false,
+                    !self.visualizer.effects_disabled,
                 ))
                 .child(stereo_section(
                     trail,
@@ -798,6 +823,7 @@ impl AurisApp {
                     theme.clone(),
                     Rc::clone(&self.visualizer.stereo_bounds),
                     false,
+                    !self.visualizer.effects_disabled,
                 ))
                 .into_any_element(),
         };
@@ -900,6 +926,7 @@ fn oscilloscope_section(
     theme: Theme,
     bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
     fill: bool,
+    effects: bool,
 ) -> gpui::AnyElement {
     let paint_theme = theme.clone();
     let graph = div()
@@ -918,6 +945,7 @@ fn oscilloscope_section(
                         span,
                         gain,
                         &paint_theme,
+                        effects,
                     );
                 },
             )
@@ -948,6 +976,7 @@ fn spectrum_section(
     theme: Theme,
     bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
     fill: bool,
+    effects: bool,
 ) -> gpui::AnyElement {
     let paint_theme = theme.clone();
     let graph = div()
@@ -966,6 +995,7 @@ fn spectrum_section(
                         &peak,
                         &reference,
                         &paint_theme,
+                        effects,
                     );
                 },
             )
@@ -995,6 +1025,7 @@ fn stereo_section(
     theme: Theme,
     bounds_cell: Rc<Cell<Option<Bounds<Pixels>>>>,
     fill: bool,
+    effects: bool,
 ) -> gpui::AnyElement {
     let paint_theme = theme.clone();
     let graph = div()
@@ -1005,7 +1036,7 @@ fn stereo_section(
             canvas(
                 move |bounds, _, _| bounds_cell.set(Some(bounds)),
                 move |bounds, _, window, cx| {
-                    paint_stereo(window, cx, bounds, &trail, auto_gain, &paint_theme);
+                    paint_stereo(window, cx, bounds, &trail, auto_gain, &paint_theme, effects);
                 },
             )
             .size_full(),
@@ -1063,6 +1094,10 @@ fn oscilloscope_window(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "painting receives the measured frame, display controls, and theme explicitly"
+)]
 fn paint_oscilloscope(
     window: &mut Window,
     cx: &mut gpui::App,
@@ -1071,6 +1106,7 @@ fn paint_oscilloscope(
     span: OscilloscopeSpan,
     gain: OscilloscopeGain,
     theme: &Theme,
+    effects: bool,
 ) {
     paint::rect(window, bounds, theme.surface_sunken);
     let left = bounds.origin.x + px(38.);
@@ -1159,11 +1195,15 @@ fn paint_oscilloscope(
     let right_samples = &frame.right[visible.start..end];
     let multiplier = gain.multiplier(left_samples, right_samples);
     for (samples, center, color) in [
-        (left_samples, top + lane_height / 2., theme.accent),
+        (
+            left_samples,
+            top + lane_height / 2.,
+            theme.visualizer_color(0),
+        ),
         (
             right_samples,
             top + lane_height * 1.5,
-            theme.track_palette[1],
+            theme.visualizer_color(1),
         ),
     ] {
         let points: Vec<_> = samples
@@ -1177,11 +1217,30 @@ fn paint_oscilloscope(
             })
             .collect();
         paint::clipped(window, plot, |window| {
-            paint::polyline(window, &points, px(1.), color)
+            // A restrained halo makes quiet signals legible without changing their measured
+            // position or amplitude. The solid centre remains the measurement itself.
+            if effects {
+                paint::polyline(window, &points, px(6.), Theme::translucent(color, 0.10));
+                paint::polyline(window, &points, px(3.), Theme::translucent(color, 0.22));
+            }
+            paint::polyline(window, &points, px(1.25), color)
         });
     }
 }
 
+fn spectrum_color(theme: &Theme, index: usize, count: usize) -> gpui::Hsla {
+    let position = if count > 1 {
+        index as f32 / (count - 1) as f32
+    } else {
+        0.0
+    };
+    theme.visualizer_gradient(position)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "painting receives the measured series, comparison overlays, and theme explicitly"
+)]
 fn paint_spectrum(
     window: &mut Window,
     cx: &mut gpui::App,
@@ -1190,6 +1249,7 @@ fn paint_spectrum(
     peak: &[f32],
     reference: &[f32],
     theme: &Theme,
+    effects: bool,
 ) {
     let left = bounds.origin.x + px(32.);
     let top = bounds.origin.y;
@@ -1232,8 +1292,10 @@ fn paint_spectrum(
     for (values, color, stroke) in [
         (reference, theme.text_faint, 2.),
         (peak, theme.text_muted, 1.),
-        (spectrum, theme.accent, 1.5),
     ] {
+        if values.is_empty() {
+            continue;
+        }
         let points: Vec<_> = values
             .iter()
             .enumerate()
@@ -1246,6 +1308,54 @@ fn paint_spectrum(
             .collect();
         paint::polyline(window, &points, px(stroke), color);
     }
+    if !spectrum.is_empty() {
+        let points: Vec<_> = spectrum
+            .iter()
+            .enumerate()
+            .map(|(i, db)| {
+                point(
+                    left + width * ((i as f32 + 0.5) / spectrum.len() as f32),
+                    top + height * (db / FLOOR_DB).clamp(0., 1.),
+                )
+            })
+            .collect();
+        // The fill follows the same bins as the actual spectrum. It adds depth while preserving
+        // the trace and grid as the authoritative readout.
+        paint::clipped(window, plot, |window| {
+            if effects {
+                paint::area_under(
+                    window,
+                    &points,
+                    top + height,
+                    Theme::translucent(
+                        spectrum_color(theme, spectrum.len() / 3, spectrum.len()),
+                        0.16,
+                    ),
+                );
+                paint::polyline(
+                    window,
+                    &points,
+                    px(5.),
+                    Theme::translucent(theme.accent, 0.10),
+                );
+                paint::polyline(
+                    window,
+                    &points,
+                    px(2.5),
+                    Theme::translucent(theme.accent, 0.24),
+                );
+            }
+            paint::polyline(window, &points, px(1.5), theme.accent);
+            for (index, pair) in points.windows(2).enumerate() {
+                paint::polyline(
+                    window,
+                    pair,
+                    px(1.5),
+                    spectrum_color(theme, index, spectrum.len()),
+                );
+            }
+        });
+    }
 }
 
 fn paint_stereo(
@@ -1255,6 +1365,7 @@ fn paint_stereo(
     history: &[VisualizerFrame],
     auto_gain: bool,
     theme: &Theme,
+    effects: bool,
 ) {
     paint::rect(window, bounds, theme.surface_sunken);
     let center = point(
@@ -1302,6 +1413,9 @@ fn paint_stereo(
         })
         .unwrap_or(1.0);
     for (index, frame) in history.iter().enumerate() {
+        if !effects && index + 1 != history.len() {
+            continue;
+        }
         let (left, right) = frame_window(frame);
         let points: Vec<_> = left
             .iter()
@@ -1316,13 +1430,36 @@ fn paint_stereo(
             .collect();
         let alpha = 0.12 + 0.78 * (index + 1) as f32 / history.len() as f32;
         paint::clipped(window, bounds, |window| {
-            paint::polyline(
-                window,
-                &points,
-                px(1.),
-                Theme::translucent(theme.accent, alpha),
-            )
+            let color = theme.visualizer_color(history.len().saturating_sub(index + 1));
+            if effects {
+                paint::polyline(
+                    window,
+                    &points,
+                    px(4.),
+                    Theme::translucent(color, alpha * 0.12),
+                );
+            }
+            paint::polyline(window, &points, px(1.), Theme::translucent(color, alpha));
         });
+    }
+    if effects && let Some(frame) = history.last() {
+        let (left, right) = frame_window(frame);
+        if let (Some(&left), Some(&right)) = (left.last(), right.last()) {
+            let (left, right) = (left * multiplier, right * multiplier);
+            let at = point(
+                center.x + radius * ((left - right) * 0.5).clamp(-1., 1.),
+                center.y - radius * ((left + right) * 0.5).clamp(-1., 1.),
+            );
+            paint::rounded_rect(
+                window,
+                Bounds {
+                    origin: point(at.x - px(3.), at.y - px(3.)),
+                    size: size(px(6.), px(6.)),
+                },
+                px(3.),
+                theme.visualizer_color(0),
+            );
+        }
     }
 }
 
@@ -1517,6 +1654,7 @@ mod tests {
     #[test]
     fn history_averages_power_and_retains_peaks() {
         let mut state = VisualizerState::default();
+        assert!(!state.effects_disabled);
         let start = Instant::now();
         state.accept_at(frame(-20.), start);
         state.accept_at(frame(0.), start + Duration::from_millis(200));
@@ -1525,6 +1663,20 @@ mod tests {
         assert!((state.mean[0] - expected).abs() < 0.001);
         state.accept_at(frame(-40.), start + Duration::from_millis(400));
         assert_eq!(state.peak[0], 0.);
+    }
+
+    #[test]
+    fn spectrum_palette_maps_edges_to_the_theme_gradient() {
+        let theme = Theme::dark();
+        assert_eq!(
+            spectrum_color(&theme, 0, 96),
+            theme.visualizer_gradient(0.0)
+        );
+        assert_eq!(
+            spectrum_color(&theme, 95, 96),
+            theme.visualizer_gradient(1.0)
+        );
+        assert_eq!(spectrum_color(&theme, 0, 1), theme.visualizer_gradient(0.0));
     }
 
     #[test]
@@ -1581,11 +1733,62 @@ mod tests {
         });
         app.update(cx, |app, _| app.visualizer.accept(frame(-12.)));
         harness::paint(&app, cx);
+        let captured = app.read_with(cx, |app, _| {
+            (
+                app.visualizer.frame.as_ref().map(|frame| {
+                    (
+                        frame.left.clone(),
+                        frame.right.clone(),
+                        frame.spectrum.clone(),
+                        frame.sample_rate,
+                        frame.window_samples,
+                    )
+                }),
+                app.visualizer.stereo_trail.len(),
+            )
+        });
+        harness::click(
+            "visualizer-effects",
+            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
+        );
+        app.read_with(cx, |app, _| {
+            assert!(app.visualizer.effects_disabled);
+            let frame = app.visualizer.frame.as_ref().expect("captured frame");
+            let captured_frame = captured.0.as_ref().expect("captured frame");
+            assert_eq!(frame.left, captured_frame.0);
+            assert_eq!(frame.right, captured_frame.1);
+            assert_eq!(frame.spectrum, captured_frame.2);
+            assert_eq!(frame.sample_rate, captured_frame.3);
+            assert_eq!(frame.window_samples, captured_frame.4);
+            assert_eq!(app.visualizer.stereo_trail.len(), captured.1);
+        });
+        app.update(cx, |app, _| {
+            app.visualizer.view = VisualizerView::Oscilloscope
+        });
+        harness::paint(
+            &app,
+            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
+        );
+        app.update(cx, |app, _| app.visualizer.view = VisualizerView::Stereo);
+        harness::paint(
+            &app,
+            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
+        );
+        app.update(cx, |app, _| app.visualizer.view = VisualizerView::All);
+        harness::click(
+            "visualizer-effects",
+            &mut gpui::VisualTestContext::from_window(handle.into(), cx),
+        );
         cx.dispatch_action(actions::VisualizerFreeze);
         cx.dispatch_action(actions::VisualizerSave);
         app.read_with(cx, |app, _| {
             assert!(app.visualizer.frozen);
             assert_eq!(app.visualizer.reference, vec![-12.; 96]);
+            assert!(!app.visualizer.effects_disabled);
+            let frame = app.visualizer.frame.as_ref().expect("frozen frame");
+            let captured_frame = captured.0.as_ref().expect("captured frame");
+            assert_eq!(frame.left, captured_frame.0);
+            assert_eq!(app.visualizer.stereo_trail.len(), captured.1);
         });
         cx.dispatch_action(actions::VisualizerSource);
         app.read_with(cx, |app, _| {

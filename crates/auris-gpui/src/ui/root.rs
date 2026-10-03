@@ -563,6 +563,13 @@ impl AurisApp {
                     ))
                     .on_action(Self::window_listener(
                         cx,
+                        |this, _: &actions::VisualizerEffects, _, cx| {
+                            this.visualizer_command(super::visualizer::VisualizerCommand::Effects);
+                            cx.notify();
+                        },
+                    ))
+                    .on_action(Self::window_listener(
+                        cx,
                         |this, _: &actions::VisualizerAverage, _, cx| {
                             this.visualizer_command(super::visualizer::VisualizerCommand::Average);
                             cx.notify();
