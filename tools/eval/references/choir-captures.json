@@ -1,0 +1,577 @@
+{
+  "source": "https://doi.org/10.5281/zenodo.1442513",
+  "creator": "Julia Wilkins, Prem Seetharaman, Alison Wahl, Bryan Pardo",
+  "license": "CC-BY-4.0",
+  "archive_url": "https://zenodo.org/records/1442513/files/VocalSet11.zip?download=1",
+  "archive_bytes": 2077243579,
+  "published_archive_md5": "0c09396242f946e7111ad7d8fc649b81",
+  "captures": [
+    {
+      "path": "f1_long_straight_a.wav",
+      "zip_path": "FULL/female1/long_tones/straight/f1_long_straight_a.wav",
+      "offset": 257673532,
+      "compressed": 716043,
+      "size": 1042802,
+      "crc": 2758722071,
+      "sha256": "e1ff90d89de7e30a4dd717dd642173e57b083832f38e74eb8033d349c02bc340"
+    },
+    {
+      "path": "f1_long_straight_i.wav",
+      "zip_path": "FULL/female1/long_tones/straight/f1_long_straight_i.wav",
+      "offset": 255743433,
+      "compressed": 666894,
+      "size": 969808,
+      "crc": 3563767651,
+      "sha256": "27b9cdb2cc4996f13d46b4d611d7b5c73de1e613b75ea7bb02c7f870769dd40f"
+    },
+    {
+      "path": "f1_long_straight_u.wav",
+      "zip_path": "FULL/female1/long_tones/straight/f1_long_straight_u.wav",
+      "offset": 257033201,
+      "compressed": 640214,
+      "size": 969810,
+      "crc": 3723377305,
+      "sha256": "6eb6c64b7c9d9a53a0e6ca192689dde027dde7addef89c97929b3848de730d42"
+    },
+    {
+      "path": "f2_long_straight_a.wav",
+      "zip_path": "FULL/female2/long_tones/straight/f2_long_straight_a.wav",
+      "offset": 1498670909,
+      "compressed": 833095,
+      "size": 1055986,
+      "crc": 3159864352,
+      "sha256": "2ec3b7655fc7e9500d74fb21fc9c38c35153fd8bd548bfe654f10f2dd7b0ef2e"
+    },
+    {
+      "path": "f2_long_straight_i.wav",
+      "zip_path": "FULL/female2/long_tones/straight/f2_long_straight_i.wav",
+      "offset": 1497137601,
+      "compressed": 751735,
+      "size": 952608,
+      "crc": 2133538849,
+      "sha256": "612cbb3f4be21177c9687d5cc8a33f9815141f3865cc3a88124ee241dabbd0d8"
+    },
+    {
+      "path": "f2_long_straight_u.wav",
+      "zip_path": "FULL/female2/long_tones/straight/f2_long_straight_u.wav",
+      "offset": 1499504121,
+      "compressed": 586256,
+      "size": 782770,
+      "crc": 48173283,
+      "sha256": "4824d66bfc3e0b618e40fd9fdbad4c3551ad4daec51daba84936a48982da2caa"
+    },
+    {
+      "path": "f3_long_straight_a.wav",
+      "zip_path": "FULL/female3/long_tones/straight/f3_long_straight_a.wav",
+      "offset": 1201804780,
+      "compressed": 740161,
+      "size": 981448,
+      "crc": 3708514010,
+      "sha256": "01953e7b2f44625e3ca42452620570d5f2c59158d64e4766c8f03ea80b0f5818"
+    },
+    {
+      "path": "f3_long_straight_i.wav",
+      "zip_path": "FULL/female3/long_tones/straight/f3_long_straight_i.wav",
+      "offset": 1200355953,
+      "compressed": 726126,
+      "size": 942854,
+      "crc": 2938876842,
+      "sha256": "36fa8042e682cdf0895f9ae8ba1dbffaddf40a33175de2ad14fa48bdf9b7217e"
+    },
+    {
+      "path": "f3_long_straight_u.wav",
+      "zip_path": "FULL/female3/long_tones/straight/f3_long_straight_u.wav",
+      "offset": 1202545058,
+      "compressed": 650248,
+      "size": 876690,
+      "crc": 689634768,
+      "sha256": "87f40b6115eac0770d49019a74ee56b2a477dcf09647a30b712f7deb5cdecb5c"
+    },
+    {
+      "path": "f4_long_straight_a.wav",
+      "zip_path": "FULL/female4/long_tones/straight/f4_long_straight_a.wav",
+      "offset": 1288355180,
+      "compressed": 638514,
+      "size": 983664,
+      "crc": 1683157917,
+      "sha256": "4491c79131c68b10ec77aacf015339c1fa8bb795d3810e4383adbf8aa2679e73"
+    },
+    {
+      "path": "f4_long_straight_i.wav",
+      "zip_path": "FULL/female4/long_tones/straight/f4_long_straight_i.wav",
+      "offset": 1286285400,
+      "compressed": 700391,
+      "size": 1042096,
+      "crc": 3753471564,
+      "sha256": "f0ccb24a2fd2487616f565a8e999af041c1ea51254124c55adbf6498aa4f0274"
+    },
+    {
+      "path": "f4_long_straight_u.wav",
+      "zip_path": "FULL/female4/long_tones/straight/f4_long_straight_u.wav",
+      "offset": 1287653597,
+      "compressed": 701466,
+      "size": 1061574,
+      "crc": 973702522,
+      "sha256": "233bd9345d28c272ef1cdd39a4c10c09c27caf196b012eb9e01a308a79791fd3"
+    },
+    {
+      "path": "f5_long_straight_a.wav",
+      "zip_path": "FULL/female5/long_tones/straight/f5_long_straight_a.wav",
+      "offset": 1385576509,
+      "compressed": 736117,
+      "size": 1130168,
+      "crc": 466018991,
+      "sha256": "90161b7728264d0141612025f39c4ee07e48bdf78469e8fda40ac290d1f0da11"
+    },
+    {
+      "path": "f5_long_straight_i.wav",
+      "zip_path": "FULL/female5/long_tones/straight/f5_long_straight_i.wav",
+      "offset": 1383043026,
+      "compressed": 886543,
+      "size": 1402388,
+      "crc": 1740856657,
+      "sha256": "118705298de906b1b540fd97e413ee84314e4c83378fb347445eb0c3f96e5c22"
+    },
+    {
+      "path": "f5_long_straight_u.wav",
+      "zip_path": "FULL/female5/long_tones/straight/f5_long_straight_u.wav",
+      "offset": 1384762231,
+      "compressed": 814161,
+      "size": 1361142,
+      "crc": 177822755,
+      "sha256": "d6cf7a184f0aaad8d964191f4a6bce2b8631f31a7da2b33943847ca5205cc69d"
+    },
+    {
+      "path": "f6_long_straight_a.wav",
+      "zip_path": "FULL/female6/long_tones/straight/f6_long_straight_a.wav",
+      "offset": 349185222,
+      "compressed": 464485,
+      "size": 652504,
+      "crc": 1133336972,
+      "sha256": "3df1274d60014e38960eb59b21ac4bb2b56613275ec52cfbe0f3ffd4772cde1b"
+    },
+    {
+      "path": "f6_long_straight_i.wav",
+      "zip_path": "FULL/female6/long_tones/straight/f6_long_straight_i.wav",
+      "offset": 348308382,
+      "compressed": 436210,
+      "size": 586210,
+      "crc": 1702206776,
+      "sha256": "e27dbb3a5a8781b0d92101c2e79cd67d6fbe410f656eeed094a65506cff9ee4b"
+    },
+    {
+      "path": "f6_long_straight_u.wav",
+      "zip_path": "FULL/female6/long_tones/straight/f6_long_straight_u.wav",
+      "offset": 349649824,
+      "compressed": 456201,
+      "size": 628080,
+      "crc": 3299550579,
+      "sha256": "53d1b61b1770467168d5883b5e0e74ca1c91fc599288149458a884a0313f1595"
+    },
+    {
+      "path": "f7_long_straight_a.wav",
+      "zip_path": "FULL/female7/long_tones/straight/f7_long_straight_a.wav",
+      "offset": 155783192,
+      "compressed": 496489,
+      "size": 644230,
+      "crc": 3336309419,
+      "sha256": "021213b137928620abd7bfe7f888421976ee0a411036768d334723ec955262df"
+    },
+    {
+      "path": "f7_long_straight_i.wav",
+      "zip_path": "FULL/female7/long_tones/straight/f7_long_straight_i.wav",
+      "offset": 154893092,
+      "compressed": 441088,
+      "size": 583050,
+      "crc": 1831828465,
+      "sha256": "dbe72799396a7cf23c3b6d46a6ee83499caa6eba0c9c92240d02cde93bf2a035"
+    },
+    {
+      "path": "f7_long_straight_u.wav",
+      "zip_path": "FULL/female7/long_tones/straight/f7_long_straight_u.wav",
+      "offset": 156279798,
+      "compressed": 397730,
+      "size": 550662,
+      "crc": 2240197267,
+      "sha256": "80d997723b5dcdcb712df82b2fae663d4dfdba115c2b5bbcd014b5b8d8af152e"
+    },
+    {
+      "path": "f8_long_straight_a.wav",
+      "zip_path": "FULL/female8/long_tones/straight/f8_long_straight_a.wav",
+      "offset": 463325219,
+      "compressed": 983833,
+      "size": 1327364,
+      "crc": 3781896168,
+      "sha256": "4878a0446f28957dc908a096af6ffe44d6d7a5ab6680282992396f1afe9093d8"
+    },
+    {
+      "path": "f8_long_straight_i.wav",
+      "zip_path": "FULL/female8/long_tones/straight/f8_long_straight_i.wav",
+      "offset": 461570789,
+      "compressed": 891114,
+      "size": 1147112,
+      "crc": 3768107508,
+      "sha256": "dcd0e354f2979a3230c8730c5e13226ef4abc1913f988fb9ecd838f2fa951b88"
+    },
+    {
+      "path": "f8_long_straight_u.wav",
+      "zip_path": "FULL/female8/long_tones/straight/f8_long_straight_u.wav",
+      "offset": 464309169,
+      "compressed": 886514,
+      "size": 1223584,
+      "crc": 54087151,
+      "sha256": "5d33137547b96a05e1a94755627782a087a1d48666f85db498c0040569b1ed58"
+    },
+    {
+      "path": "f9_long_straight_a.wav",
+      "zip_path": "FULL/female9/long_tones/straight/f9_long_straight_a.wav",
+      "offset": 55050774,
+      "compressed": 479318,
+      "size": 618748,
+      "crc": 408325767,
+      "sha256": "e6d393abeb0d6473b5b425b0b5c7b2d4f47647ea2d7772d811f34088329d6f03"
+    },
+    {
+      "path": "f9_long_straight_i.wav",
+      "zip_path": "FULL/female9/long_tones/straight/f9_long_straight_i.wav",
+      "offset": 54100571,
+      "compressed": 469644,
+      "size": 681006,
+      "crc": 2116016587,
+      "sha256": "791237895763d807ca662a960f1d4bf8139eee1c699f9066fb7fc0707f08b96f"
+    },
+    {
+      "path": "f9_long_straight_u.wav",
+      "zip_path": "FULL/female9/long_tones/straight/f9_long_straight_u.wav",
+      "offset": 55530209,
+      "compressed": 455875,
+      "size": 665442,
+      "crc": 3349802193,
+      "sha256": "859eb618d4f267df25588392dba14ed57c5799c6228cf9d0ff913f01e151db0f"
+    },
+    {
+      "path": "m10_long_straight_a.wav",
+      "zip_path": "FULL/male10/long_tones/straight/m10_long_straight_a.wav",
+      "offset": 1007665106,
+      "compressed": 588850,
+      "size": 728032,
+      "crc": 1112477429,
+      "sha256": "ddbaa9da34a4b441c264d797571f5ce836316061985e624d3f5007b2d44e8594"
+    },
+    {
+      "path": "m10_long_straight_i.wav",
+      "zip_path": "FULL/male10/long_tones/straight/m10_long_straight_i.wav",
+      "offset": 1006182524,
+      "compressed": 515762,
+      "size": 651670,
+      "crc": 1153902935,
+      "sha256": "b510289c7baff05dcea6c29cfdb01f3fd8f74222595efa571c507c14633cc658"
+    },
+    {
+      "path": "m10_long_straight_u.wav",
+      "zip_path": "FULL/male10/long_tones/straight/m10_long_straight_u.wav",
+      "offset": 1007199911,
+      "compressed": 465078,
+      "size": 621126,
+      "crc": 1724044258,
+      "sha256": "84f2cd24972487cd4410b687c237063d48639192e794db0e978197cdb157cefd"
+    },
+    {
+      "path": "m11_long_straight_a.wav",
+      "zip_path": "FULL/male11/long_tones/straight/m11_long_straight_a.wav",
+      "offset": 1098663993,
+      "compressed": 523144,
+      "size": 689586,
+      "crc": 2269247046,
+      "sha256": "e1c494a382118e10205cbe04cd2cb5d8ae08356e527d57d740d6e1d2eeefa9b9"
+    },
+    {
+      "path": "m11_long_straight_i.wav",
+      "zip_path": "FULL/male11/long_tones/straight/m11_long_straight_i.wav",
+      "offset": 1097110729,
+      "compressed": 526041,
+      "size": 693844,
+      "crc": 3126707059,
+      "sha256": "5c0d16814a49c1f4bd7d246500dd68452fac72cd1078eefc492f435d7fc692c9"
+    },
+    {
+      "path": "m11_long_straight_u.wav",
+      "zip_path": "FULL/male11/long_tones/straight/m11_long_straight_u.wav",
+      "offset": 1098181900,
+      "compressed": 481976,
+      "size": 689588,
+      "crc": 2008053099,
+      "sha256": "b42060e4ea8ee34d67e886b5368cc6790346529687cb3339f123fe0c73214b04"
+    },
+    {
+      "path": "m1_long_straight_a.wav",
+      "zip_path": "FULL/male1/long_tones/straight/m1_long_straight_a.wav",
+      "offset": 2029951515,
+      "compressed": 600306,
+      "size": 897668,
+      "crc": 2664098753,
+      "sha256": "27abc074bca36086b1abc0093e920bc750e30ac37a52bd22ae9de1e89620dd72"
+    },
+    {
+      "path": "m1_long_straight_i.wav",
+      "zip_path": "FULL/male1/long_tones/straight/m1_long_straight_i.wav",
+      "offset": 2028257532,
+      "compressed": 568232,
+      "size": 897668,
+      "crc": 2436656680,
+      "sha256": "d2ea9c62b30bc542991d3c9ed1b32e3c08a451614c7672fa0b8f4cbac3f15f52"
+    },
+    {
+      "path": "m1_long_straight_u.wav",
+      "zip_path": "FULL/male1/long_tones/straight/m1_long_straight_u.wav",
+      "offset": 2029407543,
+      "compressed": 543857,
+      "size": 834120,
+      "crc": 1313108941,
+      "sha256": "533177fc95db9c7272195d310b20603f7cd7a895bb1d3ca0acd9b27afeb4fc25"
+    },
+    {
+      "path": "m2_long_straight_a.wav",
+      "zip_path": "FULL/male2/long_tones/straight/m2_long_straight_a.wav",
+      "offset": 797107674,
+      "compressed": 587656,
+      "size": 760274,
+      "crc": 1315641583,
+      "sha256": "d82342655730126bfe78d0f351714a0bab8438bb23a4a4dccd6426633eb3610e"
+    },
+    {
+      "path": "m2_long_straight_i.wav",
+      "zip_path": "FULL/male2/long_tones/straight/m2_long_straight_i.wav",
+      "offset": 796069199,
+      "compressed": 585912,
+      "size": 805234,
+      "crc": 927310791,
+      "sha256": "6df61ec7415355514af516cdd363be6c9722405e695801020f0fce0efbf9c63b"
+    },
+    {
+      "path": "m2_long_straight_u.wav",
+      "zip_path": "FULL/male2/long_tones/straight/m2_long_straight_u.wav",
+      "offset": 797695445,
+      "compressed": 488512,
+      "size": 764362,
+      "crc": 2287950940,
+      "sha256": "1da7e550015119636d15c09585fb59aae00471145e161e1c0da4b6273c22c3a7"
+    },
+    {
+      "path": "m3_long_straight_a.wav",
+      "zip_path": "FULL/male3/long_tones/straight/m3_long_straight_a.wav",
+      "offset": 686206086,
+      "compressed": 776769,
+      "size": 1037528,
+      "crc": 3987427308,
+      "sha256": "0220658c4ac8b96392c2bbcc3348fa757ed6264185610d31daef87ec0399cf4f"
+    },
+    {
+      "path": "m3_long_straight_i.wav",
+      "zip_path": "FULL/male3/long_tones/straight/m3_long_straight_i.wav",
+      "offset": 684626067,
+      "compressed": 774489,
+      "size": 1053572,
+      "crc": 2246756474,
+      "sha256": "906b95716b6d7859fe21c69aea74b2efaf30ff3b1e9a431eb0ab7f983903e4c1"
+    },
+    {
+      "path": "m3_long_straight_u.wav",
+      "zip_path": "FULL/male3/long_tones/straight/m3_long_straight_u.wav",
+      "offset": 686982970,
+      "compressed": 821683,
+      "size": 1128442,
+      "crc": 2770580943,
+      "sha256": "46ea405124a2763cc1acfa92a00878fc5ee8f1bb9b00f592b1ca2c2e4d053f7f"
+    },
+    {
+      "path": "m4_long_straight_a.wav",
+      "zip_path": "FULL/male4/long_tones/straight/m4_long_straight_a.wav",
+      "offset": 565432020,
+      "compressed": 512226,
+      "size": 697310,
+      "crc": 3330491825,
+      "sha256": "09eb6dd466b2b9c13cf2a39e4710359b9e1d3aafb43521b59335b92c36245872"
+    },
+    {
+      "path": "m4_long_straight_i.wav",
+      "zip_path": "FULL/male4/long_tones/straight/m4_long_straight_i.wav",
+      "offset": 564163562,
+      "compressed": 445884,
+      "size": 660804,
+      "crc": 664579330,
+      "sha256": "5994fbbde27eba5b3b3a5c048127ea4c22e9787451923f4db4e8db7d5a0224d3"
+    },
+    {
+      "path": "m4_long_straight_u.wav",
+      "zip_path": "FULL/male4/long_tones/straight/m4_long_straight_u.wav",
+      "offset": 565041282,
+      "compressed": 390623,
+      "size": 569538,
+      "crc": 1814532038,
+      "sha256": "5807c32d2e062a6ea0228ecd979394b2a3b275676d440af23699806bce7cdd73"
+    },
+    {
+      "path": "m5_long_straight_a.wav",
+      "zip_path": "FULL/male5/long_tones/straight/m5_long_straight_a.wav",
+      "offset": 914772679,
+      "compressed": 632907,
+      "size": 846040,
+      "crc": 1488455631,
+      "sha256": "ebb017565075909e2f5ed3f71b32c5ccb9d02711752c3d185ef8bc71522c3868"
+    },
+    {
+      "path": "m5_long_straight_i.wav",
+      "zip_path": "FULL/male5/long_tones/straight/m5_long_straight_i.wav",
+      "offset": 912970788,
+      "compressed": 527494,
+      "size": 710680,
+      "crc": 3751531884,
+      "sha256": "244d3cb1623354e1da9e1ea63eafb54114d3ee816be4e82619650c0fa05e1eef"
+    },
+    {
+      "path": "m5_long_straight_u.wav",
+      "zip_path": "FULL/male5/long_tones/straight/m5_long_straight_u.wav",
+      "offset": 914095906,
+      "compressed": 676658,
+      "size": 954328,
+      "crc": 3580818685,
+      "sha256": "1a70e04780c3530a730cbf1e14b7235f8ed6f853cf0e687e5ebbb94ebcd2b23b"
+    },
+    {
+      "path": "m6_long_straight_a.wav",
+      "zip_path": "FULL/male6/long_tones/straight/m6_long_straight_a.wav",
+      "offset": 1925875986,
+      "compressed": 910554,
+      "size": 1227746,
+      "crc": 913815671,
+      "sha256": "0b131c19f7fba2dd377ad68b245d453bdb2eba51c912a0dc20880860c46c42c6"
+    },
+    {
+      "path": "m6_long_straight_i.wav",
+      "zip_path": "FULL/male6/long_tones/straight/m6_long_straight_i.wav",
+      "offset": 1924179439,
+      "compressed": 830193,
+      "size": 1158580,
+      "crc": 3070075476,
+      "sha256": "a350534e8144941e75b767f77a45e854c8c4f4e52f240c4518c4eabb443aba1d"
+    },
+    {
+      "path": "m6_long_straight_u.wav",
+      "zip_path": "FULL/male6/long_tones/straight/m6_long_straight_u.wav",
+      "offset": 1926786655,
+      "compressed": 762250,
+      "size": 1100942,
+      "crc": 1583363132,
+      "sha256": "98e026f84c2e863da1e83e70a7668d29df9412aa705afc42eadc434516a36c49"
+    },
+    {
+      "path": "m7_long_straight_a.wav",
+      "zip_path": "FULL/male7/long_tones/straight/m7_long_straight_a.wav",
+      "offset": 1608311372,
+      "compressed": 559740,
+      "size": 639874,
+      "crc": 1994465997,
+      "sha256": "819b8636a513565497f83302a2acd089adad9a3475e485478084498cf49f81ab"
+    },
+    {
+      "path": "m7_long_straight_i.wav",
+      "zip_path": "FULL/male7/long_tones/straight/m7_long_straight_i.wav",
+      "offset": 1606794860,
+      "compressed": 755280,
+      "size": 941872,
+      "crc": 906679550,
+      "sha256": "4eac7119203b39754ac03d0990b986cf87e7f0b38a6e7a4867f558c2350ca48e"
+    },
+    {
+      "path": "m7_long_straight_u.wav",
+      "zip_path": "FULL/male7/long_tones/straight/m7_long_straight_u.wav",
+      "offset": 1608871227,
+      "compressed": 665499,
+      "size": 880448,
+      "crc": 1296824450,
+      "sha256": "f3bcc0d68880771b165e9c520b0d2163144e6f901dc730ebbc17301c9785192d"
+    },
+    {
+      "path": "m8_long_straight_a.wav",
+      "zip_path": "FULL/male8/long_tones/straight/m8_long_straight_a.wav",
+      "offset": 1811336231,
+      "compressed": 704068,
+      "size": 918918,
+      "crc": 3310435083,
+      "sha256": "9adce8c9c6d3bc93c1c8f3d4604d2007e5a9f0c83b0670e4be29570ef1d35628"
+    },
+    {
+      "path": "m8_long_straight_i.wav",
+      "zip_path": "FULL/male8/long_tones/straight/m8_long_straight_i.wav",
+      "offset": 1810125323,
+      "compressed": 602146,
+      "size": 804608,
+      "crc": 230747420,
+      "sha256": "ddcac8795231492a3283ca89ee41a49fe8b45a7350a54c66bfbcd33cf867f8d0"
+    },
+    {
+      "path": "m8_long_straight_u.wav",
+      "zip_path": "FULL/male8/long_tones/straight/m8_long_straight_u.wav",
+      "offset": 1812040414,
+      "compressed": 595084,
+      "size": 795816,
+      "crc": 3328536437,
+      "sha256": "ca73572a042309cd874f41762ed39c24e08ea569c72bbcb51793a63d537c8321"
+    },
+    {
+      "path": "m9_long_straight_a.wav",
+      "zip_path": "FULL/male9/long_tones/straight/m9_long_straight_a.wav",
+      "offset": 1714026725,
+      "compressed": 627078,
+      "size": 717668,
+      "crc": 3368970572,
+      "sha256": "93aef9fb38d3ab55f9d2b367a23aa9309de349e0c83f9eaff9b5b1b15e25f91a"
+    },
+    {
+      "path": "m9_long_straight_i.wav",
+      "zip_path": "FULL/male9/long_tones/straight/m9_long_straight_i.wav",
+      "offset": 1712933330,
+      "compressed": 508186,
+      "size": 684376,
+      "crc": 3930527890,
+      "sha256": "bc20893f488f78bbb62fe36521c9ca8c0cf5443fe9e582a2c43bc368b15ba925"
+    },
+    {
+      "path": "m9_long_straight_u.wav",
+      "zip_path": "FULL/male9/long_tones/straight/m9_long_straight_u.wav",
+      "offset": 1714653918,
+      "compressed": 546895,
+      "size": 736162,
+      "crc": 325302768,
+      "sha256": "1023faa16b533a5c52989e00803e7ba180673040d29f164768c90d144ae0b76d"
+    },
+    {
+      "path": "readme-anon.txt",
+      "zip_path": "readme-anon.txt",
+      "offset": 2076591174,
+      "compressed": 444,
+      "size": 859,
+      "crc": 97940074,
+      "sha256": "92e2632c2ecb4785283cb05d0fd4d7e4d51a6425b71e6a8a9184dab048ec8a4a"
+    },
+    {
+      "path": "test_singers_technique.txt",
+      "zip_path": "test_singers_technique.txt",
+      "offset": 2076592683,
+      "compressed": 23,
+      "size": 34,
+      "crc": 507087910,
+      "sha256": "990f40225b488e948a752511254a0b90d4aaf9c6c7a7b19c6675c11882e712b3"
+    },
+    {
+      "path": "train_singers_technique.txt",
+      "zip_path": "train_singers_technique.txt",
+      "offset": 2076592115,
+      "compressed": 46,
+      "size": 104,
+      "crc": 1041131383,
+      "sha256": "56de742df1c5355fef832847f4cb971fd9aa69e18652f7bcc8c77b17c714272e"
+    }
+  ]
+}

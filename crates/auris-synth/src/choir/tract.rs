@@ -4,13 +4,23 @@ const SECTIONS: usize = 8;
 const DELAY_CAPACITY: usize = 64;
 const SPEED_OF_SOUND: f32 = 343.0;
 
-// Designed area profiles in square centimetres, ordered from glottis to lips.
-// They describe rounded /u/, open /a/ and front /i/ tube configurations.
-const AREAS: [[f32; SECTIONS]; 3] = [
-    [4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 4.0, 0.3],
-    [0.55, 0.6, 0.75, 1.0, 3.2, 4.8, 5.4, 4.0],
-    [4.5, 4.5, 4.5, 4.5, 0.5, 0.5, 0.5, 1.5],
+// Area profiles in square centimetres, ordered from glottis to lips: /u/, /a/, /i/.
+// Bounded fitting to real sustained vowels: see docs/choir-copy-synthesis.md and
+// tools/eval/references/choir-mel-calibration.json. No recordings enter the instrument.
+pub(super) const AREAS: [[f32; SECTIONS]; 3] = [
+    [
+        4.0, 2.346_775, 3.189_9, 3.529_518, 3.812_508, 5.260_023, 2.397_156, 0.879_734,
+    ],
+    [
+        0.55, 0.576_749, 0.308_188, 0.527_494, 5.303_491, 4.571_768, 3.423_561, 7.022_885,
+    ],
+    [
+        4.5, 3.013_471, 2.314_088, 1.964_106, 0.466_615, 0.409_956, 1.146_091, 3.818_364,
+    ],
 ];
+pub(super) const RADIATION_HZ: f32 = 312.503_16;
+// Preserve the median pre-fit training-note RMS per vowel, independently of mel loss.
+pub(super) const OUTPUT_GAINS: [f32; 3] = [0.955_550, 1.137_035, 1.232_421];
 
 fn scatter(right: f32, left: f32, reflection: f32) -> (f32, f32) {
     let scattered = reflection * (right - left);
@@ -83,16 +93,37 @@ impl Tract {
             target_output_gain: 1.0,
             radiation_memory: 0.0,
             radiation_output: 0.0,
-            radiation_pole: (-std::f32::consts::TAU * 80.0 / sample_rate).exp(),
+            radiation_pole: (-std::f32::consts::TAU * RADIATION_HZ / sample_rate).exp(),
         }
     }
 
+    #[cfg(any(not(feature = "choir-calibration"), test))]
     pub(super) fn configure(&mut self, vowel: f32, length: f32, sample_rate: f32) {
+        self.configure_profile(
+            vowel,
+            length,
+            sample_rate,
+            &AREAS,
+            RADIATION_HZ,
+            &OUTPUT_GAINS,
+        );
+    }
+
+    pub(super) fn configure_profile(
+        &mut self,
+        vowel: f32,
+        length: f32,
+        sample_rate: f32,
+        profiles: &[[f32; SECTIONS]; 3],
+        radiation_hz: f32,
+        output_gains: &[f32; 3],
+    ) {
         let first = (vowel as usize).min(1);
         let blend = (vowel - first as f32).clamp(0.0, 1.0);
         let areas: [f32; SECTIONS] = std::array::from_fn(|i| {
-            AREAS[first][i] + (AREAS[first + 1][i] - AREAS[first][i]) * blend
+            profiles[first][i] + (profiles[first + 1][i] - profiles[first][i]) * blend
         });
+        self.radiation_pole = (-std::f32::consts::TAU * radiation_hz / sample_rate).exp();
         for (target, pair) in self.targets.iter_mut().zip(areas.windows(2)) {
             *target = (pair[0] - pair[1]) / (pair[0] + pair[1]);
         }
@@ -100,7 +131,9 @@ impl Tract {
         // Convert at the glottis and back to radiated flow at the mouth. Reading lip
         // pressure directly would make a narrow /u/ aperture much louder than /a/.
         self.target_input_gain = 1.0 / areas[0];
-        self.target_output_gain = areas[SECTIONS - 1];
+        let normalization =
+            output_gains[first] + (output_gains[first + 1] - output_gains[first]) * blend;
+        self.target_output_gain = areas[SECTIONS - 1] * normalization;
         self.target_delay = (length * sample_rate / (SPEED_OF_SOUND * SECTIONS as f32))
             .clamp(1.0, (DELAY_CAPACITY - 2) as f32);
     }

@@ -1,6 +1,6 @@
 //! A wordless ensemble instrument with glottal excitation and physical vocal tracts.
 //!
-//! Each played note drives four eight-section Kelly–Lochbaum tube waveguides. Designed
+//! Each played note drives four eight-section Kelly–Lochbaum tube waveguides. Calibrated
 //! area profiles morph between rounded "oo", open "ah" and front "ee" vowels. The source
 //! is prescribed band-limited glottal flow, with independent breath noise; the acoustic
 //! tract is a reduced physical model, rather than a simulation of vocal-fold biomechanics.
@@ -147,6 +147,8 @@ pub struct Choir {
     expression: f32,
     output_gain: f32,
     target_gain: f32,
+    #[cfg(feature = "choir-calibration")]
+    calibration: ([[f32; 8]; 3], f32, [f32; 3]),
 }
 
 impl Default for Choir {
@@ -181,10 +183,42 @@ impl Choir {
             expression: 1.0,
             output_gain: 1.0,
             target_gain: 1.0,
+            #[cfg(feature = "choir-calibration")]
+            calibration: (tract::AREAS, tract::RADIATION_HZ, tract::OUTPUT_GAINS),
         };
         choir.refresh();
         choir.output_gain = choir.target_gain;
         choir
+    }
+
+    /// Overrides tract areas, lip radiation and level normalization for offline fitting.
+    ///
+    /// Available only with the development `choir-calibration` feature. Each profile
+    /// contains eight areas in square centimetres, from glottis to lips, ordered
+    /// oo/ah/ee; output gains have the same order. Invalid input leaves the instrument
+    /// unchanged. Call off the audio thread.
+    #[cfg(feature = "choir-calibration")]
+    pub fn set_calibration_tract(
+        &mut self,
+        areas: [[f32; 8]; 3],
+        radiation_hz: f32,
+        output_gains: [f32; 3],
+    ) -> bool {
+        if !areas
+            .iter()
+            .flatten()
+            .all(|area| area.is_finite() && (0.1..=10.0).contains(area))
+            || !radiation_hz.is_finite()
+            || !(30.0..=4_000.0).contains(&radiation_hz)
+            || !output_gains
+                .iter()
+                .all(|gain| gain.is_finite() && (0.05..=20.0).contains(gain))
+        {
+            return false;
+        }
+        self.calibration = (areas, radiation_hz, output_gains);
+        self.refresh();
+        true
     }
 
     fn refresh(&mut self) {
@@ -208,9 +242,19 @@ impl Choir {
             );
             for (index, singer) in voice.singers.iter_mut().enumerate() {
                 let length = length * (1.0 + LENGTH_VARIATION[index] * self.sound.ensemble);
+                #[cfg(not(feature = "choir-calibration"))]
                 singer
                     .tract
                     .configure(self.params.at(P_VOWEL), length, sample_rate);
+                #[cfg(feature = "choir-calibration")]
+                singer.tract.configure_profile(
+                    self.params.at(P_VOWEL),
+                    length,
+                    sample_rate,
+                    &self.calibration.0,
+                    self.calibration.1,
+                    &self.calibration.2,
+                );
             }
         }
     }
@@ -239,12 +283,12 @@ fn descriptors() -> Vec<ParamDescriptor> {
         ParamDescriptor::new(P_VOWEL, "vowel", "Vowel (Oo / Ah / Ee)", 0.0, 2.0, 1.0),
         ParamDescriptor::percent(P_SIZE, "voice_size", "Voice Size", 0.46),
         ParamDescriptor::percent(P_ENSEMBLE, "ensemble", "Ensemble Variation", 0.65),
-        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.12),
-        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.6),
+        ParamDescriptor::percent(P_BREATH, "breath", "Breath", 0.234_949),
+        ParamDescriptor::percent(P_TONE, "tone", "Tone", 0.164_280),
         ParamDescriptor::new(P_VIBRATO, "vibrato", "Vibrato", 0.0, 0.5, 0.09)
             .with_unit(ParamUnit::Semitones),
         ParamDescriptor::percent(P_WIDTH, "width", "Stereo Width", 0.8),
-        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.12)
+        ParamDescriptor::new(P_ATTACK, "attack", "Attack", 0.001, 3.0, 0.282_929)
             .with_unit(ParamUnit::Seconds)
             .with_curve(ParamValueCurve::Power(3.0)),
         ParamDescriptor::new(P_RELEASE, "release", "Release", 0.005, 6.0, 0.7)

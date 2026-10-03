@@ -356,6 +356,10 @@ pub mod architecture {
     //! prescribed, band-limited glottal-flow pulse and breath noise. Its vowel, voice size,
     //! ensemble variation and stereo width are ordinary automatable plugin parameters; it uses
     //! instrument tracks and MIDI notes, with no lyric or offline voice-model setup.
+    //! Its factory tract profiles, source controls and lip radiation are fitted offline to
+    //! real sustained vowels, using the production DSP at 48 kHz and a frozen log-mel loss.
+    //! Training and held-out singers are disjoint. Only calibrated constants enter the
+    //! application; the fitting overrides require the development `choir-calibration` feature.
     //!
     //! Composition interprets supported GM family hints as native instruments before looking
     //! for an optional installed font. The hint describes musical intent, not a promise to

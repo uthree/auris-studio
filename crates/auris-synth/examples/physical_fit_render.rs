@@ -12,7 +12,7 @@ use std::{
 use auris_core::{
     AudioBuffer, Instrument, NoteEvent, Parameterized, PrepareContext, ProcessContext,
 };
-use auris_synth::{Model, Physical};
+use auris_synth::{Choir, Model, Physical};
 use serde::Deserialize;
 
 const RATE: u32 = 24_000;
@@ -63,6 +63,21 @@ struct Request {
     params: BTreeMap<String, f32>,
     #[serde(default = "default_rate")]
     sample_rate: u32,
+    #[serde(default)]
+    choir_calibration: Option<ChoirCalibration>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChoirCalibration {
+    areas: [[f32; 8]; 3],
+    radiation_hz: f32,
+    #[serde(default = "unity_output_gains")]
+    output_gains: [f32; 3],
+}
+
+fn unity_output_gains() -> [f32; 3] {
+    [1.0; 3]
 }
 
 fn default_rate() -> u32 {
@@ -74,12 +89,41 @@ fn render(request: &Request) -> Result<Vec<f32>, Box<dyn Error>> {
 }
 
 fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Error>> {
-    let model = match request.model.as_str() {
-        "piano" => Model::Piano,
-        "guitar" => Model::Guitar,
-        "violin" => Model::Violin,
+    let mut instrument: Box<dyn Instrument> = match request.model.as_str() {
+        "piano" => Box::new(Physical::new(Model::Piano)),
+        "guitar" => Box::new(Physical::new(Model::Guitar)),
+        "violin" => Box::new(Physical::new(Model::Violin)),
+        "choir" => {
+            #[cfg(feature = "choir-calibration")]
+            let mut choir = Choir::new();
+            #[cfg(not(feature = "choir-calibration"))]
+            let choir = Choir::new();
+            if let Some(calibration) = &request.choir_calibration {
+                #[cfg(feature = "choir-calibration")]
+                if !choir.set_calibration_tract(
+                    calibration.areas,
+                    calibration.radiation_hz,
+                    calibration.output_gains,
+                ) {
+                    return Err("invalid choir calibration".into());
+                }
+                #[cfg(not(feature = "choir-calibration"))]
+                {
+                    let _ = (
+                        calibration.areas,
+                        calibration.radiation_hz,
+                        calibration.output_gains,
+                    );
+                    return Err("choir-calibration feature is required".into());
+                }
+            }
+            Box::new(choir)
+        }
         _ => return Err("unknown model".into()),
     };
+    if request.model != "choir" && request.choir_calibration.is_some() {
+        return Err("tract calibration requires the choir model".into());
+    }
     if !request.seconds.is_finite()
         || !(0.05..=20.0).contains(&request.seconds)
         || !request.hold.is_finite()
@@ -95,7 +139,6 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
     if frames * request.notes.len() > 32_000_000 {
         return Err("PCM request exceeds memory budget".into());
     }
-    let mut instrument = Physical::new(model);
     instrument.prepare(&PrepareContext::new(f64::from(rate), block, 2));
     for (key, value) in &request.params {
         let Some(descriptor) = instrument.parameters().iter().find(|p| p.key == *key) else {
@@ -161,7 +204,12 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
             let context =
                 ProcessContext::realtime(f64::from(rate), block, start as u64, 120.0, true);
             instrument.process(&events, &mut buffer, &context);
-            samples.extend_from_slice(&buffer.channel(0)[..block.min(frames - start)]);
+            samples.extend(
+                buffer.channel(0)[..block.min(frames - start)]
+                    .iter()
+                    .zip(buffer.channel(1))
+                    .map(|(left, right)| (left + right) * 0.5),
+            );
         }
     }
     if samples.iter().any(|sample| !sample.is_finite()) {
@@ -172,7 +220,7 @@ fn render_blocks(request: &Request, block: usize) -> Result<Vec<f32>, Box<dyn Er
 
 fn main() -> Result<(), Box<dyn Error>> {
     if std::env::args().nth(1).as_deref() == Some("--describe") {
-        let models: BTreeMap<_, _> = [
+        let mut models: BTreeMap<_, _> = [
             ("piano", Model::Piano),
             ("guitar", Model::Guitar),
             ("violin", Model::Violin),
@@ -188,6 +236,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             (name, parameters)
         })
         .collect();
+        let choir = Choir::new();
+        models.insert(
+            "choir",
+            choir
+                .parameters()
+                .iter()
+                .map(|p| (p.key.clone(), choir.param(p.id)))
+                .collect(),
+        );
         let mut description = serde_json::to_value(&models)?;
         let response_fraction = if description["violin"].get("bow_response").is_some() {
             0.5
@@ -299,6 +356,7 @@ mod tests {
             hold: 0.05,
             params: BTreeMap::new(),
             sample_rate: RATE,
+            choir_calibration: None,
         };
         let samples = render(&request).unwrap();
         assert_eq!(samples.len(), 4848);
@@ -322,6 +380,7 @@ mod tests {
             hold: 0.1,
             params: BTreeMap::from([("missing".into(), 0.5)]),
             sample_rate: RATE,
+            choir_calibration: None,
         };
         assert!(
             render(&request)
@@ -354,9 +413,30 @@ mod tests {
             hold: 0.125,
             params: BTreeMap::new(),
             sample_rate: 48_000,
+            choir_calibration: None,
         };
         assert_eq!(render(&request).unwrap().len(), 6000);
         request.sample_rate = 1;
         assert!(render(&request).is_err());
+    }
+
+    #[test]
+    fn choir_worker_preserves_guides_resets_and_exact_pcm_across_blocks() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "model": "choir", "notes": [
+                {"pitch": 60, "velocity": 0.75,
+                 "bends": [{"seconds": 0.037, "value": 0.3}]},
+                {"pitch": 60, "velocity": 0.75,
+                 "bends": [{"seconds": 0.037, "value": 0.3}]}
+            ],
+            "seconds": 0.125, "hold": 0.125, "sample_rate": 48000,
+            "params": {"vowel": 1.0, "voice_size": 0.4}
+        }))
+        .unwrap();
+        let audio = render_blocks(&request, 64).unwrap();
+        assert_eq!(audio.len(), 12000);
+        assert_eq!(&audio[..6000], &audio[6000..]);
+        assert_eq!(audio, render_blocks(&request, 257).unwrap());
+        assert!(audio.iter().any(|sample| sample.abs() > 0.001));
     }
 }

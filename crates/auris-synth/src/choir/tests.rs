@@ -343,3 +343,26 @@ fn extreme_parameters_events_and_sample_rates_remain_finite() {
         }
     }
 }
+
+#[cfg(feature = "choir-calibration")]
+#[test]
+fn offline_tract_overrides_reject_invalid_geometry_without_changing_the_instrument() {
+    let mut choir = prepared();
+    let original = choir.calibration;
+    for invalid in [0.0, -1.0, 11.0, f32::NAN, f32::INFINITY] {
+        let mut areas = tract::AREAS;
+        areas[1][3] = invalid;
+        assert!(!choir.set_calibration_tract(areas, tract::RADIATION_HZ, tract::OUTPUT_GAINS));
+        assert_eq!(choir.calibration, original);
+    }
+    for invalid in [0.0, 4_001.0, f32::NAN, f32::INFINITY] {
+        assert!(!choir.set_calibration_tract(tract::AREAS, invalid, tract::OUTPUT_GAINS));
+        assert_eq!(choir.calibration, original);
+    }
+    let mut areas = tract::AREAS;
+    areas[1][3] *= 1.5;
+    assert!(!choir.set_calibration_tract(tract::AREAS, 500.0, [f32::NAN; 3]));
+    assert_eq!(choir.calibration, original);
+    assert!(choir.set_calibration_tract(areas, 500.0, [1.0; 3]));
+    assert_eq!(choir.calibration, (areas, 500.0, [1.0; 3]));
+}

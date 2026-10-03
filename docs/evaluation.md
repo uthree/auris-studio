@@ -10,6 +10,8 @@ It fits only training notes and evaluates held-out pitches and dynamics with the
 renderer. This acoustic distance complements the symbolic and learned song measurements below.
 The [long-note/trajectory extension](physical-trajectories.md) adds 3/6-second notes, real
 violin glissandi, recorded performance guides and separate late-sustain/transition/release losses.
+The [choir calibration](choir-copy-synthesis.md) fits the native vocal-tract ensemble to
+real sustained vowels, with 24 training notes and 80 notes from separate held-out singers.
 
 ## The symbolic ruler
 
