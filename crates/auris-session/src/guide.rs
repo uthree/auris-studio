@@ -1338,12 +1338,20 @@ pub mod composition {
     //! the kick *pattern*, not the kick *part*.
     //!
     //! A final score pass lets generated chords, stabs and arpeggios leave space around the
-    //! foreground and answer in its planned breaths. It reads a stable foreground selection;
-    //! reordering the roster cannot change it. Bass, drums, sustained ambient textures and
+    //! foreground and answer in its planned breaths. It reads the union of all playing melody
+    //! parts, including overlapping leads and instrument handoffs; reordering the roster cannot
+    //! change it. Bass, drums, sustained ambient textures and
     //! authored rhythm patterns retain their own attacks. Lyric sections use the actual sung
     //! notes after the session has written them. Local generation and regeneration read the
     //! overlapping foreground already in the document, changing only the requested clip.
     //! Every result is ordinary editable note data; playback never runs this planning pass.
+    //!
+    //! Presets choose participating parts explicitly for each section. Additional instruments
+    //! enter as alternate leads and supporting textures rather than a continuously enlarged
+    //! ensemble. Reduced verses, drum-free passages and sparse outros leave room for later
+    //! arrivals. A held ending inherits the final section's participating parts, so instruments
+    //! that have left do not return solely for the last chord. An unrestricted final section
+    //! still lets the whole roster land.
     //!
     //! Reading the same harmony has to mean reading the same *notes*, which is why a part steps
     //! through [`ChordScale`](auris_core::theory::chord_scale::ChordScale) rather than through

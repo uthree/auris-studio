@@ -1,0 +1,36 @@
+{
+  "schema": "auris.preset-arrangement-structure",
+  "schema_version": 3,
+  "measurement": "arrangement_structure",
+  "interpretation": "Default-seed arrangement shape case for before/after comparison; not a total quality score.",
+  "baseline_commit": "9e2c5adee5ed1cc44c7992ce127698ee6f161d04",
+  "candidate": "final",
+  "seed_policy": "Each preset's declared seed; no explicit --seed override was used.",
+  "sounding_track_definition": "A track sounds in a bar when a written note duration overlaps that bar.",
+  "onset_free_bar_definition": "A bar with zero note starts; it may still be sounding because a note is held across its boundary.",
+  "silent_bar_definition": "A bar with zero sounding tracks under the sounding_track_definition.",
+  "mean_note_onsets_definition": "Arithmetic mean of note_onset_count over the section's bars, read directly from bar_measurements.",
+  "inputs": {
+    "measurement_source": "crates/auris-compose/examples/arrangement_measure.rs",
+    "measurement_source_sha256": "BB3DE75BD59B475EA5F0F5DC32D9FAD5A78490CC8FBD950A249C9D718F616977",
+    "baseline_arrangement": {"path": "target/evaluation-baseline/arrangement.json", "sha256": "831034A14C1BECC6D2E99C8DCC0034F3FFF560708A226DB2983585AE04E15D64"},
+    "baseline_symbolic": {"path": "target/evaluation-baseline/symbolic.txt", "sha256": "5D1EF0EE37AC9B0B8BF34504474B3EF875A5E4ADDF4BD73B8206AE431001D1BC"},
+    "candidate_arrangement": {"path": "target/evaluation-final/arrangement.json", "sha256": "A569C796D87B924E00BE4435506CD3E44BB8D1A8BE5EE1F182806CA5A47C0C78"},
+    "candidate_symbolic": {"path": "target/evaluation-final/symbolic.txt", "sha256": "DF569DFC5F7F0E3AA649BC382CE4D6AB2D5B90ACBD54A526AF984BB70C8CF93D"},
+    "candidate_binary": {"path": "target/evaluation-final/auris.exe", "sha256": "B3A9E16AC7ACABD725AD96E0D9C0520D3773AA0708A52F3D32E4B7E9F8265539"},
+    "baseline_source_archive_sha256": "A3A0E9584172B5436C3B0AB8F1566D696992988F9D4375EEDDF3B6D1AA586FCA",
+    "soundfont_workspace_copy_sha256": "EE51D2C4B1525E70F19A45909C4FD7A2E26D91D115FA89DBF5A6BC413D8B9BF3"
+  },
+  "full_per_bar_references": {"before": "target/evaluation-baseline/arrangement.json", "after": "target/evaluation-final/arrangement.json"},
+  "presets": [
+    {"name":"chiptune","before":{"tracks":4,"sections":6,"bars":44,"mean_onsets":34.27,"peak":42,"quiet":28,"ratio":1.5,"onset_free":0,"silent":0},"after":{"tracks":7,"sections":6,"bars":44,"mean_onsets":38.21,"peak":51,"quiet":29,"ratio":1.76,"onset_free":0,"silent":0},"sections_after":[["intro",3,32.75],["verse",4,37.12],["chorus",5,42.25],["verse2",5,40.5],["chorus2",5,44.88],["outro",4,31.75]],"changed_joins":5},
+    {"name":"game-loop","before":{"tracks":4,"sections":2,"bars":16,"mean_onsets":31.12,"peak":34,"quiet":27,"ratio":1.26,"onset_free":0,"silent":0},"after":{"tracks":6,"sections":2,"bars":16,"mean_onsets":35.0,"peak":38,"quiet":31,"ratio":1.23,"onset_free":0,"silent":0},"sections_after":[["verse",4,32.88],["chorus",5,37.12]],"changed_joins":1,"form_note":"The 16-bar verse/chorus loop remains intact."},
+    {"name":"pop-band","before":{"tracks":6,"sections":10,"bars":68,"mean_onsets":27.86,"peak":35,"quiet":15,"ratio":2.33,"onset_free":0,"silent":0},"after":{"tracks":11,"sections":10,"bars":68,"mean_onsets":26.31,"peak":47,"quiet":15,"ratio":3.13,"onset_free":0,"silent":0},"sections_after":[["intro",3,23],["verse",4,25.25],["pre",6,22.25],["chorus",6,32.25],["verse2",4,23.12],["pre2",6,22.5],["chorus2",6,40.12],["bridge",4,17.12],["chorus3",7,33.88],["outro",4,23.62]],"changed_joins":9},
+    {"name":"city-pop","before":{"tracks":6,"sections":6,"bars":44,"mean_onsets":51.17,"peak":76,"quiet":39,"ratio":1.95,"onset_free":0,"silent":0},"after":{"tracks":10,"sections":6,"bars":44,"mean_onsets":52.17,"peak":76,"quiet":36,"ratio":2.11,"onset_free":0,"silent":0},"sections_after":[["intro",5,71],["verse",4,40],["chorus",5,49.25],["verse2",6,50.88],["chorus2",6,57.88],["outro",5,44]],"changed_joins":5},
+    {"name":"rock","before":{"tracks":5,"sections":6,"bars":44,"mean_onsets":33.46,"peak":44,"quiet":28,"ratio":1.57,"onset_free":0,"silent":0},"after":{"tracks":9,"sections":6,"bars":44,"mean_onsets":37.04,"peak":56,"quiet":28,"ratio":2.0,"onset_free":0,"silent":0},"sections_after":[["intro",4,31],["verse",4,32.25],["chorus",5,33.62],["verse2",5,42.12],["chorus2",7,51.75],["outro",5,31.5]],"changed_joins":5},
+    {"name":"jazz-trio","before":{"tracks":4,"sections":6,"bars":44,"mean_onsets":25.81,"peak":34,"quiet":21,"ratio":1.62,"onset_free":0,"silent":0},"after":{"tracks":4,"sections":6,"bars":44,"mean_onsets":25.81,"peak":34,"quiet":21,"ratio":1.62,"onset_free":0,"silent":0},"sections_after":[["intro",2,24],["verse",4,26.88],["chorus",4,26.62],["verse2",4,25.75],["chorus2",4,25.75],["outro",4,25.88]],"changed_joins":1,"form_note":"The final candidate retains the original four-track trio behavior."},
+    {"name":"orchestral","before":{"tracks":7,"sections":6,"bars":48,"mean_onsets":16.94,"peak":25,"quiet":2,"ratio":12.5,"onset_free":0,"silent":0},"after":{"tracks":13,"sections":6,"bars":48,"mean_onsets":19.81,"peak":45,"quiet":8,"ratio":5.62,"onset_free":0,"silent":0},"sections_after":[["intro",3,9.75],["verse",5,12.88],["chorus",8,29.5],["verse2",6,15.25],["chorus2",9,30.62],["outro",6,20.88]],"changed_joins":5},
+    {"name":"synthwave","before":{"tracks":6,"sections":6,"bars":48,"mean_onsets":25.38,"peak":33,"quiet":9,"ratio":3.67,"onset_free":0,"silent":0},"after":{"tracks":11,"sections":6,"bars":48,"mean_onsets":27.33,"peak":41,"quiet":9,"ratio":4.56,"onset_free":0,"silent":0},"sections_after":[["intro",3,12],["verse",4,21.38],["chorus",6,38.62],["verse2",6,24.62],["chorus2",6,39.62],["outro",5,27.75]],"changed_joins":5},
+    {"name":"ambient","before":{"tracks":4,"sections":5,"bars":40,"mean_onsets":5.9,"peak":12,"quiet":2,"ratio":6.0,"onset_free":8,"silent":0},"after":{"tracks":4,"sections":5,"bars":40,"mean_onsets":5.5,"peak":12,"quiet":2,"ratio":6.0,"onset_free":8,"silent":0},"sections_after":[["intro",1,1.25],["verse",4,8.25],["chorus",4,10],["verse2",3,6.75],["outro",1,1.25]],"changed_joins":3,"form_note":"Verse2 uses pad, glass, and cello; the coda uses pad. Eight onset-free bars remain sounding, with zero truly silent bars."}
+  ]
+}

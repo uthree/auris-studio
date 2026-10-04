@@ -241,6 +241,8 @@ pub fn plan(spec: &SongSpec) -> Frame {
     {
         let key = last.key;
         let (tempo, intensity) = (last.tempo, last.intensity);
+        // A sparse outro stays sparse on its landing; retired instruments do not re-enter.
+        let parts = last.parts.clone();
         let numeral = Numeral::new(1, diatonic_quality(key, 1).is_minor());
         let chord = numeral.chord_in(key);
         let length = grid.bar_ticks();
@@ -271,7 +273,7 @@ pub fn plan(spec: &SongSpec) -> Frame {
                 bar: 0,
             }],
             skeleton: vec![resting],
-            parts: Vec::new(),
+            parts,
             tweaks: Default::default(),
             coda: true,
         });
@@ -860,6 +862,22 @@ mod tests {
             "#,
         ));
         assert_eq!(plain.sections.len(), 1);
+    }
+
+    #[test]
+    fn a_held_ending_keeps_the_final_sections_instrument_selection() {
+        let frame = plan(&spec(
+            r#"
+            form = "verse outro"
+            [section.outro]
+            parts = "chords bass"
+            "#,
+        ));
+        let outro = &frame.sections[frame.sections.len() - 2];
+        let ending = frame.sections.last().unwrap();
+        assert!(ending.coda);
+        assert_eq!(ending.parts, outro.parts);
+        assert_eq!(ending.parts, ["chords", "bass"]);
     }
 
     #[test]

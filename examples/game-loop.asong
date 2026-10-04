@@ -17,10 +17,12 @@ form = ["verse", "chorus"]
 [section.verse]
 bars = 8
 intensity = 0.65
+parts = "lead chords bass kick snare hat"
 
 [section.chorus]
 bars = 8
 intensity = 0.75
+parts = "lead alt_chords arp bass kick snare hat"
 
 [[part]]
 name = "lead"
@@ -31,6 +33,16 @@ density = 0.45
 name = "chords"
 role = "chords"
 gate = 0.65
+
+[[part]]
+name = "arp"
+role = "arp"
+density = 0.3
+
+[[part]]
+name = "alt_chords"
+role = "chords"
+gate = 0.45
 
 [[part]]
 name = "bass"
