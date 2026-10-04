@@ -20,10 +20,9 @@
 //! the presets are parser tests that fail loudly — a field renamed without renaming it here breaks
 //! the build's tests rather than the user's first five minutes.
 //!
-//! Genre presets name General MIDI sounds. The session uses corresponding native acoustic
-//! models where available, and the optional General MIDI library for distinct electric,
-//! electronic and orchestral timbres. Missing library sounds are reported and use each part's
-//! built-in fallback. `chiptune` and `game-loop` need no SoundFont.
+//! Genre presets name native physical instruments directly, including the membrane and
+//! metal-plate drum kit. `chiptune` and `game-loop` retain their oscillator voices. Every preset
+//! plays without external sound assets.
 
 use crate::spec::SongSpec;
 
@@ -81,27 +80,27 @@ pub const PRESETS: &[SongPreset] = &[
     },
     SongPreset {
         name: "city-pop",
-        description: "Electric piano and slap bass over 丸サ進行",
+        description: "Piano, clarinet and bass over 丸サ進行",
         source: CITY_POP,
     },
     SongPreset {
         name: "rock",
-        description: "Overdriven guitar, organ and a hard kit",
+        description: "Electric guitars, choir and a hard kit",
         source: ROCK,
     },
     SongPreset {
         name: "jazz-trio",
-        description: "Piano, upright bass and brushes on a ii-V-I",
+        description: "Piano, bass and ride cymbal on a ii-V-I",
         source: JAZZ_TRIO,
     },
     SongPreset {
         name: "orchestral",
-        description: "Strings, horns and timpani in 3/4",
+        description: "Strings, woodwinds and mallets in 3/4",
         source: ORCHESTRAL,
     },
     SongPreset {
         name: "synthwave",
-        description: "Saw lead, analogue bass and a TR-808",
+        description: "Bowed lead, choir and bass over a steady kit",
         source: SYNTHWAVE,
     },
     SongPreset {
@@ -226,49 +225,49 @@ intensity = 0.5
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Lead 2 (sawtooth)"
+instrument = "auris.physical.violin"
 
 [[part]]
 name    = "keys"
 role    = "chords"
-program = "Electric Piano 1"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "strings"
 role    = "pad"
-program = "String Ensemble 1"
+instrument = "auris.physical.violin"
 gain    = -19
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Electric Bass (finger)"
+instrument = "auris.physical.bass"
 gate    = 0.8
 
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Standard Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
 role    = "riser"
-program = "Reverse Cymbal"
+instrument = "auris.physical.violin"
 
 [section.verse2]
 chords = "a-melo"
@@ -290,7 +289,7 @@ intensity = 0.95
 melody_from = "chorus"
 "#;
 
-/// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
+/// Piano, clarinet and bass on a sixteen-beat under 丸サ進行.
 ///
 /// The chorus plays 丸サ with its ii–V spelled out — `@marusa5` — which is how the genre itself
 /// intensifies the loop: the same four bars, one of them now moving twice. A chart with two
@@ -328,49 +327,49 @@ chords    = "sabi"
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Alto Sax"
+instrument = "auris.physical.clarinet"
 octave  = 5
 
 [[part]]
 name    = "rhodes"
 role    = "chords"
-program = "Electric Piano 1"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "stabs"
 role    = "stab"
-program = "Brass Section"
+instrument = "auris.physical.clarinet"
 gain    = -17
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Slap Bass 1"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Room Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
 role    = "riser"
-program = "Reverse Cymbal"
+instrument = "auris.physical.violin"
 
 [section.verse2]
 intensity = 0.55
@@ -382,7 +381,7 @@ chords    = "sabi"
 melody_from = "chorus"
 "#;
 
-/// Guitars, an organ pad and a kit that is allowed to be loud.
+/// Electric guitars, a choir pad and a kit that is allowed to be loud.
 ///
 /// The verse and the chorus play the same four chords the other way round: `@axis-minor` broods
 /// from the minor tonic, and the chorus rotates the loop to open on the relative major — the
@@ -417,45 +416,45 @@ chords    = "lift"
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Overdriven Guitar"
+instrument = "auris.physical.electric_guitar"
 
 [[part]]
 name    = "rhythm"
 role    = "chords"
-program = "Distortion Guitar"
+instrument = "auris.physical.electric_guitar"
 octave  = 3
 gate    = 0.65
 
 [[part]]
 name    = "organ"
 role    = "pad"
-program = "Rock Organ"
+instrument = "auris.physical.choir"
 gain    = -20
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Electric Bass (pick)"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "Power Kit"
+instrument = "auris.synth.drumkit"
 
 [section.verse2]
 intensity = 0.55
@@ -467,7 +466,7 @@ chords    = "lift"
 melody_from = "chorus"
 "#;
 
-/// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
+/// Piano, bass and a quiet kit, with a swing that means it.
 const JAZZ_TRIO: &str = r#"
 performance = "jazz-trio"
 writing_style = "jazz-trio"
@@ -496,35 +495,35 @@ intensity = 0.8
 [[part]]
 name    = "piano"
 role    = "chords"
-program = "Acoustic Grand Piano"
+instrument = "auris.physical.piano"
 
 [[part]]
 name    = "melody"
 role    = "melody"
-program = "Acoustic Grand Piano"
+instrument = "auris.physical.piano"
 octave  = 5
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Acoustic Bass"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 gain    = -12
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 gain    = -11
 
 [[part]]
 name    = "ride"
 role    = "hat"
-program = "Brush Kit"
+instrument = "auris.synth.drumkit"
 note    = 51
 
 [section.verse2]
@@ -536,7 +535,7 @@ intensity = 0.8
 melody_from = "chorus"
 "#;
 
-/// Slow, in three, with winds, bowed strings, harp, pitched timpani and a cymbal.
+/// Slow, in three, with winds, bowed strings, plucked guitar, low mallets and a cymbal.
 const ORCHESTRAL: &str = r#"
 performance = "orchestral"
 writing_style = "orchestral"
@@ -567,43 +566,43 @@ intensity = 0.4
 [[part]]
 name    = "flute"
 role    = "melody"
-program = "Flute"
+instrument = "auris.physical.tin_whistle"
 octave  = 6
 
 [[part]]
 name    = "horns"
 role    = "chords"
-program = "French Horn"
+instrument = "auris.physical.clarinet"
 octave  = 4
 
 [[part]]
 name    = "strings"
 role    = "pad"
-program = "String Ensemble 1"
+instrument = "auris.physical.violin"
 gain    = -13
 
 [[part]]
 name    = "harp"
 role    = "arp"
-program = "Orchestral Harp"
+instrument = "auris.physical.guitar"
 gain    = -15
 
 [[part]]
 name    = "cellos"
 role    = "bass"
-program = "Cello"
+instrument = "auris.physical.violin"
 
 [[part]]
 name    = "timpani"
 role    = "bass"
-program = "Timpani"
+instrument = "auris.physical.mallet"
 octave  = 2
 gain    = -8
 
 [[part]]
 name    = "cymbal"
 role    = "crash"
-program = "Orchestra Kit"
+instrument = "auris.synth.drumkit"
 
 [section.verse2]
 intensity = 0.55
@@ -614,7 +613,7 @@ intensity = 1.0
 melody_from = "chorus"
 "#;
 
-/// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
+/// A bowed lead and choir over an eighth-note bass and a steady physical kit.
 const SYNTHWAVE: &str = r#"
 performance = "synthwave"
 writing_style = "synthwave"
@@ -643,49 +642,49 @@ intensity = 0.95
 [[part]]
 name    = "lead"
 role    = "melody"
-program = "Lead 2 (sawtooth)"
+instrument = "auris.physical.violin"
 
 [[part]]
 name    = "pad"
 role    = "pad"
-program = "Pad 1 (new age)"
+instrument = "auris.physical.choir"
 gain    = -14
 
 [[part]]
 name    = "arp"
 role    = "arp"
-program = "Lead 5 (charang)"
+instrument = "auris.physical.electric_guitar"
 gain    = -15
 
 [[part]]
 name    = "bass"
 role    = "bass"
-program = "Synth Bass 1"
+instrument = "auris.physical.bass"
 
 [[part]]
 name    = "kick"
 role    = "kick"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "snare"
 role    = "snare"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "hat"
 role    = "hat"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "crash"
 role    = "crash"
-program = "TR-808 Kit"
+instrument = "auris.synth.drumkit"
 
 [[part]]
 name    = "riser"
 role    = "riser"
-program = "Reverse Cymbal"
+instrument = "auris.physical.violin"
 
 [section.verse2]
 intensity = 0.55
@@ -740,27 +739,27 @@ parts     = "pad"
 [[part]]
 name    = "pad"
 role    = "pad"
-program = "Pad 7 (halo)"
+instrument = "auris.physical.choir"
 gain    = -12
 
 [[part]]
 name    = "bells"
 role    = "melody"
-program = "Music Box"
+instrument = "auris.physical.bell"
 octave  = 6
 density = 0.2
 
 [[part]]
 name    = "glass"
 role    = "arp"
-program = "FX 3 (crystal)"
+instrument = "auris.physical.mallet"
 gain    = -18
 density = 0.25
 
 [[part]]
 name    = "cello"
 role    = "bass"
-program = "Cello"
+instrument = "auris.physical.violin"
 
 [section.verse2]
 bars      = 8
@@ -771,109 +770,40 @@ melody_from = "verse"
 #[cfg(test)]
 mod tests {
     #[test]
-    fn genre_parts_request_their_named_sounds() {
-        for (style, assignments) in [
-            (
-                "pop-band",
-                vec![
-                    ("lead", "Lead 2 (sawtooth)"),
-                    ("keys", "Electric Piano 1"),
-                    ("strings", "String Ensemble 1"),
-                    ("bass", "Electric Bass (finger)"),
-                ],
-            ),
-            (
-                "city-pop",
-                vec![
-                    ("lead", "Alto Sax"),
-                    ("rhodes", "Electric Piano 1"),
-                    ("stabs", "Brass Section"),
-                    ("bass", "Slap Bass 1"),
-                ],
-            ),
-            (
-                "rock",
-                vec![
-                    ("lead", "Overdriven Guitar"),
-                    ("rhythm", "Distortion Guitar"),
-                    ("organ", "Rock Organ"),
-                    ("bass", "Electric Bass (pick)"),
-                ],
-            ),
-            (
-                "jazz-trio",
-                vec![
-                    ("piano", "Acoustic Grand Piano"),
-                    ("melody", "Acoustic Grand Piano"),
-                    ("bass", "Acoustic Bass"),
-                ],
-            ),
-            (
-                "orchestral",
-                vec![
-                    ("flute", "Flute"),
-                    ("horns", "French Horn"),
-                    ("strings", "String Ensemble 1"),
-                    ("harp", "Orchestral Harp"),
-                    ("cellos", "Cello"),
-                    ("timpani", "Timpani"),
-                ],
-            ),
-            (
-                "synthwave",
-                vec![
-                    ("lead", "Lead 2 (sawtooth)"),
-                    ("pad", "Pad 1 (new age)"),
-                    ("arp", "Lead 5 (charang)"),
-                    ("bass", "Synth Bass 1"),
-                ],
-            ),
-            (
-                "ambient",
-                vec![
-                    ("pad", "Pad 7 (halo)"),
-                    ("bells", "Music Box"),
-                    ("glass", "FX 3 (crystal)"),
-                    ("cello", "Cello"),
-                ],
-            ),
-        ] {
-            let spec = preset(style).unwrap().spec();
-            let piece = compose(&spec);
-            for (name, sound) in assignments {
-                let part = spec.parts.iter().find(|part| part.name == name).unwrap();
-                let expected = crate::gm::Program::parse(sound).unwrap().sound(false);
-                assert_eq!(part.sound(), Some(expected), "{style} · {name}");
-                let track = piece
-                    .tracks
-                    .iter()
-                    .find(|track| track.name == name)
-                    .unwrap();
-                assert_eq!(
-                    track.sound,
-                    Some(expected),
-                    "{style} · {name} lost its sound"
-                );
+    fn shipped_presets_use_self_contained_instruments() {
+        for preset in PRESETS {
+            for part in preset.spec().parts {
+                assert_eq!(part.program, None, "{} · {}", preset.name, part.name);
+                assert_eq!(part.source, None, "{} · {}", preset.name, part.name);
+                if !matches!(preset.name, "chiptune" | "game-loop") {
+                    assert!(
+                        part.instrument.starts_with("auris.physical.")
+                            || (part.role.is_drum() && part.instrument == "auris.synth.drumkit"),
+                        "{} · {} uses {}",
+                        preset.name,
+                        part.name,
+                        part.instrument
+                    );
+                }
             }
         }
     }
 
     #[test]
-    fn genre_kits_and_percussion_notes_match_their_labels() {
-        for (style, kit) in [
-            ("city-pop", "Room Kit"),
-            ("rock", "Power Kit"),
-            ("jazz-trio", "Brush Kit"),
-            ("synthwave", "TR-808 Kit"),
-        ] {
-            let spec = preset(style).unwrap().spec();
-            for part in spec.parts.iter().filter(|part| part.role.is_drum()) {
+    fn preset_drums_use_the_native_kit_and_keep_percussion_notes() {
+        for preset in PRESETS {
+            for part in preset
+                .spec()
+                .parts
+                .iter()
+                .filter(|part| part.role.is_drum())
+            {
                 assert_eq!(
-                    part.sound(),
-                    Some(crate::gm::Program::parse(kit).unwrap().sound(true)),
-                    "{style} · {}",
-                    part.name
+                    part.instrument, "auris.synth.drumkit",
+                    "{} · {}",
+                    preset.name, part.name
                 );
+                assert_eq!(part.sound(), None, "{} · {}", preset.name, part.name);
             }
         }
         let jazz = preset("jazz-trio").unwrap().spec();
@@ -893,7 +823,7 @@ mod tests {
             .unwrap();
         assert!(
             !timpani.role.is_drum(),
-            "timpani must use a pitched program, not a kit's kick"
+            "the low mallet part must retain its pitched score"
         );
     }
 
@@ -1104,10 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn every_part_falls_back_to_a_plugin_when_no_font_is_installed() {
-        // A preset naming General MIDI sounds has to be playable on a build that has none, or
-        // choosing one on a fresh clone would be choosing silence. What makes that work is that
-        // every part still carries an instrument, which is the role's default unless it says.
+    fn every_part_names_an_instrument() {
         for preset in PRESETS {
             for part in preset.spec().parts {
                 assert!(
