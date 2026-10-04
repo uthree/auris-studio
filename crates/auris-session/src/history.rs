@@ -268,8 +268,6 @@ pub enum Edit {
     Compose,
     /// Every fader was set from a measurement of what the mix actually sounds like.
     BalanceLevels,
-    /// Adopted a mix and performance measured against a reference recording.
-    MatchReference,
 }
 
 impl Edit {

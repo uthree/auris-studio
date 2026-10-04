@@ -58,12 +58,15 @@ models to maximize the learned score.
 
 ## Reproduction
 
+The tables above retain the historical Audiobox measurements. Current reruns use
+TuneJury and MuQ-MuLan; their scores are not comparable with those tables.
+
 Keep separate copies of the old and new CLI executables. Point `AURIS_SOUNDFONTS` to the same
 verified font directory for the first two conditions, or to an empty directory for the third:
 
 ```sh
-uv run tools/eval/aesthetics.py --preset all --cli /path/to/old/auris --workdir before --json before.json
-uv run tools/eval/aesthetics.py --preset all --cli /path/to/new/auris --workdir after --baseline before.json --json after.json
+uv run tools/eval/music.py --preset all --cli /path/to/old/auris --workdir before --json before.json
+uv run tools/eval/music.py --preset all --cli /path/to/new/auris --workdir after --baseline before.json --json after.json
 ```
 
 The numerical DSP and session tests also cover pitch, velocity, modal brightness, decay,

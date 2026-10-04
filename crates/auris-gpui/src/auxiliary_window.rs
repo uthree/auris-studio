@@ -230,7 +230,6 @@ impl AurisApp {
             && self.prompt.is_none()
             && self.palette.is_none()
             && self.song_sheet.is_none()
-            && !self.reference_match.open
         {
             self.close_menu();
             self.close_menu_bar();

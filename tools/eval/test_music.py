@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile
-from clap import (
+from music import (
     MANIFEST,
     RATE,
     WINDOW,
@@ -82,6 +82,9 @@ class FakeBackend:
     def text_embeddings(self, profile):
         return np.array([[1.0, 0.0], [-1.0, 0.0]])
 
+    def reward(self, excerpt):
+        return 1.5
+
     def audio_embedding(self, excerpt):
         assert excerpt.shape == (WINDOW,)
         self.audio_calls += 1
@@ -153,7 +156,9 @@ def test_comparison_refuses_changed_measurement_conditions():
         "prompts_sha256": "fixed",
         "preprocessing": {"segments": 3},
         "model": {
-            "checkpoint_sha256": "fixed",
+            "artifacts": {"model": "fixed"},
+            "tunejury_source_revision": "fixed",
+            "threads": 4,
             "packages": {},
             "tokenizer_artifacts": {},
             "device": "cpu",
@@ -166,6 +171,6 @@ def test_comparison_refuses_changed_measurement_conditions():
     with pytest.raises(ValueError, match="prompts_sha256"):
         compare(report, changed)
     changed = copy.deepcopy(report)
-    changed["model"]["checkpoint_sha256"] = "other checkpoint"
-    with pytest.raises(ValueError, match="checkpoint_sha256"):
+    changed["model"]["artifacts"] = "other checkpoint"
+    with pytest.raises(ValueError, match="artifacts"):
         compare(report, changed)

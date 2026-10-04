@@ -23,6 +23,11 @@
 //! rest stay intact; no extra random draw changes the piece's pitch germ. Sparse holds and
 //! sustained palettes can still remain still, and late held arrivals need no redistribution.
 //!
+//! Chiptune gestures reach their faster approaches earlier on the density dial, with at most
+//! four subdivisions per beat. The held arrival and phrase breath remain intact. Other
+//! palettes retain their density mapping. TuneJury and MuQ-MuLan measurements and the preset
+//! calibration are recorded in `docs/learned-music-tuning.md`.
+//!
 //! Rhythmic variations preserve the opening cells and develop the tail. A closing bar leaves a final
 //! felt beat of silence when the meter has room. If its answer would fall back to an early
 //! preparation, it instead writes the final degree at a later arrival; an anticipated arrival

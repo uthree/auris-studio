@@ -348,9 +348,6 @@ pub(crate) struct ModalFocus {
     song_sheet: FocusHandle,
     song_sheet_last: FocusHandle,
     song_sheet_scroll: ModalScrollFocus,
-    reference_match: FocusHandle,
-    reference_match_last: FocusHandle,
-    reference_match_scroll: ModalScrollFocus,
 }
 
 impl ModalFocus {
@@ -369,9 +366,6 @@ impl ModalFocus {
             song_sheet: group(cx),
             song_sheet_last: stop(cx),
             song_sheet_scroll: ModalScrollFocus::new(),
-            reference_match: group(cx),
-            reference_match_last: stop(cx),
-            reference_match_scroll: ModalScrollFocus::new(),
         }
     }
 
@@ -427,42 +421,9 @@ impl ModalFocus {
         self.song_sheet_scroll.reset();
     }
 
-    pub(crate) fn reference_match(&self) -> &FocusHandle {
-        &self.reference_match
-    }
-
-    pub(crate) fn reference_match_last(&self) -> &FocusHandle {
-        &self.reference_match_last
-    }
-
-    pub(crate) fn reference_match_scroll(&self) -> &ScrollHandle {
-        &self.reference_match_scroll.scroll
-    }
-
-    pub(crate) fn reference_match_reveal_target(
-        &self,
-        index: usize,
-        cx: &mut App,
-    ) -> (FocusHandle, Rc<Cell<Option<Bounds<Pixels>>>>) {
-        self.reference_match_scroll.target(index, cx)
-    }
-
-    pub(crate) fn reveal_reference_match_focus(&self, window: &mut Window, cx: &mut App) {
-        self.reference_match_scroll.reveal_focused(window, cx);
-    }
-
-    pub(crate) fn reset_reference_match_scroll(&self) {
-        self.reference_match_scroll.reset();
-    }
-
     #[cfg(test)]
     pub(crate) fn song_sheet_reveal_index(&self, window: &Window, cx: &App) -> Option<usize> {
         self.song_sheet_scroll.focused_index(window, cx)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reference_match_reveal_index(&self, window: &Window, cx: &App) -> Option<usize> {
-        self.reference_match_scroll.focused_index(window, cx)
     }
 
     pub(crate) fn prompt_contains_focused(&self, window: &Window) -> bool {
@@ -483,15 +444,10 @@ impl ModalFocus {
         self.song_sheet.contains_focused(window, cx)
     }
 
-    pub(crate) fn reference_match_contains_focused(&self, window: &Window, cx: &App) -> bool {
-        self.reference_match.contains_focused(window, cx)
-    }
-
     fn contains_focused(&self, window: &Window, cx: &App) -> bool {
         self.prompt_contains_focused(window)
             || self.export_contains_focused(window)
             || self.song_sheet_contains_focused(window, cx)
-            || self.reference_match_contains_focused(window, cx)
     }
 }
 
@@ -1687,8 +1643,6 @@ pub struct AurisApp {
     pub(crate) compose_progress: Option<crate::ui::compose_progress::ComposeProgressState>,
     /// Independent composition-search settings, worker control, and exact retained result.
     pub(crate) composition_search: crate::ui::song_search::CompositionSearchState,
-    /// Reference-audio matching controls, render worker and retained comparison.
-    pub(crate) reference_match: crate::ui::reference_match::ReferenceMatchState,
     /// The library browser currently choosing a song part's source.
     pub(crate) song_library: Option<crate::ui::library::SongLibrary>,
     /// Fonts browsed while composing, without adding assets to the current document.
@@ -1962,7 +1916,6 @@ impl Drop for AurisApp {
         self.music_analysis.cancel();
         self.timbre_map.cancel();
         self.composition_search.dismiss();
-        self.reference_match.cancel();
         self.session.stop_output_preview();
     }
 }
@@ -2025,7 +1978,6 @@ impl AurisApp {
                     .update(cx, |this, cx| {
                         this.session.poll();
                         this.poll_song_search();
-                        this.poll_reference_match();
                         // Here rather than while drawing, and here rather than in `poll`: the
                         // input peak is destroyed by being read, so it has to be read exactly
                         // once, on a tick of a known length, by the one thing that shows it.
@@ -2130,7 +2082,6 @@ impl AurisApp {
             song_preview: Default::default(),
             compose_progress: None,
             composition_search: Default::default(),
-            reference_match: Default::default(),
             song_library: None,
             song_library_fonts: Vec::new(),
             song_advanced: false,
@@ -2250,7 +2201,6 @@ impl AurisApp {
             // The song sheet is a form, and every letter typed into one of its fields has to
             // reach the field rather than the binding that letter would otherwise fire.
             || self.song_sheet.is_some()
-            || self.reference_match.open
     }
 
     /// Whether text is being typed into something in this window.
@@ -2409,19 +2359,6 @@ impl AurisApp {
         {
             if !self.modal_focus.prompt_contains_focused(window) {
                 window.focus(self.modal_focus.prompt_confirm());
-            }
-            return;
-        }
-        if self.reference_match.open
-            && self.prompt.is_none()
-            && self.palette.is_none()
-            && self.song_library.is_none()
-        {
-            if !self
-                .modal_focus
-                .reference_match_contains_focused(window, cx)
-            {
-                window.focus(self.modal_focus.reference_match());
             }
             return;
         }

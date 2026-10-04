@@ -5,7 +5,7 @@
 """Create a standalone local four-condition listening report; upload nothing.
 
 The optional scores manifest has schema_version=1 and variants mapping each of
-baseline/pitch/rhythm/combined to aesthetics and clap {path, sha256} artifacts,
+baseline/pitch/rhythm/combined to one music {path, sha256} artifact,
 plus excerpt_sha256 mapping each case label to the scored excerpt's SHA256.
 Without scores, objective cells remain blank. No human ratings are inferred.
 
@@ -71,32 +71,32 @@ def listening_data(
         manifests[name] = manifest
         if score_spec is not None:
             entry = score_spec["variants"][name]
-            aesthetics, clap = (
-                read(verified(entry[key])) for key in ("aesthetics", "clap")
-            )
-            if set(aesthetics) != set(labels) or set(clap.get("files", {})) != set(
-                labels
-            ):
+            music = read(verified(entry["music"]))
+            if set(music.get("files", {})) != set(labels):
                 raise ValueError(f"Score cohort differs: {name}")
             expected_hashes = {
                 label: row["excerpt"]["sha256"]
                 for label, row in manifest["files"].items()
             }
             if entry.get("excerpt_sha256") != expected_hashes or any(
-                clap["files"][label].get("sha256") != sha
+                music["files"][label].get("sha256") != sha
                 for label, sha in expected_hashes.items()
             ):
                 raise ValueError(f"Scored audio differs from listening audio: {name}")
-            if clap.get("preprocessing", {}).get("requested_segments") != 1:
-                raise ValueError(f"CLAP must use one centered segment: {name}")
+            if music.get("preprocessing", {}).get("requested_segments") != 1:
+                raise ValueError(f"Music models must use one centered segment: {name}")
+            if any(row.get("status") != "ok" for row in music["files"].values()):
+                raise ValueError(
+                    f"Music evaluation contains invalid or silent audio: {name}"
+                )
             if scores:
-                baseline_clap = scores["baseline"][1]
+                baseline_music = scores["baseline"]
                 for key in ("prompts_sha256", "prompts", "model", "preprocessing"):
-                    if clap.get(key) != baseline_clap.get(key):
+                    if music.get(key) != baseline_music.get(key):
                         raise ValueError(
-                            f"CLAP {key} differs between conditions: {name}"
+                            f"Music evaluation {key} differs between conditions: {name}"
                         )
-            scores[name] = (aesthetics, clap)
+            scores[name] = music
     groups = {}
     for case, label in zip(cases, labels):
         item = {**case, "label": label, "conditions": {}}
@@ -122,14 +122,15 @@ def listening_data(
             if row["excerpt"]["normalization"]["target_lufs"] != -23:
                 raise ValueError(f"Unexpected listening level: {name}/{label}")
             data["duration"] = number(row["excerpt"]["duration_seconds"])
-            data["scores"] = {"CE": None, "PQ": None, "CLAP": None}
+            data["scores"] = {"TuneJury": None, "MuQMuLan": None}
             if name in scores:
-                aesthetics, clap = scores[name]
+                music = scores[name]
                 data["scores"] = {
-                    "CE": number(aesthetics[label]["CE"]),
-                    "PQ": number(aesthetics[label]["PQ"]),
-                    "CLAP": number(
-                        clap["files"][label]["aggregate"]["positive_cosine"]
+                    "TuneJury": number(
+                        music["files"][label]["aggregate"]["tunejury_reward"]
+                    ),
+                    "MuQMuLan": number(
+                        music["files"][label]["aggregate"]["positive_cosine"]
                     ),
                 }
             phrase = row["phrase"]
@@ -157,7 +158,7 @@ TEMPLATE = r"""<!doctype html>
 <div class="toolbar"><label for="genre">ジャンル</label><select id="genre"></select><button id="metrics" type="button" aria-pressed="false">測定値を表示</button><button id="stop" type="button">再生を止める</button></div>
 <p id="status" class="muted status" role="status" aria-live="polite"></p><main id="groups"></main>
 <p class="muted">「改善対象例」と「比較の基準例」は設計の参考にした曲です。「前回の検証用seed」は前回の実験で使った6曲です。今回は既知の比較例として、結果にかかわらず残しています。楽譜のリンクから各条件の主旋律を編集できます。</p>
-<p class="muted">Audiobox CE・PQは楽しさと制作音質の予測値、CLAPは説明文との類似度です。モデルは同じ試聴抜粋を使い、CLAPは中央10秒を評価します。2小節の一致数は、4区間の6通りの組合せで音価・発音位置・移調を除いた音高列が一致した数です。数値だけでノリや覚えやすさの良し悪しは判断できません。</p>
+<p class="muted">TuneJuryは選好スコア、MuQ-MuLanは説明文との類似度です。両モデルで同じ試聴抜粋の中央10秒を評価します。2小節の一致数は、4区間の6通りの組合せで音価・発音位置・移調を除いた音高列が一致した数です。数値だけでノリや覚えやすさの良し悪しは判断できません。</p>
 <noscript>このローカル試聴ページにはJavaScriptが必要です。</noscript>
 <script>
 "use strict";
@@ -186,8 +187,8 @@ for(const group of DATA.groups){
     }
     const metrics=el("div",undefined,"metrics");metrics.hidden=true;
     const table=el("table"),head=el("thead"),row=el("tr"),body=el("tbody");
-    for(const text of ["条件","CE","PQ","CLAP","音数","2小節一致"]){const th=el("th",text);th.scope="col";row.append(th)}head.append(row);
-    for(const [name,title] of Object.entries(names)){const data=item.conditions[name],tr=el("tr"),th=el("th",title);th.scope="row";tr.append(th);for(const value of [format(data.scores.CE,3),format(data.scores.PQ,3),format(data.scores.CLAP,4),data.note_count,data.two_bar_motif_pairs+" / 6"])tr.append(el("td",value));body.append(tr)}
+    for(const text of ["条件","TuneJury","MuQ-MuLan","音数","2小節一致"]){const th=el("th",text);th.scope="col";row.append(th)}head.append(row);
+    for(const [name,title] of Object.entries(names)){const data=item.conditions[name],tr=el("tr"),th=el("th",title);th.scope="row";tr.append(th);for(const value of [format(data.scores.TuneJury,3),format(data.scores.MuQMuLan,4),data.note_count,data.two_bar_motif_pairs+" / 6"])tr.append(el("td",value));body.append(tr)}
     table.append(head,body);metrics.append(table);tables.push(metrics);card.append(header,conditions,metrics);section.append(card);
   }
   sections.push(section);document.getElementById("groups").append(section);

@@ -124,6 +124,9 @@ chords = "@axis"
 seed   = 16
 form   = ["intro","verse","chorus","verse2","chorus2","outro"]
 
+humanize = 0.384
+dynamics = 0.829
+
 [section.intro]
 bars      = 4
 intensity = 0.5

@@ -422,28 +422,6 @@ impl Vst3Plugins {
         self.instruments.get(&track)?.plugin.value(id)
     }
 
-    pub(super) fn save_effect(&mut self, slot: EffectSlotId) -> Result<Option<Vec<u8>>, Vst3Error> {
-        let Some(slot) = self.slots.get(&slot) else {
-            return Ok(None);
-        };
-        let name = slot.plugin.info().name.clone();
-        match slot.plugin.save_state() {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(source) => Err(self.remember_state_error(name, "saved", source)),
-        }
-    }
-
-    pub(super) fn save_instrument(&mut self, track: TrackId) -> Result<Option<Vec<u8>>, Vst3Error> {
-        let Some(slot) = self.instruments.get(&track) else {
-            return Ok(None);
-        };
-        let name = slot.plugin.info().name.clone();
-        match slot.plugin.save_state() {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(source) => Err(self.remember_state_error(name, "saved", source)),
-        }
-    }
-
     fn remember_state_error(
         &mut self,
         plugin: String,

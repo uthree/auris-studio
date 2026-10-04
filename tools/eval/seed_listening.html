@@ -50,7 +50,7 @@ thead th { background: #f4f5f6; font-weight: 600; } th:first-child { text-align:
 </div>
 <p id="status" class="muted" role="status" aria-live="polite"></p>
 <p class="muted">評価はこのブラウザー内に保存します。ファイルを移動した場合やブラウザーによって保存できない場合に備え、JSONをダウンロードしてください。音声・評価を外部に送信する機能はありません。</p>
-<p class="muted">モデル値は曲全体の元WAVを測定した参考情報です。Audiobox CEは楽しさ、PQは制作音質の予測値です。CLAPは指定した説明との類似度で、曲の良さやキャッチーさを直接測るものではありません。</p>
+<p class="muted">TuneJuryは試聴音源の選好スコア、MuQ-MuLanは指定した説明との類似度です。同じ試聴音源と測定条件で比較します。</p>
 <noscript><p>このローカル比較表にはJavaScriptが必要です。音声をアップロードする処理はありません。</p></noscript>
 <script>
 "use strict";
@@ -137,16 +137,15 @@ function showSummary(panel) {
   scroll.setAttribute("aria-label", `${panel.group.preset} の評価比較表。狭い画面では横にスクロールできます。`);
   const table = element("table"), head = element("thead"), headRow = element("tr"), body = element("tbody");
   table.append(element("caption", "このジャンルの比較 — 未入力は「—」"));
-  for (const name of ["サンプル", "Seed", "好み", "ノリ", "覚えやすさ", "CE", "PQ", "CLAP"]) {
+  for (const name of ["サンプル", "Seed", "好み", "ノリ", "覚えやすさ", "TuneJury", "MuQ-MuLan"]) {
     const cell = element("th", name); cell.scope = "col"; headRow.append(cell);
   }
   head.append(headRow);
   for (const sample of panel.group.samples) {
     const row = element("tr"), name = element("th", sample.blind_label); name.scope = "row"; row.append(name);
     const values = [sample.seed, ...METRICS.map(metric => ratings[sample.id]?.[metric] ?? "—"),
-      sample.scores.CE === null ? "—" : sample.scores.CE.toFixed(3),
-      sample.scores.PQ === null ? "—" : sample.scores.PQ.toFixed(3),
-      sample.scores.CLAP === null ? "—" : sample.scores.CLAP.toFixed(4)];
+      sample.scores.TuneJury === null ? "—" : sample.scores.TuneJury.toFixed(3),
+      sample.scores.MuQMuLan === null ? "—" : sample.scores.MuQMuLan.toFixed(4)];
     values.forEach(value => row.append(element("td", String(value)))); body.append(row);
   }
   table.append(head, body); scroll.append(table); panel.summary.append(scroll);
@@ -159,7 +158,7 @@ function showDetail(panel) {
   if (!revealed) return;
   const terms = element("dl");
   const entries = [["seed", sample.seed], ["抜粋の長さ", `${sample.duration.toFixed(2)} 秒`],
-    ["Audiobox CE", sample.scores.CE], ["Audiobox PQ", sample.scores.PQ], ["CLAP 類似度", sample.scores.CLAP]];
+    ["TuneJury", sample.scores.TuneJury], ["MuQ-MuLan 類似度", sample.scores.MuQMuLan]];
   for (const [name, value] of entries) {
     terms.append(element("dt", name), element("dd", value === null ? "未測定" : typeof value === "number" && name !== "seed" ? value.toFixed(4) : String(value)));
   }

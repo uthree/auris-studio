@@ -10,7 +10,7 @@ of model scores. Blinding is a presentation aid, not protection against inspecti
 the HTML source. Ratings start blank and are never inferred from model scores.
 
     uv run tools/eval/seed_listening.py --manifest corpus.json \
-        --aesthetics aesthetics.json --clap clap.json --output listening.html
+        --scores music.json --output listening.html
 """
 
 from __future__ import annotations
@@ -81,8 +81,7 @@ def number(value: object) -> float | None:
 
 def build_data(
     manifest: dict,
-    aesthetics: dict,
-    clap: dict,
+    music: dict,
     manifest_directory: Path,
     output_directory: Path,
 ) -> dict:
@@ -105,8 +104,13 @@ def build_data(
         duration = number(entry["excerpt"]["duration_seconds"])
         if duration is None or duration <= 0:
             raise ValueError(f"Excerpt must have positive duration: {label}")
-        scores = aesthetics.get(label, {})
-        aggregate = clap.get("files", {}).get(label, {}).get("aggregate", {})
+        scored = music.get("files", {}).get(label)
+        if scored is not None and (
+            scored.get("sha256") != entry["excerpt"]["sha256"]
+            or scored.get("status") != "ok"
+        ):
+            raise ValueError(f"Scored audio differs for {label}")
+        aggregate = scored["aggregate"] if scored else {}
         identity = hashlib.sha256(
             f"{SHUFFLE_VERSION}\0{preset}\0{seed}".encode()
         ).hexdigest()
@@ -124,9 +128,8 @@ def build_data(
                 entry["project"], manifest_directory, output_directory
             ),
             "scores": {
-                "CE": number(scores.get("CE")),
-                "PQ": number(scores.get("PQ")),
-                "CLAP": number(aggregate.get("positive_cosine")),
+                "TuneJury": number(aggregate.get("tunejury_reward")),
+                "MuQMuLan": number(aggregate.get("positive_cosine")),
             },
             "symbolic": entry.get("symbolic", {}),
             "excerpt_conditions": {
@@ -167,13 +170,10 @@ def build_data(
     }
 
 
-def generate(
-    manifest_path: Path, aesthetics_path: Path, clap_path: Path, output_html: Path
-) -> Path:
+def generate(manifest_path: Path, scores_path: Path, output_html: Path) -> Path:
     """Create a fresh HTML report; never overwrite a source, media file or existing report."""
-    manifest_path, aesthetics_path, clap_path, output_html = (
-        Path(path).resolve()
-        for path in (manifest_path, aesthetics_path, clap_path, output_html)
+    manifest_path, scores_path, output_html = (
+        Path(path).resolve() for path in (manifest_path, scores_path, output_html)
     )
     if output_html.suffix.lower() != ".html":
         raise ValueError("Output must be an .html file")
@@ -181,7 +181,7 @@ def generate(
         raise ValueError(f"Refusing to overwrite {output_html}")
     values = [
         json.loads(path.read_text(encoding="utf-8"))
-        for path in (manifest_path, aesthetics_path, clap_path)
+        for path in (manifest_path, scores_path)
     ]
     data = build_data(*values, manifest_path.parent, output_html.parent)
     template = TEMPLATE.read_text(encoding="utf-8")
@@ -197,12 +197,12 @@ def generate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("manifest", "aesthetics", "clap"):
+    for name in ("manifest", "scores"):
         parser.add_argument(f"--{name}", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
     try:
-        print(generate(args.manifest, args.aesthetics, args.clap, args.output))
+        print(generate(args.manifest, args.scores, args.output))
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.exit(1, f"{error}\n")
 

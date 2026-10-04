@@ -21,7 +21,13 @@ pub(super) fn grouped(
     let beat = grid.steps_per_beat().min(steps).max(1);
     let density = density.clamp(0.0, 1.0);
     let syncopation = syncopation.clamp(0.0, 1.0);
-    let splits = (1 + (density * 3.0).round() as usize).min(beat);
+    // Chiptune approaches reach their subdivisions sooner while retaining the
+    // held answer. Other palettes keep the slower progression to dense runs.
+    let subdivision_range = match style {
+        Some(PerformanceStyle::Chiptune) => 4.0,
+        _ => 3.0,
+    };
+    let splits = (1 + (density * subdivision_range).round() as usize).min(beat.min(4));
     // Held, short-long, long-short, anticipation, pickup. Styles choose gestures, while the
     // meter supplies their size; a dotted quarter in 6/8 remains a whole felt beat.
     let weights = match style {

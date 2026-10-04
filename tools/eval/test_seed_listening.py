@@ -16,7 +16,7 @@ def inputs(tmp_path: Path):
         "seeds": list(range(101, 109)),
         "files": {},
     }
-    aesthetics, clap = {}, {"files": {}}
+    music = {"files": {}}
     for preset in manifest["presets"]:
         for seed in manifest["seeds"]:
             label = f"{preset}-s{seed}"
@@ -28,7 +28,7 @@ def inputs(tmp_path: Path):
             ]:
                 path = asset_dir / f"{label}{suffix}"
                 path.write_bytes(b"test local asset")
-                paths[kind] = {"path": str(path)}
+                paths[kind] = {"path": str(path), "sha256": "fixture hash"}
             paths["excerpt"].update(
                 {"duration_seconds": 20.0, "normalization": {"target_lufs": -20.0}}
             )
@@ -38,22 +38,25 @@ def inputs(tmp_path: Path):
                 **paths,
                 "symbolic": {"rhythm_signature": [0, 2, 3]},
             }
-            aesthetics[label] = {"CE": 7.1, "PQ": 8.2}
-            clap["files"][label] = {"aggregate": {"positive_cosine": 0.3}}
-    return manifest, aesthetics, clap
+            music["files"][label] = {
+                "sha256": "fixture hash",
+                "status": "ok",
+                "aggregate": {"tunejury_reward": 7.1, "positive_cosine": 0.3},
+            }
+    return manifest, music
 
 
 def test_shuffling_is_repeatable_and_independent_of_model_scores_and_input_order(
     tmp_path,
 ):
-    manifest, aesthetics, clap = inputs(tmp_path)
+    manifest, music = inputs(tmp_path)
     original = copy.deepcopy(manifest)
-    first = build_data(manifest, aesthetics, clap, tmp_path, tmp_path / "report")
+    first = build_data(manifest, music, tmp_path, tmp_path / "report")
     reordered = copy.deepcopy(manifest)
     reordered["files"] = dict(reversed(list(reordered["files"].items())))
-    for value in aesthetics.values():
-        value["CE"] = -999
-    second = build_data(reordered, aesthetics, clap, tmp_path, tmp_path / "report")
+    for value in music["files"].values():
+        value["aggregate"]["tunejury_reward"] = -999
+    second = build_data(reordered, music, tmp_path, tmp_path / "report")
     for before, after in zip(first["groups"], second["groups"]):
         assert [(s["seed"], s["blind_label"]) for s in before["samples"]] == [
             (s["seed"], s["blind_label"]) for s in after["samples"]
@@ -65,9 +68,9 @@ def test_shuffling_is_repeatable_and_independent_of_model_scores_and_input_order
 
 
 def test_urls_are_encoded_relative_paths_and_link_to_original_lossless_assets(tmp_path):
-    manifest, aesthetics, clap = inputs(tmp_path)
+    manifest, music = inputs(tmp_path)
     output_directory = tmp_path / "report"
-    data = build_data(manifest, aesthetics, clap, tmp_path, output_directory)
+    data = build_data(manifest, music, tmp_path, output_directory)
     for group in data["groups"]:
         for sample in group["samples"]:
             for field in ("excerpt", "wav", "project"):
@@ -78,12 +81,12 @@ def test_urls_are_encoded_relative_paths_and_link_to_original_lossless_assets(tm
 
 
 def test_missing_scores_stay_unmeasured_and_never_become_ratings(tmp_path):
-    manifest, _, _ = inputs(tmp_path)
-    data = build_data(manifest, {}, {}, tmp_path, tmp_path)
+    manifest, _ = inputs(tmp_path)
+    data = build_data(manifest, {}, tmp_path, tmp_path)
     assert "ratings" not in data and "set_diversity" not in data
     for group in data["groups"]:
         for sample in group["samples"]:
-            assert sample["scores"] == {"CE": None, "PQ": None, "CLAP": None}
+            assert sample["scores"] == {"TuneJury": None, "MuQMuLan": None}
             assert sample["symbolic"]["rhythm_signature"] == [0, 2, 3]
 
 
@@ -91,7 +94,7 @@ def test_missing_scores_stay_unmeasured_and_never_become_ratings(tmp_path):
     "change", ["missing", "duplicate", "duration", "nonfinite", "badseed"]
 )
 def test_rejects_incomplete_or_misaligned_cohorts(tmp_path, change):
-    manifest, aesthetics, clap = inputs(tmp_path)
+    manifest, music = inputs(tmp_path)
     entry = manifest["files"]["rock-s101"]
     if change == "missing":
         del manifest["files"]["rock-s101"]
@@ -100,11 +103,11 @@ def test_rejects_incomplete_or_misaligned_cohorts(tmp_path, change):
     elif change == "duration":
         entry["excerpt"]["duration_seconds"] = 21.0
     elif change == "nonfinite":
-        aesthetics["rock-s101"]["CE"] = float("nan")
+        music["files"]["rock-s101"]["aggregate"]["tunejury_reward"] = float("nan")
     else:
         manifest["seeds"][0] = True
     with pytest.raises(ValueError):
-        build_data(manifest, aesthetics, clap, tmp_path, tmp_path)
+        build_data(manifest, music, tmp_path, tmp_path)
 
 
 def test_script_json_cannot_break_out_of_script_context():
@@ -116,12 +119,10 @@ def test_script_json_cannot_break_out_of_script_context():
 
 
 def test_generate_writes_self_contained_report_without_modifying_inputs(tmp_path):
-    manifest, aesthetics, clap = inputs(tmp_path)
+    manifest, music = inputs(tmp_path)
     manifest["listening_conditions"] = {"note": "</script><script>alert('x')</script>"}
-    paths = [
-        tmp_path / name for name in ("manifest.json", "aesthetics.json", "clap.json")
-    ]
-    for path, value in zip(paths, (manifest, aesthetics, clap)):
+    paths = [tmp_path / name for name in ("manifest.json", "music.json")]
+    for path, value in zip(paths, (manifest, music)):
         path.write_text(json.dumps(value), encoding="utf-8")
     originals = [path.read_bytes() for path in paths]
     output = generate(*paths, tmp_path / "report" / "listening.html")
