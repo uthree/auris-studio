@@ -132,12 +132,23 @@ bars      = 4
 intensity = 0.5
 parts     = "chords bass kick snare hat crash"
 
+[section.verse]
+parts = "lead chords bass kick snare hat"
+
 [section.chorus]
 intensity = 0.95
+parts = "lead chords arp bass kick snare hat crash"
 
 [[part]]
 name = "lead"
 role = "melody"
+
+[[part]]
+name = "lead_alt"
+role = "arp"
+octave = 5
+instrument = "auris.synth.fm2"
+density = 0.25
 
 [[part]]
 name = "chords"
@@ -164,16 +175,31 @@ role = "hat"
 name = "crash"
 role = "crash"
 
+[[part]]
+name = "arp"
+role = "arp"
+density = 0.35
+
+[[part]]
+name = "counter_chords"
+role = "chords"
+gate = 0.45
+
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "lead lead_alt chords bass kick snare hat"
 
 [section.chorus2]
 intensity = 0.95
 melody_from = "chorus"
+parts = "lead counter_chords arp bass kick snare hat crash"
+
+[section.outro]
+parts = "lead chords bass kick snare hat crash"
 "#;
 
-/// A four-piece with keys on top, on the progression half of J-pop is built from.
+/// A band with rotating keyboard and guitar layers, on a familiar J-pop progression.
 ///
 /// The verse walks 純情進行 — the canon over a stepwise descending bass — and the chorus lifts
 /// into 王道進行, which is the shape of the songs this preset is named for: an Aメロ that steps
@@ -205,11 +231,13 @@ parts     = "keys bass kick hat"
 
 [section.verse]
 chords = "a-melo"
+parts = "lead keys bass kick hat"
 
 [section.pre]
 bars = 4
 chords = "b-melo"
 intensity = 0.75
+parts = "lead_alt strings pluck bass hat riser"
 
 [section.bridge]
 bars = 8
@@ -219,9 +247,11 @@ parts = "lead keys strings bass"
 
 [section.chorus]
 intensity = 0.95
+parts = "lead keys strings guitar bass kick snare hat crash"
 
 [section.outro]
 intensity = 0.5
+parts = "keys strings bass hat"
 
 [[part]]
 name    = "lead"
@@ -229,9 +259,34 @@ role    = "melody"
 program = "Lead 2 (sawtooth)"
 
 [[part]]
+name    = "lead_alt"
+role    = "melody"
+program = "Electric Guitar (clean)"
+
+[[part]]
 name    = "keys"
 role    = "chords"
 program = "Electric Piano 1"
+
+[[part]]
+name    = "piano"
+role    = "chords"
+program = "Acoustic Grand Piano"
+
+[[part]]
+name    = "guitar"
+role    = "chords"
+program = "Electric Guitar (clean)"
+gate    = 0.45
+pan     = 0.35
+
+[[part]]
+name    = "pluck"
+role    = "arp"
+program = "Vibraphone"
+density = 0.3
+gain    = -18
+pan     = 0.3
 
 [[part]]
 name    = "strings"
@@ -244,6 +299,12 @@ name    = "bass"
 role    = "bass"
 program = "Electric Bass (finger)"
 gate    = 0.8
+
+[[part]]
+name    = "sub_bass"
+role    = "bass"
+program = "Synth Bass 1"
+octave  = 1
 
 [[part]]
 name    = "kick"
@@ -274,20 +335,24 @@ program = "Reverse Cymbal"
 chords = "a-melo"
 intensity = 0.60
 melody_from = "verse"
+parts = "lead_alt keys sub_bass kick hat"
 
 [section.pre2]
 bars = 4
 chords = "b-melo"
 intensity = 0.75
 melody_from = "pre"
+parts = "lead strings pluck bass hat riser"
 
 [section.chorus2]
 intensity = 0.95
 melody_from = "chorus"
+parts = "lead guitar strings piano bass kick snare hat crash"
 
 [section.chorus3]
 intensity = 0.95
 melody_from = "chorus"
+parts = "lead_alt piano strings guitar pluck bass kick snare hat crash riser"
 "#;
 
 /// The 1980s Tokyo sound: a Rhodes, a slapped bass and a sixteen-beat under 丸サ進行.
@@ -321,9 +386,13 @@ bars      = 4
 intensity = 0.5
 parts     = "rhodes stabs bass kick snare hat crash riser"
 
+[section.verse]
+parts = "lead rhodes bass kick snare hat"
+
 [section.chorus]
 intensity = 0.9
 chords    = "sabi"
+parts = "lead rhodes stabs bass kick snare hat crash"
 
 [[part]]
 name    = "lead"
@@ -332,9 +401,35 @@ program = "Alto Sax"
 octave  = 5
 
 [[part]]
+name    = "lead_alt"
+role    = "stab"
+program = "Trumpet"
+octave  = 5
+
+[[part]]
 name    = "rhodes"
 role    = "chords"
 program = "Electric Piano 1"
+
+[[part]]
+name    = "piano"
+role    = "chords"
+program = "Electric Grand Piano"
+
+[[part]]
+name    = "guitar"
+role    = "stab"
+program = "Electric Guitar (clean)"
+gain    = -18
+pan     = 0.35
+
+[[part]]
+name    = "arp"
+role    = "arp"
+program = "Vibraphone"
+gain    = -18
+density = 0.25
+pan     = 0.3
 
 [[part]]
 name    = "stabs"
@@ -375,11 +470,16 @@ program = "Reverse Cymbal"
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "lead lead_alt piano bass kick snare hat riser"
 
 [section.chorus2]
 intensity = 0.9
 chords    = "sabi"
 melody_from = "chorus"
+parts = "lead stabs guitar arp bass kick snare hat crash"
+
+[section.outro]
+parts = "lead rhodes stabs bass kick snare hat crash"
 "#;
 
 /// Guitars, an organ pad and a kit that is allowed to be loud.
@@ -410,14 +510,44 @@ bars      = 4
 intensity = 0.6
 parts     = "rhythm organ bass kick snare hat crash"
 
+[section.verse]
+parts = "lead rhythm bass kick snare hat"
+
 [section.chorus]
 intensity = 1.0
 chords    = "lift"
+parts = "lead rhythm organ bass kick snare hat crash"
 
 [[part]]
 name    = "lead"
 role    = "melody"
 program = "Overdriven Guitar"
+
+[[part]]
+name    = "lead_alt"
+role    = "melody"
+program = "Overdriven Guitar"
+
+[[part]]
+name    = "clean_guitar"
+role    = "chords"
+program = "Electric Guitar (clean)"
+gate    = 0.5
+pan     = 0.35
+
+[[part]]
+name    = "piano"
+role    = "stab"
+program = "Acoustic Grand Piano"
+gain    = -18
+
+[[part]]
+name    = "arp"
+role    = "arp"
+program = "Electric Guitar (clean)"
+density = 0.25
+gain    = -18
+pan     = 0.3
 
 [[part]]
 name    = "rhythm"
@@ -460,11 +590,16 @@ program = "Power Kit"
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "lead_alt rhythm clean_guitar bass kick snare hat"
 
 [section.chorus2]
 intensity = 1.0
 chords    = "lift"
 melody_from = "chorus"
+parts = "lead rhythm piano organ arp bass kick snare hat crash"
+
+[section.outro]
+parts = "lead rhythm organ bass kick snare hat crash"
 "#;
 
 /// Three players and a lot of space: brushes instead of sticks, and a swing that means it.
@@ -490,8 +625,12 @@ bars      = 4
 intensity = 0.4
 parts     = "piano bass"
 
+[section.verse]
+parts = "melody piano bass kick snare ride"
+
 [section.chorus]
 intensity = 0.8
+parts = "melody piano bass kick snare ride"
 
 [[part]]
 name    = "piano"
@@ -530,10 +669,15 @@ note    = 51
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "melody piano bass kick snare ride"
 
 [section.chorus2]
 intensity = 0.8
 melody_from = "chorus"
+parts = "melody piano bass kick snare ride"
+
+[section.outro]
+parts = "melody piano bass kick snare ride"
 "#;
 
 /// Slow, in three, with winds, bowed strings, harp, pitched timpani and a cymbal.
@@ -555,14 +699,19 @@ form       = ["intro","verse","chorus","verse2","chorus2","outro"]
 [section.intro]
 bars      = 8
 intensity = 0.35
-parts     = "strings cellos"
+parts     = "strings cellos harp"
+
+[section.verse]
+parts = "flute oboe strings cellos pizzicato"
 
 [section.chorus]
 intensity = 1.0
+parts = "flute horns strings pizzicato harp cellos timpani cymbal"
 
 [section.outro]
 bars      = 8
 intensity = 0.4
+parts = "flute horns strings harp cellos timpani cymbal"
 
 [[part]]
 name    = "flute"
@@ -571,10 +720,35 @@ program = "Flute"
 octave  = 6
 
 [[part]]
+name    = "oboe"
+role    = "arp"
+program = "Oboe"
+octave  = 5
+density = 0.2
+
+[[part]]
+name    = "clarinet"
+role    = "melody"
+program = "Clarinet"
+octave  = 5
+
+[[part]]
+name    = "solo_violin"
+role    = "melody"
+program = "Violin"
+octave  = 5
+
+[[part]]
 name    = "horns"
 role    = "chords"
 program = "French Horn"
 octave  = 4
+
+[[part]]
+name    = "trumpet"
+role    = "stab"
+program = "Trumpet"
+octave  = 5
 
 [[part]]
 name    = "strings"
@@ -583,10 +757,22 @@ program = "String Ensemble 1"
 gain    = -13
 
 [[part]]
+name    = "pizzicato"
+role    = "stab"
+program = "Pizzicato Strings"
+gain    = -18
+
+[[part]]
 name    = "harp"
 role    = "arp"
 program = "Orchestral Harp"
 gain    = -15
+
+[[part]]
+name    = "celesta"
+role    = "arp"
+program = "Celesta"
+gain    = -19
 
 [[part]]
 name    = "cellos"
@@ -608,10 +794,12 @@ program = "Orchestra Kit"
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "flute clarinet strings cellos harp celesta"
 
 [section.chorus2]
 intensity = 1.0
 melody_from = "chorus"
+parts = "solo_violin trumpet horns strings pizzicato harp cellos timpani cymbal"
 "#;
 
 /// A saw over an eighth-note bass, and the drum machine everybody means by "eighties".
@@ -637,8 +825,12 @@ bars      = 8
 intensity = 0.5
 parts     = "pad bass kick"
 
+[section.verse]
+parts = "lead pad bass kick hat"
+
 [section.chorus]
 intensity = 0.95
+parts = "lead pad arp chords bass kick snare hat crash"
 
 [[part]]
 name    = "lead"
@@ -646,10 +838,36 @@ role    = "melody"
 program = "Lead 2 (sawtooth)"
 
 [[part]]
+name    = "lead_alt"
+role    = "melody"
+program = "Lead 3 (calliope)"
+
+[[part]]
+name    = "chords"
+role    = "chords"
+program = "Electric Piano 2"
+gain    = -17
+pan     = -0.25
+
+[[part]]
+name    = "pluck"
+role    = "stab"
+program = "Lead 4 (chiff)"
+gain    = -18
+density = 0.3
+pan     = 0.3
+
+[[part]]
 name    = "pad"
 role    = "pad"
 program = "Pad 1 (new age)"
 gain    = -14
+
+[[part]]
+name    = "dark_pad"
+role    = "pad"
+program = "Synth Strings 1"
+gain    = -19
 
 [[part]]
 name    = "arp"
@@ -661,6 +879,12 @@ gain    = -15
 name    = "bass"
 role    = "bass"
 program = "Synth Bass 1"
+
+[[part]]
+name    = "sub_bass"
+role    = "bass"
+program = "Synth Bass 2"
+octave  = 1
 
 [[part]]
 name    = "kick"
@@ -690,10 +914,15 @@ program = "Reverse Cymbal"
 [section.verse2]
 intensity = 0.55
 melody_from = "verse"
+parts = "lead_alt dark_pad pluck sub_bass kick hat riser"
 
 [section.chorus2]
 intensity = 0.95
 melody_from = "chorus"
+parts = "lead dark_pad arp chords bass kick snare hat crash"
+
+[section.outro]
+parts = "lead pad arp bass kick snare hat crash"
 "#;
 
 /// No kit, no lead: three sustained voices and a bell that is nearly a melody.
@@ -727,10 +956,12 @@ parts     = "pad"
 [section.verse]
 bars      = 8
 intensity = 0.45
+parts = "pad bells glass cello"
 
 [section.chorus]
 bars      = 8
 intensity = 0.7
+parts = "pad bells glass cello"
 
 [section.outro]
 bars      = 8
@@ -766,10 +997,13 @@ program = "Cello"
 bars      = 8
 intensity = 0.45
 melody_from = "verse"
+parts = "pad glass cello"
 "#;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     #[test]
     fn genre_parts_request_their_named_sounds() {
         for (style, assignments) in [
@@ -952,18 +1186,26 @@ mod tests {
         }
         let frame = crate::frame::plan(&spec);
         let piece = compose(&spec);
-        let lead = piece
-            .tracks
-            .iter()
-            .find(|track| track.name == "lead")
-            .unwrap();
         for (name, bars) in [("pre", 4), ("pre2", 4), ("bridge", 8), ("chorus3", 8)] {
             let section = frame.sections.iter().find(|s| s.name == name).unwrap();
-            let clip = lead
+            let selected_melody = section.parts.iter().find(|part| {
+                spec.parts.iter().any(|candidate| {
+                    candidate.name == part.as_str() && candidate.role == Role::Melody
+                })
+            });
+            let Some(selected_melody) = selected_melody else {
+                panic!("{name} has no selected melody");
+            };
+            let track = piece
+                .tracks
+                .iter()
+                .find(|track| track.name == selected_melody.as_str())
+                .unwrap_or_else(|| panic!("{name} has no {} track", selected_melody));
+            let clip = track
                 .clips
                 .iter()
                 .find(|clip| clip.start == section.start)
-                .unwrap();
+                .unwrap_or_else(|| panic!("{name} has no selected melody clip"));
             assert!(!clip.notes.is_empty(), "{name} must contain music");
             assert_eq!(clip.length, spec.meter.ticks_per_bar() * bars);
         }
@@ -1168,5 +1410,93 @@ mod tests {
                 preset.name
             );
         }
+    }
+
+    #[test]
+    fn every_playing_section_declares_and_uses_its_arrangement() {
+        for preset in PRESETS {
+            let spec = preset.spec();
+            let frame = crate::frame::plan(&spec);
+            let declared: HashSet<&str> =
+                spec.parts.iter().map(|part| part.name.as_str()).collect();
+            let mut used = HashSet::new();
+            for section in frame.sections.iter().filter(|section| !section.coda) {
+                assert!(
+                    !section.parts.is_empty(),
+                    "{} · {} relies on the full roster",
+                    preset.name,
+                    section.name
+                );
+                for part in &section.parts {
+                    assert!(
+                        declared.contains(part.as_str()),
+                        "{} names unknown part {part}",
+                        preset.name
+                    );
+                    used.insert(part.as_str());
+                }
+            }
+            assert_eq!(
+                used, declared,
+                "{} has a roster part that never plays",
+                preset.name
+            );
+            let settings = crate::parts::ScoreSettings::from(&spec);
+            let drafts = crate::parts::write_parts(&settings, &spec.parts, &frame);
+            for draft in drafts {
+                assert!(
+                    draft.notes.iter().any(|note| {
+                        frame
+                            .sections
+                            .get(note.section)
+                            .is_some_and(|section| !section.coda)
+                    }),
+                    "{} · {} has no generated notes in a playing section",
+                    preset.name,
+                    draft.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn band_arrangements_change_texture_and_rebuild_the_final_lift() {
+        for name in ["pop-band", "city-pop", "rock", "synthwave", "chiptune"] {
+            let spec = preset(name).unwrap().spec();
+            let parts = |section: &str| {
+                spec.sections
+                    .get(section)
+                    .unwrap_or_else(|| panic!("{name} has no {section}"))
+                    .parts
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>()
+            };
+            assert_ne!(parts("verse"), parts("chorus"), "{name} has no verse lift");
+            assert_ne!(
+                parts("verse"),
+                parts("verse2"),
+                "{name} never changes its second verse"
+            );
+            if name == "pop-band" {
+                assert!(parts("chorus3").len() >= parts("chorus").len());
+            }
+        }
+    }
+
+    #[test]
+    fn game_loop_keeps_its_sixteen_bar_cycle_while_rotating_layers() {
+        let spec = SongSpec::parse(include_str!("../../../examples/game-loop.asong")).unwrap();
+        assert_eq!(spec.form, vec!["verse".to_string(), "chorus".to_string()]);
+        assert_eq!(
+            spec.form
+                .iter()
+                .map(|name| spec.sections[name].bars)
+                .sum::<usize>(),
+            16
+        );
+        assert_ne!(spec.sections["verse"].parts, spec.sections["chorus"].parts);
+        let piece = compose(&spec);
+        assert_eq!(piece.length, spec.meter.ticks_per_bar() * 16);
     }
 }

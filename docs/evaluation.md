@@ -4,6 +4,10 @@ Development measurements, none part of any release build. They exist for the sam
 every level and timing constant in this workspace was calibrated by rendering and measuring:
 a change to a writer or a dial should be judged against numbers first and ears always.
 
+The [preset arrangement study](preset-arrangement.md) pairs these measurements with track
+participation and density across the form, and records the default-seed selection, fresh-seed
+check, and per-preset tradeoffs from the 2026-10-04 revision.
+
 The [physical-instrument copy-synthesis loop](physical-copy-synthesis.md) measures temporal
 mel-spectrogram distance against a frozen cohort of real piano, guitar and violin recordings.
 It fits only training notes and evaluates held-out pitches and dynamics with the actual Rust
