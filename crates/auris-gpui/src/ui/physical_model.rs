@@ -10,6 +10,14 @@ use auris_i18n::{Key, Language, messages};
 use auris_session::{MotionFrame, MotionGeometry, MotionVoice, prelude::*};
 use gpui::{AnyElement, Bounds, Context, Pixels, Window, canvas, div, point, prelude::*, px, size};
 
+#[path = "physical_drums.rs"]
+mod drums;
+#[path = "physical_piano.rs"]
+mod piano;
+#[path = "physical_scene.rs"]
+mod scene;
+use scene::{MotionDrawing, draw_string_motion, match_history, string_layout};
+
 #[derive(Debug)]
 pub(crate) struct PhysicalView {
     source: Option<(TrackId, String)>,
@@ -19,6 +27,9 @@ pub(crate) struct PhysicalView {
     pub(crate) pitch: u8,
     drum_preview: bool,
     gain: f32,
+    effects_disabled: bool,
+    /// Recent captured frames used for short, bounded motion trails.
+    history: Vec<MotionFrame>,
 }
 impl Default for PhysicalView {
     fn default() -> Self {
@@ -30,7 +41,25 @@ impl Default for PhysicalView {
             pitch: 60,
             drum_preview: false,
             gain: 24.0,
+            effects_disabled: false,
+            history: Vec::new(),
         }
+    }
+}
+
+impl PhysicalView {
+    const HISTORY_LIMIT: usize = 12;
+
+    fn accept_frame(&mut self, frame: MotionFrame) -> bool {
+        if self.frozen || self.frame == Some(frame) {
+            return false;
+        }
+        self.history.push(frame);
+        if self.history.len() > Self::HISTORY_LIMIT {
+            self.history.remove(0);
+        }
+        self.frame = Some(frame);
+        true
     }
 }
 
@@ -42,6 +71,8 @@ impl AurisApp {
             pitch: self.physical_view.pitch,
             drum_preview: self.physical_view.drum_preview,
             gain: self.physical_view.gain,
+            effects_disabled: self.physical_view.effects_disabled,
+            history: Vec::new(),
             ..Default::default()
         };
     }
@@ -77,10 +108,8 @@ impl AurisApp {
         let track = self.physical_view.source.as_ref().map(|(track, _)| *track);
         self.session
             .watch_instrument_motion(track.filter(|_| !self.physical_view.frozen));
-        if !self.physical_view.frozen
-            && let Some(frame) = track.and_then(|track| self.session.instrument_motion(track))
-        {
-            self.physical_view.frame = Some(frame);
+        if let Some(frame) = track.and_then(|track| self.session.instrument_motion(track)) {
+            self.physical_view.accept_frame(frame);
         }
     }
     pub(crate) fn toggle_physical_freeze(&mut self) {
@@ -124,11 +153,13 @@ impl AurisApp {
         let bowed = id == "auris.physical.violin";
         let piano = id == "auris.physical.piano";
         let drums = is_drum_model(id);
+        let string_layout = string_layout(id);
         let track = *track;
         let frame = self.physical_view.frame.unwrap_or_default();
         let theme = self.theme.clone();
         let frozen = self.physical_view.frozen;
         let playing = self.physical_view.playing;
+        let effects_disabled = self.physical_view.effects_disabled;
         let language = self.language;
         let note = if drums {
             drum_name(self.physical_view.pitch, language).to_owned()
@@ -153,9 +184,19 @@ impl AurisApp {
             }
         }
         let drawing_theme = theme.clone();
+        let history = self.physical_view.history.clone();
         let gain = self.physical_view.gain;
         let held = self.t(Key::PhysicalHeld);
         let released = self.t(Key::PhysicalReleased);
+        let projection = if piano {
+            self.t(Key::PhysicalPianoProjection)
+        } else if drums {
+            self.t(Key::PhysicalDrumProjection)
+        } else if string_layout.is_some() {
+            self.t(Key::PhysicalStringProjection)
+        } else {
+            self.t(Key::PhysicalProjection)
+        };
         let caption = if frame.active == 0 {
             self.t(Key::PhysicalWaiting).to_owned()
         } else {
@@ -205,6 +246,19 @@ impl AurisApp {
                                     24 => 96.,
                                     _ => 6.,
                                 };
+                                cx.notify();
+                            }),
+                        ))
+                        .child(button(
+                            "physical-effects",
+                            self.t(Key::VisualizerEffects),
+                            ButtonStyle::Ghost,
+                            !effects_disabled,
+                            theme.accent,
+                            &theme,
+                            cx.listener(|this, _, _, cx| {
+                                this.physical_view.effects_disabled =
+                                    !this.physical_view.effects_disabled;
                                 cx.notify();
                             }),
                         ))
@@ -289,7 +343,7 @@ impl AurisApp {
                     div()
                         .id("physical-motion-canvas")
                         .debug_selector(|| "physical-motion-canvas".into())
-                        .h_48()
+                        .h(gpui::rems(if piano || drums { 18. } else { 12. }))
                         .flex_shrink_0()
                         .w_full()
                         .bg(theme.surface_sunken)
@@ -299,10 +353,19 @@ impl AurisApp {
                                 move |bounds, _, window, cx| {
                                     draw_motion(
                                         bounds,
-                                        &idle,
-                                        gain,
-                                        &drawing_theme,
-                                        (held, released, language, drums),
+                                        &MotionDrawing {
+                                            frame: &idle,
+                                            history: &history,
+                                            gain,
+                                            theme: &drawing_theme,
+                                            held,
+                                            released,
+                                            language,
+                                            drums,
+                                            piano,
+                                            layout: string_layout,
+                                            effects: !effects_disabled,
+                                        },
                                         window,
                                         cx,
                                     )
@@ -316,7 +379,7 @@ impl AurisApp {
                     div()
                         .text_xs()
                         .text_color(theme.text_faint)
-                        .child(self.t(Key::PhysicalProjection)),
+                        .child(projection),
                 )
                 .into_any_element(),
         )
@@ -401,37 +464,116 @@ fn body_points(voice: &MotionVoice, geometry: MotionGeometry, gain: f32) -> Vec<
                 let radius = 0.65 + displayed_motion(*value, gain) * 0.2;
                 (0.5 + angle.cos() * radius * 0.22, angle.sin() * radius)
             } else {
-                (x, displayed_motion(*value, gain))
+                let displacement = if geometry == MotionGeometry::String
+                    && (index == 0 || index + 1 == voice.points.len())
+                {
+                    0.0
+                } else {
+                    displayed_motion(*value, gain)
+                };
+                (x, displacement)
             }
         })
         .collect()
 }
 fn draw_motion(
     bounds: Bounds<Pixels>,
-    frame: &MotionFrame,
-    gain: f32,
-    theme: &Theme,
-    labels: (&str, &str, Language, bool),
+    drawing: &MotionDrawing<'_>,
     window: &mut Window,
     cx: &mut gpui::App,
 ) {
-    let rows = frame
+    if drawing.piano {
+        piano::draw_piano_motion(bounds, drawing, window, cx);
+        return;
+    }
+    if drawing.drums {
+        drums::draw_drum_motion(bounds, drawing, window, cx);
+        return;
+    }
+    if drawing.layout.is_some() {
+        draw_string_motion(bounds, drawing, window, cx);
+        return;
+    }
+    if bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
+        return;
+    }
+    let (frame, history, gain, theme, effects) = (
+        drawing.frame,
+        drawing.history,
+        drawing.gain,
+        drawing.theme,
+        drawing.effects,
+    );
+    let labels = (
+        drawing.held,
+        drawing.released,
+        drawing.language,
+        drawing.drums,
+    );
+    let mut visible: Vec<_> = frame
         .voices
         .iter()
-        .filter(|voice| voice.level > 0.)
-        .count()
-        .max(1);
+        .enumerate()
+        .filter(|(_, voice)| voice.level > 0. && voice.pitch.is_finite())
+        .collect();
+    if visible.is_empty() {
+        visible.push((0, &frame.voices[0]));
+    }
+    let rows = visible.len();
     let rem = window.rem_size();
     let inset = rem * 0.75;
     let lane = bounds.size.height / rows as f32;
     paint::clipped(window, bounds, |window| {
-        for (index, voice) in frame.voices.iter().take(rows).enumerate() {
+        if effects {
+            for age in (1..=5).rev() {
+                let Some(past) = history
+                    .len()
+                    .checked_sub(age + 1)
+                    .and_then(|at| history.get(at))
+                else {
+                    continue;
+                };
+                let alpha = 0.22 * (1. - age as f32 / 6.);
+                let matches = match_history(frame, past);
+                for (index, (slot, current)) in visible.iter().enumerate() {
+                    let Some(candidate) = matches[*slot] else {
+                        continue;
+                    };
+                    let voice = &past.voices[candidate];
+                    let center = bounds.top() + lane * (index as f32 + 0.5);
+                    let left = bounds.left() + bounds.size.width * 0.22;
+                    let width = bounds.size.width * 0.60;
+                    let height = (lane * 0.35).min(rem * 2.0);
+                    let geometry = voice.geometry.unwrap_or(past.geometry);
+                    let surface =
+                        matches!(geometry, MotionGeometry::Membrane | MotionGeometry::Plate);
+                    let lines = if surface {
+                        surface_lines(voice, gain).into_iter().step_by(3).collect()
+                    } else {
+                        vec![body_points(voice, geometry, gain)]
+                    };
+                    let color = Theme::translucent(
+                        theme.visualizer_color(current.pitch.round().max(0.) as usize),
+                        alpha,
+                    );
+                    for line in lines {
+                        let points: Vec<_> = line
+                            .into_iter()
+                            .map(|(x, y)| point(left + width * x, center - height * y))
+                            .collect();
+                        paint::polyline(window, &points, px(1.), color);
+                    }
+                }
+            }
+        }
+        for (index, (_, voice)) in visible.iter().enumerate() {
             let center = bounds.top() + lane * (index as f32 + 0.5);
             let left = bounds.left() + bounds.size.width * 0.22;
             let width = bounds.size.width * 0.60;
             let height = (lane * 0.35).min(rem * 2.0);
             let geometry = voice.geometry.unwrap_or(frame.geometry);
             let surface = matches!(geometry, MotionGeometry::Membrane | MotionGeometry::Plate);
+            let color = theme.visualizer_color(voice.pitch.round().max(0.) as usize);
             let label = if voice.level > 0. {
                 if labels.3 {
                     format!(
@@ -486,7 +628,10 @@ fn draw_motion(
             .into_iter()
             .map(|(x, y)| point(left + width * x, center - height * y))
             .collect();
-            paint::polyline(window, &points, px(1.5), theme.accent);
+            if effects && voice.level > 0. {
+                paint::polyline(window, &points, px(4.), Theme::translucent(color, 0.12));
+            }
+            paint::polyline(window, &points, px(1.5), color);
             if surface {
                 // A tilted wire mesh exposes nodal lines without inventing motion between frames.
                 for line in surface_lines(voice, gain) {
@@ -494,11 +639,15 @@ fn draw_motion(
                         .into_iter()
                         .map(|(x, y)| point(left + width * x, center - height * y))
                         .collect();
-                    paint::polyline(window, &points, px(1.), theme.accent);
+                    paint::polyline(window, &points, px(1.), color);
                 }
             }
             if geometry != MotionGeometry::Shell {
-                let contact = voice.contact.clamp(0., 1.);
+                let contact = if voice.contact.is_finite() {
+                    voice.contact.clamp(0., 1.)
+                } else {
+                    0.25
+                };
                 let x = left
                     + width
                         * if surface {
@@ -523,8 +672,21 @@ fn draw_motion(
                             point(x + rem * 0.5, center + length),
                         ],
                         px(2.),
-                        theme.text,
+                        color,
                     );
+                    if effects {
+                        let mut halo = color;
+                        halo.a = 0.22;
+                        paint::rounded_rect(
+                            window,
+                            Bounds::new(
+                                point(x - rem * 0.45, center - rem * 0.45),
+                                size(rem * 0.9, rem * 0.9),
+                            ),
+                            rem * 0.45,
+                            halo,
+                        );
+                    }
                 }
             }
             for (mode, value) in voice.modes.iter().enumerate() {
@@ -534,7 +696,7 @@ fn draw_motion(
                 paint::rect(
                     window,
                     Bounds::new(point(x, center + height - h), size(spacing * 0.65, h)),
-                    theme.text_muted,
+                    theme.visualizer_color(mode),
                 );
             }
         }
@@ -544,6 +706,53 @@ fn draw_motion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_history_accepts_observed_motion_once_and_stays_bounded() {
+        let mut view = PhysicalView::default();
+        for index in 0..20 {
+            let mut frame = MotionFrame {
+                active: 1,
+                ..Default::default()
+            };
+            frame.voices[0].pitch = index as f32;
+            frame.voices[0].points[1] = 0.25;
+            assert!(view.accept_frame(frame));
+        }
+        assert_eq!(view.history.len(), PhysicalView::HISTORY_LIMIT);
+        assert_eq!(view.history[0].voices[0].pitch, 8.);
+        assert!(!view.accept_frame(view.frame.unwrap()));
+    }
+
+    #[test]
+    fn frozen_view_does_not_accept_new_frames_or_advance_trails() {
+        let mut view = PhysicalView::default();
+        let first = MotionFrame {
+            active: 1,
+            ..Default::default()
+        };
+        assert!(view.accept_frame(first));
+        view.frozen = true;
+        let mut changed = first;
+        changed.voices[0].points[17] = 0.75;
+        assert!(!view.accept_frame(changed));
+        assert_eq!(view.history.len(), 1);
+        assert_eq!(view.frame, Some(first));
+    }
+
+    #[test]
+    fn string_projection_uses_all_observed_samples_and_keeps_fixed_ends() {
+        let mut voice = MotionVoice::default();
+        voice.points[1] = 0.4;
+        voice.points[32] = -0.2;
+        voice.points[63] = 0.3;
+        let points = body_points(&voice, MotionGeometry::String, 1.);
+        assert_eq!(points.len(), 64);
+        assert_eq!(points[0], (0., 0.));
+        assert_eq!(points[63].0, 1.);
+        assert_eq!(points[1].1, 0.4);
+        assert_eq!(points[32].1, -0.2);
+    }
     #[test]
     fn drum_preview_covers_the_kit_and_surface_displacement_retains_its_scale() {
         let mut pitch = 36;
@@ -639,6 +848,99 @@ mod tests {
         assert_eq!(loud[63], (1., 0.));
         assert!((quiet[32].1 / loud[32].1 - 0.1).abs() < 1e-5);
         assert_eq!(displayed_motion(f32::NAN, 6.0), 0.);
+    }
+
+    #[gpui::test]
+    fn piano_and_kit_keep_their_surface_through_silence_freeze_and_effects(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use crate::{auxiliary_window::Surface, harness};
+        let (app, cx) = harness::open(cx);
+        for (id, pitches, language, scheme, font_size) in [
+            (
+                "auris.physical.piano",
+                [21., 60., 61., 108.],
+                Language::Japanese,
+                "daylight",
+                24.,
+            ),
+            (
+                "auris.synth.drumkit",
+                [36., 38., 46., 49.],
+                Language::English,
+                "midnight",
+                16.,
+            ),
+        ] {
+            app.update(cx, |app, cx| {
+                let track = app.session.add_instrument_track("Model", id).unwrap();
+                app.open_plugin_window(PluginSubject::Instrument(track));
+                app.poll_physical_view();
+                app.theme = Theme::named(scheme);
+                app.language = language;
+                app.physical_view.effects_disabled = false;
+                cx.notify();
+            });
+            harness::paint(&app, cx);
+            let handle = app.read_with(cx, |app, _| app.auxiliary_windows[&Surface::Plugin]);
+            let mut utility = gpui::VisualTestContext::from_window(handle.into(), cx);
+            utility.update(|window, _| window.set_rem_size(px(font_size)));
+            harness::resize(&app, &mut utility, size(px(520.), px(480.)));
+            assert_eq!(
+                utility
+                    .debug_bounds("physical-motion-canvas")
+                    .unwrap()
+                    .size
+                    .height,
+                px(font_size * 18.)
+            );
+            // The test platform has no audio callback, so supply coherent observed frames.
+            app.update(&mut utility, |app, cx| {
+                let mut frame = MotionFrame {
+                    active: 5,
+                    pedal: true,
+                    ..Default::default()
+                };
+                for (voice, pitch) in frame.voices.iter_mut().zip(pitches) {
+                    voice.pitch = pitch;
+                    voice.geometry = Some(if is_drum_model(id) {
+                        drum_geometry(pitch as u8)
+                    } else {
+                        MotionGeometry::String
+                    });
+                    voice.level = 0.5;
+                    voice.contact = 0.25;
+                    voice.held = true;
+                    voice.points[17] = 0.025;
+                    voice.points[38] = -0.02;
+                }
+                app.physical_view.accept_frame(frame);
+                frame.voices.reverse();
+                app.physical_view.accept_frame(frame);
+                app.physical_view.frozen = true;
+                cx.notify();
+            });
+            harness::paint(&app, &mut utility);
+            harness::click("physical-effects", &mut utility);
+            app.read_with(&utility, |app, _| {
+                assert!(app.physical_view.effects_disabled);
+                assert!(app.physical_view.frozen);
+                assert_eq!(app.physical_view.frame.unwrap().active, 5);
+                assert_eq!(app.physical_view.frame.unwrap().voices[0].pitch, pitches[3]);
+            });
+            app.update(&mut utility, |app, cx| {
+                assert!(!app.physical_view.accept_frame(MotionFrame::default()));
+                app.physical_view.frozen = false;
+                app.physical_view.accept_frame(MotionFrame::default());
+                cx.notify();
+            });
+            harness::paint(&app, &mut utility);
+            assert!(utility.debug_bounds("physical-motion-canvas").is_some());
+            app.read_with(&utility, |app, _| {
+                assert_eq!(app.physical_view.frame.unwrap().active, 0);
+                assert!(app.physical_view.effects_disabled);
+            });
+        }
     }
 
     #[gpui::test]
@@ -748,6 +1050,12 @@ mod tests {
             app.poll_physical_view();
             app.toggle_physical_preview();
             assert!(app.physical_view.playing);
+            app.physical_view.effects_disabled = true;
+            app.physical_view.accept_frame(MotionFrame {
+                active: 1,
+                ..Default::default()
+            });
+            assert!(!app.physical_view.history.is_empty());
             let plain = app
                 .session
                 .add_instrument_track("Chip", "auris.synth.chiptune")
@@ -756,6 +1064,9 @@ mod tests {
             app.poll_physical_view();
             assert!(!app.physical_view.playing);
             assert!(app.physical_view.source.is_none());
+            assert!(app.physical_view.frame.is_none());
+            assert!(app.physical_view.history.is_empty());
+            assert!(app.physical_view.effects_disabled);
             cx.notify();
         });
         harness::paint(&app, cx);

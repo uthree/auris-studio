@@ -132,6 +132,33 @@ remains at that voice's excitation position until the next attack; violin contac
 smoothed junction while sounding. The readout includes expression, violin bow pressure and
 piano pedal state.
 
+Guitar and electric guitar use six parallel strings in standard E–A–D–G–B–E tuning;
+bass and violin use four strings in their respective E–A–D–G and G–D–A–E tuning.
+High strings appear above low strings, and guitar/bass frets shorten towards the bridge.
+The body, sound hole or pickups provide a reference for contact and stopping positions.
+String assignment is schematic fingering inferred from pitch: the monitor does not report
+physical string identities. Notes outside the tuning range remain visible on the lowest string.
+
+Piano uses a persistent 88-key A0–C8 keyboard with vertical string projections aligned to
+white and black key centres. Low strings are longer than high strings; the lengths are
+schematic. Pitch bends move continuously between neighbouring key centres. Sounding keys
+remain highlighted, with note, cents and held/releasing readouts above the strings and a
+sustain-pedal indicator below the keyboard. Notes beyond the keyboard are drawn at its edge
+while their readouts retain the sounding pitch.
+
+Drum Kit uses fixed positions for kick, snare, hi-hat, three tom registers, crash and ride.
+Resting membranes, cymbals and their meshes remain visible through silence and between hits;
+newest-voice order and voice count never rearrange the kit. Closed/open hi-hat articulations
+share one pad. Captured membrane/plate motion and contact markers overlay these resting
+surfaces; recent matching shapes add trails when effects are enabled. The monitor still
+reports at most four recent voices, so the complete resting kit is a layout reference rather
+than a claim that every sounding hit was captured.
+
+Colours follow the active theme's track palette. Short trails retain captured shapes, and
+motion-driven sparks and excitation halos emphasize energy without changing the spatial data.
+**Effects** disables the trails, halos and sparks for a calmer display. This choice survives
+editor changes. **Freeze** holds both the shape and its effects.
+
 The diagram uses live wave histories or a low-mode spatial projection, before body coloration
 and output gain. It is a relative mechanical view, not measured displacement in metres. Delay
 loops expose a fixed-end spatial projection; bell/bar modal bases are illustrative geometric

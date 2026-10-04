@@ -996,6 +996,58 @@ impl Theme {
         self.categorical_color(source.h - anchor.h, source.s / anchor.s)
     }
 
+    /// Stable categorical colour for a visualized channel, string or resonant mode.
+    ///
+    /// Uses the active scheme's track palette, including custom overrides, with contrast
+    /// against the visualization surfaces. Slots wrap without changing their identity.
+    pub fn visualizer_color(&self, slot: usize) -> Hsla {
+        self.readable_visualizer_color(self.track_palette[slot % self.track_palette.len()])
+    }
+
+    /// Continuous palette colour from the low to the high end of a visualized frequency range.
+    ///
+    /// Interpolates the active track palette in RGB, preserving authored endpoint colours.
+    /// Out-of-range positions are clamped; non-finite positions use the low endpoint.
+    pub fn visualizer_gradient(&self, position: f32) -> Hsla {
+        let position = if position.is_finite() {
+            position.clamp(0.0, 1.0)
+        } else {
+            0.0
+        } * (self.track_palette.len() - 1) as f32;
+        let left = position.floor() as usize;
+        let right = (left + 1).min(self.track_palette.len() - 1);
+        let amount = position - left as f32;
+        if amount < f32::EPSILON {
+            return self.visualizer_color(left);
+        }
+        let from: gpui::Rgba = self.track_palette[left].into();
+        let to: gpui::Rgba = self.track_palette[right].into();
+        self.readable_visualizer_color(
+            gpui::Rgba {
+                r: from.r + (to.r - from.r) * amount,
+                g: from.g + (to.g - from.g) * amount,
+                b: from.b + (to.b - from.b) * amount,
+                a: 1.0,
+            }
+            .into(),
+        )
+    }
+
+    fn readable_visualizer_color(&self, mut color: Hsla) -> Hsla {
+        color.a = 1.0;
+        let step = if self.background.l < 0.5 { 0.01 } else { -0.01 };
+        for _ in 0..=100 {
+            if [self.surface_sunken, self.surface]
+                .into_iter()
+                .all(|surface| contrast_ratio(color, surface) >= 3.2)
+            {
+                break;
+            }
+            color.l = (color.l + step).clamp(0.0, 1.0);
+        }
+        color
+    }
+
     /// A translucent variant of `color`, for clip fills over a grid.
     pub fn translucent(color: Hsla, alpha: f32) -> Hsla {
         Hsla { a: alpha, ..color }
@@ -1100,6 +1152,54 @@ impl Metrics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn visualization_colours_follow_the_palette_and_remain_visible_in_every_scheme() {
+        for scheme in SCHEMES {
+            let theme = Theme::from_scheme(scheme);
+            for slot in 0..8 {
+                let color = theme.visualizer_color(slot);
+                assert_eq!(color.h, theme.track_palette[slot].h);
+                assert_eq!(color.s, theme.track_palette[slot].s);
+                assert_eq!(color, theme.visualizer_color(slot + 8));
+            }
+            for step in 0..=200 {
+                let color = theme.visualizer_gradient(step as f32 / 200.0);
+                for surface in [theme.surface_sunken, theme.surface] {
+                    assert!(
+                        contrast_ratio(color, surface) >= 3.0,
+                        "{} at {step}",
+                        scheme.id
+                    );
+                }
+            }
+            assert_eq!(theme.visualizer_gradient(0.0), theme.visualizer_color(0));
+            assert_eq!(theme.visualizer_gradient(1.0), theme.visualizer_color(7));
+            assert_eq!(
+                theme.visualizer_gradient(f32::NAN),
+                theme.visualizer_color(0)
+            );
+            assert_eq!(theme.visualizer_gradient(-1.0), theme.visualizer_color(0));
+            assert_eq!(theme.visualizer_gradient(2.0), theme.visualizer_color(7));
+        }
+    }
+
+    #[test]
+    fn custom_visualization_colours_keep_their_hues_and_gain_surface_contrast() {
+        for base in [0.06, 0.97] {
+            let mut custom = SCHEMES[0];
+            custom.base = base;
+            custom.track_palette[0] = Some(0xffffcc);
+            custom.track_palette[7] = Some(0x110033);
+            let theme = Theme::from_scheme(&custom);
+            for slot in [0, 7] {
+                let color = theme.visualizer_color(slot);
+                assert_eq!(color.h, theme.track_palette[slot].h);
+                assert!(contrast_ratio(color, theme.surface_sunken) >= 3.0);
+                assert!(contrast_ratio(color, theme.surface) >= 3.0);
+            }
+        }
+    }
 
     #[test]
     fn every_scheme_is_reachable_by_the_name_it_is_stored_under() {

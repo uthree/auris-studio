@@ -265,6 +265,11 @@ repaints do not change its meaning. **Peak hold** keeps the largest observed val
 track changes, and **Clear comparison / peaks** starts a new comparison. The FFT is skipped while
 only a waveform or stereo view is visible.
 
+Visualization colours follow the active theme's track palette, including custom colours.
+The waveform distinguishes the two channels; the spectrum interpolates the palette from low
+to high frequency. **Effects** toggles waveform halos, spectrum shading and stereo trails
+without changing the measured values. It is available in every view and in the command palette.
+
 The oscilloscope draws the left and right sample amplitudes directly against time. Its automatic
 trigger aligns a rising zero crossing from the louder channel, keeping periodic signals stable
 without delaying or modifying playback. The audio thread writes only the new block into a
