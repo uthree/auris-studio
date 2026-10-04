@@ -380,7 +380,7 @@ pub mod architecture {
     //! Unknown families retain the ordinary reported fallback. Selection never rewrites notes.
     //! Shipped song presets name native physical instruments directly for their melodic parts;
     //! chiptune and game-loop retain their melodic oscillator voices. Drum parts use the native
-    //! physical kit directly; risers keep their reverse-cymbal choices. The preset's instrument
+    //! physical kit directly; risers use the bowed-string model. The preset's instrument
     //! IDs remain explicit when its specification is edited, saved or composed again.
     //!
     //! What the split buys costs one thing back: the document can move while a file is being read.
@@ -1111,13 +1111,11 @@ pub mod plugins {
 pub mod composition {
     //! The song specification, and how a piece is written from one.
     //!
-    //! Genre presets request their musical timbres through General MIDI: saw leads for pop
-    //! and synthwave, saxophone and electric piano for city pop, distorted guitars and organ
-    //! for rock, and winds, bowed strings, harp and pitched timpani for orchestral music.
-    //! Acoustic families with a corresponding native model use it; distinct timbres such as
-    //! electric piano, slap/synthesizer bass, harp, distorted guitar and specialty drum kits use
-    //! the optional General MIDI library. Without that library, composition reports the missing
-    //! sound set and uses each part's built-in fallback. Chiptune presets need no sound library.
+    //! Genre presets select native physical instruments directly: piano, bowed and plucked
+    //! strings, electric guitar, bass, woodwinds, mallets, bells and choir. Percussion uses the
+    //! membrane and metal-plate drum kit. Chiptune presets retain their oscillator voices.
+    //! All preset parts, including risers, play without external sound assets, and their
+    //! instrument selections survive specification edits, saving and regeneration.
     //!
     //! Section lengths belong to the preset or song specification. Vocal rhythms distribute
     //! the lyrics across those fixed bars, weighting phrases by mora count and leaving time
